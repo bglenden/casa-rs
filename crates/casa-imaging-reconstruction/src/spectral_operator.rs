@@ -25,7 +25,7 @@ use casa_imaging_model::{
     SelectedVisibilitySample, SpectralKernel, SpectralWcs, SpectralWindowCoordinateCatalog,
     UvwCoordinateLaw, WProjectionContract, WeightingCommitmentId,
 };
-use ndarray::{Array2, ArrayBase, Axis, DataMut, Ix2};
+use ndarray::{Array2, ArrayBase, ArrayView2, Axis, Data, DataMut, Ix2};
 use num_complex::{Complex, Complex32, Complex64};
 use rustfft::{Fft, FftNum, FftPlanner};
 use sha2::{Digest, Sha256};
@@ -42,7 +42,9 @@ use crate::{
     mosaic::{MOSAIC_OVERSAMPLING, MosaicNormalAccumulator, MosaicProjector, MosaicSamplePlan},
     polarization_operator::{MuellerMatrix, PolarizationOperator},
     primary_beam::PreparedPrimaryBeamPower,
-    spectral_sampling::{CasaLinearOutputGrid, CasaLinearRowCursor, CasaLinearSample},
+    spectral_sampling::{
+        CasaLinearOutputGrid, CasaLinearRowCursor, CasaLinearSample, interpolate_complex_pair,
+    },
     trace_complex_values,
     weighting::{
         CoverageEncoder, FrozenWeightingCoverageProof, WeightingAlgorithmState,
@@ -2919,6 +2921,9 @@ pub struct SpectralOperatorPrimitives {
     measurements: SpectralOperatorMeasurements,
 }
 
+#[path = "streaming_cube/completion.rs"]
+mod streaming_completion;
+
 impl SpectralOperatorPrimitives {
     #[cfg(test)]
     pub(crate) fn native_taylor_fixture(
@@ -5220,8 +5225,11 @@ fn resample_native_pair<P, T>(
             continue;
         }
         correlations.push(left_selected.address().correlation_type);
-        observed
-            .push(left.observed[ordinal] * left_factor + right.observed[ordinal] * right_factor);
+        observed.push(interpolate_complex_pair(
+            left.observed[ordinal],
+            right.observed[ordinal],
+            fine.factors(),
+        ));
         weights.push(weight);
         let weight_flag = cube_native_weight_transfer && {
             let nearest = if fine.nearest_is_right() {
@@ -6410,7 +6418,9 @@ impl CompleteDataOwnerState {
                 Ok(left
                     .iter()
                     .zip(right)
-                    .map(|(left, right)| *left * left_factor + *right * right_factor)
+                    .map(|(left, right)| {
+                        interpolate_complex_pair(*left, *right, [left_factor, right_factor])
+                    })
                     .collect())
             },
             |resampled| self.accumulate_casa_resampled_group(resampled, predicts_residual),
@@ -10907,34 +10917,50 @@ fn collect_image_planes(
             .ok_or(SpectralOperatorError::ResidencyOverflow)?,
     );
     for grid in grids {
-        for x in 0..geometry.image_shape[0] {
-            for y in 0..geometry.image_shape[1] {
-                let correction = if let Some(oversampling) = sinc_oversampling {
-                    gridder.sinc_image_correction(x, y, oversampling)
-                } else {
-                    gridder.image_correction(x, y)
-                };
-                let value = grid[(geometry.image_blc[0] + x, geometry.image_blc[1] + y)];
-                values.push(if sinc_oversampling.is_some() {
-                    // MosaicFT and AWProjectFT convert their post-FFT DComplex
-                    // lattices to Complex, then apply the Float sinc correction.
-                    let corrected =
-                        Complex32::new(value.re as f32, value.im as f32) * correction as f32;
-                    Complex64::new(f64::from(corrected.re), f64::from(corrected.im))
-                } else {
-                    value * correction
-                });
+        append_image_plane(
+            grid.view(),
+            geometry,
+            &mut values,
+            |x, y| {
+                sinc_oversampling.map_or_else(
+                    || gridder.image_correction(x, y),
+                    |oversampling| gridder.sinc_image_correction(x, y, oversampling),
+                )
+            },
+            sinc_oversampling.is_some(),
+        )?;
+    }
+    Ok(Some(values))
+}
+
+/// Shared post-FFT crop/correction in canonical plane/x/y order. Generated-value
+/// checking is fused with formation rather than a separate image reread.
+pub(crate) fn append_image_plane(
+    grid: ArrayView2<'_, Complex64>,
+    geometry: &SpectralOperatorGeometry,
+    values: &mut Vec<Complex64>,
+    correction: impl Fn(usize, usize) -> f64,
+    casa_float_correction: bool,
+) -> Result<(), SpectralOperatorError> {
+    for x in 0..geometry.image_shape[0] {
+        for y in 0..geometry.image_shape[1] {
+            let correction = correction(x, y);
+            let value = grid[(geometry.image_blc[0] + x, geometry.image_blc[1] + y)];
+            let value = if casa_float_correction {
+                // MosaicFT/AWProjectFT convert DComplex to Complex before Float correction.
+                let corrected =
+                    Complex32::new(value.re as f32, value.im as f32) * correction as f32;
+                Complex64::new(f64::from(corrected.re), f64::from(corrected.im))
+            } else {
+                value * correction
+            };
+            if !value.re.is_finite() || !value.im.is_finite() {
+                return Err(SpectralOperatorError::GeneratedNonfinite);
             }
+            values.push(value);
         }
     }
-    if values
-        .iter()
-        .any(|value| !value.re.is_finite() || !value.im.is_finite())
-    {
-        Err(SpectralOperatorError::GeneratedNonfinite)
-    } else {
-        Ok(Some(values))
-    }
+    Ok(())
 }
 
 fn aw_sensitivity_magnitude(values: Vec<Complex64>) -> Vec<f64> {
@@ -11664,6 +11690,14 @@ fn w_projection_kernel_sum(kernel: &WProjectionKernel, sampling: usize) -> f64 {
 }
 
 impl StandardConvolution {
+    pub(crate) fn dynamic_bytes(shape: [usize; 2]) -> Result<usize, SpectralOperatorError> {
+        shape[0]
+            .checked_add(shape[1])
+            .and_then(|values| values.checked_add((OVERSAMPLING + 1) * TAP_COUNT))
+            .and_then(|values| values.checked_mul(size_of::<f64>()))
+            .ok_or(SpectralOperatorError::ResidencyOverflow)
+    }
+
     pub(crate) fn new(geometry: &SpectralOperatorGeometry) -> Self {
         Self {
             grid_shape: geometry.grid_shape,
@@ -11705,10 +11739,10 @@ impl StandardConvolution {
             })
     }
 
-    pub(crate) fn grid_compensated(
+    pub(crate) fn grid_compensated<S: DataMut<Elem = Complex64>, C: DataMut<Elem = Complex64>>(
         &self,
-        grid: &mut Array2<Complex64>,
-        compensation: &mut Array2<Complex64>,
+        grid: &mut ArrayBase<S, Ix2>,
+        compensation: &mut ArrayBase<C, Ix2>,
         taps: SampleTaps,
         value: Complex64,
     ) {
@@ -11737,7 +11771,11 @@ impl StandardConvolution {
         }
     }
 
-    pub(crate) fn degrid(&self, grid: &Array2<Complex64>, taps: SampleTaps) -> Complex64 {
+    pub(crate) fn degrid<S: Data<Elem = Complex64>>(
+        &self,
+        grid: &ArrayBase<S, Ix2>,
+        taps: SampleTaps,
+    ) -> Complex64 {
         let x_weights = self.weights[taps.x.weight_index];
         let y_weights = self.weights[taps.y.weight_index];
         let mut value = Complex64::new(0.0, 0.0);
@@ -11751,7 +11789,7 @@ impl StandardConvolution {
         value
     }
 
-    fn image_correction(&self, x: usize, y: usize) -> f64 {
+    pub(crate) fn image_correction(&self, x: usize, y: usize) -> f64 {
         self.correction_x[self.image_blc[0] + x] * self.correction_y[self.image_blc[1] + y]
     }
 
@@ -11774,14 +11812,23 @@ fn convolution_sinc(index: usize, size: usize, oversampling: usize) -> f64 {
     f64::from(argument.sin() / argument)
 }
 
-pub(crate) struct PreparedFft<T: FftNum = f64> {
+#[doc(hidden)]
+pub struct PreparedFft<T: FftNum = f64> {
     forward: [Arc<dyn Fft<T>>; 2],
     inverse: [Arc<dyn Fft<T>>; 2],
     lane: Vec<Complex<T>>,
     scratch: Vec<Complex<T>>,
 }
 
+#[cfg(test)]
+#[path = "streaming_cube/reference.rs"]
+pub(crate) mod streaming_reference;
+
 impl<T: FftNum> PreparedFft<T> {
+    pub(crate) fn shape(&self) -> [usize; 2] {
+        [self.forward[0].len(), self.forward[1].len()]
+    }
+
     pub(crate) fn new(
         shape: [usize; 2],
         reserved_complex_values: usize,

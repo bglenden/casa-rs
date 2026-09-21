@@ -42,7 +42,7 @@ fn required_path(variable: &str) -> PathBuf {
 }
 
 #[test]
-#[ignore = "Q-band diagnostic only: requires owner-initialized reduced-row/512-channel fixture, fresh durable artifacts and external 8GiB guard"]
+#[ignore = "Q-band diagnostic only: requires owner-initialized reduced-row/512-channel fixture, fresh durable artifacts and an external RSS guard"]
 fn t55_q_band_rebaseline_preflight() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let image_size: usize = std::env::var("CASA_RS_T55_PREFLIGHT_IMAGE_SIZE")
@@ -52,11 +52,15 @@ fn t55_q_band_rebaseline_preflight() {
     let expected_rows: usize = std::env::var("CASA_RS_T55_PREFLIGHT_ROWS")
         .map(|value| value.parse().expect("positive diagnostic row count"))
         .unwrap_or(351);
-    assert!(expected_rows > 0 && expected_rows <= 42_120 && expected_rows % 351 == 0);
+    assert!(expected_rows > 0 && expected_rows <= 84_240 && expected_rows % 351 == 0);
     let workers: u64 = std::env::var("CASA_RS_T55_PREFLIGHT_WORKERS")
         .map(|value| value.parse().expect("positive diagnostic worker count"))
         .unwrap_or(1);
     assert!([1, 2, 4].contains(&workers));
+    let memory_bytes: u64 = std::env::var("CASA_RS_T55_NATIVE_MEMORY_BYTES")
+        .map(|value| value.parse().expect("positive diagnostic memory budget"))
+        .unwrap_or(4 << 30);
+    assert!(memory_bytes > 0 && memory_bytes <= 16 << 30);
     let measurement_set = required_path("CASA_RS_T55_REAL_MS");
     let ms = MeasurementSet::open(&measurement_set).expect("preflight MS");
     assert_eq!(
@@ -97,16 +101,34 @@ fn t55_q_band_rebaseline_preflight() {
     imaging.task_requirements = vec![TaskRequirement::PerChannelWeightDensity];
     imaging.resource_policy = ResourcePolicy::Explicit(ResourceOverride {
         workers: Some(workers),
-        memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 4 << 30)]),
+        memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), memory_bytes)]),
         ..ResourceOverride::default()
     });
     fs::write(root.join("request.txt"), format!("{imaging:#?}\n")).unwrap();
+    if std::env::var_os("CASA_RS_PROFILE_CUBE").is_some() {
+        eprintln!(
+            "cube_profile_application start_unix_nanos={}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+    }
     let started = std::time::Instant::now();
     let result = execute_continuum(imaging).unwrap_or_else(|error| {
         fs::write(root.join("failure.txt"), format!("{error:#?}\n")).unwrap();
         panic!("Q-band preflight failed: {error}");
     });
     let task_wall_seconds = started.elapsed().as_secs_f64();
+    if std::env::var_os("CASA_RS_PROFILE_CUBE").is_some() {
+        eprintln!(
+            "cube_profile_application end_unix_nanos={}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+    }
     let worker_evidence = [
         ("initial-major", &result.outcome.output.initial_receipt),
         (
@@ -165,6 +187,7 @@ fn t55_q_band_rebaseline_preflight() {
             "scope": "diagnostic only: reduced rows, all 512 Q-band channels, CPU Clark cube",
             "rows": expected_rows,
             "requested_workers": workers,
+            "native_memory_bytes": memory_bytes,
             "worker_evidence": worker_evidence,
             "image_size": image_size,
             "task_wall_seconds": task_wall_seconds,

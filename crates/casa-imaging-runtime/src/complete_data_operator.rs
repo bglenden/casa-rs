@@ -70,6 +70,10 @@ use crate::managed_spill::{
 
 const GRIDDED_NORMAL_SOURCE_SLOTS: u64 = 2;
 
+#[cfg(any(test, casa_streaming_cube_comparison))]
+#[path = "streaming_cube/completion.rs"]
+mod streaming_completion;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum GriddedNormalReplayPlanningCapacity {
     Unknown,

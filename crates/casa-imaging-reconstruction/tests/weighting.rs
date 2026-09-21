@@ -1112,8 +1112,8 @@ fn partition_block_worker_and_repeated_replay_choices_are_invariant() {
             serial_completion.coverage_proof_bytes(),
             serial_completion.coverage_proof_hash_calls(),
         ),
-        (522, 11),
-        "proof diagnostics must count every encoded byte and SHA update"
+        (4 * 102 + 2 * 37 + 64 + 9, 4 + 8),
+        "v6: four fresh-row frames, two domains, identity, terminator; count every byte/update"
     );
     assert_eq!(
         (
@@ -1260,8 +1260,9 @@ fn parallel_replay_preparation_preserves_ordered_groups_blocks_and_coverage() {
                 samples.len()
             );
             let mut blocks = Vec::new();
-            for weighted in prepared {
-                if let Some(block) = phase.commit_prepared(weighted.unwrap()).unwrap() {
+            let mut prepared = prepared.into_iter().map(Option::unwrap).collect::<Vec<_>>();
+            while !prepared.is_empty() {
+                if let Some(block) = phase.commit_prepared(&mut prepared).unwrap() {
                     blocks.push((block.sequence(), block.samples().to_vec()));
                     phase.reuse_emitted_block(block).unwrap();
                 }
@@ -1689,7 +1690,7 @@ fn fused_and_replay_flush_before_a_three_lane_group_without_a_second_block() {
     };
     let mut fused = begin_natural_weighting_stream(&problem, &plan).expect("fused stream");
     assert_eq!(consume(&mut fused), [2]);
-    let (terminal, generation, _) = fused.finish().expect("finish fused stream");
+    let (terminal, generation, scalar_summary) = fused.finish().expect("finish fused stream");
     assert_eq!(
         terminal.expect("three-lane terminal block").samples().len(),
         3
@@ -1724,6 +1725,62 @@ fn fused_and_replay_flush_before_a_three_lane_group_without_a_second_block() {
             .len(),
         3,
     );
+
+    for batch_width in 1..=samples.len() {
+        let mut fused = begin_natural_weighting_stream(&problem, &plan).unwrap();
+        let mut lengths = Vec::new();
+        let mut replay_buffer = None;
+        for start in (0..samples.len()).step_by(batch_width) {
+            let end = (start + batch_width).min(samples.len());
+            let mut prepared = samples[start..end]
+                .iter()
+                .zip(groups[start..end].iter().copied())
+                .map(|(sample, group)| {
+                    fused
+                        .prepare_sample(
+                            &problem,
+                            sample.as_view().with_input_weight_group(group),
+                            sample.address.frequency_centre_hz,
+                            exact_contributions(sample),
+                        )
+                        .unwrap()
+                })
+                .collect::<Vec<_>>();
+            let allocation = (prepared.as_ptr(), prepared.capacity());
+            while !prepared.is_empty() {
+                if let Some(block) = fused.commit_prepared(&problem, &mut prepared).unwrap() {
+                    lengths.push(block.samples().len());
+                    replay_buffer = Some(block.samples().as_ptr());
+                    fused.reuse_emitted_block(block).unwrap();
+                }
+            }
+            assert_eq!((prepared.as_ptr(), prepared.capacity()), allocation);
+            assert!(
+                fused
+                    .commit_prepared(&problem, &mut prepared)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        let (last, actual, summary) = fused.finish().unwrap();
+        let last = last.unwrap();
+        assert_eq!(lengths, [2]);
+        assert_eq!(last.samples().len(), 3);
+        assert_eq!(Some(last.samples().as_ptr()), replay_buffer);
+        assert_eq!(actual.generation_id(), generation.generation_id());
+        assert_eq!(actual.sum_weights(), generation.sum_weights());
+        assert_eq!(summary.coverage(), scalar_summary.coverage());
+        assert_eq!(summary.sample_count(), scalar_summary.sample_count());
+        assert_eq!(summary.block_count(), scalar_summary.block_count());
+        assert_eq!(
+            summary.coverage_proof_bytes(),
+            scalar_summary.coverage_proof_bytes()
+        );
+        assert_eq!(
+            summary.coverage_proof_hash_calls(),
+            scalar_summary.coverage_proof_hash_calls()
+        );
+    }
 }
 
 #[test]

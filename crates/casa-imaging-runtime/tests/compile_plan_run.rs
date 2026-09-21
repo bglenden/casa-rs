@@ -5597,7 +5597,7 @@ fn t55_initial_clean_executes_parallel_preparation_across_bounded_slabs() {
             if workers == 1 || model_value.is_some() {
                 assert_eq!(result.parallel_preparation_samples, 0);
             } else {
-                let full_replay_samples = normal.sample_count() * (result.slab_count - 1);
+                let full_replay_samples = normal.sample_count() * result.slab_count;
                 assert!(result.parallel_preparation_samples <= full_replay_samples);
                 if selected_channels == 8 && result.slab_count > 1 {
                     assert!(result.parallel_preparation_samples > 0);

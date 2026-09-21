@@ -2904,6 +2904,54 @@ mod tests {
     }
 
     #[test]
+    fn put_slice_view_direct_writes_c_order_plane_groups_across_copy_blocks() {
+        for (width, height, tile_x, tile_y) in [(70, 66, 70, 66), (70, 66, 35, 33)] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("direct-c-order-group.image");
+            let mut image = PagedImage::<f32>::create_with_tile_shape_and_cache(
+                vec![width, height, 1, 5],
+                vec![tile_x, tile_y, 1, 1],
+                make_coords(),
+                &path,
+                tile_x * tile_y * 4,
+            )
+            .unwrap();
+            let data = ndarray::Array4::from_shape_fn((width, height, 1, 3), |(x, y, _, c)| {
+                (c * 100_000 + x * 100 + y) as f32
+            });
+            image
+                .put_slice_view(data.view().into_dyn(), &[0, 0, 0, 1])
+                .unwrap();
+            let stats = image.tiled_io_stats().unwrap();
+            assert_eq!(stats.direct_tile_write_calls, 1);
+            assert_eq!(
+                stats.direct_tile_write_tiles,
+                3 * (width / tile_x) * (height / tile_y)
+            );
+            assert_eq!(stats.direct_tile_write_bytes, width * height * 3 * 4);
+            assert_eq!(stats.put_slice_c_order_calls, 0);
+            image.save().unwrap();
+            drop(image);
+            let reopened = PagedImage::<f32>::open(&path).unwrap();
+            assert_eq!(
+                reopened
+                    .get_slice(&[0, 0, 0, 1], &[width, height, 1, 3])
+                    .unwrap(),
+                data.into_dyn()
+            );
+            for channel in [0, 4] {
+                assert!(
+                    reopened
+                        .get_slice(&[0, 0, 0, channel], &[width, height, 1, 1])
+                        .unwrap()
+                        .iter()
+                        .all(|value| *value == 0.0)
+                );
+            }
+        }
+    }
+
+    #[test]
     fn put_slice_view_direct_writes_fortran_aligned_tiled_plane() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("direct-fortran-plane.image");

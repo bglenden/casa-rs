@@ -11,6 +11,15 @@ use casa_imaging_model::{
 use smallvec::SmallVec;
 use thiserror::Error;
 
+/// Keep the observed/predicted pair interpolation in the same arithmetic order.
+pub(crate) fn interpolate_complex_pair(
+    left: num_complex::Complex64,
+    right: num_complex::Complex64,
+    factors: [f64; 2],
+) -> num_complex::Complex64 {
+    left * factors[0] + right * factors[1]
+}
+
 /// One CASA fine-channel interpolation point between adjacent native channels.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct CasaLinearSample {

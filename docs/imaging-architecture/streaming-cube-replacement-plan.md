@@ -1,8 +1,8 @@
 # Bounded streaming cube replacement plan
 
-Truth class: proposed implementation plan, not an accepted architectural decision  
-Last reality check: 2026-09-20  
-Status: Oracle-reviewed proposal awaiting implementation/checkpoint approval; no production edits
+Truth class: user-approved implementation plan, not an accepted architectural decision
+Last reality check: 2026-09-20
+Status: milestones 1–3 approved; local preservation checkpoint complete
 Review: GPT-6 Pro, [conversation](https://chatgpt.com/c/6aaff6ec-fdbc-83e8-b7eb-8ca40186f3db)
 Verification: just docs-check; git diff --check; source pins compared to tested binary
 
@@ -20,10 +20,15 @@ code visibly segregated; extract and reuse established numerical kernels.
 Do not resume the old autoresearch controller or optimize retired attestation.
 Do not infer that an old uncommitted experiment was promoted.
 
-**Next executable step:** after approval of this brief and the local checkpoint
-choice, capture the identified dirty baseline in git, then implement the small
-cross-band spectral-dependency test described in milestone 1. No timing campaign,
-Obit installation, or production rewrite is authorized merely by reading this plan.
+**Current implementation:** the segregated reconstruction `streaming_cube` module
+now has a shared flat native block, a preparation-only weighted-input adapter,
+borrowed compact rows, contiguous band grids, exact row support, native prediction
+and residual/normal accumulation. The numerical/runtime replacement still uses a
+test-only seam, not a production selector. The current check/result and next
+executable action are in CURRENT.md. The active Goal covers milestones 1–3.
+Local preservation checkpoint: `aa076d36c6f6fc45738bde2095a6d05ab1ef8005`.
+The user additionally authorized local Obit timings as reference only, including
+the isolated native CPU core/task setup described below.
 
 ## Outcome and limits
 
@@ -46,11 +51,22 @@ No production product/model attestation, verification-only full-array passes,
 whole-plan hashing on progress, or new runtime fallback. Independently justified
 persistence-boundary checksums and diagnostic fingerprints remain distinct.
 
-Resources: 4 GiB shared native planner; sampled 8 GiB process-scope RSS guard;
+Resources: 16 GiB shared native planner; sampled 16 GiB process-scope RSS guard;
 two Cargo jobs; `CARGO_INCREMENTAL=0`. No full MeasurementSet materialization or
 per-worker duplicate full cubes. Strict interactive time cutoffs are suspended;
 unattended work still needs an agreed checkpoint. No push, merge, release,
-cleanup, new Goal/controller, or full-32GB run.
+cleanup, another optimization controller, or full-32GB run.
+The user increased the memory allowance on 2026-09-20 after candidate12; older
+4-GiB-planning/8-GiB-RSS observations remain labelled as such. The allowance is
+a ceiling, not a requirement to maximize resident bands or fill available RAM.
+
+First-implementation performance acceptance on the same 42,120-row / 512-channel /
+512x512 workload: new W1 must be no slower than matched CASA serial (currently
+66.526070500 s), and new W1 / new W4 must be at least 3.0. Include preparation,
+intermediate I/O and publication; do not pad the serial baseline. Use one matched
+observation initially, repeating only to resolve ambiguous timing. All seven
+products / nine full-field CASA checks and panels remain required. Obit numbers
+are reference evidence, not a substitute acceptance target.
 
 Approval of the final brief must explicitly cover the new execution/ownership
 boundary and the staging/cutover strategy. Do not edit accepted ADRs silently.
@@ -60,9 +76,9 @@ if a necessary departure is found, propose exact supersession before implementin
 ## Measured starting point
 
 Working tree:
-`/Users/brianglendenning/.codex/worktrees/5d43/casa-rs`  
-Branch: `codex/t55-serial-autoresearch`  
-HEAD: `0d4ed221fe376963676222cdf543b9392a2d88db` plus substantial dirty changes.
+`/Users/brianglendenning/.codex/worktrees/5d43/casa-rs`
+Branch: `codex/t55-serial-autoresearch`
+Pre-checkpoint HEAD: `0d4ed221fe376963676222cdf543b9392a2d88db` plus the preserved changes.
 
 Durable benchmark root:
 `/Users/brianglendenning/SoftwareProjects/casa-rs-evidence/t55/q-band-rebaseline-20260918/overnight-scaling-20260919`.
@@ -87,11 +103,12 @@ Their adjacent `source.json` records tracked source; experimental
 On 2026-09-20, byte comparison of the current tracked diff and initial-plane
 module against these saved contents passed. The only added files since that
 source pin are research/design documents. There are 35 modified tracked files
-and three untracked files, with no staged changes. Proposed preservation
-checkpoint: one local WIP commit on the current branch of the explicit 38-file
-manifest `checkpoint-files.txt` in the durable plan directory. Do not stage
-anything outside that manifest or call the experiment a promoted performance
-win. If state has changed, inspect the delta before committing. No commit made.
+and three untracked files, with no staged changes. The approved explicit 38-file
+manifest `checkpoint-files.txt` was committed locally as
+`aa076d36c6f6fc45738bde2095a6d05ab1ef8005`. The worktree was clean immediately
+afterward. This preserves the tested experimental source; it does not promote it
+as a performance win. Six Markdown hard-break whitespace warnings in that faithful
+checkpoint are being removed in the next documentation edit, without amending it.
 
 Workload: corrected simulated VLA Q band, 42,120 genuine rows, 512 selected
 channels, two correlations, 512x512 images with 640x640 padded grids; MS logical
@@ -247,10 +264,229 @@ a named block/job seam, not repeatedly inside the sample/pixel loop; account for
 its copies and peak simultaneous storage. Do not force a worse new representation
 solely to preserve an old interface.
 
-Keep one compact retirement table in this plan, populated with exact symbols and
-callers when the first new type is introduced. Each row records: old type, new
-representation, remaining consumers (including tests), temporary adapter if any,
-acceptance check and deletion milestone. This is not another receipt system.
+Initial retirement inventory (all paths below are relative to reconstruction
+`src/` unless qualified). These old containers are frozen against new production
+consumers. The table describes migration obligations, not completed deletions.
+
+| Displaced representation | New representation | Remaining consumers and temporary seam | Acceptance / deletion point |
+| --- | --- | --- | --- |
+| `NativeSpectralGroup`, `RetainedNativeSpectralGroup`, `CasaResampledGroup`, `CasaLinearRowResampler` | `streaming_cube::VisibilityRow` borrows flat channel/correlation arrays; `RowAccumulator` retains only a cursor and the previous inline prediction | `spectral_operator.rs::CompleteDataOwnerState`; `gridded_normal_operator.rs::GriddedNormalOperatorCompiler` and `gridded_normal_operator/spectral_records.rs`; their adjacent tests; `weighting.rs` uses retained-group size for admission. No production adapter added yet. | Native prediction/residual/normal and flags/weights/chunk coverage; remove covered cube consumers at milestone 4, then delete types when other-mode consumers migrate. |
+| `SpectralSlabOperator`'s separately owned per-plane arrays and lifecycle state | `streaming_cube::BandWorkspace`: contiguous `[channel,x,y]` arrays and borrowed disjoint plane views, geometry/FFT separate from elements | `spectral_operator.rs::CompleteDataOwnerState`, `spectral_operator/initial_planes.rs::InitialPlaneBatch`, adjacent operator/initial-phase tests. Test-only `streaming_cube/reference.rs::Reference` uses the old operator for comparison. | Bitwise fixed-model gridding and full application acceptance; delete cube construction/initial-plane plumbing and reference seam at milestone 4. Other spectral bases, W/AW and mosaic still need explicit migration before deleting the shared owner. |
+| `ReducedRecordKey`, `RecordRole`, `StandardRecordScratch`, cube use of `GriddedNormalCompilationPlan` | Direct native-pair prediction/accumulation; shared reconstruction `streaming_cube/input.rs::NativeBlock`, runtime `streaming_cube/input.rs::{NativeStoreWriter,NativeStore}` hold the original native payload in bounded tiles | `gridded_normal_operator.rs`, its `compilation.rs`, `spectral_records.rs`, `bounded_records.rs`, `two_domain.rs`; runtime `complete_data_operator.rs`; reconstruction `tests/major_cycle.rs` and `tests/support/gridded_frames.rs`. The new store is test-only pending application integration, with no old-store adapter. | No flattened cube artifact; complete-data numerical/I/O/resource checks and end-to-end timing. Remove covered cube compiler/store calls at milestone 4; shared non-cube replay remains until its named migration. |
+| Cube preparation's `WeightingSampleValue`/`WeightingReplayChunk` payload | `NativeInput` consumes borrowed weighted samples once into `NativeBlock`; geometry once per row, raw numeric arrays thereafter | Temporary reconstruction-owned adapter in `streaming_cube/input.rs`; currently exercised by weighting-private fixtures. `NativeBlock` is consumed directly by runtime native-store read/write and numerical borrowed-row tests. All historical weighting callers remain unchanged. | Wire this adapter at `spectral_cycle.rs`'s bounded weighting callback for the complete comparison slice; remove the covered cube's weighted-object conversion when selected-access preparation supplies the same flat fields directly. No weighted objects in stored blocks or band kernels. |
+
+No application API was added or removed. Eight internal friend-surface exports
+(`NativeBlock`, `NativeInput`, `NativeLayout`, `RowMetadata`, `BandPlan`,
+`BandMemory`, `EpochBand`, `PreparedFft`) share the flat payload, numerical band
+owner and recyclable FFT across reconstruction and runtime. No duplicate runtime
+buffer or scientific kernel remains.
+Runtime's future cube migration removes its use of
+`GriddedNormalCompilationPlan`, `GriddedNormalOperatorCompiler`,
+`GriddedNormalOperatorProgram` and associated replay work/storage operations;
+the shared exports cannot be deleted while other modes still consume them.
+Inventory those consumers again at the actual runtime/cutover boundary.
+
+The first payload layout is explicit: Complex64 values (16 bytes), f64 weights
+(8), and two distinct one-byte flags per correlation sample; u32 selected-channel
+indices plus f64 transformed frequencies per native channel; address/UVW/phase
+and original frequency-pair geometry once per row. `VisibilityRow` itself only
+borrows these arrays: no conversion or payload copy. Current tests own bounded
+rows in ordinary arrays, not the historical sample graph. For P padded pixels,
+the seeded initial phase owns six complex output arrays (96 P bytes per output
+plane), one complex forward array (16 P bytes per support plane), and 24 bytes
+per output plane for sum weight, compensation and mapped count, plus kernel/FFT
+storage. The certified-empty initial phase owns four output arrays (64 P bytes
+per output plane), no forward/residual arrays and no model read window. A refresh
+owns only two residual arrays (32 P bytes per output plane) plus forward support;
+it moves existing PSF/sensitivity/weights instead of forming them again. Empty
+arrays have zero payload allocation. `BandPlan::memory` projects preparation,
+accumulation, completion and retained-result bytes with checked shape arithmetic.
+It includes full prior state while new grids allocate, one loaded model plane,
+FFT construction/residency, convolution storage, and image allocations overlapping
+grids. Runtime `WavePlan` sums every resident band's peak, not only the number of
+workers, and adds the shared source arena, one/two decoded slots, collection
+storage, stacks and externally owned shared bytes. Application admission still
+has to supply the complete external-owner term and select bounded wave shapes.
+
+`EpochBand` now holds an immutable borrow of the exact `ModelGeneration` while
+preparing and executing a band. Preparation reads one canonical y/x support plane
+at a time through the existing bounded model owner, preserves invalid support,
+and fills only that band's forward grids with shared correction/FFT kernels.
+Completion rejects a different model object before doing inverse FFT work;
+result primitives carry the existing generation identity. No model copy, hash or
+verification-only read is used to associate the job with its epoch. The global
+controller barrier and source/run completion checks still belong to runtime;
+this small owner does not by itself prove complete-input coverage.
+
+The certified-empty initial dirty image is already the residual and moves directly
+to the controller slot; no invariant dirty clone is needed by direct-native
+refresh. Seeded initial work retains its independently computed data-side dirty
+image by ownership transfer. Refresh checks the prior band's shape/inventory,
+releases its obsolete residual and moves its invariant buffers into the new
+completion. The run owner must match source/weighting association before this
+local handoff. No content verification pass is introduced.
+
+Post-FFT image formation now shares `append_image_plane` with the historical
+operator, preserving crop, axis order and standard versus CASA-float correction.
+Generated-finite checking is fused into that calculation. Forward grids and
+compensation arrays are dropped before image allocation. `completion.rs` supplies
+the narrow temporary handoff into existing `SpectralOperatorPrimitives`, not a
+historical slab operator. It moves the exact residual into the controller-facing
+slot and data-side dirty values into the invariant slot. This removes the old
+dirty clone and separate pre-promotion residual slot: one 16-byte-per-image-cell
+copy and the corresponding redundant normal-storage field are not needed by
+this representation. The shared normal-state storage/fold/controller remains;
+its runtime completion binding reuses the existing scheduler fence. No new public API.
+
+Tests prove bounded support-only reads, y/x conversion and invalid support,
+model read errors and insufficient windows, rejection of a delayed foreign-epoch
+job, bit-exact completed primitives against the promoted historical result, and
+shape/blank/unmapped rules. Runtime now schedules real `EpochBand` jobs through
+the existing bounded executor, including FFT completion on its installed team.
+Tests compare initial and changed-model refresh results across W1/W2/W4, band
+depths 1/2/4 and one/two source slots. They check decode counts, moved invariant
+buffers, byte-admission boundaries, unmapped waves and joined model-read errors.
+These remain focused scheduled-science proofs, not full-application acceptance.
+The preparation/controller fixture now uses actual selected-observation inspection
+and the natural-weight stream's borrowed callback, returning each emitted buffer
+for reuse. `NativePreparation` packs that stream once, derives band support while
+writing, and rejects incomplete, duplicate or out-of-order chunks. Completed bands
+move through `CompleteDataOwnerResult::from_streaming_cube` into the existing
+normal-state fold and `MajorCycleOwner`, preserving terminal replay identities
+with zero additional coverage-hash work. Runtime `NativePreparation::traverse`
+now consumes the real `WeightingExecutionState` bounded selected-source callback.
+The store cannot authorize reconciliation: `complete_replay` still runs only in
+the scheduler's settled observation-read callback. Runtime's segregated
+`streaming_cube/completion.rs` transfers completed bands into the existing
+`CompleteDataSlabResult`/fold with the exact problem, attempt, lease, planned
+reconciliation node and settled source predecessor. No new completion authority
+or array scan is introduced. The real-MS runtime fixture covers successful
+reconciliation, source-fence failure and a wrong reconciliation node; current
+verification is recorded in CURRENT.md. The real-source fixture now uses
+`CubeStatePlan` for admitted model and normal storage, including its exact
+capacity/FD and immutable-heap retention boundaries. The integrated comparison
+now uses a contiguous resident normal array when both live generations and the
+minimum workspace fit; larger cases use the existing paged backing under the
+same scientific ownership interface. The native initial-empty/residual-refresh
+chain admits its actual five f64 fields per pixel. The comparison heap census
+does not charge that exact retained payload twice; it never subtracts an estimated
+reservation or rereads array contents. Model storage remains paged. Initial-band prefix selection
+uses the same phase-byte projection as execution and drains each completed wave
+to the existing fold before admitting another. `streaming_cube/plan.rs` now composes
+the native phase after those source/weighting/storage reservations. Its workspace
+is the lesser of the full initial-wave shape bound and remaining authority-owned
+memory, but must fit preparation and every minimum one-band wave. The bound
+includes preparation arenas/cache, all retained support metadata and row-range
+scratch, source slots, worker stacks and explicitly supplied enclosing owners.
+Support-vector growth is capped by output channel count; it is not preallocated
+as a full band-by-channel table. Worker claims and execution configuration agree.
+The native file itself owns its retained capacity/descriptor permit. Full
+application admission still needs actual enclosing-owner sizes, input block/tile
+selection validation at the full workload and cross-attempt native-store retention; this is not a claim of a
+complete application plan or timing.
+
+`NativePreparation` now binds its shape and output frequencies to the compiled
+selection. It constructs `NativeLayout` from the first real weighted callback,
+consuming that same chunk; no fixture address or second input traversal is used.
+`NativeInput` owns the coarse layout and returns it unchanged with completion,
+then `PreparedNative` transfers layout, store and band plans together. The
+initial scheduler executor lives in `streaming_cube/phase.rs`, with source
+polarizations and channel counts derived from the problem rather than fixture
+constants. Failure injection remains test-only. Runtime comparison coverage
+includes real RR/LL and XX/YY MeasurementSets. `InitialCube::plan` now composes
+the source/weighting, paged-state and native reservations through the existing
+physical planner. It transfers its planned bands into preparation without
+recompiling them in the read node. `NativePhasePlan::for_initial_source` derives
+native row blocks from the selected source I/O-buffer envelope (at least one
+complete row), independently of weighted callback size, and tiles from the
+projected memory-bounded wave count. The provisional
+full-channel encoding arena bounds the narrower chosen layout; actual spectral
+support is still discovered from rows, not approximated by that I/O tiling.
+Tests cover smaller memory allowances and 16k-channel storage shapes, not a
+16k-channel dataset timing. Complete application composition, later-epoch import
+and shared minor-cycle wiring now run through the private compile-time comparison
+seam. The application reuses its existing stopping/mask loop and product writer.
+The macOS comparison conservatively charges the enclosing process's live heap
+in addition to explicit phase bounds; this is not a portable production cutover.
+
+The one-use `InitialMajorPhaseCompletion` wrapper has been deleted. Its unchanged
+mask/coupling/minor-cycle operation is now the crate-internal
+`MajorCycleOperatorResult::run_reconstruction_cycle`, shared with the historical
+caller instead of introducing another CLEAN controller. The existing
+`spectral_cycle_plan::base_physical` source/transaction skeleton is reusable
+inside the runtime; it does not allocate historical slab operators or replay
+records. Later epochs transfer native storage and the original source completion,
+using the existing source-free reconstruction transaction and bounded prior-normal
+windows rather than rereading the MeasurementSet.
+The temporary completion
+adapter retires with the old primitive representation if that owner is later
+replaced; it must not become a second normal-state/controller implementation.
+
+Shared science remains in `StandardConvolution`, `PreparedFft`, polarization and
+spectral sampling helpers. Convolution methods now accept zero-copy ndarray
+views without changing their scalar loops. Scalar pair interpolation is shared
+with the old resampler, preserving observed/predicted arithmetic separately.
+The focused dependency test rejects old containers, replay records, I/O and
+per-sample reference-count/lock owners in the new numerical implementation;
+`reference.rs` is its explicit test-only exception, deleted at cutover.
+
+`NativeInput` is the named preparation conversion, not a second numerical owner.
+It reuses `accept_polarization_input`, native imaging weights and the distinct
+nearest-weight flag; Float32/Complex32 values are promoted once to Complex64.
+The one flat allocation carries partial rows/correlations across arbitrary source
+chunks and is borrowed by the storage callback without another payload copy.
+It rejects mixed source/layout, missing/duplicate/out-of-order selected cells,
+incomplete rows and post-error completion. Sink I/O errors retain their original
+error code. Shape/count completion does not scan content. The runtime must still
+count its simultaneously live weighted source chunk and this flat block, plus
+the existing encoding arena; source provenance remains with the runtime owner.
+
+The initial native store represents one homogeneous selected channel/correlation
+layout. Source/selection/correlation descriptors remain coarse shared input
+metadata; no public persistent schema or reopen/import route is introduced.
+Each row block has one metadata frame and then native-channel tiles. Fixed shape
+arithmetic supplies every offset, including short final rows/tiles: there is no
+resident directory. The writer owns one open private file in the already admitted
+`ManagedSpillStorage` directory and transfers that handle directly on successful
+row/shape/length completion. It does not reread content at completion. A failed
+write cannot complete; a short/error read fails rather than becoming EOF.
+
+For C channels and P correlations, a serialized row costs `56 + C*(8 + 26*P)`
+bytes; each metadata/tile frame adds a 4-byte CRC. The CRC includes the expected
+frame ordinal and checks truncation/corruption/misplaced frames on actual reads.
+Its concrete consumer is the private persistence reader, not product publication.
+The preparation row count is derived from the admitted native-block plus encoded
+tile arena budget. Its formula counts flat payload capacities and vector headers;
+the parent must additionally count the file/path owner, source input, and one
+page-aligned cache window, including a possible extra boundary page. There is one
+reused encoding arena and one decoding arena per admitted source slot, with no
+per-sample allocation. Preparation/serialization, reads, checksums and copies all
+remain inside the eventual end-to-end timer.
+
+`NativeSource` implements the existing `OrderedBlockSource`: a mutable store reader
+owns file I/O, and one or two executor-owned decoded windows are borrowed by
+disjoint partitions. One worker team is reused across all row blocks. This
+avoids duplicate worker input buffers and retains existing page-cache control
+(`F_NOCACHE` on macOS; release and verification on Linux) without concurrent reads
+repopulating pages during strict release checks. This does not serialize numeric
+band work or introduce another worker pool. Buffer-source admission and epoch
+jobs are now composed in `execute.rs`; source/run completion is connected to the
+existing application controller and writer. The source separately reports its
+encoding/cache arena and each decoded-slot capacity, reads each row/tile frame
+once per wave, requires exact ordered terminal coverage, poisons failed/cancelled
+input and preserves original errors through the bounded executor.
+
+Preparation unions all bands' native/model support in one native-pair traversal
+per row, rather than rescanning the native axis independently for every band.
+One temporary range per band is reset per row; retained model-channel lists merge
+the complete contiguous native closure, including interior samples that emit no
+fine channel. Reference tests cover reversed axes, gaps, shifts and unmapped rows
+and pin pair visits independent of band count. There is no per-row directory.
+At execution, `consume_block` recomputes each row's exact
+native-pair window inside the shared decoded union, then takes zero-copy subviews.
+This matters when Doppler shifts vary: predicting every sample in the wider
+union could ask for model planes outside that row's declared closure. The
+original global spectral pair and fine-grid phase are preserved when narrowing.
 
 The migration sequence is mandatory:
 
@@ -325,7 +561,7 @@ goal and needs separate scientific evidence.
    Exit: focused test distinguishes correct shared-epoch execution from stale or
    truncated support. Then implement the bounded native store and direct band
    operator on this fixed-model fixture, with truncation/read-error checks and
-   no expanded normal artifact. Start from the simple buffers/grids above and
+no expanded normal artifact. Start from the simple buffers/grids above and
    populate their retirement table as types are introduced. Resolve current model-window/controller/writer
    lifetime details locally here. Do not begin with another timing campaign.
 
@@ -387,9 +623,9 @@ peak <= native_budget
 Use max over phase peaks only when their allocations actually stop overlapping;
 otherwise count their live union. For Complex64/f64 grids, bytes are
 16 * padded_pixels * complex_array_count + 8 * padded_pixels * real_array_count,
-including compensation arrays; use actual types for other arrays. The native
-store index is coarse/paged with a bounded directory cache, not one resident
-entry per visibility. Bound writer arenas and open files as well as read buffers.
+including compensation arrays; use actual types for other arrays. The current
+homogeneous native store derives offsets from shape and needs no resident index
+or directory cache. Bound writer arenas and open files as well as read buffers.
 
 Each term comes from shape, element widths, layout/capacity and liveness; shared
 aliases are charged once. Model read support must remain coherent across the
@@ -417,7 +653,8 @@ Tooling root:
 
 - `initial_plane_checks.py check` runs reconstruction `spectral_operator::`,
   integration `major_cycle`, runtime `bounded_`, and `compile_plan_run t55_`.
-  Add new owner tests to the focused selection; do not silently omit them.
+  It now also runs `streaming_cube::` and `spectral_sampling::`; retain new-owner
+  coverage as the implementation grows.
 - `initial_plane_checks.py build UNIQUE_LABEL` preserves a release application
   binary plus tracked and untracked source identity.
 - `scaling_4x.py native UNIQUE_LABEL ABSOLUTE_BINARY WORKERS` uses the exact
@@ -425,7 +662,8 @@ Tooling root:
 - `scaling_4x.py compare NATIVE_LABEL casa-rows4x` performs the existing full-field
   seven-product/nine-check comparison. Retain and inspect all comparison panels.
 - Launch stages through `finish_stage.stage(label, command, None, seconds=None)`
-  to retain sampled 8-GiB enforcement without reinstating waived time cutoffs.
+  with `rss_bytes=16 << 30` to enforce the user-authorized 16-GiB ceiling without
+  reinstating waived time cutoffs. Builds may retain the default 8-GiB guard.
   The old `overnight_scaling.stage` and CLI deadline are expired: do not use them.
 - Preserve the SDK/environment from the successful build receipt; prior build
   failure mixed CLT SDK27 with the selected Xcode linker. Two jobs, incremental off.
@@ -463,7 +701,7 @@ to Obit helper components, not proof of native-core incompatibility.
 Obit source is already available for convenient examination under
 `/Users/brianglendenning/SoftwareProjects/casa-rs-evidence/t55/obit-source-study-20260920/Obit`
 at `ebc1c229e5e3870b5ce3c342bddb7313d986a06f`. Installation is not needed to
-read it. Recommend a separately approved, pinned ARM64 CPU core/task build in a
+read it. The user authorized reference-only timings and a pinned ARM64 CPU core/task build in a
 durable isolated prefix; not the unmodified full Homebrew recipe. Its Python
 binding/GUI assumptions are dated; native core feasibility is still untested.
 See durable `obit-installation-preflight.md` for host inventory and build boundary.
@@ -475,7 +713,11 @@ precision, flags/weights, polarization, geometry and beams; then match CLEAN
 stopping/masks/restoration/PB/products. Obit uses float grids: do not imply equal
 F64-compensated work. Report both imaging-only and conversion-inclusive workflow
 times. A common simpler diagnostic is useful if the full science cannot match,
-but is not acceptance for our LSRK case. No install has been performed.
+but is not acceptance for our LSRK case. The authorized isolated build/reference
+runs are complete; see the local timing addendum in
+`obit-data-structure-source-notes.md` and its durable REFERENCE.md. Dirty outputs
+match across Obit modes; CLEAN outputs differ materially. Neither changes this
+plan's CASA acceptance or motivates another comparator investigation now.
 
 ## Approval and first action
 
@@ -483,12 +725,23 @@ Requested approval covers the identified local WIP checkpoint and milestones
 1–3: one test-only native-store/band replacement through full serial and bounded
 parallel comparisons, with the existing resource/science limits. Milestone 4's
 production ownership/cutover map is presented after evidence; remaining-mode
-obligations are not waived. Obit installation is a separate optional approval.
+obligations are not waived. This approval is now recorded in the active Goal.
+The subsequent reference-only Obit request authorizes isolated native core/task
+setup using installed dependencies, not global package upgrades, GUI/Python
+bindings, Rosetta, or a substantial upstream-porting project.
 No new public application API, dependency direction, external persisted contract,
 accepted ADR change or independent-channel convergence is approved by this plan.
 
-After approval: refresh the explicit checkpoint manifest against git status,
-checkpoint that state locally, then add the nonzero cross-band dependency test.
+The checkpoint, nonzero cross-band dependency proof, bounded native store,
+shared input, model epochs and phase-specific band completion are implemented.
+Real epoch-band jobs now use the native source and existing bounded executor
+under checked phase-liveness wave admission. The complete application comparison
+path has run the approved workload with one and four workers; both passed the
+unchanged seven-product/nine-check CASA comparison. Native-buffer batching is
+retained after measured end-to-end improvement with identical products. The
+serial-parity and 3x scaling requirements remain unmet. Subsequent changes must
+target measured complete-application bottlenecks; see CURRENT.md for current
+source identity, timings and the one active experiment.
 Do not first rerun all past gates, restart autoresearch, or assemble another
 architecture survey. The current source pin and unaffected green evidence are
 already preserved.

@@ -2,6 +2,68 @@
 
 use super::*;
 
+#[cfg(casa_streaming_cube_comparison)]
+#[test]
+fn streaming_cube_complete_application_handoff() {
+    use casa_imaging_runtime::{CapacityDomainId, ResourceOverride, ResourcePolicy};
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = spectral_line_measurement_set(root.path());
+    let image_name = root.path().join("native-cube");
+    let mut imaging = request(
+        measurement_set,
+        image_name.clone(),
+        ContinuumAlgorithm::Clark,
+    );
+    imaging.image_size = 64;
+    imaging.weighting = ContinuumWeighting::Natural;
+    imaging.spectral_window = Some("0:0~3".into());
+    imaging.channel_count = Some(4);
+    imaging.spectral_mode = SpectralImagingMode::Cube {
+        axis: CubeAxisConfig {
+            outframe: FrequencyRef::TOPO,
+            ..CubeAxisConfig::default()
+        },
+        output_channels: Some(4),
+    };
+    imaging.beam_policy = ContinuumBeamPolicy::Common;
+    imaging.iterations = 3;
+    imaging.cycle_iterations = 1;
+    imaging.maximum_major_cycles = Some(3);
+    imaging.gain = 0.37;
+    imaging.threshold_jy = 1.0e-12;
+    imaging.noise_sigma = Some(1.0e-12);
+    imaging.resource_policy = ResourcePolicy::Explicit(ResourceOverride {
+        workers: Some(1),
+        memory_bytes: std::collections::BTreeMap::from([(
+            CapacityDomainId::new("host-memory"),
+            4 << 30,
+        )]),
+        ..ResourceOverride::default()
+    });
+    let result = execute_continuum(imaging).expect("complete native cube application");
+    assert_standard_products(&image_name, &result.product_names);
+    assert_eq!(result.outcome.output.major_cycle_count, 3);
+    assert_eq!(result.outcome.output.minor_cycles.len(), 2);
+    assert!(result.actual_minor_iterations > 0);
+    for channel in 0..4 {
+        let normal = result
+            .outcome
+            .output
+            .scientific
+            .normal_state()
+            .read_window(channel..channel + 1)
+            .unwrap();
+        assert!(
+            normal
+                .residual()
+                .iter()
+                .all(|v| v.re.is_finite() && v.im.is_finite())
+        );
+    }
+}
+
 #[test]
 fn t55_shifted_cube_density_retains_native_endpoint_weights() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");

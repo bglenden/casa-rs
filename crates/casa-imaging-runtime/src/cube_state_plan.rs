@@ -11,7 +11,7 @@ use std::{
 use casa_imaging_model::{CompiledProblem, ModelSample};
 use casa_imaging_reconstruction::{
     ModelStoragePlan, SpectralOperatorSpecification,
-    runtime_adapter::{ChannelNormalStorageRequirement, NormalStoragePlan},
+    runtime_adapter::{ChannelNormalStorageRequirement, NormalStorageFactory, NormalStoragePlan},
 };
 
 use crate::{
@@ -34,7 +34,7 @@ struct CubeStateRetention {
 #[derive(Debug)]
 pub(crate) struct CubeStatePlan {
     model: Arc<PagedModelStorageFactory>,
-    normal: Arc<PagedNormalStorageFactory>,
+    normal: Arc<dyn NormalStorageFactory>,
     retention: Arc<CubeStateRetention>,
     metrics: Arc<CubeBackingMetrics>,
     model_window_samples: usize,
@@ -61,6 +61,51 @@ impl CubeStatePlan {
         let requirements =
             ChannelNormalStorageRequirement::for_specification(&specification, window_channels)
                 .map_err(io::Error::other)?;
+        Self::with_normal(
+            problem,
+            storage,
+            window_channels,
+            acquire,
+            terminal,
+            requirements,
+            false,
+        )
+    }
+
+    pub(crate) fn streaming_cube(
+        problem: &CompiledProblem,
+        storage: &ManagedSpillStorage,
+        window_channels: usize,
+        acquire: WorkNodeId,
+        terminal: WorkNodeId,
+        resident: bool,
+    ) -> io::Result<Self> {
+        let specification =
+            SpectralOperatorSpecification::new(problem).map_err(io::Error::other)?;
+        let requirements =
+            ChannelNormalStorageRequirement::for_streaming_cube(&specification, window_channels)
+                .map_err(io::Error::other)?;
+        Self::with_normal(
+            problem,
+            storage,
+            window_channels,
+            acquire,
+            terminal,
+            requirements,
+            resident,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn with_normal(
+        problem: &CompiledProblem,
+        storage: &ManagedSpillStorage,
+        window_channels: usize,
+        acquire: WorkNodeId,
+        terminal: WorkNodeId,
+        requirements: Box<[ChannelNormalStorageRequirement]>,
+        resident: bool,
+    ) -> io::Result<Self> {
         let shape = problem.model_lifecycle().target();
         let model_window_samples = shape.domains().iter().try_fold(0usize, |largest, domain| {
             let [width, height] = domain.pixels();
@@ -115,9 +160,13 @@ impl CubeStatePlan {
             )
             .ok_or_else(overflow)?;
         for (layout, requirement) in layouts.iter().zip(&requirements) {
-            let ledger = layout
-                .normal_ledger(storage.directory())
-                .map_err(io::Error::other)?;
+            let ledger = if resident {
+                crate::streaming_cube::normal::ResidentNormalFactory::ledger(*requirement)?
+            } else {
+                layout
+                    .normal_ledger(storage.directory())
+                    .map_err(io::Error::other)?
+            };
             retained_bytes = add(
                 retained_bytes,
                 add(ledger.retained_bytes, requirement.retained_metadata_bytes())?,
@@ -136,20 +185,29 @@ impl CubeStatePlan {
                     .max(ledger.flush_scratch_bytes),
             );
         }
-        let normal = Arc::new(PagedNormalStorageFactory::new(
-            storage.directory(),
-            layouts,
-            retention.clone(),
-            metrics.clone(),
-        ));
+        let (normal, normal_metadata): (Arc<dyn NormalStorageFactory>, usize) = if resident {
+            let factory = crate::streaming_cube::normal::ResidentNormalFactory::new(
+                requirements,
+                retention.clone(),
+                metrics.clone(),
+            );
+            let metadata = factory.metadata_bytes();
+            (Arc::new(factory), metadata)
+        } else {
+            let factory = PagedNormalStorageFactory::new(
+                storage.directory(),
+                layouts,
+                retention.clone(),
+                metrics.clone(),
+            );
+            let metadata = factory.owned_metadata_bytes().map_err(io::Error::other)?;
+            (Arc::new(factory), metadata)
+        };
         retained_bytes = add(
             retained_bytes,
             model.owned_metadata_bytes().map_err(io::Error::other)?,
         )?;
-        retained_bytes = add(
-            retained_bytes,
-            normal.owned_metadata_bytes().map_err(io::Error::other)?,
-        )?;
+        retained_bytes = add(retained_bytes, normal_metadata)?;
         retained_bytes = add(
             retained_bytes,
             size_of::<Self>()
@@ -211,6 +269,10 @@ impl CubeStatePlan {
             storage_bytes: as_u64(storage_bytes)?,
             file_handles: as_u64(file_handles)?,
         })
+    }
+
+    pub(crate) fn retained_memory_bytes(&self) -> u64 {
+        self.heap.bytes
     }
 
     /// Allocation capabilities must be live before any mutable backing is made.

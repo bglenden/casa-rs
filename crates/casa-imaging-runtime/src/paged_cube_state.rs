@@ -158,6 +158,14 @@ pub(crate) struct CubeArrayMeasurements {
 #[derive(Debug, Default)]
 pub(crate) struct CubeBackingMetrics(Mutex<CubeBackingSnapshot>);
 
+impl Drop for CubeBackingMetrics {
+    fn drop(&mut self) {
+        if std::env::var_os("CASA_RS_TRACE_IMAGING_STAGE_TIMING").is_some() {
+            eprintln!("imaging_cube_backing_final observed={:?}", self.snapshot());
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct CubeBackingSnapshot {
     pub(crate) live_owned_bytes: usize,
@@ -182,7 +190,7 @@ impl CubeBackingMetrics {
         *self.0.lock().expect("cube backing metrics lock poisoned")
     }
 
-    fn register(self: &Arc<Self>, ledger: CubeArrayLedger) -> BackingObservation {
+    pub(crate) fn register(self: &Arc<Self>, ledger: CubeArrayLedger) -> BackingObservation {
         let mut state = self.0.lock().expect("cube backing metrics lock poisoned");
         state.live_owned_bytes += ledger.retained_bytes;
         state.peak_owned_bytes = state.peak_owned_bytes.max(state.live_owned_bytes);
@@ -206,13 +214,13 @@ impl CubeBackingMetrics {
 }
 
 #[derive(Debug)]
-struct BackingObservation {
+pub(crate) struct BackingObservation {
     metrics: Arc<CubeBackingMetrics>,
     ledger: CubeArrayLedger,
 }
 
 impl BackingObservation {
-    fn record(&self, scalars: usize, delta: TiledFileIoStats) {
+    pub(crate) fn record(&self, scalars: usize, delta: TiledFileIoStats) {
         let mut state = self
             .metrics
             .0

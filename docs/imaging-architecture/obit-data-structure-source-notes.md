@@ -1,8 +1,8 @@
 # Obit data-structure and gridding source notes
 
-Truth class: non-normative primary-source implementation research  
-Last reality check: 2026-09-20  
-Verification: static source inspection only; Obit was not installed, built, run, or benchmarked
+Truth class: non-normative primary-source implementation research
+Last reality check: 2026-09-20
+Verification: primary-source inspection plus separately qualified local reference timings
 
 This note records a bounded inspection of the official [Bill Cotton Obit
 repository](https://github.com/bill-cotton/Obit) at master commit
@@ -11,6 +11,24 @@ The [Obit project page](https://www.cv.nrao.edu/~bcotton/Obit.html) is the
 official project context; the repository is the implementation source. These
 observations are research inputs, not casa-rs API, persistence, or acceptance
 contracts.
+
+## Local reference timing addendum
+
+On 2026-09-20 the user requested local timings for reference only. A pinned native
+ARM64 core/Imager build completed without global installation. Same 42,120 rows,
+512 channels and 512x512 pixels: dirty W1 47.586538 s, W4 20.210558 s; all dirty
+pixels match exactly. CLEAN9 raw times are 77.163547 / 39.505559 s, but images
+differ by 4.2503% relative L2; **do not treat that ratio as equal-output scaling**.
+One observation per configuration, no significance claim.
+
+Obit forces different single-plane/grouped-line execution paths at one/four
+threads. Native topocentric spectral channels, float grids, per-channel CLEAN
+controls, product inventory and storage location differ from the CASA acceptance
+reference. These numbers neither satisfy nor lower casa-rs acceptance targets.
+No Obit numerical code was modified or copied into casa-rs.
+
+Durable build, input/output validation, exact settings, logs and interpretation:
+`/Users/brianglendenning/SoftwareProjects/casa-rs-evidence/t55/obit-build/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/REFERENCE.md`.
 
 ## Evidence
 

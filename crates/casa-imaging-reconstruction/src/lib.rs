@@ -51,6 +51,7 @@ mod psf_beam;
 mod reconstruction_cycle;
 mod spectral_operator;
 mod spectral_sampling;
+mod streaming_cube;
 mod weighting;
 
 #[doc(hidden)]
@@ -92,6 +93,7 @@ pub mod runtime_adapter {
         ReconstructionPlaneInput, ReconstructionPlanePartial, ReconstructionPlaneWork,
         ReconstructionPlaneWorkspace,
     };
+    pub use crate::spectral_operator::PreparedFft;
     pub use crate::spectral_operator::normal_storage::{
         ChannelNormalStorageRequirement, CompleteDataNormalState, CompleteDataNormalWindow,
         NormalArrayStorage, NormalStorageFactory, NormalStoragePlan,
@@ -103,6 +105,8 @@ pub mod runtime_adapter {
         SpectralOperatorPass, SpectralOperatorWorkload, SpectralSlabPlan, WProjectionDiagnostics,
         prepare_spectral_operator, reprepare_spectral_operator, spectral_operator_workload,
     };
+    pub use crate::streaming_cube::band::{BandMemory, BandPlan, EpochBand};
+    pub use crate::streaming_cube::input::{NativeBlock, NativeInput, NativeLayout, RowMetadata};
     pub use crate::weighting::{
         FusedWeightingPhase, WeightingReplayPhase, WeightingReplayWindowSummary,
         WeightingSpectralCache, begin_natural_weighting_stream,

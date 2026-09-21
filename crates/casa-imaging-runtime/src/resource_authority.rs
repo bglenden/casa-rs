@@ -2154,12 +2154,27 @@ impl ResourceAuthority {
         let pressured = capacity_under_pressure(&self.inner.topology, &state);
         let policy_capacity =
             apply_concurrent_policies(&self.inner.topology, &state, policy, &pressured);
+        let policy_memory = policy_capacity.hard.memory_bytes(&domain);
         let available = available_after_active_leases(&state, policy_capacity)?;
         let reservation = ResourceTotals {
             hard: reserved.clone(),
             preferred: reserved.clone(),
         };
         admit_totals(&reservation, &available)?;
+        if std::env::var_os("CASA_RS_TRACE_IMAGING_STAGE_TIMING").is_some() {
+            eprintln!(
+                "planning_memory domain={} pressured_bytes={} policy_bytes={} after_leases_bytes={} reserved_bytes={} remaining_bytes={}",
+                domain.as_str(),
+                pressured.memory_bytes(&domain),
+                policy_memory,
+                available.hard.memory_bytes(&domain),
+                reserved.memory_bytes(&domain),
+                available
+                    .hard
+                    .memory_bytes(&domain)
+                    .saturating_sub(reserved.memory_bytes(&domain)),
+            );
+        }
         Ok(available
             .hard
             .memory_bytes(&domain)

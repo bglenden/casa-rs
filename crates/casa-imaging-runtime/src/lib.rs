@@ -26,6 +26,12 @@ mod resource_authority;
 mod serial_product_publication;
 mod spectral_cycle;
 mod spectral_cycle_plan;
+#[cfg(any(test, casa_streaming_cube_comparison))]
+mod streaming_cube;
+/// Temporary internal application comparison seam, absent in production builds.
+#[cfg(casa_streaming_cube_comparison)]
+#[doc(hidden)]
+pub use streaming_cube::{CubePhase, NativeReplay};
 mod weighting;
 
 pub use execution_bindings::{

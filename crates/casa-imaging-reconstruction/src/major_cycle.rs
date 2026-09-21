@@ -124,6 +124,35 @@ pub struct FinalNormalState {
 }
 
 impl FinalNormalState {
+    /// Live scalar payload already charged by its retained runtime allocation.
+    /// This is metadata-only; it does not load or verify any array contents.
+    #[doc(hidden)]
+    pub fn retained_resident_bytes(&self) -> Result<u64, SpectralOperatorError> {
+        self.primitives.retained_resident_bytes()
+    }
+
+    /// Internal ownership handoff for one bounded native-cube refresh window.
+    /// The runtime checks the retained source and model association before this
+    /// read; the storage owner checks window inventory and propagates I/O errors.
+    #[doc(hidden)]
+    pub fn read_streaming_cube_window(
+        &self,
+        channels: std::ops::Range<usize>,
+    ) -> Result<crate::SpectralOperatorPrimitives, SpectralOperatorError> {
+        let NormalStateWindowPayload::ChannelLocal(domains) =
+            self.primitives.read_window(channels)?
+        else {
+            return Err(SpectralOperatorError::ReusableNormalStateMismatch);
+        };
+        if domains.len() != 1 {
+            return Err(SpectralOperatorError::ReusableNormalStateMismatch);
+        }
+        let (ordinal, _, primitives) = domains.into_iter().next().unwrap().into_parts();
+        if ordinal != 0 {
+            return Err(SpectralOperatorError::ReusableNormalStateMismatch);
+        }
+        Ok(primitives)
+    }
     /// Maximum channel window supported by this generation's backing capability.
     #[doc(hidden)]
     #[must_use]

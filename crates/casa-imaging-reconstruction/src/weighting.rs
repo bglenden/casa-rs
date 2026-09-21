@@ -2,7 +2,10 @@
 
 //! Frozen global weighting generations and bounded weighted replay.
 
+#[path = "streaming_cube/coverage.rs"]
+mod coverage;
 mod spectral_cache;
+pub(super) use coverage::CoverageEncoder;
 pub use spectral_cache::WeightingSpectralCache;
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -29,7 +32,6 @@ const GENERATION_VERSION: u32 = 2;
 const REPLAY_DOMAIN: &[u8] = b"casa-rs-weighting-replay";
 const REPLAY_VERSION: u32 = 1;
 const COVERAGE_DOMAIN: &[u8] = b"casa-rs-weighting-replay-coverage";
-const COVERAGE_HASH_CHUNK_BYTES: usize = 256;
 const COVERAGE_VERSION: u32 = 4;
 const F32_MINIMUM_POWER: i16 = -149;
 const F32_SUPERACCUMULATOR_LIMBS: usize = 6;
@@ -1409,7 +1411,7 @@ impl FusedWeightingPhase {
     ) -> Result<Option<WeightingReplayChunk>, WeightingError> {
         let weighted =
             self.prepare_sample(problem, sample, output_frame_frequency_hz, contributions)?;
-        self.commit_prepared(problem, weighted)
+        self.commit_sample(problem, weighted)
     }
 
     /// Prepare a compact value from frozen density state without updating sums.
@@ -1430,10 +1432,40 @@ impl FusedWeightingPhase {
         )
     }
 
-    /// Update exact sums, row interpolation and block packing in source order.
-    /// Values must come from this phase's trusted in-process preparation.
+    /// Commit a prefix of a bounded prepared batch in source order.
+    ///
+    /// Exact sums and coverage read borrowed values before one bulk transfer to
+    /// the replay buffer. A full chunk may leave an unconsumed suffix in
+    /// `prepared`; return the emitted allocation before committing that suffix.
+    /// Values must come from this phase's trusted in-process preparation. The
+    /// caller retains and accounts for the prepared allocation, which is reused.
     #[doc(hidden)]
     pub fn commit_prepared(
+        &mut self,
+        problem: &CompiledProblem,
+        prepared: &mut Vec<WeightingSampleValue>,
+    ) -> Result<Option<WeightingReplayChunk>, WeightingError> {
+        if self.pending.is_some() {
+            return Err(WeightingError::ReturnedBlockMismatch);
+        }
+        let flush = append_prepared_prefix(
+            &mut self.block,
+            self.max_block_samples,
+            prepared,
+            |weighted| {
+                self.sum.accumulate_prepared(problem, weighted)?;
+                self.coverage.push(weighted);
+                Ok(())
+            },
+        )?;
+        if flush {
+            self.take_block().map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn commit_sample(
         &mut self,
         problem: &CompiledProblem,
         weighted: WeightingSampleValue,
@@ -1958,7 +1990,7 @@ mod selected_sample_tests {
         assert!(native_row_heap_bytes(usize::MAX, 5).is_err());
     }
 
-    fn native_row_sample(channel: u32, row: u64) -> super::WeightingSampleValue {
+    pub(super) fn native_row_sample(channel: u32, row: u64) -> super::WeightingSampleValue {
         use casa_imaging_model::{
             CorrelationType, DirectionFrame, FrequencyFrame, LogicalIdentity,
             MeasurementSetIdentity, SkyDirection,
@@ -2441,6 +2473,10 @@ pub struct WeightingSampleValue {
     spectral_values: SmallVec<[WeightingSpectralValue; 4]>,
 }
 
+#[cfg(test)]
+#[path = "streaming_cube/input_tests.rs"]
+mod streaming_cube;
+
 impl Clone for WeightingSampleValue {
     fn clone(&self) -> Self {
         Self {
@@ -2588,7 +2624,7 @@ impl WeightingReplayPhase<'_> {
     ) -> Result<Option<WeightingReplayChunk>, WeightingError> {
         let weighted =
             self.prepare_sample(problem, sample, output_frame_frequency_hz, contributions)?;
-        self.commit_prepared(weighted)
+        self.commit_sample(weighted)
     }
 
     /// Evaluate one sample against this replay's immutable weighting generation.
@@ -2628,15 +2664,45 @@ impl WeightingReplayPhase<'_> {
         )
     }
 
-    /// Transfer a prepared sample into the sole ordered replay owner.
+    /// Transfer a prefix of a prepared batch into the sole ordered replay owner.
     ///
     /// The trusted runtime must use values prepared by this phase and commit
     /// them in source order, with complete correlation groups. Preparation
     /// storage remains part of its admitted bounded workspace until transferred.
     /// Block boundaries, coverage, counts and returned-buffer reuse are identical
     /// to [`Self::consume`]; this operation does not recalculate sample weights.
+    /// A full chunk can leave an unconsumed suffix in `prepared`. Return the
+    /// emitted allocation before committing that suffix. The caller retains
+    /// the prepared allocation and its capacity charge.
     #[doc(hidden)]
     pub fn commit_prepared(
+        &mut self,
+        prepared: &mut Vec<WeightingSampleValue>,
+    ) -> Result<Option<WeightingReplayChunk>, WeightingError> {
+        if self.pending.is_some() {
+            return Err(WeightingError::ReturnedBlockMismatch);
+        }
+        let flush = append_prepared_prefix(
+            &mut self.block,
+            self.max_block_samples,
+            prepared,
+            |weighted| {
+                self.coverage.push(weighted);
+                self.sample_count = self
+                    .sample_count
+                    .checked_add(1)
+                    .ok_or(WeightingError::SampleCountOverflow)?;
+                Ok(())
+            },
+        )?;
+        if flush {
+            self.take_block().map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn commit_sample(
         &mut self,
         weighted: WeightingSampleValue,
     ) -> Result<Option<WeightingReplayChunk>, WeightingError> {
@@ -2822,6 +2888,54 @@ impl WeightingReplayPhase<'_> {
             Ok(false)
         }
     }
+}
+
+fn append_prepared_prefix(
+    block: &mut Vec<WeightingSampleValue>,
+    max_block_samples: usize,
+    prepared: &mut Vec<WeightingSampleValue>,
+    mut commit: impl FnMut(&WeightingSampleValue) -> Result<(), WeightingError>,
+) -> Result<bool, WeightingError> {
+    let mut count = 0;
+    let mut flush = false;
+    for weighted in prepared.iter() {
+        let length = block
+            .len()
+            .checked_add(count)
+            .ok_or(WeightingError::ResidencyOverflow)?;
+        let remaining = max_block_samples
+            .checked_sub(length)
+            .ok_or(WeightingError::ResidencyOverflow)?;
+        let group_size = weighted.sample.correlation_group_size();
+        if group_size > max_block_samples {
+            return Err(WeightingError::ResidencyOverflow);
+        }
+        if weighted.sample.starts_correlation_group() && group_size > remaining {
+            flush = true;
+            break;
+        }
+        if remaining == 0 {
+            return Err(WeightingError::ResidencyOverflow);
+        }
+        commit(weighted)?;
+        count += 1;
+        if remaining == 1 && weighted.sample.ends_correlation_group() {
+            flush = true;
+            break;
+        }
+    }
+    if count != 0 {
+        if block.capacity() == 0 {
+            *block = Vec::with_capacity(max_block_samples);
+        }
+        if count == prepared.len() {
+            // Whole ranges transfer without per-sample iterator temporaries.
+            block.append(prepared);
+        } else {
+            block.extend(prepared.drain(..count));
+        }
+    }
+    Ok(flush)
 }
 
 /// Actual restricted replay work tied to one exhaustive parent generation.
@@ -3623,274 +3737,6 @@ fn generation_identity(
 
 fn hash_usize(hasher: &mut Sha256, value: usize) {
     hasher.update((value as u128).to_be_bytes());
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(super) struct CoverageProofWork {
-    pub(super) bytes: u64,
-    pub(super) hash_calls: u64,
-}
-
-impl CoverageProofWork {
-    fn checked_add(self, other: Self) -> Self {
-        Self {
-            bytes: self
-                .bytes
-                .checked_add(other.bytes)
-                .expect("coverage proof byte count fits u64"),
-            hash_calls: self
-                .hash_calls
-                .checked_add(other.hash_calls)
-                .expect("coverage proof hash-call count fits u64"),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct CoverageEncoder {
-    hasher: Option<Sha256>,
-    derived: Option<WeightingReplayCoverageId>,
-    work: CoverageProofWork,
-}
-
-impl CoverageEncoder {
-    pub(super) fn checkpoint_token(&self) -> [u8; 32] {
-        if let Some(hasher) = &self.hasher {
-            hasher.clone().finalize().into()
-        } else {
-            let mut hasher = Sha256::new();
-            hasher.update(b"casa-rs-derived-weighting-checkpoint");
-            hasher.update(
-                self.derived
-                    .expect("derived coverage has a proof")
-                    .as_bytes(),
-            );
-            hasher.finalize().into()
-        }
-    }
-
-    pub(super) fn new() -> Self {
-        let mut encoder = Self {
-            hasher: Some(Sha256::new()),
-            derived: None,
-            work: CoverageProofWork {
-                bytes: 0,
-                hash_calls: 0,
-            },
-        };
-        encoder.update(COVERAGE_DOMAIN);
-        encoder.update(&(COVERAGE_VERSION + 1).to_be_bytes());
-        encoder
-    }
-
-    pub(super) fn derived(coverage: WeightingReplayCoverageId) -> Self {
-        Self {
-            hasher: None,
-            derived: Some(coverage),
-            work: CoverageProofWork {
-                bytes: 0,
-                hash_calls: 0,
-            },
-        }
-    }
-
-    fn update(&mut self, bytes: &[u8]) {
-        self.work.bytes = self
-            .work
-            .bytes
-            .checked_add(u64::try_from(bytes.len()).expect("coverage proof chunk fits u64"))
-            .expect("coverage proof byte count fits u64");
-        self.work.hash_calls = self
-            .work
-            .hash_calls
-            .checked_add(1)
-            .expect("coverage proof hash-call count fits u64");
-        self.hasher
-            .as_mut()
-            .expect("encoded coverage owns a hasher")
-            .update(bytes);
-    }
-
-    pub(super) fn push(&mut self, weighted: &WeightingSampleValue) {
-        if self.derived.is_some() {
-            return;
-        }
-        let sample = weighted.selected();
-        let mut chunk = [0_u8; COVERAGE_HASH_CHUNK_BYTES];
-        let mut used = 0;
-        append_coverage_bytes(
-            self,
-            &mut chunk,
-            &mut used,
-            &sample.address.measurement_set.identity().as_bytes(),
-        );
-        append_coverage_bytes(
-            self,
-            &mut chunk,
-            &mut used,
-            &sample.address.physical_row.to_be_bytes(),
-        );
-        append_coverage_bytes(
-            self,
-            &mut chunk,
-            &mut used,
-            &sample.address.data_description_id.to_be_bytes(),
-        );
-        append_coverage_bytes(
-            self,
-            &mut chunk,
-            &mut used,
-            &sample.address.spectral_window_id.to_be_bytes(),
-        );
-        append_coverage_bytes(
-            self,
-            &mut chunk,
-            &mut used,
-            &sample.address.channel_index.to_be_bytes(),
-        );
-        append_coverage_bytes(
-            self,
-            &mut chunk,
-            &mut used,
-            &sample.address.correlation_index.to_be_bytes(),
-        );
-        append_coverage_bytes(
-            self,
-            &mut chunk,
-            &mut used,
-            &sample.output_frame_frequency_hz.to_bits().to_be_bytes(),
-        );
-        match sample.row_spectral_geometry {
-            Some(geometry) => {
-                append_coverage_bytes(self, &mut chunk, &mut used, &[1]);
-                append_coverage_bytes(
-                    self,
-                    &mut chunk,
-                    &mut used,
-                    &(geometry.selected_channels() as u128).to_be_bytes(),
-                );
-                let first = geometry.first();
-                append_coverage_bytes(self, &mut chunk, &mut used, &first.0.to_be_bytes());
-                append_coverage_bytes(
-                    self,
-                    &mut chunk,
-                    &mut used,
-                    &first.1.to_bits().to_be_bytes(),
-                );
-                if let Some(second) = geometry.second() {
-                    append_coverage_bytes(self, &mut chunk, &mut used, &second.0.to_be_bytes());
-                    append_coverage_bytes(
-                        self,
-                        &mut chunk,
-                        &mut used,
-                        &second.1.to_bits().to_be_bytes(),
-                    );
-                }
-                match geometry.lattice_first_pair_hz {
-                    Some(pair) => {
-                        append_coverage_bytes(self, &mut chunk, &mut used, &[1]);
-                        for frequency in pair {
-                            append_coverage_bytes(
-                                self,
-                                &mut chunk,
-                                &mut used,
-                                &frequency.to_bits().to_be_bytes(),
-                            );
-                        }
-                    }
-                    None => append_coverage_bytes(self, &mut chunk, &mut used, &[0]),
-                }
-            }
-            None => append_coverage_bytes(self, &mut chunk, &mut used, &[0]),
-        }
-        let mut count = 0_u8;
-        for value in weighted.spectral_values() {
-            count += 1;
-            append_coverage_bytes(
-                self,
-                &mut chunk,
-                &mut used,
-                &value.contribution.output_channel().to_be_bytes(),
-            );
-            append_coverage_bytes(
-                self,
-                &mut chunk,
-                &mut used,
-                &value.contribution.factor().to_bits().to_be_bytes(),
-            );
-            append_coverage_bytes(
-                self,
-                &mut chunk,
-                &mut used,
-                &value
-                    .contribution
-                    .evaluation_frequency_hz()
-                    .to_bits()
-                    .to_be_bytes(),
-            );
-            append_coverage_bytes(
-                self,
-                &mut chunk,
-                &mut used,
-                &value.imaging_weight.to_bits().to_be_bytes(),
-            );
-        }
-        append_coverage_bytes(self, &mut chunk, &mut used, &[count]);
-        self.update(&chunk[..used]);
-    }
-
-    pub(super) fn adopt(&mut self, checkpoint: &Self) {
-        self.clone_from(checkpoint);
-    }
-
-    pub(super) fn finish(
-        mut self,
-        generation: WeightingGenerationId,
-        sample_count: u64,
-    ) -> (WeightingReplayCoverageId, CoverageProofWork) {
-        if let Some(coverage) = self.derived {
-            return (coverage, self.work);
-        }
-        self.update(&sample_count.to_be_bytes());
-        let content_work = self.work;
-        let content = self
-            .hasher
-            .take()
-            .expect("encoded coverage owns a hasher")
-            .finalize();
-        let mut identity = Self::new();
-        identity.update(&generation.as_bytes());
-        identity.update(&content);
-        let work = content_work.checked_add(identity.work);
-        (
-            WeightingReplayCoverageId(LogicalIdentity::from_sha256(
-                identity
-                    .hasher
-                    .take()
-                    .expect("coverage identity owns a hasher")
-                    .finalize()
-                    .into(),
-            )),
-            work,
-        )
-    }
-}
-
-#[inline]
-fn append_coverage_bytes(
-    encoder: &mut CoverageEncoder,
-    chunk: &mut [u8; COVERAGE_HASH_CHUNK_BYTES],
-    used: &mut usize,
-    bytes: &[u8],
-) {
-    debug_assert!(bytes.len() <= chunk.len());
-    if chunk.len() - *used < bytes.len() {
-        encoder.update(&chunk[..*used]);
-        *used = 0;
-    }
-    let end = *used + bytes.len();
-    chunk[*used..end].copy_from_slice(bytes);
-    *used = end;
 }
 
 fn replay_identity(

@@ -275,9 +275,9 @@ impl<'a> ReplayPreparation<'a> {
             self.preparation_nanos += started.elapsed().as_nanos();
             let started = Instant::now();
             for worker in &mut self.workers {
-                for weighted in worker.prepared.drain(..) {
+                while !worker.prepared.is_empty() {
                     if let Some(block) = weights
-                        .commit_prepared(problem, weighted)
+                        .commit_prepared(problem, &mut worker.prepared)
                         .map_err(WeightingBlockKernelError::Owner)?
                     {
                         emit(&block, execution).map_err(WeightingBlockKernelError::Consumer)?;

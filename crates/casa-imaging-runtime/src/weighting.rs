@@ -158,7 +158,7 @@ trait StreamingWeightPhase: Send {
     fn commit_prepared(
         &mut self,
         problem: &CompiledProblem,
-        weighted: ReconstructionWeightedSample,
+        prepared: &mut Vec<ReconstructionWeightedSample>,
     ) -> Result<Option<ReconstructionWeightedBlock>, WeightingError>;
 
     fn consume_sample(
@@ -195,9 +195,9 @@ impl StreamingWeightPhase for FusedWeightingPhase {
     fn commit_prepared(
         &mut self,
         problem: &CompiledProblem,
-        weighted: ReconstructionWeightedSample,
+        prepared: &mut Vec<ReconstructionWeightedSample>,
     ) -> Result<Option<ReconstructionWeightedBlock>, WeightingError> {
-        self.commit_prepared(problem, weighted)
+        self.commit_prepared(problem, prepared)
     }
 
     fn consume_sample(
@@ -241,9 +241,9 @@ impl StreamingWeightPhase for WeightingReplayPhase<'_> {
     fn commit_prepared(
         &mut self,
         _problem: &CompiledProblem,
-        weighted: ReconstructionWeightedSample,
+        prepared: &mut Vec<ReconstructionWeightedSample>,
     ) -> Result<Option<ReconstructionWeightedBlock>, WeightingError> {
-        self.commit_prepared(weighted)
+        self.commit_prepared(prepared)
     }
 
     fn consume_sample(
@@ -289,9 +289,9 @@ impl StreamingWeightPhase for WindowReplayPhase<'_> {
     fn commit_prepared(
         &mut self,
         _problem: &CompiledProblem,
-        weighted: ReconstructionWeightedSample,
+        prepared: &mut Vec<ReconstructionWeightedSample>,
     ) -> Result<Option<ReconstructionWeightedBlock>, WeightingError> {
-        self.0.commit_prepared(weighted)
+        self.0.commit_prepared(prepared)
     }
 
     fn consume_sample(
@@ -1672,7 +1672,7 @@ impl<'a> WeightingPlanFragment<'a> {
             }
         }
         let terminal_fence = WorkDependency::Fence(FenceId::new(terminal.clone(), FenceKind::Io));
-        let allocations = legacy
+        let mut allocations: Vec<_> = legacy
             .execution_dag()
             .logical_allocations()
             .values()
@@ -1696,21 +1696,89 @@ impl<'a> WeightingPlanFragment<'a> {
                 allocation
             })
             .collect();
+        let mut alternative = legacy.execution_dag().resource_alternative().clone();
+        let mut knobs = legacy.execution_dag().initial_knobs().clone();
+        let mut slots: Vec<_> = legacy
+            .execution_dag()
+            .physical_slots()
+            .values()
+            .cloned()
+            .collect();
+        if let Some(preparation) = self.replay_preparation {
+            let id = replay_preparation_allocation(&terminal);
+            let allocation = AllocationSpec::new(
+                id.clone(),
+                PhysicalSlotId::new(format!("{}-slot", id.as_str())),
+                usize::try_from(
+                    preparation
+                        .admitted_heap_bytes()
+                        .map_err(|_| WeightingPlanFragmentError::ResidencyOverflow)?,
+                )
+                .map_err(|_| WeightingPlanFragmentError::ResidencyOverflow)?,
+                "weighting-replay-preparation",
+                terminal.clone(),
+                BTreeSet::from([terminal_fence]),
+            )?;
+            let workers = preparation.workers() as u64;
+            let stacks = if workers > 1 {
+                workers
+                    .checked_mul(crate::bounded_stream::BOUNDED_WORKER_STACK_BYTES as u64)
+                    .ok_or(WeightingPlanFragmentError::ResidencyOverflow)?
+            } else {
+                0
+            };
+            let owner = nodes
+                .iter_mut()
+                .find(|node| node.id == terminal)
+                .expect("terminal node");
+            owner
+                .claims
+                .retain(|claim| claim.resource != LeaseResource::Workers);
+            owner.claims.push(ResourceClaim {
+                resource: LeaseResource::Workers,
+                amount: workers,
+                lifetime: ClaimLifetime::Work,
+            });
+            if stacks != 0 {
+                owner.claims.push(ResourceClaim {
+                    resource: LeaseResource::RuntimeOverhead(
+                        crate::RuntimeOverheadKind::ThreadStack,
+                    ),
+                    amount: stacks,
+                    lifetime: ClaimLifetime::Work,
+                });
+            }
+            owner.allocations.push(allocation_use(
+                &id,
+                ClaimLifetime::through_fence(FenceKind::Io),
+            ));
+            alternative.demand.workers = CountDemand::new(
+                alternative.demand.workers.hard().max(workers),
+                alternative.demand.workers.preferred().max(workers),
+            );
+            alternative.scaling.minimum_workers = alternative.demand.workers.hard();
+            alternative.scaling.maximum_workers = alternative.demand.workers.preferred();
+            alternative.demand.overhead.thread_stack_bytes = alternative
+                .demand
+                .overhead
+                .thread_stack_bytes
+                .checked_add(stacks)
+                .ok_or(WeightingPlanFragmentError::ResidencyOverflow)?;
+            alternative.demand.memory.push(allocation.memory_demand());
+            knobs.workers = alternative.demand.workers.hard();
+            allocations.push(allocation.logical_allocation());
+            slots.push(allocation.physical_slot());
+        }
         let dag = ExecutionDag::new(ExecutionDagSpecification {
             required_resource_capabilities: legacy
                 .execution_dag()
                 .required_resource_capabilities()
                 .clone(),
-            resource_alternative: legacy.execution_dag().resource_alternative().clone(),
+            resource_alternative: alternative,
             nodes,
             logical_allocations: allocations,
-            physical_slots: legacy
-                .execution_dag()
-                .physical_slots()
-                .values()
-                .cloned()
-                .collect(),
-            initial_knobs: legacy.execution_dag().initial_knobs().clone(),
+            physical_slots: slots,
+            initial_knobs: knobs,
             adaptations: legacy
                 .execution_dag()
                 .adaptations()
@@ -2600,7 +2668,7 @@ impl WeightingExecutionState {
             problem,
             selected,
             plan,
-            None,
+            fragment.replay_preparation,
             stream,
             begin_continuum_stream(problem)?,
             emit,
@@ -2617,11 +2685,15 @@ impl WeightingExecutionState {
             weights: (state, summary),
             continuum,
             spectral_support_sample_count,
-            prepared_samples: _,
+            prepared_samples,
             measurements,
         } = completed;
         self.latest_traversal_measurements = Some(*owner_completion.measurements());
         self.latest_stream_measurements = Some(measurements);
+        self.parallel_preparation_samples = self
+            .parallel_preparation_samples
+            .checked_add(prepared_samples)
+            .ok_or(WeightingReplayError::Evidence(WeightingEvidenceError))?;
         let continuum_completion = continuum
             .map(|transform| transform.complete(owner_completion.generation_id()))
             .transpose()
@@ -3159,6 +3231,27 @@ impl WeightingExecutionState {
         self.density = None;
         self.imported = None;
         Ok(())
+    }
+
+    /// Transfer the original completed traversal with an owned native copy of
+    /// its samples. This is not a new selected-observation traversal.
+    pub(crate) fn release_retaining_replay(
+        &mut self,
+        context: WorkExecutionContext<'_>,
+        fragment: &WeightingPlanFragment<'_>,
+    ) -> Result<WeightingReplayCompletion, WeightingEvidenceError> {
+        fragment.authorize_release(context)?;
+        if !self.matches_attempt(context, fragment) {
+            return Err(WeightingEvidenceError);
+        }
+        let WeightingExecutionPhase::Replayed { completion, .. } = std::mem::take(&mut self.phase)
+        else {
+            return Err(WeightingEvidenceError);
+        };
+        self.retained_observation = None;
+        self.density = None;
+        self.imported = None;
+        Ok(*completion)
     }
 
     /// Return whether the planned release has consumed all externally retained state.

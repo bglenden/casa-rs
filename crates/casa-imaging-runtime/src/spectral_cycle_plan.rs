@@ -83,17 +83,17 @@ impl SpectralCyclePlanningLimits {
 /// Explicit non-scientific limits for one spectral cycle physical plan.
 #[derive(Clone)]
 pub struct SpectralCycleExecutionPolicy {
-    implementation: WorkImplementationId,
-    weighting_limits: WeightingExecutionLimits,
+    pub(crate) implementation: WorkImplementationId,
+    pub(crate) weighting_limits: WeightingExecutionLimits,
     selected_residency: SelectedObservationResidencyCertificate,
     storage_io: StorageIoResourceBinding,
     limits: SpectralCyclePlanningLimits,
-    authority: ResourceAuthority,
-    resource_policy: ResourcePolicy,
-    visibility_write: Option<SelectedVisibilityStoragePlan>,
+    pub(crate) authority: ResourceAuthority,
+    pub(crate) resource_policy: ResourcePolicy,
+    pub(crate) visibility_write: Option<SelectedVisibilityStoragePlan>,
     gridded_normal_storage: Option<ManagedSpillStorage>,
-    aw_projection: Option<PreparedAwProjection>,
-    aw_reader: Option<PreparedArtifactReaderPlan>,
+    pub(crate) aw_projection: Option<PreparedAwProjection>,
+    pub(crate) aw_reader: Option<PreparedArtifactReaderPlan>,
 }
 
 impl SpectralCycleExecutionPolicy {
@@ -1832,7 +1832,7 @@ fn append_low_memory_adaptation(
     )?)
 }
 
-fn base_physical<R: ImplementationRegistry>(
+pub(crate) fn base_physical<R: ImplementationRegistry>(
     problem: &CompiledProblem,
     registry: &R,
     policy: &SpectralCycleExecutionPolicy,
@@ -1978,7 +1978,9 @@ fn base_physical<R: ImplementationRegistry>(
             kind: WorkKind::ObservationRead,
             domain: WorkDomain::Io,
             implementation: policy.implementation.clone(),
-            dependencies: BTreeSet::from([WorkDependency::Work(check.clone())]),
+            dependencies: std::iter::once(WorkDependency::Work(check.clone()))
+                .chain(phase_input.map(|_| WorkDependency::Work(model_preparation.clone())))
+                .collect(),
             claims: read_claims,
             allocations: vec![AllocationUse {
                 allocation: source_allocation.clone(),
@@ -2659,28 +2661,19 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
         .as_ref()
         .ok_or(SpectralCyclePlanError::MissingGriddedNormalStorage)?;
     let mode = mode.specification(budget);
-    let initial_team = if initial_consumer_workers > 1 || preparation.is_some() {
+    // The weighting fragment owns its preparation team independently of storage.
+    let initial_team = if initial_consumer_workers > 1 && preparation.is_none() {
         let stack_bytes = bounded_worker_stack_bytes(initial_consumer_workers)?;
-        let bytes = if let Some(preparation) = preparation {
-            preparation
-                .admitted_heap_bytes()
-                .map_err(|_| SpectralCyclePlanError::Overflow)?
-        } else {
-            crate::bounded_stream::BoundedKernelPlan::new::<(), ()>(
-                initial_consumer_workers as usize,
-                1,
-                0,
-            )
-            .map_err(|_| SpectralCyclePlanError::Overflow)?
-            .capacity_bytes()
-            .checked_sub(stack_bytes)
-            .ok_or(SpectralCyclePlanError::Overflow)?
-        };
-        let allocation = if preparation.is_some() {
-            crate::weighting::replay_preparation_allocation(node)
-        } else {
-            crate::weighting::initial_consumer_team_allocation(node)
-        };
+        let bytes = crate::bounded_stream::BoundedKernelPlan::new::<(), ()>(
+            initial_consumer_workers as usize,
+            1,
+            0,
+        )
+        .map_err(|_| SpectralCyclePlanError::Overflow)?
+        .capacity_bytes()
+        .checked_sub(stack_bytes)
+        .ok_or(SpectralCyclePlanError::Overflow)?;
+        let allocation = crate::weighting::initial_consumer_team_allocation(node);
         Some(LogicalAllocation {
             physical_slot: PhysicalSlotId::new(format!("{}-slot", allocation.as_str())),
             id: allocation,
@@ -3491,14 +3484,14 @@ fn append_visibility_write_resources<R: ImplementationRegistry>(
     )?)
 }
 
-struct MinorCycleResources {
+pub(crate) struct MinorCycleResources {
     workers: u64,
     heap_bytes: u64,
     stack_bytes: u64,
 }
 
 impl MinorCycleResources {
-    fn for_worker_count(
+    pub(crate) fn for_worker_count(
         workspace: Option<ReconstructionPlaneWorkspace>,
         policy: &SpectralCycleExecutionPolicy,
         workers: u64,
@@ -3524,7 +3517,7 @@ impl MinorCycleResources {
     }
 }
 
-fn append_minor<R: ImplementationRegistry>(
+pub(crate) fn append_minor<R: ImplementationRegistry>(
     registry: &R,
     base: PhysicalWorkBinding,
     policy: &SpectralCycleExecutionPolicy,

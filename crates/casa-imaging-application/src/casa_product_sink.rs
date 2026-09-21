@@ -295,6 +295,19 @@ impl ProductWriter for CasaProductWriter<'_> {
         self.image
             .save()
             .map_err(|error| ProductsError::Storage(error.to_string()))?;
+        if std::env::var_os("CASA_RS_TRACE_IMAGING_STAGE_TIMING").is_some()
+            && let Some(stats) = self.image.tiled_io_stats()
+        {
+            eprintln!(
+                "imaging_product_pixels target={} pack_nanos={} swap_nanos={} write_nanos={} direct_bytes={} direct_calls={}",
+                self.staged.target.display(),
+                stats.direct_tile_pack_ns,
+                stats.direct_tile_swap_ns,
+                stats.direct_tile_write_ns,
+                stats.direct_tile_write_bytes,
+                stats.direct_tile_write_calls,
+            );
+        }
         let Self {
             image,
             sink,

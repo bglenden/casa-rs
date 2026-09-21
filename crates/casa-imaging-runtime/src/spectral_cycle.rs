@@ -1096,7 +1096,7 @@ impl FinalMajorPhaseInput {
         &self.evidence
     }
 
-    fn into_execution_parts(
+    pub(crate) fn into_execution_parts(
         self,
     ) -> (
         Box<[ModelDeltaTerm]>,
@@ -2992,7 +2992,7 @@ impl WorkImplementation for SpectralCycleExecutor {
                     .ok_or_else(|| io::Error::other("model lifecycle missing"))?;
                 let started = imaging_stage_timing_started();
                 let mut measurements = None;
-                let completion = InitialMajorPhaseCompletion::new(result).run_reconstruction_cycle(
+                let completion = result.run_reconstruction_cycle(
                     lifecycle,
                     &cycle.masks,
                     cycle.program.clone(),
@@ -3294,20 +3294,9 @@ impl WorkImplementation for SpectralCycleExecutor {
     }
 }
 
-/// Affine authoritative completion of the ordinary initial-major plan.
-struct InitialMajorPhaseCompletion {
-    result: MajorCycleOperatorResult,
-}
-
-impl InitialMajorPhaseCompletion {
-    /// Adopt one successful initial-major result.
-    #[must_use]
-    const fn new(result: MajorCycleOperatorResult) -> Self {
-        Self { result }
-    }
-
+impl MajorCycleOperatorResult {
     /// Run one resource-admitted cycle using the normal state's declared coupling.
-    fn run_reconstruction_cycle(
+    pub(crate) fn run_reconstruction_cycle(
         self,
         lifecycle: &ModelLifecycle,
         mask_plans: &ImageDomainReconstructionMaskPlans,
@@ -3316,7 +3305,7 @@ impl InitialMajorPhaseCompletion {
         pass: u32,
         measurements: &mut Option<crate::bounded_stream::BoundedStreamMeasurements>,
     ) -> Result<ReconstructionCyclePhaseCompletion, io::Error> {
-        let completion = self.result.into_completion();
+        let completion = self.into_completion();
         let (normal_state, continuation) = completion.into_continuation();
         let policy = if matches!(
             normal_state.catalog(),

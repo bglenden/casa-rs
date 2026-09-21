@@ -27,6 +27,12 @@ use crate::{ModelGenerationId, canonical_f64_bits};
 pub trait NormalArrayStorage: fmt::Debug + Send + Sync {
     /// Logical scalar capacity, excluding physical tile padding.
     fn len(&self) -> usize;
+    /// Actual live heap payload held under a retained runtime memory permit.
+    /// Excludes unused reservation capacity, metadata and paged caches. Backings
+    /// without that allocation/permit guarantee conservatively report zero.
+    fn retained_resident_bytes(&self) -> usize {
+        0
+    }
     /// Whether the logical array is empty.
     fn is_empty(&self) -> bool {
         self.len() == 0
@@ -545,6 +551,27 @@ impl ChannelNormalStorageRequirement {
         specification: &SpectralOperatorSpecification,
         window_channels: usize,
     ) -> Result<Box<[Self]>, SpectralOperatorError> {
+        Self::for_fields(specification, window_channels, true, true)
+    }
+
+    /// Native initial-empty imaging followed by residual refresh retains only
+    /// the promoted residual, PSF and sensitivity. This bound is specific to
+    /// that chain; nonempty full-normal construction uses `for_specification`.
+    /// The storage factory rejects allocations exceeding the projected capacity.
+    #[doc(hidden)]
+    pub fn for_streaming_cube(
+        specification: &SpectralOperatorSpecification,
+        window_channels: usize,
+    ) -> Result<Box<[Self]>, SpectralOperatorError> {
+        Self::for_fields(specification, window_channels, false, false)
+    }
+
+    fn for_fields(
+        specification: &SpectralOperatorSpecification,
+        window_channels: usize,
+        invariant: bool,
+        residual: bool,
+    ) -> Result<Box<[Self]>, SpectralOperatorError> {
         let channels = specification.slab.total_channels();
         if specification.basis != SpectralBasisPlan::ChannelLocal
             || window_channels == 0
@@ -566,7 +593,7 @@ impl ChannelNormalStorageRequirement {
                 let values = plane_values
                     .checked_mul(channels)
                     .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-                let fields = ChannelNormalFields::new(values, true, true)?;
+                let fields = ChannelNormalFields::new(values, invariant, residual)?;
                 let metadata_values = channels
                     .checked_mul(polarizations)
                     .ok_or(SpectralOperatorError::ResidencyOverflow)?;
@@ -741,6 +768,17 @@ pub(crate) struct NormalDomainMetadata<'a> {
 }
 
 impl NormalStatePrimitives {
+    pub(crate) fn retained_resident_bytes(&self) -> Result<u64, SpectralOperatorError> {
+        match self {
+            Self::ChannelLocal(domains) => domains.iter().try_fold(0u64, |bytes, domain| {
+                bytes
+                    .checked_add(domain.storage.retained_resident_bytes() as u64)
+                    .ok_or(SpectralOperatorError::ResidencyOverflow)
+            }),
+            Self::Coupled(_) => Ok(0),
+        }
+    }
+
     pub(crate) fn read_plane(
         &self,
         ordinal: usize,

@@ -2628,7 +2628,7 @@ fn write_bytes(
     release_page_cache(file, start, bytes.len(), true, operations)
 }
 
-fn configure_bounded_page_cache(file: &File) -> Result<(), ManagedSpillError> {
+pub(crate) fn configure_bounded_page_cache(file: &File) -> Result<(), ManagedSpillError> {
     use std::os::fd::AsRawFd;
 
     #[cfg(target_os = "macos")]
@@ -2654,7 +2654,7 @@ fn configure_bounded_page_cache(file: &File) -> Result<(), ManagedSpillError> {
     Ok(())
 }
 
-fn release_page_cache(
+pub(crate) fn release_page_cache(
     file: &File,
     offset: u64,
     bytes: usize,
@@ -2822,7 +2822,7 @@ fn system_page_bytes() -> Result<u64, ManagedSpillError> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::{
         cell::Cell,
         collections::{BTreeMap, BTreeSet},
@@ -3233,7 +3233,7 @@ mod tests {
         assert_eq!(aggregate.buffer_reuses(), 3);
     }
 
-    fn test_authority(
+    pub(crate) fn test_authority(
         root: &Path,
         available_storage_bytes: u64,
     ) -> (ResourceAuthority, ManagedSpillStorage) {

@@ -11058,14 +11058,25 @@ impl TiledFileIO {
                         let tile_base = tile_number * tile_nelem;
                         let src_x0 = tx * tile_x;
                         let src_y0 = ty * tile_y;
-                        for local_x in 0..tile_x {
-                            let tile_base_x = tile_base + local_x;
-                            for local_y in 0..tile_y {
-                                let src_y = src_y0 + local_y;
-                                let src_x = src_x0 + local_x;
-                                let src_index =
-                                    ((src_x * shape[1] + src_y) * shape[2]) * shape[3] + channel;
-                                typed[tile_base_x + local_y * tile_x] = data[src_index];
+                        // Keep both sides of the C-to-Fortran transpose local;
+                        // a whole-plane inner loop repeatedly evicts partially
+                        // written cache lines. This is traversal only, not a
+                        // different persisted tile shape or a scratch buffer.
+                        const TRANSPOSE_EDGE: usize = 32;
+                        for block_y in (0..tile_y).step_by(TRANSPOSE_EDGE) {
+                            for block_x in (0..tile_x).step_by(TRANSPOSE_EDGE) {
+                                let end_x = (block_x + TRANSPOSE_EDGE).min(tile_x);
+                                let end_y = (block_y + TRANSPOSE_EDGE).min(tile_y);
+                                for local_x in block_x..end_x {
+                                    let tile_base_x = tile_base + local_x;
+                                    let src_base = ((src_x0 + local_x) * shape[1] + src_y0)
+                                        * shape[3]
+                                        + channel;
+                                    for local_y in block_y..end_y {
+                                        typed[tile_base_x + local_y * tile_x] =
+                                            data[src_base + local_y * shape[3]];
+                                    }
+                                }
                             }
                         }
                     }
