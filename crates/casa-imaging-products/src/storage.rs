@@ -125,24 +125,24 @@ impl ProductWindowLayout {
     }
 }
 
-/// Borrowed execution of a bounded wave of independent product windows.
+/// Borrowed execution of a bounded wave of independent product preparation jobs.
 ///
 /// Implementations must join all preparation before returning, including on
 /// failure. Physical writers remain on the caller and never enter this hook.
 pub trait ProductWindowExecutor {
     /// Fill each slot using its wave-local index, or return a joined failure.
-    fn prepare(
+    fn prepare<T: Send>(
         &self,
-        slots: &mut [Option<ProductWindow>],
-        operation: &(dyn Fn(usize) -> Result<ProductWindow, ProductsError> + Sync),
+        slots: &mut [Option<T>],
+        operation: &(dyn Fn(usize) -> Result<T, ProductsError> + Sync),
     ) -> Result<(), ProductsError>;
 }
 
 impl ProductWindowExecutor for () {
-    fn prepare(
+    fn prepare<T: Send>(
         &self,
-        slots: &mut [Option<ProductWindow>],
-        operation: &(dyn Fn(usize) -> Result<ProductWindow, ProductsError> + Sync),
+        slots: &mut [Option<T>],
+        operation: &(dyn Fn(usize) -> Result<T, ProductsError> + Sync),
     ) -> Result<(), ProductsError> {
         for (index, slot) in slots.iter_mut().enumerate() {
             *slot = Some(operation(index)?);

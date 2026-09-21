@@ -1621,7 +1621,7 @@ fn direct_generation_counts_bounded_windows_and_finishes_each_member() {
     );
     assert_eq!(
         parallel_plan.beam_scratch_bytes(),
-        serial_demand.beam_scratch_bytes()
+        serial_demand.beam_scratch_bytes() * 2
     );
     assert_eq!(
         parallel_plan.retained_metadata_bytes(),
@@ -1654,7 +1654,7 @@ fn direct_generation_counts_bounded_windows_and_finishes_each_member() {
         ),
         Err(ProductsError::GeneratedNonfinite)
     ));
-    assert_eq!(failed_output.begun_members(), 1);
+    assert_eq!(failed_output.begun_members(), 0);
     assert_eq!(failed_output.write_count(planned.members()[0].node()), 0);
     assert!(!failed_output.finished(planned.members()[0].node()));
 }
@@ -1664,12 +1664,10 @@ struct ReversedWindowCompletion {
 }
 
 impl casa_imaging_products::ProductWindowExecutor for ReversedWindowCompletion {
-    fn prepare(
+    fn prepare<T: Send>(
         &self,
-        slots: &mut [Option<casa_imaging_products::ProductWindow>],
-        operation: &(
-             dyn Fn(usize) -> Result<casa_imaging_products::ProductWindow, ProductsError> + Sync
-         ),
+        slots: &mut [Option<T>],
+        operation: &(dyn Fn(usize) -> Result<T, ProductsError> + Sync),
     ) -> Result<(), ProductsError> {
         use std::sync::{Condvar, Mutex};
         let next = Mutex::new(slots.len() - 1);
@@ -1796,9 +1794,10 @@ fn generic_generation_demand_charges_exact_owned_arrays() {
     );
     assert_eq!(
         demand.peak_residency_bytes(),
-        demand.algorithm_scratch_bytes()
-            + demand.retained_metadata_bytes()
-            + demand.beam_scratch_bytes()
+        demand.retained_metadata_bytes()
+            + (demand.algorithm_scratch_bytes()
+                + size_of::<Option<casa_imaging_products::RestoringBeam>>() as u64)
+                .max(demand.beam_scratch_bytes())
     );
     let generated = produce_continuum_members(
         &planned,
@@ -1883,9 +1882,63 @@ fn cube_generation_demand_retains_channel_beams_and_charges_common_fit_scratch()
         }
         assert_eq!(
             demand.peak_residency_bytes(),
-            demand.algorithm_scratch_bytes()
-                + demand.retained_metadata_bytes()
-                + demand.beam_scratch_bytes()
+            demand.retained_metadata_bytes()
+                + (demand.algorithm_scratch_bytes()
+                    + (2 * size_of::<Option<RestoringBeam>>()) as u64)
+                    .max(demand.beam_scratch_bytes())
+        );
+
+        let parallel_demand = planned
+            .demand(&inputs, ProductStoragePlan::new(1, 8).unwrap())
+            .unwrap();
+        assert_eq!(parallel_demand.storage_plan().maximum_workers(), 2);
+        assert_eq!(
+            parallel_demand.beam_scratch_bytes(),
+            2 * demand.beam_scratch_bytes()
+        );
+        assert_eq!(
+            parallel_demand.retained_metadata_bytes(),
+            demand.retained_metadata_bytes()
+        );
+        assert_eq!(
+            parallel_demand.peak_residency_bytes(),
+            parallel_demand.retained_metadata_bytes()
+                + (parallel_demand.algorithm_scratch_bytes()
+                    + (2 * size_of::<Option<RestoringBeam>>()) as u64)
+                    .max(parallel_demand.beam_scratch_bytes())
+        );
+        let parallel_output = MemoryProductOutput::default();
+        let parallel = produce_continuum_members(
+            &planned,
+            &inputs,
+            parallel_demand.storage_plan(),
+            &ReversedWindowCompletion { fail: false },
+            &parallel_output,
+        )
+        .expect("reversed beam completion preserves ordered beam policy");
+        assert_eq!(parallel.fitted_beams(), generated.fitted_beams());
+        assert_eq!(parallel.restoring_beams(), generated.restoring_beams());
+        let parallel = GeneratedProducts::from_output(&parallel, &parallel_output);
+        let serial = generate_for(&planned, &inputs);
+        for (parallel, serial) in parallel.members().iter().zip(serial.members()) {
+            assert_eq!(parallel.payload(), serial.payload());
+            assert_eq!(parallel.validity(), serial.validity());
+        }
+        let failed_output = MemoryProductOutput::default();
+        assert!(matches!(
+            produce_continuum_members(
+                &planned,
+                &inputs,
+                parallel_demand.storage_plan(),
+                &ReversedWindowCompletion { fail: true },
+                &failed_output,
+            ),
+            Err(ProductsError::GeneratedNonfinite)
+        ));
+        assert_eq!(
+            failed_output.begun_members(),
+            0,
+            "beam barrier precedes every writer"
         );
     }
 }

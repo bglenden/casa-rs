@@ -46,15 +46,11 @@ impl ResidentNormalFactory {
             .checked_mul(size_of::<f64>())
             .and_then(|bytes| bytes.checked_add(size_of::<ResidentNormalArray>()))
             .ok_or_else(|| io::Error::other("resident normal capacity overflow"))?;
-        let window = requirement
-            .maximum_window_scalars()
-            .checked_mul(size_of::<f64>())
-            .ok_or_else(|| io::Error::other("resident normal window overflow"))?;
         Ok(CubeArrayLedger {
             retained_bytes: capacity,
             cache_bytes: 0,
             cache_index_bytes: 0,
-            read_scratch_bytes: window,
+            read_scratch_bytes: 0,
             write_scratch_bytes: 0,
             flush_scratch_bytes: 0,
             storage_bytes: 0,
@@ -117,7 +113,11 @@ impl NormalArrayStorage for ResidentNormalArray {
         size_of_val(self.values.as_ref())
     }
 
-    fn read(&self, start: usize, len: usize) -> Result<Box<[f64]>, SpectralOperatorError> {
+    fn read(
+        &self,
+        start: usize,
+        len: usize,
+    ) -> Result<std::borrow::Cow<'_, [f64]>, SpectralOperatorError> {
         if len > self.window_scalars {
             return Err(SpectralOperatorError::InvalidSlab);
         }
@@ -202,6 +202,12 @@ mod tests {
         ];
         array.write(7, &values).unwrap();
         let observed = array.read(7, values.len()).unwrap();
+        assert!(matches!(observed, std::borrow::Cow::Borrowed(_)));
+        assert_eq!(
+            observed.as_ptr(),
+            array.read(7, values.len()).unwrap().as_ptr()
+        );
+        assert_eq!(Arc::strong_count(&owner), 2);
         assert_eq!(
             observed.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
             values.map(f64::to_bits)

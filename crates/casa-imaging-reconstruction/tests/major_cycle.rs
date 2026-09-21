@@ -486,9 +486,13 @@ fn normal_reconciliation_transfers_owned_storage_without_reading_arrays() {
         fn len(&self) -> usize {
             self.values.len()
         }
-        fn read(&self, start: usize, len: usize) -> Result<Box<[f64]>, SpectralOperatorError> {
+        fn read(
+            &self,
+            start: usize,
+            len: usize,
+        ) -> Result<std::borrow::Cow<'_, [f64]>, SpectralOperatorError> {
             self.reads.fetch_add(len, Ordering::Relaxed);
-            Ok(self.values[start..start + len].into())
+            Ok(std::borrow::Cow::Borrowed(&self.values[start..start + len]))
         }
         fn write(&mut self, start: usize, values: &[f64]) -> Result<(), SpectralOperatorError> {
             self.values[start..start + values.len()].copy_from_slice(values);
@@ -2483,6 +2487,41 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
                 .iter()
                 .all(|threshold| *threshold == thresholds[0])
         );
+        // Retain the pre-refactor full-window calculation as an independent
+        // numerical check of the selective worker summary path.
+        let mut peak = 0.0_f64;
+        let mut sidelobe = 0.0_f64;
+        for channel in normal.slab().core_range() {
+            let window = normal.read_window(channel..channel + 1).unwrap();
+            let plane = window.polarization_plane(0, 0).unwrap();
+            if plane.validity() != casa_imaging_reconstruction::SpectralChannelValidity::Valid {
+                continue;
+            }
+            let psf = plane
+                .normal_approximation()
+                .iter()
+                .map(|v| v.re as f32)
+                .collect::<Vec<_>>();
+            let psf_peak = psf
+                .iter()
+                .map(|v| f64::from(v.abs()))
+                .fold(0.0_f64, f64::max);
+            peak = peak.max(
+                plane
+                    .residual()
+                    .iter()
+                    .map(|v| v.re.abs() / psf_peak)
+                    .fold(0.0_f64, f64::max),
+            );
+            sidelobe = sidelobe.max(
+                casa_imaging_reconstruction::fitted_psf_sidelobe_fraction(&psf, plane.shape())
+                    .unwrap(),
+            );
+        }
+        assert_eq!(
+            thresholds[0].to_bits(),
+            (peak * sidelobe.clamp(0.05, 0.8)).to_bits()
+        );
 
         for workers in [1, 2, 3] {
             let mut work = cycle
@@ -2495,6 +2534,26 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
             assert_eq!(planned_workspace.plane_count(), work.plane_count());
             assert!(actual_workspace.worker_bytes() <= planned_workspace.worker_bytes());
             assert!(actual_workspace.retained_bytes() <= planned_workspace.retained_bytes());
+            assert!(matches!(
+                work.execute_plane(&work.prepare_plane(0).unwrap()),
+                Err(casa_imaging_reconstruction::ReconstructionCycleError::InvalidPlaneCoverage)
+            ));
+            for start in (0..work.threshold_plane_count()).step_by(workers) {
+                let end = (start + workers).min(work.threshold_plane_count());
+                let statistics = std::thread::scope(|scope| {
+                    let work = &work;
+                    (start..end)
+                        .rev()
+                        .map(|ordinal| scope.spawn(move || work.plane_statistics(ordinal)))
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .map(|worker| worker.join().unwrap().unwrap())
+                        .collect::<Vec<_>>()
+                });
+                for statistics in statistics.into_iter().rev() {
+                    work.commit_statistics(statistics).unwrap();
+                }
+            }
             for start in (0..work.plane_count()).step_by(workers) {
                 let end = (start + workers).min(work.plane_count());
                 let inputs = (start..end)
@@ -2540,6 +2599,22 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
             .prepare_independent(&lifecycle, base, &normal, &mask)
             .expect("prepared planes");
         assert!(matches!(work.prepare_plane(3), Err(InvalidPlaneCoverage)));
+        let out_of_order = work.plane_statistics(1).unwrap();
+        assert!(matches!(
+            work.commit_statistics(out_of_order),
+            Err(InvalidPlaneCoverage)
+        ));
+        let first = work.plane_statistics(0).unwrap();
+        let duplicate = work.plane_statistics(0).unwrap();
+        work.commit_statistics(first).unwrap();
+        assert!(matches!(
+            work.commit_statistics(duplicate),
+            Err(InvalidPlaneCoverage)
+        ));
+        for ordinal in 1..work.threshold_plane_count() {
+            let statistics = work.plane_statistics(ordinal).unwrap();
+            work.commit_statistics(statistics).unwrap();
+        }
         let out_of_order = work
             .execute_plane(&work.prepare_plane(1).unwrap())
             .expect("second plane");
@@ -2548,9 +2623,18 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
             Err(InvalidPlaneCoverage)
         ));
         let other_cycle = cycle.clone();
-        let other_work = other_cycle
+        let mut other_work = other_cycle
             .prepare_independent(&lifecycle, base, &normal, &mask)
             .expect("different prepared inputs");
+        let foreign_statistics = other_work.plane_statistics(0).unwrap();
+        assert!(matches!(
+            work.commit_statistics(foreign_statistics),
+            Err(InvalidPlaneCoverage)
+        ));
+        for ordinal in 0..other_work.threshold_plane_count() {
+            let statistics = other_work.plane_statistics(ordinal).unwrap();
+            other_work.commit_statistics(statistics).unwrap();
+        }
         let foreign_input = other_work.prepare_plane(0).unwrap();
         assert!(matches!(
             work.execute_plane(&foreign_input),

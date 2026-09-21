@@ -5,8 +5,8 @@ use std::io;
 use casa_imaging_reconstruction::{
     ReconstructionCycleError, ReconstructionCycleResult,
     runtime_adapter::{
-        ReconstructionPlaneInput, ReconstructionPlanePartial, ReconstructionPlaneWork,
-        ReconstructionPlaneWorkspace,
+        ReconstructionPlaneInput, ReconstructionPlanePartial, ReconstructionPlaneStatistics,
+        ReconstructionPlaneWork, ReconstructionPlaneWorkspace,
     },
 };
 
@@ -31,10 +31,15 @@ impl PlaneExecutionPlan {
             .worker_bytes()
             .checked_mul(workers as u64)
             .ok_or_else(|| io::Error::other("plane workspace overflow"))?;
-        let kernel = BoundedKernelPlan::new::<
-            ReconstructionPlaneInput<'_>,
-            ReconstructionPlanePartial<'_>,
-        >(workers, workspace.plane_count(), dynamic_bytes)
+        let partitions = workspace
+            .plane_count()
+            .checked_mul(if workspace.plane_count() == 1 { 1 } else { 2 })
+            .ok_or_else(|| io::Error::other("plane partition count overflow"))?;
+        let kernel = BoundedKernelPlan::new::<PlanePartition<'_>, PlanePartial<'_>>(
+            workers,
+            partitions,
+            dynamic_bytes,
+        )
         .map_err(|error| io::Error::other(format!("invalid plane kernel plan: {error:?}")))?;
         let stack_bytes = if workers == 1 {
             0
@@ -123,14 +128,24 @@ struct PlaneKernel<'a> {
     worker_bytes: u64,
 }
 
+enum PlanePartition<'a> {
+    Statistics(usize),
+    Solve(ReconstructionPlaneInput<'a>),
+}
+
+enum PlanePartial<'a> {
+    Statistics(ReconstructionPlaneStatistics<'a>),
+    Solve(ReconstructionPlanePartial<'a>),
+}
+
 impl<'a> PartitionedKernel<()> for PlaneKernel<'a> {
-    type Partition = ReconstructionPlaneInput<'a>;
-    type Partial = ReconstructionPlanePartial<'a>;
+    type Partition = PlanePartition<'a>;
+    type Partial = PlanePartial<'a>;
     type Completion = ReconstructionCycleResult;
     type Error = ReconstructionCycleError;
 
     fn partition_count(&self, _: BlockIdentity, _: &()) -> Result<usize, Self::Error> {
-        Ok(self.work.plane_count())
+        Ok(self.work.threshold_plane_count() + self.work.plane_count())
     }
 
     fn partition(
@@ -139,20 +154,26 @@ impl<'a> PartitionedKernel<()> for PlaneKernel<'a> {
         _: &(),
         ordinal: usize,
     ) -> Result<KernelPartition<Self::Partition>, Self::Error> {
-        Ok(KernelPartition::ordered(
+        let statistics = self.work.threshold_plane_count();
+        let (phase, partition) = if ordinal < statistics {
+            (0, PlanePartition::Statistics(ordinal))
+        } else {
+            (
+                1,
+                PlanePartition::Solve(self.work.prepare_plane(ordinal - statistics)?),
+            )
+        };
+        Ok(KernelPartition::ordered_in_phase(
+            phase,
             ordinal as u64,
             0,
             ordinal as u64,
-            self.work.prepare_plane(ordinal)?,
+            partition,
         ))
     }
 
-    fn partition_dynamic_capacity_bytes(&self, input: &Self::Partition) -> u64 {
-        input.owned_bytes()
-    }
-
-    fn execution_dynamic_capacity_bytes(&self, input: &Self::Partition) -> u64 {
-        self.worker_bytes.saturating_sub(input.owned_bytes())
+    fn execution_dynamic_capacity_bytes(&self, _: &Self::Partition) -> u64 {
+        self.worker_bytes
     }
 
     fn execute(
@@ -161,11 +182,20 @@ impl<'a> PartitionedKernel<()> for PlaneKernel<'a> {
         _: &(),
         input: &Self::Partition,
     ) -> Result<Self::Partial, Self::Error> {
-        self.work.execute_plane(input)
+        match input {
+            PlanePartition::Statistics(ordinal) => self
+                .work
+                .plane_statistics(*ordinal)
+                .map(PlanePartial::Statistics),
+            PlanePartition::Solve(input) => self.work.execute_plane(input).map(PlanePartial::Solve),
+        }
     }
 
     fn partial_dynamic_capacity_bytes(&self, partial: &Self::Partial) -> u64 {
-        partial.owned_bytes()
+        match partial {
+            PlanePartial::Statistics(_) => 0,
+            PlanePartial::Solve(partial) => partial.owned_bytes(),
+        }
     }
 
     fn commit(
@@ -175,7 +205,10 @@ impl<'a> PartitionedKernel<()> for PlaneKernel<'a> {
         partial: Self::Partial,
         _execution: crate::bounded_stream::BoundedExecution<'_>,
     ) -> Result<(), Self::Error> {
-        self.work.commit_plane(partial)
+        match partial {
+            PlanePartial::Statistics(statistics) => self.work.commit_statistics(statistics),
+            PlanePartial::Solve(partial) => self.work.commit_plane(partial),
+        }
     }
 
     fn complete(

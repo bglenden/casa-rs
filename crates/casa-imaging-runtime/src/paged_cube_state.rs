@@ -455,10 +455,14 @@ impl NormalArrayStorage for PagedNormalArray {
         self.scalars
     }
 
-    fn read(&self, start: usize, len: usize) -> Result<Box<[f64]>, SpectralOperatorError> {
+    fn read(
+        &self,
+        start: usize,
+        len: usize,
+    ) -> Result<std::borrow::Cow<'_, [f64]>, SpectralOperatorError> {
         self.check_window(start, len)?;
         if len == 0 {
-            return Ok(Box::new([]));
+            return Ok(std::borrow::Cow::Owned(Vec::new()));
         }
         let array = self.array.lock().map_err(normal_storage_error)?;
         let before = array.io_stats();
@@ -478,7 +482,7 @@ impl NormalArrayStorage for PagedNormalArray {
         }
         self.observation
             .record(len, array.io_stats().delta_since(before));
-        Ok(values.into_boxed_slice())
+        Ok(std::borrow::Cow::Owned(values))
     }
 
     fn write(&mut self, start: usize, values: &[f64]) -> Result<(), SpectralOperatorError> {
@@ -955,6 +959,10 @@ mod tests {
         for start in (0..257).step_by(7) {
             let count = 7.min(257 - start);
             let actual = storage.read(start, count).unwrap();
+            assert!(matches!(actual, std::borrow::Cow::Owned(_)));
+            if let std::borrow::Cow::Owned(values) = &actual {
+                assert_eq!(values.capacity(), count);
+            }
             assert_eq!(actual.len(), count);
             assert_eq!(
                 actual

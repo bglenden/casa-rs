@@ -16,11 +16,12 @@ cpp-interop-tests = ["casa-test-support/cpp-interop-tests"]
 workspace = true
 
 [dependencies]
+bytemuck = { version = "1.25", features = ["extern_crate_alloc"] }
 casa-imaging-model = { path = "../casa-imaging-model" }
 casa-numerics = { path = "../casa-numerics" }
 crc32c = "0.6"
 ndarray.workspace = true
-num-complex.workspace = true
+num-complex = { workspace = true, features = ["bytemuck"] }
 rustfft.workspace = true
 sha2 = "0.10"
 smallvec.workspace = true

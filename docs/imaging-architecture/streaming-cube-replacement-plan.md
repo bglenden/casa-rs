@@ -34,6 +34,14 @@ constructing `WeightingSelectedSample`/`WeightingSampleValue` per correlation.
 Natural weighting retains its global exact sum and shared per-value flag policy;
 it does not use the density-weighted cube's resampling state. Current validation
 and application measurements, including rejected attempts, remain in CURRENT.md.
+The locally retained ownership checkpoint is `186b4c8b50`: residual refresh shares
+immutable PSF/sensitivity backing, and bounded product windows prepare on the
+existing team before ordered writing. The next measured candidate uses borrowed
+resident normal-plane views (owned decoded windows when paged), worker-side
+plane setup, an exact ordered threshold-statistics barrier before the existing
+CLEAN solve, and bounded parallel beam fits. It preserves the common-beam policy
+and single writer. These connections do not establish the 3x target; current
+measurements, source identity and acceptance status remain in CURRENT.md.
 The user additionally authorized local Obit timings as reference only, including
 the isolated native CPU core/task setup described below.
 

@@ -21,17 +21,10 @@ const GENERATE: &str = "product-generation-write";
 const COMMIT: &str = "product-publication-commit";
 
 impl casa_imaging_products::ProductWindowExecutor for crate::bounded_stream::FixedWorkerTeam {
-    fn prepare(
+    fn prepare<T: Send>(
         &self,
-        slots: &mut [Option<casa_imaging_products::ProductWindow>],
-        operation: &(
-             dyn Fn(
-            usize,
-        ) -> Result<
-            casa_imaging_products::ProductWindow,
-            casa_imaging_products::ProductsError,
-        > + Sync
-         ),
+        slots: &mut [Option<T>],
+        operation: &(dyn Fn(usize) -> Result<T, casa_imaging_products::ProductsError> + Sync),
     ) -> Result<(), casa_imaging_products::ProductsError> {
         self.for_each_mut(slots, |index, slot| {
             *slot = Some(operation(index)?);

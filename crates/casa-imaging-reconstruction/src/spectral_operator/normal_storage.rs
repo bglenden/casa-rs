@@ -17,6 +17,24 @@ use super::{
 };
 use crate::{ModelGenerationId, canonical_f64_bits};
 
+// num-complex 0.4.6 supplies Pod for its repr(C) real/imaginary pair.
+// Checked casts preserve all floating-point bits without copying payloads.
+fn complex_scalars(values: &[Complex64]) -> Result<&[f64], SpectralOperatorError> {
+    bytemuck::try_cast_slice(values)
+        .map_err(|error| SpectralOperatorError::NormalStorage(error.to_string()))
+}
+
+fn scalar_complex(values: Cow<'_, [f64]>) -> Result<Cow<'_, [Complex64]>, SpectralOperatorError> {
+    match values {
+        Cow::Borrowed(values) => bytemuck::try_cast_slice(values)
+            .map(Cow::Borrowed)
+            .map_err(|error| SpectralOperatorError::NormalStorage(error.to_string())),
+        Cow::Owned(values) => bytemuck::allocation::try_cast_vec(values)
+            .map(Cow::Owned)
+            .map_err(|(error, _)| SpectralOperatorError::NormalStorage(error.to_string())),
+    }
+}
+
 /// Physical scalar-array capability used only by the Normal State owner.
 ///
 /// Complex values are stored as consecutive real/imaginary f64 values. Access
@@ -37,8 +55,11 @@ pub trait NormalArrayStorage: fmt::Debug + Send + Sync {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
-    /// Return exactly `len` scalars in an owned, bounded window.
-    fn read(&self, start: usize, len: usize) -> Result<Box<[f64]>, SpectralOperatorError>;
+    /// Return exactly `len` scalars. Resident windows borrow their backing and
+    /// retained memory permit; paged windows own the bounded decoded allocation.
+    /// Owned windows used as complex pairs must also have an even capacity so
+    /// their allocation can transfer without repacking; invalid layouts fail.
+    fn read(&self, start: usize, len: usize) -> Result<Cow<'_, [f64]>, SpectralOperatorError>;
     /// Replace a bounded scalar window without resizing the array.
     fn write(&mut self, start: usize, values: &[f64]) -> Result<(), SpectralOperatorError>;
 }
@@ -51,6 +72,49 @@ mod tests {
     const CHANNELS: usize = 5;
     const CELLS: usize = 6;
     const POLARIZATIONS: usize = 2;
+
+    #[test]
+    fn complex_scalar_windows_preserve_bits_and_allocation_identity() {
+        let bits = [0, (-0.0_f64).to_bits(), 0x7ff8_0000_0000_0042, 1];
+        let values: Vec<_> = bits.into_iter().map(f64::from_bits).collect();
+        let borrowed = scalar_complex(Cow::Borrowed(&values)).unwrap();
+        assert!(matches!(borrowed, Cow::Borrowed(_)));
+        assert_eq!(borrowed.as_ptr().cast::<f64>(), values.as_ptr());
+        assert_eq!(
+            complex_scalars(&borrowed).unwrap().as_ptr(),
+            values.as_ptr()
+        );
+        assert_eq!(
+            complex_scalars(&borrowed)
+                .unwrap()
+                .iter()
+                .map(|v| v.to_bits())
+                .collect::<Vec<_>>(),
+            bits
+        );
+        drop(borrowed);
+        let pointer = values.as_ptr();
+        let capacity = values.capacity();
+        let owned = scalar_complex(Cow::Owned(values)).unwrap();
+        assert_eq!(owned.as_ptr().cast::<f64>(), pointer);
+        let Cow::Owned(owned) = owned else {
+            panic!("paged allocation must stay owned")
+        };
+        assert_eq!(owned.capacity() * 2, capacity);
+        assert_eq!(
+            complex_scalars(&owned)
+                .unwrap()
+                .iter()
+                .map(|v| v.to_bits())
+                .collect::<Vec<_>>(),
+            bits
+        );
+        assert!(scalar_complex(Cow::Borrowed(&[1.0])).is_err());
+        let mut odd_capacity = Vec::with_capacity(3);
+        odd_capacity.extend_from_slice(&[1.0, 2.0]);
+        assert!(scalar_complex(Cow::Owned(odd_capacity)).is_err());
+        assert!(scalar_complex(Cow::Owned(Vec::new())).unwrap().is_empty());
+    }
 
     fn model() -> ModelGenerationId {
         ModelGenerationId(LogicalIdentity::from_sha256([19; 32]))
@@ -144,7 +208,7 @@ mod tests {
         fn len(&self) -> usize {
             self.values.len()
         }
-        fn read(&self, start: usize, len: usize) -> Result<Box<[f64]>, SpectralOperatorError> {
+        fn read(&self, start: usize, len: usize) -> Result<Cow<'_, [f64]>, SpectralOperatorError> {
             assert!(len <= self.allowed);
             self.maximum_access.fetch_max(len, Ordering::Relaxed);
             self.values.read(start, len)
@@ -167,7 +231,7 @@ mod tests {
         fn len(&self) -> usize {
             self.storage.len()
         }
-        fn read(&self, start: usize, len: usize) -> Result<Box<[f64]>, SpectralOperatorError> {
+        fn read(&self, start: usize, len: usize) -> Result<Cow<'_, [f64]>, SpectralOperatorError> {
             self.reads.lock().unwrap().push((start, len));
             self.storage.read(start, len)
         }
@@ -232,6 +296,7 @@ mod tests {
 
             let offset = (3 * POLARIZATIONS + 1) * CELLS;
             let psf = selected.read_psf().unwrap();
+            assert!(matches!(psf, Cow::Borrowed(_)));
             assert_eq!(
                 *reads[1].lock().unwrap(),
                 vec![(
@@ -244,6 +309,7 @@ mod tests {
             reads[1].lock().unwrap().clear();
 
             let residual = selected.read_residual().unwrap();
+            assert!(matches!(residual, Cow::Borrowed(_)));
             assert_eq!(
                 *reads[1].lock().unwrap(),
                 vec![(fields.dirty.start + 2 * offset, 2 * CELLS)]
@@ -254,6 +320,7 @@ mod tests {
             );
             reads[1].lock().unwrap().clear();
             let sensitivity = selected.read_sensitivity().unwrap();
+            assert!(matches!(sensitivity, Cow::Borrowed(_)));
             assert_eq!(
                 *reads[1].lock().unwrap(),
                 vec![(
@@ -392,7 +459,7 @@ mod tests {
             fn len(&self) -> usize {
                 0
             }
-            fn read(&self, _: usize, _: usize) -> Result<Box<[f64]>, SpectralOperatorError> {
+            fn read(&self, _: usize, _: usize) -> Result<Cow<'_, [f64]>, SpectralOperatorError> {
                 Err(SpectralOperatorError::NormalStorage(
                     "selected read failed".into(),
                 ))
@@ -415,11 +482,12 @@ mod tests {
     }
 
     #[test]
-    fn resident_normal_reads_return_independent_exact_bit_windows() {
+    fn resident_normal_reads_borrow_exact_bit_windows() {
         let bits = [0, (-0.0_f64).to_bits(), 0x7ff8000000000042, 1];
         let mut storage: Box<[f64]> = bits.into_iter().map(f64::from_bits).collect();
         let window = storage.read(1, 3).unwrap();
-        storage.write(1, &[2.0, 3.0, 4.0]).unwrap();
+        assert!(matches!(window, Cow::Borrowed(_)));
+        assert_eq!(window.as_ptr(), storage[1..].as_ptr());
         assert_eq!(
             window
                 .iter()
@@ -427,6 +495,8 @@ mod tests {
                 .collect::<Vec<_>>(),
             bits[1..]
         );
+        drop(window);
+        storage.write(1, &[2.0, 3.0, 4.0]).unwrap();
         assert!(storage.read(4, 0).unwrap().is_empty());
         assert_eq!(storage.read(5, 0), Err(SpectralOperatorError::InvalidSlab));
         assert_eq!(storage.read(3, 2), Err(SpectralOperatorError::InvalidSlab));
@@ -444,8 +514,8 @@ mod tests {
             fn len(&self) -> usize {
                 3
             }
-            fn read(&self, _: usize, _: usize) -> Result<Box<[f64]>, SpectralOperatorError> {
-                Ok(Box::new([1.0, 2.0]))
+            fn read(&self, _: usize, _: usize) -> Result<Cow<'_, [f64]>, SpectralOperatorError> {
+                Ok(Cow::Owned(vec![1.0, 2.0]))
             }
             fn write(&mut self, _: usize, _: &[f64]) -> Result<(), SpectralOperatorError> {
                 unreachable!("fixture is installed after generation")
@@ -473,7 +543,7 @@ mod tests {
             self.storage.len()
         }
 
-        fn read(&self, start: usize, len: usize) -> Result<Box<[f64]>, SpectralOperatorError> {
+        fn read(&self, start: usize, len: usize) -> Result<Cow<'_, [f64]>, SpectralOperatorError> {
             self.accesses.fetch_add(1, Ordering::Relaxed);
             self.storage.read(start, len)
         }
@@ -561,7 +631,7 @@ mod tests {
             fn len(&self) -> usize {
                 CHANNELS * POLARIZATIONS * CELLS * 2
             }
-            fn read(&self, _: usize, _: usize) -> Result<Box<[f64]>, SpectralOperatorError> {
+            fn read(&self, _: usize, _: usize) -> Result<Cow<'_, [f64]>, SpectralOperatorError> {
                 unreachable!("failed candidate must not be published")
             }
             fn write(&mut self, _: usize, _: &[f64]) -> Result<(), SpectralOperatorError> {
@@ -1288,14 +1358,14 @@ impl NormalArrayStorage for Box<[f64]> {
         self.as_ref().len()
     }
 
-    fn read(&self, start: usize, len: usize) -> Result<Box<[f64]>, SpectralOperatorError> {
+    fn read(&self, start: usize, len: usize) -> Result<Cow<'_, [f64]>, SpectralOperatorError> {
         let end = start
             .checked_add(len)
             .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-        Ok(self
-            .get(start..end)
-            .ok_or(SpectralOperatorError::InvalidSlab)?
-            .into())
+        Ok(Cow::Borrowed(
+            self.get(start..end)
+                .ok_or(SpectralOperatorError::InvalidSlab)?,
+        ))
     }
 
     fn write(&mut self, start: usize, values: &[f64]) -> Result<(), SpectralOperatorError> {
@@ -1392,7 +1462,7 @@ enum NormalPlaneBacking<'a> {
     Resident(&'a SpectralOperatorPrimitives),
 }
 
-impl FinalNormalPlaneReader<'_> {
+impl<'a> FinalNormalPlaneReader<'a> {
     /// Direction-plane dimensions, without reading image payloads.
     #[must_use]
     pub fn shape(&self) -> [usize; 2] {
@@ -1436,13 +1506,10 @@ impl FinalNormalPlaneReader<'_> {
     }
 
     /// Load the authoritative dirty/residual field, including promoted residuals.
-    pub fn read_residual(&self) -> Result<Cow<'_, [Complex64]>, SpectralOperatorError> {
+    pub fn read_residual(&self) -> Result<Cow<'a, [Complex64]>, SpectralOperatorError> {
         let offset = self.plane * self.cells;
         match self.backing {
-            NormalPlaneBacking::Stored(d) => Ok(Cow::Owned(
-                d.read_complex(&d.fields.dirty, offset, self.cells)?
-                    .into_vec(),
-            )),
+            NormalPlaneBacking::Stored(d) => d.read_complex(&d.fields.dirty, offset, self.cells),
             NormalPlaneBacking::Resident(d) => {
                 Ok(Cow::Borrowed(&d.dirty()[offset..offset + self.cells]))
             }
@@ -1450,13 +1517,10 @@ impl FinalNormalPlaneReader<'_> {
     }
 
     /// Load only the selected unnormalized point-spread-function plane.
-    pub fn read_psf(&self) -> Result<Cow<'_, [Complex64]>, SpectralOperatorError> {
+    pub fn read_psf(&self) -> Result<Cow<'a, [Complex64]>, SpectralOperatorError> {
         let offset = self.plane * self.cells;
         match self.backing {
-            NormalPlaneBacking::Stored(d) => Ok(Cow::Owned(
-                d.read_complex(&d.fields.psf, offset, self.cells)?
-                    .into_vec(),
-            )),
+            NormalPlaneBacking::Stored(d) => d.read_complex(&d.fields.psf, offset, self.cells),
             NormalPlaneBacking::Resident(d) => {
                 Ok(Cow::Borrowed(&d.psf()[offset..offset + self.cells]))
             }
@@ -1464,14 +1528,12 @@ impl FinalNormalPlaneReader<'_> {
     }
 
     /// Load only the selected unnormalized sensitivity plane.
-    pub fn read_sensitivity(&self) -> Result<Cow<'_, [f64]>, SpectralOperatorError> {
+    pub fn read_sensitivity(&self) -> Result<Cow<'a, [f64]>, SpectralOperatorError> {
         let offset = self.plane * self.cells;
         match self.backing {
             NormalPlaneBacking::Stored(d) => {
                 let start = d.fields.sensitivity.start + offset;
-                Ok(Cow::Owned(
-                    d.read_scalars(start..start + self.cells)?.into_vec(),
-                ))
+                d.read_scalars(start..start + self.cells)
             }
             NormalPlaneBacking::Resident(d) => {
                 Ok(Cow::Borrowed(&d.sensitivity()[offset..offset + self.cells]))
@@ -1546,14 +1608,10 @@ impl StoredChannelNormalDomain {
         {
             return Err(SpectralOperatorError::ProblemMismatch);
         }
-        let scalars: Vec<_> = residual
-            .values
-            .iter()
-            .flat_map(|value| [value.re, value.im])
-            .collect();
+        let scalars = complex_scalars(&residual.values)?;
         self.storage.write(
             range.start * self.polarizations * checked_cells(self.shape)? * 2,
-            &scalars,
+            scalars,
         )?;
         self.next_channel = range.end;
         Ok(())
@@ -1702,14 +1760,14 @@ impl StoredChannelNormalDomain {
             ),
         ] {
             if let (Some(field), Some(source)) = (field, source) {
-                let scalars: Vec<_> = source.iter().flat_map(|v| [v.re, v.im]).collect();
+                let scalars = complex_scalars(source)?;
                 let start = field.start + 2 * offset;
                 if field.start >= self.fields.epoch_scalars {
                     Arc::get_mut(&mut self.invariants)
                         .ok_or(SpectralOperatorError::IncompleteCoverage)?
-                        .write(start - self.fields.epoch_scalars, &scalars)?;
+                        .write(start - self.fields.epoch_scalars, scalars)?;
                 } else {
-                    self.storage.write(start, &scalars)?;
+                    self.storage.write(start, scalars)?;
                 }
             }
         }
@@ -1752,7 +1810,7 @@ impl StoredChannelNormalDomain {
         Ok(())
     }
 
-    fn read_scalars(&self, range: Range<usize>) -> Result<Box<[f64]>, SpectralOperatorError> {
+    fn read_scalars(&self, range: Range<usize>) -> Result<Cow<'_, [f64]>, SpectralOperatorError> {
         let result = if range.start >= self.fields.epoch_scalars {
             self.invariants
                 .read(range.start - self.fields.epoch_scalars, range.len())?
@@ -1772,13 +1830,10 @@ impl StoredChannelNormalDomain {
         field: &Range<usize>,
         offset: usize,
         values: usize,
-    ) -> Result<Box<[Complex64]>, SpectralOperatorError> {
+    ) -> Result<Cow<'_, [Complex64]>, SpectralOperatorError> {
         let start = field.start + offset * 2;
         let scalars = self.read_scalars(start..start + values * 2)?;
-        Ok(scalars
-            .chunks_exact(2)
-            .map(|v| Complex64::new(v[0], v[1]))
-            .collect())
+        scalar_complex(scalars)
     }
 
     pub(crate) fn read_window(
@@ -1815,20 +1870,32 @@ impl StoredChannelNormalDomain {
                 basis: SpectralBasisPlan::ChannelLocal,
                 polarizations: self.polarizations,
                 joint_line_term_by_channel: vec![None; self.total_channels].into_boxed_slice(),
-                dirty: self.read_complex(&self.fields.dirty, offset, values)?,
+                dirty: self
+                    .read_complex(&self.fields.dirty, offset, values)?
+                    .into_owned()
+                    .into_boxed_slice(),
                 invariant_dirty: self
                     .fields
                     .invariant_dirty
                     .as_ref()
-                    .map(|f| self.read_complex(f, offset, values))
+                    .map(|f| {
+                        self.read_complex(f, offset, values)
+                            .map(|v| v.into_owned().into_boxed_slice())
+                    })
                     .transpose()?,
                 common_residual: None,
                 invariant_common_dirty: None,
-                psf: self.read_complex(&self.fields.psf, offset, values)?,
-                sensitivity: self.read_scalars(
-                    self.fields.sensitivity.start + offset
-                        ..self.fields.sensitivity.start + offset + values,
-                )?,
+                psf: self
+                    .read_complex(&self.fields.psf, offset, values)?
+                    .into_owned()
+                    .into_boxed_slice(),
+                sensitivity: self
+                    .read_scalars(
+                        self.fields.sensitivity.start + offset
+                            ..self.fields.sensitivity.start + offset + values,
+                    )?
+                    .into_owned()
+                    .into_boxed_slice(),
                 primary_beam_weighted_sum: None,
                 sum_weights: self.sum_weights[plane_range.clone()].into(),
                 published_sum_weights: self.published_sum_weights[plane_range.clone()].into(),
@@ -1838,7 +1905,10 @@ impl StoredChannelNormalDomain {
                     .fields
                     .major_cycle_residual
                     .as_ref()
-                    .map(|f| self.read_complex(f, offset, values))
+                    .map(|f| {
+                        self.read_complex(f, offset, values)
+                            .map(|v| v.into_owned().into_boxed_slice())
+                    })
                     .transpose()?,
                 major_cycle_residual_promoted: self.major_cycle_residual_promoted,
                 residual_model: self.residual_model,
@@ -1879,7 +1949,10 @@ impl StoredChannelNormalDomain {
                 window_values
             };
             for start in (field.start..field.end).step_by(width) {
-                for value in self.read_scalars(start..start.saturating_add(width).min(field.end))? {
+                for &value in self
+                    .read_scalars(start..start.saturating_add(width).min(field.end))?
+                    .iter()
+                {
                     encoder.u64(if complex {
                         value.to_bits()
                     } else {

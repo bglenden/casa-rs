@@ -19,7 +19,7 @@
 //! diagnostic evidence: first-divergence comparisons between two recorded
 //! sequences are informational and never gate acceptance.
 
-use std::{collections::BTreeMap, fmt};
+use std::{borrow::Cow, collections::BTreeMap, fmt};
 
 use casa_imaging_model::{
     CompiledProblem, CompiledProblemId, HogbomIterationAccounting, LogicalIdentity, ModelCell,
@@ -1341,7 +1341,6 @@ pub fn run_minor_cycle(
     if view.channel_count() != 1 {
         return Err(MinorCycleError::ChannelCycleRequired);
     }
-    let view = &view.read_window(view.slab().core_range())?;
     let model_plane = controls.model_plane();
     lifecycle.validate_named_generation(base)?;
     let base = &base.read_window(
@@ -1351,8 +1350,11 @@ pub fn run_minor_cycle(
     run_minor_cycle_plane(
         lifecycle,
         base,
-        view.polarization_plane(0, controls.model_plane().polarization())
-            .ok_or(MinorCycleError::ModelShapeMismatch)?,
+        view.read_reconstruction_plane(
+            model_plane.domain(),
+            view.slab().core_range().start,
+            model_plane.polarization(),
+        )?,
         mask,
         controls,
     )
@@ -1361,7 +1363,7 @@ pub fn run_minor_cycle(
 struct ImageDomainHogbomWork<'a> {
     domain_ordinal: usize,
     shape: [usize; 2],
-    psf: &'a [num_complex::Complex64],
+    psf: Cow<'a, [num_complex::Complex64]>,
     model_plane: MinorCycleModelPlane,
     psf_peak: f64,
     psf_peak_pixel: [usize; 2],
@@ -1482,7 +1484,7 @@ pub(crate) fn run_image_domain_minor_cycle(
         work.push(ImageDomainHogbomWork {
             domain_ordinal: domain.ordinal(),
             shape,
-            psf: plane.normal_approximation(),
+            psf: plane.into_normal_approximation(),
             model_plane,
             psf_peak,
             psf_peak_pixel: plane_pixel(psf_peak_index, shape),
@@ -1664,7 +1666,7 @@ fn run_image_domain_hogbom_controllers(
             let peak_pixel = plane_pixel(peak_index, domain.shape);
             subtract_psf(
                 &mut domain.residual,
-                domain.psf,
+                &domain.psf,
                 domain.shape,
                 peak_pixel,
                 domain.psf_peak_pixel,
@@ -4777,7 +4779,7 @@ mod tests {
         ImageDomainHogbomWork {
             domain_ordinal,
             shape: [1, 1],
-            psf,
+            psf: std::borrow::Cow::Borrowed(psf),
             model_plane: MinorCycleModelPlane::new(domain_ordinal, 0, 0),
             psf_peak: 1.0,
             psf_peak_pixel: [0, 0],

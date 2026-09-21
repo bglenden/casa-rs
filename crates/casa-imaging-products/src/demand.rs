@@ -68,7 +68,7 @@ impl ContinuumGenerationDemand {
         self.retained_metadata_bytes
     }
 
-    /// Peak temporary beam-selection, fitting or active-member metadata storage.
+    /// Peak beam phase, including parallel input conversion, fitting and slots.
     #[must_use]
     pub const fn beam_scratch_bytes(self) -> u64 {
         self.beam_scratch_bytes
@@ -146,10 +146,28 @@ impl PlannedContinuumGeneration {
                 .max(bytes_for::<bool>(window_values, "product window validity")?);
         }
 
+        let requires_beam = self
+            .members()
+            .iter()
+            .any(|member| member.beam_rule() != ProductBeamRule::None);
+        let beam_jobs = if requires_beam {
+            inputs
+                .normal_state()
+                .domain_count()
+                .checked_mul(inputs.normal_state().channel_count())
+                .and_then(|count| count.checked_mul(inputs.normal_state().polarization_count()))
+                .ok_or(ProductsError::ResourceDemandOverflow(
+                    "generation beam count",
+                ))?
+        } else {
+            0
+        };
         let workers = match inputs.normal_state().catalog() {
             NormalStateCatalog::UnnormalizedTaylorBlockV1
             | NormalStateCatalog::UnnormalizedJointBlockV1 => 1,
-            _ => storage_plan.maximum_workers().min(maximum_windows),
+            _ => storage_plan
+                .maximum_workers()
+                .min(maximum_windows.max(beam_jobs)),
         };
         let storage_plan = ProductStoragePlan::new(storage_plan.maximum_channels(), workers)?;
 
@@ -184,7 +202,7 @@ impl PlannedContinuumGeneration {
             "windowed production scratch",
         )?;
         // Each lane can retain a completed window while another lane still owns
-        // its plane workspace. Beam fitting remains a serial prepass.
+        // its plane workspace. Beam fitting joins before these windows begin.
         algorithm_scratch_bytes = algorithm_scratch_bytes.checked_mul(workers as u64).ok_or(
             ProductsError::ResourceDemandOverflow("parallel product windows"),
         )?;
@@ -199,14 +217,29 @@ impl PlannedContinuumGeneration {
                 "parallel product slots",
             )?;
         }
-        let (retained_metadata_bytes, beam_scratch_bytes) = self.metadata_demand(inputs)?;
-        let peak_residency_bytes = checked_add(
-            algorithm_scratch_bytes,
+        let (retained_metadata_bytes, member_beam_bytes, beam_scratch_bytes) =
+            self.metadata_demand(inputs, workers)?;
+        let transient_bytes = if matches!(
+            inputs.normal_state().catalog(),
+            NormalStateCatalog::UnnormalizedTaylorBlockV1
+                | NormalStateCatalog::UnnormalizedJointBlockV1
+        ) {
             checked_add(
-                retained_metadata_bytes,
+                algorithm_scratch_bytes,
                 beam_scratch_bytes,
-                "product metadata",
-            )?,
+                "coupled beam workspace",
+            )?
+        } else {
+            checked_add(
+                algorithm_scratch_bytes,
+                member_beam_bytes,
+                "active member preparation",
+            )?
+            .max(beam_scratch_bytes)
+        };
+        let peak_residency_bytes = checked_add(
+            retained_metadata_bytes,
+            transient_bytes,
             "product generation residency",
         )?;
         Ok(ContinuumGenerationDemand {
@@ -225,7 +258,8 @@ impl PlannedContinuumGeneration {
     fn metadata_demand(
         &self,
         inputs: &ContinuumProductInputs<'_>,
-    ) -> Result<(u64, u64), ProductsError> {
+        workers: usize,
+    ) -> Result<(u64, u64, u64), ProductsError> {
         let state = inputs.normal_state();
         let domains = state.domain_count();
         if domains == 0 {
@@ -332,12 +366,29 @@ impl PlannedContinuumGeneration {
                 let shape = state
                     .domain_shape(ordinal)
                     .ok_or(ProductsError::SourceLineageMismatch)?;
-                fitting_scratch = fitting_scratch
-                    .max(casa_imaging_reconstruction::psf_fit_workspace_bytes(shape));
+                let cells = checked_shape_values([shape[0], shape[1], 1, 1])?;
+                let input = bytes_for::<f32>(cells, "beam real PSF")?;
+                // Paged PSFs own the decoded complex plane while converting to
+                // f32; fitting then retains only f32 and the fit workspace.
+                let conversion = bytes_for::<Complex64>(cells, "beam complex PSF")?;
+                fitting_scratch = fitting_scratch.max(
+                    checked_add(conversion, input, "beam input conversion")?.max(checked_add(
+                        input,
+                        casa_imaging_reconstruction::psf_fit_workspace_bytes(shape),
+                        "beam fitting workspace",
+                    )?),
+                );
             }
+            fitting_scratch = checked_mul(fitting_scratch, workers as u64, "parallel beam fits")?;
+            fitting_scratch = checked_add(
+                fitting_scratch,
+                bytes_for::<Option<Option<RestoringBeam>>>(workers, "beam summary slots")?,
+                "parallel beam summaries",
+            )?;
         }
         Ok((
             retained,
+            active_member_beams,
             active_member_beams.max(common_scratch).max(fitting_scratch),
         ))
     }

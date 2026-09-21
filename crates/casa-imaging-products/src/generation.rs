@@ -576,35 +576,36 @@ pub fn produce_continuum_members(
                 "generation beam count",
             ))?;
         let mut fitted = Vec::with_capacity(beam_count);
-        for (domain, local_channel, polarization) in inputs
-            .problem()
-            .geometry()
-            .domains()
-            .iter()
-            .flat_map(|domain| {
-                (0..channel_count).flat_map(move |local_channel| {
-                    (0..normal_state.polarization_count())
-                        .map(move |polarization| (domain, local_channel, polarization))
-                })
-            })
-        {
-            let channel = normal_state.slab().core_range().start + local_channel;
-            let plane = normal_state.read_plane(
-                inputs.model_domain_ordinal(domain.role())?,
-                channel,
-                polarization,
-            )?;
-            fitted.push(if plane.validity() == SpectralChannelValidity::Valid {
-                fit_restoring_beam(
-                    &psf_real_plane(&plane)?,
-                    plane.shape(),
-                    inputs.cell_size_rad_for_domain(domain.role())?,
-                    planned.psf_cutoff(),
-                )
-                .map(Some)?
-            } else {
-                None
-            });
+        for start in (0..beam_count).step_by(storage_plan.maximum_workers()) {
+            let count = storage_plan.maximum_workers().min(beam_count - start);
+            let mut slots = vec![None; count];
+            execution.prepare(&mut slots, &|index| {
+                let ordinal = start + index;
+                let polarization = ordinal % normal_state.polarization_count();
+                let local_channel = (ordinal / normal_state.polarization_count()) % channel_count;
+                let domain = &inputs.problem().geometry().domains()
+                    [ordinal / (channel_count * normal_state.polarization_count())];
+                let channel = normal_state.slab().core_range().start + local_channel;
+                let plane = normal_state.read_plane(
+                    inputs.model_domain_ordinal(domain.role())?,
+                    channel,
+                    polarization,
+                )?;
+                if plane.validity() == SpectralChannelValidity::Valid {
+                    fit_restoring_beam(
+                        &psf_real_plane(&plane)?,
+                        plane.shape(),
+                        inputs.cell_size_rad_for_domain(domain.role())?,
+                        planned.psf_cutoff(),
+                    )
+                    .map(Some)
+                } else {
+                    Ok(None)
+                }
+            })?;
+            for slot in slots {
+                fitted.push(slot.ok_or(ProductsError::SourceLineageMismatch)?);
+            }
         }
         fitted.into_boxed_slice()
     } else {

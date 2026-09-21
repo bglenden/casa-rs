@@ -474,6 +474,10 @@ impl ReconstructionCycle {
             });
         }
         let mut work = self.prepare_independent(lifecycle, base, normal, mask)?;
+        for ordinal in 0..work.threshold_plane_count() {
+            let statistics = work.plane_statistics(ordinal)?;
+            work.commit_statistics(statistics)?;
+        }
         for ordinal in 0..work.plane_count() {
             let input = work.prepare_plane(ordinal)?;
             let partial = work.execute_plane(&input)?;
@@ -484,9 +488,9 @@ impl ReconstructionCycle {
 
     /// Prepare immutable independent-plane work for a resource-admitted executor.
     ///
-    /// The reconstruction owner computes the common cycle threshold once. Each
-    /// plane may then execute independently, but only canonical, complete
-    /// collection can mint the combined Model Delta and cycle evidence.
+    /// The executor first collects bounded plane statistics in canonical order.
+    /// Only after that global threshold barrier may independent solves begin.
+    /// Complete ordered collection mints the combined Model Delta and evidence.
     #[doc(hidden)]
     pub fn prepare_independent<'a>(
         &'a self,
@@ -512,7 +516,10 @@ impl ReconstructionCycle {
                 normal,
                 mask,
             },
-            shared_cycle_threshold: shared_cycle_threshold(&self.program, normal)?,
+            shared_cycle_threshold: None,
+            threshold_planes: 0,
+            threshold_peak: 0.0,
+            threshold_sidelobe: 0.0,
             plane_count,
             terms: Vec::new(),
             channels: Vec::with_capacity(plane_count),
@@ -588,27 +595,26 @@ impl ReconstructionPlaneBinding<'_> {
 pub struct ReconstructionPlaneWork<'a> {
     binding: ReconstructionPlaneBinding<'a>,
     shared_cycle_threshold: Option<f64>,
+    threshold_planes: usize,
+    threshold_peak: f64,
+    threshold_sidelobe: f64,
     plane_count: usize,
     terms: Vec<ModelDeltaTerm>,
     channels: Vec<ChannelCycleEvidence>,
 }
 
-/// One coordinator-loaded plane input with no worker-side backing access.
+/// A validated plane descriptor; pixel storage is acquired by its worker.
 pub struct ReconstructionPlaneInput<'a> {
     binding: ReconstructionPlaneBinding<'a>,
     ordinal: usize,
-    model: Option<crate::ModelGenerationWindow<'a>>,
-    normal: crate::FinalNormalStateWindow<'a>,
 }
 
-impl ReconstructionPlaneInput<'_> {
-    /// Resident semantic sample buffer retained by this partition.
-    pub fn owned_bytes(&self) -> u64 {
-        self.model
-            .as_ref()
-            .map_or(0, |model| model.owned_bytes() as u64)
-            + self.normal.owned_bytes() as u64
-    }
+/// Compact owner-bound statistics, collected before any independent solve.
+pub struct ReconstructionPlaneStatistics<'a> {
+    binding: ReconstructionPlaneBinding<'a>,
+    ordinal: usize,
+    peak: f64,
+    sidelobe: f64,
 }
 
 /// Opaque result from exactly one admitted independent plane.
@@ -698,17 +704,17 @@ impl ReconstructionPlaneWorkspace {
             .saturating_mul(4 * size_of::<ModelDeltaTerm>() as u64)
             .saturating_add(evidence_bytes)
             .saturating_add(size_of::<ReconstructionPlaneWork<'_>>() as u64);
+        let cells = (shape[0] as u64).saturating_mul(shape[1] as u64);
+        let normal_bytes = cells.saturating_mul(2 * size_of::<num_complex::Complex64>() as u64);
+        let threshold_bytes = normal_bytes
+            .saturating_add(cells.saturating_mul(size_of::<f32>() as u64))
+            .saturating_add(crate::psf_fit_workspace_bytes(shape));
         Self {
             planes,
-            worker_bytes: plane.bytes.saturating_add(
-                crate::normal_state_window_residency_bytes(
-                    shape,
-                    polarizations,
-                    planes / polarizations,
-                    1,
-                )
-                .unwrap_or(u64::MAX),
-            ),
+            worker_bytes: plane
+                .bytes
+                .saturating_add(normal_bytes)
+                .max(threshold_bytes),
             retained_bytes,
         }
     }
@@ -773,7 +779,61 @@ impl<'a> ReconstructionPlaneWork<'a> {
         self.plane_count
     }
 
-    /// Load model support before a plane is dispatched to computation workers.
+    /// Single-plane reconstruction retains the existing local threshold rule.
+    #[must_use]
+    pub const fn threshold_plane_count(&self) -> usize {
+        if self.plane_count == 1 {
+            0
+        } else {
+            self.plane_count
+        }
+    }
+
+    /// Calculate exactly the existing per-plane entry peak and PSF sidelobe.
+    /// No sensitivity or model payload is read by this prepass.
+    pub fn plane_statistics(
+        &self,
+        ordinal: usize,
+    ) -> Result<ReconstructionPlaneStatistics<'a>, ReconstructionCycleError> {
+        if ordinal >= self.threshold_plane_count() {
+            return Err(ReconstructionCycleError::InvalidPlaneCoverage);
+        }
+        let normal = self.binding.normal;
+        let channel = normal.slab().core_range().start + ordinal % normal.channel_count();
+        let plane = normal.read_plane(0, channel, ordinal / normal.channel_count())?;
+        let (peak, sidelobe) = plane_cycle_statistics(&plane)?;
+        Ok(ReconstructionPlaneStatistics {
+            binding: self.binding,
+            ordinal,
+            peak,
+            sidelobe,
+        })
+    }
+
+    /// Fold a complete threshold prepass in its original polarization/channel order.
+    pub fn commit_statistics(
+        &mut self,
+        statistics: ReconstructionPlaneStatistics<'a>,
+    ) -> Result<(), ReconstructionCycleError> {
+        if !self.binding.same_inputs(statistics.binding)
+            || statistics.ordinal != self.threshold_planes
+            || self.threshold_planes >= self.threshold_plane_count()
+        {
+            return Err(ReconstructionCycleError::InvalidPlaneCoverage);
+        }
+        self.threshold_peak = self.threshold_peak.max(statistics.peak);
+        self.threshold_sidelobe = self.threshold_sidelobe.max(statistics.sidelobe);
+        self.threshold_planes += 1;
+        if self.threshold_planes == self.threshold_plane_count() {
+            self.shared_cycle_threshold = shared_cycle_threshold_from_statistics(
+                &self.binding.cycle.program,
+                [(self.threshold_peak, self.threshold_sidelobe)],
+            );
+        }
+        Ok(())
+    }
+
+    /// Validate a descriptor without loading pixel arrays on the coordinator.
     pub fn prepare_plane(
         &self,
         ordinal: usize,
@@ -781,72 +841,43 @@ impl<'a> ReconstructionPlaneWork<'a> {
         if ordinal >= self.plane_count {
             return Err(ReconstructionCycleError::InvalidPlaneCoverage);
         }
-        let normal = self.binding.normal;
-        let channel = normal.slab().core_range().start + ordinal % normal.channel_count();
-        let normal_window = normal.read_window(channel..channel + 1)?;
-        let plane = normal_window
-            .polarization_plane(0, ordinal / normal.channel_count())
-            .ok_or(ReconstructionCycleError::InvalidNormalStateSlab)?;
-        let model = if plane.validity() == SpectralChannelValidity::Valid {
-            Some(
-                self.binding
-                    .base
-                    .read_window(0, plane.output_channel()..plane.output_channel() + 1)?,
-            )
-        } else {
-            None
-        };
         Ok(ReconstructionPlaneInput {
             binding: self.binding,
             ordinal,
-            model,
-            normal: normal_window,
         })
     }
 
-    /// Execute one prepared plane against the shared entry threshold without I/O.
+    /// Acquire bounded read-only fields and run the existing solver on this worker.
     pub fn execute_plane(
         &self,
         input: &ReconstructionPlaneInput<'a>,
     ) -> Result<ReconstructionPlanePartial<'a>, ReconstructionCycleError> {
-        if !self.binding.same_inputs(input.binding) {
+        if !self.binding.same_inputs(input.binding)
+            || self.threshold_planes != self.threshold_plane_count()
+        {
             return Err(ReconstructionCycleError::InvalidPlaneCoverage);
         }
         let ordinal = input.ordinal;
         let ReconstructionPlaneBinding {
             cycle,
             lifecycle,
-            base: _,
+            base,
             normal,
             mask,
         } = self.binding;
         let polarization = ordinal / normal.channel_count();
-        let plane = input
-            .normal
-            .polarization_plane(0, polarization)
-            .ok_or(ReconstructionCycleError::InvalidNormalStateSlab)?;
-        let validity = plane.validity();
+        let channel = normal.slab().core_range().start + ordinal % normal.channel_count();
+        let validity = normal.read_plane(0, channel, polarization)?.validity();
         let (delta, minor_cycle) = if validity == SpectralChannelValidity::Valid {
+            let plane = normal.read_reconstruction_plane(0, channel, polarization)?;
+            let model = base.read_window(0, channel..channel + 1)?;
             let program = cycle
                 .program
                 .clone()
                 .with_fixed_cycle_threshold(self.shared_cycle_threshold)
-                .on_model_plane(MinorCycleModelPlane::new(
-                    0,
-                    plane.output_channel(),
-                    polarization,
-                ));
-            let (delta, evidence) = run_minor_cycle_plane(
-                lifecycle,
-                input
-                    .model
-                    .as_ref()
-                    .ok_or(ReconstructionCycleError::InvalidPlaneCoverage)?,
-                plane,
-                mask,
-                program,
-            )?
-            .into_parts();
+                .on_model_plane(MinorCycleModelPlane::new(0, channel, polarization));
+            let (delta, evidence) =
+                run_minor_cycle_plane(lifecycle, &model, plane, mask, program)?.into_parts();
             (delta, Some(evidence))
         } else {
             (None, None)
@@ -856,7 +887,7 @@ impl<'a> ReconstructionPlaneWork<'a> {
             ordinal,
             delta,
             evidence: ChannelCycleEvidence {
-                output_channel: plane.output_channel(),
+                output_channel: channel,
                 polarization,
                 validity,
                 minor_cycle,
@@ -1041,50 +1072,32 @@ fn shared_cycle_threshold_from_statistics(
     program.cycle_threshold_for(global_peak, maximum_sidelobe)
 }
 
-fn shared_cycle_threshold(
-    program: &MinorCycleProgram,
-    normal: &FinalNormalState,
-) -> Result<Option<f64>, MinorCycleError> {
-    if normal.channel_count() * normal.polarization_count() == 1 {
-        return Ok(None);
+fn plane_cycle_statistics(
+    plane: &crate::FinalNormalPlaneReader<'_>,
+) -> Result<(f64, f64), MinorCycleError> {
+    if plane.validity() != SpectralChannelValidity::Valid {
+        return Ok((0.0, 0.0));
     }
-    let mut global_peak = 0.0_f64;
-    let mut maximum_sidelobe = 0.0_f64;
-    for polarization in 0..normal.polarization_count() {
-        for local_channel in 0..normal.channel_count() {
-            let channel = normal.slab().core_range().start + local_channel;
-            let window = normal.read_window(channel..channel + 1)?;
-            let plane = window
-                .polarization_plane(0, polarization)
-                .ok_or(MinorCycleError::ModelShapeMismatch)?;
-            if plane.validity() != SpectralChannelValidity::Valid {
-                continue;
-            }
-            let psf = plane
-                .normal_approximation()
-                .iter()
-                .map(|value| value.re as f32)
-                .collect::<Vec<_>>();
-            let psf_peak = psf
-                .iter()
-                .map(|value| f64::from(value.abs()))
-                .fold(0.0_f64, f64::max);
-            if !(psf_peak.is_finite() && psf_peak > 0.0) {
-                return Err(MinorCycleError::InvalidPsfPeak);
-            }
-            let peak = plane
-                .residual()
-                .iter()
-                .map(|value| value.re.abs() / psf_peak)
-                .fold(0.0_f64, f64::max);
-            global_peak = global_peak.max(peak);
-            maximum_sidelobe =
-                maximum_sidelobe.max(crate::fitted_psf_sidelobe_fraction(&psf, plane.shape())?);
-        }
+    let psf = plane
+        .read_psf()?
+        .iter()
+        .map(|value| value.re as f32)
+        .collect::<Vec<_>>();
+    let psf_peak = psf
+        .iter()
+        .map(|value| f64::from(value.abs()))
+        .fold(0.0_f64, f64::max);
+    if !(psf_peak.is_finite() && psf_peak > 0.0) {
+        return Err(MinorCycleError::InvalidPsfPeak);
     }
-    Ok(shared_cycle_threshold_from_statistics(
-        program,
-        [(global_peak, maximum_sidelobe)],
+    let peak = plane
+        .read_residual()?
+        .iter()
+        .map(|value| value.re.abs() / psf_peak)
+        .fold(0.0_f64, f64::max);
+    Ok((
+        peak,
+        crate::fitted_psf_sidelobe_fraction(&psf, plane.shape())?,
     ))
 }
 

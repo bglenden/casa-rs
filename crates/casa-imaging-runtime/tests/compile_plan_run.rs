@@ -4937,6 +4937,13 @@ fn t55_small_cube_admits_owner_workspace_with_one_worker() {
         memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 1 << 20)]),
         ..ResourceOverride::default()
     });
+    let undersized_policy = ResourcePolicy::Explicit(ResourceOverride {
+        memory_bytes: BTreeMap::from([(
+            CapacityDomainId::new("host-memory"),
+            dense_array_estimate,
+        )]),
+        ..ResourceOverride::default()
+    });
     let policy = SpectralCycleExecutionPolicy::new(
         implementation(78),
         WeightingExecutionLimits::new(1, 1).unwrap(),
@@ -4944,7 +4951,7 @@ fn t55_small_cube_admits_owner_workspace_with_one_worker() {
         serial_storage_io(),
         SpectralCyclePlanningLimits::new(1_000, dense_array_estimate, 900_000),
         authority().clone(),
-        ResourcePolicy::Balanced,
+        undersized_policy.clone(),
     )
     .with_gridded_normal_storage(artifact_storage());
     let planned = SpectralCyclePlan::initial(&problem, &planning_registry, policy)
@@ -4955,11 +4962,11 @@ fn t55_small_cube_admits_owner_workspace_with_one_worker() {
         ReceiptRetention::new(1, 1_048_576).unwrap(),
     )
     .unwrap();
-    // Independent backing overhead exceeds Balanced's 75-percent host share.
-    // Refuse that budget, then admit the same minimum candidate within 1 MiB.
+    // The caller's dense-array estimate omits owner workspace. Reject that
+    // budget, then admit the same fully charged minimum candidate within 1 MiB.
     let rejected = runtime_plan(
         &problem,
-        PlanningBindings::new(registry(78), ResourcePolicy::Balanced, planning_profile(78)),
+        PlanningBindings::new(registry(78), undersized_policy, planning_profile(78)),
         authority(),
         &planning_registry,
         &receipts,

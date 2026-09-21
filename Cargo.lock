@@ -633,6 +633,7 @@ dependencies = [
 name = "casa-imaging-reconstruction"
 version = "0.27.0"
 dependencies = [
+ "bytemuck",
  "casa-images",
  "casa-imaging-model",
  "casa-numerics",
@@ -2872,6 +2873,7 @@ version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73f88a1307638156682bada9d7604135552957b7818057dcef22705b4d509495"
 dependencies = [
+ "bytemuck",
  "num-traits",
 ]
 

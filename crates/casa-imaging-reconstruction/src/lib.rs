@@ -91,8 +91,8 @@ pub mod runtime_adapter {
     };
     pub use crate::major_cycle::CubeNormalRefresh;
     pub use crate::reconstruction_cycle::{
-        ReconstructionPlaneInput, ReconstructionPlanePartial, ReconstructionPlaneWork,
-        ReconstructionPlaneWorkspace,
+        ReconstructionPlaneInput, ReconstructionPlanePartial, ReconstructionPlaneStatistics,
+        ReconstructionPlaneWork, ReconstructionPlaneWorkspace,
     };
     pub use crate::spectral_operator::PreparedFft;
     pub use crate::spectral_operator::normal_storage::{

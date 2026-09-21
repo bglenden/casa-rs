@@ -13,7 +13,7 @@
 //! three members are never separable outside this operation, and none is a
 //! Product Generation seal or publication authority.
 
-use std::fmt;
+use std::{borrow::Cow, fmt};
 
 #[cfg(test)]
 pub(crate) mod native_minor_fixture;
@@ -519,6 +519,26 @@ impl FinalNormalState {
         self.primitives
             .read_plane(domain_ordinal, absolute_channel, polarization)
     }
+
+    pub(crate) fn read_reconstruction_plane(
+        &self,
+        domain_ordinal: usize,
+        absolute_channel: usize,
+        polarization: usize,
+    ) -> Result<FinalNormalStatePlane<'_>, SpectralOperatorError> {
+        let plane = self.read_plane(domain_ordinal, absolute_channel, polarization)?;
+        Ok(FinalNormalStatePlane {
+            owner: self,
+            domain_ordinal,
+            output_channel: absolute_channel,
+            polarization,
+            shape: plane.shape(),
+            validity: plane.validity(),
+            sum_weight: plane.sum_weight(),
+            residual: plane.read_residual()?,
+            psf: plane.read_psf()?,
+        })
+    }
 }
 
 /// Incomplete residual-only candidate; no complete-state access until coverage
@@ -741,12 +761,14 @@ impl FinalNormalStateWindow<'_> {
         }
         Some(FinalNormalStatePlane {
             owner: self.owner,
-            domain: self.primitives.get(0)?,
-            local_channel,
+            domain_ordinal: self.primitives.get(0)?.domain_ordinal(),
+            output_channel: self.primitives.slab().core_range().start + local_channel,
             polarization,
-            residual: self.primitives.dirty().get(start..end)?,
-            psf: self.primitives.psf().get(start..end)?,
-            sensitivity: self.primitives.sensitivity().get(start..end)?,
+            shape: self.shape(),
+            validity: *self.primitives.channel_validity().get(plane)?,
+            sum_weight: *self.primitives.sum_weights().get(plane)?,
+            residual: Cow::Borrowed(self.primitives.dirty().get(start..end)?),
+            psf: Cow::Borrowed(self.primitives.psf().get(start..end)?),
         })
     }
 }
@@ -855,12 +877,14 @@ impl<'a> FinalNormalDomainState<'a> {
         }
         Some(FinalNormalStatePlane {
             owner: self.owner,
-            domain: self.domain,
-            local_channel,
+            domain_ordinal: self.domain.domain_ordinal(),
+            output_channel: primitives.slab().core_range().start + local_channel,
             polarization,
-            residual: primitives.dirty().get(start..end)?,
-            psf: primitives.psf().get(start..end)?,
-            sensitivity: primitives.sensitivity().get(start..end)?,
+            shape: primitives.shape(),
+            validity: *primitives.channel_validity().get(plane)?,
+            sum_weight: *primitives.sum_weights().get(plane)?,
+            residual: Cow::Borrowed(primitives.dirty().get(start..end)?),
+            psf: Cow::Borrowed(primitives.psf().get(start..end)?),
         })
     }
 }
@@ -935,79 +959,78 @@ impl<'a> FinalNormalStateNormalMoment<'a> {
     }
 }
 
-/// Borrowed two-dimensional plane of one authoritative Normal State slab.
-#[derive(Debug, Clone, Copy)]
+/// Read-only reconstruction fields for one authoritative Normal State plane.
+/// Resident fields borrow their backing; paged fields own only the selected plane.
+#[derive(Debug)]
 pub struct FinalNormalStatePlane<'a> {
     owner: &'a FinalNormalState,
-    domain: &'a crate::spectral_operator::SpectralDomainPrimitives,
-    local_channel: usize,
+    domain_ordinal: usize,
+    output_channel: usize,
     polarization: usize,
-    residual: &'a [num_complex::Complex64],
-    psf: &'a [num_complex::Complex64],
-    sensitivity: &'a [f64],
+    shape: [usize; 2],
+    validity: crate::SpectralChannelValidity,
+    sum_weight: f64,
+    residual: Cow<'a, [num_complex::Complex64]>,
+    psf: Cow<'a, [num_complex::Complex64]>,
 }
 
 impl<'a> FinalNormalStatePlane<'a> {
+    pub(crate) fn into_normal_approximation(self) -> Cow<'a, [num_complex::Complex64]> {
+        self.psf
+    }
+
     /// Return the slab owner this view borrows.
     #[must_use]
-    pub const fn owner(self) -> &'a FinalNormalState {
+    pub const fn owner(&self) -> &'a FinalNormalState {
         self.owner
     }
 
     /// Return the canonical image-domain ordinal of this plane.
     #[must_use]
-    pub const fn domain_ordinal(self) -> usize {
-        self.domain.domain_ordinal()
+    pub const fn domain_ordinal(&self) -> usize {
+        self.domain_ordinal
     }
 
     /// Return the absolute output-channel ordinal.
     #[must_use]
-    pub fn output_channel(self) -> usize {
-        self.domain.primitives().slab().core_range().start + self.local_channel
+    pub const fn output_channel(&self) -> usize {
+        self.output_channel
     }
 
     /// Return the reconstruction polarization-plane ordinal.
     #[must_use]
-    pub const fn polarization(self) -> usize {
+    pub const fn polarization(&self) -> usize {
         self.polarization
     }
 
     /// Return this plane's model-dependent unnormalized residual.
     #[must_use]
-    pub const fn residual(self) -> &'a [num_complex::Complex64] {
-        self.residual
+    pub fn residual(&self) -> &[num_complex::Complex64] {
+        &self.residual
     }
 
     /// Return this plane's unnormalized PSF approximation.
     #[must_use]
-    pub const fn normal_approximation(self) -> &'a [num_complex::Complex64] {
-        self.psf
-    }
-
-    /// Return this plane's per-pixel sensitivity values.
-    #[must_use]
-    pub const fn sensitivity(self) -> &'a [f64] {
-        self.sensitivity
+    pub fn normal_approximation(&self) -> &[num_complex::Complex64] {
+        &self.psf
     }
 
     /// Return this plane's accumulated sum weight.
     #[must_use]
-    pub fn sum_weight(self) -> f64 {
-        self.domain.primitives().sum_weights()
-            [self.local_channel * self.domain.primitives().polarization_count() + self.polarization]
+    pub const fn sum_weight(&self) -> f64 {
+        self.sum_weight
     }
 
     /// Return the common direction-plane shape.
     #[must_use]
-    pub fn shape(self) -> [usize; 2] {
-        self.domain.primitives().shape()
+    pub const fn shape(&self) -> [usize; 2] {
+        self.shape
     }
 
     /// Return mapped, blank, or unmapped channel validity.
     #[must_use]
-    pub fn validity(self) -> crate::SpectralChannelValidity {
-        self.domain.primitives().channel_validity()
-            [self.local_channel * self.domain.primitives().polarization_count() + self.polarization]
+    pub const fn validity(&self) -> crate::SpectralChannelValidity {
+        self.validity
     }
 }
 
