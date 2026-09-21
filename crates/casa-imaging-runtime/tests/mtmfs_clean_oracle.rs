@@ -168,6 +168,7 @@ fn full_product_window(
             .map(|member| member.axes().spectral().output_channels())
             .max()
             .expect("planned continuum generation has members"),
+        1,
     )
     .expect("planned continuum generation has positive channels")
 }
@@ -449,7 +450,7 @@ fn t44_real_ms_mtmfs_products_match_frozen_casa() -> Result<(), Box<dyn Error>> 
     }
     let window = full_product_window(&planned);
     let output_windows = OracleProductOutput::default();
-    let generated = produce_continuum_members(&planned, &inputs, window, &output_windows)?;
+    let generated = produce_continuum_members(&planned, &inputs, window, &(), &output_windows)?;
     let names = generated
         .members()
         .iter()

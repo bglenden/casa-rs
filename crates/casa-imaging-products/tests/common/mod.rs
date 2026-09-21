@@ -53,6 +53,7 @@ pub fn full_window(planned: &PlannedContinuumGeneration) -> ProductStoragePlan {
             .map(|member| member.axes().spectral().output_channels())
             .max()
             .unwrap(),
+        1,
     )
     .unwrap()
 }

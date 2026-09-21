@@ -20,6 +20,26 @@ use std::{
 const GENERATE: &str = "product-generation-write";
 const COMMIT: &str = "product-publication-commit";
 
+impl casa_imaging_products::ProductWindowExecutor for crate::bounded_stream::FixedWorkerTeam {
+    fn prepare(
+        &self,
+        slots: &mut [Option<casa_imaging_products::ProductWindow>],
+        operation: &(
+             dyn Fn(
+            usize,
+        ) -> Result<
+            casa_imaging_products::ProductWindow,
+            casa_imaging_products::ProductsError,
+        > + Sync
+         ),
+    ) -> Result<(), casa_imaging_products::ProductsError> {
+        self.for_each_mut(slots, |index, slot| {
+            *slot = Some(operation(index)?);
+            Ok(())
+        })
+    }
+}
+
 /// Write-only generation destination with individual-image atomic replacement.
 ///
 /// A failed publication fails the run. The output set is incomplete and must be
@@ -124,6 +144,17 @@ fn build_physical<R: ImplementationRegistry>(
 ) -> Result<PhysicalWorkBinding, SerialProductPublicationPlanError> {
     let generate = WorkNodeId::new(GENERATE);
     let commit = WorkNodeId::new(COMMIT);
+    let workers = demand.storage_plan().maximum_workers() as u64;
+    let stack_bytes = if workers == 1 {
+        0
+    } else {
+        workers
+            .checked_mul(
+                (crate::bounded_stream::BOUNDED_WORKER_STACK_BYTES
+                    + std::mem::size_of::<std::thread::JoinHandle<()>>()) as u64,
+            )
+            .ok_or(SerialProductPublicationPlanError::Overflow)?
+    };
     let payload_bytes = publication
         .entries()
         .iter()
@@ -141,6 +172,7 @@ fn build_physical<R: ImplementationRegistry>(
     let scratch_bytes = demand
         .peak_residency_bytes()
         .checked_sub(demand.retained_metadata_bytes())
+        .and_then(|bytes| bytes.checked_add(stack_bytes))
         .ok_or(SerialProductPublicationPlanError::Overflow)?
         .max(1);
     let allocation_id = AllocationId::new("product-generation-window");
@@ -168,7 +200,7 @@ fn build_physical<R: ImplementationRegistry>(
             implementation: policy.implementation.clone(),
             dependencies: BTreeSet::new(),
             claims: vec![
-                claim(LeaseResource::Workers, 1, ClaimLifetime::Work),
+                claim(LeaseResource::Workers, workers, ClaimLifetime::Work),
                 claim(LeaseResource::FileDescriptors, 1, ClaimLifetime::Work),
                 claim(staged.clone(), payload_bytes, ClaimLifetime::Work),
                 claim(
@@ -344,7 +376,7 @@ fn build_physical<R: ImplementationRegistry>(
                 memory("product-output-writer", writer_bytes),
                 memory("product-publication-commit", 1),
             ],
-            workers: CountDemand::new(1, 1),
+            workers: CountDemand::new(workers, workers),
             overhead: RuntimeOverheadDemand::zero(),
             storage: vec![StorageDemand {
                 demand_id: storage_demand,
@@ -381,8 +413,8 @@ fn build_physical<R: ImplementationRegistry>(
         },
         headroom: ResourceHeadroom::default(),
         scaling: ScalingMetadata {
-            minimum_workers: 1,
-            maximum_workers: 1,
+            minimum_workers: workers,
+            maximum_workers: workers,
             maximum_batch_size: 1,
             maximum_tile_width: 1,
             maximum_tile_height: 1,
@@ -397,7 +429,10 @@ fn build_physical<R: ImplementationRegistry>(
         nodes,
         logical_allocations: allocations,
         physical_slots: slots,
-        initial_knobs: ExecutionKnobs::serial(),
+        initial_knobs: ExecutionKnobs {
+            workers,
+            ..ExecutionKnobs::serial()
+        },
         adaptations: vec![],
     })?;
     let predictions = dag
@@ -703,8 +738,16 @@ impl<S: SerialProductPublicationSink> WorkImplementation for SerialProductPublic
                 }
                 .map_err(SerialProductPublicationExecutionError::Products)?;
             }
-            let generated = produce_continuum_members(&planned, &inputs, self.window, &self.sink)
-                .map_err(SerialProductPublicationExecutionError::Products)?;
+            if context.knobs().workers != self.window.maximum_workers() as u64 {
+                return Err(SerialProductPublicationExecutionError::State);
+            }
+            let team = crate::bounded_stream::FixedWorkerTeam::new(self.window.maximum_workers())
+                .map_err(|error| {
+                SerialProductPublicationExecutionError::Workers(format!("{error:?}"))
+            })?;
+            let generated =
+                produce_continuum_members(&planned, &inputs, self.window, &team, &self.sink)
+                    .map_err(SerialProductPublicationExecutionError::Products)?;
             *state = SerialProductPublicationState::Generated(SerialProductPublicationCompletion {
                 planned,
                 scientific,
@@ -801,6 +844,8 @@ impl<S: SerialProductPublicationSink> WorkImplementation for SerialProductPublic
 /// Direct generation or output I/O failure.
 #[derive(Debug)]
 pub enum SerialProductPublicationExecutionError<E> {
+    /// The admitted worker team could not be started.
+    Workers(String),
     /// Missing, foreign, or already-consumed execution state.
     State,
     /// Scientific generation or bounded writer error.

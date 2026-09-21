@@ -11,25 +11,19 @@ use crate::bounded_stream::{
     execute_bounded_resident,
 };
 use casa_imaging_reconstruction::{
-    ModelGeneration, PolarizationOperator, SpectralOperatorPrimitives,
-    runtime_adapter::{BandPlan, NativeBlock, NativeLayout, PreparedFft},
+    ModelGeneration, PolarizationOperator,
+    runtime_adapter::{BandPlan, BandResult, NativeBlock, NativeLayout, PreparedFft},
 };
 use std::{io, mem::size_of, sync::Mutex, time::Instant};
 
 pub(super) struct BandInput {
     pub(super) plan: BandPlan,
-    pub(super) prior: Option<SpectralOperatorPrimitives>,
     pub(super) fft: Option<PreparedFft>,
 }
 
 enum BandJob {
     Pending(BandInput),
-    Completed(
-        SpectralOperatorPrimitives,
-        PreparedFft,
-        (usize, usize),
-        BandProfile,
-    ),
+    Completed(BandResult, PreparedFft, (usize, usize), BandProfile),
 }
 
 // Diagnostic only: aggregate at block boundaries and print after the worker join.
@@ -71,46 +65,6 @@ fn overflow() -> io::Error {
 }
 
 impl WavePlan {
-    /// Select without loading image data: fresh-normal work plus a complete
-    /// prior window bounds the smaller residual-only workspace. Actual jobs
-    /// are checked again by `new` before any grids or workers are allocated.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn refresh_prefix(
-        store: StorePlan,
-        bands: &[BandPlan],
-        workers: usize,
-        source_slots: usize,
-        shared_bytes: u64,
-        budget: u64,
-        prior_window_bytes: u64,
-    ) -> io::Result<usize> {
-        let full: Vec<_> = bands.iter().map(BandPlan::full_refresh).collect();
-        let mut low = 0;
-        let mut high = full.len();
-        while low < high {
-            let count = low + (high - low).div_ceil(2);
-            let projected = Self::project(
-                store,
-                full[..count].iter().map(|b| (b, None)),
-                workers,
-                source_slots,
-                shared_bytes,
-            )?;
-            let peak = prior_window_bytes
-                .checked_mul(count as u64)
-                .and_then(|n| n.checked_add(projected.peak_bytes))
-                .ok_or_else(overflow)?;
-            if peak <= budget {
-                low = count;
-            } else {
-                high = count - 1;
-            }
-        }
-        if low == 0 {
-            return Err(io::Error::other("cube budget cannot hold one refresh band"));
-        }
-        Ok(low)
-    }
     /// `shared_bytes` includes live compiled inputs/model/storage/sink owners
     /// outside this wave. All jobs can retain grids or completed images at once,
     /// so charge the sum of their individual peaks, never just worker_count.
@@ -124,7 +78,7 @@ impl WavePlan {
     ) -> io::Result<Self> {
         let plan = Self::project(
             store.plan,
-            jobs.iter().map(|job| (&job.plan, job.prior.as_ref())),
+            jobs.iter().map(|job| &job.plan),
             workers,
             source_slots,
             shared_bytes,
@@ -139,7 +93,7 @@ impl WavePlan {
     /// descriptors exist during selection; no grids, FFTs or images allocate.
     /// The caller charges all retained plan metadata in `shared_bytes`, drains
     /// each wave into bounded normal storage, then selects the next prefix.
-    pub(super) fn initial_prefix(
+    pub(super) fn prefix(
         store: StorePlan,
         bands: &[BandPlan],
         workers: usize,
@@ -153,7 +107,7 @@ impl WavePlan {
             let count = low + (high - low).div_ceil(2);
             let plan = Self::project(
                 store,
-                bands[..count].iter().map(|band| (band, None)),
+                bands[..count].iter(),
                 workers,
                 source_slots,
                 shared_bytes,
@@ -172,7 +126,7 @@ impl WavePlan {
 
     pub(super) fn project<'a>(
         store: StorePlan,
-        jobs: impl ExactSizeIterator<Item = (&'a BandPlan, Option<&'a SpectralOperatorPrimitives>)>,
+        jobs: impl ExactSizeIterator<Item = &'a BandPlan>,
         workers: usize,
         source_slots: usize,
         shared_bytes: u64,
@@ -187,7 +141,7 @@ impl WavePlan {
         let mut job_bytes = Vec::with_capacity(count);
         let mut dynamic = 0_u64;
         let mut previous_end = None;
-        for (band, prior) in jobs {
+        for band in jobs {
             if previous_end.is_some_and(|end| end != band.core().start) {
                 return Err(io::Error::other("nonadjacent cube band wave"));
             }
@@ -202,7 +156,7 @@ impl WavePlan {
                 );
                 NativeSource::memory(store, native)?.1
             };
-            let bytes = u64::try_from(band.memory(prior).map_err(io::Error::other)?.peak_bytes())
+            let bytes = u64::try_from(band.memory().map_err(io::Error::other)?.peak_bytes())
                 .map_err(|_| overflow())?
                 .checked_add(input)
                 .ok_or_else(overflow)?;
@@ -214,7 +168,7 @@ impl WavePlan {
             .checked_mul(
                 size_of::<BandInput>()
                     + size_of::<Mutex<Option<BandJob>>>()
-                    + size_of::<(SpectralOperatorPrimitives, PreparedFft)>()
+                    + size_of::<(BandResult, PreparedFft)>()
                     + 2 * size_of::<u64>(),
             )
             .and_then(|bytes| {
@@ -251,7 +205,7 @@ impl WavePlan {
 }
 
 pub(super) struct WaveResult {
-    pub(super) bands: Vec<(SpectralOperatorPrimitives, PreparedFft)>,
+    pub(super) bands: Vec<(BandResult, PreparedFft)>,
     pub(super) source: StoreIo,
 }
 
@@ -368,7 +322,7 @@ impl PartitionedKernel<()> for BandKernel<'_> {
         let prepare_started = self.profile.then(Instant::now);
         let mut job = input
             .plan
-            .prepare(self.generation, input.prior, input.fft)
+            .prepare(self.generation, input.fft)
             .map_err(io::Error::other)?;
         if let Some(started) = prepare_started {
             profile.prepare_nanos = started.elapsed().as_nanos();

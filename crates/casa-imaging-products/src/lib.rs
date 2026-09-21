@@ -34,7 +34,8 @@ pub use restore::{
 };
 pub use source::ContinuumProductInputs;
 pub use storage::{
-    ProductOutput, ProductStoragePlan, ProductWindow, ProductWindowLayout, ProductWriter,
+    ProductOutput, ProductStoragePlan, ProductWindow, ProductWindowExecutor, ProductWindowLayout,
+    ProductWriter,
 };
 pub use visibility::{
     ModelVisibilityProductId, ResidualVisibilityProductId, VisibilityProductAuthority,

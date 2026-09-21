@@ -73,6 +73,8 @@ const GRIDDED_NORMAL_SOURCE_SLOTS: u64 = 2;
 #[cfg(any(test, casa_streaming_cube_comparison))]
 #[path = "streaming_cube/completion.rs"]
 mod streaming_completion;
+#[cfg(any(test, casa_streaming_cube_comparison))]
+pub(crate) use streaming_completion::PendingCubeRefresh;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum GriddedNormalReplayPlanningCapacity {

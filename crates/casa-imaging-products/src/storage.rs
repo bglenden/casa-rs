@@ -12,15 +12,25 @@ use crate::{PlannedMember, ProductsError, RestoringBeam};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProductStoragePlan {
     maximum_channels: usize,
+    maximum_workers: usize,
 }
 
 impl ProductStoragePlan {
     /// Select a positive channel-window capacity; one channel is the atomic plane.
-    pub fn new(maximum_channels: usize) -> Result<Self, ProductsError> {
-        if maximum_channels == 0 {
+    pub fn new(maximum_channels: usize, maximum_workers: usize) -> Result<Self, ProductsError> {
+        if maximum_channels == 0 || maximum_workers == 0 {
             return Err(ProductsError::InvalidWindow);
         }
-        Ok(Self { maximum_channels })
+        Ok(Self {
+            maximum_channels,
+            maximum_workers,
+        })
+    }
+
+    /// Maximum simultaneously prepared windows, bounded by admitted workers.
+    #[must_use]
+    pub const fn maximum_workers(self) -> usize {
+        self.maximum_workers
     }
 
     /// Return the selected maximum number of resident output channels.
@@ -94,7 +104,7 @@ impl ProductWindowLayout {
         values_for(self.shape)
     }
 
-    fn window(self, channels: Range<usize>) -> Result<ProductWindow, ProductsError> {
+    pub(crate) fn window(self, channels: Range<usize>) -> Result<ProductWindow, ProductsError> {
         if channels.start >= channels.end
             || channels.end > self.shape[self.spectral_axis]
             || channels.len() > self.maximum_channels
@@ -112,6 +122,32 @@ impl ProductWindowLayout {
             payload: vec![0.0; values],
             validity: vec![true; values],
         })
+    }
+}
+
+/// Borrowed execution of a bounded wave of independent product windows.
+///
+/// Implementations must join all preparation before returning, including on
+/// failure. Physical writers remain on the caller and never enter this hook.
+pub trait ProductWindowExecutor {
+    /// Fill each slot using its wave-local index, or return a joined failure.
+    fn prepare(
+        &self,
+        slots: &mut [Option<ProductWindow>],
+        operation: &(dyn Fn(usize) -> Result<ProductWindow, ProductsError> + Sync),
+    ) -> Result<(), ProductsError>;
+}
+
+impl ProductWindowExecutor for () {
+    fn prepare(
+        &self,
+        slots: &mut [Option<ProductWindow>],
+        operation: &(dyn Fn(usize) -> Result<ProductWindow, ProductsError> + Sync),
+    ) -> Result<(), ProductsError> {
+        for (index, slot) in slots.iter_mut().enumerate() {
+            *slot = Some(operation(index)?);
+        }
+        Ok(())
     }
 }
 

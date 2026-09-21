@@ -128,6 +128,93 @@ fn can_admit(authority: &ResourceAuthority, bytes: u64) -> bool {
 }
 
 #[test]
+fn artifact_memory_partitions_release_independently_and_preserve_export_liveness() {
+    for drop_before_finalize in [false, true] {
+        let owner = WorkNodeId::new("seal");
+        let mut specification = artifact_specification();
+        specification.logical_allocations[1].lifetime.disposition =
+            AllocationDisposition::ExportImmutableArtifact {
+                owner_node: owner.clone(),
+            };
+        let dag = ExecutionDag::new(specification).unwrap();
+        let authority = io_authority_with_workers_and_memory(2, 1024);
+        let mut scheduler =
+            ExecutionScheduler::start(&dag, &ResourcePolicy::Exclusive, &authority, None).unwrap();
+        assert!(matches!(
+            scheduler.next_action().unwrap(),
+            SchedulerAction::Work(_)
+        ));
+        scheduler
+            .finish_work(owner.clone(), WorkResult::Succeeded)
+            .unwrap();
+        scheduler
+            .complete_fence(FenceId::new(owner.clone(), FenceKind::Io))
+            .unwrap();
+        let permit = scheduler.take_artifact_permit(&owner).unwrap().unwrap();
+        let allocations = [
+            &dag.logical_allocations[&AllocationId::new("metadata")],
+            &dag.logical_allocations[&AllocationId::new("transient")],
+        ];
+        let mut partitions = permit
+            .partition_immutable_allocations(&owner, &allocations)
+            .unwrap();
+        let epoch = Arc::new(partitions.pop().unwrap());
+        let epoch_reader = epoch.clone();
+        let invariants = partitions.pop().unwrap();
+        assert!(invariants.covers_exact_immutable_allocation(&owner, allocations[0]));
+        assert!(epoch.covers_exact_immutable_allocation(&owner, allocations[1]));
+        assert!(Arc::ptr_eq(&epoch._liveness, &invariants._liveness));
+        drop(epoch);
+        assert!(!can_admit(&authority, 225));
+        let mut epoch_reader = Some(epoch_reader);
+        if drop_before_finalize {
+            drop(epoch_reader.take());
+        }
+        assert_eq!(
+            scheduler.next_action().unwrap(),
+            SchedulerAction::Complete(SchedulerTerminal::Succeeded)
+        );
+        drop(epoch_reader);
+        assert!(can_admit(&authority, 824));
+        assert!(!can_admit(&authority, 825));
+        drop(invariants);
+        assert!(can_admit(&authority, 1024));
+    }
+}
+
+#[test]
+fn artifact_memory_partition_rejects_an_inexact_allocation_before_transfer() {
+    let dag = ExecutionDag::new(artifact_specification()).unwrap();
+    let authority = io_authority_with_workers_and_memory(2, 1024);
+    let mut scheduler =
+        ExecutionScheduler::start(&dag, &ResourcePolicy::Exclusive, &authority, None).unwrap();
+    let owner = WorkNodeId::new("seal");
+    assert!(matches!(
+        scheduler.next_action().unwrap(),
+        SchedulerAction::Work(_)
+    ));
+    scheduler
+        .finish_work(owner.clone(), WorkResult::Succeeded)
+        .unwrap();
+    scheduler
+        .complete_fence(FenceId::new(owner.clone(), FenceKind::Io))
+        .unwrap();
+    let permit = scheduler.take_artifact_permit(&owner).unwrap().unwrap();
+    let mut changed = dag.logical_allocations[&AllocationId::new("metadata")].clone();
+    changed.bytes += 1;
+    assert!(
+        permit
+            .partition_immutable_allocations(&owner, &[&changed])
+            .is_err()
+    );
+    assert_eq!(
+        scheduler.next_action().unwrap(),
+        SchedulerAction::Complete(SchedulerTerminal::Succeeded)
+    );
+    assert!(can_admit(&authority, 1024));
+}
+
+#[test]
 fn t55_artifact_export_preserves_memory_until_the_final_owning_alias() {
     let dag = ExecutionDag::new(artifact_specification()).expect("immutable export plan");
     let authority = io_authority_with_workers_and_memory(2, 1024);

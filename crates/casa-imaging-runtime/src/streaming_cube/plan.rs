@@ -28,7 +28,6 @@ pub(super) struct NativePhasePlan {
     reconcile: WorkNodeId,
     storage_id: String,
     imported: bool,
-    pub(super) prior_window_bytes: u64,
 }
 
 fn overflow() -> io::Error {
@@ -131,7 +130,7 @@ impl NativePhasePlan {
             shared_owner_bytes,
             workers,
             source_slots,
-            None,
+            false,
         )
     }
 
@@ -146,11 +145,9 @@ impl NativePhasePlan {
         shared_owner_bytes: u64,
         workers: usize,
         source_slots: usize,
-        prior_window_bytes: Option<u64>,
+        imported: bool,
     ) -> io::Result<Self> {
-        if prior_window_bytes.is_none()
-            && bands.iter().any(|band| !band.is_certified_empty_initial())
-        {
+        if !imported && bands.iter().any(|band| !band.is_certified_empty_initial()) {
             return Err(io::Error::other(
                 "native initial phase requires a certified empty model",
             ));
@@ -211,59 +208,26 @@ impl NativePhasePlan {
             // its eventual growth before the source pass discovers that support.
             .and_then(|bytes| bytes.checked_add(metadata))
             .ok_or_else(overflow)?;
-        let full: Vec<_> = if prior_window_bytes.is_some() {
-            bands.iter().map(BandPlan::full_refresh).collect()
-        } else {
-            bands.to_vec()
-        };
-        let all = WavePlan::project(
-            store,
-            full.iter().map(|band| (band, None)),
-            workers,
-            source_slots,
-            wave_shared,
-        )?
-        .peak_bytes
-        .checked_add(
-            prior_window_bytes
-                .unwrap_or(0)
-                .checked_mul(bands.len() as u64)
-                .ok_or_else(overflow)?,
-        )
-        .ok_or_else(overflow)?;
+        let all =
+            WavePlan::project(store, bands.iter(), workers, source_slots, wave_shared)?.peak_bytes;
         let mut minimum = preparation;
-        for band in &full {
+        for band in bands {
             minimum = minimum.max(
                 WavePlan::project(
                     store,
-                    std::iter::once((band, None)),
+                    std::iter::once(band),
                     workers,
                     source_slots,
                     wave_shared,
                 )?
-                .peak_bytes
-                .checked_add(prior_window_bytes.unwrap_or(0))
-                .ok_or_else(overflow)?,
+                .peak_bytes,
             );
         }
         let mut worker_wave_bytes = minimum;
-        for wave in full.windows(workers.min(full.len())) {
+        for wave in bands.windows(workers.min(bands.len())) {
             worker_wave_bytes = worker_wave_bytes.max(
-                WavePlan::project(
-                    store,
-                    wave.iter().map(|band| (band, None)),
-                    workers,
-                    source_slots,
-                    wave_shared,
-                )?
-                .peak_bytes
-                .checked_add(
-                    prior_window_bytes
-                        .unwrap_or(0)
-                        .checked_mul(wave.len() as u64)
-                        .ok_or_else(overflow)?,
-                )
-                .ok_or_else(overflow)?,
+                WavePlan::project(store, wave.iter(), workers, source_slots, wave_shared)?
+                    .peak_bytes,
             );
         }
         let available = authority
@@ -273,7 +237,7 @@ impl NativePhasePlan {
         if std::env::var_os("CASA_RS_TRACE_IMAGING_STAGE_TIMING").is_some() {
             eprintln!(
                 "streaming_cube_phase_plan imported={} workers={workers} available_bytes={available} workspace_bytes={workspace_bytes} minimum_bytes={minimum} worker_wave_bytes={worker_wave_bytes} shared_bytes={shared_bytes} preparation_bytes={preparation} all_bands_bytes={all}",
-                prior_window_bytes.is_some(),
+                imported,
             );
         }
         if minimum > workspace_bytes {
@@ -291,8 +255,7 @@ impl NativePhasePlan {
             read,
             reconcile,
             storage_id,
-            imported: prior_window_bytes.is_some(),
-            prior_window_bytes: prior_window_bytes.unwrap_or(0),
+            imported,
         })
     }
 

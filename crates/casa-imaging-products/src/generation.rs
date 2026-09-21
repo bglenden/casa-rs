@@ -524,6 +524,7 @@ pub fn produce_continuum_members(
     planned: &PlannedContinuumGeneration,
     inputs: &ContinuumProductInputs<'_>,
     storage_plan: ProductStoragePlan,
+    execution: &impl crate::ProductWindowExecutor,
     output: &dyn ProductOutput,
 ) -> Result<PublishedContinuumGeneration, ProductsError> {
     if inputs.problem().problem_id() != planned.problem_id
@@ -668,110 +669,123 @@ pub fn produce_continuum_members(
         )?;
         let writer = output.begin_member(member, layout, &member_beams)?;
         let mut writer = ProductMemberWriter::new(layout, writer)?;
-        for window_start in (0..channel_count).step_by(layout.maximum_channels()) {
-            let window_end = (window_start + layout.maximum_channels()).min(channel_count);
-            let mut output = writer.window(window_start..window_end)?;
-            for local_channel in window_start..window_end {
-                let channel = normal_state.slab().core_range().start + local_channel;
-                if reconstruction_only {
-                    for polarization in 0..normal_state.polarization_count() {
-                        let payload = if member.role == ProductRole::CleanMask {
-                            reconstruction_support_plane(
-                                inputs,
-                                member.axes().domain(),
-                                plane_shape[0] * plane_shape[1],
-                            )?
-                        } else {
-                            model_real_plane(
-                                inputs.final_model(),
-                                domain_ordinal,
-                                channel,
+        let window_count = channel_count.div_ceil(layout.maximum_channels());
+        let workers = storage_plan.maximum_workers().min(window_count);
+        for wave_start in (0..window_count).step_by(workers) {
+            let mut slots: Vec<Option<crate::ProductWindow>> = (0..workers
+                .min(window_count - wave_start))
+                .map(|_| None)
+                .collect();
+            execution.prepare(&mut slots, &|index| {
+                let window_start = (wave_start + index) * layout.maximum_channels();
+                let window_end = (window_start + layout.maximum_channels()).min(channel_count);
+                let mut output = layout.window(window_start..window_end)?;
+                for local_channel in window_start..window_end {
+                    let channel = normal_state.slab().core_range().start + local_channel;
+                    if reconstruction_only {
+                        for polarization in 0..normal_state.polarization_count() {
+                            let payload = if member.role == ProductRole::CleanMask {
+                                reconstruction_support_plane(
+                                    inputs,
+                                    member.axes().domain(),
+                                    plane_shape[0] * plane_shape[1],
+                                )?
+                            } else {
+                                model_real_plane(
+                                    inputs.final_model(),
+                                    domain_ordinal,
+                                    channel,
+                                    polarization,
+                                    plane_shape,
+                                )?
+                            };
+                            scatter_image_polarization_plane(
+                                &mut output.payload,
+                                member.axes().order(),
+                                output.shape,
                                 polarization,
+                                channel - window_start,
                                 plane_shape,
-                            )?
-                        };
-                        scatter_image_polarization_plane(
-                            &mut output.payload,
-                            member.axes().order(),
-                            output.shape,
-                            polarization,
-                            channel - window_start,
-                            plane_shape,
-                            &payload,
-                        )?;
-                    }
-                    continue;
-                }
-                for polarization in 0..normal_state.polarization_count() {
-                    let plane = normal_state.read_plane(domain_ordinal, channel, polarization)?;
-                    if plane.shape() != plane_shape {
-                        return Err(ProductsError::SourceLineageMismatch);
-                    }
-                    let output_channel = plane.output_channel() - window_start;
-                    if matches!(member.role, ProductRole::SumWeights(_)) {
-                        scatter_polarization_plane_state(
-                            &mut output.payload,
-                            member.axes(),
-                            output.shape,
-                            polarization,
-                            output_channel,
-                            plane.published_sum_weight() as f32,
-                        )?;
+                                &payload,
+                            )?;
+                        }
                         continue;
                     }
-                    let beam_index = beam_offset
-                        + local_channel * normal_state.polarization_count()
-                        + polarization;
-                    let mut plane_payload = produce_plane_member(PlaneMemberRequest {
-                        member,
-                        inputs,
-                        plane: &plane,
-                        domain_ordinal,
-                        polarization,
-                        fitted_beam: fitted_beams.get(beam_index).copied().flatten(),
-                        restoring_beam: restoring_beams.get(beam_index).copied().flatten(),
-                        primary_beam_model: planned.primary_beam_model,
-                    })?;
-                    if member.validity != ProductValidityRule::All {
-                        let support = product_plane_validity(
-                            member.validity,
-                            &plane,
-                            planned.primary_beam_model,
+                    for polarization in 0..normal_state.polarization_count() {
+                        let plane =
+                            normal_state.read_plane(domain_ordinal, channel, polarization)?;
+                        if plane.shape() != plane_shape {
+                            return Err(ProductsError::SourceLineageMismatch);
+                        }
+                        let output_channel = plane.output_channel() - window_start;
+                        if matches!(member.role, ProductRole::SumWeights(_)) {
+                            scatter_polarization_plane_state(
+                                &mut output.payload,
+                                member.axes(),
+                                output.shape,
+                                polarization,
+                                output_channel,
+                                plane.published_sum_weight() as f32,
+                            )?;
+                            continue;
+                        }
+                        let beam_index = beam_offset
+                            + local_channel * normal_state.polarization_count()
+                            + polarization;
+                        let mut plane_payload = produce_plane_member(PlaneMemberRequest {
+                            member,
                             inputs,
-                            member.axes().domain(),
-                        )?;
-                        zero_invalid_plane_values(&mut plane_payload, &support)?;
-                    }
-                    if let ProductPixelMask::Explicit(rule) = member.storage.pixel_mask() {
-                        let support = product_plane_validity(
-                            rule,
-                            &plane,
-                            planned.primary_beam_model,
-                            inputs,
-                            member.axes().domain(),
-                        )?;
+                            plane: &plane,
+                            domain_ordinal,
+                            polarization,
+                            fitted_beam: fitted_beams.get(beam_index).copied().flatten(),
+                            restoring_beam: restoring_beams.get(beam_index).copied().flatten(),
+                            primary_beam_model: planned.primary_beam_model,
+                        })?;
+                        if member.validity != ProductValidityRule::All {
+                            let support = product_plane_validity(
+                                member.validity,
+                                &plane,
+                                planned.primary_beam_model,
+                                inputs,
+                                member.axes().domain(),
+                            )?;
+                            zero_invalid_plane_values(&mut plane_payload, &support)?;
+                        }
+                        if let ProductPixelMask::Explicit(rule) = member.storage.pixel_mask() {
+                            let support = product_plane_validity(
+                                rule,
+                                &plane,
+                                planned.primary_beam_model,
+                                inputs,
+                                member.axes().domain(),
+                            )?;
+                            scatter_image_polarization_plane(
+                                &mut output.validity,
+                                member.axes().order(),
+                                output.shape,
+                                polarization,
+                                output_channel,
+                                plane_shape,
+                                &support,
+                            )?;
+                        }
                         scatter_image_polarization_plane(
-                            &mut output.validity,
+                            &mut output.payload,
                             member.axes().order(),
                             output.shape,
                             polarization,
                             output_channel,
                             plane_shape,
-                            &support,
+                            &plane_payload,
                         )?;
                     }
-                    scatter_image_polarization_plane(
-                        &mut output.payload,
-                        member.axes().order(),
-                        output.shape,
-                        polarization,
-                        output_channel,
-                        plane_shape,
-                        &plane_payload,
-                    )?;
                 }
+                Ok(output)
+            })?;
+            for slot in slots {
+                writer.write(slot.ok_or(ProductsError::InvalidWindow)?)?;
             }
-            writer.write(output)?;
         }
         writer.finish()?;
     }

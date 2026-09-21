@@ -89,6 +89,7 @@ pub mod runtime_adapter {
         GriddedNormalWork, SourceCardinalityObservation, gridded_normal_operator_record_bytes,
         gridded_normal_route_capacity_bytes, standard_convolution_support,
     };
+    pub use crate::major_cycle::CubeNormalRefresh;
     pub use crate::reconstruction_cycle::{
         ReconstructionPlaneInput, ReconstructionPlanePartial, ReconstructionPlaneWork,
         ReconstructionPlaneWorkspace,
@@ -105,7 +106,9 @@ pub mod runtime_adapter {
         SpectralOperatorPass, SpectralOperatorWorkload, SpectralSlabPlan, WProjectionDiagnostics,
         prepare_spectral_operator, reprepare_spectral_operator, spectral_operator_workload,
     };
-    pub use crate::streaming_cube::band::{BandMemory, BandPlan, EpochBand};
+    pub use crate::streaming_cube::band::{
+        BandMemory, BandPlan, BandResult, CubeResidual, EpochBand,
+    };
     pub use crate::streaming_cube::input::{NativeBlock, NativeLayout, RowMetadata};
     pub use crate::weighting::native_preparation::{
         NativePreparationWorker, NativeWeightingPreparation,

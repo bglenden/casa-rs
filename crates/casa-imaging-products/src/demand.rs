@@ -123,6 +123,7 @@ impl PlannedContinuumGeneration {
         let mut maximum_member_validity_bytes = 0_u64;
         let mut maximum_window_payload_bytes = 0_u64;
         let mut maximum_window_validity_bytes = 0_u64;
+        let mut maximum_windows = 1;
         for member in self.members() {
             let values = checked_shape_values(member.shape())?;
             if values != member.payload_values() {
@@ -135,12 +136,22 @@ impl PlannedContinuumGeneration {
             let validity = bytes_for::<bool>(values, "member validity")?;
             maximum_member_payload_bytes = maximum_member_payload_bytes.max(payload);
             maximum_member_validity_bytes = maximum_member_validity_bytes.max(validity);
-            let window_values = storage_plan.layout(member.axes())?.maximum_values();
+            let layout = storage_plan.layout(member.axes())?;
+            maximum_windows = maximum_windows
+                .max(layout.shape()[layout.spectral_axis()].div_ceil(layout.maximum_channels()));
+            let window_values = layout.maximum_values();
             maximum_window_payload_bytes = maximum_window_payload_bytes
                 .max(bytes_for::<f32>(window_values, "product window payload")?);
             maximum_window_validity_bytes = maximum_window_validity_bytes
                 .max(bytes_for::<bool>(window_values, "product window validity")?);
         }
+
+        let workers = match inputs.normal_state().catalog() {
+            NormalStateCatalog::UnnormalizedTaylorBlockV1
+            | NormalStateCatalog::UnnormalizedJointBlockV1 => 1,
+            _ => storage_plan.maximum_workers().min(maximum_windows),
+        };
+        let storage_plan = ProductStoragePlan::new(storage_plan.maximum_channels(), workers)?;
 
         let mut algorithm_scratch_bytes = match inputs.normal_state().catalog() {
             NormalStateCatalog::UnnormalizedTaylorBlockV1 => taylor_scratch_bytes(inputs)?,
@@ -172,6 +183,22 @@ impl PlannedContinuumGeneration {
             )?,
             "windowed production scratch",
         )?;
+        // Each lane can retain a completed window while another lane still owns
+        // its plane workspace. Beam fitting remains a serial prepass.
+        algorithm_scratch_bytes = algorithm_scratch_bytes.checked_mul(workers as u64).ok_or(
+            ProductsError::ResourceDemandOverflow("parallel product windows"),
+        )?;
+        if !matches!(
+            inputs.normal_state().catalog(),
+            NormalStateCatalog::UnnormalizedTaylorBlockV1
+                | NormalStateCatalog::UnnormalizedJointBlockV1
+        ) {
+            algorithm_scratch_bytes = checked_add(
+                algorithm_scratch_bytes,
+                bytes_for::<Option<crate::ProductWindow>>(workers, "product window slots")?,
+                "parallel product slots",
+            )?;
+        }
         let (retained_metadata_bytes, beam_scratch_bytes) = self.metadata_demand(inputs)?;
         let peak_residency_bytes = checked_add(
             algorithm_scratch_bytes,

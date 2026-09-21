@@ -4,15 +4,25 @@
 
 use super::*;
 use casa_imaging_reconstruction::SpectralOperatorPrimitives;
+use casa_imaging_reconstruction::runtime_adapter::{CubeNormalRefresh, CubeResidual};
+use casa_imaging_reconstruction::{FinalNormalState, ModelGenerationId};
 
-impl CompleteDataSlabResult {
-    pub(crate) fn from_streaming_cube_refresh(
+pub(crate) struct PendingCubeRefresh {
+    evidence: CubeNormalRefresh,
+    binding: CompleteDataExecutionBinding,
+}
+
+impl PendingCubeRefresh {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
         context: WorkExecutionContext<'_>,
         reconciliation_node: &WorkNodeId,
         imported_node: &WorkNodeId,
         specification: &SpectralOperatorSpecification,
-        primitives: SpectralOperatorPrimitives,
+        previous: &FinalNormalState,
+        model: ModelGenerationId,
         original: &WeightingReplayCompletion,
+        storage: &NormalStoragePlan,
     ) -> Result<Self, CompleteDataOperatorError> {
         if context.node().id != *reconciliation_node
             || context.node().kind != WorkKind::Compute
@@ -27,14 +37,15 @@ impl CompleteDataSlabResult {
         {
             return Err(CompleteDataOperatorError::ExecutionBinding);
         }
-        let evidence = CompleteDataOwnerResult::from_streaming_cube(
+        let evidence = previous.begin_streaming_cube_refresh(
             specification,
-            primitives,
             original.reconstruction_summary(),
             original.selected_generation(),
             original
                 .continuum_transform()
                 .map(|value| value.generation_id()),
+            model,
+            storage,
         )?;
         Ok(Self {
             evidence,
@@ -49,6 +60,27 @@ impl CompleteDataSlabResult {
         })
     }
 
+    pub(crate) fn append(
+        &mut self,
+        residual: CubeResidual,
+    ) -> Result<(), CompleteDataOperatorError> {
+        self.evidence.append(residual)?;
+        Ok(())
+    }
+
+    pub(crate) fn complete(self) -> Result<CompleteDataOperatorResult, CompleteDataOperatorError> {
+        Ok(CompleteDataOperatorResult {
+            evidence: self.evidence.finish()?,
+            attempt: self.binding.attempt,
+            replay_node: self.binding.replay_node,
+            reconciliation_node: self.binding.reconciliation_node,
+            lease_epoch: self.binding.lease_epoch,
+            observation_predecessor_required: false,
+        })
+    }
+}
+
+impl CompleteDataSlabResult {
     /// Adopt an initial band only after the selected-source I/O fence settled.
     /// The reconciliation node comes from the composed phase plan, not the band.
     pub(crate) fn from_streaming_cube(

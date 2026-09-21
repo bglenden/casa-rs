@@ -203,6 +203,10 @@ mod tests {
                     storage: stored.storage,
                     reads: log.clone(),
                 });
+                stored.invariants = Arc::new(Box::new(ReadObservedStorage {
+                    storage: Arc::try_unwrap(stored.invariants).unwrap(),
+                    reads: log.clone(),
+                }));
                 domains.push(stored);
             }
             let fields = domains[1].fields.clone();
@@ -230,7 +234,10 @@ mod tests {
             let psf = selected.read_psf().unwrap();
             assert_eq!(
                 *reads[1].lock().unwrap(),
-                vec![(fields.psf.start + 2 * offset, 2 * CELLS)]
+                vec![(
+                    fields.psf.start - fields.epoch_scalars + 2 * offset,
+                    2 * CELLS
+                )]
             );
             assert_eq!(psf[0].re, offset as f64 - 0.125 + 100.0);
             assert!(reads[0].lock().unwrap().is_empty());
@@ -249,7 +256,10 @@ mod tests {
             let sensitivity = selected.read_sensitivity().unwrap();
             assert_eq!(
                 *reads[1].lock().unwrap(),
-                vec![(fields.sensitivity.start + offset, CELLS)]
+                vec![(
+                    fields.sensitivity.start - fields.epoch_scalars + offset,
+                    CELLS
+                )]
             );
             assert!(reads[0].lock().unwrap().is_empty());
 
@@ -395,6 +405,7 @@ mod tests {
         let mut domain =
             StoredChannelNormalDomain::begin(domain(0..CHANNELS, false), &plan).unwrap();
         domain.storage = Box::new(FailedRead);
+        domain.invariants = Arc::new(Box::new(FailedRead));
         let primitives = NormalStatePrimitives::ChannelLocal(vec![domain].into());
         let plane = primitives.read_plane(0, 2, 1).unwrap();
         let error = SpectralOperatorError::NormalStorage("selected read failed".into());
@@ -448,6 +459,146 @@ mod tests {
             stored.read_scalars(0..3),
             Err(SpectralOperatorError::NormalStorage(_))
         ));
+    }
+
+    #[derive(Debug)]
+    struct EpochObservedStorage {
+        storage: Box<dyn NormalArrayStorage>,
+        accesses: Arc<AtomicUsize>,
+        _alive: Arc<()>,
+    }
+
+    impl NormalArrayStorage for EpochObservedStorage {
+        fn len(&self) -> usize {
+            self.storage.len()
+        }
+
+        fn read(&self, start: usize, len: usize) -> Result<Box<[f64]>, SpectralOperatorError> {
+            self.accesses.fetch_add(1, Ordering::Relaxed);
+            self.storage.read(start, len)
+        }
+
+        fn write(&mut self, start: usize, values: &[f64]) -> Result<(), SpectralOperatorError> {
+            self.accesses.fetch_add(1, Ordering::Relaxed);
+            self.storage.write(start, values)
+        }
+    }
+
+    fn streaming_domain() -> SpectralDomainPrimitives {
+        let mut input = domain(0..CHANNELS, true);
+        input.primitives.invariant_dirty = None;
+        input.primitives.major_cycle_residual = None;
+        input.primitives.major_cycle_residual_promoted = true;
+        input
+    }
+
+    #[test]
+    fn residual_epochs_share_only_invariants_without_old_array_access_or_owner_chain() {
+        let plan = NormalStoragePlan::resident(CHANNELS).unwrap();
+        let mut old = StoredChannelNormalDomain::begin(streaming_domain(), &plan).unwrap();
+        assert_eq!(old.storage.len(), CHANNELS * POLARIZATIONS * CELLS * 2);
+        assert_eq!(old.invariants.len(), CHANNELS * POLARIZATIONS * CELLS * 3);
+        let expected = old.read_window(0..CHANNELS).unwrap();
+        let accesses = Arc::new(AtomicUsize::new(0));
+        let epoch_alive = Arc::new(());
+        old.storage = Box::new(EpochObservedStorage {
+            storage: old.storage,
+            accesses: accesses.clone(),
+            _alive: epoch_alive.clone(),
+        });
+        old.invariants = Arc::new(Box::new(EpochObservedStorage {
+            storage: Arc::try_unwrap(old.invariants).unwrap(),
+            accesses: accesses.clone(),
+            _alive: Arc::new(()),
+        }));
+        let invariants = Arc::downgrade(&old.invariants);
+        for epoch in 1..=3 {
+            let next_model = ModelGenerationId(LogicalIdentity::from_sha256([epoch; 32]));
+            let mut next = old.refresh(next_model, &plan).unwrap();
+            let values: Box<[_]> = (0..CHANNELS * POLARIZATIONS * CELLS)
+                .map(|index| Complex64::new(index as f64 + f64::from(epoch), -0.0))
+                .collect();
+            next.append_residual(&crate::streaming_cube::band::CubeResidual {
+                shape: [3, 2],
+                core: 0..CHANNELS,
+                total_channels: CHANNELS,
+                model: next_model,
+                values: values.clone(),
+            })
+            .unwrap();
+            assert!(next.is_complete());
+            assert_eq!(accesses.load(Ordering::Relaxed), 0);
+            assert!(Arc::ptr_eq(&old.invariants, &next.invariants));
+            drop(old);
+            assert_eq!(Arc::strong_count(&epoch_alive), 1);
+            assert_eq!(invariants.strong_count(), 1);
+            let observed = next.read_window(0..CHANNELS).unwrap();
+            let p = observed.primitives();
+            assert_eq!(p.psf, expected.primitives().psf);
+            assert_eq!(p.sensitivity, expected.primitives().sensitivity);
+            assert_eq!(p.sum_weights, expected.primitives().sum_weights);
+            assert_eq!(
+                p.published_sum_weights,
+                expected.primitives().published_sum_weights
+            );
+            assert_eq!(p.validity, expected.primitives().validity);
+            for (actual, expected) in p.dirty.iter().zip(values.iter()) {
+                assert_eq!(actual.re.to_bits(), expected.re.to_bits());
+                assert_eq!(actual.im.to_bits(), expected.im.to_bits());
+            }
+            accesses.store(0, Ordering::Relaxed);
+            old = next;
+        }
+        drop(old);
+        assert!(invariants.upgrade().is_none());
+    }
+
+    #[test]
+    fn failed_residual_refresh_leaves_previous_epoch_readable() {
+        #[derive(Debug)]
+        struct WriteFailure;
+        impl NormalArrayStorage for WriteFailure {
+            fn len(&self) -> usize {
+                CHANNELS * POLARIZATIONS * CELLS * 2
+            }
+            fn read(&self, _: usize, _: usize) -> Result<Box<[f64]>, SpectralOperatorError> {
+                unreachable!("failed candidate must not be published")
+            }
+            fn write(&mut self, _: usize, _: &[f64]) -> Result<(), SpectralOperatorError> {
+                Err(SpectralOperatorError::NormalStorage(
+                    "injected write failure".into(),
+                ))
+            }
+        }
+        let plan = NormalStoragePlan::resident(CHANNELS).unwrap();
+        let old = StoredChannelNormalDomain::begin(streaming_domain(), &plan).unwrap();
+        let expected = old.content_identity().unwrap();
+        let mut next = old.refresh(model(), &plan).unwrap();
+        let mut residual = crate::streaming_cube::band::CubeResidual {
+            shape: [3, 2],
+            core: 1..CHANNELS,
+            total_channels: CHANNELS,
+            model: model(),
+            values: vec![Complex64::new(3.0, -0.0); (CHANNELS - 1) * POLARIZATIONS * CELLS].into(),
+        };
+        assert_eq!(
+            next.append_residual(&residual),
+            Err(SpectralOperatorError::IncompleteCoverage)
+        );
+        residual.core = 0..CHANNELS - 1;
+        next.append_residual(&residual).unwrap();
+        assert!(!next.is_complete());
+        next.storage = Box::new(WriteFailure);
+        residual.core = CHANNELS - 1..CHANNELS;
+        residual.values = vec![Complex64::new(3.0, -0.0); POLARIZATIONS * CELLS].into();
+        assert!(matches!(
+            next.append_residual(&residual),
+            Err(SpectralOperatorError::NormalStorage(_))
+        ));
+        assert!(!next.is_complete());
+        drop(next);
+        assert_eq!(old.content_identity().unwrap(), expected);
+        assert!(old.read_window(0..CHANNELS).is_ok());
     }
 
     #[test]
@@ -525,6 +676,7 @@ mod tests {
 #[doc(hidden)]
 pub trait NormalStorageFactory: fmt::Debug + Send + Sync {
     /// Allocate storage whose complete logical contents will be owner-written.
+    /// Slots are `2 * domain` for epoch arrays and `2 * domain + 1` for invariants.
     fn create(
         &self,
         domain: usize,
@@ -532,12 +684,12 @@ pub trait NormalStorageFactory: fmt::Debug + Send + Sync {
     ) -> Result<Box<dyn NormalArrayStorage>, SpectralOperatorError>;
 }
 
-/// Owner-derived upper bounds for one exact channel-local domain backing.
-/// The bound includes both invariant dirty and an unpromoted major residual;
-/// those fields may be absent, but cannot require a larger physical array.
+/// Owner-derived bounds for one physical allocation of a channel-local domain.
+/// Epoch arrays and invariant arrays have independent ordered allocation slots.
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChannelNormalStorageRequirement {
+    allocation_ordinal: usize,
     scalar_capacity: usize,
     complex_plane_scalars: usize,
     maximum_window_scalars: usize,
@@ -545,13 +697,14 @@ pub struct ChannelNormalStorageRequirement {
 }
 
 impl ChannelNormalStorageRequirement {
-    /// Derive one requirement per domain in the specification's canonical order.
+    /// Derive epoch and invariant requirements for each domain in canonical order.
+    /// Includes optional invariant dirty and unpromoted major residual capacity.
     /// Coupled coefficient families use their separately admitted representation.
     pub fn for_specification(
         specification: &SpectralOperatorSpecification,
         window_channels: usize,
     ) -> Result<Box<[Self]>, SpectralOperatorError> {
-        Self::for_fields(specification, window_channels, true, true)
+        Self::for_fields(specification, window_channels, true, true, false)
     }
 
     /// Native initial-empty imaging followed by residual refresh retains only
@@ -563,7 +716,16 @@ impl ChannelNormalStorageRequirement {
         specification: &SpectralOperatorSpecification,
         window_channels: usize,
     ) -> Result<Box<[Self]>, SpectralOperatorError> {
-        Self::for_fields(specification, window_channels, false, false)
+        Self::for_fields(specification, window_channels, false, false, false)
+    }
+
+    /// Allocate only the new complex residual; imported invariants retain their
+    /// original physical owner and resource permit.
+    pub fn for_streaming_cube_refresh(
+        specification: &SpectralOperatorSpecification,
+        window_channels: usize,
+    ) -> Result<Box<[Self]>, SpectralOperatorError> {
+        Self::for_fields(specification, window_channels, false, false, true)
     }
 
     fn for_fields(
@@ -571,6 +733,7 @@ impl ChannelNormalStorageRequirement {
         window_channels: usize,
         invariant: bool,
         residual: bool,
+        residual_only: bool,
     ) -> Result<Box<[Self]>, SpectralOperatorError> {
         let channels = specification.slab.total_channels();
         if specification.basis != SpectralBasisPlan::ChannelLocal
@@ -583,7 +746,8 @@ impl ChannelNormalStorageRequirement {
         specification
             .domains()
             .iter()
-            .map(|domain| {
+            .enumerate()
+            .map(|(ordinal, domain)| {
                 let plane_values = checked_cells(domain.image_shape())?
                     .checked_mul(polarizations)
                     .ok_or(SpectralOperatorError::ResidencyOverflow)?;
@@ -606,16 +770,35 @@ impl ChannelNormalStorageRequirement {
                     .and_then(|bytes| bytes.checked_add(size_of::<StoredChannelNormalDomain>()))
                     .and_then(|bytes| bytes.checked_add(role_bytes))
                     .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-                Ok(Self {
-                    scalar_capacity: fields.scalars,
+                let epoch = Self {
+                    allocation_ordinal: ordinal * 2,
+                    scalar_capacity: fields.epoch_scalars,
                     complex_plane_scalars,
                     maximum_window_scalars: complex_plane_scalars
                         .checked_mul(window_channels)
                         .ok_or(SpectralOperatorError::ResidencyOverflow)?,
                     retained_metadata_bytes,
-                })
+                };
+                let mut allocations = vec![epoch];
+                if !residual_only {
+                    allocations.push(Self {
+                        allocation_ordinal: ordinal * 2 + 1,
+                        scalar_capacity: fields.scalars - fields.epoch_scalars,
+                        retained_metadata_bytes: size_of::<Box<dyn NormalArrayStorage>>()
+                            + 2 * size_of::<usize>(),
+                        ..epoch
+                    });
+                }
+                Ok(allocations)
             })
-            .collect()
+            .collect::<Result<Vec<_>, SpectralOperatorError>>()
+            .map(|domains| domains.into_iter().flatten().collect())
+    }
+
+    /// Canonical physical allocation slot, independent of omitted shared arrays.
+    #[must_use]
+    pub const fn allocation_ordinal(self) -> usize {
+        self.allocation_ordinal
     }
 
     /// Maximum f64 scalar count in the field-major physical array.
@@ -773,6 +956,9 @@ impl NormalStatePrimitives {
             Self::ChannelLocal(domains) => domains.iter().try_fold(0u64, |bytes, domain| {
                 bytes
                     .checked_add(domain.storage.retained_resident_bytes() as u64)
+                    .and_then(|bytes| {
+                        bytes.checked_add(domain.invariants.retained_resident_bytes() as u64)
+                    })
                     .ok_or(SpectralOperatorError::ResidencyOverflow)
             }),
             Self::Coupled(_) => Ok(0),
@@ -1006,6 +1192,38 @@ pub(crate) struct StoredChannelNormalFold {
 }
 
 impl StoredChannelNormalFold {
+    pub(crate) fn refresh(
+        previous: &NormalStatePrimitives,
+        completion: CompleteDataOwnerCompletion,
+        model: ModelGenerationId,
+        plan: &NormalStoragePlan,
+    ) -> Result<Self, SpectralOperatorError> {
+        let NormalStatePrimitives::ChannelLocal(domains) = previous else {
+            return Err(SpectralOperatorError::ProblemMismatch);
+        };
+        if domains.len() != 1 {
+            return Err(SpectralOperatorError::ProblemMismatch);
+        }
+        let domain = domains[0].refresh(model, plan)?;
+        Ok(Self {
+            domains: vec![domain].into_boxed_slice(),
+            completion,
+            next_channel: 0,
+        })
+    }
+
+    pub(crate) fn append_residual(
+        &mut self,
+        residual: crate::streaming_cube::band::CubeResidual,
+    ) -> Result<(), SpectralOperatorError> {
+        if self.domains.len() != 1 || residual.core.start != self.next_channel {
+            return Err(SpectralOperatorError::IncompleteCoverage);
+        }
+        self.domains[0].append_residual(&residual)?;
+        self.next_channel = residual.core.end;
+        Ok(())
+    }
+
     pub(crate) fn begin(
         first: CompleteDataOwnerResult,
         plan: &NormalStoragePlan,
@@ -1091,8 +1309,8 @@ impl NormalArrayStorage for Box<[f64]> {
     }
 }
 
-/// Offsets in one domain's field-major scalar array. Weight and validity
-/// vectors are channel metadata, retained separately from image-sized fields.
+/// Logical field offsets with epoch arrays before immutable arrays. Physical
+/// invariant offsets subtract `epoch_scalars`; the two allocations never alias.
 #[derive(Debug, Clone)]
 struct ChannelNormalFields {
     dirty: Range<usize>,
@@ -1101,6 +1319,7 @@ struct ChannelNormalFields {
     sensitivity: Range<usize>,
     major_cycle_residual: Option<Range<usize>>,
     scalars: usize,
+    epoch_scalars: usize,
 }
 
 impl ChannelNormalFields {
@@ -1117,10 +1336,11 @@ impl ChannelNormalFields {
             Ok(start..end)
         };
         let dirty = field(complex)?;
+        let major_cycle_residual = residual.then(|| field(complex)).transpose()?;
+        let epoch_scalars = major_cycle_residual.as_ref().unwrap_or(&dirty).end;
         let invariant_dirty = invariant.then(|| field(complex)).transpose()?;
         let psf = field(complex)?;
         let sensitivity = field(values)?;
-        let major_cycle_residual = residual.then(|| field(complex)).transpose()?;
         Ok(Self {
             dirty,
             invariant_dirty,
@@ -1128,6 +1348,7 @@ impl ChannelNormalFields {
             sensitivity,
             major_cycle_residual,
             scalars: end,
+            epoch_scalars,
         })
     }
 }
@@ -1147,6 +1368,7 @@ pub(crate) struct StoredChannelNormalDomain {
     major_cycle_residual_promoted: bool,
     fields: ChannelNormalFields,
     storage: Box<dyn NormalArrayStorage>,
+    invariants: Arc<Box<dyn NormalArrayStorage>>,
     window_channels: usize,
     next_channel: usize,
 }
@@ -1259,6 +1481,84 @@ impl FinalNormalPlaneReader<'_> {
 }
 
 impl StoredChannelNormalDomain {
+    fn refresh(
+        &self,
+        model: ModelGenerationId,
+        plan: &NormalStoragePlan,
+    ) -> Result<Self, SpectralOperatorError> {
+        if !self.is_complete() {
+            return Err(SpectralOperatorError::IncompleteCoverage);
+        }
+        if !self.major_cycle_residual_promoted
+            || self.fields.invariant_dirty.is_some()
+            || self.fields.major_cycle_residual.is_some()
+        {
+            return Err(SpectralOperatorError::ProblemMismatch);
+        }
+        let mut fields = self.fields.clone();
+        fields.dirty = 0..self.fields.dirty.len();
+        let storage = plan.factory.create(self.ordinal * 2, fields.dirty.len())?;
+        if storage.len() != fields.dirty.len() {
+            return Err(SpectralOperatorError::NormalStorage(
+                "allocated scalar capacity differs from the admitted layout".into(),
+            ));
+        }
+        Ok(Self {
+            ordinal: self.ordinal,
+            role: self.role.clone(),
+            shape: self.shape,
+            total_channels: self.total_channels,
+            polarizations: self.polarizations,
+            sum_weights: self.sum_weights.clone(),
+            published_sum_weights: self.published_sum_weights.clone(),
+            validity: self.validity.clone(),
+            residual_model: Some(model),
+            major_cycle_residual_promoted: true,
+            fields,
+            storage,
+            invariants: self.invariants.clone(),
+            window_channels: plan.window_channels,
+            next_channel: 0,
+        })
+    }
+
+    fn append_residual(
+        &mut self,
+        residual: &crate::streaming_cube::band::CubeResidual,
+    ) -> Result<(), SpectralOperatorError> {
+        let range = &residual.core;
+        if range.start != self.next_channel
+            || range.start >= range.end
+            || range.end > self.total_channels
+        {
+            return Err(SpectralOperatorError::IncompleteCoverage);
+        }
+        if range.len() > self.window_channels {
+            return Err(SpectralOperatorError::NormalStorage(
+                "normal-state write exceeds the admitted channel window".into(),
+            ));
+        }
+        if residual.shape != self.shape
+            || residual.total_channels != self.total_channels
+            || self.residual_model != Some(residual.model)
+            || residual.values.len()
+                != range.len() * self.polarizations * checked_cells(self.shape)?
+        {
+            return Err(SpectralOperatorError::ProblemMismatch);
+        }
+        let scalars: Vec<_> = residual
+            .values
+            .iter()
+            .flat_map(|value| [value.re, value.im])
+            .collect();
+        self.storage.write(
+            range.start * self.polarizations * checked_cells(self.shape)? * 2,
+            &scalars,
+        )?;
+        self.next_channel = range.end;
+        Ok(())
+    }
+
     fn validate_plane(
         &self,
         channel: usize,
@@ -1301,8 +1601,16 @@ impl StoredChannelNormalDomain {
             p.invariant_dirty.is_some(),
             p.major_cycle_residual.is_some(),
         )?;
-        let storage = plan.factory.create(first.domain_ordinal, fields.scalars)?;
-        if storage.len() != fields.scalars {
+        let storage = plan
+            .factory
+            .create(first.domain_ordinal * 2, fields.epoch_scalars)?;
+        let invariants = plan.factory.create(
+            first.domain_ordinal * 2 + 1,
+            fields.scalars - fields.epoch_scalars,
+        )?;
+        if storage.len() != fields.epoch_scalars
+            || invariants.len() != fields.scalars - fields.epoch_scalars
+        {
             return Err(SpectralOperatorError::NormalStorage(
                 "allocated scalar capacity differs from the admitted layout".into(),
             ));
@@ -1320,6 +1628,7 @@ impl StoredChannelNormalDomain {
             major_cycle_residual_promoted: p.major_cycle_residual_promoted,
             fields,
             storage,
+            invariants: Arc::new(invariants),
             window_channels: plan.window_channels,
             next_channel: 0,
         };
@@ -1394,11 +1703,22 @@ impl StoredChannelNormalDomain {
         ] {
             if let (Some(field), Some(source)) = (field, source) {
                 let scalars: Vec<_> = source.iter().flat_map(|v| [v.re, v.im]).collect();
-                self.storage.write(field.start + 2 * offset, &scalars)?;
+                let start = field.start + 2 * offset;
+                if field.start >= self.fields.epoch_scalars {
+                    Arc::get_mut(&mut self.invariants)
+                        .ok_or(SpectralOperatorError::IncompleteCoverage)?
+                        .write(start - self.fields.epoch_scalars, &scalars)?;
+                } else {
+                    self.storage.write(start, &scalars)?;
+                }
             }
         }
-        self.storage
-            .write(self.fields.sensitivity.start + offset, &p.sensitivity)?;
+        Arc::get_mut(&mut self.invariants)
+            .ok_or(SpectralOperatorError::IncompleteCoverage)?
+            .write(
+                self.fields.sensitivity.start - self.fields.epoch_scalars + offset,
+                &p.sensitivity,
+            )?;
         self.sum_weights[plane_offset..plane_offset + planes].copy_from_slice(&p.sum_weights);
         self.published_sum_weights[plane_offset..plane_offset + planes]
             .copy_from_slice(&p.published_sum_weights);
@@ -1433,7 +1753,12 @@ impl StoredChannelNormalDomain {
     }
 
     fn read_scalars(&self, range: Range<usize>) -> Result<Box<[f64]>, SpectralOperatorError> {
-        let result = self.storage.read(range.start, range.len())?;
+        let result = if range.start >= self.fields.epoch_scalars {
+            self.invariants
+                .read(range.start - self.fields.epoch_scalars, range.len())?
+        } else {
+            self.storage.read(range.start, range.len())?
+        };
         if result.len() != range.len() {
             return Err(SpectralOperatorError::NormalStorage(
                 "normal backing returned an incorrect window length".into(),

@@ -791,13 +791,13 @@ fn band_memory_accounts_for_actual_phase_buffers_and_completed_ownership() {
                     model: (0..4).collect(),
                 },
             };
-            let memory = plan.memory(None).unwrap();
+            let memory = plan.memory().unwrap();
             let generation = if phase == BandPhase::InitialZero {
                 &empty
             } else {
                 &model
             };
-            let job = plan.clone().prepare(generation, None, None).unwrap();
+            let job = plan.clone().prepare(generation, None).unwrap();
             assert_eq!(job.native_range, plan.native_range());
             let w = &job.workspace;
             let grids = [
@@ -825,22 +825,38 @@ fn band_memory_accounts_for_actual_phase_buffers_and_completed_ownership() {
                 payload + fft + convolution + size_of::<BandPlan>() + size_of::<EpochBand<'_>>()
             );
             let (normal, fft_state) = job.complete(generation).unwrap();
+            let BandResult::Initial(normal) = normal else {
+                panic!("initial normal required")
+            };
             assert_eq!(
                 memory.retained_bytes,
-                normal.cube_owned_bytes(true).unwrap() + size_of::<PreparedFft>() + fft
+                normal.cube_owned_bytes(true).unwrap() - size_of::<SpectralOperatorPrimitives>()
+                    + size_of::<(BandResult, PreparedFft)>()
+                    + fft
             );
             let refresh = plan.residual_refresh();
-            let memory = refresh.memory(Some(&normal)).unwrap();
+            let memory = refresh.memory().unwrap();
             let residual_image = depth * 64 * size_of::<Complex64>();
-            assert!(memory.preparation_bytes >= memory.accumulation_bytes + residual_image);
+            assert!(
+                memory.preparation_bytes
+                    >= memory.accumulation_bytes
+                        + 64 * size_of::<casa_imaging_model::ModelSample>()
+            );
             let (updated, _) = refresh
-                .prepare(&model, Some(normal), Some(fft_state))
+                .prepare(&model, Some(fft_state))
                 .unwrap()
                 .complete(&model)
                 .unwrap();
+            let BandResult::Residual(updated) = updated else {
+                panic!("residual-only result required")
+            };
+            assert_eq!(
+                updated.values.len() * size_of::<Complex64>(),
+                residual_image
+            );
             assert_eq!(
                 memory.retained_bytes,
-                updated.cube_owned_bytes(true).unwrap() + size_of::<PreparedFft>() + fft
+                residual_image + size_of::<(BandResult, PreparedFft)>() + fft
             );
         }
     }
@@ -868,7 +884,7 @@ fn band_memory_scales_from_shapes_and_rejects_overflow_without_allocating() {
         let mut previous = 0;
         for depth in depths {
             plan.core = 0..depth;
-            let memory = plan.memory(None).unwrap();
+            let memory = plan.memory().unwrap();
             assert!(memory.peak_bytes() > previous);
             assert!(
                 memory.accumulation_bytes
@@ -879,21 +895,21 @@ fn band_memory_scales_from_shapes_and_rejects_overflow_without_allocating() {
     }
     plan.geometry.grid_shape = [usize::MAX, 2];
     assert!(matches!(
-        plan.memory(None),
+        plan.memory(),
         Err(SpectralOperatorError::ResidencyOverflow)
     ));
     plan.geometry = geometry();
     plan.core = 0..0;
     assert!(matches!(
-        plan.memory(None),
+        plan.memory(),
         Err(SpectralOperatorError::InvalidSlab)
     ));
     plan.core = 0..1;
+    let initial = plan.memory().unwrap();
     plan.phase = BandPhase::Residual;
-    assert!(matches!(
-        plan.memory(None),
-        Err(SpectralOperatorError::ReusableNormalStateMismatch)
-    ));
+    let residual = plan.memory().unwrap();
+    assert!(residual.accumulation_bytes < initial.accumulation_bytes);
+    assert!(residual.retained_bytes < initial.retained_bytes);
 }
 
 #[test]
@@ -919,7 +935,7 @@ fn model_epoch_reads_only_support_planes_with_correct_axes_and_invalid_support()
         PreparedFft::new([10, 10], 7690).unwrap(),
         BandPhase::Full,
     );
-    let job = EpochBand::prepare(owned, &model, None, 0..8).unwrap();
+    let job = EpochBand::prepare(owned, &model, 0..8).unwrap();
     assert_bits(
         job.workspace.forward.iter().copied(),
         expected.forward.iter().copied(),
@@ -945,7 +961,7 @@ fn model_epoch_reads_only_support_planes_with_correct_axes_and_invalid_support()
         PreparedFft::new([10, 10], 7690).unwrap(),
         BandPhase::Full,
     );
-    let mut job = EpochBand::prepare(prepared, &model, None, support.native.clone()).unwrap();
+    let mut job = EpochBand::prepare(prepared, &model, support.native.clone()).unwrap();
     let mut expected = workspace(1..2, support.model, &raw);
     let polarization = polarization();
     for band in [&mut job.workspace, &mut expected] {
@@ -974,7 +990,7 @@ fn delayed_band_cannot_complete_into_another_model_epoch_and_model_io_errors_pro
             BandPhase::Full,
         )
     };
-    let job = EpochBand::prepare(new(), &model, None, 0..8).unwrap();
+    let job = EpochBand::prepare(new(), &model, 0..8).unwrap();
     std::thread::scope(|scope| {
         let (send, release) = std::sync::mpsc::sync_channel(0);
         let expected = &other;
@@ -990,11 +1006,11 @@ fn delayed_band_cannot_complete_into_another_model_epoch_and_model_io_errors_pro
     });
     reads.fail.store(true, std::sync::atomic::Ordering::Relaxed);
     assert!(
-        matches!(EpochBand::prepare(new(), &model, None, 0..8), Err(SpectralOperatorError::ModelAccess(crate::ModelLifecycleError::Storage(message))) if message == "injected model read failure")
+        matches!(EpochBand::prepare(new(), &model, 0..8), Err(SpectralOperatorError::ModelAccess(crate::ModelLifecycleError::Storage(message))) if message == "injected model read failure")
     );
     let (too_small, _) = generation(63, real_model);
     assert!(matches!(
-        EpochBand::prepare(new(), &too_small, None, 0..8),
+        EpochBand::prepare(new(), &too_small, 0..8),
         Err(SpectralOperatorError::ModelAccess(_))
     ));
 }
@@ -1015,7 +1031,7 @@ fn completed_epoch_images_match_historical_normal_state_without_dirty_clone() {
         PreparedFft::new([10, 10], 7690).unwrap(),
         BandPhase::Full,
     );
-    let mut job = EpochBand::prepare(workspace, &model, None, 0..8).unwrap();
+    let mut job = EpochBand::prepare(workspace, &model, 0..8).unwrap();
     let polarization = polarization();
     let mut row = job
         .workspace
@@ -1024,6 +1040,9 @@ fn completed_epoch_images_match_historical_normal_state_without_dirty_clone() {
     row.push(0..8).unwrap();
     row.finish().unwrap();
     let (actual, _) = job.complete(&model).unwrap();
+    let BandResult::Initial(actual) = actual else {
+        panic!("initial normal required")
+    };
     assert_bits(
         actual.dirty().iter().copied(),
         expected.dirty().iter().copied(),
@@ -1066,7 +1085,7 @@ fn channel_completion_moves_buffers_and_keeps_blank_unmapped_and_shape_checks() 
         sum_weight: vec![2.0, 0.0, 0.0],
         mapped: vec![2, 1, 0],
     };
-    let completed = SpectralOperatorPrimitives::from_cube_band(images, 4, model, None).unwrap();
+    let completed = SpectralOperatorPrimitives::from_cube_band(images, 4, model).unwrap();
     assert_eq!(completed.dirty().as_ptr(), residual_pointer);
     assert_eq!(completed.psf().as_ptr(), psf_pointer);
     assert_eq!(
@@ -1087,11 +1106,11 @@ fn channel_completion_moves_buffers_and_keeps_blank_unmapped_and_shape_checks() 
         sum_weight: vec![1.0],
         mapped: vec![1],
     };
-    assert!(SpectralOperatorPrimitives::from_cube_band(invalid, 4, model, None).is_err());
+    assert!(SpectralOperatorPrimitives::from_cube_band(invalid, 4, model).is_err());
 }
 
 #[test]
-fn empty_initial_and_residual_refresh_omit_dead_grids_and_move_normal_buffers() {
+fn empty_initial_and_residual_refresh_omit_dead_grids_and_do_not_load_prior_arrays() {
     let (empty, reads) = generation_with_origin(
         64,
         None::<fn(usize, usize, usize) -> casa_imaging_model::ModelSample>,
@@ -1110,11 +1129,7 @@ fn empty_initial_and_residual_refresh_omit_dead_grids_and_move_normal_buffers() 
         )
     };
     assert!(matches!(
-        EpochBand::prepare(new(BandPhase::InitialZero), &model, None, 0..8),
-        Err(SpectralOperatorError::ReusableNormalStateMismatch)
-    ));
-    assert!(matches!(
-        EpochBand::prepare(new(BandPhase::Residual), &model, None, 0..8),
+        EpochBand::prepare(new(BandPhase::InitialZero), &model, 0..8),
         Err(SpectralOperatorError::ReusableNormalStateMismatch)
     ));
     let consume = |job: &mut EpochBand<'_>| {
@@ -1125,7 +1140,7 @@ fn empty_initial_and_residual_refresh_omit_dead_grids_and_move_normal_buffers() 
         row.push(0..8).unwrap();
         row.finish().unwrap();
     };
-    let mut initial = EpochBand::prepare(new(BandPhase::InitialZero), &empty, None, 0..8).unwrap();
+    let mut initial = EpochBand::prepare(new(BandPhase::InitialZero), &empty, 0..8).unwrap();
     assert!(
         reads.ranges.lock().unwrap().is_empty(),
         "certified zero is never loaded"
@@ -1135,51 +1150,38 @@ fn empty_initial_and_residual_refresh_omit_dead_grids_and_move_normal_buffers() 
     assert!(initial.workspace.residual_error.is_empty());
     consume(&mut initial);
     let (initial, _) = initial.complete(&empty).unwrap();
+    let BandResult::Initial(initial) = initial else {
+        panic!("initial normal required")
+    };
     let expected = reference_operator(&input, &output, &Array3::zeros((4, 8, 8)))
         .finish_images(empty.generation_id());
     assert_eq!(
         initial.normal_state_content_identity(),
         expected.normal_state_content_identity()
     );
-    let pointers = (
-        initial.psf().as_ptr(),
-        initial.sensitivity().as_ptr(),
-        initial.sum_weights().as_ptr(),
-    );
-    let mut refresh =
-        EpochBand::prepare(new(BandPhase::Residual), &model, Some(initial), 0..8).unwrap();
+    let original_identity = initial.normal_state_content_identity();
+    let mut refresh = EpochBand::prepare(new(BandPhase::Residual), &model, 0..8).unwrap();
     assert!(refresh.workspace.dirty.is_empty());
     assert!(refresh.workspace.dirty_error.is_empty());
     assert!(refresh.workspace.psf.is_empty());
     assert!(refresh.workspace.psf_error.is_empty());
     assert!(refresh.workspace.sum_weight.is_empty());
     assert!(refresh.workspace.mapped.is_empty());
-    assert!(
-        refresh.prior.as_ref().unwrap().dirty().is_empty(),
-        "old residual released before execution"
-    );
     consume(&mut refresh);
     let (actual, _) = refresh.complete(&model).unwrap();
+    let BandResult::Residual(actual) = actual else {
+        panic!("residual-only result required")
+    };
     let raw = Array3::from_shape_fn((4, 8, 8), |(ch, x, y)| {
         Complex64::new(real_model(ch, x, y).value().value(), 0.0)
     });
     let expected = reference_operator(&input, &output, &raw).finish_images(model.generation_id());
+    assert_eq!(actual.values.as_ref(), expected.dirty());
+    assert_eq!(actual.model, model.generation_id());
     assert_eq!(
-        actual.normal_state_content_identity(),
-        expected.normal_state_content_identity()
-    );
-    assert_eq!(
-        (
-            actual.psf().as_ptr(),
-            actual.sensitivity().as_ptr(),
-            actual.sum_weights().as_ptr()
-        ),
-        pointers
-    );
-    assert!(
-        actual
-            .promote_major_cycle_residual(model.generation_id())
-            .is_ok()
+        initial.normal_state_content_identity(),
+        original_identity,
+        "prior remains unchanged and independently owned"
     );
 }
 

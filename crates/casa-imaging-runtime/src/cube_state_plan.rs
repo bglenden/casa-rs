@@ -29,7 +29,15 @@ struct CubeStateRetention {
     heap: OnceLock<RetainedArtifactPermit>,
 }
 
-/// A candidate owns one new model backing and one normal backing per domain.
+/// One independently releasable memory allocation; shared capacity is small for
+/// resident normals and remains conservative for paged file/storage resources.
+#[derive(Debug)]
+struct CubeBackingRetention {
+    heap: OnceLock<RetainedArtifactPermit>,
+    _shared: Arc<CubeStateRetention>,
+}
+
+/// A candidate owns a model and separate epoch/invariant normal backings.
 /// Prior generations keep their own reservations while this generation is built.
 #[derive(Debug)]
 pub(crate) struct CubeStatePlan {
@@ -42,6 +50,8 @@ pub(crate) struct CubeStatePlan {
     acquire: WorkNodeId,
     terminal: WorkNodeId,
     heap: LogicalAllocation,
+    backings: Box<[(LogicalAllocation, Arc<CubeBackingRetention>)]>,
+    retained_bytes: u64,
     scratch: LogicalAllocation,
     storage_id: String,
     storage_bytes: u64,
@@ -79,12 +89,19 @@ impl CubeStatePlan {
         acquire: WorkNodeId,
         terminal: WorkNodeId,
         resident: bool,
+        residual_only: bool,
     ) -> io::Result<Self> {
         let specification =
             SpectralOperatorSpecification::new(problem).map_err(io::Error::other)?;
-        let requirements =
+        let requirements = if residual_only {
+            ChannelNormalStorageRequirement::for_streaming_cube_refresh(
+                &specification,
+                window_channels,
+            )
+        } else {
             ChannelNormalStorageRequirement::for_streaming_cube(&specification, window_channels)
-                .map_err(io::Error::other)?;
+        }
+        .map_err(io::Error::other)?;
         Self::with_normal(
             problem,
             storage,
@@ -116,6 +133,10 @@ impl CubeStatePlan {
                 .ok_or_else(overflow)
         })?;
         let retention = Arc::new(CubeStateRetention::default());
+        let model_retention = Arc::new(CubeBackingRetention {
+            heap: OnceLock::new(),
+            _shared: retention.clone(),
+        });
         let metrics = Arc::new(CubeBackingMetrics::default());
         let model_layout = CubeArrayLayout::new(
             shape.sample_count(),
@@ -128,7 +149,7 @@ impl CubeStatePlan {
             PagedModelStorageFactory::new(
                 storage.directory(),
                 model_layout,
-                retention.clone(),
+                model_retention.clone(),
                 metrics.clone(),
             )
             .map_err(io::Error::other)?,
@@ -143,10 +164,23 @@ impl CubeStatePlan {
                     requirement.maximum_window_scalars(),
                     1,
                 )
+                .map(|layout| (requirement.allocation_ordinal(), layout))
                 .map_err(io::Error::other)
             })
             .collect::<io::Result<Box<[_]>>>()?;
-        let mut retained_bytes = model_ledger.retained_bytes;
+        let mut retained_bytes = 0usize;
+        let mut backings = vec![(
+            allocation(
+                format!("cube-state-model-{}", acquire.as_str()),
+                as_u64(model_ledger.retained_bytes)?,
+                &acquire,
+                &terminal,
+                true,
+            ),
+            model_retention,
+        )];
+        let mut normal_retentions: Vec<(usize, Arc<dyn std::fmt::Debug + Send + Sync>)> =
+            Vec::new();
         let mut storage_bytes = model_ledger.storage_bytes;
         let mut file_handles = model_ledger.file_handles;
         let mut scratch_bytes = model_ledger
@@ -159,7 +193,7 @@ impl CubeStatePlan {
                     .ok_or_else(overflow)?,
             )
             .ok_or_else(overflow)?;
-        for (layout, requirement) in layouts.iter().zip(&requirements) {
+        for ((_, layout), requirement) in layouts.iter().zip(&requirements) {
             let ledger = if resident {
                 crate::streaming_cube::normal::ResidentNormalFactory::ledger(*requirement)?
             } else {
@@ -167,10 +201,28 @@ impl CubeStatePlan {
                     .normal_ledger(storage.directory())
                     .map_err(io::Error::other)?
             };
-            retained_bytes = add(
-                retained_bytes,
-                add(ledger.retained_bytes, requirement.retained_metadata_bytes())?,
-            )?;
+            let normal_retention = Arc::new(CubeBackingRetention {
+                heap: OnceLock::new(),
+                _shared: retention.clone(),
+            });
+            normal_retentions.push((requirement.allocation_ordinal(), normal_retention.clone()));
+            backings.push((
+                allocation(
+                    format!(
+                        "cube-state-normal-{}-{}",
+                        acquire.as_str(),
+                        requirement.allocation_ordinal()
+                    ),
+                    as_u64(add(
+                        ledger.retained_bytes,
+                        requirement.retained_metadata_bytes(),
+                    )?)?,
+                    &acquire,
+                    &terminal,
+                    true,
+                ),
+                normal_retention,
+            ));
             storage_bytes = add(storage_bytes, ledger.storage_bytes)?;
             file_handles = add(file_handles, ledger.file_handles)?;
             // The normal owner converts a complex source to f64 before the
@@ -188,7 +240,7 @@ impl CubeStatePlan {
         let (normal, normal_metadata): (Arc<dyn NormalStorageFactory>, usize) = if resident {
             let factory = crate::streaming_cube::normal::ResidentNormalFactory::new(
                 requirements,
-                retention.clone(),
+                normal_retentions.into_boxed_slice(),
                 metrics.clone(),
             );
             let metadata = factory.metadata_bytes();
@@ -197,7 +249,7 @@ impl CubeStatePlan {
             let factory = PagedNormalStorageFactory::new(
                 storage.directory(),
                 layouts,
-                retention.clone(),
+                normal_retentions.into_boxed_slice(),
                 metrics.clone(),
             );
             let metadata = factory.owned_metadata_bytes().map_err(io::Error::other)?;
@@ -213,6 +265,10 @@ impl CubeStatePlan {
             size_of::<Self>()
                 + size_of::<CubeStateRetention>()
                 + size_of::<CubeBackingMetrics>()
+                + backings.len()
+                    * (size_of::<(LogicalAllocation, Arc<CubeBackingRetention>)>()
+                        + size_of::<CubeBackingRetention>()
+                        + 2 * size_of::<usize>())
                 + 10 * size_of::<usize>(),
         )?;
         let storage_id = format!("cube-state-storage-{}", acquire.as_str());
@@ -243,10 +299,29 @@ impl CubeStatePlan {
             .and_then(|other| bytes.checked_add(other))
         })
         .ok_or_else(overflow)?;
+        let permit_bytes = backings
+            .iter()
+            .try_fold(permit_bytes, |bytes, (allocation, _)| {
+                RetainedArtifactPermit::heap_bytes_for_resources(
+                    &[LeaseResource::Memory {
+                        allocation_id: allocation.id.as_str().to_owned(),
+                    }],
+                    1,
+                    "host-memory",
+                    storage.resources().domain().as_str(),
+                )
+                .and_then(|other| bytes.checked_add(other))
+                .ok_or_else(overflow)
+            })?;
         let retained_bytes = as_u64(retained_bytes)?
             .checked_add(permit_bytes)
             .ok_or_else(overflow)?;
         let heap = allocation(heap_id, retained_bytes, &acquire, &terminal, true);
+        let retained_bytes = backings
+            .iter()
+            .try_fold(heap.bytes, |bytes, (allocation, _)| {
+                bytes.checked_add(allocation.bytes).ok_or_else(overflow)
+            })?;
         let scratch = allocation(
             format!("cube-state-access-{}", acquire.as_str()),
             as_u64(scratch_bytes)?,
@@ -264,6 +339,8 @@ impl CubeStatePlan {
             acquire,
             terminal,
             heap,
+            backings: backings.into_boxed_slice(),
+            retained_bytes,
             scratch,
             storage_id,
             storage_bytes: as_u64(storage_bytes)?,
@@ -272,7 +349,7 @@ impl CubeStatePlan {
     }
 
     pub(crate) fn retained_memory_bytes(&self) -> u64 {
-        self.heap.bytes
+        self.retained_bytes
     }
 
     /// Allocation capabilities must be live before any mutable backing is made.
@@ -286,6 +363,13 @@ impl CubeStatePlan {
                 .allocations
                 .iter()
                 .any(|use_| use_.allocation == self.heap.id)
+            || self.backings.iter().any(|(allocation, _)| {
+                !context
+                    .node()
+                    .allocations
+                    .iter()
+                    .any(|use_| use_.allocation == allocation.id)
+            })
             || !context.node().claims.iter().any(|claim| {
                 claim.resource == self.storage_resource()
                     && claim.amount == self.storage_bytes
@@ -320,7 +404,7 @@ impl CubeStatePlan {
             eprintln!(
                 "imaging_cube_backing_measurements node={} planned_retained_bytes={} planned_access_scratch_bytes={} planned_storage_bytes={} planned_file_handles={} observed={:?}",
                 node.as_str(),
-                self.heap.bytes,
+                self.retained_memory_bytes(),
                 self.scratch.bytes,
                 self.storage_bytes,
                 self.file_handles,
@@ -352,15 +436,24 @@ impl CubeStatePlan {
                 .set(permit)
                 .map_err(|_| io::Error::other("cube backing capacity was retained twice"))
         } else if node == &self.terminal {
-            if !permit.covers_exact_immutable_allocation(node, &self.heap) {
-                return Err(io::Error::other(
-                    "cube backing cache export differs from its admitted allocation",
-                ));
-            }
+            let allocations = std::iter::once(&self.heap)
+                .chain(self.backings.iter().map(|(allocation, _)| allocation))
+                .collect::<Vec<_>>();
+            let mut partitions = permit
+                .partition_immutable_allocations(node, &allocations)
+                .map_err(io::Error::other)?
+                .into_iter();
             self.retention
                 .heap
-                .set(permit)
-                .map_err(|_| io::Error::other("cube backing cache was retained twice"))
+                .set(partitions.next().expect("shared allocation is present"))
+                .map_err(|_| io::Error::other("cube backing cache was retained twice"))?;
+            for ((_, retention), permit) in self.backings.iter().zip(partitions) {
+                retention
+                    .heap
+                    .set(permit)
+                    .map_err(|_| io::Error::other("cube backing allocation was retained twice"))?;
+            }
+            Ok(())
         } else {
             Err(io::Error::other(
                 "cube backing reservation was exported by an unrelated node",
@@ -439,6 +532,11 @@ impl CubeStatePlan {
                     lifetime: lifetime.clone(),
                 },
             ]);
+            node.allocations
+                .extend(self.backings.iter().map(|(allocation, _)| AllocationUse {
+                    allocation: allocation.id.clone(),
+                    lifetime: lifetime.clone(),
+                }));
             node.claims.extend([
                 ResourceClaim {
                     resource: LeaseResource::StorageReadRate {
@@ -479,7 +577,10 @@ impl CubeStatePlan {
         }
         let mut alternative = base.execution_dag().resource_alternative().clone();
         alternative.demand.queues.extend(new_queue);
-        for allocation in [&self.heap, &self.scratch] {
+        for allocation in [&self.heap, &self.scratch]
+            .into_iter()
+            .chain(self.backings.iter().map(|(allocation, _)| allocation))
+        {
             alternative.demand.memory.push(MemoryDemand {
                 allocation_id: allocation.id.as_str().to_owned(),
                 hard_bytes: allocation.bytes,
@@ -526,20 +627,30 @@ impl CubeStatePlan {
                 .values()
                 .cloned()
                 .chain([self.heap.clone(), self.scratch.clone()])
+                .chain(
+                    self.backings
+                        .iter()
+                        .map(|(allocation, _)| allocation.clone()),
+                )
                 .collect(),
             physical_slots: base
                 .execution_dag()
                 .physical_slots()
                 .values()
                 .cloned()
-                .chain([&self.heap, &self.scratch].map(|allocation| PhysicalSlot {
-                    id: allocation.physical_slot.clone(),
-                    lease_resource: LeaseResource::Memory {
-                        allocation_id: allocation.id.as_str().to_owned(),
-                    },
-                    capacity_bytes: allocation.bytes,
-                    compatibility: allocation.compatibility.clone(),
-                }))
+                .chain(
+                    [&self.heap, &self.scratch]
+                        .into_iter()
+                        .chain(self.backings.iter().map(|(allocation, _)| allocation))
+                        .map(|allocation| PhysicalSlot {
+                            id: allocation.physical_slot.clone(),
+                            lease_resource: LeaseResource::Memory {
+                                allocation_id: allocation.id.as_str().to_owned(),
+                            },
+                            capacity_bytes: allocation.bytes,
+                            compatibility: allocation.compatibility.clone(),
+                        }),
+                )
                 .collect(),
             initial_knobs: base.execution_dag().initial_knobs().clone(),
             adaptations: base

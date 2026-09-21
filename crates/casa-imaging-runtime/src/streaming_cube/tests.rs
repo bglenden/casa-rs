@@ -218,6 +218,7 @@ fn streaming_cube_initial_source_fence_controls_runtime_reconciliation() {
             // This fixture's 8-MiB host cannot fit a full four-worker wave
             // alongside resident storage. Keep executing that low-memory case.
             workers == 1,
+            false,
         )
         .unwrap();
         let physical = cube_state
@@ -495,29 +496,26 @@ fn resident_storage_threshold_preserves_a_complete_worker_wave() {
         let worker_wave = full.native_plan.worker_wave_bytes;
         let resident_bytes = full.cube_state.retained_memory_bytes();
         let bands = &full.state.lock().unwrap().bands;
-        let prior = casa_imaging_reconstruction::normal_state_window_residency_bytes(
-            problem.model_lifecycle().target().domains()[0].pixels(),
-            1,
-            problem.geometry().spectral().output_channels(),
-            1,
-        )
-        .unwrap();
+        let refresh_bands = bands
+            .iter()
+            .map(BandPlan::residual_refresh)
+            .collect::<Vec<_>>();
         let refresh = NativePhasePlan::new_for_pass(
             &physical,
             &fixture.authority,
             &ResourcePolicy::Exclusive,
             &fixture.storage,
             full.native_plan.store,
-            bands,
+            &refresh_bands,
             0,
             workers,
             1,
-            Some(prior),
+            true,
         )
         .unwrap();
         for start in 0..bands.len() {
             assert!(
-                WavePlan::initial_prefix(
+                WavePlan::prefix(
                     full.native_plan.store,
                     &bands[start..],
                     workers,
@@ -529,14 +527,13 @@ fn resident_storage_threshold_preserves_a_complete_worker_wave() {
                     >= workers.min(bands.len() - start)
             );
             assert!(
-                WavePlan::refresh_prefix(
+                WavePlan::prefix(
                     refresh.store,
-                    &bands[start..],
+                    &refresh_bands[start..],
                     workers,
                     1,
                     refresh.shared_bytes,
                     refresh.worker_wave_bytes,
-                    prior,
                 )
                 .unwrap()
                     >= workers.min(bands.len() - start)

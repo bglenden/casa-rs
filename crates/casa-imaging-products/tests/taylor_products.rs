@@ -744,8 +744,9 @@ fn generate_with_controls(
     let inputs = ContinuumProductInputs::from_major_cycle(problem, join).expect("Taylor inputs");
     let planned = PlannedContinuumGeneration::new(&inputs, &controls).expect("T44 Taylor plan");
     let output = MemoryProductOutput::default();
-    let produced = produce_continuum_members(&planned, &inputs, full_window(&planned), &output)
-        .expect("T44 Taylor product family");
+    let produced =
+        produce_continuum_members(&planned, &inputs, full_window(&planned), &(), &output)
+            .expect("T44 Taylor product family");
     GeneratedProducts::from_output(&produced, &output)
 }
 
@@ -797,8 +798,9 @@ fn t46_joint_products_publish_one_lineage_without_component_residuals() {
     let planned = PlannedContinuumGeneration::new(&inputs, &ContinuumProductControls::default())
         .expect("joint product plan");
     let output = MemoryProductOutput::default();
-    let produced = produce_continuum_members(&planned, &inputs, full_window(&planned), &output)
-        .expect("joint product family");
+    let produced =
+        produce_continuum_members(&planned, &inputs, full_window(&planned), &(), &output)
+            .expect("joint product family");
     let generated = GeneratedProducts::from_output(&produced, &output);
 
     assert!(
@@ -1354,6 +1356,7 @@ fn taylor_generation_demand_charges_retained_families_and_algorithm_scratch() {
         &planned,
         &inputs,
         full_window(&planned),
+        &(),
         &MemoryProductOutput::default(),
     )
     .unwrap();

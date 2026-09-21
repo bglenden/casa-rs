@@ -4933,6 +4933,10 @@ fn t55_small_cube_admits_owner_workspace_with_one_worker() {
         implementation_metadata(&problem),
         [implementation(78)],
     );
+    let admission_policy = ResourcePolicy::Explicit(ResourceOverride {
+        memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 1 << 20)]),
+        ..ResourceOverride::default()
+    });
     let policy = SpectralCycleExecutionPolicy::new(
         implementation(78),
         WeightingExecutionLimits::new(1, 1).unwrap(),
@@ -4944,16 +4948,35 @@ fn t55_small_cube_admits_owner_workspace_with_one_worker() {
     )
     .with_gridded_normal_storage(artifact_storage());
     let planned = SpectralCyclePlan::initial(&problem, &planning_registry, policy)
-        .expect("the complete three-plane solve fits the 1 MiB host serially");
+        .expect("under-budget planning retains the fully charged one-plane candidate");
     let directory = tempfile::tempdir().expect("admission receipts");
     let receipts = ExecutionReceiptStore::new(
         directory.path(),
         ReceiptRetention::new(1, 1_048_576).unwrap(),
     )
     .unwrap();
-    let selected = runtime_plan(
+    // Independent backing overhead exceeds Balanced's 75-percent host share.
+    // Refuse that budget, then admit the same minimum candidate within 1 MiB.
+    let rejected = runtime_plan(
         &problem,
         PlanningBindings::new(registry(78), ResourcePolicy::Balanced, planning_profile(78)),
+        authority(),
+        &planning_registry,
+        &receipts,
+        |_, _| Ok::<_, io::Error>(planned.physical_candidates()),
+    );
+    assert!(matches!(rejected,
+        Err(PlanError::Resource(ResourceError::NoFeasibleAlternative(certificate)))
+            if !certificate.rejections().is_empty()
+                && certificate.rejections().iter().all(|rejection| matches!(
+                rejection.reason(),
+                AlternativeRejectionReason::Infeasible { resource, required, available }
+                    if resource == "memory-domain:host-memory" && required > available
+            ))
+    ));
+    let selected = runtime_plan(
+        &problem,
+        PlanningBindings::new(registry(78), admission_policy, planning_profile(78)),
         authority(),
         &planning_registry,
         &receipts,
@@ -4962,8 +4985,8 @@ fn t55_small_cube_admits_owner_workspace_with_one_worker() {
     .expect("the owner workspace fits authoritative admission");
     let parts = planned.into_parts(&selected).unwrap();
     // T55 bounds channel-local cube state by the exact owner workspace rather
-    // than the caller's old dense-array estimate, so Balanced admits a single
-    // resident channel plane per slab.
+    // than the caller's old dense-array estimate. The minimum candidate holds
+    // a single resident channel plane per slab.
     assert_eq!(parts.complete_data.slab().core_depth(), 1);
     let dag = parts.physical.execution_dag();
     let minor = &dag.nodes()[parts.minor_cycle_node.as_ref().unwrap()];
@@ -14403,7 +14426,7 @@ fn pending_generation_for_problem(
     let demand = planned
         .demand(
             &inputs,
-            casa_imaging_products::ProductStoragePlan::new(1).unwrap(),
+            casa_imaging_products::ProductStoragePlan::new(1, 1).unwrap(),
         )
         .expect("product generation demand");
     (planned, join, demand)

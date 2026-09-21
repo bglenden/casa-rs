@@ -131,27 +131,49 @@ impl FinalNormalState {
         self.primitives.retained_resident_bytes()
     }
 
-    /// Internal ownership handoff for one bounded native-cube refresh window.
-    /// The runtime checks the retained source and model association before this
-    /// read; the storage owner checks window inventory and propagates I/O errors.
+    /// Start a residual-only candidate sharing this complete state's immutable
+    /// normal fields. Source/operator association is checked without array reads;
+    /// the previous complete state remains usable if the candidate fails.
     #[doc(hidden)]
-    pub fn read_streaming_cube_window(
+    pub fn begin_streaming_cube_refresh(
         &self,
-        channels: std::ops::Range<usize>,
-    ) -> Result<crate::SpectralOperatorPrimitives, SpectralOperatorError> {
-        let NormalStateWindowPayload::ChannelLocal(domains) =
-            self.primitives.read_window(channels)?
-        else {
-            return Err(SpectralOperatorError::ReusableNormalStateMismatch);
-        };
-        if domains.len() != 1 {
+        specification: &crate::SpectralOperatorSpecification,
+        replay: &crate::weighting::WeightingReplaySummary,
+        selected: SelectedObservationGenerationId,
+        transform: Option<ContinuumTransformGenerationId>,
+        model: ModelGenerationId,
+        storage: &crate::spectral_operator::normal_storage::NormalStoragePlan,
+    ) -> Result<CubeNormalRefresh, SpectralOperatorError> {
+        let completion =
+            crate::spectral_operator::CompleteDataOwnerCompletion::from_streaming_cube(
+                specification,
+                replay,
+                selected,
+                transform,
+            )?;
+        if self.catalog != NormalStateCatalog::UnnormalizedChannelSlabV1
+            || self.problem != completion.problem_id()
+            || self.geometry != completion.geometry_id()
+            || self.numerics != completion.numerics_id()
+            || self.weighting_commitment != completion.weighting_commitment_id()
+            || self.weighting_generation != completion.weighting_generation()
+            || self.replay != completion.replay_id()
+            || self.coverage != completion.coverage()
+            || self.selected_generation != selected
+            || self.continuum_transform_generation != transform
+            || self.sample_count != replay.sample_count()
+            || self.block_count != replay.block_count()
+        {
             return Err(SpectralOperatorError::ReusableNormalStateMismatch);
         }
-        let (ordinal, _, primitives) = domains.into_iter().next().unwrap().into_parts();
-        if ordinal != 0 {
-            return Err(SpectralOperatorError::ReusableNormalStateMismatch);
-        }
-        Ok(primitives)
+        Ok(CubeNormalRefresh {
+            fold: crate::spectral_operator::normal_storage::StoredChannelNormalFold::refresh(
+                &self.primitives,
+                completion,
+                model,
+                storage,
+            )?,
+        })
     }
     /// Maximum channel window supported by this generation's backing capability.
     #[doc(hidden)]
@@ -496,6 +518,34 @@ impl FinalNormalState {
     ) -> Result<crate::FinalNormalPlaneReader<'_>, SpectralOperatorError> {
         self.primitives
             .read_plane(domain_ordinal, absolute_channel, polarization)
+    }
+}
+
+/// Incomplete residual-only candidate; no complete-state access until coverage
+/// closes. Its shared invariant owner never retains a previous residual epoch.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct CubeNormalRefresh {
+    fold: crate::spectral_operator::normal_storage::StoredChannelNormalFold,
+}
+
+impl CubeNormalRefresh {
+    /// Append the next exclusive channel range at the candidate's model epoch.
+    pub fn append(
+        &mut self,
+        residual: crate::streaming_cube::band::CubeResidual,
+    ) -> Result<(), SpectralOperatorError> {
+        self.fold.append_residual(residual)
+    }
+
+    /// Transfer a complete candidate only after ordered full-axis coverage.
+    pub fn finish(
+        self,
+    ) -> Result<
+        crate::spectral_operator::normal_storage::CompleteDataNormalState,
+        SpectralOperatorError,
+    > {
+        self.fold.finish()
     }
 }
 

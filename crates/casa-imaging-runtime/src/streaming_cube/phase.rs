@@ -16,7 +16,9 @@ use crate::{
     SpectralCycleExecutionPolicy, SpectralPassIdentity, SpectralPassPhase, WeightingExecutionState,
     WeightingPlanFragment, WeightingReplayCompletion, WeightingStreamingMode, WorkExecutionContext,
     WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements, WorkNodeId,
-    complete_data_operator::{CompleteDataSlabResult, PendingCompleteDataSlabFold},
+    complete_data_operator::{
+        CompleteDataSlabResult, PendingCompleteDataSlabFold, PendingCubeRefresh,
+    },
     cube_state_plan::CubeStatePlan,
 };
 use casa_imaging_model::{
@@ -26,7 +28,7 @@ use casa_imaging_reconstruction::{
     ExecutableModelProblem, FinalNormalState, ImageDomainReconstructionMaskPlans,
     MajorCyclePreparation, MinorCycleProgram, ModelLifecycle, MuellerMatrix, PolarizationOperator,
     ReconstructionMaskSet, SpectralOperatorSpecification, WeightingPlan, plan_weighting,
-    runtime_adapter::{BandPlan, ReconstructionPlaneWorkspace, SpectralOperatorPass},
+    runtime_adapter::{BandPlan, BandResult, ReconstructionPlaneWorkspace, SpectralOperatorPass},
 };
 use casa_ms::DeferredSelectedObservationAccess;
 use std::{io, sync::Mutex};
@@ -324,6 +326,7 @@ impl InitialCube {
             prepare.clone(),
             state_terminal.clone(),
             false,
+            imported,
         )?;
         let before_cube_state = physical;
         let mut physical = cube_state
@@ -377,14 +380,6 @@ impl InitialCube {
             .ok_or_else(|| io::Error::other("native cube owner residency overflow"))?;
         let plan_native = |physical: &PhysicalWorkBinding| {
             if let Some(retained) = &retained {
-                let prior_window_bytes =
-                    casa_imaging_reconstruction::normal_state_window_residency_bytes(
-                        problem.model_lifecycle().target().domains()[0].pixels(),
-                        1,
-                        output_hz.len(),
-                        1,
-                    )
-                    .map_err(io::Error::other)?;
                 NativePhasePlan::new_for_pass(
                     physical,
                     &policy.authority,
@@ -395,7 +390,7 @@ impl InitialCube {
                     shared_bytes,
                     workers,
                     source_slots,
-                    Some(prior_window_bytes),
+                    true,
                 )
             } else {
                 NativePhasePlan::for_initial_source(
@@ -419,6 +414,7 @@ impl InitialCube {
             prepare.clone(),
             state_terminal,
             true,
+            imported,
         )?;
         let resident_physical = resident
             .compose(
@@ -702,47 +698,49 @@ impl WorkImplementation for InitialCube {
                 .ok_or_else(|| io::Error::other("native source fence is incomplete"))?;
             let retained_bands = bands.iter().map(BandPlan::residual_refresh).collect();
             let mut fold: Option<PendingCompleteDataSlabFold> = None;
+            let reconciliation = &self.reconcile;
+            #[cfg(test)]
+            let reconciliation = if self.failure == Failure::ReconciliationNode {
+                &self.read
+            } else {
+                reconciliation
+            };
+            let mut refresh = if self.imported {
+                Some(
+                    PendingCubeRefresh::new(
+                        context,
+                        reconciliation,
+                        &self.read,
+                        &SpectralOperatorSpecification::new(&self.problem)
+                            .map_err(io::Error::other)?,
+                        state
+                            .prior
+                            .as_ref()
+                            .ok_or_else(|| io::Error::other("native refresh lacks prior normal"))?,
+                        model.final_model().generation_id(),
+                        replay,
+                        &self.cube_state.normal_storage()?,
+                    )
+                    .map_err(io::Error::other)?,
+                )
+            } else {
+                None
+            };
             let mut pending = bands.into_iter();
             while !pending.as_slice().is_empty() {
-                let count = if self.imported {
-                    WavePlan::refresh_prefix(
-                        store.plan,
-                        pending.as_slice(),
-                        self.native_plan.workers,
-                        self.native_plan.source_slots,
-                        self.native_plan.shared_bytes,
-                        self.native_plan.workspace_bytes,
-                        self.native_plan.prior_window_bytes,
-                    )?
-                } else {
-                    WavePlan::initial_prefix(
-                        store.plan,
-                        pending.as_slice(),
-                        self.native_plan.workers,
-                        self.native_plan.source_slots,
-                        self.native_plan.shared_bytes,
-                        self.native_plan.workspace_bytes,
-                    )?
-                };
+                let count = WavePlan::prefix(
+                    store.plan,
+                    pending.as_slice(),
+                    self.native_plan.workers,
+                    self.native_plan.source_slots,
+                    self.native_plan.shared_bytes,
+                    self.native_plan.workspace_bytes,
+                )?;
                 let jobs = pending
                     .by_ref()
                     .take(count)
-                    .map(|plan| {
-                        Ok(BandInput {
-                            prior: state
-                                .prior
-                                .as_ref()
-                                .map(|prior| {
-                                    prior
-                                        .read_streaming_cube_window(plan.core())
-                                        .map_err(io::Error::other)
-                                })
-                                .transpose()?,
-                            plan,
-                            fft: None,
-                        })
-                    })
-                    .collect::<io::Result<Vec<_>>>()?;
+                    .map(|plan| BandInput { plan, fft: None })
+                    .collect::<Vec<_>>();
                 let mut measurements = None;
                 let wave = execute::execute(
                     &mut store,
@@ -768,6 +766,22 @@ impl WorkImplementation for InitialCube {
                     );
                 }
                 for (normal, _) in wave.bands {
+                    let normal = match normal {
+                        BandResult::Residual(residual) => {
+                            refresh
+                                .as_mut()
+                                .ok_or_else(|| {
+                                    io::Error::other("initial phase returned residual-only output")
+                                })?
+                                .append(residual)
+                                .map_err(io::Error::other)?;
+                            continue;
+                        }
+                        BandResult::Initial(normal) if !self.imported => normal,
+                        BandResult::Initial(_) => {
+                            return Err(io::Error::other("refresh returned initial normal fields"));
+                        }
+                    };
                     let core = normal.slab().core_range();
                     let spec = SpectralOperatorSpecification::for_slab(
                         &self.problem,
@@ -775,33 +789,14 @@ impl WorkImplementation for InitialCube {
                         core.len(),
                     )
                     .map_err(io::Error::other)?;
-                    let reconciliation = &self.reconcile;
-                    #[cfg(test)]
-                    let reconciliation = if self.failure == Failure::ReconciliationNode {
-                        &self.read
-                    } else {
-                        reconciliation
-                    };
-                    let band = if self.imported {
-                        CompleteDataSlabResult::from_streaming_cube_refresh(
-                            context,
-                            reconciliation,
-                            &self.read,
-                            &spec,
-                            normal,
-                            replay,
-                        )
-                        .map_err(io::Error::other)?
-                    } else {
-                        CompleteDataSlabResult::from_streaming_cube(
-                            context,
-                            reconciliation,
-                            &spec,
-                            normal,
-                            replay,
-                        )
-                        .map_err(io::Error::other)?
-                    };
+                    let band = CompleteDataSlabResult::from_streaming_cube(
+                        context,
+                        reconciliation,
+                        &spec,
+                        normal,
+                        replay,
+                    )
+                    .map_err(io::Error::other)?;
                     fold = Some(
                         match fold {
                             None => band.begin_fold(&self.cube_state.normal_storage()?),
@@ -811,11 +806,11 @@ impl WorkImplementation for InitialCube {
                     );
                 }
             }
-            let fold = fold.ok_or_else(|| io::Error::other("native cube produced no bands"))?;
-            let complete = if self.imported {
-                fold.complete_gridded()
+            let complete = if let Some(refresh) = refresh {
+                refresh.complete()
             } else {
-                fold.complete(replay)
+                fold.ok_or_else(|| io::Error::other("native cube produced no bands"))?
+                    .complete(replay)
             }
             .map_err(io::Error::other)?;
             state.prior = None;

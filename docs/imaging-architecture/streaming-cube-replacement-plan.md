@@ -386,10 +386,22 @@ is the lesser of the full initial-wave shape bound and remaining authority-owned
 memory, but must fit preparation and every minimum one-band wave. The bound
 includes preparation arenas/cache, all retained support metadata and row-range
 scratch, source slots, worker stacks and explicitly supplied enclosing owners.
+Normal storage separates epoch-specific dirty/residual arrays from independently
+owned immutable PSF/sensitivity arrays at initial construction. Residual refresh
+shares the invariant owner directly and writes only the newly calculated residual;
+it never loads old residual arrays merely to discard them or rewrites invariant
+arrays. The prior complete state survives candidate failure. Source/operator
+associations and model epoch are checked without content attestation, and only
+ordered complete residual coverage transfers to the existing CLEAN controller.
+Each backing carries its own logical memory allocation/permit; shared aliases
+are charged once and do not retain previous residual generations. Physical
+encodings, persistence checksums and CASA output formats are unchanged.
+
 Resident normal storage has a stronger admission condition: its fully composed
 reservation must leave room for preparation and a complete wave with one band
-per useful worker (capped by the number of bands). The wave bound includes prior
-normal windows during residual refresh. Otherwise the existing paged storage
+per useful worker (capped by the number of bands). The wave bound uses the actual
+phase's grids and model support; no prior normal windows are materialized during
+residual refresh. Otherwise the existing paged storage
 keeps that workspace available; genuinely low memory can still constrain the
 wave. This prevents a residency threshold from stranding otherwise usable workers
 without increasing the memory ceiling or adding a dataset-specific threshold.

@@ -1200,6 +1200,13 @@ where
     S::Error: Send + Sync,
 {
     let (planned_products, generation_demand) = {
+        let requested_workers = match &runtime.resource_policy {
+            ResourcePolicy::Explicit(policy) => policy
+                .workers
+                .unwrap_or_else(|| prior.initial_receipt.initial_execution_knobs().workers),
+            _ => prior.initial_receipt.initial_execution_knobs().workers,
+        };
+        let requested_workers = usize::try_from(requested_workers)?;
         let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific)?;
         if let Some(masks) = reconstruction_masks.as_ref() {
             inputs = match masks {
@@ -1213,7 +1220,10 @@ where
             };
         }
         let planned = PlannedContinuumGeneration::new(&inputs, &publication_config.controls)?;
-        let demand = planned.demand(&inputs, casa_imaging_products::ProductStoragePlan::new(1)?)?;
+        let demand = planned.demand(
+            &inputs,
+            casa_imaging_products::ProductStoragePlan::new(1, requested_workers)?,
+        )?;
         (planned, demand)
     };
     let staging_residency_bytes = publication_config

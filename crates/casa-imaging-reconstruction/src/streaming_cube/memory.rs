@@ -7,7 +7,7 @@ use super::*;
 use crate::spectral_operator::fft_planning_words_for_shape;
 use std::mem::size_of;
 
-/// Conservative per-job phase peaks, including its owned prior normal and FFT.
+/// Conservative per-job phase peaks, including its generated fields and FFT.
 /// Shape-derived library bounds are shared with the existing spectral owner.
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy)]
@@ -48,10 +48,7 @@ fn mul(left: usize, right: usize) -> Result<usize, SpectralOperatorError> {
 impl BandPlan {
     /// No allocation or payload scan. The runtime must also count input/source,
     /// shared model storage, job collection headers, output sinks and stacks.
-    pub fn memory(
-        &self,
-        prior: Option<&SpectralOperatorPrimitives>,
-    ) -> Result<BandMemory, SpectralOperatorError> {
+    pub fn memory(&self) -> Result<BandMemory, SpectralOperatorError> {
         if self.core.is_empty() || self.core.end > self.total_channels {
             return Err(SpectralOperatorError::InvalidSlab);
         }
@@ -70,21 +67,6 @@ impl BandPlan {
         )?;
         let convolution = StandardConvolution::dynamic_bytes(self.geometry.grid_shape)?;
         let support = mul(self.support.model.capacity(), size_of::<usize>())?;
-        let (old_normal, reused) = match (self.phase, prior) {
-            (BandPhase::Residual, Some(prior)) => {
-                prior.validate_cube_layout(
-                    self.geometry.image_shape,
-                    self.core.clone(),
-                    self.total_channels,
-                )?;
-                (
-                    prior.cube_owned_bytes(true)?,
-                    prior.cube_owned_bytes(false)?,
-                )
-            }
-            (BandPhase::InitialZero | BandPhase::Full, None) => (0, 0),
-            _ => return Err(SpectralOperatorError::ReusableNormalStateMismatch),
-        };
         let normal = self.phase != BandPhase::Residual;
         let predicts = self.phase != BandPhase::InitialZero;
         let grid_count = match self.phase {
@@ -128,10 +110,10 @@ impl BandPlan {
             },
             stats,
         ])?;
-        let accumulation_bytes = add(&[workspace, reused])?;
-        let preparation_bytes = add(&[workspace, old_normal])?
+        let accumulation_bytes = workspace;
+        let preparation_bytes = workspace
             .max(add(&[accumulation_bytes, model_window])?)
-            .max(add(&[headers, support, fft, planning, old_normal])?);
+            .max(add(&[headers, support, fft, planning])?);
         // Compensation/forward/support arrays are explicitly dropped first.
         // Each image allocation overlaps all not-yet-consumed grids and the
         // already completed images; a grid is dropped after its conversion.
@@ -139,7 +121,6 @@ impl BandPlan {
             headers,
             fft,
             convolution,
-            reused,
             if normal { mul(depth, 16)? } else { 0 },
         ])?;
         let mut completion_bytes = 0;
@@ -162,16 +143,10 @@ impl BandPlan {
         } else {
             0
         };
-        let result_headers = if normal {
-            size_of::<(SpectralOperatorPrimitives, PreparedFft)>()
-        } else {
-            // The moved prior already includes its primitive header.
-            size_of::<PreparedFft>()
-        };
+        let result_headers = size_of::<(BandResult, PreparedFft)>();
         let retained_bytes = add(&[
             result_headers,
             fft,
-            reused,
             mul(image_count, image)?,
             normal_metadata,
         ])?;

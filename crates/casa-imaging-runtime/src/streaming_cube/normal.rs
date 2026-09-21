@@ -15,25 +15,27 @@ use crate::paged_cube_state::{BackingObservation, CubeArrayLedger, CubeBackingMe
 #[derive(Debug)]
 pub(crate) struct ResidentNormalFactory {
     requirements: Box<[ChannelNormalStorageRequirement]>,
-    retention: Arc<dyn fmt::Debug + Send + Sync>,
+    retentions: Box<[(usize, Arc<dyn fmt::Debug + Send + Sync>)]>,
     metrics: Arc<CubeBackingMetrics>,
 }
 
 impl ResidentNormalFactory {
     pub(crate) fn new(
         requirements: Box<[ChannelNormalStorageRequirement]>,
-        retention: Arc<dyn fmt::Debug + Send + Sync>,
+        retentions: Box<[(usize, Arc<dyn fmt::Debug + Send + Sync>)]>,
         metrics: Arc<CubeBackingMetrics>,
     ) -> Self {
         Self {
             requirements,
-            retention,
+            retentions,
             metrics,
         }
     }
 
     pub(crate) fn metadata_bytes(&self) -> usize {
-        size_of::<Self>() + size_of_val(self.requirements.as_ref())
+        size_of::<Self>()
+            + size_of_val(self.requirements.as_ref())
+            + size_of_val(self.retentions.as_ref())
     }
 
     pub(crate) fn ledger(
@@ -64,12 +66,13 @@ impl ResidentNormalFactory {
 impl NormalStorageFactory for ResidentNormalFactory {
     fn create(
         &self,
-        domain: usize,
+        allocation_ordinal: usize,
         scalars: usize,
     ) -> Result<Box<dyn NormalArrayStorage>, SpectralOperatorError> {
         let requirement = *self
             .requirements
-            .get(domain)
+            .iter()
+            .find(|r| r.allocation_ordinal() == allocation_ordinal)
             .filter(|r| scalars > 0 && scalars <= r.scalar_capacity())
             .ok_or_else(|| {
                 SpectralOperatorError::NormalStorage(
@@ -79,11 +82,20 @@ impl NormalStorageFactory for ResidentNormalFactory {
         let mut ledger = Self::ledger(requirement)
             .map_err(|e| SpectralOperatorError::NormalStorage(e.to_string()))?;
         ledger.retained_bytes = size_of::<ResidentNormalArray>() + scalars * size_of::<f64>();
+        let retention = self
+            .retentions
+            .iter()
+            .find(|(ordinal, _)| *ordinal == allocation_ordinal)
+            .ok_or_else(|| {
+                SpectralOperatorError::NormalStorage(
+                    "normal allocation lacks its retention owner".into(),
+                )
+            })?;
         Ok(Box::new(ResidentNormalArray {
             values: vec![0.0; scalars].into_boxed_slice(),
             window_scalars: requirement.maximum_window_scalars(),
             observation: self.metrics.register(ledger),
-            _retention: self.retention.clone(),
+            _retention: retention.1.clone(),
         }))
     }
 }
@@ -141,14 +153,31 @@ mod tests {
         let requirements =
             ChannelNormalStorageRequirement::for_streaming_cube(&specification, 1).unwrap();
         let legacy = ChannelNormalStorageRequirement::for_specification(&specification, 1).unwrap();
-        assert_eq!(requirements[0].scalar_capacity(), 4 * 64 * 5);
-        assert_eq!(legacy[0].scalar_capacity(), 4 * 64 * 9);
+        assert_eq!(requirements[0].scalar_capacity(), 4 * 64 * 2);
+        assert_eq!(requirements[1].scalar_capacity(), 4 * 64 * 3);
+        assert_eq!(legacy[0].scalar_capacity(), 4 * 64 * 4);
+        assert_eq!(legacy[1].scalar_capacity(), 4 * 64 * 5);
+        let refresh =
+            ChannelNormalStorageRequirement::for_streaming_cube_refresh(&specification, 1).unwrap();
+        assert_eq!(refresh.len(), 1);
+        assert_eq!(refresh[0].allocation_ordinal(), 0);
+        assert_eq!(refresh[0].scalar_capacity(), 4 * 64 * 2);
+        let initial_scalars = requirements
+            .iter()
+            .map(|r| r.scalar_capacity())
+            .sum::<usize>();
+        let refresh_scalars = refresh.iter().map(|r| r.scalar_capacity()).sum::<usize>();
+        assert_eq!(initial_scalars + refresh_scalars, 4 * 64 * 7);
         let requirement = requirements[0];
         let admitted = ResidentNormalFactory::ledger(requirement).unwrap();
         let metrics = Arc::new(CubeBackingMetrics::default());
         let owner = Arc::new(());
-        let factory = ResidentNormalFactory::new(requirements, owner.clone(), metrics.clone());
-        assert!(factory.create(1, 1).is_err());
+        let factory = ResidentNormalFactory::new(
+            requirements,
+            vec![(0, owner.clone() as Arc<dyn fmt::Debug + Send + Sync>)].into(),
+            metrics.clone(),
+        );
+        assert!(factory.create(2, 1).is_err());
         assert!(factory.create(0, 0).is_err());
         assert!(
             factory

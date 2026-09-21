@@ -203,6 +203,9 @@ fn native_preparation_and_real_bands_feed_the_existing_fold_and_controller() {
     .unwrap();
     let mut fold: Option<CompleteDataOwnerSlabFold> = None;
     for ((normal, _), specification) in result.bands.into_iter().zip(&specifications) {
+        let BandResult::Initial(normal) = normal else {
+            panic!("initial normal required")
+        };
         let pointers = (
             normal.dirty().as_ptr(),
             normal.psf().as_ptr(),
@@ -478,7 +481,6 @@ fn initial_jobs(plans: &[BandPlan]) -> Vec<BandInput> {
         .iter()
         .map(|plan| BandInput {
             plan: plan.clone(),
-            prior: None,
             fft: None,
         })
         .collect()
@@ -510,11 +512,20 @@ fn run(
     (result, measured.unwrap())
 }
 
-fn assert_same(
-    expected: &SpectralOperatorPrimitives,
-    bands: &[(SpectralOperatorPrimitives, PreparedFft)],
-) {
+fn assert_same(expected: &BandResult, bands: &[(BandResult, PreparedFft)]) {
     for (band, _) in bands {
+        let (expected, band) = match (expected, band) {
+            (BandResult::Residual(expected), BandResult::Residual(band)) => {
+                let core = band.core();
+                assert_eq!(
+                    band.values(),
+                    &expected.values()[core.start * 64..core.end * 64]
+                );
+                continue;
+            }
+            (BandResult::Initial(expected), BandResult::Initial(band)) => (expected, band),
+            _ => panic!("different band phases"),
+        };
         let core = band.slab().core_range();
         let pixels = core.start * 64..core.end * 64;
         assert_eq!(band.dirty(), &expected.dirty()[pixels.clone()]);
@@ -537,12 +548,11 @@ fn complete_band_jobs_match_across_workers_and_epochs_without_row_block_dispatch
     let (initial_reference, _) = run(&mut store, initial_jobs(&whole), &empty, 1, 1);
     let (mut initial, _) = run(&mut store, initial_jobs(&whole), &empty, 1, 1);
     let model = changed_model(&owner, empty);
-    let (full_prior, fft) = initial.bands.pop().unwrap();
+    let (_, fft) = initial.bands.pop().unwrap();
     let (expected, _) = run(
         &mut store,
         vec![BandInput {
             plan: whole[0].residual_refresh(),
-            prior: Some(full_prior),
             fft: Some(fft),
         }],
         &model,
@@ -583,26 +593,22 @@ fn complete_band_jobs_match_across_workers_and_epochs_without_row_block_dispatch
                     "each band reads at most one metadata and three tile frames per block"
                 );
                 let model = changed_model(&owner, empty);
-                let pointers: Vec<_> = initial
-                    .bands
-                    .iter()
-                    .map(|(normal, _)| (normal.psf().as_ptr(), normal.sensitivity().as_ptr()))
-                    .collect();
                 let jobs = plans
                     .iter()
                     .zip(initial.bands)
-                    .map(|(plan, (normal, fft))| BandInput {
+                    .map(|(plan, (_, fft))| BandInput {
                         plan: plan.residual_refresh(),
-                        prior: Some(normal),
                         fft: Some(fft),
                     })
                     .collect();
                 let (refreshed, _) = run(&mut store, jobs, &model, workers, slots);
                 assert_same(&expected.bands[0].0, &refreshed.bands);
-                for ((normal, _), (psf, sensitivity)) in refreshed.bands.iter().zip(pointers) {
-                    assert_eq!(normal.psf().as_ptr(), psf);
-                    assert_eq!(normal.sensitivity().as_ptr(), sensitivity);
-                }
+                assert!(
+                    refreshed
+                        .bands
+                        .iter()
+                        .all(|(band, _)| matches!(band, BandResult::Residual(_)))
+                );
             }
         }
     }
@@ -659,7 +665,7 @@ fn wave_admission_counts_all_jobs_and_rejects_before_work() {
             assert_eq!(plan.job_bytes.len(), 4);
             let dynamic: u64 = jobs
                 .iter()
-                .map(|job| job.plan.memory(None).unwrap().peak_bytes() as u64)
+                .map(|job| job.plan.memory().unwrap().peak_bytes() as u64)
                 .sum();
             assert!(plan.peak_bytes > dynamic);
         }
@@ -680,22 +686,15 @@ fn initial_wave_selection_uses_shape_budget_and_drains_before_next_wave() {
     for workers in [1, 2, 4] {
         for slots in [1, 2] {
             for count in 1..=bands.len() {
-                let budget = WavePlan::project(
-                    store.plan,
-                    bands[..count].iter().map(|band| (band, None)),
-                    workers,
-                    slots,
-                    4096,
-                )
-                .unwrap()
-                .peak_bytes;
+                let budget =
+                    WavePlan::project(store.plan, bands[..count].iter(), workers, slots, 4096)
+                        .unwrap()
+                        .peak_bytes;
                 assert_eq!(
-                    WavePlan::initial_prefix(store.plan, &bands, workers, slots, 4096, budget,)
-                        .unwrap(),
+                    WavePlan::prefix(store.plan, &bands, workers, slots, 4096, budget,).unwrap(),
                     count
                 );
-                let below =
-                    WavePlan::initial_prefix(store.plan, &bands, workers, slots, 4096, budget - 1);
+                let below = WavePlan::prefix(store.plan, &bands, workers, slots, 4096, budget - 1);
                 if count == 1 {
                     assert!(below.is_err());
                 } else {
@@ -706,28 +705,16 @@ fn initial_wave_selection_uses_shape_budget_and_drains_before_next_wave() {
                 // spare capacity can shrink. Every later band must also fit.
                 let budget = bands.iter().fold(budget, |budget, band| {
                     budget.max(
-                        WavePlan::project(
-                            store.plan,
-                            std::iter::once((band, None)),
-                            workers,
-                            slots,
-                            4096,
-                        )
-                        .unwrap()
-                        .peak_bytes,
+                        WavePlan::project(store.plan, std::iter::once(band), workers, slots, 4096)
+                            .unwrap()
+                            .peak_bytes,
                     )
                 });
                 let mut start = 0;
                 while start < bands.len() {
-                    let depth = WavePlan::initial_prefix(
-                        store.plan,
-                        &bands[start..],
-                        workers,
-                        slots,
-                        4096,
-                        budget,
-                    )
-                    .unwrap();
+                    let depth =
+                        WavePlan::prefix(store.plan, &bands[start..], workers, slots, 4096, budget)
+                            .unwrap();
                     let wave = execute(
                         &mut store,
                         initial_jobs(&bands[start..start + depth]),
@@ -744,10 +731,15 @@ fn initial_wave_selection_uses_shape_budget_and_drains_before_next_wave() {
                     )
                     .unwrap();
                     for (actual, reference) in wave.bands.iter().zip(&expected.bands[start..]) {
-                        assert_eq!(actual.0.dirty(), reference.0.dirty());
-                        assert_eq!(actual.0.psf(), reference.0.psf());
-                        assert_eq!(actual.0.sensitivity(), reference.0.sensitivity());
-                        assert_eq!(actual.0.sum_weights(), reference.0.sum_weights());
+                        let (BandResult::Initial(actual), BandResult::Initial(reference)) =
+                            (&actual.0, &reference.0)
+                        else {
+                            panic!("initial normal required")
+                        };
+                        assert_eq!(actual.dirty(), reference.dirty());
+                        assert_eq!(actual.psf(), reference.psf());
+                        assert_eq!(actual.sensitivity(), reference.sensitivity());
+                        assert_eq!(actual.sum_weights(), reference.sum_weights());
                     }
                     start += depth;
                     // Returned images/FFT owners leave scope before next selection.
@@ -755,9 +747,9 @@ fn initial_wave_selection_uses_shape_budget_and_drains_before_next_wave() {
             }
         }
     }
-    assert!(WavePlan::initial_prefix(store.plan, &bands, 0, 1, 0, u64::MAX).is_err());
-    assert!(WavePlan::initial_prefix(store.plan, &bands, 4, 3, 0, u64::MAX).is_err());
-    assert!(WavePlan::initial_prefix(store.plan, &[], 1, 1, 0, u64::MAX).is_err());
+    assert!(WavePlan::prefix(store.plan, &bands, 0, 1, 0, u64::MAX).is_err());
+    assert!(WavePlan::prefix(store.plan, &bands, 4, 3, 0, u64::MAX).is_err());
+    assert!(WavePlan::prefix(store.plan, &[], 1, 1, 0, u64::MAX).is_err());
 }
 
 #[test]
@@ -772,6 +764,9 @@ fn wholly_unmapped_wave_uses_no_source_or_fabricated_rows() {
     assert_eq!(measurements.logical_units_filled, 0);
     assert_eq!(measurements.worker_threads_started, 4);
     for (normal, _) in result.bands {
+        let BandResult::Initial(normal) = normal else {
+            panic!("initial normal required")
+        };
         assert_eq!(
             normal.channel_validity(),
             &[SpectralChannelValidity::Unmapped]
@@ -795,9 +790,8 @@ fn model_read_failure_joins_the_wave_without_completion() {
     let jobs = bands
         .iter()
         .zip(initial.bands)
-        .map(|(plan, (normal, fft))| BandInput {
+        .map(|(plan, (_, fft))| BandInput {
             plan: plan.residual_refresh(),
-            prior: Some(normal),
             fft: Some(fft),
         })
         .collect();

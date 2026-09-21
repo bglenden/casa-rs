@@ -531,7 +531,7 @@ enum WorkerExecution<P, E> {
     Failed(Box<E>),
 }
 
-struct FixedWorkerTeam {
+pub(crate) struct FixedWorkerTeam {
     pool: Option<rayon::ThreadPool>,
     threads: Vec<JoinHandle<()>>,
     threads_started: Arc<AtomicU64>,
@@ -541,7 +541,7 @@ struct FixedWorkerTeam {
 }
 
 impl FixedWorkerTeam {
-    fn new(workers: usize) -> Result<Self, BoundedStreamPlanError> {
+    pub(crate) fn new(workers: usize) -> Result<Self, BoundedStreamPlanError> {
         Self::new_with_spawn(workers, |thread| {
             std::thread::Builder::new()
                 .stack_size(BOUNDED_WORKER_STACK_BYTES)
@@ -606,6 +606,15 @@ impl FixedWorkerTeam {
         #[cfg(test)]
         self.external_pool_installs.fetch_add(1, Ordering::Relaxed);
         pool.install(operation)
+    }
+
+    /// Execute borrowed preparation and join before returning to a caller-owned sink.
+    pub(crate) fn for_each_mut<T: Send, E: Send>(
+        &self,
+        values: &mut [T],
+        operation: impl Fn(usize, &mut T) -> Result<(), E> + Send + Sync,
+    ) -> Result<(), E> {
+        self.install(|| BoundedExecution(Some(self)).for_each_mut(values, operation))
     }
 
     fn execute_wave<S, K>(
@@ -5139,5 +5148,37 @@ mod tests {
         assert_eq!(finished.load(Ordering::Acquire), 4);
         assert_eq!(output, [1, 2, 3, 4]);
         assert_eq!(exits.load(Ordering::Acquire), 4);
+    }
+
+    #[test]
+    fn caller_owned_sink_drains_borrowed_waves_after_one_team_joins() {
+        use std::{cell::RefCell, rc::Rc};
+        let sink = Rc::new(RefCell::new(Vec::new()));
+        let caller = std::thread::current().id();
+        let team = FixedWorkerTeam::new(2).unwrap();
+        for wave in 0..3 {
+            let mut slots = [0; 2];
+            team.for_each_mut(&mut slots, |index, value| {
+                assert_ne!(std::thread::current().id(), caller);
+                *value = wave * 2 + index;
+                Ok::<_, Infallible>(())
+            })
+            .unwrap();
+            assert_eq!(std::thread::current().id(), caller);
+            sink.borrow_mut().extend(slots);
+        }
+        assert_eq!(*sink.borrow(), [0, 1, 2, 3, 4, 5]);
+        assert_eq!(team.threads_started.load(Ordering::Relaxed), 2);
+        assert_eq!(team.external_pool_installs(), 3);
+        let barrier = Barrier::new(2);
+        let finished = AtomicUsize::new(0);
+        let result = team.for_each_mut(&mut [0; 2], |index, value| {
+            barrier.wait();
+            *value = index;
+            finished.fetch_add(1, Ordering::Release);
+            if index == 0 { Err(()) } else { Ok(()) }
+        });
+        assert_eq!(result, Err(()));
+        assert_eq!(finished.load(Ordering::Acquire), 2);
     }
 }

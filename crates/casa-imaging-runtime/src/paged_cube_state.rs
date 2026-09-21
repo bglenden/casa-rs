@@ -286,22 +286,22 @@ fn checked_sum(values: &[usize]) -> Result<usize, String> {
 #[derive(Debug)]
 pub(crate) struct PagedNormalStorageFactory {
     parent: Box<Path>,
-    layouts: Box<[CubeArrayLayout]>,
-    retention: Arc<dyn std::fmt::Debug + Send + Sync>,
+    layouts: Box<[(usize, CubeArrayLayout)]>,
+    retentions: Box<[(usize, Arc<dyn std::fmt::Debug + Send + Sync>)]>,
     metrics: Arc<CubeBackingMetrics>,
 }
 
 impl PagedNormalStorageFactory {
     pub(crate) fn new(
         parent: &Path,
-        layouts: Box<[CubeArrayLayout]>,
-        retention: Arc<dyn std::fmt::Debug + Send + Sync>,
+        layouts: Box<[(usize, CubeArrayLayout)]>,
+        retentions: Box<[(usize, Arc<dyn std::fmt::Debug + Send + Sync>)]>,
         metrics: Arc<CubeBackingMetrics>,
     ) -> Self {
         Self {
             parent: parent.into(),
             layouts,
-            retention,
+            retentions,
             metrics,
         }
     }
@@ -310,9 +310,10 @@ impl PagedNormalStorageFactory {
         let mut bytes = checked_sum(&[
             size_of::<Self>(),
             self.parent.as_os_str().len(),
-            checked_bytes(self.layouts.len(), size_of::<CubeArrayLayout>())?,
+            checked_bytes(self.layouts.len(), size_of::<(usize, CubeArrayLayout)>())?,
+            size_of_val(self.retentions.as_ref()),
         ])?;
-        for layout in &self.layouts {
+        for (_, layout) in &self.layouts {
             bytes = checked_sum(&[
                 bytes,
                 layout
@@ -328,12 +329,13 @@ impl PagedNormalStorageFactory {
 impl NormalStorageFactory for PagedNormalStorageFactory {
     fn create(
         &self,
-        domain_ordinal: usize,
+        allocation_ordinal: usize,
         scalars: usize,
     ) -> Result<Box<dyn NormalArrayStorage>, SpectralOperatorError> {
         let layout = self
             .layouts
-            .get(domain_ordinal)
+            .iter()
+            .find_map(|(ordinal, layout)| (*ordinal == allocation_ordinal).then_some(layout))
             .filter(|layout| scalars > 0 && scalars <= layout.logical_scalars)
             .ok_or_else(|| {
                 normal_storage_error("normal backing does not match its domain layout")
@@ -342,7 +344,12 @@ impl NormalStorageFactory for PagedNormalStorageFactory {
             &self.parent,
             layout,
             scalars,
-            self.retention.clone(),
+            self.retentions
+                .iter()
+                .find(|(ordinal, _)| *ordinal == allocation_ordinal)
+                .ok_or_else(|| normal_storage_error("normal allocation lacks its retention owner"))?
+                .1
+                .clone(),
             self.metrics.clone(),
         )?))
     }
@@ -982,14 +989,106 @@ mod tests {
     }
 
     #[test]
+    fn paged_residual_epochs_share_only_invariants_and_preserve_prior_state_on_error() {
+        let parent = tempfile::tempdir().unwrap();
+        let metrics = Arc::new(CubeBackingMetrics::default());
+        let epoch_values = [0.0, -0.0, f64::from_bits(0x7ff8_0000_0000_1234), 0.125];
+        let invariant_values = [-0.0, f64::MAX, 0.25, -0.5];
+        let initial = PagedNormalStorageFactory::new(
+            parent.path(),
+            vec![
+                (0, CubeArrayLayout::new(16, 4, 4, 1).unwrap()),
+                (1, CubeArrayLayout::new(24, 4, 4, 1).unwrap()),
+            ]
+            .into(),
+            vec![
+                (0, Arc::new(()) as Arc<dyn std::fmt::Debug + Send + Sync>),
+                (1, Arc::new(()) as Arc<dyn std::fmt::Debug + Send + Sync>),
+            ]
+            .into(),
+            metrics.clone(),
+        );
+        let mut epoch = initial.create(0, 16).unwrap();
+        let mut invariants = initial.create(1, 24).unwrap();
+        for start in (0..epoch.len()).step_by(4) {
+            epoch.write(start, &epoch_values).unwrap();
+        }
+        for start in (0..invariants.len()).step_by(4) {
+            invariants.write(start, &invariant_values).unwrap();
+        }
+        let mut previous = (epoch, Arc::new(invariants));
+        let invariant_owner = Arc::downgrade(&previous.1);
+        drop(initial);
+        assert_eq!(metrics.snapshot().live_backings, 2);
+        for generation in 1..=3 {
+            let factory = PagedNormalStorageFactory::new(
+                parent.path(),
+                vec![(0, CubeArrayLayout::new(16, 4, 4, 1).unwrap())].into(),
+                vec![(0, Arc::new(()) as Arc<dyn std::fmt::Debug + Send + Sync>)].into(),
+                metrics.clone(),
+            );
+            assert!(
+                factory.create(1, 24).is_err(),
+                "refresh admits no invariant allocation"
+            );
+            let mut candidate = factory.create(0, 16).unwrap();
+            drop(factory);
+            assert_eq!(metrics.snapshot().live_backings, 3);
+            candidate.write(0, &[generation as f64; 4]).unwrap();
+            assert_eq!(
+                candidate.write(16, &[1.0]),
+                Err(SpectralOperatorError::InvalidSlab)
+            );
+            let expected_epoch = if generation == 1 {
+                epoch_values
+            } else {
+                [f64::from(generation - 1); 4]
+            };
+            assert_eq!(
+                previous
+                    .0
+                    .read(0, 4)
+                    .unwrap()
+                    .iter()
+                    .map(|value| value.to_bits())
+                    .collect::<Vec<_>>(),
+                expected_epoch.map(f64::to_bits),
+            );
+            assert_eq!(
+                previous
+                    .1
+                    .read(0, 4)
+                    .unwrap()
+                    .iter()
+                    .map(|value| value.to_bits())
+                    .collect::<Vec<_>>(),
+                invariant_values.map(f64::to_bits),
+            );
+            for start in (4..candidate.len()).step_by(4) {
+                candidate.write(start, &[generation as f64; 4]).unwrap();
+            }
+            let completed = (candidate, previous.1.clone());
+            drop(previous);
+            assert_eq!(invariant_owner.strong_count(), 1);
+            assert_eq!(metrics.snapshot().live_backings, 2);
+            assert_eq!(std::fs::read_dir(parent.path()).unwrap().count(), 2);
+            previous = completed;
+        }
+        drop(previous);
+        assert!(invariant_owner.upgrade().is_none());
+        assert_eq!(metrics.snapshot().live_backings, 0);
+        assert_eq!(std::fs::read_dir(parent.path()).unwrap().count(), 0);
+    }
+
+    #[test]
     fn t55_paged_normal_rejects_padding_and_overflow_without_backing_access() {
         let parent = tempfile::tempdir().unwrap();
         let layout = CubeArrayLayout::new(11, 8, 2, 1).unwrap();
         let metrics = Arc::new(CubeBackingMetrics::default());
         let factory = PagedNormalStorageFactory::new(
             parent.path(),
-            vec![layout].into_boxed_slice(),
-            Arc::new(()),
+            vec![(0, layout)].into_boxed_slice(),
+            vec![(0, Arc::new(()) as Arc<dyn std::fmt::Debug + Send + Sync>)].into(),
             metrics.clone(),
         );
         let mut storage = factory.create(0, 9).unwrap();
@@ -1031,8 +1130,8 @@ mod tests {
         let layout = CubeArrayLayout::new(9, 8, 2, 1).unwrap();
         let factory = PagedNormalStorageFactory::new(
             &missing,
-            vec![layout].into_boxed_slice(),
-            Arc::new(()),
+            vec![(0, layout)].into_boxed_slice(),
+            vec![(0, Arc::new(()) as Arc<dyn std::fmt::Debug + Send + Sync>)].into(),
             Arc::default(),
         );
         let error = factory.create(0, 9).unwrap_err();

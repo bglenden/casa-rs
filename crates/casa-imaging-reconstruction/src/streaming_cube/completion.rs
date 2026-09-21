@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::streaming_cube::band::{BandImages, BandPhase};
+#[cfg(test)]
 use std::mem::size_of_val;
 
 impl SpectralOperatorSpecification {
@@ -28,6 +29,7 @@ impl SpectralOperatorSpecification {
 }
 
 impl SpectralOperatorPrimitives {
+    #[cfg(test)]
     pub(crate) fn cube_owned_bytes(
         &self,
         include_residual: bool,
@@ -52,20 +54,6 @@ impl SpectralOperatorPrimitives {
                 sum.checked_add(bytes)
                     .ok_or(SpectralOperatorError::ResidencyOverflow)
             })
-    }
-
-    /// Runtime has already matched the run/weighting/source identity. This
-    /// consuming handoff validates the local layout and releases the obsolete
-    /// residual before allocating its replacement, without scanning content.
-    pub(crate) fn prepare_cube_reuse(
-        &mut self,
-        shape: [usize; 2],
-        core: std::ops::Range<usize>,
-        total_channels: usize,
-    ) -> Result<(), SpectralOperatorError> {
-        self.validate_cube_layout(shape, core, total_channels)?;
-        self.dirty = Box::new([]);
-        Ok(())
     }
 
     pub(crate) fn validate_cube_layout(
@@ -113,7 +101,6 @@ impl SpectralOperatorPrimitives {
         images: BandImages,
         total_channels: usize,
         model: ModelGenerationId,
-        prior: Option<Self>,
     ) -> Result<Self, SpectralOperatorError> {
         let BandImages {
             phase,
@@ -129,25 +116,7 @@ impl SpectralOperatorPrimitives {
         let values = cells
             .checked_mul(core.len())
             .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-        if phase == BandPhase::Residual {
-            let mut prior = prior.ok_or(SpectralOperatorError::ReusableNormalStateMismatch)?;
-            if residual.len() != values
-                || !dirty.is_empty()
-                || !psf.is_empty()
-                || !sum_weight.is_empty()
-                || !mapped.is_empty()
-                || prior.shape != shape
-                || prior.slab.core_range() != core
-                || prior.slab.total_channels() != total_channels
-                || !prior.dirty.is_empty()
-            {
-                return Err(SpectralOperatorError::ReusableNormalStateMismatch);
-            }
-            prior.dirty = residual.into_boxed_slice();
-            prior.residual_model = Some(model);
-            return Ok(prior);
-        }
-        if prior.is_some()
+        if phase == BandPhase::Residual
             || core.is_empty()
             || core.end > total_channels
             || dirty.len() != values
@@ -236,30 +205,47 @@ impl CompleteDataOwnerResult {
             specification.slab.core_range(),
             specification.slab.total_channels(),
         )?;
-        if replay.sample_count() == 0 || replay.block_count() == 0 {
-            return Err(SpectralOperatorError::IncompleteCoverage);
-        }
         let domains =
             combine_initial_chart_primitives(specification, std::iter::once(Ok(primitives)))?;
         Ok(Self {
             domains,
-            completion: CompleteDataOwnerCompletion {
-                problem: specification.problem,
-                geometry: specification.geometry,
-                numerics: specification.numerics,
-                weighting_commitment: specification.weighting_commitment,
-                weighting_generation: replay.weighting_generation(),
-                replay: replay.replay_id(),
-                coverage: replay.coverage(),
-                // Reuse terminal source coverage; no second encoding pass.
-                coverage_proof_bytes: 0,
-                coverage_proof_hash_calls: 0,
-                primitives: SpectralPrimitiveCatalog::UnnormalizedChannelSlabV1,
+            completion: CompleteDataOwnerCompletion::from_streaming_cube(
+                specification,
+                replay,
                 selected_generation,
                 continuum_transform_generation,
-                sample_count: replay.sample_count(),
-                block_count: replay.block_count(),
-            },
+            )?,
+        })
+    }
+}
+
+impl CompleteDataOwnerCompletion {
+    pub(crate) fn from_streaming_cube(
+        specification: &SpectralOperatorSpecification,
+        replay: &WeightingReplaySummary,
+        selected_generation: SelectedObservationGenerationId,
+        continuum_transform_generation: Option<ContinuumTransformGenerationId>,
+    ) -> Result<Self, SpectralOperatorError> {
+        specification.cube_geometry()?;
+        if replay.sample_count() == 0 || replay.block_count() == 0 {
+            return Err(SpectralOperatorError::IncompleteCoverage);
+        }
+        Ok(Self {
+            problem: specification.problem,
+            geometry: specification.geometry,
+            numerics: specification.numerics,
+            weighting_commitment: specification.weighting_commitment,
+            weighting_generation: replay.weighting_generation(),
+            replay: replay.replay_id(),
+            coverage: replay.coverage(),
+            // Reuse terminal source coverage; no second encoding pass.
+            coverage_proof_bytes: 0,
+            coverage_proof_hash_calls: 0,
+            primitives: SpectralPrimitiveCatalog::UnnormalizedChannelSlabV1,
+            selected_generation,
+            continuum_transform_generation,
+            sample_count: replay.sample_count(),
+            block_count: replay.block_count(),
         })
     }
 }
@@ -283,14 +269,14 @@ fn cube_phase_handoff_moves_initial_dirty_and_preserves_explicit_invariants() {
     };
     let images = make(BandPhase::InitialZero);
     let pointer = images.dirty.as_ptr();
-    let initial = SpectralOperatorPrimitives::from_cube_band(images, 1, model, None).unwrap();
+    let initial = SpectralOperatorPrimitives::from_cube_band(images, 1, model).unwrap();
     assert_eq!(initial.dirty.as_ptr(), pointer);
     assert!(initial.invariant_dirty.is_none());
     assert!(initial.major_cycle_residual.is_none());
     let images = make(BandPhase::Full);
     let dirty_pointer = images.dirty.as_ptr();
     let residual_pointer = images.residual.as_ptr();
-    let mut full = SpectralOperatorPrimitives::from_cube_band(images, 1, model, None).unwrap();
+    let full = SpectralOperatorPrimitives::from_cube_band(images, 1, model).unwrap();
     assert_eq!(full.dirty.as_ptr(), residual_pointer);
     assert_eq!(
         full.invariant_dirty.as_ref().unwrap().as_ptr(),
@@ -300,16 +286,5 @@ fn cube_phase_handoff_moves_initial_dirty_and_preserves_explicit_invariants() {
         full.invariant_dirty.as_deref().unwrap(),
         &[Complex64::new(3.0, 0.0); 2]
     );
-    assert!(full.prepare_cube_reuse([2, 1], 0..1, 2).is_err());
-    assert_eq!(
-        full.dirty.as_ptr(),
-        residual_pointer,
-        "failed layout check must not mutate"
-    );
-    full.prepare_cube_reuse([2, 1], 0..1, 1).unwrap();
-    assert!(full.dirty.is_empty());
-    assert_eq!(
-        full.invariant_dirty.as_ref().unwrap().as_ptr(),
-        dirty_pointer
-    );
+    assert!(full.validate_cube_layout([2, 1], 0..1, 2).is_err());
 }

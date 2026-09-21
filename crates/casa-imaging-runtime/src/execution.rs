@@ -284,6 +284,65 @@ pub struct RetainedArtifactPermit {
 }
 
 impl RetainedArtifactPermit {
+    /// Move whole dedicated memory permits to their independent artifact owners.
+    /// The export liveness remains shared until every partition has been dropped.
+    pub(crate) fn partition_immutable_allocations(
+        self,
+        owner_node: &WorkNodeId,
+        allocations: &[&LogicalAllocation],
+    ) -> Result<Vec<Self>, ResourceError> {
+        let identities = allocations
+            .iter()
+            .map(|allocation| immutable_allocation_identity(owner_node, allocation))
+            .collect::<Vec<_>>();
+        if self.permits.len() != allocations.len()
+            || self.immutable_allocations.len() != allocations.len()
+            || identities.iter().collect::<BTreeSet<_>>().len() != identities.len()
+            || identities
+                .iter()
+                .any(|identity| !self.immutable_allocations.contains(identity))
+            || allocations.iter().any(|allocation| {
+                self.permits
+                    .iter()
+                    .filter(|permit| {
+                        permit.resource()
+                            == &LeaseResource::Memory {
+                                allocation_id: allocation.id.as_str().to_owned(),
+                            }
+                            && permit.amount() == allocation.bytes
+                    })
+                    .count()
+                    != 1
+            })
+        {
+            return Err(ResourceError::Invalid(
+                "artifact memory partition differs from its exact exported allocations".into(),
+            ));
+        }
+        let mut permits = self.permits.into_vec();
+        Ok(allocations
+            .iter()
+            .zip(identities)
+            .map(|(allocation, identity)| {
+                let index = permits
+                    .iter()
+                    .position(|permit| {
+                        permit.resource()
+                            == &LeaseResource::Memory {
+                                allocation_id: allocation.id.as_str().to_owned(),
+                            }
+                    })
+                    .expect("partition resources were checked before transfer");
+                Self {
+                    lease_epoch: self.lease_epoch,
+                    permits: vec![permits.swap_remove(index)].into_boxed_slice(),
+                    immutable_allocations: vec![identity].into_boxed_slice(),
+                    _liveness: self._liveness.clone(),
+                }
+            })
+            .collect())
+    }
+
     /// Check all named non-memory resources in a capacity reservation.
     pub(crate) fn covers_exact_resources(&self, expected: &[(LeaseResource, u64)]) -> bool {
         self.immutable_allocations.is_empty()
