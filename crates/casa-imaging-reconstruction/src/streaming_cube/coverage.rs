@@ -16,6 +16,8 @@ use super::{
     COVERAGE_DOMAIN, LogicalIdentity, WeightingGenerationId, WeightingReplayCoverageId,
     WeightingSampleValue,
 };
+use crate::{spectral_sampling::NativeRowSpectralGeometry, weighting::WeightingSpectralValue};
+use casa_imaging_model::SelectedSampleAddress;
 use sha2::{Digest, Sha256};
 
 const STREAM_VERSION: u32 = 6;
@@ -116,10 +118,25 @@ impl CoverageEncoder {
     }
 
     pub(crate) fn push(&mut self, weighted: &WeightingSampleValue) {
+        let sample = weighted.selected();
+        self.push_parts(
+            sample.address,
+            sample.row_spectral_geometry,
+            sample.output_frame_frequency_hz,
+            &weighted.spectral_values,
+        );
+    }
+
+    pub(crate) fn push_parts(
+        &mut self,
+        address: SelectedSampleAddress,
+        geometry: Option<NativeRowSpectralGeometry>,
+        output_frame_frequency_hz: f64,
+        spectral_values: &[WeightingSpectralValue],
+    ) {
         if self.derived.is_some() {
             return;
         }
-        let sample = weighted.selected();
         let mut chunk = [0_u8; COVERAGE_HASH_CHUNK_BYTES];
         let mut used = 1;
         chunk[0] = 1;
@@ -127,27 +144,27 @@ impl CoverageEncoder {
             self,
             &mut chunk,
             &mut used,
-            &sample.address.measurement_set.identity().as_bytes(),
+            &address.measurement_set.identity().as_bytes(),
         );
         append_coverage_bytes(
             self,
             &mut chunk,
             &mut used,
-            &sample.address.physical_row.to_be_bytes(),
+            &address.physical_row.to_be_bytes(),
         );
         append_coverage_bytes(
             self,
             &mut chunk,
             &mut used,
-            &sample.address.data_description_id.to_be_bytes(),
+            &address.data_description_id.to_be_bytes(),
         );
         append_coverage_bytes(
             self,
             &mut chunk,
             &mut used,
-            &sample.address.spectral_window_id.to_be_bytes(),
+            &address.spectral_window_id.to_be_bytes(),
         );
-        match sample.row_spectral_geometry {
+        match geometry {
             Some(geometry) => {
                 append_coverage_bytes(self, &mut chunk, &mut used, &[1]);
                 append_coverage_bytes(
@@ -205,27 +222,27 @@ impl CoverageEncoder {
             self,
             &mut chunk,
             &mut used,
-            &sample.address.channel_index.to_be_bytes(),
+            &address.channel_index.to_be_bytes(),
         );
         append_coverage_bytes(
             self,
             &mut chunk,
             &mut used,
-            &sample.address.correlation_index.to_be_bytes(),
+            &address.correlation_index.to_be_bytes(),
         );
         append_coverage_bytes(
             self,
             &mut chunk,
             &mut used,
-            &sample.output_frame_frequency_hz.to_bits().to_be_bytes(),
+            &output_frame_frequency_hz.to_bits().to_be_bytes(),
         );
         append_coverage_bytes(
             self,
             &mut chunk,
             &mut used,
-            &(weighted.spectral_values.len() as u64).to_be_bytes(),
+            &(spectral_values.len() as u64).to_be_bytes(),
         );
-        for value in weighted.spectral_values() {
+        for value in spectral_values {
             append_coverage_bytes(
                 self,
                 &mut chunk,

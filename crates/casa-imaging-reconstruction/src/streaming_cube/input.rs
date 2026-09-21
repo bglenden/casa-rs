@@ -6,12 +6,13 @@
 
 use std::{io, mem::size_of};
 
-use casa_imaging_model::{
-    CorrelationType, FiniteValuePolicy, SelectedSampleAddress, SelectedVisibilitySample,
-};
+use casa_imaging_model::{CorrelationType, SelectedSampleAddress};
+#[cfg(test)]
+use casa_imaging_model::{FiniteValuePolicy, SelectedVisibilitySample};
 use num_complex::Complex64;
 use smallvec::SmallVec;
 
+#[cfg(test)]
 use crate::{WeightingSampleValue, spectral_operator::accept_polarization_input};
 
 fn invalid(message: &'static str) -> io::Error {
@@ -67,7 +68,7 @@ impl NativeLayout {
         })
     }
 
-    fn contains_source(&self, address: SelectedSampleAddress) -> bool {
+    pub(crate) fn contains_source(&self, address: SelectedSampleAddress) -> bool {
         address.measurement_set == self.address.measurement_set
             && address.data_description_id == self.address.data_description_id
             && address.spectral_window_id == self.address.spectral_window_id
@@ -209,6 +210,7 @@ impl NativeBlock {
 
 /// Worker-local packing into an admitted native block. Weighted values exist
 /// only for the duration of each shared-science call, never as a retained batch.
+#[cfg(test)]
 pub(crate) struct NativeInput {
     layout: NativeLayout,
     block: NativeBlock,
@@ -220,6 +222,7 @@ pub(crate) struct NativeInput {
     failed: bool,
 }
 
+#[cfg(test)]
 impl NativeInput {
     /// Consume an admitted full-channel buffer; no extra payload allocation.
     pub(crate) fn new(
@@ -242,54 +245,6 @@ impl NativeInput {
             previous_row: None,
             failed: false,
         })
-    }
-
-    pub(crate) fn begin_batch(&mut self) -> io::Result<()> {
-        if self.failed || self.next != 0 {
-            return Err(invalid("native input batch was not committed"));
-        }
-        self.block
-            .set_shape(self.block.maximum_rows, self.layout.channels.len())
-    }
-
-    pub(crate) fn push_sample(&mut self, sample: &WeightingSampleValue) -> io::Result<()> {
-        if self.failed || self.next == self.block.values.len() {
-            return Err(invalid("native input failed or exceeds admitted rows"));
-        }
-        let result = self.append_sample(sample);
-        self.failed = result.is_err();
-        result
-    }
-
-    pub(crate) fn finish_batch(&mut self) -> io::Result<&NativeBlock> {
-        let row_samples = self.block.channels * self.block.correlations;
-        if self.failed || self.next == 0 || self.next % row_samples != 0 {
-            self.failed = true;
-            return Err(invalid("failed, empty or incomplete native input batch"));
-        }
-        self.block
-            .set_shape(self.next / row_samples, self.block.channels)?;
-        Ok(&self.block)
-    }
-
-    pub(crate) fn commit_batch(&mut self) {
-        self.next = 0;
-    }
-
-    pub(crate) fn block(&self) -> &NativeBlock {
-        &self.block
-    }
-
-    pub(crate) fn layout(&self) -> &NativeLayout {
-        &self.layout
-    }
-
-    pub(crate) fn row_samples(&self) -> usize {
-        self.layout.channels.len() * self.layout.correlations.len()
-    }
-
-    pub(crate) fn maximum_rows(&self) -> usize {
-        self.block.maximum_rows
     }
 
     /// Reference-test adapter for arbitrary historical chunk boundaries.

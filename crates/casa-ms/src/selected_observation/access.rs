@@ -1846,46 +1846,42 @@ impl SelectedObservationBlock {
                 let channel_offset = usize::try_from(channel.channel_index)
                     .ok()
                     .and_then(|channel| channel.checked_sub(self.buffer.channel_range().start));
-                let stokes_i_group_flag = coordinates
-                    .products
-                    .iter()
-                    .copied()
-                    .filter(|peer| peer.correlation_type().contributes_to_stokes_i())
-                    .try_fold(false, |flagged, peer| {
-                        let correlation = usize::try_from(peer.correlation_index()).ok();
-                        let peer = match (channel_offset, correlation) {
-                            (Some(channel), Some(correlation)) => {
-                                self.buffer.sample(channel, row, correlation)
-                            }
-                            _ => None,
-                        }
-                        .ok_or(BlockVisitError::Source(
-                            BoundObservationSourceError::StoredSampleShapeMismatch,
-                        ))?;
-                        Ok::<_, BlockVisitError<E>>(flagged || peer.channel_flag())
-                    })?;
-                for product in coordinates.products.iter().copied() {
-                    let correlation_offset = usize::try_from(product.correlation_index()).ok();
-                    let stored = match (channel_offset, correlation_offset) {
-                        (Some(channel), Some(correlation)) => {
-                            self.buffer.sample(channel, row, correlation)
-                        }
-                        _ => None,
-                    }
+                let values = channel_offset
+                    .and_then(|channel| self.buffer.channel_values(channel, row))
                     .ok_or(BlockVisitError::Source(
                         BoundObservationSourceError::StoredSampleShapeMismatch,
                     ))?;
-                    let parallel_hand_group_flag =
-                        if product.correlation_type().contributes_to_stokes_i() {
-                            stokes_i_group_flag
-                        } else {
-                            stored.channel_flag()
-                        };
-                    correlations.push(project_stored_run_correlation(
-                        product,
-                        stored,
-                        parallel_hand_group_flag,
-                    ));
+                for product in coordinates.products.iter().copied() {
+                    let (visibility, channel_flag, input_weight) =
+                        usize::try_from(product.correlation_index())
+                            .ok()
+                            .and_then(|index| values.sample(index))
+                            .ok_or(BlockVisitError::Source(
+                                BoundObservationSourceError::StoredSampleShapeMismatch,
+                            ))?;
+                    correlations.push(SelectedObservationRunCorrelation {
+                        correlation_index: product.correlation_index(),
+                        correlation_type: product.correlation_type(),
+                        visibility: match visibility {
+                            SelectedStoredVisibility::Float32(value) => {
+                                SelectedVisibilitySample::Float32(value)
+                            }
+                            SelectedStoredVisibility::Complex32(value) => {
+                                SelectedVisibilitySample::Complex32(value)
+                            }
+                        },
+                        channel_flag,
+                        parallel_hand_group_flag: channel_flag,
+                        input_weight,
+                    });
+                }
+                let stokes_i_group_flag = correlations.iter().any(|sample| {
+                    sample.correlation_type.contributes_to_stokes_i() && sample.channel_flag
+                });
+                for sample in correlations.iter_mut() {
+                    if sample.correlation_type.contributes_to_stokes_i() {
+                        sample.parallel_hand_group_flag = stokes_i_group_flag;
+                    }
                 }
                 consume(
                     &run_row,

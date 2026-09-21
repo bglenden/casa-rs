@@ -22,7 +22,8 @@ pub(super) struct NativePhasePlan {
     pub(super) workspace_bytes: u64,
     pub(super) workers: usize,
     pub(super) source_slots: usize,
-    pub(super) minimum_workspace_bytes: u64,
+    /// Preparation and any consecutive wave with one band per useful worker.
+    pub(super) worker_wave_bytes: u64,
     read: WorkNodeId,
     reconcile: WorkNodeId,
     storage_id: String,
@@ -245,13 +246,33 @@ impl NativePhasePlan {
                 .ok_or_else(overflow)?,
             );
         }
+        let mut worker_wave_bytes = minimum;
+        for wave in full.windows(workers.min(full.len())) {
+            worker_wave_bytes = worker_wave_bytes.max(
+                WavePlan::project(
+                    store,
+                    wave.iter().map(|band| (band, None)),
+                    workers,
+                    source_slots,
+                    wave_shared,
+                )?
+                .peak_bytes
+                .checked_add(
+                    prior_window_bytes
+                        .unwrap_or(0)
+                        .checked_mul(wave.len() as u64)
+                        .ok_or_else(overflow)?,
+                )
+                .ok_or_else(overflow)?,
+            );
+        }
         let available = authority
             .remaining_planning_memory_bytes(policy, base.execution_dag().resource_alternative())
             .map_err(io::Error::other)?;
         let workspace_bytes = preparation.max(all).min(available);
         if std::env::var_os("CASA_RS_TRACE_IMAGING_STAGE_TIMING").is_some() {
             eprintln!(
-                "streaming_cube_phase_plan imported={} workers={workers} available_bytes={available} workspace_bytes={workspace_bytes} minimum_bytes={minimum} shared_bytes={shared_bytes} preparation_bytes={preparation} all_bands_bytes={all}",
+                "streaming_cube_phase_plan imported={} workers={workers} available_bytes={available} workspace_bytes={workspace_bytes} minimum_bytes={minimum} worker_wave_bytes={worker_wave_bytes} shared_bytes={shared_bytes} preparation_bytes={preparation} all_bands_bytes={all}",
                 prior_window_bytes.is_some(),
             );
         }
@@ -266,7 +287,7 @@ impl NativePhasePlan {
             workspace_bytes,
             workers,
             source_slots,
-            minimum_workspace_bytes: minimum,
+            worker_wave_bytes,
             read,
             reconcile,
             storage_id,

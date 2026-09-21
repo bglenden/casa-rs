@@ -113,6 +113,40 @@ enum SelectedStoredWeights {
     PerChannel(Vec<f32>),
 }
 
+enum StoredVisibilitySlice<'a> {
+    Float32(&'a [f32]),
+    Complex32(&'a [casa_types::Complex32]),
+}
+
+/// Borrowed numeric channel payload, without replicated MAIN row metadata.
+pub(crate) struct SelectedStoredChannel<'a> {
+    visibility: StoredVisibilitySlice<'a>,
+    flags: &'a [bool],
+    weights: &'a [f32],
+}
+
+impl SelectedStoredChannel<'_> {
+    pub(crate) fn sample(
+        &self,
+        correlation: usize,
+    ) -> Option<(SelectedStoredVisibility, bool, f32)> {
+        let visibility = match self.visibility {
+            StoredVisibilitySlice::Float32(values) => {
+                SelectedStoredVisibility::Float32(*values.get(correlation)?)
+            }
+            StoredVisibilitySlice::Complex32(values) => {
+                let value = values.get(correlation)?;
+                SelectedStoredVisibility::Complex32([value.re, value.im])
+            }
+        };
+        Some((
+            visibility,
+            *self.flags.get(correlation)?,
+            *self.weights.get(correlation)?,
+        ))
+    }
+}
+
 /// Caller-owned bounded storage block for exact selected-observation values.
 #[derive(Debug)]
 pub(crate) struct SelectedObservationBuffer {
@@ -393,6 +427,39 @@ impl SelectedObservationBuffer {
         add_vec!(&self.observation_ids, i32);
         add_vec!(&self.array_ids, i32);
         Some(bytes)
+    }
+
+    /// Borrow one channel's correlation slices, checking the storage bounds once.
+    pub(crate) fn channel_values(
+        &self,
+        channel: usize,
+        row: usize,
+    ) -> Option<SelectedStoredChannel<'_>> {
+        if channel >= self.channel_range.count || row >= self.row_count() {
+            return None;
+        }
+        let start = packed_sample_index(channel, row, 0, self.row_count(), self.correlation_count);
+        let end = start + self.correlation_count;
+        let visibility = match self.visibility.as_ref()? {
+            SelectedStoredVisibilities::Float32(values) => {
+                StoredVisibilitySlice::Float32(values.get(start..end)?)
+            }
+            SelectedStoredVisibilities::Complex32(values) => {
+                StoredVisibilitySlice::Complex32(values.get(start..end)?)
+            }
+        };
+        let weights = match self.weights.as_ref()? {
+            SelectedStoredWeights::PerRow(values) => {
+                let offset = row * self.correlation_count;
+                values.get(offset..offset + self.correlation_count)?
+            }
+            SelectedStoredWeights::PerChannel(values) => values.get(start..end)?,
+        };
+        Some(SelectedStoredChannel {
+            visibility,
+            flags: self.flags.get(start..end)?,
+            weights,
+        })
     }
 
     /// Return one stored sample by channel, row, and correlation block offsets.
@@ -1139,6 +1206,7 @@ mod tests {
         assert_eq!(sample.state_id(), 18);
         assert_eq!(sample.observation_id(), 16);
         assert_eq!(sample.array_id(), 15);
+        assert_channel_views_match_samples(&buffer);
     }
 
     #[test]
@@ -1306,6 +1374,33 @@ mod tests {
         );
         assert_eq!(first_channel.input_weight(), 2.0);
         assert_eq!(second_channel.input_weight(), 2.0);
+        assert_channel_views_match_samples(&buffer);
+    }
+
+    fn assert_channel_views_match_samples(buffer: &SelectedObservationBuffer) {
+        for row in 0..buffer.row_count() {
+            for channel in 0..buffer.channel_range.count {
+                let values = buffer.channel_values(channel, row).unwrap();
+                for correlation in 0..buffer.correlation_count {
+                    let sample = buffer.sample(channel, row, correlation).unwrap();
+                    assert_eq!(
+                        values.sample(correlation),
+                        Some((
+                            sample.visibility(),
+                            sample.channel_flag(),
+                            sample.input_weight(),
+                        ))
+                    );
+                }
+                assert!(values.sample(buffer.correlation_count).is_none());
+            }
+            assert!(
+                buffer
+                    .channel_values(buffer.channel_range.count, row)
+                    .is_none()
+            );
+        }
+        assert!(buffer.channel_values(0, buffer.row_count()).is_none());
     }
 
     fn add_row(ms: &mut MeasurementSet, row_id: i32) {

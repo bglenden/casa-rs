@@ -7,6 +7,7 @@ use std::{
     fs::File,
     path::{Path, PathBuf},
     sync::Mutex,
+    time::Instant,
 };
 
 use casa_coordinates::CoordinateSystem;
@@ -192,6 +193,9 @@ impl CasaImageProductSink {
         layout: ProductWindowLayout,
         beams: &[Option<RestoringBeam>],
     ) -> Result<CasaProductWriter<'_>, std::io::Error> {
+        let started = std::env::var_os("CASA_RS_PROFILE_PRODUCTS")
+            .is_some()
+            .then(Instant::now);
         let output = self
             .domains
             .get(member.axes().domain())
@@ -252,6 +256,9 @@ impl CasaImageProductSink {
             image,
             explicit_mask,
             sink: self,
+            profile: started.is_some(),
+            begin_nanos: started.map_or(0, |start| start.elapsed().as_nanos()),
+            window_nanos: 0,
             staged: StagedProduct {
                 _directory: directory,
                 staging,
@@ -266,10 +273,14 @@ struct CasaProductWriter<'a> {
     explicit_mask: bool,
     sink: &'a CasaImageProductSink,
     staged: StagedProduct,
+    profile: bool,
+    begin_nanos: u128,
+    window_nanos: u128,
 }
 
 impl ProductWriter for CasaProductWriter<'_> {
     fn write(&mut self, window: ProductWindow) -> Result<(), ProductsError> {
+        let started = self.profile.then(Instant::now);
         let (start, shape, payload, validity) = window.into_parts();
         let data = ArrayD::from_shape_vec(IxDyn(&shape), payload)
             .map_err(|error| ProductsError::Storage(error.to_string()))?;
@@ -283,9 +294,13 @@ impl ProductWriter for CasaProductWriter<'_> {
                 .put_mask_slice("mask0", &mask, &start)
                 .map_err(|error| ProductsError::Storage(error.to_string()))?;
         }
+        if let Some(started) = started {
+            self.window_nanos += started.elapsed().as_nanos();
+        }
         Ok(())
     }
     fn finish(mut self: Box<Self>) -> Result<(), ProductsError> {
+        let started = self.profile.then(Instant::now);
         if self.explicit_mask {
             self.image
                 .set_default_mask("mask0")
@@ -312,9 +327,18 @@ impl ProductWriter for CasaProductWriter<'_> {
             image,
             sink,
             staged,
+            begin_nanos,
+            window_nanos,
             ..
         } = *self;
         drop(image);
+        if let Some(started) = started {
+            eprintln!(
+                "imaging_product_writer target={} begin_nanos={begin_nanos} window_nanos={window_nanos} finish_nanos={}",
+                staged.target.display(),
+                started.elapsed().as_nanos(),
+            );
+        }
         sink.staged
             .lock()
             .map_err(|_| {

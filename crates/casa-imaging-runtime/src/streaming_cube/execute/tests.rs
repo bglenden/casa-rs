@@ -47,6 +47,7 @@ fn native_input(
         .collect();
     let mut visited = 0;
     let mut ordinal = 0;
+    let mut pending = None;
     let (selected, count) = problem
         .inspect_selected_observation(samples.into_iter().map(Ok::<_, io::Error>), |sample| {
             let worker_index = (visited / 12) % workers.len();
@@ -87,7 +88,47 @@ fn native_input(
             .unwrap()
             .with_row_geometry(row);
             let contributions = cache.compile(view, evaluation).map_err(io::Error::other)?;
-            worker.consume(problem, view, address.frequency_centre_hz, contributions)?;
+            let correlation = SelectedObservationRunCorrelation {
+                correlation_index: address.correlation_index,
+                correlation_type: address.correlation_type,
+                visibility: sample.visibility,
+                channel_flag: sample.channel_flag,
+                parallel_hand_group_flag: sample.parallel_hand_group_flag,
+                input_weight: sample.input_weight,
+            };
+            if address.correlation_index == 0 {
+                pending = Some(correlation);
+            } else {
+                let correlations = [pending.take().expect("first correlation"), correlation];
+                let source_row = SelectedObservationRunRow {
+                    measurement_set: address.measurement_set,
+                    physical_row: address.physical_row,
+                    data_description_id: address.data_description_id,
+                    spectral_window_id: address.spectral_window_id,
+                    polarization_id: address.polarization_id,
+                    prediction_target: sample.prediction_target,
+                    row_flag: sample.row_flag,
+                    coordinates: sample.coordinates,
+                    domain_projections: sample.domain_projections.clone(),
+                    metadata: sample.metadata,
+                };
+                let channel = SelectedObservationRunChannel {
+                    channel_index: address.channel_index,
+                    frequency_centre_hz: address.frequency_centre_hz,
+                    frequency_lower_hz: address.frequency_lower_hz,
+                    frequency_upper_hz: address.frequency_upper_hz,
+                    channel_width_hz: address.channel_width_hz,
+                    frequency_frame: address.frequency_frame,
+                };
+                worker.consume_channel(
+                    &source_row,
+                    channel,
+                    &correlations,
+                    row,
+                    address.frequency_centre_hz,
+                    contributions,
+                )?;
+            }
             visited += 1;
             if visited % 12 == 0 {
                 worker.finish_batch()?;

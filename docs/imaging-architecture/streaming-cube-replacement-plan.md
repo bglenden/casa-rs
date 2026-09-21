@@ -27,6 +27,13 @@ and residual/normal accumulation. The numerical/runtime replacement still uses a
 test-only seam, not a production selector. The current check/result and next
 executable action are in CURRENT.md. The active Goal covers milestones 1–3.
 Local pre-preparation-refactor checkpoint: `608ff13395edc604d5ee8db403db52b8c5da59e8`.
+The verified direct-preparation candidate and revised skills are preserved at
+`e8729a9058` before the row/channel-kernel change. That change lends numeric source
+channel slices, computes group weighting once, and fills native arrays without
+constructing `WeightingSelectedSample`/`WeightingSampleValue` per correlation.
+Natural weighting retains its global exact sum and shared per-value flag policy;
+it does not use the density-weighted cube's resampling state. Current validation
+and application measurements, including rejected attempts, remain in CURRENT.md.
 The user additionally authorized local Obit timings as reference only, including
 the isolated native CPU core/task setup described below.
 
@@ -273,7 +280,7 @@ consumers. The table describes migration obligations, not completed deletions.
 | `NativeSpectralGroup`, `RetainedNativeSpectralGroup`, `CasaResampledGroup`, `CasaLinearRowResampler` | `streaming_cube::VisibilityRow` borrows flat channel/correlation arrays; `RowAccumulator` retains only a cursor and the previous inline prediction | `spectral_operator.rs::CompleteDataOwnerState`; `gridded_normal_operator.rs::GriddedNormalOperatorCompiler` and `gridded_normal_operator/spectral_records.rs`; their adjacent tests; `weighting.rs` uses retained-group size for admission. No production adapter added yet. | Native prediction/residual/normal and flags/weights/chunk coverage; remove covered cube consumers at milestone 4, then delete types when other-mode consumers migrate. |
 | `SpectralSlabOperator`'s separately owned per-plane arrays and lifecycle state | `streaming_cube::BandWorkspace`: contiguous `[channel,x,y]` arrays and borrowed disjoint plane views, geometry/FFT separate from elements | `spectral_operator.rs::CompleteDataOwnerState`, `spectral_operator/initial_planes.rs::InitialPlaneBatch`, adjacent operator/initial-phase tests. Test-only `streaming_cube/reference.rs::Reference` uses the old operator for comparison. | Bitwise fixed-model gridding and full application acceptance; delete cube construction/initial-plane plumbing and reference seam at milestone 4. Other spectral bases, W/AW and mosaic still need explicit migration before deleting the shared owner. |
 | `ReducedRecordKey`, `RecordRole`, `StandardRecordScratch`, cube use of `GriddedNormalCompilationPlan` | Direct native-pair prediction/accumulation; shared reconstruction `streaming_cube/input.rs::NativeBlock`, runtime `streaming_cube/input.rs::{NativeStoreWriter,NativeStore}` hold the original native payload in bounded tiles | `gridded_normal_operator.rs`, its `compilation.rs`, `spectral_records.rs`, `bounded_records.rs`, `two_domain.rs`; runtime `complete_data_operator.rs`; reconstruction `tests/major_cycle.rs` and `tests/support/gridded_frames.rs`. The new store is test-only pending application integration, with no old-store adapter. | No flattened cube artifact; complete-data numerical/I/O/resource checks and end-to-end timing. Remove covered cube compiler/store calls at milestone 4; shared non-cube replay remains until its named migration. |
-| Cube preparation's `WeightingSampleValue`/`WeightingReplayChunk` payload | `NativePreparationWorker` consumes borrowed selected rows through the shared scalar weighting kernel directly into `NativeBlock`; geometry once per row, raw numeric arrays thereafter | The complete comparison path now uses runtime `weighting/native_preparation.rs` and the existing bounded team. `NativeInput` is reconstruction-private; its old chunk entry points are test-only references. Generic non-cube weighting still owns its replay route. | The covered cube's indexed/prepared-sample collection and weighted-chunk conversion are removed. Exact scalar/worker/batch tests cover the replacement; complete application timing and CASA acceptance remain required before promotion. |
+| Cube preparation's `WeightingSampleValue`/`WeightingReplayChunk` payload | `NativePreparationWorker` consumes borrowed row/channel correlation slices through shared weight/taper/finite-value primitives directly into `NativeBlock`; no rich per-sample intermediate | The complete comparison path uses runtime `weighting/native_preparation.rs` and the existing bounded team. `NativeInput` is now entirely test-only; generic non-cube weighting still owns its replay route. | The covered cube's indexed/prepared-sample collection, weighted-chunk conversion and rich per-sample packing API are removed. Scalar/group/worker/batch tests cover the replacement; current application timing and CASA acceptance are required before promotion. |
 
 No application API was added or removed. Nine internal friend-surface exports
 (`NativeBlock`, `NativeLayout`, `RowMetadata`, `NativeWeightingPreparation`,
@@ -379,6 +386,13 @@ is the lesser of the full initial-wave shape bound and remaining authority-owned
 memory, but must fit preparation and every minimum one-band wave. The bound
 includes preparation arenas/cache, all retained support metadata and row-range
 scratch, source slots, worker stacks and explicitly supplied enclosing owners.
+Resident normal storage has a stronger admission condition: its fully composed
+reservation must leave room for preparation and a complete wave with one band
+per useful worker (capped by the number of bands). The wave bound includes prior
+normal windows during residual refresh. Otherwise the existing paged storage
+keeps that workspace available; genuinely low memory can still constrain the
+wave. This prevents a residency threshold from stranding otherwise usable workers
+without increasing the memory ceiling or adding a dataset-specific threshold.
 Support-vector growth is capped by output channel count; it is not preallocated
 as a full band-by-channel table. Worker claims and execution configuration agree.
 The native file itself owns its retained capacity/descriptor permit. Full

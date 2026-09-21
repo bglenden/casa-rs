@@ -834,6 +834,21 @@ pub struct SelectedObservationTraversalRun<'a> {
 }
 
 impl<'a> SelectedObservationTraversalRun<'a> {
+    /// Borrow the shared row without reconstructing owned sample records.
+    pub const fn row(&self) -> &'a SelectedObservationRunRow {
+        self.row
+    }
+
+    /// Return the shared native channel coordinate.
+    pub const fn channel(&self) -> SelectedObservationRunChannel {
+        self.channel
+    }
+
+    /// Borrow the contiguous selected correlation group in canonical order.
+    pub const fn correlations(&self) -> &'a [SelectedObservationRunCorrelation] {
+        self.correlations
+    }
+
     pub(super) fn new(
         row: &'a SelectedObservationRunRow,
         channel: SelectedObservationRunChannel,

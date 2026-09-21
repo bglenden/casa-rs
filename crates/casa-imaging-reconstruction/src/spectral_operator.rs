@@ -7481,19 +7481,29 @@ pub(crate) fn accept_polarization_input(
     sample: &crate::weighting::WeightingSelectedSample,
     finite_values: FiniteValuePolicy,
 ) -> Result<bool, SpectralOperatorError> {
-    let nonfinite = !sample.raw_input_weight().is_finite()
-        || sample.raw_input_weight() < 0.0
-        || match sample.visibility {
+    accept_polarization_value(
+        sample.visibility,
+        sample.raw_input_weight(),
+        sample.row_flag || sample.channel_flag,
+        finite_values,
+    )
+}
+
+pub(crate) fn accept_polarization_value(
+    visibility: SelectedVisibilitySample,
+    input_weight: f32,
+    flagged: bool,
+    finite_values: FiniteValuePolicy,
+) -> Result<bool, SpectralOperatorError> {
+    let nonfinite = !input_weight.is_finite()
+        || input_weight < 0.0
+        || match visibility {
             SelectedVisibilitySample::Float32(value) => !value.is_finite(),
             SelectedVisibilitySample::Complex32(value) => {
                 value.into_iter().any(|component| !component.is_finite())
             }
         };
-    apply_input_policy(
-        nonfinite,
-        sample.row_flag || sample.channel_flag,
-        finite_values,
-    )
+    apply_input_policy(nonfinite, flagged, finite_values)
 }
 
 fn apply_finite_value_policy(

@@ -203,7 +203,7 @@ where
                         storage,
                         source_first * channels..source_last * channels,
                         |run| {
-                            for reported in run.samples() {
+                            if let Some(reported) = run.samples().next() {
                                 if worker.native.is_none() {
                                     let selected =
                                         problem.selected_observation().read_set().sources()[0]
@@ -245,9 +245,15 @@ where
                                     .native
                                     .as_mut()
                                     .expect("initialized above")
-                                    .consume(
-                                        problem,
-                                        reported.selected(),
+                                    .consume_channel(
+                                        run.row(),
+                                        run.channel(),
+                                        run.correlations(),
+                                        reported.spectral_evaluation().row_geometry().ok_or(
+                                            ReplayCallbackError::Owner(
+                                                WeightingError::RowSpectralGeometryMismatch,
+                                            ),
+                                        )?,
                                         reported.spectral_evaluation().output_frame().centre_hz(),
                                         contributions,
                                     )

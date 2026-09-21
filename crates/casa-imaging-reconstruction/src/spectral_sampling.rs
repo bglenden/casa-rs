@@ -301,6 +301,8 @@ pub(crate) struct CasaLinearPairSamples<'a> {
     left_frequency_hz: f64,
     right_frequency_hz: f64,
     native_increment_hz: f64,
+    #[cfg(test)]
+    frequency_probes: usize,
 }
 
 impl Iterator for CasaLinearPairSamples<'_> {
@@ -309,6 +311,10 @@ impl Iterator for CasaLinearPairSamples<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         while *self.next_fine_channel < self.grid.fine_channel_count() {
             let fine_ordinal = *self.next_fine_channel;
+            #[cfg(test)]
+            {
+                self.frequency_probes += 1;
+            }
             let frequency_hz = self.grid.fine_frequency_hz(fine_ordinal);
             let before_left = if self.native_increment_hz > 0.0 {
                 frequency_hz < self.left_frequency_hz
@@ -316,7 +322,31 @@ impl Iterator for CasaLinearPairSamples<'_> {
                 frequency_hz > self.left_frequency_hz
             };
             if before_left {
-                *self.next_fine_channel += 1;
+                // A window may begin late in the original fine grid. Seek the
+                // first bracketed ordinal without walking its entire prefix.
+                // Use the original frequency expression and strict comparison
+                // so rounding, descending axes and shared endpoints stay exact.
+                let mut lower = fine_ordinal + 1;
+                let mut upper = self.grid.fine_channel_count();
+                while lower < upper {
+                    let middle = lower + (upper - lower) / 2;
+                    #[cfg(test)]
+                    {
+                        self.frequency_probes += 1;
+                    }
+                    let frequency_hz = self.grid.fine_frequency_hz(middle);
+                    let before_left = if self.native_increment_hz > 0.0 {
+                        frequency_hz < self.left_frequency_hz
+                    } else {
+                        frequency_hz > self.left_frequency_hz
+                    };
+                    if before_left {
+                        lower = middle + 1;
+                    } else {
+                        upper = middle;
+                    }
+                }
+                *self.next_fine_channel = lower;
                 continue;
             }
             let after_right = if self.native_increment_hz > 0.0 {
@@ -460,6 +490,8 @@ impl CasaLinearGrid {
             left_frequency_hz,
             right_frequency_hz,
             native_increment_hz,
+            #[cfg(test)]
+            frequency_probes: 0,
         })
     }
 }
@@ -1087,6 +1119,174 @@ fn sparse_terms(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn linear_pair_next(
+        grid: CasaLinearGrid,
+        cursor: &mut usize,
+        left: f64,
+        right: f64,
+    ) -> Option<CasaLinearSample> {
+        let increment = right - left;
+        while *cursor < grid.fine_channel_count() {
+            let ordinal = *cursor;
+            let frequency = grid.fine_frequency_hz(ordinal);
+            if if increment > 0.0 {
+                frequency < left
+            } else {
+                frequency > left
+            } {
+                *cursor += 1;
+                continue;
+            }
+            if if increment > 0.0 {
+                frequency > right
+            } else {
+                frequency < right
+            } {
+                return None;
+            }
+            *cursor += 1;
+            let right_factor = ((frequency - left) / increment).clamp(0.0, 1.0);
+            return Some(CasaLinearSample {
+                output_channel: grid.output_channel(ordinal),
+                frequency_hz: frequency,
+                left_factor: 1.0 - right_factor,
+                right_factor,
+            });
+        }
+        None
+    }
+
+    fn sample_bits(sample: CasaLinearSample) -> (usize, u64, [u64; 2]) {
+        (
+            sample.output_channel(),
+            sample.frequency_hz().to_bits(),
+            sample.factors().map(f64::to_bits),
+        )
+    }
+
+    #[test]
+    fn window_seek_matches_linear_cursor_bits_at_edges_gaps_and_reversed_axes() {
+        for native_direction in [-1.0, 1.0] {
+            let native_increment = native_direction * 2.0e6;
+            for output_direction in [-1.0, 1.0] {
+                for width in [0.25, 1.0, 2.5, 64.0] {
+                    let output = (0..129)
+                        .map(|i| 44.0e9 + i as f64 * output_direction * width * 2.0e6)
+                        .collect::<Vec<_>>();
+                    let grid = CasaLinearGrid::compile(&output, 44.0e9, 44.0e9 + native_increment)
+                        .unwrap();
+                    let count = grid.fine_channel_count();
+                    for target in [0, 1, count / 2, count - 1, count] {
+                        let centre = grid.fine_frequency_hz(target);
+                        for left in [
+                            centre.next_down(),
+                            centre,
+                            centre.next_up(),
+                            centre + 0.25 * native_increment,
+                        ] {
+                            for start in [0, target / 2, target.min(count), count] {
+                                let mut expected_cursor = start;
+                                let mut actual_cursor = start;
+                                for pair in [
+                                    [left, left + native_increment],
+                                    [left + native_increment, left + 2.0 * native_increment],
+                                ] {
+                                    let mut actual = grid
+                                        .samples_for_pair(&mut actual_cursor, pair[0], pair[1])
+                                        .unwrap();
+                                    loop {
+                                        let expected = linear_pair_next(
+                                            grid,
+                                            &mut expected_cursor,
+                                            pair[0],
+                                            pair[1],
+                                        );
+                                        assert_eq!(
+                                            actual.next().map(sample_bits),
+                                            expected.map(sample_bits),
+                                            "width={width}, native={native_direction}, output={output_direction}, target={target}, start={start}, pair={pair:?}"
+                                        );
+                                        if expected.is_none() {
+                                            break;
+                                        }
+                                    }
+                                    assert_eq!(actual_cursor, expected_cursor);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn window_seek_remains_lazy_and_resumes_partial_pairs_exactly() {
+        let grid = CasaLinearGrid::compile(&[10.0, 11.0, 12.0, 13.0, 14.0], 8.0, 12.0).unwrap();
+        for consumed in 0..=2 {
+            let mut actual_cursor = 0;
+            let mut expected_cursor = 0;
+            {
+                let mut samples = grid
+                    .samples_for_pair(&mut actual_cursor, 11.0, 13.0)
+                    .unwrap();
+                assert_eq!(samples.frequency_probes, 0);
+                for _ in 0..consumed {
+                    assert_eq!(
+                        samples.next().map(sample_bits),
+                        linear_pair_next(grid, &mut expected_cursor, 11.0, 13.0).map(sample_bits)
+                    );
+                }
+            }
+            assert_eq!(actual_cursor, expected_cursor);
+            let actual = grid
+                .samples_for_pair(&mut actual_cursor, 13.0, 15.0)
+                .unwrap()
+                .map(sample_bits)
+                .collect::<Vec<_>>();
+            let expected =
+                std::iter::from_fn(|| linear_pair_next(grid, &mut expected_cursor, 13.0, 15.0))
+                    .map(sample_bits)
+                    .collect::<Vec<_>>();
+            assert_eq!(actual, expected);
+            assert_eq!(actual_cursor, expected_cursor);
+        }
+    }
+
+    #[test]
+    fn late_window_seek_probes_grow_logarithmically_without_prefix_enumeration() {
+        for count in [16_usize, 512, 16_384, 1_048_576] {
+            for direction in [-1.0, 1.0] {
+                let first = 44.0e9;
+                let step = direction * 2.0e6;
+                let grid = CasaLinearGrid::compile_for_output(
+                    CasaLinearOutputGrid {
+                        first_hz: first,
+                        second_hz: first + step,
+                        last_hz: first + (count - 1) as f64 * step,
+                        channels: count,
+                    },
+                    first,
+                    first + step,
+                )
+                .unwrap();
+                let left = grid.fine_frequency_hz(count - 2) + step / 4.0;
+                let mut cursor = 0;
+                let mut samples = grid
+                    .samples_for_pair(&mut cursor, left, left + step)
+                    .unwrap();
+                assert_eq!(samples.by_ref().count(), 1);
+                let ceiling = (usize::BITS - count.leading_zeros()) as usize + 4;
+                assert!(
+                    samples.frequency_probes <= ceiling,
+                    "{count} channels used {} probes, limit {ceiling}",
+                    samples.frequency_probes
+                );
+                assert_eq!(cursor, count);
+            }
+        }
+    }
 
     fn window_sample_address(channel: usize, frequency: f64) -> SelectedSampleAddress {
         use casa_imaging_model::{

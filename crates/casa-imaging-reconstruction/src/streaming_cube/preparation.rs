@@ -1,14 +1,20 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 //! Whole-row native preparation on the admitted imaging team. Projection and
-//! spectral evaluation feed the existing scalar weighting kernels here; exact
+//! spectral evaluation feed the shared weighting primitives here; exact
 //! sums and source-coverage encoding stay with their worker until ordered join.
 //! No prepared-sample collection or weighted replay allocation is constructed.
 
 use std::io;
 
 use super::*;
-use crate::streaming_cube::input::{NativeBlock, NativeInput, NativeLayout};
+use crate::spectral_operator::accept_polarization_value;
+use crate::streaming_cube::input::{NativeBlock, NativeLayout, RowMetadata};
+use casa_imaging_model::{
+    FrequencyFrame, SelectedObservationRunChannel, SelectedObservationRunCorrelation,
+    SelectedObservationRunRow, SelectedRowSpectralGeometry,
+};
+use num_complex::Complex64;
 
 const NATIVE_COVERAGE_DOMAIN: &[u8] = b"casa-rs-native-weighting-row-coverage";
 const NATIVE_COVERAGE_VERSION: u32 = 1;
@@ -102,7 +108,6 @@ impl NativeWeightingPreparation {
             .and_then(|bytes| bytes.checked_add(channels.checked_mul(size_of::<u32>())?))
             .and_then(|bytes| bytes.checked_add(size_of::<NativeLayout>()))
             .and_then(|bytes| bytes.checked_add(maximum_rows.checked_mul(size_of::<[u8; 32]>())?))
-            .and_then(|bytes| bytes.checked_add(size_of::<NativeInput>()))
             .and_then(|bytes| bytes.checked_add(size_of::<NativePreparationWorker>()))
             .ok_or_else(|| invalid("native preparation worker capacity overflow"))
     }
@@ -120,11 +125,25 @@ impl NativeWeightingPreparation {
         if self.failed || self.sum.problem != problem.problem_id() {
             return Err(invalid("native weighting preparation failed or mismatched"));
         }
-        let input = NativeInput::new(layout, block, finite_values)?;
+        let maximum_rows = block.metadata.len();
+        block.validate_shape(
+            maximum_rows,
+            layout.channels.len(),
+            layout.correlations.len(),
+        )?;
+        let sum = natural_sum(problem, plan)?;
         Ok(NativePreparationWorker {
-            sum: natural_sum(problem, plan)?,
-            row_digests: Vec::with_capacity(input.maximum_rows()),
-            input,
+            sum,
+            row_digests: Vec::with_capacity(maximum_rows),
+            block,
+            layout,
+            maximum_rows,
+            channel: 0,
+            previous_row: None,
+            finite_values,
+            output_frame: problem.geometry().spectral().output_frame(),
+            taper: problem.weighting().uv_taper(),
+            maximum_terms: maximum_spectral_terms(problem),
             row_coverage: CoverageEncoder::new(),
             work: coverage::CoverageProofWork {
                 bytes: 0,
@@ -220,7 +239,6 @@ impl NativeWeightingPreparation {
             bytes: 0,
             hash_calls: 0,
         };
-        worker.input.commit_batch();
         worker.batch_open = false;
         worker.batch_finished = false;
         Ok(())
@@ -271,7 +289,15 @@ impl NativeWeightingPreparation {
 /// Reusable flat native buffer plus exact sums for a disjoint whole-row range.
 pub struct NativePreparationWorker {
     sum: WeightingSumWeightPhase,
-    input: NativeInput,
+    block: NativeBlock,
+    layout: NativeLayout,
+    maximum_rows: usize,
+    channel: usize,
+    previous_row: Option<u64>,
+    finite_values: FiniteValuePolicy,
+    output_frame: FrequencyFrame,
+    taper: Option<UvTaper>,
+    maximum_terms: usize,
     row_digests: Vec<[u8; 32]>,
     row_coverage: CoverageEncoder,
     work: coverage::CoverageProofWork,
@@ -286,46 +312,217 @@ impl NativePreparationWorker {
         if self.failed || self.batch_open || self.batch_finished {
             return Err(invalid("native preparation worker batch already open"));
         }
-        self.input.begin_batch()?;
+        self.block
+            .set_shape(self.maximum_rows, self.layout.channels.len())?;
         self.batch_open = true;
         Ok(())
     }
 
-    /// Apply the shared science and immediately pack the result. The selected
-    /// view is borrowed, and the sole weighted value dies when this call ends.
-    pub fn consume<'a>(
+    /// Prepare one borrowed row/channel correlation slice directly into the
+    /// worker's arrays. Row geometry is installed once; group weighting and
+    /// spectral values are computed once per channel, with per-value validation.
+    pub fn consume_channel(
         &mut self,
-        problem: &CompiledProblem,
-        sample: impl Into<SelectedObservationSampleView<'a>>,
+        row: &SelectedObservationRunRow,
+        channel: SelectedObservationRunChannel,
+        correlations: &[SelectedObservationRunCorrelation],
+        geometry: SelectedRowSpectralGeometry,
         output_frame_frequency_hz: f64,
         contributions: SelectedSpectralContributions,
     ) -> io::Result<()> {
         let result: io::Result<()> = (|| {
             if self.failed || !self.batch_open || self.batch_finished {
                 return Err(invalid(
-                    "native preparation worker is not accepting samples",
+                    "native preparation worker is not accepting channels",
                 ));
             }
-            let weighted = self
-                .sum
-                .prepare_sample(
-                    problem,
-                    sample.into(),
-                    output_frame_frequency_hz,
-                    contributions,
+            let row_index = self.row_digests.len();
+            if row_index == self.maximum_rows
+                || correlations.len() != self.layout.correlations.len()
+                || channel.channel_index != self.layout.channels[self.channel]
+                || contributions.len() > self.maximum_terms
+                || !output_frame_frequency_hz.is_finite()
+                || output_frame_frequency_hz <= 0.0
+            {
+                return Err(invalid("native channel exceeds shape or stencil bound"));
+            }
+            let first = &correlations[0];
+            let view = SelectedObservationSampleView::from_run(row, &channel, first);
+            let address = view.address();
+            if !self.layout.contains_source(address) {
+                return Err(invalid("native source identity mismatch"));
+            }
+            if !geometry.matches_sample(view, self.output_frame)
+                || [Some(geometry.first()), geometry.second()]
+                    .into_iter()
+                    .flatten()
+                    .any(|(index, hz)| {
+                        index == channel.channel_index
+                            && hz.to_bits() != output_frame_frequency_hz.to_bits()
+                    })
+            {
+                return Err(io::Error::other(
+                    WeightingError::RowSpectralGeometryMismatch,
+                ));
+            }
+            let native_geometry = NativeRowSpectralGeometry {
+                channels: geometry.selected_channels(),
+                first: geometry.first(),
+                second: geometry.second(),
+                lattice_first_pair_hz: geometry.lattice_first_pair_hz(),
+            };
+            if self.channel == 0 {
+                if self
+                    .previous_row
+                    .is_some_and(|previous| row.physical_row <= previous)
+                    || native_geometry.channels != self.block.channels
+                    || native_geometry.first.0 != self.layout.channels[0]
+                    || native_geometry.second.map(|pair| pair.0) != Some(self.layout.channels[1])
+                    || row.domain_projections.len() != 1
+                {
+                    return Err(invalid("native row order or geometry mismatch"));
+                }
+                let projection = row
+                    .domain_projections
+                    .get(0)
+                    .ok_or_else(|| invalid("native primary projection missing"))?
+                    .model();
+                self.block.metadata[row_index] = RowMetadata {
+                    physical_row: row.physical_row,
+                    uvw_m: projection.transformed_uvw_m(),
+                    phase_shift_m: projection.phase_shift_m(),
+                    original_pair_hz: native_geometry
+                        .first_pair_hz()
+                        .ok_or_else(|| invalid("missing native frequency pair"))?,
+                };
+                self.previous_row = Some(row.physical_row);
+            } else if self.previous_row != Some(row.physical_row) {
+                return Err(invalid("native row ended before its selected channels"));
+            }
+            let group_flag = correlations.iter().any(|value| value.channel_flag);
+            let input = casa_unpolarized_input_weight(SelectedInputWeightGroup::correlation_run(
+                first.input_weight,
+                correlations.last().expect("nonempty layout").input_weight,
+                correlations.len(),
+            ));
+            let input_value = input_weight_value(
+                input,
+                group_flag
+                    || row.row_flag
+                    || correlations
+                        .iter()
+                        .all(|value| value.parallel_hand_group_flag),
+                self.finite_values,
+            )
+            .map_err(io::Error::other)?;
+            let natural_weight = |frequency_hz| -> io::Result<f64> {
+                if input_value == 0.0 {
+                    Ok(0.0)
+                } else {
+                    let uv = if self.taper.is_some() {
+                        uv_lambda_for_coordinates(row.coordinates.density_uvw_m, frequency_hz)
+                    } else {
+                        [0.0; 2]
+                    };
+                    apply_weight_taper(input_value, self.taper, uv).map_err(io::Error::other)
+                }
+            };
+            let base_weight = natural_weight(output_frame_frequency_hz)?;
+            let cell = row_index * self.block.channels + self.channel;
+            self.block.frequencies_hz[cell] = output_frame_frequency_hz;
+            let start = cell * correlations.len();
+            let end = start + correlations.len();
+            let spectral_values: SmallVec<[WeightingSpectralValue; 4]> = contributions
+                .iter()
+                .map(|contribution| {
+                    Ok(WeightingSpectralValue {
+                        contribution,
+                        imaging_weight: natural_weight(contribution.evaluation_frequency_hz())?,
+                    })
+                })
+                .collect::<io::Result<_>>()?;
+            let flagged_spectral_values: SmallVec<[WeightingSpectralValue; 4]> = if correlations
+                .iter()
+                .any(|sample| sample.parallel_hand_group_flag)
+            {
+                spectral_values
+                    .iter()
+                    .map(|value| WeightingSpectralValue {
+                        contribution: value.contribution,
+                        imaging_weight: 0.0,
+                    })
+                    .collect()
+            } else {
+                SmallVec::new()
+            };
+            for (ordinal, ((((sample, value), weight), flag), weight_flag)) in correlations
+                .iter()
+                .zip(&mut self.block.values[start..end])
+                .zip(&mut self.block.weights[start..end])
+                .zip(&mut self.block.flags[start..end])
+                .zip(&mut self.block.weight_flags[start..end])
+                .enumerate()
+            {
+                if (sample.correlation_index, sample.correlation_type)
+                    != self.layout.correlations[ordinal]
+                {
+                    return Err(invalid("native correlation order mismatch"));
+                }
+                *value = match sample.visibility {
+                    SelectedVisibilitySample::Float32(value) => {
+                        Complex64::new(f64::from(value), 0.0)
+                    }
+                    SelectedVisibilitySample::Complex32([re, im]) => {
+                        Complex64::new(f64::from(re), f64::from(im))
+                    }
+                };
+                *weight = if sample.parallel_hand_group_flag {
+                    0.0
+                } else {
+                    base_weight
+                };
+                *flag = !accept_polarization_value(
+                    sample.visibility,
+                    sample.input_weight,
+                    row.row_flag || sample.channel_flag,
+                    self.finite_values,
                 )
                 .map_err(io::Error::other)?;
-            self.input.push_sample(&weighted)?;
-            self.sum
-                .accumulate_prepared(problem, &weighted)
-                .map_err(io::Error::other)?;
-            self.row_coverage.push(&weighted);
-            if self.sum.sum_sample_count % self.input.row_samples() as u64 == 0 {
+                *weight_flag = group_flag || sample.parallel_hand_group_flag || row.row_flag;
+                let spectral = if sample.parallel_hand_group_flag {
+                    flagged_spectral_values.as_slice()
+                } else {
+                    spectral_values.as_slice()
+                };
+                if let Some(value) = spectral.first() {
+                    self.sum.sum_weights[0]
+                        .add(value.imaging_weight)
+                        .map_err(io::Error::other)?;
+                }
+                let mut member_address = address;
+                member_address.correlation_index = sample.correlation_index;
+                member_address.correlation_type = sample.correlation_type;
+                self.row_coverage.push_parts(
+                    member_address,
+                    Some(native_geometry),
+                    output_frame_frequency_hz,
+                    spectral,
+                );
+            }
+            self.sum.sum_sample_count = self
+                .sum
+                .sum_sample_count
+                .checked_add(correlations.len() as u64)
+                .ok_or_else(|| invalid("native sample count overflow"))?;
+            self.channel += 1;
+            if self.channel == self.block.channels {
                 let encoder = std::mem::replace(&mut self.row_coverage, CoverageEncoder::new());
-                let (digest, work) = encoder.finish_row(self.input.row_samples() as u64);
+                let (digest, work) =
+                    encoder.finish_row((self.block.channels * self.block.correlations) as u64);
                 self.row_digests.push(digest);
                 self.work.bytes += work.bytes;
                 self.work.hash_calls += work.hash_calls;
+                self.channel = 0;
             }
             Ok(())
         })();
@@ -342,7 +539,11 @@ impl NativePreparationWorker {
             if let Some(rows) = &mut self.sum.cube_rows {
                 rows.cursor.finish().map_err(io::Error::other)?;
             }
-            self.input.finish_batch()?;
+            if self.channel != 0 || self.row_digests.is_empty() {
+                return Err(invalid("empty or incomplete native batch"));
+            }
+            self.block
+                .set_shape(self.row_digests.len(), self.layout.channels.len())?;
             Ok(())
         })();
         if result.is_err() {
@@ -355,11 +556,11 @@ impl NativePreparationWorker {
 
     /// Borrow the native arrays until the next admitted refill begins.
     pub fn block(&self) -> &NativeBlock {
-        self.input.block()
+        &self.block
     }
 
     /// Shared source axes for the retained native store.
     pub fn layout(&self) -> &NativeLayout {
-        self.input.layout()
+        &self.layout
     }
 }

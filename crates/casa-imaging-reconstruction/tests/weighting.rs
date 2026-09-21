@@ -31,7 +31,7 @@ use casa_imaging_model::{
     WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_reconstruction::runtime_adapter::{
-    NativeBlock, NativeLayout, NativeWeightingPreparation,
+    NativeBlock, NativeLayout, NativePreparationWorker, NativeWeightingPreparation,
 };
 use casa_imaging_reconstruction::{
     FrozenWeightingCoverageProof, WeightingAlgorithmState, WeightingError,
@@ -487,16 +487,22 @@ fn native_preparation_fixture_with_taper(
 fn native_preparation_view(
     sample: &SelectedObservationSample,
 ) -> casa_imaging_model::SelectedObservationSampleView<'_> {
-    sample.as_view().with_row_spectral_geometry(Some(
-        SelectedRowSpectralGeometry::new(
-            sample.as_view(),
-            FrequencyFrame::Topocentric,
-            3,
-            (0, 1.00025e9),
-            Some((1, 1.00125e9)),
+    sample
+        .as_view()
+        .with_input_weight_group(
+            SelectedInputWeightGroup::single(sample.input_weight)
+                .with_imaging_flag(sample.channel_flag),
         )
-        .unwrap(),
-    ))
+        .with_row_spectral_geometry(Some(
+            SelectedRowSpectralGeometry::new(
+                sample.as_view(),
+                FrequencyFrame::Topocentric,
+                3,
+                (0, 1.00025e9),
+                Some((1, 1.00125e9)),
+            )
+            .unwrap(),
+        ))
 }
 
 fn native_preparation_layout(sample: &SelectedObservationSample) -> NativeLayout {
@@ -506,6 +512,58 @@ fn native_preparation_layout(sample: &SelectedObservationSample) -> NativeLayout
         [(0, CorrelationType::StokesI)].into_iter().collect(),
     )
     .unwrap()
+}
+
+fn prepare_native_group(
+    worker: &mut NativePreparationWorker,
+    samples: &[SelectedObservationSample],
+) -> std::io::Result<()> {
+    use casa_imaging_model::{
+        SelectedObservationRunChannel, SelectedObservationRunCorrelation, SelectedObservationRunRow,
+    };
+    let sample = &samples[0];
+    let address = sample.address;
+    let row = SelectedObservationRunRow {
+        measurement_set: address.measurement_set,
+        physical_row: address.physical_row,
+        data_description_id: address.data_description_id,
+        spectral_window_id: address.spectral_window_id,
+        polarization_id: address.polarization_id,
+        prediction_target: sample.prediction_target,
+        row_flag: sample.row_flag,
+        coordinates: sample.coordinates,
+        domain_projections: sample.domain_projections.clone(),
+        metadata: sample.metadata,
+    };
+    let channel = SelectedObservationRunChannel {
+        channel_index: address.channel_index,
+        frequency_centre_hz: address.frequency_centre_hz,
+        frequency_lower_hz: address.frequency_lower_hz,
+        frequency_upper_hz: address.frequency_upper_hz,
+        channel_width_hz: address.channel_width_hz,
+        frequency_frame: address.frequency_frame,
+    };
+    let correlations: Vec<_> = samples
+        .iter()
+        .map(|sample| SelectedObservationRunCorrelation {
+            correlation_index: sample.address.correlation_index,
+            correlation_type: sample.address.correlation_type,
+            visibility: sample.visibility,
+            channel_flag: sample.channel_flag,
+            parallel_hand_group_flag: sample.parallel_hand_group_flag,
+            input_weight: sample.input_weight,
+        })
+        .collect();
+    worker.consume_channel(
+        &row,
+        channel,
+        &correlations,
+        native_preparation_view(sample)
+            .row_spectral_geometry()
+            .unwrap(),
+        address.frequency_centre_hz,
+        exact_contributions(sample),
+    )
 }
 
 #[test]
@@ -567,20 +625,12 @@ fn assert_native_preparation_equivalence(
             let active = wave.len().div_ceil(rows_per_worker * 3);
             std::thread::scope(|threads| {
                 for (worker, input) in workers.iter_mut().zip(wave.chunks(rows_per_worker * 3)) {
-                    let problem = &problem;
                     threads.spawn(move || {
                         worker.begin_batch().unwrap();
                         // Individual calls model multiple source callbacks into
                         // the same still-open worker allocation.
                         for sample in input {
-                            worker
-                                .consume(
-                                    problem,
-                                    native_preparation_view(sample),
-                                    sample.address.frequency_centre_hz,
-                                    exact_contributions(sample),
-                                )
-                                .unwrap();
+                            prepare_native_group(worker, std::slice::from_ref(sample)).unwrap();
                         }
                         worker.finish_batch().unwrap();
                     });
@@ -656,13 +706,7 @@ fn native_preparation_rejects_incomplete_or_out_of_order_batches_without_complet
         let mut lane = worker(&owner);
         lane.begin_batch().unwrap();
         for sample in &samples[..length] {
-            lane.consume(
-                &problem,
-                native_preparation_view(sample),
-                sample.address.frequency_centre_hz,
-                exact_contributions(sample),
-            )
-            .unwrap();
+            prepare_native_group(&mut lane, std::slice::from_ref(sample)).unwrap();
         }
         assert!(lane.finish_batch().is_err());
         assert!(owner.commit(&mut lane).is_err());
@@ -675,19 +719,183 @@ fn native_preparation_rejects_incomplete_or_out_of_order_batches_without_complet
         lane.begin_batch().unwrap();
         assert!(lane.begin_batch().is_err());
         for sample in input {
-            lane.consume(
-                &problem,
-                native_preparation_view(sample),
-                sample.address.frequency_centre_hz,
-                exact_contributions(sample),
-            )
-            .unwrap();
+            prepare_native_group(lane, std::slice::from_ref(sample)).unwrap();
         }
         lane.finish_batch().unwrap();
     }
     owner.commit(&mut second).unwrap();
     assert!(owner.commit(&mut first).is_err());
     assert!(owner.finish().is_err());
+}
+
+#[test]
+fn native_channel_kernel_preserves_group_weights_raw_flags_and_exact_sums() {
+    for count in [2, 4] {
+        for taper in [None, Some(UvTaper::new(10.0, 5.0, 0.2))] {
+            let (problem, source) = native_preparation_fixture_with_taper(taper);
+            let products = if count == 2 {
+                vec![CorrelationType::LinearXx, CorrelationType::LinearYy]
+            } else {
+                vec![
+                    CorrelationType::LinearXx,
+                    CorrelationType::LinearXy,
+                    CorrelationType::LinearYx,
+                    CorrelationType::LinearYy,
+                ]
+            };
+            let groups: Vec<Vec<_>> = source
+                .iter()
+                .map(|sample| {
+                    products
+                        .iter()
+                        .enumerate()
+                        .map(|(ordinal, product)| {
+                            let mut sample = sample.clone();
+                            sample.address.correlation_index = ordinal as u32;
+                            sample.address.correlation_type = *product;
+                            sample.input_weight = if ordinal == 0 {
+                                3.0
+                            } else if ordinal + 1 == count {
+                                if sample.address.physical_row == 2 {
+                                    -1.0
+                                } else {
+                                    1.0
+                                }
+                            } else if sample.address.physical_row == 6 {
+                                f32::NAN
+                            } else {
+                                1.0e8
+                            };
+                            sample.channel_flag &= ordinal == 0;
+                            sample.parallel_hand_group_flag = sample.channel_flag;
+                            if sample.address.physical_row == 10 && ordinal == 0 {
+                                sample.visibility =
+                                    SelectedVisibilitySample::Complex32([f32::NAN, 0.0]);
+                            }
+                            sample
+                        })
+                        .collect()
+                })
+                .collect();
+            let plan =
+                plan_weighting(&problem, WeightingExecutionLimits::new(32, 32).unwrap()).unwrap();
+            let mut scalar = begin_natural_weighting_stream(&problem, &plan).unwrap();
+            let mut expected = Vec::new();
+            for group in &groups {
+                let shared = SelectedInputWeightGroup::correlation_run(
+                    group[0].input_weight,
+                    group[count - 1].input_weight,
+                    count,
+                )
+                .with_imaging_flag(group.iter().any(|sample| sample.channel_flag));
+                for (ordinal, sample) in group.iter().enumerate() {
+                    let view = native_preparation_view(sample).with_input_weight_group(
+                        shared
+                            .with_density_owner(ordinal == 0)
+                            .with_terminal_member(ordinal + 1 == count),
+                    );
+                    if let Some(block) = scalar
+                        .consume(
+                            &problem,
+                            view,
+                            sample.address.frequency_centre_hz,
+                            exact_contributions(sample),
+                        )
+                        .unwrap()
+                    {
+                        expected.extend_from_slice(block.samples());
+                        scalar.reuse_emitted_block(block).unwrap();
+                    }
+                }
+            }
+            let (last, scalar_state, _) = scalar.finish().unwrap();
+            if let Some(last) = last {
+                expected.extend(last.into_samples());
+            }
+            let layout = NativeLayout::new(
+                groups[0][0].address,
+                vec![0, 1, 2],
+                products
+                    .iter()
+                    .enumerate()
+                    .map(|(i, product)| (i as u32, *product))
+                    .collect(),
+            )
+            .unwrap();
+            let mut owner = NativeWeightingPreparation::new(&problem, &plan).unwrap();
+            let mut worker = owner
+                .worker(
+                    &problem,
+                    &plan,
+                    layout,
+                    NativeBlock::new(7, 3, count).unwrap(),
+                    FiniteValuePolicy::FlagInputRejectGenerated,
+                )
+                .unwrap();
+            worker.begin_batch().unwrap();
+            for group in &groups {
+                prepare_native_group(&mut worker, group).unwrap();
+            }
+            worker.finish_batch().unwrap();
+            let block = owner.commit(&mut worker).unwrap();
+            for (index, (actual, expected)) in block.weights.iter().zip(&expected).enumerate() {
+                assert_eq!(
+                    actual.to_bits(),
+                    expected.source_imaging_weight().unwrap().to_bits(),
+                    "count={count}, sample={index}"
+                );
+                let sample = &groups[index / count][index % count];
+                let nonfinite_value = match sample.visibility {
+                    SelectedVisibilitySample::Float32(v) => !v.is_finite(),
+                    SelectedVisibilitySample::Complex32([re, im]) => {
+                        !re.is_finite() || !im.is_finite()
+                    }
+                };
+                assert_eq!(
+                    block.flags[index],
+                    sample.channel_flag
+                        || sample.row_flag
+                        || nonfinite_value
+                        || !sample.input_weight.is_finite()
+                        || sample.input_weight < 0.0
+                );
+            }
+            let (actual, _) = owner.finish().unwrap();
+            assert_eq!(actual.sum_weights(), scalar_state.sum_weights());
+            assert_eq!(actual.generation_id(), scalar_state.generation_id());
+        }
+    }
+}
+
+#[test]
+fn native_channel_kernel_poisoning_preserves_value_and_shape_errors() {
+    let (problem, samples) = native_preparation_fixture();
+    let plan = plan_weighting(&problem, WeightingExecutionLimits::new(4, 4).unwrap()).unwrap();
+    for case in 0..4 {
+        let mut owner = NativeWeightingPreparation::new(&problem, &plan).unwrap();
+        let mut worker = owner
+            .worker(
+                &problem,
+                &plan,
+                native_preparation_layout(&samples[0]),
+                NativeBlock::new(1, 3, 1).unwrap(),
+                FiniteValuePolicy::RejectAll,
+            )
+            .unwrap();
+        worker.begin_batch().unwrap();
+        let mut sample = samples[0].clone();
+        match case {
+            0 => sample.input_weight = -1.0,
+            1 => sample.visibility = SelectedVisibilitySample::Float32(f32::NAN),
+            2 => sample.address.correlation_index = 1,
+            3 => sample.address.data_description_id = 1,
+            _ => unreachable!(),
+        }
+        assert!(prepare_native_group(&mut worker, &[sample]).is_err());
+        assert!(worker.finish_batch().is_err());
+        assert!(owner.commit(&mut worker).is_err());
+        assert!(owner.finish().is_err());
+    }
 }
 
 fn selected_generation(

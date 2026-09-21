@@ -420,30 +420,32 @@ impl InitialCube {
             state_terminal,
             true,
         )?;
-        // Select storage before any payload allocation. Existing retained
-        // generations and all base owners are already charged by the authority;
-        // leave enough for preparation and at least one complete band job.
-        let available = policy
-            .authority
-            .remaining_planning_memory_bytes(
-                &policy.resource_policy,
-                physical.execution_dag().resource_alternative(),
+        let resident_physical = resident
+            .compose(
+                registry,
+                policy.implementation.clone(),
+                &storage,
+                before_cube_state,
+                &read,
+                &reconcile,
             )
             .map_err(io::Error::other)?;
-        let additional = resident
-            .retained_memory_bytes()
-            .saturating_sub(cube_state.retained_memory_bytes());
-        if additional <= available.saturating_sub(native_plan.minimum_workspace_bytes) {
-            physical = resident
-                .compose(
-                    registry,
-                    policy.implementation.clone(),
-                    &storage,
-                    before_cube_state,
-                    &read,
-                    &reconcile,
-                )
-                .map_err(io::Error::other)?;
+        // Compare the complete storage reservation before allocating payloads.
+        // Residency must leave a full worker wave, not just a runnable band.
+        let resident_available = match policy.authority.remaining_planning_memory_bytes(
+            &policy.resource_policy,
+            resident_physical.execution_dag().resource_alternative(),
+        ) {
+            Ok(bytes) => bytes,
+            Err(crate::ResourceError::Infeasible { resource, .. })
+                if resource.starts_with("memory-domain:") =>
+            {
+                0
+            }
+            Err(error) => return Err(io::Error::other(error)),
+        };
+        if resident_available >= native_plan.worker_wave_bytes {
+            physical = resident_physical;
             native_plan = plan_native(&physical)?;
             cube_state = resident;
             eprintln!(

@@ -850,7 +850,15 @@ fn weight_from_state(
             input / (cell_density * robust_f2[plane] / factor + 1.0)
         }
     };
-    let weighted = weighted * gaussian_taper(problem.weighting().uv_taper(), uv);
+    apply_weight_taper(weighted, problem.weighting().uv_taper(), uv)
+}
+
+fn apply_weight_taper(
+    weighted: f64,
+    taper: Option<UvTaper>,
+    uv: [f64; 2],
+) -> Result<f64, WeightingError> {
+    let weighted = weighted * gaussian_taper(taper, uv);
     if weighted.is_finite() && weighted >= 0.0 {
         Ok(weighted)
     } else {
@@ -3327,14 +3335,26 @@ fn input_weight(
     problem: &CompiledProblem,
     sample: &WeightingSelectedSample,
 ) -> Result<f64, WeightingError> {
-    if sample.input_weight_group_flag || sample.parallel_hand_group_flag || sample.row_flag {
+    input_weight_value(
+        sample.input_weight,
+        sample.input_weight_group_flag || sample.parallel_hand_group_flag || sample.row_flag,
+        problem.numerics().finite_values(),
+    )
+}
+
+fn input_weight_value(
+    weight: f32,
+    flagged: bool,
+    finite_values: FiniteValuePolicy,
+) -> Result<f64, WeightingError> {
+    if flagged {
         return Ok(0.0);
     }
-    let weight = f64::from(sample.input_weight);
+    let weight = f64::from(weight);
     if weight.is_finite() {
         return Ok(weight.max(0.0));
     }
-    match problem.numerics().finite_values() {
+    match finite_values {
         FiniteValuePolicy::FlagInputRejectGenerated => Ok(0.0),
         FiniteValuePolicy::RejectAll => Err(WeightingError::GeneratedNonFiniteWeight),
     }

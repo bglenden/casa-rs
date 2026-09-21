@@ -215,7 +215,9 @@ fn streaming_cube_initial_source_fence_controls_runtime_reconciliation() {
             1,
             prepare.clone(),
             reconcile.clone(),
-            true,
+            // This fixture's 8-MiB host cannot fit a full four-worker wave
+            // alongside resident storage. Keep executing that low-memory case.
+            workers == 1,
         )
         .unwrap();
         let physical = cube_state
@@ -420,6 +422,150 @@ fn streaming_cube_initial_source_fence_controls_runtime_reconciliation() {
                 state.weighting.parallel_preparation_sample_count(),
                 3 * u64::from(channels) * 2,
                 "every selected sample uses the admitted preparation team"
+            );
+        }
+    }
+}
+
+#[test]
+fn resident_storage_threshold_preserves_a_complete_worker_wave() {
+    for workers in [1, 2, 4, 8] {
+        let mut fixture = source_fixture(SyntheticPolarizationBasis::Circular, 6);
+        let artifacts = fixture._directory.path().join("artifacts");
+        let mut inventory = support::runtime_inventory_with_roots(
+            artifacts.clone(),
+            fixture._directory.path().join("cube.ms"),
+        );
+        inventory.topology.memory_domains[0].capacity_bytes = 64 << 20;
+        inventory
+            .pressure
+            .memory_available_bytes
+            .insert(CapacityDomainId::new("host-memory"), 64 << 20);
+        inventory.topology.logical_cpu_threads = 8;
+        inventory.topology.performance_cpu_cores = CpuClassCapacity::Known(8);
+        inventory.pressure.available_cpu_threads = 8;
+        fixture.authority = ResourceAuthority::with_inventory(inventory).unwrap();
+        fixture.storage = ManagedSpillStorage::bind(
+            &fixture.authority,
+            support::artifact_storage_io(),
+            artifacts,
+        )
+        .unwrap();
+        let problem = &fixture.problem;
+        let registry = support::PlanningRegistry::new(problem);
+        let policy = SpectralCycleExecutionPolicy::new(
+            support::implementation_id(),
+            WeightingExecutionLimits::new(7, 1).unwrap(),
+            fixture.access.certify_residency(problem).unwrap(),
+            support::storage_io(),
+            SpectralCyclePlanningLimits::new(1000, 1, 900000),
+            fixture.authority.clone(),
+            ResourcePolicy::Exclusive,
+        );
+        // Exercise the real phase selector without allocating or executing its
+        // source. The existing fence test executes the admitted source path.
+        let plan = |policy| {
+            InitialCube::build(
+                problem.clone(),
+                &registry,
+                policy,
+                fixture.storage.clone(),
+                None,
+                None,
+                None,
+                0,
+                workers,
+                1,
+                0,
+                None,
+            )
+            .unwrap()
+        };
+        let (physical, full) = plan(policy.clone());
+        let available = fixture
+            .authority
+            .remaining_planning_memory_bytes(
+                &ResourcePolicy::Exclusive,
+                physical.execution_dag().resource_alternative(),
+            )
+            .unwrap();
+        let base_charge = fixture.authority.topology().memory_domains[0].capacity_bytes
+            - available
+            - full.native_plan.workspace_bytes;
+        let worker_wave = full.native_plan.worker_wave_bytes;
+        let resident_bytes = full.cube_state.retained_memory_bytes();
+        let bands = &full.state.lock().unwrap().bands;
+        let prior = casa_imaging_reconstruction::normal_state_window_residency_bytes(
+            problem.model_lifecycle().target().domains()[0].pixels(),
+            1,
+            problem.geometry().spectral().output_channels(),
+            1,
+        )
+        .unwrap();
+        let refresh = NativePhasePlan::new_for_pass(
+            &physical,
+            &fixture.authority,
+            &ResourcePolicy::Exclusive,
+            &fixture.storage,
+            full.native_plan.store,
+            bands,
+            0,
+            workers,
+            1,
+            Some(prior),
+        )
+        .unwrap();
+        for start in 0..bands.len() {
+            assert!(
+                WavePlan::initial_prefix(
+                    full.native_plan.store,
+                    &bands[start..],
+                    workers,
+                    1,
+                    full.native_plan.shared_bytes,
+                    worker_wave,
+                )
+                .unwrap()
+                    >= workers.min(bands.len() - start)
+            );
+            assert!(
+                WavePlan::refresh_prefix(
+                    refresh.store,
+                    &bands[start..],
+                    workers,
+                    1,
+                    refresh.shared_bytes,
+                    refresh.worker_wave_bytes,
+                    prior,
+                )
+                .unwrap()
+                    >= workers.min(bands.len() - start)
+            );
+        }
+        for (workspace, expect_resident) in [
+            (worker_wave - 1, false),
+            (worker_wave, true),
+            (full.native_plan.workspace_bytes, true),
+        ] {
+            let mut limited = policy.clone();
+            limited.resource_policy = ResourcePolicy::Explicit(ResourceOverride {
+                memory_bytes: [(
+                    CapacityDomainId::new("host-memory"),
+                    base_charge + workspace,
+                )]
+                .into_iter()
+                .collect(),
+                ..ResourceOverride::default()
+            });
+            let (_, actual) = plan(limited);
+            assert_eq!(
+                actual.cube_state.retained_memory_bytes() == resident_bytes,
+                expect_resident,
+                "workers={workers}, workspace={workspace}"
+            );
+            assert!(
+                actual.native_plan.workspace_bytes >= actual.native_plan.worker_wave_bytes,
+                "storage choice cannot strand workers when the paged wave fits"
             );
         }
     }
