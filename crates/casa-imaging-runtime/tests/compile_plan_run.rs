@@ -42,8 +42,6 @@ use casa_imaging_model::{
 };
 use casa_imaging_products::{
     ContinuumGenerationDemand, ContinuumProductControls, ContinuumProductInputs,
-    ContinuumSourceCatalog, ProductGenerationAuthority, PublicationProjection,
-    SealedContinuumGeneration, produce_continuum_members,
 };
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, MajorCycleCompletion, MajorCycleOwner, MajorCyclePreparation,
@@ -59,19 +57,19 @@ use casa_imaging_runtime::{
     AdaptationId, AdaptationTransition, AllocationAccess, AllocationId, AllocationLayout,
     AllocationLifetime, AllocationPurpose, AllocationUse, AlternativeId,
     AlternativeRejectionReason, ArtifactDisposition, ArtifactIdentity, ArtifactMeasurement,
-    ArtifactRole, AttemptBoundObservationCompletion, AuthorizedProductPublicationEntry,
-    BindingKind, BuildIdentity, CacheDemand, CacheIdentity, CapabilityPredicate, CapacityDomainId,
-    CapacityViewId, ClaimLifetime, CompiledProblemEvidence, CompleteDataOperatorResult,
-    CompleteDataPlanFragment, CompleteDataPreparedState, CountDemand, CpuClassCapacity,
-    DemandAlternative, DemandEnvelope, ExecutionDag, ExecutionDagSpecification, ExecutionError,
-    ExecutionEvidenceError, ExecutionKnobs, ExecutionOutcome, ExecutionPlanId, ExecutionProvenance,
-    ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionStatus,
-    ExternalPressure, FenceId, FenceKind, FinalVisibilitySink, FrozenWeightingReservation,
-    HostInventory, ImplementationContractCatalog, ImplementationContractMetadata,
-    ImplementationRegistry, ImplementationRegistryId, InitializationPolicy, IoBufferDemand,
-    IoBufferKind, IoMeasurement, IoPrediction, LeaseResource, LogicalAllocation,
-    MajorCycleOperatorResult, MajorCycleOperatorState, ManagedSpillStorage, MemoryCapacityDomain,
-    MemoryCapacityKind, MemoryDemand, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
+    ArtifactRole, AttemptBoundObservationCompletion, BindingKind, BuildIdentity, CacheDemand,
+    CacheIdentity, CapabilityPredicate, CapacityDomainId, CapacityViewId, ClaimLifetime,
+    CompiledProblemEvidence, CompleteDataOperatorResult, CompleteDataPlanFragment,
+    CompleteDataPreparedState, CountDemand, CpuClassCapacity, DemandAlternative, DemandEnvelope,
+    ExecutionDag, ExecutionDagSpecification, ExecutionError, ExecutionEvidenceError,
+    ExecutionKnobs, ExecutionOutcome, ExecutionPlanId, ExecutionProvenance, ExecutionReceipt,
+    ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionStatus, ExternalPressure, FenceId,
+    FenceKind, FinalVisibilitySink, FrozenWeightingReservation, HostInventory,
+    ImplementationContractCatalog, ImplementationContractMetadata, ImplementationRegistry,
+    ImplementationRegistryId, InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement,
+    IoPrediction, LeaseResource, LogicalAllocation, MajorCycleOperatorResult,
+    MajorCycleOperatorState, ManagedSpillStorage, MemoryCapacityDomain, MemoryCapacityKind,
+    MemoryDemand, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
     ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
     PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
     PlannerCostModelProfileBootstrap, PlannerCostModelProfileId, PlanningBindings,
@@ -81,11 +79,11 @@ use casa_imaging_runtime::{
     PreparedArtifactPlanFragment, PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision,
     PreparedArtifactRegistration, PreparedArtifactRejection, PreparedArtifactReuseOutcome,
     PreparedArtifactSegmentDescriptor, PreparedArtifactSourceSegment, PreparedArtifactStore,
-    PreparedArtifactUvAffine, ProductMemberPublicationFailure, ProductPublicationPlan,
-    ProductionStorageProfile, PublicationLayoutLedger, PublicationMappedStaging,
-    PublicationParticipant, PublicationPhysicalLayout, PublicationResourceBounds,
-    PublicationStaging, QueueDemand, QueueResource, QueueResourceId, QuiescencePoint, RateDemand,
-    RateResource, RateResourceId, RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus,
+    PreparedArtifactUvAffine, ProductPublicationPlan, ProductionStorageProfile,
+    PublicationLayoutLedger, PublicationMappedStaging, PublicationParticipant,
+    PublicationPhysicalLayout, PublicationResourceBounds, PublicationStaging, QueueDemand,
+    QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId,
+    RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus,
     ReconstructionCyclePhaseCompletion, RedactedPath, ResourceAuthority, ResourceClaim,
     ResourceError, ResourceHeadroom, ResourceMeasurement, ResourceOverride, ResourcePolicy,
     ResourceTopology, RunBindings, RunController, RunDirective, RunError, RunToCompletion,
@@ -93,10 +91,10 @@ use casa_imaging_runtime::{
     SerialProductPublicationExecutor, SerialProductPublicationPlan, SerialProductPublicationPolicy,
     SerialProductPublicationRegistry, SerialProductPublicationSink, SlotCompatibility,
     SpectralCycleExecutionPolicy, SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan,
-    SpectralCyclePlanError, SpectralCyclePlanParts, SpectralCyclePlanningLimits,
-    SpectralCycleRegistry, SpectralOperatorState, SpectralPassIdentity, SpectralPassPhase,
-    StagePrediction, StorageDomain, StorageDomainId, StorageIoResourceBinding, StorageMode,
-    StorageUseKind, WeightedObservationBlock, WeightingExecutionState, WeightingPlanFragment,
+    SpectralCyclePlanParts, SpectralCyclePlanningLimits, SpectralCycleRegistry,
+    SpectralOperatorState, SpectralPassIdentity, SpectralPassPhase, StagePrediction, StorageDomain,
+    StorageDomainId, StorageIoResourceBinding, StorageMode, StorageUseKind,
+    WeightedObservationBlock, WeightingExecutionState, WeightingPlanFragment,
     WeightingReplayCompletion, WorkDependency, WorkDomain, WorkExecutionContext,
     WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements, WorkNode, WorkNodeId,
     plan as runtime_plan, plan_continuum_transform_row, run as runtime_run,
@@ -139,14 +137,14 @@ fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
         casa_imaging_model::PrimaryBeamValidityPolicy::new(
             0.2,
             casa_imaging_model::ProductSupportComparison::StrictlyGreater,
-            casa_imaging_model::ProductBlankingPolicy::ZeroAndFalseMask,
+            casa_imaging_model::ProductBlankingPolicy::Zero,
         )
         .expect("valid PB policy"),
         casa_imaging_model::TaylorValidityPolicy::new(
             casa_imaging_model::TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
             0.1,
             casa_imaging_model::ProductSupportComparison::StrictlyGreater,
-            casa_imaging_model::ProductBlankingPolicy::ZeroAndFalseMask,
+            casa_imaging_model::ProductBlankingPolicy::Zero,
         )
         .expect("valid Taylor policy"),
     )
@@ -160,8 +158,10 @@ mod common;
 
 mod cost_model_profile;
 mod imaging_plan_selection;
-#[path = "compile_plan_run/receipt_summary_cache.rs"]
-mod receipt_summary_cache;
+#[path = "compile_plan_run/publication_lifecycle.rs"]
+mod publication_lifecycle;
+#[path = "compile_plan_run/receipt_progress.rs"]
+mod receipt_progress;
 mod walking_skeleton;
 
 use common::{
@@ -345,7 +345,7 @@ fn payload_sha256(document: &str) -> String {
 
 fn with_current_payload_checksum(mut document: String) -> String {
     let digest = payload_sha256(&document);
-    let marker = "\"payload_sha256\": \"";
+    let marker = "\"payload_sha256\":\"";
     let start = document.find(marker).expect("payload checksum") + marker.len();
     let end = start + 64;
     assert_eq!(&document[end..end + 1], "\"");
@@ -362,11 +362,11 @@ enum BatchReceiptTamper {
 
 fn with_batch_receipt_tamper(document: &str, node_id: &str, tamper: BatchReceiptTamper) -> String {
     let mut document = document.to_owned();
-    let node_marker = format!("\"node_id\": \"{node_id}\"");
+    let node_marker = format!("\"node_id\":\"{node_id}\"");
     let node_start = document
         .find(&node_marker)
         .expect("canonical batch-controlled replay projection");
-    let batch_marker = "\"actual_batch\": ";
+    let batch_marker = "\"actual_batch\":";
     let batch_start = document[node_start..]
         .find(batch_marker)
         .map(|offset| node_start + offset + batch_marker.len())
@@ -384,7 +384,7 @@ fn with_batch_receipt_tamper(document: &str, node_id: &str, tamper: BatchReceipt
                 BatchReceiptTamper::MismatchMaximum => "maximum",
                 BatchReceiptTamper::Remove => unreachable!(),
             };
-            let marker = format!("\"{field}\": ");
+            let marker = format!("\"{field}\":");
             let start = document[batch_start..batch_end]
                 .find(&marker)
                 .map(|offset| batch_start + offset + marker.len())
@@ -413,24 +413,24 @@ fn with_node_receipt_status(
     current: &str,
     replacement: &str,
 ) -> String {
-    let node_marker = format!("\"node_id\": \"{node}\"");
+    let node_marker = format!("\"node_id\":\"{node}\"");
     let node_start = document
         .find(&node_marker)
         .expect("receipt node projection");
-    let status_marker = format!("\"status\": \"{current}\"");
+    let status_marker = format!("\"status\":\"{current}\"");
     let status_start = document[node_start..]
         .find(&status_marker)
         .map(|offset| node_start + offset)
         .expect("receipt node status");
     document.replace_range(
         status_start..status_start + status_marker.len(),
-        &format!("\"status\": \"{replacement}\""),
+        &format!("\"status\":\"{replacement}\""),
     );
     with_current_payload_checksum(document)
 }
 
 fn with_usize_array(mut document: String, field: &str, values: &[usize]) -> String {
-    let marker = format!("\"{field}\": [");
+    let marker = format!("\"{field}\":[");
     let start = document.find(&marker).expect("typed projection field") + marker.len();
     let end = document[start..]
         .find(']')
@@ -446,11 +446,11 @@ fn with_usize_array(mut document: String, field: &str, values: &[usize]) -> Stri
 }
 
 fn with_forged_product_graph_identity(mut document: String) -> String {
-    let graph_marker = "\"product_graph\": {";
+    let graph_marker = "\"product_graph\":{";
     let graph_start = document
         .find(graph_marker)
         .expect("typed Product Graph projection");
-    let identity_marker = "\"identity\": \"";
+    let identity_marker = "\"identity\":\"";
     let start = document[graph_start..]
         .find(identity_marker)
         .map(|offset| graph_start + offset + identity_marker.len())
@@ -461,11 +461,11 @@ fn with_forged_product_graph_identity(mut document: String) -> String {
 }
 
 fn with_forged_reprojection_identity(mut document: String) -> String {
-    let reprojection_marker = "\"reprojection\": {";
+    let reprojection_marker = "\"reprojection\":{";
     let reprojection_start = document
         .find(reprojection_marker)
         .expect("typed model reprojection projection");
-    let identity_marker = "\"identity\": \"";
+    let identity_marker = "\"identity\":\"";
     let start = document[reprojection_start..]
         .find(identity_marker)
         .map(|offset| reprojection_start + offset + identity_marker.len())
@@ -477,11 +477,11 @@ fn with_forged_reprojection_identity(mut document: String) -> String {
 }
 
 fn with_forged_model_lifecycle_identity(mut document: String, replacement: &str) -> String {
-    let lifecycle_marker = "\"model_lifecycle\": {";
+    let lifecycle_marker = "\"model_lifecycle\":{";
     let lifecycle_start = document
         .find(lifecycle_marker)
         .expect("typed model lifecycle projection");
-    let identity_marker = "\"identity\": \"";
+    let identity_marker = "\"identity\":\"";
     let start = document[lifecycle_start..]
         .find(identity_marker)
         .map(|offset| lifecycle_start + offset + identity_marker.len())
@@ -507,9 +507,9 @@ fn with_forged_model_input_source_identity(mut document: String, replacement: &s
 
 fn with_forged_problem_model_and_audit_identity(mut document: String, replacement: &str) -> String {
     assert_eq!(replacement.len(), 64);
-    let model_marker = "\"model_identity\": {";
+    let model_marker = "\"model_identity\":{";
     let model_start = document.find(model_marker).expect("typed model identity");
-    let identity_marker = "\"identity\": \"";
+    let identity_marker = "\"identity\":\"";
     let typed_start = document[model_start..]
         .find(identity_marker)
         .map(|offset| model_start + offset + identity_marker.len())
@@ -517,7 +517,7 @@ fn with_forged_problem_model_and_audit_identity(mut document: String, replacemen
     assert_ne!(&document[typed_start..typed_start + 64], replacement);
     document.replace_range(typed_start..typed_start + 64, replacement);
 
-    let audit_marker = "\"observation.model.identity\": \"";
+    let audit_marker = "\"observation.model.identity\":\"";
     let audit_start =
         document.find(audit_marker).expect("audit model identity") + audit_marker.len();
     assert_ne!(&document[audit_start..audit_start + 64], replacement);
@@ -527,7 +527,7 @@ fn with_forged_problem_model_and_audit_identity(mut document: String, replacemen
 
 fn with_forged_parent_problem_identity(mut document: String, replacement: &str) -> String {
     assert_eq!(replacement.len(), 64);
-    for marker in ["\"problem_identity\": \"", "\"problem.identity\": \""] {
+    for marker in ["\"problem_identity\":\"", "\"problem.identity\":\""] {
         let start = document.find(marker).expect("problem identity projection") + marker.len();
         assert_ne!(&document[start..start + 64], replacement);
         document.replace_range(start..start + 64, replacement);
@@ -536,7 +536,7 @@ fn with_forged_parent_problem_identity(mut document: String, replacement: &str) 
 }
 
 fn with_forged_audit_field(mut document: String, field: &str, value: &str) -> String {
-    let marker = format!("\"{field}\": \"");
+    let marker = format!("\"{field}\":\"");
     let start = document.find(&marker).expect("Product Graph audit field") + marker.len();
     let end = document[start..]
         .find('"')
@@ -563,7 +563,7 @@ fn with_retained_claim_tamper(document: &str, tamper: RetainedClaimTamper) -> St
         .expect("typed plan projection");
     let mut document = document.to_owned();
     if matches!(tamper, RetainedClaimTamper::ChangeDagIdentity) {
-        let marker = "\"dag_identity\": \"";
+        let marker = "\"dag_identity\":\"";
         let start = document.find(marker).expect("DAG identity") + marker.len();
         document.replace_range(start..start + 64, &"f".repeat(64));
     } else {
@@ -588,7 +588,7 @@ fn with_retained_claim_tamper(document: &str, tamper: RetainedClaimTamper) -> St
             retained_nodes.len() >= 4,
             "weighting retained-claim topology"
         );
-        let retained_marker = "\"lifetime\": \"retained_until:";
+        let retained_marker = "\"lifetime\":\"retained_until:";
         let lifetime_start = document
             .find(retained_marker)
             .expect("serialized retained claim");
@@ -627,7 +627,7 @@ fn with_retained_claim_tamper(document: &str, tamper: RetainedClaimTamper) -> St
                 }
             }
             RetainedClaimTamper::ChangeAmount => {
-                let marker = "\"amount\": ";
+                let marker = "\"amount\":";
                 let start = document[claim_start..lifetime_start]
                     .find(marker)
                     .map(|offset| claim_start + offset + marker.len())
@@ -683,11 +683,11 @@ fn with_retained_claim_tamper(document: &str, tamper: RetainedClaimTamper) -> St
                 }
                 .and_then(|node| node["node_id"].as_str())
                 .expect("unexpected retained-claim target with claims");
-                let target_marker = format!("\"node_id\": \"{target}\"");
+                let target_marker = format!("\"node_id\":\"{target}\"");
                 let target_start = document
                     .find(&target_marker)
                     .expect("target node projection");
-                let claims_marker = "\"claims\": [";
+                let claims_marker = "\"claims\":[";
                 let insertion = document[target_start..]
                     .find(claims_marker)
                     .map(|offset| target_start + offset + claims_marker.len())
@@ -741,14 +741,7 @@ fn geometry_with_shape_and_increment(
         CentreLaws::new(
             PhaseCentreLaw::Fixed(direction.reference_direction()),
             DelayCentreLaw::PhaseTrackingCentre,
-            PointingCentreLaw::Observation(ObservationPointingLaw::new(
-                PointingDirectionColumn::Direction,
-                PointingDirectionSemantic::AntennaBoresight,
-                PointingTimeSampling::VisibilityTimeCentroid,
-                PointingInterpolation::GreatCircleShortestArc,
-                PointingExtrapolation::Reject,
-                MissingPointingPolicy::Reject,
-            )),
+            PointingCentreLaw::PhaseTrackingCentre,
         ),
         UvwCoordinateLaw::PhaseTrackingCentre,
         SpectralCoordinateSpec::new(
@@ -854,6 +847,8 @@ fn channel_major_taylor_request_with_shape(
         ReconstructionControls::new(1, 0.1, 0.0),
         None,
         shape,
+        44.0e9,
+        model_lifecycle(ModelStateIdentity::Empty),
     )
 }
 
@@ -943,6 +938,8 @@ fn spectral_request_with_inputs(
         controls,
         visibility_transform,
         ImageShape::new(8, 8),
+        44.0e9,
+        model_lifecycle(ModelStateIdentity::Empty),
     )
 }
 
@@ -955,6 +952,8 @@ fn spectral_request_with_inputs_and_shape(
     controls: ReconstructionControls,
     visibility_transform: Option<SequentialContinuumTransform>,
     shape: ImageShape,
+    reference_frequency_hz: f64,
+    model_requirements: casa_imaging_model::ModelLifecycleRequirements,
 ) -> ImagingRequest {
     let pixels = shape.pixels();
     let geometry = geometry_with_shape_and_increment(
@@ -965,7 +964,7 @@ fn spectral_request_with_inputs_and_shape(
     let spectral = geometry.spectral().clone().with_wcs(SpectralWcs::Linear {
         channels,
         reference_pixel: 0.0,
-        reference_frequency_hz: 44.0e9,
+        reference_frequency_hz,
         increment_hz: 128.0e6,
     });
     let geometry = geometry.with_spectral(spectral);
@@ -1011,12 +1010,7 @@ fn spectral_request_with_inputs_and_shape(
     if let Some(transform) = visibility_transform {
         specification = specification.with_visibility_transform(transform);
     }
-    ImagingRequest::new(
-        specification,
-        geometry,
-        inputs,
-        model_lifecycle(ModelStateIdentity::Empty),
-    )
+    ImagingRequest::new(specification, geometry, inputs, model_requirements)
 }
 
 fn request(observation: u8) -> ImagingRequest {
@@ -1224,6 +1218,51 @@ fn standard_problem_specification(
     )
 }
 
+fn hogbom_problem_specification(
+    weighting: WeightingContract,
+    products: Vec<ProductKind>,
+    model_column_write: ModelColumnWrite,
+    controls: ReconstructionControls,
+    basis: ReconstructionBasis,
+) -> ProblemSpecification {
+    let numerics = NumericsContract::new(
+        vec![NumericPrecision::F64],
+        ReductionPolicy::Compensated,
+        FiniteValuePolicy::FlagInputRejectGenerated,
+        NumericalStage::ALL
+            .into_iter()
+            .map(|stage| (stage, StageErrorBudget::new(1.0e-7, 1.0e-3)))
+            .collect(),
+    );
+    ProblemSpecification::new(
+        ScientificContract::new(
+            SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
+            MeasurementEquationContract::new(
+                InstrumentResponse::Scalar,
+                DeclaredInnerProducts::new(
+                    ModelInnerProduct::HermitianEuclidean,
+                    VisibilityInnerProduct::HermitianEuclidean,
+                ),
+            ),
+        ),
+        ReconstructionContract::new(
+            basis,
+            ReconstructionAlgorithm::Hogbom,
+            controls,
+            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+        ),
+        weighting,
+        ProductRequirements::new(
+            products,
+            ProductNormalization::UnitResponse,
+            RestoringBeamPolicy::None,
+            product_validity(),
+        ),
+        ObservationTransactionRequirements::new(model_column_write),
+        numerics,
+    )
+}
+
 fn mtmfs_problem_specification(small_scale_bias: f64) -> ProblemSpecification {
     let numerics = NumericsContract::new(
         vec![NumericPrecision::F64],
@@ -1289,39 +1328,18 @@ fn artifact_measurement(
         .expect("test adapters only report externally constructible artifact dispositions")
 }
 
-fn publication_probe_executor(
-    prepared_observed: Arc<AtomicBool>,
-    publication_calls: Arc<AtomicUsize>,
-    receipts: Arc<ExecutionReceiptStore>,
-    attempt: casa_imaging_runtime::ExecutionAttemptId,
-) -> RecordingExecutor {
+fn product_measurement_executor(plan: &ProductPublicationPlan) -> RecordingExecutor {
     let mut executor = recording_executor(6, None, None);
-    executor.publication_probe = Some(PublicationProbe {
-        receipts,
-        attempt,
-        prepared_observed,
-        publication_calls,
-    });
-    executor
-}
-
-fn sealed_measurement_executor(
-    plan: &ProductPublicationPlan,
-    projection: &PublicationProjection,
-) -> RecordingExecutor {
-    let mut executor = recording_executor(6, None, None);
-    let authorization = plan
-        .authorize(projection)
-        .expect("publication authorization");
+    let authorization = plan;
     executor.sealed_measurements = Some(
         authorization
             .entries()
             .iter()
             .map(|entry| {
                 ArtifactMeasurement::new(
-                    entry.planned_identity(),
-                    Some(entry.observed_identity()),
-                    ArtifactDisposition::PublicationPrepared,
+                    entry.artifact(),
+                    None,
+                    ArtifactDisposition::Staged,
                     entry.payload_bytes(),
                     None,
                 )
@@ -1329,7 +1347,6 @@ fn sealed_measurement_executor(
             })
             .collect(),
     );
-    executor.product_projection = Some(projection.clone());
     executor
 }
 
@@ -1358,18 +1375,15 @@ fn recording_executor(
         weighting_failure_node: None,
         weighting_fence_failure_event: None,
         publication_failure: None,
-        publication_failure_after: None,
-        publication_uncertain_after: None,
-        published_member_calls: AtomicUsize::new(0),
         generic_source_access: None,
         initial_consistency_expected: None,
         visibility_during_fence_settlement: None,
         publication_buffer_held: None,
         receipt_root_to_disrupt: None,
         publication_pause: None,
-        publication_probe: None,
         sealed_measurements: None,
-        product_projection: None,
+        publication_path: None,
+        native_publication: Mutex::new(None),
         observation_completions: None,
         delivered_observation_completions: None,
         observation_completion_failure: None,
@@ -1390,8 +1404,11 @@ fn recording_executor(
         major_cycle_node: None,
         major_cycle_mode: MajorCycleMode::Confirm,
         major_cycle_problem: None,
+        bind_major_cycle_model: false,
         major_cycle_lifecycle: Mutex::new(None),
         major_cycle_preparation: Mutex::new(None),
+        major_cycle_continuation: Mutex::new(None),
+        major_cycle_prior_normal_state: Mutex::new(None),
         major_cycle_result: Mutex::new(None),
         major_cycle_error: Mutex::new(None),
         weighting_source_sample_count: AtomicUsize::new(0),
@@ -1511,15 +1528,16 @@ impl CompleteDataLawEvidence {
                     num_complex::Complex64::new(f64::from(real), f64::from(imaginary))
                 }
             };
-            let phase = num_complex::Complex64::from_polar(
-                1.0,
-                std::f64::consts::TAU
-                    * selected.phase_shift_m()
-                    * selected.address().frequency_centre_hz
-                    / 299_792_458.0,
-            );
             for spectral in weighted.spectral_values() {
-                expected_unit.push(phase.conj() * spectral.contribution().factor());
+                let contribution = spectral.contribution();
+                let phase = num_complex::Complex64::from_polar(
+                    1.0,
+                    std::f64::consts::TAU
+                        * selected.phase_shift_m()
+                        * contribution.evaluation_frequency_hz()
+                        / 299_792_458.0,
+                );
+                expected_unit.push(phase.conj() * contribution.factor());
                 weighted_visibility.push(visibility * spectral.imaging_weight());
             }
         }
@@ -1592,18 +1610,15 @@ struct RecordingExecutor {
     weighting_failure_node: Option<WorkNodeId>,
     weighting_fence_failure_event: Option<(WorkNodeId, FenceKind)>,
     publication_failure: Option<&'static str>,
-    publication_failure_after: Option<usize>,
-    publication_uncertain_after: Option<usize>,
-    published_member_calls: AtomicUsize,
     generic_source_access: Option<Arc<AtomicBool>>,
     initial_consistency_expected: Option<(ObservationTransactionId, Arc<AtomicBool>)>,
     visibility_during_fence_settlement: Option<Arc<AtomicBool>>,
     publication_buffer_held: Option<Arc<AtomicBool>>,
     receipt_root_to_disrupt: Option<PathBuf>,
     publication_pause: Option<Arc<PublicationPause>>,
-    publication_probe: Option<PublicationProbe>,
     sealed_measurements: Option<Vec<ArtifactMeasurement>>,
-    product_projection: Option<PublicationProjection>,
+    publication_path: Option<RedactedPath>,
+    native_publication: Mutex<Option<NativePublicationFixture>>,
     observation_completions: Option<Arc<Mutex<Vec<RecordedObservationCompletion>>>>,
     delivered_observation_completions: Option<DeliveredObservationCompletions>,
     observation_completion_failure: Option<&'static str>,
@@ -1624,8 +1639,11 @@ struct RecordingExecutor {
     major_cycle_node: Option<WorkNodeId>,
     major_cycle_mode: MajorCycleMode,
     major_cycle_problem: Option<casa_imaging_model::CompiledProblem>,
+    bind_major_cycle_model: bool,
     major_cycle_lifecycle: Mutex<Option<ModelLifecycle>>,
     major_cycle_preparation: Mutex<Option<MajorCyclePreparation>>,
+    major_cycle_continuation: Mutex<Option<casa_imaging_reconstruction::FinalModelContinuation>>,
+    major_cycle_prior_normal_state: Mutex<Option<casa_imaging_reconstruction::FinalNormalState>>,
     major_cycle_result: Mutex<Option<MajorCycleOperatorResult>>,
     major_cycle_error: Mutex<Option<String>>,
     weighting_source_sample_count: AtomicUsize,
@@ -1638,15 +1656,46 @@ struct RecordingExecutor {
     weighting_owner_at_release: AtomicBool,
 }
 
-#[derive(Debug)]
-struct PublicationProbe {
-    receipts: Arc<ExecutionReceiptStore>,
-    attempt: casa_imaging_runtime::ExecutionAttemptId,
-    prepared_observed: Arc<AtomicBool>,
-    publication_calls: Arc<AtomicUsize>,
+#[derive(Clone)]
+struct NativePublicationFixture {
+    plan: ProductPublicationPlan,
 }
 
 impl RecordingExecutor {
+    fn native_publication(&self) -> Option<NativePublicationFixture> {
+        let mut cached = self
+            .native_publication
+            .lock()
+            .expect("native publication cache lock");
+        if cached.is_none() {
+            let problem = self.major_cycle_problem.as_ref()?;
+            let plan = publication_plan_for_problem(problem);
+            *cached = Some(NativePublicationFixture { plan });
+        }
+        cached.clone()
+    }
+
+    fn native_sealed_measurements(&self) -> Option<Vec<ArtifactMeasurement>> {
+        let fixture = self.native_publication()?;
+        let authorization = fixture.plan;
+        Some(
+            authorization
+                .entries()
+                .iter()
+                .map(|entry| {
+                    ArtifactMeasurement::new(
+                        entry.artifact(),
+                        None,
+                        ArtifactDisposition::Staged,
+                        entry.payload_bytes(),
+                        None,
+                    )
+                    .expect("publication evidence is externally constructible")
+                })
+                .collect(),
+        )
+    }
+
     fn work_measurements(&self, context: WorkExecutionContext<'_>) -> WorkMeasurements {
         let resources = context
             .node()
@@ -1683,11 +1732,14 @@ impl RecordingExecutor {
                     Vec::new(),
                 )
             });
-        if context.node().kind == WorkKind::Publication && self.sealed_measurements.is_some() {
-            artifacts = self
+        if context.node().kind == WorkKind::Publication {
+            if let Some(sealed) = self
                 .sealed_measurements
                 .clone()
-                .expect("sealed measurements present");
+                .or_else(|| self.native_sealed_measurements())
+            {
+                artifacts = sealed;
+            }
         }
         if context.node().kind == WorkKind::Publication && artifacts.is_empty() {
             artifacts = context
@@ -1720,41 +1772,6 @@ impl RecordingExecutor {
             }),
             Ordering::SeqCst,
         );
-    }
-
-    fn observe_publication_prepared(&self) -> Result<(), io::Error> {
-        let Some(probe) = &self.publication_probe else {
-            return Ok(());
-        };
-        if probe
-            .publication_calls
-            .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
-            .is_err()
-        {
-            return Ok(());
-        }
-        let receipt = probe
-            .receipts
-            .open(probe.attempt)
-            .map_err(io::Error::other)?;
-        let prepared = receipt.status() == ReceiptStatus::PublicationPrepared
-            && receipt.artifact_identities().into_iter().all(|artifact| {
-                receipt.artifact_role(artifact) != Some(ArtifactRole::Output)
-                    || matches!(
-                        receipt.artifact_disposition(artifact),
-                        Some(
-                            ArtifactDisposition::Staged | ArtifactDisposition::PublicationPrepared
-                        )
-                    )
-            });
-        probe.prepared_observed.store(prepared, Ordering::SeqCst);
-        if prepared {
-            Ok(())
-        } else {
-            Err(io::Error::other(
-                "publication became callable before durable receipt preparation",
-            ))
-        }
     }
 
     fn await_publication_visibility(&self) -> Result<(), io::Error> {
@@ -1827,13 +1844,30 @@ impl RecordingExecutor {
             MajorCycleMode::StaleLifecycleEpoch => context.lease_epoch() + 1,
             _ => context.lease_epoch(),
         };
-        let lifecycle = ModelLifecycle::bind(
-            ExecutableModelProblem::from_compiled(problem.clone()).map_err(io::Error::other)?,
-            canonical_attempt,
-            epoch,
-        )
-        .map_err(io::Error::other)?;
-        let named = lifecycle.initial_empty().map_err(io::Error::other)?;
+        let executable =
+            ExecutableModelProblem::from_compiled(problem.clone()).map_err(io::Error::other)?;
+        let storage = casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window");
+        let continuation = self
+            .major_cycle_continuation
+            .lock()
+            .expect("major-cycle continuation lock")
+            .take();
+        let (lifecycle, named) = if let Some(continuation) = continuation {
+            ModelLifecycle::continue_from(
+                executable,
+                canonical_attempt,
+                epoch,
+                continuation,
+                storage,
+            )
+            .map_err(io::Error::other)?
+        } else {
+            let lifecycle = ModelLifecycle::bind(executable, canonical_attempt, epoch, storage)
+                .map_err(io::Error::other)?;
+            let named = lifecycle.initial_empty().map_err(io::Error::other)?;
+            (lifecycle, named)
+        };
         let preparation = match self.major_cycle_mode {
             MajorCycleMode::ForeignGeneration => {
                 let foreign = ModelLifecycle::bind(
@@ -1841,6 +1875,8 @@ impl RecordingExecutor {
                         .map_err(io::Error::other)?,
                     canonical_attempt,
                     epoch,
+                    casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+                        .expect("positive model window"),
                 )
                 .map_err(io::Error::other)?;
                 MajorCyclePreparation::prepare(
@@ -2071,10 +2107,15 @@ impl WorkImplementation for RecordingExecutor {
                         .expect("weighting execution state lock")
                         .begin_complete_data(context, complete, problem, prepared)
                         .map_err(io::Error::other)?;
-                    if self.major_cycle_problem.is_some() {
+                    if self.bind_major_cycle_model {
                         let preparation = self.prepare_major_cycle(context)?;
+                        let prior_normal_state = self
+                            .major_cycle_prior_normal_state
+                            .lock()
+                            .expect("major-cycle prior normal state lock")
+                            .take();
                         operator
-                            .bind_major_cycle_model(&preparation, None)
+                            .bind_major_cycle_model(&preparation, prior_normal_state)
                             .map_err(io::Error::other)?;
                         *self
                             .major_cycle_preparation
@@ -2108,7 +2149,7 @@ impl WorkImplementation for RecordingExecutor {
                             .expect("complete-data state lock")
                             .as_mut()
                         {
-                            if self.major_cycle_problem.is_none() {
+                            if !self.bind_major_cycle_model {
                                 let prediction_count = self
                                     .complete_data_laws
                                     .lock()
@@ -2336,7 +2377,12 @@ impl WorkImplementation for RecordingExecutor {
                         let replay = state
                             .replay_completion()
                             .expect("completed replay retains terminal proof");
-                        let result = operator.complete(replay).map_err(io::Error::other)?;
+                        let normal_storage = casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                            self.complete_data_plan.as_ref().expect("fixture complete-data plan").slab().total_channels(),
+                        ).expect("fixture normal window");
+                        let result = operator
+                            .complete(replay, &normal_storage)
+                            .map_err(io::Error::other)?;
                         *self
                             .complete_data_result
                             .lock()
@@ -2358,78 +2404,14 @@ impl WorkImplementation for RecordingExecutor {
         completion.bind(owner_completion).map_err(io::Error::other)
     }
 
-    fn complete_product_generation(
-        &self,
-        _context: WorkExecutionContext<'_>,
-    ) -> Result<Option<PublicationProjection>, Self::Error> {
-        Ok(self.product_projection.clone())
-    }
-
     fn publish(&self, context: WorkExecutionContext<'_>) -> Result<(), Self::Error> {
         if context.node().kind != WorkKind::Publication || context.publication().is_none() {
             return Err(io::Error::other(
                 "publication requires the transaction-bound Publication node",
             ));
         }
-        if self.product_projection.is_some() && context.product_publication().is_none() {
-            return Err(io::Error::other(
-                "native product publication requires runtime-validated authority",
-            ));
-        }
-        self.observe_publication_prepared()?;
         self.await_publication_visibility()?;
         self.expose_publication_visibility(context)
-    }
-
-    fn publish_product_member(
-        &self,
-        context: WorkExecutionContext<'_>,
-        entry: AuthorizedProductPublicationEntry,
-    ) -> Option<Result<ArtifactMeasurement, ProductMemberPublicationFailure<Self::Error>>> {
-        self.major_cycle_problem.as_ref()?;
-        let authorized = context
-            .product_publication()
-            .is_some_and(|publication| publication.entries().contains(&entry));
-        let measurement = |disposition| {
-            ArtifactMeasurement::new(
-                entry.planned_identity(),
-                Some(entry.observed_identity()),
-                disposition,
-                entry.payload_bytes(),
-                None,
-            )
-            .expect("T20 publication fixture uses authorized artifact evidence")
-        };
-        if !authorized {
-            return Some(Err(ProductMemberPublicationFailure::new(
-                io::Error::other("T20 publication fixture lacks member authorization"),
-                measurement(ArtifactDisposition::PublicationFailed),
-            )));
-        }
-        let member_index = self.published_member_calls.fetch_add(1, Ordering::SeqCst);
-        if self.publication_failure_after == Some(member_index) {
-            return Some(Err(ProductMemberPublicationFailure::new(
-                io::Error::other("member publication failed after a published prefix"),
-                measurement(ArtifactDisposition::PublicationFailed),
-            )));
-        }
-        if self.publication_uncertain_after == Some(member_index) {
-            return Some(Err(ProductMemberPublicationFailure::new(
-                io::Error::other("member publication outcome is uncertain"),
-                measurement(ArtifactDisposition::PublicationUncertain),
-            )));
-        }
-        if let Err(error) = self
-            .observe_publication_prepared()
-            .and_then(|()| self.await_publication_visibility())
-            .and_then(|()| self.expose_publication_visibility(context))
-        {
-            return Some(Err(ProductMemberPublicationFailure::new(
-                error,
-                measurement(ArtifactDisposition::PublicationFailed),
-            )));
-        }
-        Some(Ok(measurement(ArtifactDisposition::Published)))
     }
 }
 
@@ -2438,8 +2420,8 @@ fn product_publication_recording_executor(
     launched: Arc<AtomicBool>,
     visible_generation: Arc<AtomicUsize>,
 ) -> RecordingExecutor {
-    let (publication, projection) = sealed_publication_plan_for_problem(problem);
-    let mut executor = sealed_measurement_executor(&publication, &projection);
+    let publication = publication_plan_for_problem(problem);
+    let mut executor = product_measurement_executor(&publication);
     executor.major_cycle_problem = Some(problem.clone());
     executor.publication_launched = Some(launched);
     executor.visible_generation = Some(visible_generation);
@@ -2540,6 +2522,37 @@ fn production_weighting_fragment_owns_generation_replay_and_release_lifetimes() 
         dag.physical_slots().len() - base.execution_dag().physical_slots().len(),
         5
     );
+    let cache = dag
+        .logical_allocations()
+        .values()
+        .find(|allocation| {
+            allocation
+                .id
+                .as_str()
+                .starts_with("weighting-spectral-stencil-cache-")
+        })
+        .expect("bounded spectral cache allocation");
+    assert_eq!(
+        cache.bytes,
+        plan.planned_residency().spectral_cache_bytes() as u64
+    );
+    assert!(cache.bytes > 0);
+    assert_eq!(cache.lifetime.acquire_at, source);
+    assert_eq!(
+        cache.lifetime.release_after,
+        BTreeSet::from([WorkDependency::Fence(FenceId::new(
+            replay.clone(),
+            FenceKind::Io
+        ))])
+    );
+    for node in [&source, &generation, &replay] {
+        assert!(
+            dag.nodes()[node]
+                .allocations
+                .iter()
+                .any(|usage| { usage.allocation == cache.id && usage.lifetime == source_lifetime })
+        );
+    }
     assert_eq!(
         dag.logical_allocations()[&frozen].lifetime.release_after,
         BTreeSet::from([WorkDependency::Work(release.clone())])
@@ -2691,61 +2704,83 @@ fn spectral_cycle_initial_plan_contains_resource_accounted_minor_cycle() {
     .with_gridded_normal_storage(artifact_storage());
     let plan = SpectralCyclePlan::initial(&problem, &implementation_registry, policy)
         .expect("production initial-major plan");
-    let minor = plan.minor_cycle_node().expect("initial plan owns T21");
-    let node = &plan.physical_work().execution_dag().nodes()[minor];
-    assert_eq!(node.kind, WorkKind::Compute);
-    assert!(
-        node.claims
-            .iter()
-            .any(|claim| claim.resource == LeaseResource::Workers && claim.amount == 1)
-    );
-    assert_eq!(node.allocations.len(), 1);
-    assert!(
-        plan.physical_work()
-            .prediction()
-            .stages()
-            .contains_key(minor)
-    );
-    let demand = &plan
-        .physical_work()
-        .execution_dag()
-        .resource_alternative()
-        .demand;
-    assert!(demand.storage.iter().any(|storage| {
-        storage.demand_id.starts_with("managed-spill-storage")
-            && storage.write_rate.hard() > 0
-            && storage.operations_rate.hard() == 0
-            && storage.queue_slots.hard() > 0
-    }));
-    assert!(demand.io_buffers.serialization_bytes > 0);
-    assert!(
-        plan.physical_work()
-            .execution_dag()
-            .resource_alternative()
-            .headroom
-            .memory_bytes
-            .get(&CapacityDomainId::new("host-memory"))
-            .is_some_and(|bytes| *bytes > 0),
-        "one bounded spill window is reserved as page-cache pressure"
-    );
-    assert_eq!(
-        plan.physical_work()
-            .execution_dag()
-            .resource_alternative()
-            .headroom
-            .cache_bytes,
-        0,
-        "reclaimable kernel pages are not a retained application cache"
-    );
-    assert!(
-        plan.physical_work()
-            .execution_dag()
-            .nodes()
+    let candidates = plan.physical_candidates();
+    assert!(!candidates.is_empty());
+    for physical in candidates {
+        let minor = WorkNodeId::new("spectral-cycle-minor-cycle");
+        let dag = physical.execution_dag();
+        let cache = dag
+            .logical_allocations()
             .values()
-            .flat_map(|node| &node.claims)
-            .all(|claim| !matches!(claim.resource, LeaseResource::StorageOperationsRate { .. })),
-        "IOPS is observed from execution, never required for spill eligibility"
-    );
+            .find(|allocation| {
+                allocation
+                    .id
+                    .as_str()
+                    .starts_with("weighting-spectral-stencil-cache-")
+            })
+            .expect("streaming plan preserves the spectral cache reservation");
+        assert_eq!(
+            cache.bytes,
+            plan.weighting_plan()
+                .planned_residency()
+                .spectral_cache_bytes() as u64
+        );
+        assert!(
+            dag.nodes()[&cache.lifetime.acquire_at]
+                .allocations
+                .iter()
+                .any(|usage| usage.allocation == cache.id)
+        );
+        for release in &cache.lifetime.release_after {
+            let WorkDependency::Fence(fence) = release else {
+                panic!("spectral cache must retire at the terminal traversal fence");
+            };
+            assert!(
+                dag.nodes()[fence.node()]
+                    .allocations
+                    .iter()
+                    .any(|usage| usage.allocation == cache.id)
+            );
+        }
+        let node = &dag.nodes()[&minor];
+        assert_eq!(node.kind, WorkKind::Compute);
+        assert!(
+            node.claims
+                .iter()
+                .any(|claim| { claim.resource == LeaseResource::Workers && claim.amount == 1 })
+        );
+        assert_eq!(node.allocations.len(), 1);
+        assert!(physical.prediction().stages().contains_key(&minor));
+        let alternative = dag.resource_alternative();
+        assert!(alternative.demand.storage.iter().any(|storage| {
+            storage.demand_id.starts_with("managed-spill-storage")
+                && storage.write_rate.hard() > 0
+                && storage.operations_rate.hard() == 0
+                && storage.queue_slots.hard() > 0
+        }));
+        assert!(alternative.demand.io_buffers.serialization_bytes > 0);
+        assert!(
+            alternative
+                .headroom
+                .memory_bytes
+                .get(&CapacityDomainId::new("host-memory"))
+                .is_some_and(|bytes| *bytes > 0),
+            "one bounded spill window is reserved as page-cache pressure"
+        );
+        assert_eq!(
+            alternative.headroom.cache_bytes, 0,
+            "reclaimable kernel pages are not a retained application cache"
+        );
+        assert!(
+            dag.nodes()
+                .values()
+                .flat_map(|node| &node.claims)
+                .all(|claim| {
+                    !matches!(claim.resource, LeaseResource::StorageOperationsRate { .. })
+                }),
+            "IOPS is observed from execution, never required for spill eligibility"
+        );
+    }
 }
 
 #[test]
@@ -2799,8 +2834,11 @@ fn managed_spill_requires_artifact_capacity_inside_the_selected_policy_reserve()
         .with_gridded_normal_storage(artifact_storage()),
     )
     .expect("baseline spill plan");
-    let required_storage_bytes = baseline
-        .physical_work()
+    let baseline_candidates = baseline.physical_candidates();
+    let baseline_physical = baseline_candidates
+        .first()
+        .expect("baseline physical candidate");
+    let required_storage_bytes = baseline_physical
         .execution_dag()
         .resource_alternative()
         .demand
@@ -2815,7 +2853,9 @@ fn managed_spill_requires_artifact_capacity_inside_the_selected_policy_reserve()
         })
         .sum::<u64>();
     assert!(
-        baseline.physical_work().artifacts().is_empty(),
+        baseline_candidates
+            .iter()
+            .all(|physical| physical.artifacts().is_empty()),
         "runtime-private spill must not enter the persisted artifact identity surface"
     );
     assert!(required_storage_bytes > 1);
@@ -2854,7 +2894,7 @@ fn managed_spill_requires_artifact_capacity_inside_the_selected_policy_reserve()
         &feasible_authority,
         &implementation_registry,
         &feasible_receipts,
-        move |_, _| Ok::<_, io::Error>(vec![feasible.into_parts().physical]),
+        move |_, _| Ok::<_, io::Error>(feasible.physical_candidates()),
     )
     .expect("verified spill bytes fit inside Balanced's storage reserve");
     assert_eq!(execution_plan.problem_id(), problem.problem_id());
@@ -2893,7 +2933,7 @@ fn managed_spill_requires_artifact_capacity_inside_the_selected_policy_reserve()
         &insufficient_authority,
         &implementation_registry,
         &insufficient_receipts,
-        move |_, _| Ok::<_, io::Error>(vec![insufficient.into_parts().physical]),
+        move |_, _| Ok::<_, io::Error>(insufficient.physical_candidates()),
     );
     assert!(matches!(
         result,
@@ -2939,22 +2979,29 @@ fn spectral_cycle_dirty_plan_omits_minor_cycle_and_gridded_normal_work() {
     )
     .expect("production dirty plan");
 
-    assert!(plan.minor_cycle_node().is_none());
-    assert!(
-        plan.physical_work()
-            .execution_dag()
-            .nodes()
-            .keys()
-            .all(|node| node.as_str() != "spectral-cycle-minor-cycle")
-    );
-    assert!(
-        plan.physical_work()
-            .execution_dag()
-            .logical_allocations()
-            .keys()
-            .all(|allocation| !allocation.as_str().starts_with("managed-spill-"))
-    );
-    assert!(plan.into_parts().gridded_normal.is_none());
+    let candidates = plan.physical_candidates();
+    assert!(!candidates.is_empty());
+    for physical in candidates {
+        let dag = physical.execution_dag();
+        assert!(dag.nodes().keys().all(|node| {
+            node.as_str() != "spectral-cycle-minor-cycle"
+                && !node.as_str().starts_with("managed-spill-")
+                && !node.as_str().starts_with("gridded-normal-replay-")
+        }));
+        assert!(
+            dag.logical_allocations()
+                .keys()
+                .all(|allocation| !allocation.as_str().starts_with("managed-spill-"))
+        );
+        assert!(
+            dag.resource_alternative()
+                .demand
+                .storage
+                .iter()
+                .all(|storage| !storage.demand_id.starts_with("managed-spill-"))
+        );
+        assert!(physical.artifacts().is_empty());
+    }
 }
 
 #[test]
@@ -2999,26 +3046,29 @@ fn spectral_cycle_claims_the_compiled_continuum_row_buffer() {
             ),
             authority().clone(),
             ResourcePolicy::Balanced,
-        ),
+        )
+        .with_gridded_normal_storage(artifact_storage()),
     )
     .expect("transformed dirty plan");
-    let allocation = planned
-        .physical_work()
-        .execution_dag()
-        .logical_allocations()
-        .values()
-        .find(|allocation| {
-            allocation
-                .id
-                .as_str()
-                .starts_with("continuum-transform-row-")
-        })
-        .expect("continuum row allocation");
-
-    assert_eq!(
-        allocation.bytes,
-        u64::try_from(row_plan.bytes()).expect("row plan bytes fit u64")
-    );
+    let candidates = planned.physical_candidates();
+    assert!(!candidates.is_empty());
+    for physical in candidates {
+        let allocation = physical
+            .execution_dag()
+            .logical_allocations()
+            .values()
+            .find(|allocation| {
+                allocation
+                    .id
+                    .as_str()
+                    .starts_with("continuum-transform-row-")
+            })
+            .expect("continuum row allocation");
+        assert_eq!(
+            allocation.bytes,
+            u64::try_from(row_plan.bytes()).expect("row plan bytes fit u64")
+        );
+    }
 }
 
 #[test]
@@ -3073,19 +3123,22 @@ fn spectral_cycle_initial_plan_bounds_selected_payload_traversals_by_weighting_s
             ),
         )
         .expect("streaming plan");
-        let payload_traversals = plan
-            .physical_work()
-            .execution_dag()
-            .nodes()
-            .values()
-            .filter(|node| node.kind == WorkKind::ObservationRead)
-            .count();
-        assert_eq!(
-            payload_traversals,
-            expected,
-            "{:?}",
-            problem.weighting().scheme()
-        );
+        let candidates = plan.physical_candidates();
+        assert!(!candidates.is_empty());
+        for physical in candidates {
+            let payload_traversals = physical
+                .execution_dag()
+                .nodes()
+                .values()
+                .filter(|node| node.kind == WorkKind::ObservationRead)
+                .count();
+            assert_eq!(
+                payload_traversals,
+                expected,
+                "{:?}",
+                problem.weighting().scheme()
+            );
+        }
     }
 }
 
@@ -3173,6 +3226,9 @@ impl FinalVisibilitySink for RejectFirstVisibilityBlock {
 
 #[test]
 fn failed_density_generation_receipt_uses_current_partial_stream_measurements() {
+    let _guard = run_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let problem = compile(
         request_with_geometry_references_weighting_products_model_write_input_and_source_count(
             74,
@@ -3215,15 +3271,30 @@ fn failed_density_generation_receipt_uses_current_partial_stream_measurements() 
         ),
     )
     .expect("dirty density plan");
+    let directory = tempfile::tempdir().expect("receipt directory");
+    let receipts = ExecutionReceiptStore::new(
+        directory.path(),
+        ReceiptRetention::new(4, 1_048_576).expect("retention"),
+    )
+    .expect("receipt store");
+    let resource_policy = ResourcePolicy::Exclusive;
+    let execution_plan = runtime_plan(
+        &problem,
+        PlanningBindings::new(registry(74), resource_policy.clone(), planning_profile(4)),
+        authority(),
+        &planning_registry,
+        &receipts,
+        |_, _| Ok::<_, io::Error>(planned.physical_candidates()),
+    )
+    .expect("runtime plan");
     let SpectralCyclePlanParts {
-        physical,
         weighting,
         complete_data: complete,
         source_resources: resources,
         pass,
         minor_cycle_node: minor,
         ..
-    } = planned.into_parts();
+    } = planned.into_parts(&execution_plan).unwrap();
     assert!(minor.is_none());
     let visibility_worker_stopped = Arc::new(AtomicBool::new(false));
     let executor = SpectralCycleExecutor::new(
@@ -3242,22 +3313,6 @@ fn failed_density_generation_receipt_uses_current_partial_stream_measurements() 
     ))));
     let runtime_registry =
         SpectralCycleRegistry::new(registry(74), implementation(74), &problem, executor);
-    let directory = tempfile::tempdir().expect("receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(4, 1_048_576).expect("retention"),
-    )
-    .expect("receipt store");
-    let resource_policy = ResourcePolicy::Exclusive;
-    let execution_plan = runtime_plan(
-        &problem,
-        PlanningBindings::new(registry(74), resource_policy.clone(), planning_profile(4)),
-        authority(),
-        &runtime_registry,
-        &receipts,
-        move |_, _| Ok::<_, io::Error>(vec![physical]),
-    )
-    .expect("runtime plan");
     let current = RunBindings::new(problem.inputs().clone(), &resource_policy, cost_model(4));
     let executable = ExecutableModelProblem::from_compiled(problem.clone()).expect("executable");
     let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([74; 32]);
@@ -3401,6 +3456,12 @@ fn execute_spectral_cycle_with_weighting_mode(
     verify_low_memory_plan: bool,
     apply_low_memory_route: bool,
 ) {
+    // The deterministic 1 MiB authority is shared by the whole integration
+    // binary; serialize with every other plan/run so an unrelated concurrent
+    // reservation cannot make this exact plane envelope infeasible.
+    let _guard = run_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let image_edge = 8;
     let reference_pixel = if verify_low_memory_plan { 4.0 } else { 3.0 };
     let mut geometry = geometry_with_shape_and_increment(
@@ -3408,9 +3469,12 @@ fn execute_spectral_cycle_with_weighting_mode(
         ImageShape::new(image_edge, image_edge),
         [-1.0e-6, 1.0e-6],
     );
+    // Fit the whole cube inside the fixed 1 MiB test authority so this fixture
+    // exercises retained-to-recompute adaptation, not static spectral windows.
+    let low_memory_channels = 4;
     if verify_low_memory_plan {
         let spectral = geometry.spectral().clone().with_wcs(SpectralWcs::Linear {
-            channels: 2,
+            channels: low_memory_channels,
             reference_pixel: 0.0,
             reference_frequency_hz: 1.4e9,
             increment_hz: 1.0e6,
@@ -3425,7 +3489,12 @@ fn execute_spectral_cycle_with_weighting_mode(
                 ModelColumnWrite::Disabled,
             ),
             geometry.clone(),
-            problem_inputs_with_channels(1, default_references(), ModelStateIdentity::Empty, 2),
+            problem_inputs_with_channels(
+                1,
+                default_references(),
+                ModelStateIdentity::Empty,
+                low_memory_channels,
+            ),
             model_lifecycle(ModelStateIdentity::Empty),
         )
     } else {
@@ -3457,11 +3526,22 @@ fn execute_spectral_cycle_with_weighting_mode(
         .expect("resolve runtime owner fixture")
         .into_parts();
     let snapshot = compile_observation(snapshot_input).expect("compile runtime owner snapshot");
+    // Multi-channel continuum is compiled channel-major; the Constant and
+    // Taylor bases are defined for a single output channel only.
+    let problem_basis = if verify_low_memory_plan {
+        ReconstructionBasis::ChannelLocal {
+            channels: low_memory_channels,
+        }
+    } else {
+        ReconstructionBasis::Constant
+    };
     let problem = compile(ImagingRequest::new(
-        standard_problem_specification(
+        hogbom_problem_specification(
             weighting,
             vec![ProductKind::Psf],
             ModelColumnWrite::Disabled,
+            ReconstructionControls::new(2, 0.1, 0.0),
+            problem_basis,
         ),
         geometry,
         ProblemInputIdentities::new(snapshot),
@@ -3500,26 +3580,41 @@ fn execute_spectral_cycle_with_weighting_mode(
         .with_gridded_normal_storage(gridded_storage.clone()),
     )
     .expect("production initial plan");
-    let minor_node = planned.minor_cycle_node().expect("T21 node").clone();
-    let SpectralCyclePlanParts {
-        physical,
-        weighting,
-        complete_data: complete,
-        source_resources: resources,
-        pass,
-        gridded_normal: planned_gridded_normal,
-        ..
-    } = planned.into_parts();
     // The exact 8x8 density scratch and selected-owner minimum fit the fixture's
     // physical 1 MiB capacity but intentionally exceed Balanced's 75% ceiling.
     let resource_policy = ResourcePolicy::Exclusive;
     let frozen_reservation = FrozenWeightingReservation::acquire(
         authority(),
         resource_policy.clone(),
-        weighting.planned_residency(),
+        planned.weighting_plan().planned_residency(),
         replay_proof_bytes,
     )
     .expect("cross-plan frozen weighting reservation");
+    let directory = tempfile::tempdir().expect("receipt directory");
+    let receipts = ExecutionReceiptStore::new(
+        directory.path(),
+        ReceiptRetention::new(4, 1_048_576).expect("retention"),
+    )
+    .expect("receipt store");
+    let execution_plan = runtime_plan(
+        &problem,
+        PlanningBindings::new(registry(73), resource_policy.clone(), planning_profile(4)),
+        authority(),
+        &planning_registry,
+        &receipts,
+        |_, _| Ok::<_, io::Error>(planned.physical_candidates()),
+    )
+    .expect("ordinary initial plan");
+    let SpectralCyclePlanParts {
+        weighting,
+        complete_data: complete,
+        source_resources: resources,
+        pass,
+        minor_cycle_node,
+        gridded_normal: planned_gridded_normal,
+        ..
+    } = planned.into_parts(&execution_plan).unwrap();
+    let minor_node = minor_cycle_node.expect("T21 node");
     let planned_gridded_normal =
         planned_gridded_normal.expect("initial plan binds gridded-normal compilation");
     let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([73; 32]);
@@ -3545,25 +3640,11 @@ fn execute_spectral_cycle_with_weighting_mode(
             },
         ])
         .expect("one-domain mask plans"),
-        casa_imaging_reconstruction::MinorCycleProgram::new(0.1, 0.0, 2).expect("controls"),
+        casa_imaging_reconstruction::MinorCycleProgram::for_problem(&problem)
+            .expect("compiled minor-cycle controls"),
     );
     let runtime_registry =
         SpectralCycleRegistry::new(registry(73), implementation(73), &problem, executor);
-    let directory = tempfile::tempdir().expect("receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(4, 1_048_576).expect("retention"),
-    )
-    .expect("receipt store");
-    let execution_plan = runtime_plan(
-        &problem,
-        PlanningBindings::new(registry(73), resource_policy.clone(), planning_profile(4)),
-        authority(),
-        &runtime_registry,
-        &receipts,
-        move |_, _| Ok::<_, io::Error>(vec![physical]),
-    )
-    .expect("ordinary initial plan");
     let current = RunBindings::new(problem.inputs().clone(), &resource_policy, cost_model(4));
     let executable = ExecutableModelProblem::from_compiled(problem.clone()).expect("executable");
     runtime_run(
@@ -3694,7 +3775,7 @@ fn execute_spectral_cycle_with_weighting_mode(
             )
         })
         .expect("initial gridded spill storage claim");
-    assert_eq!(receipt.schema_version(), 22);
+    assert_eq!(receipt.schema_version(), 24);
     assert_eq!(initial_storage_claim.lifetime, ClaimLifetime::Artifact);
     assert_eq!(
         receipt.actual_resource_peak(
@@ -3739,9 +3820,46 @@ fn execute_spectral_cycle_with_weighting_mode(
         gridded_replay,
     )
     .expect("production final-major plan");
+    let final_plan = runtime_plan(
+        &problem,
+        PlanningBindings::new(
+            registry(73),
+            if verify_low_memory_plan {
+                final_resource_policy.clone()
+            } else {
+                resource_policy.clone()
+            },
+            planning_profile(4),
+        ),
+        authority(),
+        &planning_registry,
+        &receipts,
+        |_, _| Ok::<_, io::Error>(final_planned.physical_candidates()),
+    )
+    .expect("ordinary final-major plan");
+    let SpectralCyclePlanParts {
+        physical: final_physical,
+        weighting: final_weighting,
+        complete_data: final_complete,
+        pass: final_pass,
+        minor_cycle_node: final_minor,
+        gridded_normal: planned_gridded_normal,
+        ..
+    } = final_planned.into_parts(&final_plan).unwrap();
+    assert!(final_minor.is_none());
+    let model_samples = problem.model_lifecycle().target().sample_count();
+    let planned_model_bytes = final_complete.residency().major_cycle_model_bytes();
+    let maximum_accepted_terms = 2 * problem.model_lifecycle().target().coefficients();
+    assert!(
+        final_complete.residency().major_cycle_model_bytes()
+            <= model_samples * std::mem::size_of::<casa_imaging_model::ModelSample>()
+                + 2 * maximum_accepted_terms
+                    * std::mem::size_of::<casa_imaging_model::ModelDeltaTerm>(),
+        "final-major admission must bind the accepted sparse update, not the logical whole-model delta ceiling"
+    );
     if verify_low_memory_plan {
-        assert_t59_low_memory_production_routes(final_planned.physical_work());
-        let dag = final_planned.physical_work().execution_dag();
+        assert_t59_low_memory_production_routes(&final_physical);
+        let dag = final_physical.execution_dag();
         let transition = dag
             .adaptations()
             .values()
@@ -3784,16 +3902,6 @@ fn execute_spectral_cycle_with_weighting_mode(
             .find(|claim| claim.resource == LeaseResource::ResidentCache)
             .expect("retained route cache claim")
             .clone();
-        let SpectralCyclePlanParts {
-            physical: final_physical,
-            weighting: final_weighting,
-            complete_data: final_complete,
-            pass: final_pass,
-            minor_cycle_node: final_minor,
-            gridded_normal: planned_gridded_normal,
-            ..
-        } = final_planned.into_parts();
-        assert!(final_minor.is_none());
         let final_executor = SpectralCycleExecutor::new_gridded(
             implementation(73),
             problem.clone(),
@@ -3808,19 +3916,6 @@ fn execute_spectral_cycle_with_weighting_mode(
         .with_frozen_weighting(frozen_weighting);
         let final_registry =
             SpectralCycleRegistry::new(registry(73), implementation(73), &problem, final_executor);
-        let final_plan = runtime_plan(
-            &problem,
-            PlanningBindings::new(
-                registry(73),
-                final_resource_policy.clone(),
-                planning_profile(4),
-            ),
-            authority(),
-            &final_registry,
-            &receipts,
-            move |_, _| Ok::<_, io::Error>(vec![final_physical]),
-        )
-        .expect("low-memory final-major runtime plan");
         let final_current = RunBindings::new(
             problem.inputs().clone(),
             &final_resource_policy,
@@ -3978,16 +4073,6 @@ fn execute_spectral_cycle_with_weighting_mode(
         .keys()
         .cloned()
         .collect::<BTreeSet<_>>();
-    let SpectralCyclePlanParts {
-        physical: final_physical,
-        weighting: final_weighting,
-        complete_data: final_complete,
-        pass: final_pass,
-        minor_cycle_node: final_minor,
-        gridded_normal: planned_gridded_normal,
-        ..
-    } = final_planned.into_parts();
-    assert!(final_minor.is_none());
     let final_nodes = final_physical
         .execution_dag()
         .nodes()
@@ -4063,9 +4148,16 @@ fn execute_spectral_cycle_with_weighting_mode(
             .maximum_batch_size,
         1
     );
-    assert!(replay_nodes[0].claims.iter().any(|claim| {
-        claim.resource == LeaseResource::IoBuffer(IoBufferKind::SpillRead) && claim.amount == 2 * 72
-    }));
+    let spill_read_claims = replay_nodes[0]
+        .claims
+        .iter()
+        .filter(|claim| claim.resource == LeaseResource::IoBuffer(IoBufferKind::SpillRead))
+        .map(|claim| claim.amount)
+        .collect::<Vec<_>>();
+    assert!(
+        spill_read_claims.contains(&(2 * 112)),
+        "two 112-byte gridded-normal records were {spill_read_claims:?}"
+    );
     assert!(
         replay_nodes[0]
             .id
@@ -4167,7 +4259,9 @@ fn execute_spectral_cycle_with_weighting_mode(
                 .starts_with("spectral-operator-gridded-route-gridded-residual-refresh-")
         })
         .expect("gridded replay route allocation");
-    let expected_route_bytes = gridded_normal_route_capacity_bytes(0, 1, 1).unwrap();
+    // The single selected sample now contributes one compressed
+    // gridded-normal record; Stokes-I data no longer zeroes it out.
+    let expected_route_bytes = gridded_normal_route_capacity_bytes(1, 1, 1).unwrap();
     assert_eq!(route.bytes, expected_route_bytes);
     assert_eq!(
         route.compatibility.layout,
@@ -4245,15 +4339,6 @@ fn execute_spectral_cycle_with_weighting_mode(
     .with_frozen_weighting(frozen_weighting);
     let final_registry =
         SpectralCycleRegistry::new(registry(73), implementation(73), &problem, final_executor);
-    let final_plan = runtime_plan(
-        &problem,
-        PlanningBindings::new(registry(73), resource_policy, planning_profile(4)),
-        authority(),
-        &final_registry,
-        &receipts,
-        move |_, _| Ok::<_, io::Error>(vec![final_physical]),
-    )
-    .expect("ordinary final-major plan");
     assert_ne!(execution_plan.plan_id(), final_plan.plan_id());
     assert!(
         final_plan
@@ -4299,6 +4384,14 @@ fn execute_spectral_cycle_with_weighting_mode(
         .expect("final-major completion")
         .into_completion();
     assert_eq!(
+        planned_model_bytes as u64,
+        (model_samples * std::mem::size_of::<casa_imaging_model::ModelSample>()) as u64
+            + 2 * final_receipt
+                .artifact_actual_bytes(accepted_update)
+                .unwrap(),
+        "the plan reserves the model and both exact pending-update copies"
+    );
+    assert_eq!(
         final_completion.normal_state().selected_generation(),
         selected_generation
     );
@@ -4336,15 +4429,17 @@ fn execute_initial_reconstruction_cycle(
     let residency = initial_access
         .certify_residency(problem)
         .expect("owner-certified channel-cycle residency");
-    let replay_proof_bytes = initial_access
-        .replay_proof_retained_heap_bytes(problem)
-        .expect("bounded channel-cycle replay-proof residency");
     let planning_registry = ContractOnlyRegistry::new(
         registry(byte),
         implementation_metadata(problem),
         [implementation(byte)],
     );
     let channel_count = problem.geometry().spectral().output_channels();
+    let resource_policy = ResourcePolicy::Explicit(ResourceOverride {
+        memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 1 << 20)]),
+        workers: Some(1),
+        ..ResourceOverride::default()
+    });
     let policy = SpectralCycleExecutionPolicy::new(
         implementation(byte),
         WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
@@ -4356,31 +4451,170 @@ fn execute_initial_reconstruction_cycle(
             900_000,
         ),
         authority().clone(),
-        ResourcePolicy::Balanced,
+        resource_policy.clone(),
     )
     .with_gridded_normal_storage(artifact_storage());
     let planned = SpectralCyclePlan::initial(problem, &planning_registry, policy)
         .expect("channel-cycle initial plan");
-    let cycle_node = planned
-        .minor_cycle_node()
-        .expect("initial plan owns reconstruction cycle")
-        .clone();
+    execute_planned_initial_reconstruction_cycle(
+        problem,
+        byte,
+        initial_access,
+        InitialCycleTestPlan {
+            planned,
+            authority: authority(),
+            resource_policy,
+            expected_workers: 1,
+            require_multiple_slabs: false,
+            model_executables: None,
+        },
+    )
+    .completion
+}
+
+struct InitialCycleTestPlan<'a> {
+    planned: SpectralCyclePlan,
+    authority: &'a ResourceAuthority,
+    resource_policy: ResourcePolicy,
+    expected_workers: u64,
+    require_multiple_slabs: bool,
+    model_executables: Option<[ExecutableModelProblem; 2]>,
+}
+
+struct InitialCycleTestResult {
+    completion: ReconstructionCyclePhaseCompletion,
+    parallel_preparation_samples: u64,
+    slab_count: u64,
+}
+
+fn execute_planned_initial_reconstruction_cycle(
+    problem: &casa_imaging_model::CompiledProblem,
+    byte: u8,
+    initial_access: ResolvedSelectedObservationAccess,
+    plan: InitialCycleTestPlan<'_>,
+) -> InitialCycleTestResult {
+    let InitialCycleTestPlan {
+        planned,
+        authority,
+        resource_policy,
+        expected_workers,
+        require_multiple_slabs,
+        model_executables,
+    } = plan;
+    let [executor_model, executable] = model_executables.unwrap_or_else(|| {
+        std::array::from_fn(|_| {
+            ExecutableModelProblem::from_compiled(problem.clone()).expect("executable model")
+        })
+    });
+    let replay_proof_bytes = initial_access
+        .replay_proof_retained_heap_bytes(problem)
+        .expect("bounded channel-cycle replay-proof residency");
+    let planning_registry = ContractOnlyRegistry::new(
+        registry(byte),
+        implementation_metadata(problem),
+        [implementation(byte)],
+    );
+    let reservation = FrozenWeightingReservation::acquire(
+        authority,
+        resource_policy.clone(),
+        planned.weighting_plan().planned_residency(),
+        replay_proof_bytes,
+    )
+    .expect("frozen weighting reservation");
+    let directory = tempfile::tempdir().expect("receipt directory");
+    let receipts = ExecutionReceiptStore::new(
+        directory.path(),
+        ReceiptRetention::new(2, 1_048_576).expect("retention"),
+    )
+    .expect("receipt store");
+    let execution_plan = runtime_plan(
+        problem,
+        PlanningBindings::new(
+            registry(byte),
+            resource_policy.clone(),
+            planning_profile(byte),
+        ),
+        authority,
+        &planning_registry,
+        &receipts,
+        |_, _| {
+            Ok::<_, io::Error>(
+                planned
+                    .physical_candidates()
+                    .into_iter()
+                    .filter(|physical| {
+                        physical.execution_dag().initial_knobs().workers == expected_workers
+                    })
+                    .collect(),
+            )
+        },
+    )
+    .expect("channel-cycle runtime plan");
+    let dag = execution_plan.execution_dag();
+    assert_eq!(dag.initial_knobs().workers, expected_workers);
+    if require_multiple_slabs {
+        assert!(
+            dag.initial_knobs().slab_depth > 0
+                && dag.initial_knobs().slab_depth
+                    < problem.geometry().spectral().output_channels() as u64,
+            "the executor regression must traverse additional initial slabs"
+        );
+        let preparation = dag.logical_allocations().values().find(|allocation| {
+            allocation
+                .id
+                .as_str()
+                .starts_with("initial-replay-preparation-")
+        });
+        assert_eq!(preparation.is_some(), expected_workers > 1);
+        if let Some(preparation) = preparation {
+            assert!(
+                dag.nodes()[&preparation.lifetime.acquire_at]
+                    .claims
+                    .iter()
+                    .any(|claim| claim.resource == LeaseResource::Workers
+                        && claim.amount == expected_workers)
+            );
+        }
+    }
     let SpectralCyclePlanParts {
-        physical,
         weighting,
         complete_data: complete,
         source_resources: resources,
         pass,
+        minor_cycle_node,
         gridded_normal: planned_gridded_normal,
         ..
-    } = planned.into_parts();
-    let reservation = FrozenWeightingReservation::acquire(
-        authority(),
-        ResourcePolicy::Balanced,
-        weighting.planned_residency(),
-        replay_proof_bytes,
-    )
-    .expect("frozen weighting reservation");
+    } = planned.into_parts(&execution_plan).unwrap();
+    let slab_count = (problem.geometry().spectral().output_channels() as u64)
+        .div_ceil(complete.slab().core_depth() as u64);
+    if require_multiple_slabs {
+        assert!(
+            slab_count > 1,
+            "the initial operator must actually replay multiple slabs"
+        );
+    } else if !matches!(
+        problem.model_lifecycle().input(),
+        casa_imaging_model::ModelInputCommitment::Empty
+    ) {
+        assert_eq!(
+            slab_count, 1,
+            "supplied initial models currently use a full-channel slab"
+        );
+        assert!(
+            execution_plan
+                .execution_dag()
+                .logical_allocations()
+                .values()
+                .all(|allocation| {
+                    !allocation
+                        .id
+                        .as_str()
+                        .starts_with("initial-replay-preparation-")
+                }),
+            "a single initial slab must not reserve unused replay preparation"
+        );
+    }
+    let cycle_node = minor_cycle_node.expect("initial plan owns reconstruction cycle");
     let planned_gridded_normal =
         planned_gridded_normal.expect("channel-cycle plan binds gridded-normal compilation");
     let program = casa_imaging_reconstruction::MinorCycleProgram::for_algorithm(
@@ -4398,7 +4632,7 @@ fn execute_initial_reconstruction_cycle(
         pass,
         complete,
         initial_access.into_deferred(),
-        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable model"),
+        executor_model,
         SpectralCyclePassInput::Initial,
     )
     .with_frozen_weighting_reservation(reservation)
@@ -4416,35 +4650,14 @@ fn execute_initial_reconstruction_cycle(
     );
     let runtime_registry =
         SpectralCycleRegistry::new(registry(byte), implementation(byte), problem, executor);
-    let directory = tempfile::tempdir().expect("receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(2, 1_048_576).expect("retention"),
-    )
-    .expect("receipt store");
-    let execution_plan = runtime_plan(
-        problem,
-        PlanningBindings::new(
-            registry(byte),
-            ResourcePolicy::Balanced,
-            planning_profile(byte),
-        ),
-        authority(),
-        &runtime_registry,
-        &receipts,
-        move |_, _| Ok::<_, io::Error>(vec![physical]),
-    )
-    .expect("channel-cycle runtime plan");
-    let resource_policy = ResourcePolicy::Balanced;
     let current = RunBindings::new(problem.inputs().clone(), &resource_policy, cost_model(byte));
-    let executable = ExecutableModelProblem::from_compiled(problem.clone()).expect("executable");
     let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([byte; 32]);
     runtime_run(
         &executable,
         &execution_plan,
         &current,
         &runtime_registry,
-        authority(),
+        authority,
         &mut RunToCompletion,
         receipts.bind(execution_provenance(
             attempt,
@@ -4457,10 +4670,19 @@ fn execute_initial_reconstruction_cycle(
         receipt.node_status(&cycle_node),
         Some(ReceiptStatus::Completed)
     );
-    runtime_registry
+    let parallel_preparation_samples = runtime_registry
+        .implementation()
+        .parallel_preparation_sample_count()
+        .expect("unpoisoned execution preparation counters");
+    let completion = runtime_registry
         .implementation()
         .take_reconstruction_cycle_completion()
-        .expect("channel-cycle completion")
+        .expect("channel-cycle completion");
+    InitialCycleTestResult {
+        completion,
+        parallel_preparation_samples,
+        slab_count,
+    }
 }
 
 fn execute_dirty_channel_local_slabs(
@@ -4487,39 +4709,10 @@ fn execute_dirty_channel_local_slabs(
             SpectralCyclePlanningLimits::new(1_000, 1, 900_000),
             authority().clone(),
             ResourcePolicy::Balanced,
-        ),
+        )
+        .with_gridded_normal_storage(artifact_storage()),
     )
     .expect("resource-bounded dirty-cube plan");
-    let slab_depth = planned
-        .physical_work()
-        .execution_dag()
-        .initial_knobs()
-        .slab_depth;
-    assert!(
-        slab_depth > 0 && slab_depth < problem.geometry().spectral().output_channels() as u64,
-        "the runtime case must execute more than one planned slab"
-    );
-    let SpectralCyclePlanParts {
-        physical,
-        weighting,
-        complete_data,
-        source_resources,
-        pass,
-        ..
-    } = planned.into_parts();
-    let executor = SpectralCycleExecutor::new(
-        implementation(byte),
-        problem.clone(),
-        weighting,
-        source_resources,
-        pass,
-        complete_data,
-        initial_access.into_deferred(),
-        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable cube model"),
-        SpectralCyclePassInput::Initial,
-    );
-    let runtime_registry =
-        SpectralCycleRegistry::new(registry(byte), implementation(byte), problem, executor);
     let directory = tempfile::tempdir().expect("dirty-cube receipt directory");
     let receipts = ExecutionReceiptStore::new(
         directory.path(),
@@ -4534,11 +4727,36 @@ fn execute_dirty_channel_local_slabs(
             planning_profile(byte),
         ),
         authority(),
-        &runtime_registry,
+        &planning_registry,
         &receipts,
-        move |_, _| Ok::<_, io::Error>(vec![physical]),
+        |_, _| Ok::<_, io::Error>(planned.physical_candidates()),
     )
     .expect("dirty-cube runtime plan");
+    let slab_depth = execution_plan.execution_dag().initial_knobs().slab_depth;
+    assert!(
+        slab_depth > 0 && slab_depth < problem.geometry().spectral().output_channels() as u64,
+        "the runtime case must execute more than one planned slab"
+    );
+    let SpectralCyclePlanParts {
+        weighting,
+        complete_data,
+        source_resources,
+        pass,
+        ..
+    } = planned.into_parts(&execution_plan).unwrap();
+    let executor = SpectralCycleExecutor::new(
+        implementation(byte),
+        problem.clone(),
+        weighting,
+        source_resources,
+        pass,
+        complete_data,
+        initial_access.into_deferred(),
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable cube model"),
+        SpectralCyclePassInput::Initial,
+    );
+    let runtime_registry =
+        SpectralCycleRegistry::new(registry(byte), implementation(byte), problem, executor);
     let current = RunBindings::new(
         problem.inputs().clone(),
         &ResourcePolicy::Balanced,
@@ -4577,6 +4795,27 @@ fn owner_resolved_channel_local_hogbom_problem(
     casa_imaging_model::CompiledProblem,
     ResolvedSelectedObservationAccess,
 ) {
+    let (problem, access, _) = owner_resolved_channel_local_hogbom_with_frequency(
+        observation,
+        output_channels,
+        selected_channels,
+        44.0e9,
+        None,
+    );
+    (problem, access)
+}
+
+fn owner_resolved_channel_local_hogbom_with_frequency(
+    observation: u8,
+    output_channels: usize,
+    selected_channels: usize,
+    reference_frequency_hz: f64,
+    model_value: Option<f64>,
+) -> (
+    casa_imaging_model::CompiledProblem,
+    ResolvedSelectedObservationAccess,
+    Option<[ExecutableModelProblem; 2]>,
+) {
     let fixture = compile(channel_local_hogbom_request(
         observation,
         output_channels,
@@ -4588,35 +4827,945 @@ fn owner_resolved_channel_local_hogbom_problem(
         Ok(_) | Err(casa_ms::ObservationOwnerError::AlreadyInitialized) => {}
         Err(error) => panic!("initialize channel-cycle owner fixture: {error}"),
     }
-    let resolution = SelectedObservationResolutionRequest::new(
-        fixture_source.provenance().locator(),
-        fixture_source.provenance().selection_request_identity(),
-        fixture_source.selection().clone(),
-        VisibilityColumn::Data,
-        WeightColumn::Weight,
-        Vec::new(),
-        ModelStateIdentity::Empty,
-        SelectedObservationContentBudget::new(256 * 1024, 1, 4),
-        casa_test_support::deterministic_measures_provider_for_identity([90; 32]),
-    );
-    let (snapshot_input, initial_access) = resolve_selected_observation(resolution)
-        .expect("resolve channel-cycle owner fixture")
-        .into_parts();
-    let snapshot =
-        compile_observation(snapshot_input).expect("compile channel-cycle owner snapshot");
-    let problem = compile(channel_local_request_with_inputs(
-        ProblemInputIdentities::new(snapshot),
-        output_channels,
-        ReconstructionAlgorithm::Hogbom,
-        ReconstructionControls::new(2, 0.5, 0.0),
-        None,
+    let resolve = |model| {
+        let resolution = SelectedObservationResolutionRequest::new(
+            fixture_source.provenance().locator(),
+            fixture_source.provenance().selection_request_identity(),
+            fixture_source.selection().clone(),
+            VisibilityColumn::Data,
+            WeightColumn::Weight,
+            Vec::new(),
+            model,
+            SelectedObservationContentBudget::new(256 * 1024, 1, 4),
+            casa_test_support::deterministic_measures_provider_for_identity([90; 32]),
+        );
+        let (snapshot_input, initial_access) = resolve_selected_observation(resolution)
+            .expect("resolve channel-cycle owner fixture")
+            .into_parts();
+        let snapshot =
+            compile_observation(snapshot_input).expect("compile channel-cycle owner snapshot");
+        (ProblemInputIdentities::new(snapshot), initial_access)
+    };
+    let make_request = |inputs, shape, requirements| {
+        spectral_request_with_inputs_and_shape(
+            inputs,
+            output_channels,
+            ReconstructionBasis::ChannelLocal {
+                channels: output_channels,
+            },
+            ReconstructionAlgorithm::Hogbom,
+            ReconstructionControls::new(2, 0.5, 0.0),
+            None,
+            shape,
+            reference_frequency_hz,
+            requirements,
+        )
+    };
+    let (inputs, initial_access) = resolve(ModelStateIdentity::Empty);
+    let problem = compile(make_request(
+        inputs.clone(),
+        ImageShape::new(8, 8),
+        model_lifecycle(ModelStateIdentity::Empty),
     ))
     .expect("owner-resolved channel-cycle compilation");
-    (problem, initial_access)
+    let Some(value) = model_value else {
+        return (problem, initial_access, None);
+    };
+    let source_problem = compile(make_request(
+        inputs,
+        ImageShape::new(9, 9),
+        model_lifecycle(ModelStateIdentity::Empty),
+    ))
+    .expect("larger source model footprint");
+    let source = identity(if value == 0.0 { 252 } else { 253 });
+    let mut reader = ConstantInitialModel {
+        source,
+        shape: source_problem.model_lifecycle().target().clone(),
+        value: ModelValue::new(value).unwrap(),
+    };
+    let prepared: [_; 2] = std::array::from_fn(|_| {
+        casa_imaging_reconstruction::prepare_reprojected_seed(&mut reader, &problem)
+            .expect("owner-prepared initial model")
+    });
+    let (inputs, initial_access) = resolve(ModelStateIdentity::Seed(source));
+    let problem = compile(make_request(
+        inputs,
+        ImageShape::new(8, 8),
+        prepared[0].lifecycle_requirements(),
+    ))
+    .expect("compile supplied-model problem");
+    let executables = prepared.map(|prepared| {
+        prepared
+            .bind_compiled_problem(problem.clone())
+            .expect("bind supplied model")
+    });
+    (problem, initial_access, Some(executables))
+}
+
+struct ConstantInitialModel {
+    source: LogicalIdentity,
+    shape: casa_imaging_model::ModelSourceShape,
+    value: ModelValue,
+}
+
+impl casa_imaging_reconstruction::ModelSourceReader for ConstantInitialModel {
+    type Error = io::Error;
+
+    fn source_identity(&self) -> LogicalIdentity {
+        self.source
+    }
+
+    fn source_shape(&self) -> &casa_imaging_model::ModelSourceShape {
+        &self.shape
+    }
+
+    fn read_sample(
+        &mut self,
+        cell: ModelCell,
+    ) -> Result<casa_imaging_model::ModelSample, Self::Error> {
+        assert!(self.shape.flat_index(cell).is_some());
+        Ok(casa_imaging_model::ModelSample::valid(self.value))
+    }
+}
+
+#[test]
+fn t55_small_cube_admits_owner_workspace_with_one_worker() {
+    let _guard = run_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (problem, access) = owner_resolved_channel_local_hogbom_problem(238, 3, 2);
+    let dense_array_estimate = 3 * 8 * 8 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3;
+    let planning_registry = ContractOnlyRegistry::new(
+        registry(78),
+        implementation_metadata(&problem),
+        [implementation(78)],
+    );
+    let admission_policy = ResourcePolicy::Explicit(ResourceOverride {
+        memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 1 << 20)]),
+        ..ResourceOverride::default()
+    });
+    let undersized_policy = ResourcePolicy::Explicit(ResourceOverride {
+        memory_bytes: BTreeMap::from([(
+            CapacityDomainId::new("host-memory"),
+            dense_array_estimate,
+        )]),
+        ..ResourceOverride::default()
+    });
+    let policy = SpectralCycleExecutionPolicy::new(
+        implementation(78),
+        WeightingExecutionLimits::new(1, 1).unwrap(),
+        access.certify_residency(&problem).unwrap(),
+        serial_storage_io(),
+        SpectralCyclePlanningLimits::new(1_000, dense_array_estimate, 900_000),
+        authority().clone(),
+        undersized_policy.clone(),
+    )
+    .with_gridded_normal_storage(artifact_storage());
+    let planned = SpectralCyclePlan::initial(&problem, &planning_registry, policy)
+        .expect("under-budget planning retains the fully charged one-plane candidate");
+    let directory = tempfile::tempdir().expect("admission receipts");
+    let receipts = ExecutionReceiptStore::new(
+        directory.path(),
+        ReceiptRetention::new(1, 1_048_576).unwrap(),
+    )
+    .unwrap();
+    // The caller's dense-array estimate omits owner workspace. Reject that
+    // budget, then admit the same fully charged minimum candidate within 1 MiB.
+    let rejected = runtime_plan(
+        &problem,
+        PlanningBindings::new(registry(78), undersized_policy, planning_profile(78)),
+        authority(),
+        &planning_registry,
+        &receipts,
+        |_, _| Ok::<_, io::Error>(planned.physical_candidates()),
+    );
+    assert!(matches!(rejected,
+        Err(PlanError::Resource(ResourceError::NoFeasibleAlternative(certificate)))
+            if !certificate.rejections().is_empty()
+                && certificate.rejections().iter().all(|rejection| matches!(
+                rejection.reason(),
+                AlternativeRejectionReason::Infeasible { resource, required, available }
+                    if resource == "memory-domain:host-memory" && required > available
+            ))
+    ));
+    let selected = runtime_plan(
+        &problem,
+        PlanningBindings::new(registry(78), admission_policy, planning_profile(78)),
+        authority(),
+        &planning_registry,
+        &receipts,
+        |_, _| Ok::<_, io::Error>(planned.physical_candidates()),
+    )
+    .expect("the owner workspace fits authoritative admission");
+    let parts = planned.into_parts(&selected).unwrap();
+    // T55 bounds channel-local cube state by the exact owner workspace rather
+    // than the caller's old dense-array estimate. The minimum candidate holds
+    // a single resident channel plane per slab.
+    assert_eq!(parts.complete_data.slab().core_depth(), 1);
+    let dag = parts.physical.execution_dag();
+    let minor = &dag.nodes()[parts.minor_cycle_node.as_ref().unwrap()];
+    assert!(
+        minor
+            .claims
+            .iter()
+            .any(|claim| claim.resource == LeaseResource::Workers && claim.amount == 1)
+    );
+    assert_eq!(
+        dag.resource_alternative()
+            .demand
+            .overhead
+            .thread_stack_bytes,
+        0
+    );
+    let workspace = dag
+        .resource_alternative()
+        .demand
+        .memory
+        .iter()
+        .find(|demand| demand.allocation_id == "spectral-cycle-minor-cycle")
+        .unwrap();
+    assert!(
+        workspace.hard_bytes > dense_array_estimate,
+        "admission uses the owner workspace rather than the caller's old dense-array estimate"
+    );
+    let minor_allocation = dag
+        .logical_allocations()
+        .values()
+        .find(|allocation| allocation.id.as_str() == "spectral-cycle-minor-cycle")
+        .expect("minor-cycle workspace allocation");
+    let compiler = dag
+        .logical_allocations()
+        .values()
+        .find(|allocation| {
+            allocation
+                .id
+                .as_str()
+                .starts_with("gridded-normal-compiler-")
+        })
+        .unwrap();
+    let metadata = dag
+        .logical_allocations()
+        .values()
+        .find(|allocation| {
+            allocation
+                .id
+                .as_str()
+                .starts_with("gridded-normal-retained-metadata-")
+        })
+        .unwrap();
+    assert_eq!(compiler.physical_slot, minor_allocation.physical_slot);
+    assert_ne!(metadata.physical_slot, compiler.physical_slot);
+    let shared = &dag.physical_slots()[&compiler.physical_slot];
+    assert_eq!(
+        shared.capacity_bytes,
+        compiler.bytes.max(minor_allocation.bytes)
+    );
+    assert_eq!(workspace.hard_bytes, shared.capacity_bytes);
+    assert_eq!(shared.compatibility.storage_mode, StorageMode::Host);
+    assert_eq!(
+        shared.compatibility.layout.as_str(),
+        "owner-managed-host-workspace"
+    );
+    assert_eq!(
+        dag.logical_allocations()
+            .values()
+            .filter(|allocation| { allocation.physical_slot == metadata.physical_slot })
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn t55_initial_consumer_pair_is_terminal_only_and_separately_accounted() {
+    for weighting in [
+        WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+        WeightingContract::new(
+            WeightingScheme::Uniform,
+            WeightDensityScope::GlobalSelection,
+        ),
+    ] {
+        let problem = compile(request_with_geometry_references_and_weighting(
+            1,
+            geometry_with_shape([256.0, 256.0], ImageShape::new(512, 512)),
+            default_references(),
+            weighting,
+        ))
+        .unwrap();
+        let registry = test_registry(&problem, 3, 6, None);
+        let policy = SpectralCycleExecutionPolicy::new(
+            implementation(6),
+            WeightingExecutionLimits::new(2, 3).unwrap(),
+            selected_content_residency(&problem),
+            serial_storage_io(),
+            SpectralCyclePlanningLimits::new(1_000, 1, 900_000),
+            authority().clone(),
+            ResourcePolicy::Explicit(ResourceOverride {
+                workers: Some(3),
+                ..ResourceOverride::default()
+            }),
+        );
+        let dirty = SpectralCyclePlan::dirty(&problem, &registry, policy.clone()).unwrap();
+        assert!(dirty.physical_candidates().iter().all(|physical| {
+            physical
+                .execution_dag()
+                .logical_allocations()
+                .values()
+                .all(|allocation| {
+                    allocation.compatibility.layout.as_str() != "initial-consumer-team"
+                })
+        }));
+        let plan = SpectralCyclePlan::initial(
+            &problem,
+            &registry,
+            policy.with_gridded_normal_storage(artifact_storage()),
+        )
+        .unwrap();
+        let candidates = plan.physical_candidates();
+        let serial = candidates
+            .iter()
+            .find(|physical| physical.execution_dag().initial_knobs().workers == 1)
+            .unwrap();
+        let serial_dag = serial.execution_dag();
+        assert!(serial_dag.logical_allocations().values().all(|allocation| {
+            allocation.compatibility.layout.as_str() != "initial-consumer-team"
+        }));
+        let pair = candidates
+            .iter()
+            .find(|physical| physical.execution_dag().initial_knobs().workers == 2)
+            .unwrap();
+        let dag = pair.execution_dag();
+        let teams = dag
+            .logical_allocations()
+            .values()
+            .filter(|allocation| {
+                allocation.compatibility.layout.as_str() == "initial-consumer-team"
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(teams.len(), 1);
+        let team = teams[0];
+        let terminal = &team.lifetime.acquire_at;
+        assert_eq!(
+            team.lifetime.release_after,
+            BTreeSet::from([WorkDependency::Fence(FenceId::new(
+                terminal.clone(),
+                FenceKind::Io,
+            ))])
+        );
+        assert_eq!(team.purpose, AllocationPurpose::Data);
+        let slot = &dag.physical_slots()[&team.physical_slot];
+        assert_eq!(slot.capacity_bytes, team.bytes);
+        let demand = dag
+            .resource_alternative()
+            .demand
+            .memory
+            .iter()
+            .find(|demand| demand.allocation_id == team.id.as_str())
+            .unwrap();
+        assert_eq!(demand.hard_bytes, team.bytes);
+        assert_eq!(demand.preferred_bytes, team.bytes);
+        assert!(team.bytes > 0);
+        let owner = &dag.nodes()[terminal];
+        assert!(
+            owner
+                .allocations
+                .iter()
+                .any(|usage| usage.allocation == team.id
+                    && usage.lifetime == ClaimLifetime::through_fence(FenceKind::Io))
+        );
+        assert!(
+            owner
+                .claims
+                .iter()
+                .any(|claim| claim.resource == LeaseResource::Workers
+                    && claim.amount == 2
+                    && claim.lifetime == ClaimLifetime::Work)
+        );
+        assert!(owner.claims.iter().any(|claim| {
+            claim.resource
+                == LeaseResource::RuntimeOverhead(
+                    casa_imaging_runtime::RuntimeOverheadKind::ThreadStack,
+                )
+                && claim.amount
+                    == dag
+                        .resource_alternative()
+                        .demand
+                        .overhead
+                        .thread_stack_bytes
+                && claim.lifetime == ClaimLifetime::Work
+        }));
+        for (id, node) in dag.nodes() {
+            if id != terminal && id.as_str() != "spectral-cycle-minor-cycle" {
+                assert_eq!(node.claims, serial_dag.nodes()[id].claims);
+            }
+        }
+        assert_eq!(
+            dag.resource_alternative().demand.io_buffers,
+            serial_dag.resource_alternative().demand.io_buffers
+        );
+        for allocation in serial_dag
+            .logical_allocations()
+            .values()
+            .filter(|allocation| matches!(allocation.purpose, AllocationPurpose::IoBuffer(_)))
+        {
+            assert_eq!(
+                dag.logical_allocations()[&allocation.id].bytes,
+                allocation.bytes
+            );
+        }
+    }
+}
+
+#[test]
+fn t55_exact_plane_candidates_resize_workspace_and_admit_the_serial_memory_floor() {
+    let problem = compile(channel_local_hogbom_request(238, 3, 2)).unwrap();
+    let owner =
+        casa_imaging_reconstruction::runtime_adapter::ReconstructionPlaneWorkspace::for_problem(
+            &problem,
+        )
+        .unwrap()
+        .expect("independent plane workspace");
+    let planning_registry = ContractOnlyRegistry::new(
+        registry(78),
+        implementation_metadata(&problem),
+        [implementation(78)],
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let storage = ProductionStorageProfile::new(
+        directory.path(),
+        1 << 30,
+        1 << 30,
+        1_000_000,
+        1_000_000,
+        64,
+        8,
+    )
+    .unwrap();
+    let authority = ResourceAuthority::detected_with_storage_profile(&storage).unwrap();
+    let spill =
+        ManagedSpillStorage::bind(&authority, storage.io_resources(), directory.path()).unwrap();
+    let resource_policy = ResourcePolicy::Explicit(ResourceOverride {
+        workers: Some(3),
+        ..ResourceOverride::default()
+    });
+    let make_plan = |policy| {
+        SpectralCyclePlan::initial(
+            &problem,
+            &planning_registry,
+            SpectralCycleExecutionPolicy::new(
+                implementation(78),
+                WeightingExecutionLimits::new(1, 1).unwrap(),
+                selected_content_residency(&problem),
+                storage.io_resources(),
+                SpectralCyclePlanningLimits::new(1_000, 1, 900_000),
+                authority.clone(),
+                policy,
+            )
+            .with_gridded_normal_storage(spill.clone()),
+        )
+        .expect("complete candidates are emitted before authority admission")
+    };
+    let planned = make_plan(resource_policy.clone());
+    let mut heap_by_workers = BTreeMap::new();
+    let mut stacks_by_workers = BTreeMap::new();
+    for physical in planned.physical_candidates() {
+        let dag = physical.execution_dag();
+        let alternative = dag.resource_alternative();
+        let workers = dag.initial_knobs().workers;
+        if workers > 1 {
+            let team = dag
+                .logical_allocations()
+                .values()
+                .find(|allocation| {
+                    allocation.compatibility.layout.as_str() == "weighting-replay-preparation"
+                })
+                .expect("initial terminal preparation allocation");
+            assert!(
+                dag.logical_allocations().values().all(|allocation| {
+                    allocation.compatibility.layout.as_str() != "initial-consumer-team"
+                }),
+                "preparation owns the team; storage must not allocate another one"
+            );
+            assert!(
+                dag.nodes()[&team.lifetime.acquire_at]
+                    .claims
+                    .iter()
+                    .any(|claim| {
+                        claim.resource == LeaseResource::Workers && claim.amount == workers
+                    })
+            );
+        }
+        assert_eq!(alternative.scaling.minimum_workers, workers);
+        assert_eq!(alternative.scaling.maximum_workers, workers);
+        assert_eq!(
+            alternative.demand.workers,
+            CountDemand::new(workers, workers)
+        );
+        let minor = &dag.nodes()[&WorkNodeId::new("spectral-cycle-minor-cycle")];
+        assert!(
+            minor
+                .claims
+                .iter()
+                .any(|claim| claim.resource == LeaseResource::Workers && claim.amount == workers)
+        );
+        let allocation = dag
+            .logical_allocations()
+            .values()
+            .find(|allocation| allocation.id.as_str() == "spectral-cycle-minor-cycle")
+            .expect("minor-cycle workspace allocation");
+        let slot = &dag.physical_slots()[&allocation.physical_slot];
+        let demand = alternative
+            .demand
+            .memory
+            .iter()
+            .find(|demand| demand.allocation_id == allocation.id.as_str())
+            .unwrap();
+        assert_eq!(demand.hard_bytes, allocation.bytes);
+        assert_eq!(demand.preferred_bytes, allocation.bytes);
+        assert_eq!(slot.capacity_bytes, allocation.bytes);
+        assert!(allocation.bytes >= owner.worker_bytes() * workers + owner.retained_bytes());
+        heap_by_workers.insert(workers, allocation.bytes);
+        stacks_by_workers.insert(workers, alternative.demand.overhead.thread_stack_bytes);
+    }
+    assert_eq!(
+        heap_by_workers.keys().copied().collect::<Vec<_>>(),
+        [1, 2, 3]
+    );
+    assert!(heap_by_workers[&1] < heap_by_workers[&2] && heap_by_workers[&2] < heap_by_workers[&3]);
+    assert_eq!(
+        heap_by_workers[&2] - heap_by_workers[&1],
+        heap_by_workers[&3] - heap_by_workers[&2]
+            + std::mem::size_of::<std::thread::JoinHandle<()>>() as u64,
+        "W1 has no thread handles; W2 adds two, while W3 adds one more"
+    );
+    assert_eq!(stacks_by_workers[&1], 0);
+    let memory_ceiling = stacks_by_workers[&2] / 2;
+    let constrained = ResourcePolicy::Explicit(ResourceOverride {
+        workers: Some(3),
+        memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), memory_ceiling)]),
+        ..ResourceOverride::default()
+    });
+    let planned = make_plan(constrained.clone());
+    let candidates = planned.physical_candidates();
+    assert_eq!(candidates.len(), 3);
+    assert!(
+        candidates
+            .iter()
+            .filter(|physical| physical.execution_dag().initial_knobs().workers > 1)
+            .all(|physical| physical
+                .execution_dag()
+                .resource_alternative()
+                .demand
+                .overhead
+                .thread_stack_bytes
+                > memory_ceiling)
+    );
+    let receipts = ExecutionReceiptStore::new(
+        directory.path().join("receipts"),
+        ReceiptRetention::new(1, 1_048_576).unwrap(),
+    )
+    .unwrap();
+    let selected = runtime_plan(
+        &problem,
+        PlanningBindings::new(registry(78), constrained, planning_profile(78)),
+        &authority,
+        &planning_registry,
+        &receipts,
+        move |_, _| Ok::<_, io::Error>(candidates),
+    )
+    .expect("the complete serial candidate fits while larger teams are refused");
+    assert_eq!(selected.execution_dag().initial_knobs().workers, 1);
+    let parts = planned.into_parts(&selected).unwrap();
+    assert_eq!(parts.complete_data.slab().core_depth(), 3);
+}
+
+#[test]
+fn t55_channel_replay_preparation_has_its_own_bounded_workspace_and_worker_claim() {
+    let problem = compile(channel_local_hogbom_request(238, 8, 2)).unwrap();
+    let registry = test_registry(&problem, 3, 6, None);
+    let policy = SpectralCycleExecutionPolicy::new(
+        implementation(6),
+        WeightingExecutionLimits::new(16, 4).unwrap(),
+        selected_content_residency(&problem),
+        serial_storage_io(),
+        SpectralCyclePlanningLimits::new(1_000, 1, 900_000),
+        authority().clone(),
+        ResourcePolicy::Explicit(ResourceOverride {
+            workers: Some(4),
+            ..ResourceOverride::default()
+        }),
+    )
+    .with_gridded_normal_storage(artifact_storage());
+    let plan = SpectralCyclePlan::initial(&problem, &registry, policy).unwrap();
+    let mut sizes = Vec::new();
+    let candidates = plan.physical_candidates();
+    for workers in [1, 2, 4] {
+        let physical = candidates
+            .iter()
+            .find(|physical| physical.execution_dag().initial_knobs().workers == workers)
+            .unwrap();
+        let dag = physical.execution_dag();
+        let preparation = dag
+            .logical_allocations()
+            .values()
+            .filter(|allocation| {
+                allocation
+                    .id
+                    .as_str()
+                    .starts_with("initial-replay-preparation-")
+            })
+            .collect::<Vec<_>>();
+        if workers == 1 {
+            assert!(
+                preparation.is_empty(),
+                "serial needs no parallel staging workspace"
+            );
+            assert!(
+                dag.nodes()
+                    .values()
+                    .all(|node| node.claims.iter().all(|claim| {
+                        claim.resource
+                            != LeaseResource::RuntimeOverhead(
+                                casa_imaging_runtime::RuntimeOverheadKind::ThreadStack,
+                            )
+                    }))
+            );
+            continue;
+        }
+        assert_eq!(preparation.len(), 1);
+        let allocation = preparation[0];
+        assert_eq!(
+            dag.physical_slots()[&allocation.physical_slot].capacity_bytes,
+            allocation.bytes
+        );
+        let owner = &dag.nodes()[&allocation.lifetime.acquire_at];
+        assert!(
+            owner
+                .claims
+                .iter()
+                .any(|claim| claim.resource == LeaseResource::Workers && claim.amount == workers)
+        );
+        let stack_bytes = owner
+            .claims
+            .iter()
+            .filter(|claim| {
+                claim.resource
+                    == LeaseResource::RuntimeOverhead(
+                        casa_imaging_runtime::RuntimeOverheadKind::ThreadStack,
+                    )
+            })
+            .map(|claim| claim.amount)
+            .sum::<u64>();
+        assert_eq!(
+            stack_bytes,
+            if workers == 1 {
+                0
+            } else {
+                workers * 2 * 1024 * 1024
+            }
+        );
+        assert!(
+            owner
+                .allocations
+                .iter()
+                .any(|usage| usage.allocation == allocation.id
+                    && usage.lifetime == ClaimLifetime::through_fence(FenceKind::Io))
+        );
+        assert!(
+            dag.resource_alternative()
+                .demand
+                .memory
+                .iter()
+                .any(|demand| demand.allocation_id == allocation.id.as_str()
+                    && demand.hard_bytes == allocation.bytes)
+        );
+        sizes.push(allocation.bytes);
+    }
+    assert!(
+        sizes.windows(2).all(|pair| pair[0] < pair[1]),
+        "additional worker scratch must be charged"
+    );
+}
+
+#[test]
+fn t55_initial_clean_executes_parallel_preparation_across_bounded_slabs() {
+    let _guard = run_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let directory = tempfile::tempdir().expect("parallel preparation storage");
+    let storage = ProductionStorageProfile::new(
+        directory.path(),
+        1 << 30,
+        1 << 30,
+        1_000_000,
+        1_000_000,
+        64,
+        8,
+    )
+    .unwrap();
+    let authority = ResourceAuthority::detected_with_storage_profile(&storage).unwrap();
+    let spill =
+        ManagedSpillStorage::bind(&authority, storage.io_resources(), directory.path()).unwrap();
+    let mut identity_channel_weights = None;
+    let mut empty_model_planes = None;
+    for (selected_channels, reference_frequency_hz, model_value) in [
+        (8, 44.0e9, None),
+        (2, 44.0e9, None),
+        (8, 43.936e9, None),
+        (8, 44.0e9, Some(0.0)),
+        (8, 44.0e9, Some(0.25)),
+        (8, 43.936e9, Some(0.25)),
+    ] {
+        let mut baseline = None;
+        for (workers, memory_scale) in [(1, 1), (2, 1), (4, 1), (4, 2)] {
+            let (problem, access, model_executables) =
+                owner_resolved_channel_local_hogbom_with_frequency(
+                    246,
+                    8,
+                    selected_channels,
+                    reference_frequency_hz,
+                    model_value,
+                );
+            let planning_registry = ContractOnlyRegistry::new(
+                registry(81),
+                implementation_metadata(&problem),
+                [implementation(81)],
+            );
+            let residency = access.certify_residency(&problem).unwrap();
+            // The eight-channel fixture fills windows of three, three, and two
+            // complete correlation groups. The two-channel fixture adds nonzero
+            // visibilities and six unmapped output planes, using one short window.
+            let weighting_limits = WeightingExecutionLimits::new(3, 2).unwrap();
+            let make_plan = |resource_policy| {
+                SpectralCyclePlan::initial(
+                    &problem,
+                    &planning_registry,
+                    SpectralCycleExecutionPolicy::new(
+                        implementation(81),
+                        weighting_limits,
+                        residency.clone(),
+                        storage.io_resources(),
+                        SpectralCyclePlanningLimits::new(1_000, 1, 900_000),
+                        authority.clone(),
+                        resource_policy,
+                    )
+                    .with_gridded_normal_storage(spill.clone()),
+                )
+                .expect("bounded initial CLEAN candidate")
+            };
+            let host = CapacityDomainId::new("host-memory");
+            let minimum = make_plan(ResourcePolicy::Explicit(ResourceOverride {
+                workers: Some(workers),
+                memory_bytes: BTreeMap::from([(host.clone(), 1)]),
+                ..ResourceOverride::default()
+            }));
+            let candidates = minimum.physical_candidates();
+            let candidate = candidates
+                .iter()
+                .find(|physical| physical.execution_dag().initial_knobs().workers == workers)
+                .expect("requested team has a fully charged minimum candidate");
+            let dag = candidate.execution_dag();
+            assert_eq!(dag.initial_knobs().slab_depth, 1);
+            let alternative = dag.resource_alternative();
+            let overhead = &alternative.demand.overhead;
+            let weighting = minimum.weighting_plan().planned_residency();
+            let memory_bytes = alternative
+                .demand
+                .memory
+                .iter()
+                .map(|demand| demand.hard_bytes)
+                .sum::<u64>()
+                + [
+                    overhead.thread_stack_bytes,
+                    overhead.allocator_fragmentation_bytes,
+                    overhead.external_library_bytes,
+                    overhead.fft_workspace_bytes,
+                    overhead.driver_bytes,
+                    overhead.jit_bytes,
+                    overhead.command_buffer_bytes,
+                    alternative.demand.caches.hard_resident_bytes,
+                    alternative
+                        .headroom
+                        .memory_bytes
+                        .get(&host)
+                        .copied()
+                        .unwrap_or_default(),
+                    alternative.headroom.cache_bytes,
+                    weighting.density_layout_bytes() as u64,
+                    weighting.density_grid_bytes() as u64,
+                    weighting.robust_factor_bytes() as u64,
+                    weighting.sum_weight_bytes() as u64,
+                    access.replay_proof_retained_heap_bytes(&problem).unwrap() as u64,
+                ]
+                .into_iter()
+                .sum::<u64>();
+            let resource_policy = ResourcePolicy::Explicit(ResourceOverride {
+                workers: Some(workers),
+                memory_bytes: BTreeMap::from([(host, memory_bytes * memory_scale)]),
+                ..ResourceOverride::default()
+            });
+            let planned = make_plan(resource_policy.clone());
+            let result = execute_planned_initial_reconstruction_cycle(
+                &problem,
+                81,
+                access,
+                InitialCycleTestPlan {
+                    planned,
+                    authority: &authority,
+                    resource_policy,
+                    expected_workers: workers,
+                    require_multiple_slabs: model_value.is_none() && memory_scale == 1,
+                    model_executables,
+                },
+            );
+            if memory_scale > 1 && model_value.is_none() {
+                assert!(
+                    result.slab_count < 8,
+                    "larger bound admits multiple planes per slab"
+                );
+            }
+            let final_input = result.completion.into_final_major_input();
+            let normal = final_input.evidence().normal_state();
+            assert_eq!(normal.sample_count(), selected_channels as u64);
+            if workers == 1 && selected_channels == 8 {
+                if reference_frequency_hz == 44.0e9 {
+                    identity_channel_weights = Some(normal.sum_weights().to_vec());
+                } else {
+                    assert_ne!(
+                        normal.sum_weights(),
+                        identity_channel_weights.as_ref().unwrap(),
+                        "half-channel-shifted output grid must exercise nonidentity interpolation"
+                    );
+                }
+            }
+            if workers == 1 || model_value.is_some() {
+                assert_eq!(result.parallel_preparation_samples, 0);
+            } else {
+                let full_replay_samples = normal.sample_count() * result.slab_count;
+                assert!(result.parallel_preparation_samples <= full_replay_samples);
+                if selected_channels == 8 && result.slab_count > 1 {
+                    assert!(result.parallel_preparation_samples > 0);
+                    assert!(
+                        result.parallel_preparation_samples < full_replay_samples,
+                        "source windows must prepare fewer samples than exhaustive slab replays"
+                    );
+                }
+            }
+            let mut planes = Vec::new();
+            for channel in 0..8 {
+                let window = normal.read_window(channel..channel + 1).unwrap();
+                planes.push((
+                    window
+                        .residual()
+                        .iter()
+                        .map(|value| (value.re.to_bits(), value.im.to_bits()))
+                        .collect::<Vec<_>>(),
+                    window
+                        .normal_approximation()
+                        .iter()
+                        .map(|value| (value.re.to_bits(), value.im.to_bits()))
+                        .collect::<Vec<_>>(),
+                    window
+                        .sensitivity()
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>(),
+                ));
+            }
+            if workers == 1 && selected_channels == 8 && reference_frequency_hz == 44.0e9 {
+                match model_value {
+                    None => empty_model_planes = Some(planes.clone()),
+                    Some(0.0) => assert_eq!(
+                        &planes,
+                        empty_model_planes.as_ref().unwrap(),
+                        "ingested zero and empty models must give identical science"
+                    ),
+                    Some(_) => {
+                        let empty_planes = empty_model_planes.as_ref().unwrap();
+                        assert!(
+                            planes
+                                .iter()
+                                .zip(empty_planes)
+                                .any(|(seeded, empty)| seeded.0 != empty.0),
+                            "nonzero input model must affect the residual"
+                        );
+                        for (seeded, empty) in planes.iter().zip(empty_planes) {
+                            assert_eq!(seeded.1, empty.1, "model-independent normal operator");
+                            assert_eq!(seeded.2, empty.2, "model-independent sensitivity");
+                        }
+                    }
+                }
+            }
+            let cycle = final_input.evidence().reconstruction_cycle();
+            if selected_channels == 2 {
+                assert!(cycle.initial_peak_flux() > 0.0);
+                assert!(cycle.iterations() > 0);
+            }
+            let science = (
+                normal.sample_count(),
+                normal.block_count(),
+                normal
+                    .sum_weights()
+                    .iter()
+                    .map(|value| value.to_bits())
+                    .collect::<Vec<_>>(),
+                normal
+                    .channel_sum_weights()
+                    .iter()
+                    .map(|value| value.to_bits())
+                    .collect::<Vec<_>>(),
+                planes,
+                cycle.iterations(),
+                cycle.controller_iterations(),
+                cycle.total_flux().to_bits(),
+                cycle.initial_peak_flux().to_bits(),
+                cycle.final_peak_flux().to_bits(),
+                cycle
+                    .channels()
+                    .iter()
+                    .map(|channel| {
+                        (
+                            channel.output_channel(),
+                            channel.polarization(),
+                            channel.validity(),
+                            channel.minor_cycle().map(|minor| {
+                                (
+                                    minor.iterations(),
+                                    minor.stop_reason(),
+                                    minor.recorded_component_sequence().map(|components| {
+                                        components
+                                            .iter()
+                                            .map(|component| {
+                                                (
+                                                    component.cell(),
+                                                    component.flux().to_bits(),
+                                                    component.scale_px().to_bits(),
+                                                )
+                                            })
+                                            .collect::<Vec<_>>()
+                                    }),
+                                )
+                            }),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            );
+            if let Some(baseline) = &baseline {
+                assert_eq!(
+                    &science, baseline,
+                    "worker count must not change ordered science"
+                );
+            } else {
+                baseline = Some(science);
+            }
+        }
+    }
 }
 
 #[test]
 fn t38_runtime_runs_one_shared_cycle_with_combined_channel_evidence() {
+    let _run_guard = run_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let (problem, initial_access) = owner_resolved_channel_local_hogbom_problem(238, 3, 2);
     let completion = execute_initial_reconstruction_cycle(&problem, 78, initial_access);
     let evidence = completion.evidence();
@@ -4652,7 +5801,10 @@ fn t38_runtime_runs_one_shared_cycle_with_combined_channel_evidence() {
 fn t607_runtime_executes_resource_bounded_channel_local_slabs() {
     let _guard = T607_CHANNEL_SLAB_EXECUTION_LOCK
         .lock()
-        .expect("T607 execution lock");
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _run_guard = run_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let (problem, initial_access) = owner_resolved_channel_local_hogbom_problem(247, 32, 32);
     let completion = execute_dirty_channel_local_slabs(&problem, 79, initial_access);
     assert_eq!(
@@ -4663,10 +5815,13 @@ fn t607_runtime_executes_resource_bounded_channel_local_slabs() {
 }
 
 #[test]
-fn t607_clean_cycle_rejects_a_plan_that_cannot_retain_every_cube_plane() {
+fn t607_clean_cycle_admits_bounded_channel_slabs_and_rejects_below_minimum() {
     let _guard = T607_CHANNEL_SLAB_EXECUTION_LOCK
         .lock()
-        .expect("T607 execution lock");
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _run_guard = run_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let (problem, initial_access) = owner_resolved_channel_local_hogbom_problem(248, 28, 28);
     let residency = initial_access
         .certify_residency(&problem)
@@ -4677,29 +5832,216 @@ fn t607_clean_cycle_rejects_a_plan_that_cannot_retain_every_cube_plane() {
         [implementation(80)],
     );
     let channel_count = problem.geometry().spectral().output_channels();
-    let policy = SpectralCycleExecutionPolicy::new(
-        implementation(80),
-        WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
-        residency,
-        serial_storage_io(),
-        SpectralCyclePlanningLimits::new(
-            1_000,
-            (channel_count * 8 * 8 * std::mem::size_of::<num_complex::Complex64>() * 3) as u64,
-            900_000,
-        ),
-        authority().clone(),
-        ResourcePolicy::Balanced,
-    )
-    .with_gridded_normal_storage(artifact_storage());
-
-    let error = match SpectralCyclePlan::initial(&problem, &planning_registry, policy) {
-        Ok(_) => panic!("cube CLEAN must not fold independently planned channel slabs"),
-        Err(error) => error,
+    let make_policy = |resource_policy| {
+        SpectralCycleExecutionPolicy::new(
+            implementation(80),
+            WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+            residency.clone(),
+            serial_storage_io(),
+            SpectralCyclePlanningLimits::new(
+                1_000,
+                (channel_count * 8 * 8 * std::mem::size_of::<num_complex::Complex64>() * 3) as u64,
+                900_000,
+            ),
+            authority().clone(),
+            resource_policy,
+        )
+        .with_gridded_normal_storage(artifact_storage())
     };
-    assert!(matches!(
-        error,
-        SpectralCyclePlanError::CubeCleanRequiresAllPlanes
-    ));
+
+    let planned = SpectralCyclePlan::initial(
+        &problem,
+        &planning_registry,
+        make_policy(ResourcePolicy::Exclusive),
+    )
+    .expect("admit a resource-bounded channel-local CLEAN candidate");
+    let directory = tempfile::tempdir().expect("admission receipts");
+    let receipts = ExecutionReceiptStore::new(
+        directory.path(),
+        ReceiptRetention::new(1, 1_048_576).unwrap(),
+    )
+    .unwrap();
+    let selected = runtime_plan(
+        &problem,
+        PlanningBindings::new(
+            registry(80),
+            ResourcePolicy::Exclusive,
+            planning_profile(80),
+        ),
+        authority(),
+        &planning_registry,
+        &receipts,
+        |_, _| Ok::<_, io::Error>(planned.physical_candidates()),
+    )
+    .expect("the bounded channel-local candidate fits authoritative admission");
+    let selected_depth = selected.execution_dag().initial_knobs().slab_depth;
+    let parts = planned
+        .into_parts(&selected)
+        .expect("transfer the admitted channel-local candidate");
+    assert!(selected_depth > 0 && selected_depth < channel_count as u64);
+    assert_eq!(
+        parts.complete_data.slab().core_depth(),
+        selected_depth as usize
+    );
+    assert_eq!(
+        parts
+            .complete_data
+            .residency()
+            .sequential_fold_accumulator_bytes(),
+        0,
+        "ChannelLocal folding is retained by the paged cube-state owner"
+    );
+    let dag = parts.physical.execution_dag();
+    assert!(
+        dag.resource_alternative()
+            .quiescence_points
+            .contains(&QuiescencePoint::Slab),
+        "bounded CLEAN must expose ordered slab quiescence"
+    );
+    let full = CompleteDataPlanFragment::for_slab(
+        &problem,
+        1,
+        WorkNodeId::new("t607-clean-full-depth"),
+        0,
+        channel_count,
+        SpectralOperatorPass::InitialMajor,
+    )
+    .expect("full-cube CLEAN resource comparison");
+    let bounded = CompleteDataPlanFragment::for_slab(
+        &problem,
+        1,
+        WorkNodeId::new("t607-clean-bounded-depth"),
+        0,
+        selected_depth as usize,
+        SpectralOperatorPass::InitialMajor,
+    )
+    .expect("matching bounded channel-slab resource comparison");
+    let operator_allocations = dag
+        .logical_allocations()
+        .values()
+        .filter(|allocation| allocation.id.as_str().starts_with("spectral-operator-"))
+        .collect::<Vec<_>>();
+    assert!(!operator_allocations.is_empty());
+    assert!(operator_allocations.iter().all(|allocation| {
+        allocation
+            .id
+            .as_str()
+            .ends_with(&format!("-ch0-{selected_depth}"))
+    }));
+    for (prefix, expected_bytes) in [
+        ("spectral-operator-grids-", bounded.residency().grid_bytes()),
+        (
+            "spectral-operator-primitives-",
+            bounded.residency().primitive_output_bytes(),
+        ),
+    ] {
+        let allocations = operator_allocations
+            .iter()
+            .filter(|allocation| allocation.id.as_str().starts_with(prefix))
+            .collect::<Vec<_>>();
+        assert_eq!(allocations.len(), 1);
+        assert_eq!(allocations[0].bytes, expected_bytes as u64);
+    }
+    let operator_peak = operator_allocations
+        .iter()
+        .map(|allocation| allocation.bytes)
+        .sum::<u64>()
+        + dag
+            .resource_alternative()
+            .demand
+            .overhead
+            .fft_workspace_bytes;
+    assert!(
+        operator_peak < full.residency().peak_bytes() as u64,
+        "bounded channel slabs must not retain the full cube operator"
+    );
+
+    // Release the successful admission before probing the genuine minimum
+    // candidate so the rejection below is caused by its own ceiling.
+    drop(parts);
+    drop(selected);
+    let minimum_probe_policy = ResourcePolicy::Explicit(ResourceOverride {
+        memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 1)]),
+        workers: Some(1),
+        ..ResourceOverride::default()
+    });
+    let minimum_planned = SpectralCyclePlan::initial(
+        &problem,
+        &planning_registry,
+        make_policy(minimum_probe_policy),
+    )
+    .expect("retain the fully charged one-channel candidate for rejection");
+    let minimum_candidates = minimum_planned.physical_candidates();
+    assert_eq!(minimum_candidates.len(), 1);
+    let minimum_candidate = &minimum_candidates[0];
+    assert_eq!(
+        minimum_candidate.execution_dag().initial_knobs().slab_depth,
+        1,
+        "below-minimum planning must retain the one-channel candidate"
+    );
+    let alternative = minimum_candidate.execution_dag().resource_alternative();
+    let declared_memory = alternative
+        .demand
+        .memory
+        .iter()
+        .map(|demand| demand.hard_bytes)
+        .sum::<u64>();
+    let declared_overhead = [
+        alternative.demand.overhead.thread_stack_bytes,
+        alternative.demand.overhead.allocator_fragmentation_bytes,
+        alternative.demand.overhead.external_library_bytes,
+        alternative.demand.overhead.fft_workspace_bytes,
+        alternative.demand.overhead.driver_bytes,
+        alternative.demand.overhead.jit_bytes,
+        alternative.demand.overhead.command_buffer_bytes,
+    ]
+    .into_iter()
+    .sum::<u64>();
+    let host_domain = CapacityDomainId::new("host-memory");
+    let minimum_required = declared_memory
+        .checked_add(declared_overhead)
+        .and_then(|bytes| bytes.checked_add(alternative.demand.caches.hard_resident_bytes))
+        .and_then(|bytes| {
+            bytes.checked_add(
+                alternative
+                    .headroom
+                    .memory_bytes
+                    .get(&host_domain)
+                    .copied()
+                    .unwrap_or_default(),
+            )
+        })
+        .and_then(|bytes| bytes.checked_add(alternative.headroom.cache_bytes))
+        .expect("one-channel memory demand fits u64");
+    assert!(minimum_required > 1);
+    let below_minimum = minimum_required - 1;
+    let rejection_policy = ResourcePolicy::Explicit(ResourceOverride {
+        memory_bytes: BTreeMap::from([(host_domain, below_minimum)]),
+        workers: Some(1),
+        ..ResourceOverride::default()
+    });
+    let result = runtime_plan(
+        &problem,
+        PlanningBindings::new(registry(80), rejection_policy, planning_profile(80)),
+        authority(),
+        &planning_registry,
+        &receipts,
+        move |_, _| Ok::<_, io::Error>(minimum_candidates),
+    );
+    assert!(
+        matches!(result,
+            Err(PlanError::Resource(ResourceError::NoFeasibleAlternative(certificate)))
+                if !certificate.rejections().is_empty()
+                    && certificate.rejections().iter().all(|rejection| matches!(
+                        rejection.reason(),
+                        AlternativeRejectionReason::Infeasible { resource, required, available }
+                            if resource.starts_with("memory-domain:")
+                                && *required == minimum_required
+                                && *available <= below_minimum
+                    ))
+        ),
+        "the authority must reject a ceiling below the one-channel demand"
+    );
 }
 
 #[test]
@@ -4944,6 +6286,42 @@ fn physical_work_for_problem(
     .expect("problem-bound physical work")
 }
 
+/// Bind a problem whose model input cannot be sealed by the empty-model
+/// publication fixture (for example an aligned seed) to a reconstruction-only
+/// transaction over the same physical transaction DAG.
+fn reconstruction_physical_work_for_problem(
+    problem: &casa_imaging_model::CompiledProblem,
+    implementation_byte: u8,
+) -> PhysicalWorkBinding {
+    let base = physical_work(implementation_byte);
+    let artifacts = base
+        .artifacts()
+        .iter()
+        .filter(|artifact| artifact.role() != ArtifactRole::Output)
+        .cloned()
+        .collect();
+    let transaction = ObservationTransactionWork::new_reconstruction(
+        base.observation_transaction()
+            .initial_consistency_check()
+            .expect("observation consistency check")
+            .clone(),
+        base.observation_transaction()
+            .post_replay_reconciliation()
+            .expect("product transaction has reconciliation")
+            .clone(),
+        base.observation_transaction().commit().clone(),
+    );
+    PhysicalWorkBinding::new_reconstruction(
+        implementation_catalog(problem, base.execution_dag()),
+        base.execution_dag().clone(),
+        base.prediction().clone(),
+        artifacts,
+        transaction,
+        PublicationLayoutLedger::empty(),
+    )
+    .expect("problem-bound reconstruction physical work")
+}
+
 fn physical_work_for_weighting_problem(
     problem: &casa_imaging_model::CompiledProblem,
     implementation_byte: u8,
@@ -5039,6 +6417,7 @@ fn physical_work_for_weighting_problem_with_residency(
         compatibility: source_compatibility.clone(),
         physical_slot: source_slot.clone(),
         lifetime: AllocationLifetime {
+            disposition: casa_imaging_runtime::AllocationDisposition::Release,
             acquire_at: WorkNodeId::new("transaction-read"),
             release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
                 WorkNodeId::new("transaction-read"),
@@ -5177,7 +6556,7 @@ fn physical_work_with_product_staging(
     implementation_byte: u8,
     participants: Vec<PublicationParticipant>,
 ) -> Result<PhysicalWorkBinding, PhysicalWorkBindingError> {
-    let (publication, _) = sealed_publication_plan_for_problem(problem);
+    let publication = publication_plan_for_problem(problem);
     physical_work_with_optional_seal(
         problem,
         implementation_byte,
@@ -5214,7 +6593,7 @@ fn physical_work_with_transaction_staging(
     acquire_publication_early: bool,
     fenced_observation_read: bool,
 ) -> PhysicalWorkBinding {
-    let (publication, _) = sealed_publication_plan_for_problem(problem);
+    let publication = publication_plan_for_problem(problem);
     physical_work_with_optional_seal(
         problem,
         implementation_byte,
@@ -5345,7 +6724,7 @@ fn transaction_binding(
     acquire_publication_early: bool,
     fenced_observation_read: bool,
 ) -> PhysicalWorkBinding {
-    let (publication, _) = sealed_publication_plan_for_problem(problem);
+    let publication = publication_plan_for_problem(problem);
     transaction_binding_with_seal(
         problem,
         specification,
@@ -5732,6 +7111,7 @@ fn transaction_binding_with_seal(
         compatibility: product_writer_compatibility.clone(),
         physical_slot: product_writer_slot.clone(),
         lifetime: AllocationLifetime {
+            disposition: casa_imaging_runtime::AllocationDisposition::Release,
             acquire_at: product.clone(),
             release_after: BTreeSet::from([WorkDependency::Work(product.clone())]),
         },
@@ -5755,6 +7135,7 @@ fn transaction_binding_with_seal(
         compatibility: publication_compatibility.clone(),
         physical_slot: publication_slot.clone(),
         lifetime: AllocationLifetime {
+            disposition: casa_imaging_runtime::AllocationDisposition::Release,
             acquire_at: if acquire_publication_early {
                 product.clone()
             } else {
@@ -5782,6 +7163,7 @@ fn transaction_binding_with_seal(
             compatibility: commit_compatibility.clone(),
             physical_slot: commit_slot.clone(),
             lifetime: AllocationLifetime {
+                disposition: casa_imaging_runtime::AllocationDisposition::Release,
                 acquire_at: commit.clone(),
                 release_after: BTreeSet::from([
                     WorkDependency::Fence(FenceId::new(commit.clone(), FenceKind::Io)),
@@ -5931,6 +7313,7 @@ fn evidenced_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
         compatibility: compatibility.clone(),
         physical_slot: source_slot.clone(),
         lifetime: AllocationLifetime {
+            disposition: casa_imaging_runtime::AllocationDisposition::Release,
             acquire_at: read.clone(),
             release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
                 read.clone(),
@@ -6030,6 +7413,13 @@ fn evidenced_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
 
 fn adaptive_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
     let problem = compile(request(1)).expect("adaptive physical-work problem");
+    adaptive_physical_work_for_problem(&problem, implementation_byte)
+}
+
+fn adaptive_physical_work_for_problem(
+    problem: &casa_imaging_model::CompiledProblem,
+    implementation_byte: u8,
+) -> PhysicalWorkBinding {
     let work_implementation = implementation(implementation_byte);
     let first_id = WorkNodeId::new("first-major-work");
     let boundary_id = WorkNodeId::new("major-boundary");
@@ -6126,10 +7516,10 @@ fn adaptive_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
         }],
     };
     transaction_binding(
-        &problem,
+        problem,
         specification,
         implementation(implementation_byte),
-        default_product_participants(),
+        product_participants(problem),
         false,
         true,
     )
@@ -6289,6 +7679,7 @@ fn conditional_adaptive_physical_work(implementation_byte: u8) -> PhysicalWorkBi
                 compatibility: retained_compatibility.clone(),
                 physical_slot: retained_slot.clone(),
                 lifetime: AllocationLifetime {
+                    disposition: casa_imaging_runtime::AllocationDisposition::Release,
                     acquire_at: retained.clone(),
                     release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
                         retained.clone(),
@@ -6303,6 +7694,7 @@ fn conditional_adaptive_physical_work(implementation_byte: u8) -> PhysicalWorkBi
                 compatibility: streamed_compatibility.clone(),
                 physical_slot: streamed_slot.clone(),
                 lifetime: AllocationLifetime {
+                    disposition: casa_imaging_runtime::AllocationDisposition::Release,
                     acquire_at: streamed.clone(),
                     release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
                         streamed.clone(),
@@ -6353,7 +7745,7 @@ fn auditable_physical_work(
     problem: &casa_imaging_model::CompiledProblem,
     implementation_byte: u8,
 ) -> PhysicalWorkBinding {
-    let base = adaptive_physical_work(implementation_byte);
+    let base = adaptive_physical_work_for_problem(problem, implementation_byte);
     let base_dag = base.execution_dag();
     let allocation = AllocationId::new("audit-generation");
     let slot = PhysicalSlotId::new("audit-slot");
@@ -6406,6 +7798,7 @@ fn auditable_physical_work(
                 compatibility: compatibility.clone(),
                 physical_slot: slot.clone(),
                 lifetime: AllocationLifetime {
+                    disposition: casa_imaging_runtime::AllocationDisposition::Release,
                     acquire_at: WorkNodeId::new("first-major-work"),
                     release_after: BTreeSet::from([WorkDependency::Work(WorkNodeId::new(
                         "minor-work",
@@ -6677,6 +8070,7 @@ fn release_failure_physical_work(
             compatibility: compatibility.clone(),
             physical_slot: physical_slot_id.clone(),
             lifetime: AllocationLifetime {
+                disposition: casa_imaging_runtime::AllocationDisposition::Release,
                 acquire_at: prepare_id.clone(),
                 release_after,
             },
@@ -6756,19 +8150,28 @@ fn mapped_publication_candidate(
     )
 }
 
+fn publication_capable_executor(
+    problem: &casa_imaging_model::CompiledProblem,
+    implementation_byte: u8,
+) -> RecordingExecutor {
+    let mut executor = recording_executor(implementation_byte, None, None);
+    executor.major_cycle_problem = Some(problem.clone());
+    executor.bind_major_cycle_model = true;
+    executor
+}
+
 fn test_registry(
     problem: &casa_imaging_model::CompiledProblem,
     registry_byte: u8,
     implementation_byte: u8,
     failure: Option<&'static str>,
 ) -> TestRegistry {
+    let mut executor = publication_capable_executor(problem, implementation_byte);
+    executor.failure = failure;
     TestRegistry {
         id: registry(registry_byte),
         metadata: implementation_metadata(problem),
-        executors: BTreeMap::from([(
-            implementation(implementation_byte),
-            recording_executor(implementation_byte, failure, None),
-        )]),
+        executors: BTreeMap::from([(implementation(implementation_byte), executor)]),
     }
 }
 
@@ -7062,7 +8465,7 @@ fn runtime_inventory(available_locks: u64) -> HostInventory {
             performance_cpu_cores: CpuClassCapacity::Known(4),
             cache_capacity_bytes: 1_048_576,
             lock_capacity: 4,
-            file_descriptor_capacity: 16,
+            file_descriptor_capacity: 32,
         },
         pressure: ExternalPressure {
             memory_available_bytes: BTreeMap::from([(domain, 1_048_576)]),
@@ -7080,7 +8483,7 @@ fn runtime_inventory(available_locks: u64) -> HostInventory {
             accelerator_available_slots: BTreeMap::new(),
             cache_available_bytes: 1_048_576,
             available_locks,
-            available_file_descriptors: 16,
+            available_file_descriptors: 32,
         },
     }
 }
@@ -7158,7 +8561,7 @@ fn native_product_physical_work(
     observation_transaction: ObservationTransactionWork,
     publication_layouts: PublicationLayoutLedger,
 ) -> Result<PhysicalWorkBinding, PhysicalWorkBindingError> {
-    let (publication, _) = sealed_publication_plan_for_problem(problem);
+    let publication = publication_plan_for_problem(problem);
     PhysicalWorkBinding::new_with_product_publication(
         catalog,
         execution_dag,
@@ -7270,6 +8673,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
         io_base
             .observation_transaction()
             .initial_consistency_check()
+            .expect("observation consistency check")
             .clone(),
         io_base
             .observation_transaction()
@@ -7351,6 +8755,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
         contract_base
             .observation_transaction()
             .initial_consistency_check()
+            .expect("observation consistency check")
             .clone(),
         contract_base
             .observation_transaction()
@@ -7387,6 +8792,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
         publication_base
             .observation_transaction()
             .initial_consistency_check()
+            .expect("observation consistency check")
             .clone(),
         publication_base
             .observation_transaction()
@@ -7425,6 +8831,17 @@ fn physical_work_binding_rejects_typed_io_contracts_without_predictions() {
             .collect(),
     )
     .expect("complete stage ledger with no typed I/O evidence");
+    let transaction = ObservationTransactionWork::new_reconstruction(
+        base.observation_transaction()
+            .initial_consistency_check()
+            .expect("observation consistency check")
+            .clone(),
+        base.observation_transaction()
+            .post_replay_reconciliation()
+            .expect("transaction has reconciliation")
+            .clone(),
+        base.observation_transaction().commit().clone(),
+    );
 
     assert!(matches!(
         PhysicalWorkBinding::new_reconstruction(
@@ -7432,7 +8849,7 @@ fn physical_work_binding_rejects_typed_io_contracts_without_predictions() {
             dag,
             prediction,
             Vec::new(),
-            base.observation_transaction().clone(),
+            transaction,
             PublicationLayoutLedger::empty(),
         ),
         Err(PhysicalWorkBindingError::MissingIoPrediction { .. })
@@ -7592,7 +9009,7 @@ fn run_can_invoke_only_the_implementation_identity_sealed_by_plan() {
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
-    let selected = recording_executor(6, None, None);
+    let selected = publication_capable_executor(&problem, 6);
     let different = recording_executor(7, None, None);
     let registry = TestRegistry {
         id: registry(3),
@@ -7649,7 +9066,7 @@ fn initial_consistency_check_receives_the_exact_observation_transaction() {
         cost_model(4),
     );
     let observed = Arc::new(AtomicBool::new(false));
-    let mut executor = recording_executor(6, None, None);
+    let mut executor = publication_capable_executor(&problem, 6);
     executor.initial_consistency_expected = Some((
         problem.observation_transaction().transaction_id(),
         Arc::clone(&observed),
@@ -7684,7 +9101,7 @@ fn generic_io_cannot_receive_observation_sources() {
         cost_model(4),
     );
     let generic_source_access = Arc::new(AtomicBool::new(false));
-    let mut executor = recording_executor(6, None, None);
+    let mut executor = publication_capable_executor(&problem, 6);
     executor.generic_source_access = Some(Arc::clone(&generic_source_access));
     let registry = TestRegistry {
         id: registry(3),
@@ -7779,7 +9196,12 @@ fn versioned_request_compiles_before_physical_planning() {
 #[test]
 fn plan_seals_physical_work_and_every_required_binding() {
     assert_eq!(ExecutionPlanId::SCHEMA_VERSION, 12);
-    let problem = compile(request(1)).expect("logical compilation");
+    // The golden binds the physical plan and publication metadata, not image content.
+    let problem = compile(request_with_geometry(
+        1,
+        geometry_with_shape_and_increment([0.0, 0.0], ImageShape::new(1, 1), [-1.0e-6, 1.0e-6]),
+    ))
+    .expect("logical compilation");
     let expected_problem_id = problem.problem_id();
     let bindings =
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4));
@@ -7795,7 +9217,13 @@ fn plan_seals_physical_work_and_every_required_binding() {
         |problem, bindings| {
             assert_eq!(problem.problem_id(), expected_problem_id);
             assert_eq!(bindings.resource_policy(), &ResourcePolicy::Balanced);
-            Ok::<_, ()>(physical_work(6))
+            Ok::<_, ()>(physical_work_with_transaction_staging(
+                problem,
+                6,
+                product_participants(problem),
+                false,
+                true,
+            ))
         },
     )
     .expect("physical planning");
@@ -7844,16 +9272,22 @@ fn plan_seals_physical_work_and_every_required_binding() {
         execution_plan.physical_work_id()
     );
 
-    let repeated = plan_with_receipts(&problem, bindings, &receipts, |_, _| {
-        Ok::<_, ()>(physical_work(6))
+    let repeated = plan_with_receipts(&problem, bindings, &receipts, |problem, _| {
+        Ok::<_, ()>(physical_work_with_transaction_staging(
+            problem,
+            6,
+            product_participants(problem),
+            false,
+            true,
+        ))
     })
     .expect("repeat physical planning");
     assert_eq!(execution_plan.plan_id(), repeated.plan_id());
     assert_eq!(
         execution_plan.plan_id().as_bytes(),
         [
-            36, 130, 229, 225, 168, 116, 205, 156, 201, 148, 238, 180, 124, 228, 193, 199, 79, 11,
-            231, 197, 230, 142, 0, 90, 69, 86, 151, 107, 100, 145, 141, 210,
+            224, 139, 174, 185, 255, 62, 180, 253, 69, 140, 215, 23, 240, 117, 8, 62, 0, 193, 140,
+            149, 89, 99, 182, 207, 248, 88, 164, 79, 54, 12, 37, 148,
         ]
     );
 }
@@ -7883,11 +9317,13 @@ fn reconstruction_only_transaction_scope_rejects_product_publication() {
 #[test]
 fn native_product_publication_rejects_reconstruction_only_transaction_scope() {
     let problem = compile(sealed_products_request(239)).expect("continuum compilation");
-    let (publication, _) = sealed_publication_plan_for_problem(&problem);
+    let publication = publication_plan_for_problem(&problem);
     let base = problem_bound_sealed_work(&problem, &publication);
     let work = base.observation_transaction();
     let reconstruction = ObservationTransactionWork::new_reconstruction(
-        work.initial_consistency_check().clone(),
+        work.initial_consistency_check()
+            .expect("observation consistency check")
+            .clone(),
         work.post_replay_reconciliation()
             .expect("reconstruction has reconciliation")
             .clone(),
@@ -8609,108 +10045,7 @@ fn publication_visibility_is_final_after_fence_and_scheduler_settlement() {
 }
 
 #[test]
-fn later_member_failure_retains_terminal_prefix_and_suffix_evidence() {
-    let problem = compile(request_with_products_and_model(
-        1,
-        geometry(255.0),
-        vec![ProductKind::Psf, ProductKind::Residual, ProductKind::Model],
-        ModelColumnWrite::Disabled,
-    ))
-    .expect("logical compilation");
-    let execution_plan = plan(
-        &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
-        |_, _| Ok::<_, ()>(physical_work_for_problem(&problem, 6)),
-    )
-    .expect("physical planning");
-    let current = RunBindings::new(
-        problem.inputs().clone(),
-        &ResourcePolicy::Balanced,
-        cost_model(4),
-    );
-    let receipts = execution_plan.receipt_store();
-    let provenance = execution_provenance(
-        casa_imaging_runtime::ExecutionAttemptId::from_sha256([91; 32]),
-        BuildIdentity::from_sha256([92; 32]),
-    );
-    let publication_launched = Arc::new(AtomicBool::new(false));
-    let visible_generation = Arc::new(AtomicUsize::new(0));
-    let mut executor = product_publication_recording_executor(
-        &problem,
-        Arc::clone(&publication_launched),
-        Arc::clone(&visible_generation),
-    );
-    executor.publication_failure_after = Some(1);
-    let registry = TestRegistry {
-        id: registry(3),
-        metadata: implementation_metadata(&problem),
-        executors: BTreeMap::from([(implementation(6), executor)]),
-    };
-    let mut controller = RunToCompletion;
-
-    let error = run_receipted(
-        &problem,
-        &execution_plan,
-        &current,
-        &registry,
-        authority(),
-        &mut controller,
-        receipts.bind(provenance.clone()),
-    )
-    .expect_err("a later member failure must preserve the published prefix");
-    let receipt = receipts
-        .open(provenance.attempt_id())
-        .expect("failed member-publication receipt remains reopenable");
-
-    assert!(matches!(
-        error,
-        RunError::Execution { node, .. } if node == WorkNodeId::new("transaction-commit")
-    ));
-    assert!(publication_launched.load(Ordering::SeqCst));
-    assert_eq!(visible_generation.load(Ordering::SeqCst), 1);
-    assert_eq!(receipt.schema_version(), 22);
-    assert_eq!(receipt.status(), ReceiptStatus::Failed);
-    let dispositions = execution_plan
-        .publication_layouts()
-        .entries()
-        .iter()
-        .map(|layout| receipt.artifact_disposition(layout.artifact()))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        dispositions
-            .iter()
-            .filter(|value| **value == Some(ArtifactDisposition::Published))
-            .count(),
-        1
-    );
-    assert_eq!(
-        dispositions
-            .iter()
-            .filter(|value| **value == Some(ArtifactDisposition::PublicationFailed))
-            .count(),
-        1
-    );
-    assert_eq!(
-        dispositions
-            .iter()
-            .filter(|value| **value == Some(ArtifactDisposition::PublicationPrepared))
-            .count(),
-        dispositions.len() - 2
-    );
-    for layout in execution_plan.publication_layouts().entries() {
-        assert_eq!(
-            receipt.publication_layout_identity(layout.artifact()),
-            Some(layout.layout_id())
-        );
-        assert_eq!(
-            receipt.publication_resource_bounds(layout.artifact()),
-            Some(layout.resource_bounds())
-        );
-    }
-}
-
-#[test]
-fn prepared_publication_holds_the_shared_root_reservation_through_publish() {
+fn publication_does_not_lock_receipt_store_and_active_attempt_remains_exclusive() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
@@ -8723,6 +10058,11 @@ fn prepared_publication_holds_the_shared_root_reservation_through_publish() {
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
+    // The two intentional overlapping runs below must not overlap an unrelated
+    // test's lease on the shared deterministic authority.
+    let _guard = run_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let max_bytes = 1_048_576;
     let receipts = execution_plan.receipt_store();
     let pause = Arc::new(PublicationPause::default());
@@ -8741,10 +10081,7 @@ fn prepared_publication_holds_the_shared_root_reservation_through_publish() {
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([93; 32]),
         BuildIdentity::from_sha256([94; 32]),
     );
-    let second = execution_provenance(
-        casa_imaging_runtime::ExecutionAttemptId::from_sha256([95; 32]),
-        BuildIdentity::from_sha256([96; 32]),
-    );
+    let second = first.clone();
     let executable =
         ExecutableModelProblem::from_compiled(problem.clone()).expect("direct executable problem");
 
@@ -8788,7 +10125,7 @@ fn prepared_publication_holds_the_shared_root_reservation_through_publish() {
             .sum::<u64>();
         assert!(
             retained_bytes <= max_bytes,
-            "prepared marker plus terminal candidate must remain within retention"
+            "active reservation must remain within retention"
         );
 
         let (second_tx, second_rx) = std::sync::mpsc::channel();
@@ -8807,11 +10144,15 @@ fn prepared_publication_holds_the_shared_root_reservation_through_publish() {
                 ))
                 .expect("second run result receiver");
         });
-        match second_rx.recv_timeout(Duration::from_millis(100)) {
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+        match second_rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(Err(RunError::Receipt(
+                casa_imaging_runtime::ReceiptError::AttemptAlreadyExists,
+            ))) => {}
             unexpected => {
                 pause.release();
-                panic!("second run bypassed the retained reservation: {unexpected:?}");
+                panic!(
+                    "duplicate attempt must fail promptly while publication is paused: {unexpected:?}"
+                );
             }
         }
 
@@ -8821,13 +10162,6 @@ fn prepared_publication_holds_the_shared_root_reservation_through_publish() {
                 .recv_timeout(Duration::from_secs(5))
                 .expect("first run result")
                 .expect("first run"),
-            ExecutionOutcome::Succeeded
-        );
-        assert_eq!(
-            second_rx
-                .recv_timeout(Duration::from_secs(5))
-                .expect("second run result")
-                .expect("second run"),
             ExecutionOutcome::Succeeded
         );
     });
@@ -8912,7 +10246,7 @@ fn observation_completion_is_attempt_node_and_fence_bound_after_successful_settl
     let receipts = execution_plan.receipt_store();
     let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([157; 32]);
     let completions = Arc::new(Mutex::new(Vec::new()));
-    let mut executor = recording_executor(6, None, None);
+    let mut executor = publication_capable_executor(&problem, 6);
     executor.observation_completions = Some(Arc::clone(&completions));
     let registry = TestRegistry {
         id: registry(3),
@@ -8959,7 +10293,7 @@ fn settled_observation_completion_is_delivered_only_to_explicit_predecessor_cons
         cost_model(4),
     );
     let delivered = Arc::new(Mutex::new(Vec::new()));
-    let mut executor = recording_executor(6, None, None);
+    let mut executor = publication_capable_executor(&problem, 6);
     executor.delivered_observation_completions = Some(Arc::clone(&delivered));
     let registry = TestRegistry {
         id: registry(3),
@@ -9026,7 +10360,7 @@ fn synchronous_observation_completion_is_exactly_once_attempt_node_and_lease_bou
     let receipts = execution_plan.receipt_store();
     let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([159; 32]);
     let completions = Arc::new(Mutex::new(Vec::new()));
-    let mut executor = recording_executor(6, None, None);
+    let mut executor = publication_capable_executor(&problem, 6);
     executor.observation_completions = Some(Arc::clone(&completions));
     let registry = TestRegistry {
         id: registry(3),
@@ -9754,7 +11088,7 @@ fn multi_source_weighting_receipts_certified_aggregate_residency_through_release
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let mut executor = recording_executor(6, None, None);
+    let mut executor = publication_capable_executor(&problem, 6);
     executor.weighting_source_residency = Some(residency);
     executor.weighting_plan = Some(weighting_plan);
     let registry = TestRegistry {
@@ -9836,6 +11170,44 @@ fn multi_source_weighting_receipts_certified_aggregate_residency_through_release
             .expect("weighting execution state lock")
             .is_empty()
     );
+}
+
+#[test]
+fn selected_source_workspace_charges_row_carry_and_initial_plane_batches() {
+    for channels in [1, 2, 8] {
+        let problem = compile(channel_local_request(237, channels)).unwrap();
+        let specification = SpectralOperatorSpecification::new(&problem).unwrap();
+        let row_carry_bytes =
+            spectral_operator_workload(&specification, 4, SpectralOperatorPass::ResidualRefresh)
+                .unwrap()
+                .source_row_workspace_bytes();
+        assert_eq!(row_carry_bytes > 0, channels > 1);
+        for pass in [
+            SpectralOperatorPass::InitialMajor,
+            SpectralOperatorPass::ResidualRefresh,
+        ] {
+            let workload = spectral_operator_workload(&specification, 4, pass).unwrap();
+            let fragment = CompleteDataPlanFragment::new(
+                &problem,
+                4,
+                WorkNodeId::new("native-row-reservation"),
+                pass,
+            )
+            .unwrap();
+            if pass == SpectralOperatorPass::InitialMajor {
+                assert!(
+                    workload.source_row_workspace_bytes() > row_carry_bytes,
+                    "initial plane batching needs storage even for a single channel"
+                );
+            }
+            assert_eq!(
+                fragment.residency().forward_workspace_bytes(),
+                workload.forward_complex_values() * size_of::<num_complex::Complex64>()
+                    + workload.source_row_workspace_bytes(),
+                "the source owner must be charged in both initial and refresh passes"
+            );
+        }
+    }
 }
 
 #[test]
@@ -10045,7 +11417,8 @@ fn t51_initial_empty_model_residency_excludes_unallocated_pending_delta() {
         fragment(SpectralOperatorPass::ResidualRefresh)
             .residency()
             .major_cycle_model_bytes(),
-        dense_bytes + delta_bytes,
+        dense_bytes + 2 * delta_bytes,
+        "a refresh reserves the pending delta's terms and their compensated pair",
     );
 }
 
@@ -10139,25 +11512,43 @@ fn t41_production_plan_schedules_planner_bounded_mvc_slabs_for_realistic_image_s
             512 * 512 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
             900_000,
         ),
-        mvc_authority,
+        mvc_authority.clone(),
         ResourcePolicy::Exclusive,
     )
     .with_gridded_normal_storage(gridded_storage);
     let plan =
         SpectralCyclePlan::initial(&problem, &registry, policy).expect("production MVC plan");
-    let knobs = plan.physical_work().execution_dag().initial_knobs();
+    let receipts = ExecutionReceiptStore::new(
+        storage_root.path().join("receipts"),
+        ReceiptRetention::new(1, 1_048_576).unwrap(),
+    )
+    .unwrap();
+    let selected = runtime_plan(
+        &problem,
+        PlanningBindings::new(
+            registry.registry_id(),
+            ResourcePolicy::Exclusive,
+            planning_profile(4),
+        ),
+        &mvc_authority,
+        &registry,
+        &receipts,
+        |_, _| Ok::<_, io::Error>(plan.physical_candidates()),
+    )
+    .expect("admit the complete MVC candidate");
+    let knobs = selected.execution_dag().initial_knobs();
     assert_eq!(
         knobs.slab_depth, 8,
         "the operator-memory ceiling admits the complete channel cube"
     );
     assert!(
-        plan.physical_work()
+        selected
             .execution_dag()
             .resource_alternative()
             .quiescence_points
             .contains(&QuiescencePoint::Slab)
     );
-    let complete = plan.into_parts().complete_data;
+    let complete = plan.into_parts(&selected).unwrap().complete_data;
     assert_eq!(complete.slab().core_range(), 0..8);
     assert_eq!(complete.residency(), full.residency());
 }
@@ -10195,26 +11586,70 @@ fn t607_production_plan_bounds_channel_local_cube_with_ordered_slabs() {
             SpectralCyclePlanningLimits::new(1_000, 1, 900_000),
             authority().clone(),
             ResourcePolicy::Balanced,
-        ),
+        )
+        .with_gridded_normal_storage(artifact_storage()),
     )
     .expect("resource-bounded channel-local plan");
-    let slab_depth = plan
-        .physical_work()
-        .execution_dag()
-        .initial_knobs()
-        .slab_depth;
-    assert!(slab_depth > 0 && slab_depth < channels as u64);
-    assert!(
-        plan.physical_work()
-            .execution_dag()
-            .resource_alternative()
-            .quiescence_points
-            .contains(&QuiescencePoint::Slab)
-    );
-    let complete = plan.into_parts().complete_data;
-    assert_eq!(complete.slab().core_range(), 0..slab_depth as usize);
-    assert!(complete.residency().sequential_fold_accumulator_bytes() > 0);
-    assert!(complete.residency().peak_bytes() < full.residency().peak_bytes());
+    let candidates = plan.physical_candidates();
+    assert!(!candidates.is_empty());
+    for physical in candidates {
+        let dag = physical.execution_dag();
+        let slab_depth = dag.initial_knobs().slab_depth;
+        assert!(slab_depth > 0 && slab_depth < channels as u64);
+        assert!(
+            dag.resource_alternative()
+                .quiescence_points
+                .contains(&QuiescencePoint::Slab)
+        );
+        let slab = CompleteDataPlanFragment::for_slab(
+            &problem,
+            256,
+            WorkNodeId::new("t607-channel-local-bounded-depth"),
+            0,
+            slab_depth as usize,
+            SpectralOperatorPass::InitialMajor,
+        )
+        .expect("matching slab-only resource comparison");
+        let operator_allocations = dag
+            .logical_allocations()
+            .values()
+            .filter(|allocation| allocation.id.as_str().starts_with("spectral-operator-"))
+            .collect::<Vec<_>>();
+        assert!(!operator_allocations.is_empty());
+        assert!(operator_allocations.iter().all(|allocation| {
+            allocation
+                .id
+                .as_str()
+                .ends_with(&format!("-ch0-{slab_depth}"))
+        }));
+        let allocation_bytes = |prefix| {
+            let matching = operator_allocations
+                .iter()
+                .filter(|allocation| allocation.id.as_str().starts_with(prefix))
+                .collect::<Vec<_>>();
+            assert_eq!(matching.len(), 1);
+            matching[0].bytes
+        };
+        assert_eq!(
+            allocation_bytes("spectral-operator-grids-"),
+            slab.residency().grid_bytes() as u64
+        );
+        assert_eq!(
+            allocation_bytes("spectral-operator-primitives-"),
+            slab.residency().primitive_output_bytes() as u64,
+            "the paged cube-state owner reserves the ordered fold backing"
+        );
+        let operator_peak = operator_allocations
+            .iter()
+            .map(|allocation| allocation.bytes)
+            .sum::<u64>()
+            + dag
+                .resource_alternative()
+                .demand
+                .overhead
+                .fft_workspace_bytes;
+        assert!(operator_peak < full.residency().peak_bytes() as u64);
+    }
 }
 
 #[test]
@@ -10327,7 +11762,12 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let mut executor = recording_executor(6, None, None);
+    // Keep this fixture on the T19 law-evidence path: the publication fixture
+    // supplies the projection, sealed measurements and member publisher, while
+    // `bind_major_cycle_model` stays off so the paired-operator law probe runs.
+    let publication = publication_plan_for_problem(&problem);
+    let mut executor = product_measurement_executor(&publication);
+    executor.major_cycle_problem = Some(problem.clone());
     executor.id = pathlike_implementation.clone();
     executor.weighting_source_residency = Some(selected_content_residency(&problem));
     executor.weighting_plan = Some(weighting_plan);
@@ -10462,8 +11902,11 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
         executor.weighted_sample_count.load(Ordering::SeqCst) as u64
     );
     assert_eq!(complete_data.block_count(), complete_data.sample_count());
-    assert_eq!(complete_data.primitives().shape(), [8, 8]);
-    assert!(complete_data.primitives().sum_weight() > 0.0);
+    let window = complete_data
+        .read_window(0..1)
+        .expect("single-plane fixture window");
+    assert_eq!(window.primitives().shape(), [8, 8]);
+    assert!(window.primitives().sum_weight() > 0.0);
     assert!(
         executor
             .complete_data_prediction_count
@@ -10483,8 +11926,11 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
         .lock()
         .expect("complete-data law evidence lock");
     assert_eq!(laws.blocks as u64, complete_data.block_count());
+    // The retained T19 operator predicts through the gridded transform, whose
+    // own round-trip contract is 1e-6 relative; the earlier exact-operator
+    // bound of 1e-10 no longer describes this implementation.
     assert!(
-        laws.unit_source_max_error <= 1.0e-10,
+        laws.unit_source_max_error <= 1.0e-6,
         "T18-authorized unit source error was {}",
         laws.unit_source_max_error
     );
@@ -10495,7 +11941,7 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
     );
     let weighted_adjoint_right = complete_data_adjoint_model()
         .iter()
-        .zip(complete_data.primitives().dirty())
+        .zip(window.primitives().dirty())
         .map(|(model, dirty)| model.conj() * dirty)
         .sum::<num_complex::Complex64>();
     let adjoint_scale = laws
@@ -10849,10 +12295,8 @@ fn transaction_failures_leave_the_old_generation_visible() {
         "failed admission cannot launch mutation or publication work"
     );
 
-    // The receipt produced by the real run seam is the only source accepted
-    // for historical quantitative constraints. Replaying it at the same
-    // pressure is reported as a recorded refusal rather than a fresh
-    // synthetic admission failure.
+    // Admission remains a current-capacity decision even when the same store
+    // contains an earlier quantitative failure.
     let pressure_guard = run_lock()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -10880,10 +12324,9 @@ fn transaction_failures_leave_the_old_generation_visible() {
         replay,
         Err(PlanError::Resource(ResourceError::NoFeasibleAlternative(certificate)))
             if matches!(certificate.rejections(), [rejection]
-                if matches!(rejection.reason(), AlternativeRejectionReason::RecordedFailure {
-                    attempt,
-                    status: ReceiptStatus::Infeasible,
-                } if *attempt == casa_imaging_runtime::ExecutionAttemptId::from_sha256([243; 32])))
+                if matches!(rejection.reason(), AlternativeRejectionReason::Infeasible {
+                    resource, required: 1, available: 0,
+                } if resource == "locks"))
     ));
 }
 
@@ -10917,7 +12360,7 @@ fn release_failures_drain_independent_fences_and_quarantine_only_failed_slots() 
                 ),
             );
         }
-        let mut prepare_executor = recording_executor(6, None, None);
+        let mut prepare_executor = publication_capable_executor(&problem, 6);
         prepare_executor.measurements.insert(
             WorkNodeId::new(if fail_at_fence {
                 "0-prepare-mapping"
@@ -11024,7 +12467,7 @@ fn run_persists_a_reopenable_receipt_with_exact_identities_and_every_plan_node()
         .expect("reopen durable receipt");
 
     assert_eq!(outcome, ExecutionOutcome::Succeeded);
-    assert_eq!(receipt.schema_version(), 22);
+    assert_eq!(receipt.schema_version(), 24);
     assert_eq!(receipt.status(), ReceiptStatus::Completed);
     assert_eq!(receipt.plan_identity(), execution_plan.plan_id().as_bytes());
     assert_eq!(receipt.problem_identity(), problem.problem_id().as_bytes());
@@ -11079,7 +12522,7 @@ fn receipt_rejects_checksum_valid_typed_projection_and_audit_forgery() {
     let execution_plan = plan(
         &problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
-        |problem, _| Ok::<_, ()>(physical_work_for_problem(problem, 6)),
+        |problem, _| Ok::<_, ()>(reconstruction_physical_work_for_problem(problem, 6)),
     )
     .expect("physical planning");
     let current = RunBindings::new(
@@ -11087,7 +12530,11 @@ fn receipt_rejects_checksum_valid_typed_projection_and_audit_forgery() {
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let registry = test_registry(&problem, 3, 6, None);
+    let registry = TestRegistry {
+        id: registry(3),
+        metadata: implementation_metadata(&problem),
+        executors: BTreeMap::from([(implementation(6), recording_executor(6, None, None))]),
+    };
     let receipts = execution_plan.receipt_store();
     let provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([85; 32]),
@@ -11107,7 +12554,7 @@ fn receipt_rejects_checksum_valid_typed_projection_and_audit_forgery() {
     .expect("receipted execution");
     let path = only_receipt_path(receipts.root_path());
     let original = fs::read_to_string(&path).expect("serialized receipt");
-    let checksum_marker = "\"payload_sha256\": \"";
+    let checksum_marker = "\"payload_sha256\":\"";
     let checksum_start =
         original.find(checksum_marker).expect("payload checksum") + checksum_marker.len();
     assert_eq!(
@@ -11262,7 +12709,7 @@ fn effective_problem_projection_carries_mtmfs_scales_and_bias() {
     let unbiased_projection = CompiledProblemEvidence::project(&unbiased);
     let biased_projection = CompiledProblemEvidence::project(&biased);
 
-    assert_eq!(unbiased_projection.schema_version(), 10);
+    assert_eq!(unbiased_projection.schema_version(), 11);
     assert_eq!(
         unbiased_projection.field("reconstruction.algorithm.kind"),
         Some("mtmfs")
@@ -11417,7 +12864,7 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
         .expect("antenna generation")
         .to_string();
 
-    assert_eq!(projected.schema_version(), 10);
+    assert_eq!(projected.schema_version(), 11);
     assert_eq!(projected, &CompiledProblemEvidence::project(&problem));
     assert_eq!(
         reopened.model_lifecycle_identity(),
@@ -11456,10 +12903,14 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
     );
     assert_eq!(
         projected.field("science.measurement_equation.operator.transforms.2.kind"),
-        Some("direction_dependent_response")
+        Some("feed_response")
     );
     assert_eq!(
         projected.field("science.measurement_equation.operator.transforms.3.kind"),
+        Some("direction_dependent_response")
+    );
+    assert_eq!(
+        projected.field("science.measurement_equation.operator.transforms.4.kind"),
         Some("phase")
     );
     assert_eq!(
@@ -11525,7 +12976,7 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
         projected.field("products.graph.identity"),
         Some(problem.product_graph().graph_id().to_string().as_str())
     );
-    assert_eq!(projected.field("products.graph.schema_version"), Some("2"));
+    assert_eq!(projected.field("products.graph.schema_version"), Some("4"));
     assert_eq!(projected.field("products.graph.nodes.0.ordinal"), Some("0"));
     assert_eq!(
         projected.field("products.graph.publication.members.0"),
@@ -11595,7 +13046,7 @@ fn receipt_reopens_the_complete_selected_plan_projection() {
     .expect("auditable physical planning");
     let current = RunBindings::new(problem.inputs().clone(), &policy, cost_model(4));
     let cache_artifact = ArtifactIdentity::from_sha256([51; 32]);
-    let mut executor = recording_executor(6, None, None);
+    let mut executor = publication_capable_executor(&problem, 6);
     executor.measurements = BTreeMap::from([(
         WorkNodeId::new("first-major-work"),
         (
@@ -11929,10 +13380,30 @@ fn receipt_compares_planned_and_actual_io_artifacts_and_never_persists_paths() {
     );
     let input = ArtifactIdentity::from_sha256([31; 32]);
     let cache = ArtifactIdentity::from_sha256([32; 32]);
-    let output = ArtifactIdentity::from_sha256([34; 32]);
+    let publication = publication_plan_for_problem(&problem);
+    let authorization = &publication;
+    let first_output = &authorization.entries()[0];
+    let output = first_output.artifact();
+    let output_bytes = first_output.payload_bytes();
     let input_path = RedactedPath::from_path("/Users/private/secret-source.ms");
     let output_path = RedactedPath::from_path("/Volumes/private/secret-image.table");
-    let mut executor = recording_executor(6, None, None);
+    let mut executor = publication_capable_executor(&problem, 6);
+    executor.publication_path = Some(output_path);
+    executor.sealed_measurements = Some(
+        authorization
+            .entries()
+            .iter()
+            .map(|entry| {
+                artifact_measurement(
+                    entry.artifact(),
+                    None,
+                    ArtifactDisposition::Staged,
+                    entry.payload_bytes(),
+                    (entry.node() == first_output.node()).then_some(output_path),
+                )
+            })
+            .collect(),
+    );
     executor.measurements = BTreeMap::from([
         (
             WorkNodeId::new("read"),
@@ -11960,13 +13431,7 @@ fn receipt_compares_planned_and_actual_io_artifacts_and_never_persists_paths() {
             WorkNodeId::new("transaction-commit"),
             (
                 vec![IoMeasurement::new(IoBufferKind::Publication, 2_048, 1)],
-                vec![artifact_measurement(
-                    output,
-                    Some(ArtifactIdentity::from_sha256([36; 32])),
-                    ArtifactDisposition::Staged,
-                    2_048,
-                    Some(output_path),
-                )],
+                Vec::new(),
             ),
         ),
     ]);
@@ -12022,7 +13487,7 @@ fn receipt_compares_planned_and_actual_io_artifacts_and_never_persists_paths() {
         receipt.artifact_node(output),
         Some(WorkNodeId::new("transaction-commit"))
     );
-    assert_eq!(receipt.artifact_actual_bytes(output), Some(2_048));
+    assert_eq!(receipt.artifact_actual_bytes(output), Some(output_bytes));
     assert_eq!(
         receipt.artifact_disposition(output),
         Some(ArtifactDisposition::Published)
@@ -12035,10 +13500,7 @@ fn receipt_compares_planned_and_actual_io_artifacts_and_never_persists_paths() {
         receipt.artifact_cache_identity(cache),
         Some(CacheIdentity::from_sha256([33; 32]).as_bytes())
     );
-    assert_eq!(
-        receipt.artifact_observed_identity(output),
-        Some(ArtifactIdentity::from_sha256([36; 32]).as_bytes())
-    );
+    assert_eq!(receipt.artifact_observed_identity(output), None);
     assert_eq!(
         receipt.artifact_path_identity(input),
         Some(input_path.as_bytes())
@@ -12047,15 +13509,8 @@ fn receipt_compares_planned_and_actual_io_artifacts_and_never_persists_paths() {
         receipt.artifact_path_identity(output),
         Some(output_path.as_bytes())
     );
-    let persisted = std::fs::read_to_string(
-        std::fs::read_dir(receipts.root_path())
-            .expect("receipt directory listing")
-            .next()
-            .expect("receipt file")
-            .expect("receipt entry")
-            .path(),
-    )
-    .expect("serialized receipt");
+    let persisted = std::fs::read_to_string(only_receipt_path(receipts.root_path()))
+        .expect("serialized receipt");
     assert!(!persisted.contains("secret-source.ms"));
     assert!(!persisted.contains("secret-image.table"));
 }
@@ -12076,15 +13531,12 @@ fn failed_publication_fence_never_records_a_published_output() {
     );
     let input = ArtifactIdentity::from_sha256([31; 32]);
     let cache = ArtifactIdentity::from_sha256([32; 32]);
-    let (publication, projection) = sealed_publication_plan_for_problem(&problem);
-    let authorization = publication
-        .authorize(&projection)
-        .expect("publication authorization");
-    let first_output = authorization.entries()[0];
-    let output = first_output.planned_identity();
-    let staged_output = first_output.observed_identity();
+    let publication = publication_plan_for_problem(&problem);
+    let authorization = &publication;
+    let first_output = &authorization.entries()[0];
+    let output = first_output.artifact();
     let output_bytes = first_output.payload_bytes();
-    let mut executor = sealed_measurement_executor(&publication, &projection);
+    let mut executor = product_measurement_executor(&publication);
     executor.major_cycle_problem = Some(problem.clone());
     executor.fence_failure = Some("publication fence failed");
     executor.fail_only_fence = Some(FenceKind::Publication);
@@ -12131,12 +13583,9 @@ fn failed_publication_fence_never_records_a_published_output() {
     assert_eq!(receipt.status(), ReceiptStatus::Failed);
     assert_eq!(
         receipt.artifact_disposition(output),
-        Some(ArtifactDisposition::PublicationPrepared)
+        Some(ArtifactDisposition::Staged)
     );
-    assert_eq!(
-        receipt.artifact_observed_identity(output),
-        Some(staged_output.as_bytes())
-    );
+    assert_eq!(receipt.artifact_observed_identity(output), None);
     assert_eq!(receipt.artifact_actual_bytes(output), Some(output_bytes));
     assert_eq!(
         receipt.fence_status(&FenceId::new(
@@ -12364,8 +13813,14 @@ fn stale_binding_uses_the_plan_receipt_store_for_mutation_evidence() {
     ));
 }
 
-fn t20_major_cycle_harness(
+type T20PriorState = (
+    casa_imaging_reconstruction::FinalNormalState,
+    casa_imaging_reconstruction::FinalModelContinuation,
+);
+
+fn t20_major_cycle_harness_with_prior(
     mode: MajorCycleMode,
+    prior: Option<T20PriorState>,
 ) -> (
     casa_imaging_model::CompiledProblem,
     casa_imaging_runtime::ExecutionPlan,
@@ -12401,11 +13856,16 @@ fn t20_major_cycle_harness(
     let physical = fragment
         .compose(&base)
         .expect("production weighting physical work");
+    let operator_pass = if prior.is_some() {
+        SpectralOperatorPass::ResidualRefresh
+    } else {
+        SpectralOperatorPass::InitialMajor
+    };
     let operator_plan = CompleteDataPlanFragment::new(
         &problem,
         weighting_plan.limits().max_block_samples(),
         replay.clone(),
-        SpectralOperatorPass::InitialMajor,
+        operator_pass,
     )
     .expect("spectral operator runtime plan");
     let (physical, operator_plan) = operator_plan
@@ -12422,18 +13882,29 @@ fn t20_major_cycle_harness(
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let (publication, projection) = sealed_publication_plan_for_problem(&problem);
-    let mut executor = sealed_measurement_executor(&publication, &projection);
+    let publication = publication_plan_for_problem(&problem);
+    let mut executor = product_measurement_executor(&publication);
     executor.id = pathlike_implementation.clone();
     executor.weighting_source_residency = Some(selected_content_residency(&problem));
     executor.weighting_plan = Some(weighting_plan);
     executor.complete_data_plan = Some(operator_plan);
+    if let Some((normal_state, continuation)) = prior {
+        *executor
+            .major_cycle_prior_normal_state
+            .lock()
+            .expect("major-cycle prior normal state lock") = Some(normal_state);
+        *executor
+            .major_cycle_continuation
+            .lock()
+            .expect("major-cycle continuation lock") = Some(continuation);
+    }
     executor.major_cycle_node = Some(match mode {
         MajorCycleMode::NodeSubstitution => WorkNodeId::new("transaction-stage-psf"),
         _ => WorkNodeId::new("post-replay-reconciliation"),
     });
     executor.major_cycle_mode = mode;
     executor.major_cycle_problem = Some(problem.clone());
+    executor.bind_major_cycle_model = true;
     (
         problem,
         execution_plan,
@@ -12452,8 +13923,21 @@ fn run_t20_major_cycle(
     TestRegistry,
     WorkImplementationId,
 ) {
+    run_t20_major_cycle_with_prior(mode, seed, None)
+}
+
+fn run_t20_major_cycle_with_prior(
+    mode: MajorCycleMode,
+    seed: u8,
+    prior: Option<T20PriorState>,
+) -> (
+    Result<ExecutionOutcome, RunError<io::Error>>,
+    casa_imaging_model::CompiledProblem,
+    TestRegistry,
+    WorkImplementationId,
+) {
     let (problem, execution_plan, current, implementation, executors) =
-        t20_major_cycle_harness(mode);
+        t20_major_cycle_harness_with_prior(mode, prior);
     let registry = TestRegistry {
         id: registry(3),
         metadata: implementation_metadata(&problem),
@@ -12538,8 +14022,27 @@ fn major_cycle_reconciles_t19_evidence_with_the_named_model_generation() {
 
 #[test]
 fn major_cycle_applies_pending_deltas_only_through_the_model_owner() {
+    // A pending delta is applied by a residual-refresh major cycle over the
+    // prior reconciled normal state, so the fixture runs the production
+    // initial-reconciliation then final-major sequence rather than binding a
+    // delta-applied candidate to a certified-zero initial pass.
+    let (outcome, _problem, initial_registry, initial_implementation) =
+        run_t20_major_cycle(MajorCycleMode::Confirm, 212);
+    assert_eq!(
+        outcome.expect("initial reconciliation completes"),
+        ExecutionOutcome::Succeeded
+    );
+    let initial = initial_registry.executors[&initial_implementation]
+        .major_cycle_result
+        .lock()
+        .expect("initial major-cycle result lock")
+        .take()
+        .expect("initial reconciliation recorded its runtime envelope")
+        .into_completion();
+    let prior = Some(initial.into_continuation());
+
     let (outcome, _problem, registry, implementation) =
-        run_t20_major_cycle(MajorCycleMode::ApplyDelta, 213);
+        run_t20_major_cycle_with_prior(MajorCycleMode::ApplyDelta, 213, prior);
     assert_eq!(
         outcome.expect("delta reconciliation completes"),
         ExecutionOutcome::Succeeded
@@ -12866,6 +14369,8 @@ fn sealed_products_round(
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem"),
         ModelExecutionAttemptId::new(identity(attempt_byte)),
         7,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("bind model lifecycle");
     let named = lifecycle.initial_empty().expect("empty named generation");
@@ -12912,29 +14417,20 @@ fn sealed_products_round(
     let evidence: CompleteDataOwnerResult = state
         .complete(&summary, selected_generation, None)
         .expect("complete T19 evidence");
-    MajorCycleOwner::from_complete_data(evidence, preparation)
-        .expect("T20 owner")
-        .reconcile(&mut lifecycle)
-        .expect("atomic reconciliation")
-}
-
-fn sealed_generation_for_problem(
-    problem: &casa_imaging_model::CompiledProblem,
-) -> (
-    casa_imaging_products::PlannedContinuumGeneration,
-    SealedContinuumGeneration,
-) {
-    let join = sealed_products_round(problem, 200);
-    let catalog = ContinuumSourceCatalog::from_major_cycle(problem, &join)
-        .expect("source catalog from released join");
-    let authority = ProductGenerationAuthority::bind(problem);
-    let planned = authority
-        .plan(&catalog, &ContinuumProductControls::default())
-        .expect("planned generation");
-    let inputs = ContinuumProductInputs::from_major_cycle(problem, &join).expect("inputs");
-    let produced = produce_continuum_members(&planned, &inputs).expect("produced members");
-    let sealed = authority.authorize(&planned, &produced).expect("sealed");
-    (planned, sealed)
+    MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    evidence.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            evidence.seal(&storage).expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .expect("T20 owner")
+    .reconcile(&mut lifecycle)
+    .expect("atomic reconciliation")
 }
 
 fn pending_generation_for_problem(
@@ -12945,23 +14441,26 @@ fn pending_generation_for_problem(
     ContinuumGenerationDemand,
 ) {
     let join = sealed_products_round(problem, 202);
-    let catalog = ContinuumSourceCatalog::from_major_cycle(problem, &join)
-        .expect("source catalog from released join");
-    let planned = ProductGenerationAuthority::bind(problem)
-        .plan(&catalog, &ContinuumProductControls::default())
-        .expect("planned generation");
     let inputs = ContinuumProductInputs::from_major_cycle(problem, &join).expect("inputs");
-    let demand = planned.demand(&inputs).expect("product generation demand");
+    let planned = casa_imaging_products::PlannedContinuumGeneration::new(
+        &inputs,
+        &ContinuumProductControls::default(),
+    )
+    .expect("planned generation");
+    let demand = planned
+        .demand(
+            &inputs,
+            casa_imaging_products::ProductStoragePlan::new(1, 1).unwrap(),
+        )
+        .expect("product generation demand");
     (planned, join, demand)
 }
 
-fn sealed_publication_plan_for_problem(
+fn publication_plan_for_problem(
     problem: &casa_imaging_model::CompiledProblem,
-) -> (ProductPublicationPlan, PublicationProjection) {
-    let (planned, sealed) = sealed_generation_for_problem(problem);
-    let projection = PublicationProjection::from_sealed(&sealed).expect("publication projection");
-    let plan = ProductPublicationPlan::bind(problem, &planned).expect("planned publication plan");
-    (plan, projection)
+) -> ProductPublicationPlan {
+    let (planned, _, _) = pending_generation_for_problem(problem);
+    ProductPublicationPlan::bind(problem, &planned).expect("planned inventory")
 }
 
 #[test]
@@ -12975,7 +14474,13 @@ fn planned_publication_rejects_another_problem_with_the_same_product_graph() {
     );
     assert_ne!(source.problem_id(), foreign.problem_id());
 
-    let (planned, _sealed) = sealed_generation_for_problem(&source);
+    let (planned, _, _) = pending_generation_for_problem(&source);
+    let publication = ProductPublicationPlan::bind(&source, &planned).unwrap();
+    let shared = publication.clone();
+    assert!(
+        std::ptr::eq(publication.entries(), shared.entries()),
+        "planning and execution share one routing inventory"
+    );
     let error = ProductPublicationPlan::bind(&foreign, &planned)
         .expect_err("a plan from another problem must not enter publication planning");
     assert_eq!(
@@ -12987,351 +14492,242 @@ fn planned_publication_rejects_another_problem_with_the_same_product_graph() {
     );
 }
 
-#[test]
-fn product_publication_plans_before_member_production_and_sealing() {
-    let problem = compile(sealed_products_request(238)).expect("continuum compilation");
-    let join = sealed_products_round(&problem, 201);
-    let catalog = ContinuumSourceCatalog::from_major_cycle(&problem, &join)
-        .expect("source catalog from released join");
-    let authority = ProductGenerationAuthority::bind(&problem);
-    let planned = authority
-        .plan(&catalog, &ContinuumProductControls::default())
-        .expect("planned generation");
-
-    let publication = ProductPublicationPlan::bind(&problem, &planned)
-        .expect("physical publication planning needs no completed seal");
-    assert_eq!(publication.generation_id(), planned.generation_id());
-
-    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &join).expect("inputs");
-    let produced = produce_continuum_members(&planned, &inputs).expect("produced members");
-    let sealed = authority.authorize(&planned, &produced).expect("sealed");
-    let projection = PublicationProjection::from_sealed(&sealed).expect("projection");
-    let authorized = publication
-        .authorize(&projection)
-        .expect("post-completion seal matches immutable plan");
-    assert_eq!(authorized.generation_id(), planned.generation_id());
-    assert_eq!(authorized.entries().len(), publication.entries().len());
-}
-
 #[derive(Default)]
 struct InMemoryProductSink {
-    staged: Mutex<Vec<ArtifactIdentity>>,
-    visible: Mutex<Vec<ArtifactIdentity>>,
+    staged: Mutex<Vec<casa_imaging_model::ProductNodeId>>,
+    visible: Mutex<Vec<casa_imaging_model::ProductNodeId>>,
     publish_calls: AtomicUsize,
-    published_entries: Mutex<Vec<casa_imaging_runtime::AuthorizedProductPublicationEntry>>,
-    fail_at: Option<usize>,
-    uncertain: bool,
+    fail: bool,
 }
-
-impl SerialProductPublicationSink for InMemoryProductSink {
-    type Error = io::Error;
-
-    fn staging_residency_bytes(
-        &self,
-        _planned: &casa_imaging_products::PlannedContinuumGeneration,
-        demand: &ContinuumGenerationDemand,
-    ) -> Result<u64, Self::Error> {
-        demand
-            .maximum_member_payload_bytes()
-            .checked_add(demand.maximum_member_validity_bytes())
-            .ok_or_else(|| io::Error::other("in-memory staging residency overflow"))
+struct CountingProductWriter<'a> {
+    sink: &'a InMemoryProductSink,
+    node: casa_imaging_model::ProductNodeId,
+    layout: casa_imaging_products::ProductWindowLayout,
+    next_channel: usize,
+}
+impl casa_imaging_products::ProductOutput for InMemoryProductSink {
+    fn begin_member<'a>(
+        &'a self,
+        member: &casa_imaging_products::PlannedMember,
+        layout: casa_imaging_products::ProductWindowLayout,
+        _: &[Option<casa_imaging_products::RestoringBeam>],
+    ) -> Result<
+        Box<dyn casa_imaging_products::ProductWriter + 'a>,
+        casa_imaging_products::ProductsError,
+    > {
+        assert!(self.visible.lock().unwrap().is_empty());
+        Ok(Box::new(CountingProductWriter {
+            sink: self,
+            node: member.node(),
+            layout,
+            next_channel: 0,
+        }))
     }
-
-    fn stage(
-        &self,
-        planned: ArtifactIdentity,
-        _observed: ArtifactIdentity,
-        _member: &casa_imaging_products::SealedMember,
-    ) -> Result<(), Self::Error> {
-        assert!(self.visible.lock().expect("visible lock").is_empty());
-        self.staged.lock().expect("staging lock").push(planned);
+}
+impl casa_imaging_products::ProductWriter for CountingProductWriter<'_> {
+    fn write(
+        &mut self,
+        window: casa_imaging_products::ProductWindow,
+    ) -> Result<(), casa_imaging_products::ProductsError> {
+        let axis = self.layout.spectral_axis();
+        assert_eq!(window.start()[axis], self.next_channel);
+        assert!(window.payload().len() <= self.layout.maximum_values());
+        assert!(window.payload().iter().all(|value| !value.is_infinite()));
+        self.next_channel += window.shape()[axis];
         Ok(())
     }
-
-    fn promote(
+    fn finish(self: Box<Self>) -> Result<(), casa_imaging_products::ProductsError> {
+        assert_eq!(
+            self.next_channel,
+            self.layout.shape()[self.layout.spectral_axis()]
+        );
+        self.sink.staged.lock().unwrap().push(self.node);
+        Ok(())
+    }
+}
+impl SerialProductPublicationSink for InMemoryProductSink {
+    type Error = io::Error;
+    fn residency(
         &self,
-        entry: casa_imaging_runtime::AuthorizedProductPublicationEntry,
-    ) -> Result<(), casa_imaging_runtime::MemberPromotionFailure<Self::Error>> {
-        let call = self.publish_calls.fetch_add(1, Ordering::SeqCst);
-        if self.fail_at == Some(call) {
-            let error = io::Error::other("injected member promotion failure");
-            return Err(if self.uncertain {
-                casa_imaging_runtime::MemberPromotionFailure::uncertain(error)
-            } else {
-                casa_imaging_runtime::MemberPromotionFailure::failed(error)
-            });
+        _: &casa_imaging_products::PlannedContinuumGeneration,
+        demand: &ContinuumGenerationDemand,
+    ) -> Result<casa_imaging_runtime::ProductSinkResidency, Self::Error> {
+        Ok(casa_imaging_runtime::ProductSinkResidency {
+            writer_bytes: demand.maximum_window_payload_bytes()
+                + demand.maximum_window_validity_bytes(),
+            retained_bytes: 0,
+        })
+    }
+    fn publish(&self) -> Result<(), Self::Error> {
+        self.publish_calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(io::Error::other(
+                "injected publication failure; rerun required",
+            ));
         }
-        let mut visible = self.visible.lock().expect("visible lock");
-        if !visible.contains(&entry.observed_identity()) {
-            visible.push(entry.observed_identity());
-        }
-        self.published_entries
-            .lock()
-            .expect("published entries lock")
-            .push(entry);
+        *self.visible.lock().unwrap() = self.staged.lock().unwrap().clone();
         Ok(())
     }
 }
 
 #[test]
-fn serial_product_publication_stages_privately_then_publishes_once() {
-    let problem = compile(sealed_products_request(242)).expect("continuum compilation");
-    let (planned, scientific, generation_demand) = pending_generation_for_problem(&problem);
-    let sink = InMemoryProductSink::default();
-    let staging_residency_bytes = sink
-        .staging_residency_bytes(&planned, &generation_demand)
-        .expect("in-memory staging demand");
-    let planning_registry = ContractOnlyRegistry::new(
-        registry(77),
-        implementation_metadata(&problem),
-        [implementation(77)],
-    );
-    let storage_io = serial_storage_io();
-    let planned_runtime = SerialProductPublicationPlan::new(
-        &problem,
-        &planned,
-        &generation_demand,
-        staging_residency_bytes,
-        &planning_registry,
-        SerialProductPublicationPolicy::new(implementation(77), storage_io.clone(), 1_000, 900_000),
-    )
-    .expect("production publication plan");
-    let publication_dag = planned_runtime.physical_work().execution_dag();
-    assert_eq!(
-        planned_runtime
-            .physical_work()
-            .observation_transaction()
-            .post_replay_reconciliation(),
-        None,
-        "sealed publication has a total public reconciliation query"
-    );
-    assert!(
-        publication_dag
-            .nodes()
-            .values()
-            .all(|node| !node.kind.reads_observation()),
-        "sealed conventional products require no ObservationRead work"
-    );
-    assert!(publication_dag.nodes().values().all(|node| {
-        node.claims.iter().all(|claim| {
-            !matches!(
-                claim.resource,
-                LeaseResource::MeasurementSetLock { .. }
-                    | LeaseResource::StorageReadRate { .. }
-                    | LeaseResource::StorageQueue { .. }
-                    | LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead)
-            )
-        })
-    }));
-    let demand = &publication_dag.resource_alternative().demand;
-    assert_eq!(demand.locks.hard(), 0);
-    assert_eq!(
-        demand.file_descriptors.hard(),
-        1,
-        "one serial output descriptor is distinct from zero observation descriptors"
-    );
-    for node in ["product-publication-stage", "product-publication-commit"] {
-        assert!(
-            publication_dag.nodes()[&WorkNodeId::new(node)]
-                .claims
-                .iter()
-                .any(|claim| {
-                    claim.resource == LeaseResource::FileDescriptors && claim.amount == 1
-                })
-        );
-    }
-    assert!(
-        publication_dag.nodes()[&WorkNodeId::new("product-publication-check")]
-            .claims
-            .iter()
-            .all(|claim| claim.resource != LeaseResource::FileDescriptors)
-    );
-    assert_eq!(demand.queues.len(), 1);
-    assert_eq!(
-        demand.queues[0].demand_id,
-        "product-publication-output-queue"
-    );
-    assert_eq!(demand.io_buffers.source_read_ahead_bytes, 0);
-    let payload_bytes = planned_runtime
-        .publication()
-        .entries()
-        .iter()
-        .map(|entry| entry.payload_bytes())
-        .sum::<u64>();
-    let writer_residency_bytes = payload_bytes.max(staging_residency_bytes);
-    assert_eq!(
-        demand.io_buffers.serialization_bytes, writer_residency_bytes,
-        "publication charges the larger of the serialized payload and sink-owned staging envelope"
-    );
-    assert_eq!(
-        publication_dag.logical_allocations()
-            [&casa_imaging_runtime::AllocationId::new("product-generation-produced")]
-            .bytes,
-        generation_demand.produced_residency_bytes(),
-        "generation charges the product-owner produced residency"
-    );
-    assert_eq!(
-        publication_dag.logical_allocations()
-            [&casa_imaging_runtime::AllocationId::new("product-generation-sealed")]
-            .bytes,
-        generation_demand.sealed_residency_bytes(),
-        "sealing charges the product-owner sealed residency"
-    );
-    assert_eq!(
-        publication_dag.logical_allocations()
-            [&casa_imaging_runtime::AllocationId::new("product-generation-scratch")]
-            .bytes,
-        generation_demand.algorithm_scratch_bytes(),
-        "generation charges the product-owner algorithm scratch"
-    );
-    assert_eq!(
-        publication_dag.logical_allocations()
-            [&casa_imaging_runtime::AllocationId::new("product-publication-writer-buffer")]
-            .bytes,
-        writer_residency_bytes,
-        "serialization has an independent admitted writer allocation"
-    );
-    assert_eq!(demand.rates.len(), 1);
-    assert_eq!(
-        demand.rates[0].demand_id, "product-publication-output-write-rate",
-        "publication must reserve only output write throughput"
-    );
-    let expected_members = planned_runtime.publication().entries().len();
-    let (physical, publication) = planned_runtime.into_parts();
-    let expected_layouts = physical.publication_layouts().entries().to_vec();
-    let executor = SerialProductPublicationExecutor::new(
-        implementation(77),
-        problem.clone(),
-        publication,
-        planned,
-        scientific,
-        None,
-        sink,
-    )
-    .expect("sealed publication executor");
-    let runtime_registry =
-        SerialProductPublicationRegistry::new(registry(77), implementation(77), &problem, executor);
-    let directory = tempfile::tempdir().expect("receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(4, 1_048_576).expect("retention"),
-    )
-    .expect("receipt store");
-    let execution_plan = runtime_plan(
-        &problem,
-        PlanningBindings::new(registry(77), ResourcePolicy::Balanced, planning_profile(4)),
-        authority(),
-        &runtime_registry,
-        &receipts,
-        move |_, _| Ok::<_, io::Error>(vec![physical]),
-    )
-    .expect("ordinary publication plan");
-    assert!(
-        runtime_registry
-            .implementation()
-            .sink()
-            .visible
-            .lock()
-            .expect("visible lock")
-            .is_empty()
-    );
-    let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([78; 32]);
-    let current = RunBindings::new(
-        problem.inputs().clone(),
-        &ResourcePolicy::Balanced,
-        cost_model(4),
-    );
-    runtime_run(
-        &ExecutableModelProblem::from_compiled(problem.clone()).expect("executable"),
-        &execution_plan,
-        &current,
-        &runtime_registry,
-        authority(),
-        &mut RunToCompletion,
-        receipts.bind(execution_provenance(
-            attempt,
-            BuildIdentity::from_sha256([79; 32]),
-        )),
-    )
-    .expect("atomic publication run");
-    let sink = runtime_registry.implementation().sink();
-    assert_eq!(
-        sink.staged.lock().expect("staging lock").len(),
-        expected_members
-    );
-    assert_eq!(
-        sink.visible.lock().expect("visible lock").len(),
-        expected_members
-    );
-    assert_eq!(sink.publish_calls.load(Ordering::SeqCst), expected_members);
-    let retry_entry = sink
-        .published_entries
+fn direct_product_publication_has_bounded_write_only_generation_and_one_terminal_publish() {
+    let _guard = run_lock()
         .lock()
-        .expect("published entries lock")[0];
-    sink.promote(retry_entry)
-        .expect("same member identity is idempotent");
-    assert_eq!(
-        sink.visible.lock().expect("visible lock").len(),
-        expected_members
-    );
-    let (_, _, published) = runtime_registry
-        .implementation()
-        .take_completion()
-        .expect("payload-free publication completion")
-        .into_parts();
-    assert_eq!(published.payload_residency_bytes(), 0);
-    let receipt = receipts.open(attempt).expect("publication receipt");
-    assert_eq!(receipt.status(), ReceiptStatus::Completed);
-    assert_eq!(receipt.publication_layout_count(), expected_members);
-    for expected in &expected_layouts {
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    for fail in [false, true] {
+        let problem = compile(sealed_products_request(242)).unwrap();
+        let (planned, scientific, demand) = pending_generation_for_problem(&problem);
+        let sink = InMemoryProductSink {
+            fail,
+            ..InMemoryProductSink::default()
+        };
+        let writer_bytes = sink.residency(&planned, &demand).unwrap();
+        let planning_registry = ContractOnlyRegistry::new(
+            registry(77),
+            implementation_metadata(&problem),
+            [implementation(77)],
+        );
+        let planned_runtime = SerialProductPublicationPlan::new(
+            &problem,
+            &planned,
+            &demand,
+            writer_bytes,
+            &planning_registry,
+            SerialProductPublicationPolicy::new(
+                implementation(77),
+                serial_storage_io(),
+                1_000,
+                900_000,
+            ),
+        )
+        .unwrap();
+        let dag = planned_runtime.physical_work().execution_dag();
+        assert_eq!(dag.nodes().len(), 2);
+        assert!(
+            planned_runtime
+                .physical_work()
+                .observation_transaction()
+                .initial_consistency_check()
+                .is_none()
+        );
+        let metadata =
+            &dag.logical_allocations()[&AllocationId::new("product-generation-metadata")];
+        assert_eq!(metadata.bytes, demand.retained_metadata_bytes());
         assert_eq!(
-            receipt.publication_participant(expected.artifact()),
-            Some(match expected.participant() {
-                casa_imaging_runtime::PublicationParticipant::Product { graph_id, node_id } => {
-                    casa_imaging_runtime::ReceiptPublicationParticipant::Product {
-                        graph_identity: graph_id.as_bytes(),
-                        node_ordinal: node_id.ordinal(),
-                    }
-                }
-            })
+            metadata.lifetime.acquire_at,
+            WorkNodeId::new("product-generation-write")
         );
         assert_eq!(
-            receipt.publication_layout_identity(expected.artifact()),
-            Some(expected.layout_id())
+            metadata.lifetime.release_after,
+            BTreeSet::from([
+                WorkDependency::Fence(FenceId::new(
+                    WorkNodeId::new("product-publication-commit"),
+                    FenceKind::Io
+                )),
+                WorkDependency::Fence(FenceId::new(
+                    WorkNodeId::new("product-publication-commit"),
+                    FenceKind::Publication
+                )),
+            ])
+        );
+        assert_eq!(dag.resource_alternative().demand.file_descriptors.hard(), 1);
+        assert_eq!(
+            dag.resource_alternative()
+                .demand
+                .io_buffers
+                .serialization_bytes,
+            writer_bytes.writer_bytes
+        );
+        assert!(
+            dag.resource_alternative()
+                .demand
+                .storage
+                .iter()
+                .all(|storage| storage.temporary_bytes == 0)
+        );
+        assert!(
+            dag.nodes()
+                .values()
+                .all(|node| !node.kind.reads_observation())
+        );
+        let expected_members = planned.members().len();
+        let (physical, publication, window) = planned_runtime.into_parts();
+        let executor = SerialProductPublicationExecutor::new(
+            implementation(77),
+            problem.clone(),
+            publication,
+            planned,
+            scientific,
+            None,
+            sink,
+            window,
+        )
+        .unwrap();
+        let registry = SerialProductPublicationRegistry::new(
+            registry(77),
+            implementation(77),
+            &problem,
+            executor,
+        );
+        let directory = tempfile::tempdir().unwrap();
+        let receipts = ExecutionReceiptStore::new(
+            directory.path(),
+            ReceiptRetention::new(4, 1_048_576).unwrap(),
+        )
+        .unwrap();
+        let plan = runtime_plan(
+            &problem,
+            PlanningBindings::new(
+                registry.registry_id(),
+                ResourcePolicy::Balanced,
+                planning_profile(4),
+            ),
+            authority(),
+            &registry,
+            &receipts,
+            move |_, _| Ok::<_, io::Error>(vec![physical]),
+        )
+        .unwrap();
+        let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([78; 32]);
+        let current = RunBindings::new(
+            problem.inputs().clone(),
+            &ResourcePolicy::Balanced,
+            cost_model(4),
+        );
+        let result = runtime_run(
+            &ExecutableModelProblem::from_compiled(problem.clone()).unwrap(),
+            &plan,
+            &current,
+            &registry,
+            authority(),
+            &mut RunToCompletion,
+            receipts.bind(execution_provenance(
+                attempt,
+                BuildIdentity::from_sha256([79; 32]),
+            )),
+        );
+        assert_eq!(result.is_err(), fail);
+        let sink = registry.implementation().sink();
+        assert_eq!(sink.staged.lock().unwrap().len(), expected_members);
+        assert_eq!(sink.publish_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            sink.visible.lock().unwrap().len(),
+            if fail { 0 } else { expected_members }
+        );
+        assert_eq!(registry.implementation().take_completion().is_none(), fail);
+        assert!(
+            registry.implementation().take_completion().is_none(),
+            "completion is consumed once"
         );
         assert_eq!(
-            receipt.publication_producer(expected.artifact()).as_ref(),
-            Some(expected.staging().producer())
-        );
-        assert_eq!(
-            receipt.publication_terminal(expected.artifact()).as_ref(),
-            Some(expected.staging().terminal())
-        );
-        assert_eq!(
-            receipt.publication_writer_buffer_kind(expected.artifact()),
-            Some(expected.staging().writer_buffer_kind())
-        );
-        assert_eq!(
-            receipt
-                .publication_writer_allocation(expected.artifact())
-                .as_ref(),
-            Some(expected.staging().writer_allocation())
-        );
-        assert_eq!(
-            receipt.publication_resource_bounds(expected.artifact()),
-            Some(expected.resource_bounds())
-        );
-    }
-    for (node_id, node) in execution_plan.execution_dag().nodes() {
-        for claim in &node.claims {
-            if let LeaseResource::IoBuffer(kind) = &claim.resource {
-                assert_eq!(
-                    receipt.stage_actual_io(node_id, *kind),
-                    None,
-                    "capacity claim for {node_id:?} must not become fabricated actual I/O"
-                );
+            receipts.open(attempt).unwrap().status(),
+            if fail {
+                ReceiptStatus::Failed
+            } else {
+                ReceiptStatus::Completed
             }
-        }
+        );
     }
 }
 
@@ -13340,7 +14736,7 @@ fn production_storage_profile_admits_serial_scientific_and_publication_plans() {
     let problem = compile(sealed_products_request(245)).expect("continuum compilation");
     let (planned, _, generation_demand) = pending_generation_for_problem(&problem);
     let staging_residency_bytes = InMemoryProductSink::default()
-        .staging_residency_bytes(&planned, &generation_demand)
+        .residency(&planned, &generation_demand)
         .expect("in-memory staging demand");
     let residency = selected_content_residency(&problem);
     let planning_registry = ContractOnlyRegistry::new(
@@ -13375,7 +14771,7 @@ fn production_storage_profile_admits_serial_scientific_and_publication_plans() {
         ),
     )
     .expect("production scientific plan");
-    let scientific = scientific.into_parts().physical;
+    let scientific = scientific.physical_candidates();
     let planned_runtime = SerialProductPublicationPlan::new(
         &problem,
         &planned,
@@ -13390,7 +14786,7 @@ fn production_storage_profile_admits_serial_scientific_and_publication_plans() {
         ),
     )
     .expect("production publication plan");
-    let (physical, _) = planned_runtime.into_parts();
+    let (physical, _, _) = planned_runtime.into_parts();
     let directory = tempfile::tempdir().expect("receipt directory");
     let receipts = ExecutionReceiptStore::new(
         directory.path(),
@@ -13404,7 +14800,7 @@ fn production_storage_profile_admits_serial_scientific_and_publication_plans() {
         &authority,
         &planning_registry,
         &receipts,
-        move |_, _| Ok::<_, io::Error>(vec![scientific]),
+        move |_, _| Ok::<_, io::Error>(scientific),
     )
     .expect("profiled production resources admit the scientific plan");
 
@@ -13424,7 +14820,7 @@ fn profiled_serial_plans_bind_only_their_used_storage_identities() {
     let problem = compile(sealed_products_request(246)).expect("continuum compilation");
     let (planned, _, generation_demand) = pending_generation_for_problem(&problem);
     let staging_residency_bytes = InMemoryProductSink::default()
-        .staging_residency_bytes(&planned, &generation_demand)
+        .residency(&planned, &generation_demand)
         .expect("in-memory staging demand");
     let residency = selected_content_residency(&problem);
     let planning_registry = ContractOnlyRegistry::new(
@@ -13514,7 +14910,9 @@ fn profiled_serial_plans_bind_only_their_used_storage_identities() {
             ),
         )
         .expect("scientific plan construction");
-        reject(scientific.into_parts().physical);
+        for physical in scientific.physical_candidates() {
+            reject(physical);
+        }
 
         let publication = SerialProductPublicationPlan::new(
             &problem,
@@ -13540,138 +14938,6 @@ fn profiled_serial_plans_bind_only_their_used_storage_identities() {
             reject(publication);
         }
     }
-}
-
-fn assert_member_failure_receipt(uncertain: bool, expected: ArtifactDisposition) {
-    let problem = compile(sealed_products_request(245)).expect("continuum compilation");
-    let (planned, scientific, generation_demand) = pending_generation_for_problem(&problem);
-    let sink = InMemoryProductSink {
-        fail_at: Some(1),
-        uncertain,
-        ..Default::default()
-    };
-    let staging_residency_bytes = sink
-        .staging_residency_bytes(&planned, &generation_demand)
-        .expect("in-memory staging demand");
-    let planning_registry = ContractOnlyRegistry::new(
-        registry(81),
-        implementation_metadata(&problem),
-        [implementation(81)],
-    );
-    let planned_runtime = SerialProductPublicationPlan::new(
-        &problem,
-        &planned,
-        &generation_demand,
-        staging_residency_bytes,
-        &planning_registry,
-        SerialProductPublicationPolicy::new(
-            implementation(81),
-            serial_storage_io(),
-            1_000,
-            900_000,
-        ),
-    )
-    .expect("member publication plan");
-    let entries = planned_runtime.publication().entries().to_vec();
-    assert!(
-        entries.len() > 2,
-        "fixture needs a published prefix and remainder"
-    );
-    let (physical, publication) = planned_runtime.into_parts();
-    let executor = SerialProductPublicationExecutor::new(
-        implementation(81),
-        problem.clone(),
-        publication,
-        planned,
-        scientific,
-        None,
-        sink,
-    )
-    .expect("sealed publication executor");
-    let runtime_registry =
-        SerialProductPublicationRegistry::new(registry(81), implementation(81), &problem, executor);
-    let directory = tempfile::tempdir().expect("receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(4, 1_048_576).expect("retention"),
-    )
-    .expect("receipt store");
-    let execution_plan = runtime_plan(
-        &problem,
-        PlanningBindings::new(registry(81), ResourcePolicy::Balanced, planning_profile(4)),
-        authority(),
-        &runtime_registry,
-        &receipts,
-        move |_, _| Ok::<_, io::Error>(vec![physical]),
-    )
-    .expect("ordinary publication plan");
-    let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([82; 32]);
-    let current = RunBindings::new(
-        problem.inputs().clone(),
-        &ResourcePolicy::Balanced,
-        cost_model(4),
-    );
-    runtime_run(
-        &ExecutableModelProblem::from_compiled(problem.clone()).expect("executable"),
-        &execution_plan,
-        &current,
-        &runtime_registry,
-        authority(),
-        &mut RunToCompletion,
-        receipts.bind(execution_provenance(
-            attempt,
-            BuildIdentity::from_sha256([83; 32]),
-        )),
-    )
-    .expect_err("second member promotion fails");
-    let receipt = receipts.open(attempt).expect("failed receipt is durable");
-    assert_eq!(receipt.status(), ReceiptStatus::Failed);
-    assert_eq!(
-        receipt.artifact_disposition(entries[0].artifact()),
-        Some(ArtifactDisposition::Published)
-    );
-    assert_eq!(
-        receipt.artifact_disposition(entries[1].artifact()),
-        Some(expected)
-    );
-    for entry in &entries[2..] {
-        assert_eq!(
-            receipt.artifact_disposition(entry.artifact()),
-            Some(ArtifactDisposition::PublicationPrepared)
-        );
-    }
-}
-
-#[test]
-fn serial_product_publication_checkpoints_published_prefix_before_member_failure() {
-    assert_member_failure_receipt(false, ArtifactDisposition::PublicationFailed);
-}
-
-#[test]
-fn serial_product_publication_records_uncertain_member_without_losing_published_prefix() {
-    assert_member_failure_receipt(true, ArtifactDisposition::PublicationUncertain);
-}
-
-#[test]
-fn serial_product_publication_rejects_foreign_scientific_generation() {
-    let problem = compile(sealed_products_request(243)).expect("continuum compilation");
-    let foreign = compile(sealed_products_request(244)).expect("foreign compilation");
-    let (planned, _, _) = pending_generation_for_problem(&problem);
-    let (_, foreign_scientific, _) = pending_generation_for_problem(&foreign);
-    let publication = ProductPublicationPlan::bind(&problem, &planned).expect("publication plan");
-    let error = match SerialProductPublicationExecutor::new(
-        implementation(80),
-        problem.clone(),
-        publication,
-        planned,
-        foreign_scientific,
-        None,
-        InMemoryProductSink::default(),
-    ) {
-        Ok(_) => panic!("foreign scientific generation must be rejected before staging"),
-        Err(error) => error,
-    };
-    assert!(error.to_string().contains("product publication"));
 }
 
 fn problem_bound_sealed_work(
@@ -13760,335 +15026,4 @@ fn problem_bound_sealed_work(
         sealed,
     )
     .expect("problem-bound sealed transaction work")
-}
-
-#[test]
-fn sealed_generation_publishes_through_the_runtime_with_authority_bound_receipt_identities() {
-    let problem = compile(sealed_products_request(230)).expect("continuum compilation");
-    let (sealed_plan, projection) = sealed_publication_plan_for_problem(&problem);
-
-    // Every graph publication member has exactly one pre-execution planned identity.
-    let graph = problem.product_graph();
-    assert_eq!(
-        sealed_plan.entries().len(),
-        graph.publication().members().len()
-    );
-    for entry in sealed_plan.entries() {
-        assert_ne!(entry.payload_bytes(), 0);
-    }
-    let identities: Vec<_> = sealed_plan
-        .entries()
-        .iter()
-        .map(|entry| entry.artifact())
-        .collect();
-    for (index, identity) in identities.iter().enumerate() {
-        assert!(!identities[..index].contains(identity), "member-unique");
-    }
-
-    let execution_plan = plan(
-        &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
-        |_, _| Ok::<_, ()>(problem_bound_sealed_work(&problem, &sealed_plan)),
-    )
-    .expect("physical planning");
-
-    // The plan's publication layouts carry exactly the planned identities.
-    for entry in sealed_plan.entries() {
-        let layout = execution_plan
-            .publication_layouts()
-            .entries()
-            .iter()
-            .find(|layout| {
-                layout.participant()
-                    == PublicationParticipant::Product {
-                        graph_id: problem.product_graph().graph_id(),
-                        node_id: entry.node(),
-                    }
-            })
-            .expect("layout for planned member");
-        assert_eq!(layout.artifact(), entry.artifact());
-    }
-
-    // Run the real engine to terminal promotion with the probe gate armed:
-    // publication must only fire after the durable receipt is Prepared, and
-    // the completed receipt must report every sealed artifact Published.
-    let current = RunBindings::new(
-        problem.inputs().clone(),
-        &ResourcePolicy::Balanced,
-        cost_model(4),
-    );
-    let receipts = execution_plan.receipt_store();
-    let provenance = execution_provenance(
-        casa_imaging_runtime::ExecutionAttemptId::from_sha256([231; 32]),
-        BuildIdentity::from_sha256([232; 32]),
-    );
-    let prepared_observed = Arc::new(AtomicBool::new(false));
-    let publication_calls = Arc::new(AtomicUsize::new(0));
-    let mut controller = RunToCompletion;
-    let mut probed = publication_probe_executor(
-        Arc::clone(&prepared_observed),
-        Arc::clone(&publication_calls),
-        Arc::new(execution_plan.receipt_store()),
-        provenance.attempt_id(),
-    );
-    let sealed_executor = sealed_measurement_executor(&sealed_plan, &projection);
-    probed.sealed_measurements = sealed_executor.sealed_measurements;
-    probed.product_projection = sealed_executor.product_projection;
-    let registry = TestRegistry {
-        id: registry(3),
-        metadata: implementation_metadata(&problem),
-        executors: BTreeMap::from([(implementation(6), probed)]),
-    };
-    let outcome = run_receipted(
-        &problem,
-        &execution_plan,
-        &current,
-        &registry,
-        authority(),
-        &mut controller,
-        receipts.bind(provenance.clone()),
-    )
-    .expect("receipted execution");
-    assert_eq!(outcome, ExecutionOutcome::Succeeded);
-    assert_eq!(publication_calls.load(Ordering::SeqCst), 1);
-    assert!(prepared_observed.load(Ordering::SeqCst));
-
-    let receipt = receipts
-        .open(provenance.attempt_id())
-        .expect("terminal receipt reopenable");
-    assert_eq!(receipt.status(), ReceiptStatus::Completed);
-    let authorization = sealed_plan.authorize(&projection).expect("authorization");
-    for entry in authorization.entries() {
-        assert_eq!(
-            receipt.artifact_disposition(entry.planned_identity()),
-            Some(ArtifactDisposition::Published)
-        );
-        assert_eq!(
-            receipt.artifact_observed_identity(entry.planned_identity()),
-            Some(entry.observed_identity().as_bytes())
-        );
-        assert_eq!(
-            receipt.publication_producer(entry.planned_identity()),
-            Some(WorkNodeId::new("transaction-stage-psf"))
-        );
-    }
-}
-
-#[test]
-fn mismatched_sealed_content_evidence_cannot_reach_atomic_publication() {
-    let problem = compile(sealed_products_request(239)).expect("continuum compilation");
-    let (publication_plan, projection) = sealed_publication_plan_for_problem(&problem);
-    let execution_plan = plan(
-        &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
-        |_, _| Ok::<_, ()>(problem_bound_sealed_work(&problem, &publication_plan)),
-    )
-    .expect("physical planning");
-    let current = RunBindings::new(
-        problem.inputs().clone(),
-        &ResourcePolicy::Balanced,
-        cost_model(4),
-    );
-    let receipts = execution_plan.receipt_store();
-    let provenance = execution_provenance(
-        casa_imaging_runtime::ExecutionAttemptId::from_sha256([240; 32]),
-        BuildIdentity::from_sha256([241; 32]),
-    );
-    let publication_calls = Arc::new(AtomicUsize::new(0));
-    let mut executor = publication_probe_executor(
-        Arc::new(AtomicBool::new(false)),
-        Arc::clone(&publication_calls),
-        Arc::new(execution_plan.receipt_store()),
-        provenance.attempt_id(),
-    );
-    executor.product_projection = Some(projection);
-    executor.sealed_measurements = Some(
-        publication_plan
-            .entries()
-            .iter()
-            .map(|entry| {
-                ArtifactMeasurement::new(
-                    entry.artifact(),
-                    Some(entry.artifact()),
-                    ArtifactDisposition::Staged,
-                    entry.payload_bytes(),
-                    None,
-                )
-                .expect("staging evidence")
-            })
-            .collect(),
-    );
-    let registry = TestRegistry {
-        id: registry(3),
-        metadata: implementation_metadata(&problem),
-        executors: BTreeMap::from([(implementation(6), executor)]),
-    };
-    let mut controller = RunToCompletion;
-    let error = run_receipted(
-        &problem,
-        &execution_plan,
-        &current,
-        &registry,
-        authority(),
-        &mut controller,
-        receipts.bind(provenance),
-    )
-    .expect_err("content evidence must match the post-completion authorization");
-    assert!(matches!(
-        error,
-        RunError::ProductPublication(
-            casa_imaging_runtime::ProductPublicationError::ArtifactEvidenceMismatch { .. }
-        )
-    ));
-    assert_eq!(publication_calls.load(Ordering::SeqCst), 0);
-}
-
-#[test]
-fn missing_completed_projection_cannot_reach_atomic_publication() {
-    let problem = compile(sealed_products_request(242)).expect("continuum compilation");
-    let (publication_plan, projection) = sealed_publication_plan_for_problem(&problem);
-    let execution_plan = plan(
-        &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
-        |_, _| Ok::<_, ()>(problem_bound_sealed_work(&problem, &publication_plan)),
-    )
-    .expect("physical planning");
-    let current = RunBindings::new(
-        problem.inputs().clone(),
-        &ResourcePolicy::Balanced,
-        cost_model(4),
-    );
-    let receipts = execution_plan.receipt_store();
-    let provenance = execution_provenance(
-        casa_imaging_runtime::ExecutionAttemptId::from_sha256([243; 32]),
-        BuildIdentity::from_sha256([244; 32]),
-    );
-    let publication_calls = Arc::new(AtomicUsize::new(0));
-    let mut executor = publication_probe_executor(
-        Arc::new(AtomicBool::new(false)),
-        Arc::clone(&publication_calls),
-        Arc::new(execution_plan.receipt_store()),
-        provenance.attempt_id(),
-    );
-    executor.sealed_measurements =
-        sealed_measurement_executor(&publication_plan, &projection).sealed_measurements;
-    let registry = TestRegistry {
-        id: registry(3),
-        metadata: implementation_metadata(&problem),
-        executors: BTreeMap::from([(implementation(6), executor)]),
-    };
-    let mut controller = RunToCompletion;
-    let error = run_receipted(
-        &problem,
-        &execution_plan,
-        &current,
-        &registry,
-        authority(),
-        &mut controller,
-        receipts.bind(provenance),
-    )
-    .expect_err("planned native publication requires a completed projection");
-    assert!(matches!(
-        error,
-        RunError::ProductPublication(
-            casa_imaging_runtime::ProductPublicationError::MissingProjection
-        )
-    ));
-    assert_eq!(publication_calls.load(Ordering::SeqCst), 0);
-}
-
-#[test]
-fn uncertain_sealed_member_retains_prefix_and_authority_bound_evidence() {
-    let problem = compile(sealed_products_request(233)).expect("continuum compilation");
-    let (sealed_plan, projection) = sealed_publication_plan_for_problem(&problem);
-    let execution_plan = plan(
-        &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
-        |_, _| Ok::<_, ()>(problem_bound_sealed_work(&problem, &sealed_plan)),
-    )
-    .expect("physical planning");
-    let current = RunBindings::new(
-        problem.inputs().clone(),
-        &ResourcePolicy::Balanced,
-        cost_model(4),
-    );
-    let receipts = execution_plan.receipt_store();
-    let provenance = execution_provenance(
-        casa_imaging_runtime::ExecutionAttemptId::from_sha256([234; 32]),
-        BuildIdentity::from_sha256([235; 32]),
-    );
-    let publication_launched = Arc::new(AtomicBool::new(false));
-    let visible_generation = Arc::new(AtomicUsize::new(0));
-    let mut executor = product_publication_recording_executor(
-        &problem,
-        Arc::clone(&publication_launched),
-        Arc::clone(&visible_generation),
-    );
-    executor.publication_uncertain_after = Some(1);
-    let registry = TestRegistry {
-        id: registry(3),
-        metadata: implementation_metadata(&problem),
-        executors: BTreeMap::from([(implementation(6), executor)]),
-    };
-    let mut controller = RunToCompletion;
-    let error = run_receipted(
-        &problem,
-        &execution_plan,
-        &current,
-        &registry,
-        authority(),
-        &mut controller,
-        receipts.bind(provenance.clone()),
-    )
-    .expect_err("an uncertain member outcome terminates with durable evidence");
-    assert!(matches!(
-        error,
-        RunError::Execution { node, .. } if node == WorkNodeId::new("transaction-commit")
-    ));
-    assert_eq!(visible_generation.load(Ordering::SeqCst), 1);
-
-    let receipt = receipts
-        .open(provenance.attempt_id())
-        .expect("uncertain member receipt remains reopenable");
-    assert_eq!(receipt.status(), ReceiptStatus::Failed);
-    let authorization = sealed_plan
-        .authorize(&projection)
-        .expect("publication authorization");
-    let dispositions = sealed_plan
-        .entries()
-        .iter()
-        .map(|entry| receipt.artifact_disposition(entry.artifact()))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        dispositions
-            .iter()
-            .filter(|value| **value == Some(ArtifactDisposition::Published))
-            .count(),
-        1
-    );
-    assert_eq!(
-        dispositions
-            .iter()
-            .filter(|value| **value == Some(ArtifactDisposition::PublicationUncertain))
-            .count(),
-        1
-    );
-    assert_eq!(
-        dispositions
-            .iter()
-            .filter(|value| **value == Some(ArtifactDisposition::PublicationPrepared))
-            .count(),
-        dispositions.len() - 2
-    );
-    for entry in sealed_plan.entries() {
-        let authorized = authorization
-            .entries()
-            .iter()
-            .find(|candidate| candidate.planned_identity() == entry.artifact())
-            .expect("each planned member remains authority-bound");
-        assert_eq!(
-            receipt.artifact_observed_identity(entry.artifact()),
-            Some(authorized.observed_identity().as_bytes())
-        );
-    }
 }

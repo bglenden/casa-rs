@@ -121,6 +121,55 @@ fn full_aw_problem() -> CompiledProblem {
     .unwrap()
 }
 
+#[test]
+fn accepted_delta_residency_preserves_both_live_copies_and_logical_limit() {
+    let problem = full_aw_problem();
+    let specifications = [SpectralOperatorSpecification::new(&problem).unwrap()];
+    let layout = GriddedNormalStorageLayout::new([[4096; 2]], 2, 50, true).unwrap();
+    let window =
+        GriddedNormalReplayWindowPlan::plan_frame_payloads(&[], 4096, 96, 1, layout).unwrap();
+    let fragment = |terms| {
+        CompleteDataPlanFragment::gridded_replay_with_preparation_node(
+            &problem,
+            4096,
+            WorkNodeId::new("replay"),
+            WorkNodeId::new("prepare"),
+            &window,
+            &specifications,
+            terms,
+        )
+    };
+    let samples = problem.model_lifecycle().target().sample_count();
+    let limit = samples.min(problem.model_lifecycle().bounds().max_delta_terms());
+    let model_bytes = samples * std::mem::size_of::<ModelSample>();
+    for terms in [0, 1, 9, limit] {
+        let planned = fragment(terms).unwrap();
+        assert_eq!(planned.pending_delta_terms(), Some(terms));
+        assert_eq!(
+            planned.residency().major_cycle_model_bytes(),
+            model_bytes + 2 * terms * std::mem::size_of::<ModelDeltaTerm>()
+        );
+    }
+    assert!(matches!(
+        fragment(limit + 1),
+        Err(CompleteDataPlanError::PlanMismatch)
+    ));
+
+    let unbound = CompleteDataPlanFragment::new_with_preparation_node(
+        &problem,
+        4096,
+        WorkNodeId::new("unbound-replay"),
+        WorkNodeId::new("unbound-prepare"),
+        SpectralOperatorPass::ResidualRefresh,
+    )
+    .unwrap();
+    assert_eq!(unbound.pending_delta_terms(), None);
+    assert_eq!(
+        unbound.residency().major_cycle_model_bytes(),
+        model_bytes + 2 * limit * std::mem::size_of::<ModelDeltaTerm>()
+    );
+}
+
 #[derive(Clone)]
 struct UnreadProvider;
 impl AwPreparedCellProvider for UnreadProvider {
@@ -253,17 +302,28 @@ fn t51_full_aw_residual_phase_adapts_complete_allocations_and_rejects_below_floo
         .map_err(SpectralCyclePlanError::from)
     };
     let preferred = preview(Some(minimum_bytes * 4)).unwrap();
+    let gridded_spectral_windows = [SpectralOperatorSpecification::new(&problem).unwrap()];
     let phase = SpectralCyclePhasePlanning {
         pass: SpectralPassIdentity::new(SpectralPassPhase::FinalMajor, 1),
         include_minor: true,
         phase_input: Some(ArtifactIdentity::from_owner_digest([50; 32])),
+        pending_delta_terms: Some(
+            problem
+                .model_lifecycle()
+                .target()
+                .sample_count()
+                .min(problem.model_lifecycle().bounds().max_delta_terms()),
+        ),
         strategy: GriddedNormalStrategy::ReuseManagedSpill,
         artifact_budget: Some(
-            crate::complete_data_operator::project_managed_spill_budget(&problem, 4096).unwrap(),
+            crate::complete_data_operator::project_gridded_normal_compilation(&problem, 4096)
+                .unwrap(),
         ),
         gridded_replay_descriptor: Some(GriddedNormalReplayDescriptor::planning_fixture(
             16_106_938_800,
         )),
+        gridded_spectral_windows: Some(&gridded_spectral_windows),
+        initial_channel_depth: None,
     };
     let compose = |window: &GriddedNormalReplayWindowPlan| {
         compose_major_physical(
@@ -272,6 +332,7 @@ fn t51_full_aw_residual_phase_adapts_complete_allocations_and_rejects_below_floo
             &policy,
             &weighting,
             phase,
+            1,
             Some(window),
         )
     };
@@ -282,9 +343,6 @@ fn t51_full_aw_residual_phase_adapts_complete_allocations_and_rejects_below_floo
                 &policy.resource_policy,
                 preferred_candidate
                     .physical
-                    .clone()
-                    .with_fixed_worker_count(1)
-                    .unwrap()
                     .execution_dag()
                     .resource_alternative()
             )
@@ -298,6 +356,27 @@ fn t51_full_aw_residual_phase_adapts_complete_allocations_and_rejects_below_floo
         workers: Some(1),
         ..crate::ResourceOverride::default()
     });
+    let bounded = compose_major_physical_mode(
+        &problem,
+        &registry,
+        &fixed_policy,
+        &weighting,
+        phase,
+        PhysicalComposition {
+            workers: 1,
+            window: Some(&selected),
+            retention: RetentionMode::Bounded,
+        },
+    )
+    .unwrap();
+    assert!(candidate_memory_fits(&bounded, &fixed_policy).unwrap());
+    assert!(
+        !bounded
+            .physical
+            .execution_dag()
+            .nodes()
+            .contains_key(&retained_route_node(phase.pass))
+    );
     for window in [&preferred, &selected] {
         let planned = compose_major_physical(
             &problem,
@@ -305,9 +384,14 @@ fn t51_full_aw_residual_phase_adapts_complete_allocations_and_rejects_below_floo
             &fixed_policy,
             &weighting,
             phase,
+            1,
             Some(window),
         )
         .unwrap();
+        assert!(
+            !candidate_memory_fits(&planned, &fixed_policy).unwrap(),
+            "retaining the entire spill must exceed this explicit ceiling"
+        );
         let reader = planned.complete_data.prepared_artifact_reader().unwrap();
         let nodes = planned.physical.execution_dag().nodes();
         let join = adaptation_route_join_node(phase.pass);
@@ -334,12 +418,13 @@ fn t51_full_aw_residual_phase_adapts_complete_allocations_and_rejects_below_floo
     }
     assert!(selected.maximum_records() < preferred.maximum_records());
     assert!(candidate.complete_data.residency().aw_prepared_pool_bytes() >= 472_524_620);
+    let model_samples = 4096 * 4096 * 2;
     assert_eq!(
         candidate
             .complete_data
             .residency()
             .major_cycle_model_bytes(),
-        2_147_483_648
+        model_samples * (size_of::<ModelSample>() + 2 * size_of::<ModelDeltaTerm>())
     );
     let receipts = ExecutionReceiptStore::new(
         root.path().join("receipts"),
@@ -363,11 +448,7 @@ fn t51_full_aw_residual_phase_adapts_complete_allocations_and_rejects_below_floo
 
     let minimum = preview(None).unwrap();
     let minimum_candidate = compose(&minimum).unwrap();
-    let serial = minimum_candidate
-        .physical
-        .clone()
-        .with_fixed_worker_count(1)
-        .unwrap();
+    let serial = minimum_candidate.physical.clone();
     let remaining = authority
         .remaining_planning_memory_bytes(
             &policy.resource_policy,
@@ -375,12 +456,71 @@ fn t51_full_aw_residual_phase_adapts_complete_allocations_and_rejects_below_floo
         )
         .unwrap();
     let floor = memory - remaining;
+    let mut at_floor = policy.clone();
+    at_floor.authority = ResourceAuthority::with_inventory(inventory(root.path(), floor)).unwrap();
     for workers in [1, 4] {
-        let physical = minimum_candidate
-            .physical
-            .clone()
-            .with_fixed_worker_count(workers)
+        let (_, candidate) =
+            select_gridded_window_plan(preferred.clone(), &at_floor, preview, |window| {
+                compose_major_physical(
+                    &problem,
+                    &registry,
+                    &at_floor,
+                    &weighting,
+                    phase,
+                    workers,
+                    Some(window),
+                )
+            })
             .unwrap();
+        let quote = at_floor.authority.remaining_planning_memory_bytes(
+            &at_floor.resource_policy,
+            candidate.physical.execution_dag().resource_alternative(),
+        );
+        assert_eq!(
+            quote.is_ok(),
+            workers == 1,
+            "the window search must quote this exact worker profile, not a serial projection"
+        );
+        assert_eq!(
+            candidate
+                .physical
+                .execution_dag()
+                .resource_alternative()
+                .scaling
+                .minimum_workers,
+            workers
+        );
+        assert_eq!(
+            candidate
+                .physical
+                .execution_dag()
+                .resource_alternative()
+                .scaling
+                .maximum_workers,
+            workers
+        );
+    }
+    assert!(
+        matches!(
+            select_gridded_window_plan(preferred.clone(), &policy, preview, |_| {
+                Err(SpectralCyclePlanError::Overflow)
+            }),
+            Err(SpectralCyclePlanError::Overflow)
+        ),
+        "invalid composition must not be treated as a capacity refusal"
+    );
+    for workers in [1, 4] {
+        let physical = compose_major_physical(
+            &problem,
+            &registry,
+            &policy,
+            &weighting,
+            phase,
+            workers,
+            Some(&minimum),
+        )
+        .unwrap()
+        .physical;
         assert_eq!(
             physical.execution_dag().logical_allocations(),
             serial.execution_dag().logical_allocations()
@@ -398,7 +538,15 @@ fn t51_full_aw_residual_phase_adapts_complete_allocations_and_rejects_below_floo
     let mut below = policy.clone();
     below.authority = ResourceAuthority::with_inventory(inventory(root.path(), floor - 1)).unwrap();
     let (_, rejected) = select_gridded_window_plan(preferred, &below, preview, |window| {
-        compose_major_physical(&problem, &registry, &below, &weighting, phase, Some(window))
+        compose_major_physical(
+            &problem,
+            &registry,
+            &below,
+            &weighting,
+            phase,
+            1,
+            Some(window),
+        )
     })
     .unwrap();
     assert!(

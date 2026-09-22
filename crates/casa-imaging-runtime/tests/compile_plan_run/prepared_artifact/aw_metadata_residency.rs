@@ -331,6 +331,7 @@ fn reconstruction_base(problem: &casa_imaging_model::CompiledProblem) -> Physica
             compatibility: compatibility.clone(),
             physical_slot: slot.clone(),
             lifetime: AllocationLifetime {
+                disposition: casa_imaging_runtime::AllocationDisposition::Release,
                 acquire_at: node_id.clone(),
                 release_after: node
                     .fences

@@ -4,7 +4,7 @@
 
 use std::fmt;
 
-use casa_imaging_model::{CompiledProblemId, LogicalIdentity, ModelCell, ModelDeltaTerm};
+use casa_imaging_model::{CompiledProblemId, LogicalIdentity, ModelDeltaTerm};
 use thiserror::Error;
 
 use crate::{
@@ -473,55 +473,56 @@ impl ReconstructionCycle {
                 },
             });
         }
-        let shared_cycle_threshold = shared_cycle_threshold(&self.program, normal)?;
-        let mut terms = Vec::<ModelDeltaTerm>::new();
-        let mut channels = Vec::with_capacity(normal.channel_count() * normal.polarization_count());
-        for polarization in 0..normal.polarization_count() {
-            for local_channel in 0..normal.channel_count() {
-                let plane = normal
-                    .polarization_plane(local_channel, polarization)
-                    .ok_or(ReconstructionCycleError::InvalidNormalStateSlab)?;
-                let validity = plane.validity();
-                let minor_cycle = if validity == SpectralChannelValidity::Valid {
-                    let program = self
-                        .program
-                        .clone()
-                        .with_fixed_cycle_threshold(shared_cycle_threshold)
-                        .on_model_plane(MinorCycleModelPlane::new(
-                            0,
-                            plane.output_channel(),
-                            polarization,
-                        ));
-                    let result = run_minor_cycle_plane(lifecycle, base, plane, mask, program)?;
-                    let (delta, evidence) = result.into_parts();
-                    if let Some(delta) = delta {
-                        terms.extend_from_slice(delta.terms());
-                    }
-                    Some(evidence)
-                } else {
-                    None
-                };
-                channels.push(ChannelCycleEvidence {
-                    output_channel: plane.output_channel(),
-                    polarization,
-                    validity,
-                    minor_cycle,
-                });
-            }
+        let mut work = self.prepare_independent(lifecycle, base, normal, mask)?;
+        for ordinal in 0..work.threshold_plane_count() {
+            let statistics = work.plane_statistics(ordinal)?;
+            work.commit_statistics(statistics)?;
         }
-        let delta = (!terms.is_empty())
-            .then(|| lifecycle.compile_delta(base, terms))
-            .transpose()?;
-        let evidence_id =
-            reconstruction_cycle_evidence_id(lifecycle, normal, self.policy, &channels);
-        Ok(ReconstructionCycleResult {
-            delta,
-            evidence: ReconstructionCycleEvidence {
-                evidence_id,
-                problem: lifecycle.problem(),
-                policy: self.policy,
-                channels: channels.into_boxed_slice(),
+        for ordinal in 0..work.plane_count() {
+            let input = work.prepare_plane(ordinal)?;
+            let partial = work.execute_plane(&input)?;
+            work.commit_plane(partial)?;
+        }
+        work.finish()
+    }
+
+    /// Prepare immutable independent-plane work for a resource-admitted executor.
+    ///
+    /// The executor first collects bounded plane statistics in canonical order.
+    /// Only after that global threshold barrier may independent solves begin.
+    /// Complete ordered collection mints the combined Model Delta and evidence.
+    #[doc(hidden)]
+    pub fn prepare_independent<'a>(
+        &'a self,
+        lifecycle: &'a ModelLifecycle,
+        base: &'a ModelGeneration,
+        normal: &'a FinalNormalState,
+        mask: &'a crate::ReconstructionMask,
+    ) -> Result<ReconstructionPlaneWork<'a>, ReconstructionCycleError> {
+        if self.policy != ChannelCyclePolicy::Independent {
+            return Err(ReconstructionCycleError::UnsupportedCoupledPolicy);
+        }
+        let plane_count = normal
+            .channel_count()
+            .checked_mul(normal.polarization_count())
+            .filter(|count| *count > 0)
+            .ok_or(ReconstructionCycleError::InvalidNormalStateSlab)?;
+        lifecycle.validate_named_generation(base)?;
+        Ok(ReconstructionPlaneWork {
+            binding: ReconstructionPlaneBinding {
+                cycle: self,
+                lifecycle,
+                base,
+                normal,
+                mask,
             },
+            shared_cycle_threshold: None,
+            threshold_planes: 0,
+            threshold_peak: 0.0,
+            threshold_sidelobe: 0.0,
+            plane_count,
+            terms: Vec::new(),
+            channels: Vec::with_capacity(plane_count),
         })
     }
 
@@ -567,6 +568,382 @@ impl ReconstructionCycle {
     }
 }
 
+#[derive(Clone, Copy)]
+struct ReconstructionPlaneBinding<'a> {
+    cycle: &'a ReconstructionCycle,
+    lifecycle: &'a ModelLifecycle,
+    base: &'a ModelGeneration,
+    normal: &'a FinalNormalState,
+    mask: &'a crate::ReconstructionMask,
+}
+
+impl ReconstructionPlaneBinding<'_> {
+    fn same_inputs(self, other: Self) -> bool {
+        std::ptr::eq(self.cycle, other.cycle)
+            && std::ptr::eq(self.lifecycle, other.lifecycle)
+            && std::ptr::eq(self.base, other.base)
+            && std::ptr::eq(self.normal, other.normal)
+            && std::ptr::eq(self.mask, other.mask)
+    }
+}
+
+/// Reconstruction-owned independent plane execution and ordered collection.
+///
+/// Runtime may schedule immutable plane work concurrently. It must return each
+/// opaque partial once in polarization/channel order; no authoritative model
+/// state changes until the complete collection is finalized.
+pub struct ReconstructionPlaneWork<'a> {
+    binding: ReconstructionPlaneBinding<'a>,
+    shared_cycle_threshold: Option<f64>,
+    threshold_planes: usize,
+    threshold_peak: f64,
+    threshold_sidelobe: f64,
+    plane_count: usize,
+    terms: Vec<ModelDeltaTerm>,
+    channels: Vec<ChannelCycleEvidence>,
+}
+
+/// A validated plane descriptor; pixel storage is acquired by its worker.
+pub struct ReconstructionPlaneInput<'a> {
+    binding: ReconstructionPlaneBinding<'a>,
+    ordinal: usize,
+}
+
+/// Compact owner-bound statistics, collected before any independent solve.
+pub struct ReconstructionPlaneStatistics<'a> {
+    binding: ReconstructionPlaneBinding<'a>,
+    ordinal: usize,
+    peak: f64,
+    sidelobe: f64,
+}
+
+/// Opaque result from exactly one admitted independent plane.
+pub struct ReconstructionPlanePartial<'a> {
+    binding: ReconstructionPlaneBinding<'a>,
+    ordinal: usize,
+    delta: Option<ModelDelta>,
+    evidence: ChannelCycleEvidence,
+}
+
+/// Scientific-owner memory envelope for independent single-domain planes.
+///
+/// Normal State and base model remain shared in their existing plan slots.
+/// Per-worker bytes include the private solve and its returned partial; retained
+/// bytes include the ordered collection and final combined-delta compilation.
+#[derive(Clone, Copy, Debug)]
+pub struct ReconstructionPlaneWorkspace {
+    planes: usize,
+    worker_bytes: u64,
+    retained_bytes: u64,
+}
+
+impl ReconstructionPlaneWorkspace {
+    /// Derive the largest legal independent-plane work from compiled controls.
+    /// Coupled, multi-domain, and dirty work have different execution shapes.
+    pub fn for_problem(
+        problem: &casa_imaging_model::CompiledProblem,
+    ) -> Result<Option<Self>, MinorCycleError> {
+        use casa_imaging_model::{ReconstructionAlgorithm, ReconstructionBasis};
+        if problem.geometry().domains().len() != 1
+            || !matches!(
+                problem.reconstruction().basis(),
+                ReconstructionBasis::Constant | ReconstructionBasis::ChannelLocal { .. }
+            )
+            || !matches!(
+                problem.reconstruction().algorithm(),
+                ReconstructionAlgorithm::Hogbom
+                    | ReconstructionAlgorithm::Clark
+                    | ReconstructionAlgorithm::Multiscale { .. }
+            )
+        {
+            return Ok(None);
+        }
+        let program = MinorCycleProgram::for_problem(problem)?;
+        let target = problem.model_lifecycle().target();
+        let planes = target
+            .coefficients()
+            .checked_mul(target.polarizations())
+            .ok_or(MinorCycleError::ModelShapeMismatch)?;
+        Ok(Some(Self::new(
+            target.domains()[0].pixels(),
+            target.polarizations(),
+            planes,
+            &program,
+            program.actual_iteration_limit(),
+            problem.model_lifecycle().bounds().max_delta_terms(),
+        )))
+    }
+
+    fn new(
+        shape: [usize; 2],
+        polarizations: usize,
+        planes: usize,
+        program: &MinorCycleProgram,
+        recorded_components: usize,
+        maximum_delta_terms: usize,
+    ) -> Self {
+        let plane = crate::minor_cycle::minor_cycle_workspace(
+            shape,
+            polarizations,
+            casa_imaging_model::ReconstructionBasis::Constant,
+            program.algorithm(),
+            program.actual_iteration_limit(),
+            recorded_components,
+        );
+        let terms = plane
+            .maximum_delta_terms
+            .saturating_mul(planes as u64)
+            .min(maximum_delta_terms as u64);
+        let recorded_bytes = plane
+            .maximum_recorded_components
+            .saturating_mul(size_of::<crate::MinorCycleComponent>() as u64);
+        let evidence_bytes = (planes as u64).saturating_mul(
+            (size_of::<ChannelCycleEvidence>() as u64).saturating_add(recorded_bytes),
+        );
+        let retained_bytes = terms
+            .saturating_mul(4 * size_of::<ModelDeltaTerm>() as u64)
+            .saturating_add(evidence_bytes)
+            .saturating_add(size_of::<ReconstructionPlaneWork<'_>>() as u64);
+        let cells = (shape[0] as u64).saturating_mul(shape[1] as u64);
+        let normal_bytes = cells.saturating_mul(2 * size_of::<num_complex::Complex64>() as u64);
+        let threshold_bytes = normal_bytes
+            .saturating_add(cells.saturating_mul(size_of::<f32>() as u64))
+            .saturating_add(crate::psf_fit_workspace_bytes(shape));
+        Self {
+            planes,
+            worker_bytes: plane
+                .bytes
+                .saturating_add(normal_bytes)
+                .max(threshold_bytes),
+            retained_bytes,
+        }
+    }
+
+    /// Canonical plane slots, including slots that may be blank at execution.
+    #[must_use]
+    pub const fn plane_count(self) -> usize {
+        self.planes
+    }
+
+    /// Heap envelope for each concurrently executing or pending plane partial.
+    #[must_use]
+    pub const fn worker_bytes(self) -> u64 {
+        self.worker_bytes
+    }
+
+    /// Shared ordered-collection heap envelope, independent of worker count.
+    #[must_use]
+    pub const fn retained_bytes(self) -> u64 {
+        self.retained_bytes
+    }
+}
+
+impl ReconstructionPlanePartial<'_> {
+    /// Actual heap bytes carried by this opaque completed plane.
+    #[must_use]
+    pub fn owned_bytes(&self) -> u64 {
+        let terms = self
+            .delta
+            .as_ref()
+            .map_or(0, |delta| std::mem::size_of_val(delta.terms()));
+        let recorded = self
+            .evidence
+            .minor_cycle
+            .as_ref()
+            .and_then(MinorCycleEvidence::recorded_component_sequence)
+            .map_or(0, std::mem::size_of_val);
+        (terms + recorded) as u64
+    }
+}
+
+impl<'a> ReconstructionPlaneWork<'a> {
+    /// Envelope for these exact controls and the full pending cycle collection.
+    #[must_use]
+    pub fn workspace(&self) -> ReconstructionPlaneWorkspace {
+        ReconstructionPlaneWorkspace::new(
+            self.binding.normal.shape(),
+            self.binding.base.shape().polarizations(),
+            self.plane_count,
+            &self.binding.cycle.program,
+            self.binding
+                .cycle
+                .program
+                .component_sequence_limit()
+                .unwrap_or(0),
+            self.binding.lifecycle.contract().bounds().max_delta_terms(),
+        )
+    }
+    /// Number of canonical plane slots, including explicit blank/unmapped slots.
+    #[must_use]
+    pub const fn plane_count(&self) -> usize {
+        self.plane_count
+    }
+
+    /// Single-plane reconstruction retains the existing local threshold rule.
+    #[must_use]
+    pub const fn threshold_plane_count(&self) -> usize {
+        if self.plane_count == 1 {
+            0
+        } else {
+            self.plane_count
+        }
+    }
+
+    /// Calculate exactly the existing per-plane entry peak and PSF sidelobe.
+    /// No sensitivity or model payload is read by this prepass.
+    pub fn plane_statistics(
+        &self,
+        ordinal: usize,
+    ) -> Result<ReconstructionPlaneStatistics<'a>, ReconstructionCycleError> {
+        if ordinal >= self.threshold_plane_count() {
+            return Err(ReconstructionCycleError::InvalidPlaneCoverage);
+        }
+        let normal = self.binding.normal;
+        let channel = normal.slab().core_range().start + ordinal % normal.channel_count();
+        let plane = normal.read_plane(0, channel, ordinal / normal.channel_count())?;
+        let (peak, sidelobe) = plane_cycle_statistics(&plane)?;
+        Ok(ReconstructionPlaneStatistics {
+            binding: self.binding,
+            ordinal,
+            peak,
+            sidelobe,
+        })
+    }
+
+    /// Fold a complete threshold prepass in its original polarization/channel order.
+    pub fn commit_statistics(
+        &mut self,
+        statistics: ReconstructionPlaneStatistics<'a>,
+    ) -> Result<(), ReconstructionCycleError> {
+        if !self.binding.same_inputs(statistics.binding)
+            || statistics.ordinal != self.threshold_planes
+            || self.threshold_planes >= self.threshold_plane_count()
+        {
+            return Err(ReconstructionCycleError::InvalidPlaneCoverage);
+        }
+        self.threshold_peak = self.threshold_peak.max(statistics.peak);
+        self.threshold_sidelobe = self.threshold_sidelobe.max(statistics.sidelobe);
+        self.threshold_planes += 1;
+        if self.threshold_planes == self.threshold_plane_count() {
+            self.shared_cycle_threshold = shared_cycle_threshold_from_statistics(
+                &self.binding.cycle.program,
+                [(self.threshold_peak, self.threshold_sidelobe)],
+            );
+        }
+        Ok(())
+    }
+
+    /// Validate a descriptor without loading pixel arrays on the coordinator.
+    pub fn prepare_plane(
+        &self,
+        ordinal: usize,
+    ) -> Result<ReconstructionPlaneInput<'a>, ReconstructionCycleError> {
+        if ordinal >= self.plane_count {
+            return Err(ReconstructionCycleError::InvalidPlaneCoverage);
+        }
+        Ok(ReconstructionPlaneInput {
+            binding: self.binding,
+            ordinal,
+        })
+    }
+
+    /// Acquire bounded read-only fields and run the existing solver on this worker.
+    pub fn execute_plane(
+        &self,
+        input: &ReconstructionPlaneInput<'a>,
+    ) -> Result<ReconstructionPlanePartial<'a>, ReconstructionCycleError> {
+        if !self.binding.same_inputs(input.binding)
+            || self.threshold_planes != self.threshold_plane_count()
+        {
+            return Err(ReconstructionCycleError::InvalidPlaneCoverage);
+        }
+        let ordinal = input.ordinal;
+        let ReconstructionPlaneBinding {
+            cycle,
+            lifecycle,
+            base,
+            normal,
+            mask,
+        } = self.binding;
+        let polarization = ordinal / normal.channel_count();
+        let channel = normal.slab().core_range().start + ordinal % normal.channel_count();
+        let validity = normal.read_plane(0, channel, polarization)?.validity();
+        let (delta, minor_cycle) = if validity == SpectralChannelValidity::Valid {
+            let plane = normal.read_reconstruction_plane(0, channel, polarization)?;
+            let model = base.read_window(0, channel..channel + 1)?;
+            let program = cycle
+                .program
+                .clone()
+                .with_fixed_cycle_threshold(self.shared_cycle_threshold)
+                .on_model_plane(MinorCycleModelPlane::new(0, channel, polarization));
+            let (delta, evidence) =
+                run_minor_cycle_plane(lifecycle, &model, plane, mask, program)?.into_parts();
+            (delta, Some(evidence))
+        } else {
+            (None, None)
+        };
+        Ok(ReconstructionPlanePartial {
+            binding: self.binding,
+            ordinal,
+            delta,
+            evidence: ChannelCycleEvidence {
+                output_channel: channel,
+                polarization,
+                validity,
+                minor_cycle,
+            },
+        })
+    }
+
+    /// Consume the next canonical partial from these exact immutable inputs.
+    pub fn commit_plane(
+        &mut self,
+        partial: ReconstructionPlanePartial<'a>,
+    ) -> Result<(), ReconstructionCycleError> {
+        if !self.binding.same_inputs(partial.binding) || partial.ordinal != self.channels.len() {
+            return Err(ReconstructionCycleError::InvalidPlaneCoverage);
+        }
+        if let Some(delta) = partial.delta {
+            let terms = self.terms.len().saturating_add(delta.terms().len());
+            let bound = self.binding.lifecycle.contract().bounds().max_delta_terms();
+            if terms > bound {
+                return Err(ModelLifecycleError::DeltaTermBoundExceeded { terms, bound }.into());
+            }
+            self.terms.extend_from_slice(delta.terms());
+        }
+        self.channels.push(partial.evidence);
+        Ok(())
+    }
+
+    /// Mint one combined delta and cycle evidence only after exact coverage.
+    pub fn finish(self) -> Result<ReconstructionCycleResult, ReconstructionCycleError> {
+        if self.channels.len() != self.plane_count {
+            return Err(ReconstructionCycleError::InvalidPlaneCoverage);
+        }
+        let ReconstructionPlaneBinding {
+            cycle,
+            lifecycle,
+            base,
+            normal,
+            ..
+        } = self.binding;
+        let delta = (!self.terms.is_empty())
+            .then(|| lifecycle.compile_delta(base, self.terms))
+            .transpose()?;
+        let evidence_id =
+            reconstruction_cycle_evidence_id(lifecycle, normal, cycle.policy, &self.channels);
+        Ok(ReconstructionCycleResult {
+            delta,
+            evidence: ReconstructionCycleEvidence {
+                evidence_id,
+                problem: lifecycle.problem(),
+                policy: cycle.policy,
+                channels: self.channels.into_boxed_slice(),
+            },
+        })
+    }
+}
+
 fn run_admitted_image_domain_polarizations<T, E>(
     validities: &[SpectralChannelValidity],
     shared_cycle_threshold: Option<f64>,
@@ -589,12 +966,10 @@ fn image_domain_polarization_validities(
 ) -> Result<Vec<SpectralChannelValidity>, ReconstructionCycleError> {
     (0..normal.polarization_count())
         .map(|polarization| {
-            normal
-                .domains()
+            (0..normal.domain_count())
                 .map(|domain| {
-                    domain
-                        .polarization_plane(0, polarization)
-                        .map(|plane| plane.validity())
+                    normal
+                        .domain_channel_validity(domain, 0, polarization)
                         .ok_or(ReconstructionCycleError::InvalidNormalStateSlab)
                 })
                 .find_map(|validity| match validity {
@@ -625,6 +1000,7 @@ fn shared_image_domain_cycle_threshold(
 
     let mut global_peak = 0.0_f64;
     let mut maximum_sidelobe = 0.0_f64;
+    let normal = &normal.read_window(normal.slab().core_range())?;
     for (polarization, validity) in validities.iter().copied().enumerate() {
         if validity != SpectralChannelValidity::Valid {
             continue;
@@ -656,17 +1032,14 @@ fn shared_image_domain_cycle_threshold(
             }
 
             let mut plane_peak = 0.0_f64;
+            let model_plane = base.read_plane(domain.ordinal(), 0, polarization)?;
             for (index, value) in plane.residual().iter().enumerate() {
                 if !value.re.is_finite() {
                     return Err(MinorCycleError::GeneratedNonfinite);
                 }
                 let pixel = [index / shape[1], index % shape[1]];
-                let cell = ModelCell::new(domain.ordinal(), 0, polarization, pixel);
-                let supported = base
-                    .shape()
-                    .flat_index(cell)
-                    .and_then(|flat| base.samples().get(flat))
-                    .is_some_and(|sample| sample.support() == ModelSupport::Valid);
+                let supported =
+                    model_plane[pixel[1] * shape[0] + pixel[0]].support() == ModelSupport::Valid;
                 if mask.contains(pixel) && supported {
                     plane_peak = plane_peak.max(value.re.abs() / psf_peak);
                 }
@@ -699,48 +1072,32 @@ fn shared_cycle_threshold_from_statistics(
     program.cycle_threshold_for(global_peak, maximum_sidelobe)
 }
 
-fn shared_cycle_threshold(
-    program: &MinorCycleProgram,
-    normal: &FinalNormalState,
-) -> Result<Option<f64>, MinorCycleError> {
-    if normal.channel_count() * normal.polarization_count() == 1 {
-        return Ok(None);
+fn plane_cycle_statistics(
+    plane: &crate::FinalNormalPlaneReader<'_>,
+) -> Result<(f64, f64), MinorCycleError> {
+    if plane.validity() != SpectralChannelValidity::Valid {
+        return Ok((0.0, 0.0));
     }
-    let mut global_peak = 0.0_f64;
-    let mut maximum_sidelobe = 0.0_f64;
-    for polarization in 0..normal.polarization_count() {
-        for local_channel in 0..normal.channel_count() {
-            let plane = normal
-                .polarization_plane(local_channel, polarization)
-                .ok_or(MinorCycleError::ModelShapeMismatch)?;
-            if plane.validity() != SpectralChannelValidity::Valid {
-                continue;
-            }
-            let psf = plane
-                .normal_approximation()
-                .iter()
-                .map(|value| value.re as f32)
-                .collect::<Vec<_>>();
-            let psf_peak = psf
-                .iter()
-                .map(|value| f64::from(value.abs()))
-                .fold(0.0_f64, f64::max);
-            if !(psf_peak.is_finite() && psf_peak > 0.0) {
-                return Err(MinorCycleError::InvalidPsfPeak);
-            }
-            let peak = plane
-                .residual()
-                .iter()
-                .map(|value| value.re.abs() / psf_peak)
-                .fold(0.0_f64, f64::max);
-            global_peak = global_peak.max(peak);
-            maximum_sidelobe =
-                maximum_sidelobe.max(crate::fitted_psf_sidelobe_fraction(&psf, plane.shape())?);
-        }
+    let psf = plane
+        .read_psf()?
+        .iter()
+        .map(|value| value.re as f32)
+        .collect::<Vec<_>>();
+    let psf_peak = psf
+        .iter()
+        .map(|value| f64::from(value.abs()))
+        .fold(0.0_f64, f64::max);
+    if !(psf_peak.is_finite() && psf_peak > 0.0) {
+        return Err(MinorCycleError::InvalidPsfPeak);
     }
-    Ok(shared_cycle_threshold_from_statistics(
-        program,
-        [(global_peak, maximum_sidelobe)],
+    let peak = plane
+        .read_residual()?
+        .iter()
+        .map(|value| value.re.abs() / psf_peak)
+        .fold(0.0_f64, f64::max);
+    Ok((
+        peak,
+        crate::fitted_psf_sidelobe_fraction(&psf, plane.shape())?,
     ))
 }
 
@@ -774,6 +1131,9 @@ impl ReconstructionCycleResult {
 /// Exact reason the shared reconstruction cycle failed closed.
 #[derive(Debug, Error)]
 pub enum ReconstructionCycleError {
+    /// A coordinator could not load the required authoritative Normal State.
+    #[error(transparent)]
+    NormalAccess(#[from] crate::SpectralOperatorError),
     /// No jointly coupled channel solver is approved by T38.
     #[error("coupled channel reconstruction requires an approved joint solver")]
     UnsupportedCoupledPolicy,
@@ -783,6 +1143,9 @@ pub enum ReconstructionCycleError {
     /// The normal-state slab cannot expose all of its declared core planes.
     #[error("normal-state slab storage does not match its declared channel interval")]
     InvalidNormalStateSlab,
+    /// Independent-plane results were foreign, missing, duplicated, or reordered.
+    #[error("reconstruction plane results do not exactly cover the ordered cycle")]
+    InvalidPlaneCoverage,
     /// A channel-local minor solve failed.
     #[error(transparent)]
     Minor(#[from] MinorCycleError),

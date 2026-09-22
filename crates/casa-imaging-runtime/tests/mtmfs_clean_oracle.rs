@@ -10,7 +10,8 @@ use std::{collections::BTreeMap, convert::Infallible, error::Error, fs, io, path
 use casa_imaging_model::{ProductRole, ProductTerm, ProductUnit};
 use casa_imaging_products::{
     AnalyticPrimaryBeamModel, ContinuumProductControls, ContinuumProductInputs,
-    ContinuumSourceCatalog, ProductGenerationAuthority, produce_continuum_members,
+    PlannedContinuumGeneration, PlannedMember, ProductOutput, ProductWindow, ProductWindowLayout,
+    ProductWriter, ProductsError, RestoringBeam, produce_continuum_members,
 };
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, ImageDomainReconstructionMaskPlans, MinorCycleProgram,
@@ -35,6 +36,46 @@ use serde_json::json;
 
 const T43_OUTPUT_ENV: &str = "CASA_RS_T43_RUST_OUTPUT";
 const T44_OUTPUT_ENV: &str = "CASA_RS_T44_RUST_OUTPUT";
+
+#[derive(Default)]
+struct OracleProductOutput(std::sync::Mutex<BTreeMap<String, ProductWindow>>);
+struct OracleProductWriter<'a> {
+    output: &'a OracleProductOutput,
+    name: String,
+    window: Option<ProductWindow>,
+}
+impl ProductOutput for OracleProductOutput {
+    fn begin_member<'a>(
+        &'a self,
+        member: &PlannedMember,
+        _: ProductWindowLayout,
+        _: &[Option<RestoringBeam>],
+    ) -> Result<Box<dyn ProductWriter + 'a>, ProductsError> {
+        Ok(Box::new(OracleProductWriter {
+            output: self,
+            name: member.name().to_owned(),
+            window: None,
+        }))
+    }
+}
+impl ProductWriter for OracleProductWriter<'_> {
+    fn write(&mut self, window: ProductWindow) -> Result<(), ProductsError> {
+        assert!(
+            self.window.is_none(),
+            "oracle fixture deliberately admits one full window"
+        );
+        self.window = Some(window);
+        Ok(())
+    }
+    fn finish(self: Box<Self>) -> Result<(), ProductsError> {
+        self.output
+            .0
+            .lock()
+            .unwrap()
+            .insert(self.name, self.window.unwrap());
+        Ok(())
+    }
+}
 const IMAGE_SIZE: usize = 128;
 const CELLS: usize = IMAGE_SIZE * IMAGE_SIZE;
 const IMPLEMENTATION_BYTE: u8 = 0x43;
@@ -114,6 +155,22 @@ struct CleanRun {
     problem: casa_imaging_model::CompiledProblem,
     final_completion: casa_imaging_reconstruction::MajorCycleCompletion,
     cycles: Vec<CycleSummary>,
+    artifact_directory: tempfile::TempDir,
+}
+
+fn full_product_window(
+    planned: &casa_imaging_products::PlannedContinuumGeneration,
+) -> casa_imaging_products::ProductStoragePlan {
+    casa_imaging_products::ProductStoragePlan::new(
+        planned
+            .members()
+            .iter()
+            .map(|member| member.axes().spectral().output_channels())
+            .max()
+            .expect("planned continuum generation has members"),
+        1,
+    )
+    .expect("planned continuum generation has positive channels")
 }
 
 fn execute_four_cycle_clean(t44_products: bool) -> Result<CleanRun, Box<dyn Error>> {
@@ -155,25 +212,35 @@ fn execute_four_cycle_clean(t44_products: bool) -> Result<CleanRun, Box<dyn Erro
     let program = MinorCycleProgram::for_problem(&problem)?.record_component_sequence(16)?;
 
     let initial = SpectralCyclePlan::initial(&problem, &planning_registry, execution_policy())?;
-    let minor_node = initial
-        .minor_cycle_node()
-        .ok_or("T43/T44 initial plan lacks its reconstruction cycle")?
-        .clone();
+    let frozen_reservation = FrozenWeightingReservation::acquire(
+        authority,
+        resource_policy.clone(),
+        initial.weighting_plan().planned_residency(),
+        1 << 20,
+    )?;
+    let plan = runtime_plan(
+        &problem,
+        PlanningBindings::new(
+            registry_id(),
+            resource_policy.clone(),
+            PlannerCostModelProfileBootstrap::new(cost_model_id()),
+        ),
+        authority,
+        &planning_registry,
+        &receipts,
+        |_, _| Ok::<_, Infallible>(initial.physical_candidates()),
+    )?;
     let SpectralCyclePlanParts {
-        physical,
         weighting,
         complete_data,
         source_resources,
         pass,
+        minor_cycle_node,
         gridded_normal,
         ..
-    } = initial.into_parts();
-    let frozen_reservation = FrozenWeightingReservation::acquire(
-        authority,
-        resource_policy.clone(),
-        weighting.planned_residency(),
-        1 << 20,
-    )?;
+    } = initial.into_parts(&plan)?;
+    let minor_node =
+        minor_cycle_node.ok_or("T43/T44 initial plan lacks its reconstruction cycle")?;
     let executor = SpectralCycleExecutor::new(
         implementation_id(),
         problem.clone(),
@@ -198,18 +265,6 @@ fn execute_four_cycle_clean(t44_products: bool) -> Result<CleanRun, Box<dyn Erro
     );
     let registry =
         SpectralCycleRegistry::new(registry_id(), implementation_id(), &problem, executor);
-    let plan = runtime_plan(
-        &problem,
-        PlanningBindings::new(
-            registry_id(),
-            resource_policy.clone(),
-            PlannerCostModelProfileBootstrap::new(cost_model_id()),
-        ),
-        authority,
-        &registry,
-        &receipts,
-        move |_, _| Ok::<_, Infallible>(vec![physical]),
-    )?;
     runtime_run(
         &executable,
         &plan,
@@ -281,6 +336,7 @@ fn execute_four_cycle_clean(t44_products: bool) -> Result<CleanRun, Box<dyn Erro
         problem,
         final_completion,
         cycles,
+        artifact_directory,
     })
 }
 
@@ -294,13 +350,21 @@ fn t43_real_ms_mtmfs_clean_matches_frozen_casa() -> Result<(), Box<dyn Error>> {
         problem: _,
         final_completion,
         cycles,
+        artifact_directory: _,
     } = execute_four_cycle_clean(false)?;
 
-    let model = final_completion.final_model().samples();
+    let model = final_completion
+        .final_model()
+        .read_samples(0..final_completion.final_model().sample_count())
+        .expect("read fixture model");
     if model.len() != 2 * CELLS {
         return Err(format!("T43 final model has {} samples", model.len()).into());
     }
+    let model = model.as_ref();
     let normal = final_completion.normal_state();
+    let window = normal
+        .read_window(normal.slab().core_range())
+        .expect("coupled Taylor fixture window");
     let divisor = *normal
         .sum_weights()
         .first()
@@ -308,7 +372,7 @@ fn t43_real_ms_mtmfs_clean_matches_frozen_casa() -> Result<(), Box<dyn Error>> {
         .ok_or("T43 principal Taylor sum weight is not positive")?;
     let residual = (0..2)
         .map(|term| {
-            normal
+            window
                 .coefficient_term(term)
                 .map(|view| {
                     view.residual()
@@ -375,33 +439,36 @@ fn t44_real_ms_mtmfs_products_match_frozen_casa() -> Result<(), Box<dyn Error>> 
         problem,
         final_completion,
         cycles,
+        artifact_directory,
     } = execute_four_cycle_clean(true)?;
-    let catalog = ContinuumSourceCatalog::from_major_cycle(&problem, &final_completion)?;
-    let authority = ProductGenerationAuthority::bind(&problem);
     let controls = ContinuumProductControls::default()
         .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaEvlaCommon);
-    let planned = authority.plan(&catalog, &controls)?;
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &final_completion)?;
+    let planned = PlannedContinuumGeneration::new(&inputs, &controls)?;
     if planned.primary_beam_model() != Some(AnalyticPrimaryBeamModel::CasaEvlaCommon) {
         return Err("T44 product plan did not pin the CASA EVLA common beam".into());
     }
-    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &final_completion)?;
-    let produced = produce_continuum_members(&planned, &inputs)?;
-    let sealed = authority.authorize(&planned, &produced)?;
-    let names = sealed
+    let window = full_product_window(&planned);
+    let output_windows = OracleProductOutput::default();
+    let generated = produce_continuum_members(&planned, &inputs, window, &(), &output_windows)?;
+    let names = generated
         .members()
         .iter()
         .map(|member| member.name())
         .collect::<Vec<_>>();
     if names != T44_PRODUCT_NAMES {
-        return Err(format!("T44 sealed product set changed: {names:?}").into());
+        return Err(format!("T44 product set changed: {names:?}").into());
     }
     if names.iter().any(|name| name.starts_with(".weight")) || names.contains(&".alpha.pbcor") {
         return Err("T44 standard product set contains weight or alpha.pbcor".into());
     }
-    let common_beam = sealed
-        .restoring_beam()
+    let common_beam = generated
+        .restoring_beams()
+        .iter()
+        .flatten()
+        .next()
         .ok_or("T44 common restoring beam is missing")?;
-    for member in sealed.members().iter().filter(|member| {
+    for member in generated.members().iter().filter(|member| {
         matches!(
             member.contract().role(),
             ProductRole::RestoredImage(_)
@@ -429,15 +496,19 @@ fn t44_real_ms_mtmfs_products_match_frozen_casa() -> Result<(), Box<dyn Error>> 
             "stop_reason": "iteration_limit",
         },
         "common_beam": beam_json(common_beam),
-        "members": sealed.members().iter().map(|member| json!({
-            "name": member.name(),
-            "role": product_role_name(member.contract().role()),
-            "unit": product_unit_name(member.contract().unit()),
-            "shape": member.contract().axes().shape(),
-            "beam": member.resolved_beam().map(beam_json),
-            "payload": member.payload(),
-            "validity": member.validity(),
-        })).collect::<Vec<_>>(),
+        "members": generated.members().iter().map(|member| {
+            let windows = output_windows.0.lock().unwrap();
+            let full = &windows[member.name()];
+            json!({
+                "name": member.name(),
+                "role": product_role_name(member.contract().role()),
+                "unit": product_unit_name(member.contract().unit()),
+                "shape": member.contract().axes().shape(),
+                "beam": member.resolved_beam().map(beam_json),
+                "payload": full.payload(),
+                "validity": full.validity(),
+            })
+        }).collect::<Vec<_>>(),
     });
     if let Some(parent) = output.parent() {
         fs::create_dir_all(parent)?;
@@ -534,7 +605,9 @@ fn cycle_summary_from_evidence(
 }
 
 fn model_tt0_sum(model: &ModelGeneration) -> f64 {
-    model.samples()[..CELLS]
+    model
+        .read_samples(0..model.sample_count())
+        .expect("read fixture model")[..CELLS]
         .iter()
         .map(|sample| sample.value().value())
         .sum()
@@ -570,18 +643,27 @@ fn execute_continuing_cycle(
         ordinal,
         replay,
     )?;
-    let minor_node = planned
-        .minor_cycle_node()
-        .ok_or("T43 continuing plan lacks reconstruction cycle")?
-        .clone();
+    let plan = runtime_plan(
+        problem,
+        PlanningBindings::new(
+            registry_id(),
+            resource_policy.clone(),
+            PlannerCostModelProfileBootstrap::new(cost_model_id()),
+        ),
+        authority,
+        planning_registry,
+        receipts,
+        |_, _| Ok::<_, Infallible>(planned.physical_candidates()),
+    )?;
     let SpectralCyclePlanParts {
-        physical,
         weighting,
         complete_data,
         pass,
+        minor_cycle_node,
         gridded_normal,
         ..
-    } = planned.into_parts();
+    } = planned.into_parts(&plan)?;
+    let minor_node = minor_cycle_node.ok_or("T43 continuing plan lacks reconstruction cycle")?;
     let executor = SpectralCycleExecutor::new_gridded(
         implementation_id(),
         problem.clone(),
@@ -603,14 +685,7 @@ fn execute_continuing_cycle(
     let registry =
         SpectralCycleRegistry::new(registry_id(), implementation_id(), problem, executor);
     run_plan(
-        problem,
-        resource_policy,
-        authority,
-        receipts,
-        current,
-        &registry,
-        physical,
-        ordinal,
+        problem, authority, receipts, current, &registry, &plan, ordinal,
     )?;
     Ok((
         registry
@@ -650,14 +725,25 @@ fn execute_terminal_major(
         ordinal,
         replay,
     )?;
+    let plan = runtime_plan(
+        problem,
+        PlanningBindings::new(
+            registry_id(),
+            resource_policy.clone(),
+            PlannerCostModelProfileBootstrap::new(cost_model_id()),
+        ),
+        authority,
+        planning_registry,
+        receipts,
+        |_, _| Ok::<_, Infallible>(planned.physical_candidates()),
+    )?;
     let SpectralCyclePlanParts {
-        physical,
         weighting,
         complete_data,
         pass,
         gridded_normal,
         ..
-    } = planned.into_parts();
+    } = planned.into_parts(&plan)?;
     let executor = SpectralCycleExecutor::new_gridded(
         implementation_id(),
         problem.clone(),
@@ -672,14 +758,7 @@ fn execute_terminal_major(
     let registry =
         SpectralCycleRegistry::new(registry_id(), implementation_id(), problem, executor);
     run_plan(
-        problem,
-        resource_policy,
-        authority,
-        receipts,
-        current,
-        &registry,
-        physical,
-        ordinal,
+        problem, authority, receipts, current, &registry, &plan, ordinal,
     )?;
     Ok(registry
         .implementation()
@@ -688,34 +767,20 @@ fn execute_terminal_major(
         .into_completion())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn run_plan(
     problem: &casa_imaging_model::CompiledProblem,
-    resource_policy: &ResourcePolicy,
     authority: &ResourceAuthority,
     receipts: &ExecutionReceiptStore,
     current: &RunBindings,
     registry: &SpectralCycleRegistry<SpectralCycleExecutor>,
-    physical: casa_imaging_runtime::PhysicalWorkBinding,
+    plan: &casa_imaging_runtime::ExecutionPlan,
     ordinal: u32,
 ) -> Result<(), Box<dyn Error>> {
-    let plan = runtime_plan(
-        problem,
-        PlanningBindings::new(
-            registry_id(),
-            resource_policy.clone(),
-            PlannerCostModelProfileBootstrap::new(cost_model_id()),
-        ),
-        authority,
-        registry,
-        receipts,
-        move |_, _| Ok::<_, Infallible>(vec![physical]),
-    )?;
     let executable = ExecutableModelProblem::from_compiled(problem.clone())?;
     let attempt = attempt_id(ordinal);
     runtime_run(
         &executable,
-        &plan,
+        plan,
         current,
         registry,
         authority,

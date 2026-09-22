@@ -4,6 +4,9 @@
 
 use std::convert::Infallible;
 
+mod common;
+use common::{GeneratedMember, GeneratedProducts, MemoryProductOutput, full_window};
+
 use casa_imaging_model::{
     AntennaSelection, AxisOrder, CentreLaws, ColumnGeneration, ConsistencyToken,
     CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
@@ -36,8 +39,8 @@ use casa_imaging_model::{
 };
 use casa_imaging_products::{
     AnalyticPrimaryBeamModel, ContinuumProductControls, ContinuumProductInputs,
-    ContinuumSourceCatalog, ProductGenerationAuthority, ProductsError, SealedContinuumGeneration,
-    SealedMember, fft_convolve, gaussian_beam_image, produce_continuum_members,
+    PlannedContinuumGeneration, ProductsError, fft_convolve, gaussian_beam_image,
+    produce_continuum_members,
 };
 use casa_imaging_reconstruction::{
     CoupledReconstructionMask, ExecutableModelProblem, MajorCycleCompletion, MajorCycleOwner,
@@ -200,14 +203,14 @@ fn validity_with_taylor_fraction(taylor_fraction: f32) -> ProductValidityPolicie
         PrimaryBeamValidityPolicy::new(
             0.2,
             ProductSupportComparison::StrictlyGreater,
-            ProductBlankingPolicy::ZeroAndFalseMask,
+            ProductBlankingPolicy::Zero,
         )
         .expect("PB validity"),
         TaylorValidityPolicy::new(
             TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
             taylor_fraction,
             ProductSupportComparison::StrictlyGreater,
-            ProductBlankingPolicy::ZeroAndFalseMask,
+            ProductBlankingPolicy::Zero,
         )
         .expect("Taylor validity"),
     )
@@ -332,7 +335,11 @@ fn taylor_problem_with_fraction(
     .expect("compile Taylor problem")
 }
 
-fn joint_problem(seed: u8, products: &[ProductKind]) -> casa_imaging_model::CompiledProblem {
+fn joint_problem(
+    seed: u8,
+    products: &[ProductKind],
+    uncorrected_mask: casa_imaging_model::UncorrectedImageMaskPolicy,
+) -> casa_imaging_model::CompiledProblem {
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
@@ -417,7 +424,7 @@ fn joint_problem(seed: u8, products: &[ProductKind]) -> casa_imaging_model::Comp
                 products.to_vec(),
                 ProductNormalization::UnitResponse,
                 RestoringBeamPolicy::Common,
-                validity(),
+                validity().with_uncorrected_mask(uncorrected_mask),
             ),
             ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
             NumericsContract::new(
@@ -618,29 +625,6 @@ fn run_round_with_terms(
     seed: u8,
     model_terms: &[(usize, f64)],
 ) -> MajorCycleCompletion {
-    let mut lifecycle = ModelLifecycle::bind(
-        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem"),
-        attempt(seed),
-        7,
-    )
-    .expect("model lifecycle");
-    let empty = lifecycle.initial_empty().expect("empty model");
-    let delta = (!model_terms.is_empty()).then(|| {
-        lifecycle
-            .compile_delta(
-                &empty,
-                model_terms.iter().map(|(coefficient, value)| {
-                    casa_imaging_model::ModelDeltaTerm::new(
-                        casa_imaging_model::ModelCell::new(0, *coefficient, 0, [4, 4]),
-                        casa_imaging_model::ModelValue::new(*value).expect("model value"),
-                    )
-                }),
-            )
-            .expect("model delta")
-    });
-    let preparation =
-        MajorCyclePreparation::prepare(&lifecycle, empty, delta).expect("preparation");
-    let final_model_generation = preparation.final_model_generation();
     let plan = plan_weighting(
         problem,
         WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
@@ -650,69 +634,124 @@ fn run_round_with_terms(
     let selected = selected_generation(problem, &samples);
     let generation = weighting_generation(problem, &plan, &samples).expect("weighting generation");
     let (blocks, summary) = replay(&generation, problem, &plan, &samples);
-    let specification =
-        SpectralOperatorSpecification::new(problem).expect("spectral specification");
-    let workload = spectral_operator_workload(
-        &specification,
-        plan.limits().max_block_samples(),
-        SpectralOperatorPass::InitialMajor,
+    let run = |lifecycle: &mut ModelLifecycle,
+               preparation: MajorCyclePreparation,
+               prior: Option<casa_imaging_reconstruction::FinalNormalState>| {
+        let final_model_generation = preparation.final_model_generation();
+        let specification =
+            SpectralOperatorSpecification::new(problem).expect("spectral specification");
+        let workload = spectral_operator_workload(
+            &specification,
+            plan.limits().max_block_samples(),
+            if prior.is_some() {
+                SpectralOperatorPass::ResidualRefresh
+            } else {
+                SpectralOperatorPass::InitialMajor
+            },
+        )
+        .expect("operator workload");
+        let prepared =
+            prepare_spectral_operator(specification, workload).expect("prepare operator");
+        let mut state = prepared
+            .begin(problem, &generation)
+            .expect("begin complete-data owner");
+        state
+            .bind_major_cycle_model(preparation.final_model(), prior)
+            .expect("bind final model");
+        for block in &blocks {
+            state.consume_block(block).expect("consume block");
+        }
+        let evidence: CompleteDataOwnerResult = state
+            .complete(&summary, selected, None)
+            .expect("complete normal state");
+        let mut owner = MajorCycleOwner::from_complete_data(
+            {
+                let storage =
+                    casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                        evidence.primitives().slab().total_channels(),
+                    )
+                    .expect("fixture normal window");
+                evidence.seal(&storage).expect("seal fixture normal state")
+            },
+            preparation,
+        )
+        .expect("major-cycle owner");
+        if matches!(
+            problem.reconstruction().basis(),
+            ReconstructionBasis::JointContinuumLine { .. }
+        ) {
+            owner = owner
+                .bind_reconstruction_masks(&ReconstructionMaskSet::Coupled(Box::new(
+                    joint_product_masks(problem, final_model_generation),
+                )))
+                .expect("bind joint final masks");
+        }
+        owner.reconcile(lifecycle).expect("major-cycle join")
+    };
+    let mut lifecycle = ModelLifecycle::bind(
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem"),
+        attempt(seed),
+        7,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
-    .expect("operator workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
-    let mut state = prepared
-        .begin(problem, &generation)
-        .expect("begin complete-data owner");
-    state
-        .bind_major_cycle_model(preparation.final_model(), None)
-        .expect("bind final model");
-    for block in &blocks {
-        state.consume_block(block).expect("consume block");
+    .expect("model lifecycle");
+    let empty = lifecycle.initial_empty().expect("empty model");
+    let preparation =
+        MajorCyclePreparation::prepare(&lifecycle, empty, None).expect("initial preparation");
+    let initial = run(&mut lifecycle, preparation, None);
+    if model_terms.is_empty() {
+        return initial;
     }
-    let evidence: CompleteDataOwnerResult = state
-        .complete(&summary, selected, None)
-        .expect("complete normal state");
-    let mut owner =
-        MajorCycleOwner::from_complete_data(evidence, preparation).expect("major-cycle owner");
-    if matches!(
-        problem.reconstruction().basis(),
-        ReconstructionBasis::JointContinuumLine { .. }
-    ) {
-        owner = owner
-            .bind_reconstruction_masks(&ReconstructionMaskSet::Coupled(Box::new(
-                joint_product_masks(problem, final_model_generation),
-            )))
-            .expect("bind joint final masks");
-    }
-    owner.reconcile(&mut lifecycle).expect("major-cycle join")
+    let (normal, continuation) = initial.into_continuation();
+    let (mut lifecycle, named) = ModelLifecycle::continue_from(
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem"),
+        attempt(seed),
+        8,
+        continuation,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
+    )
+    .expect("continued lifecycle");
+    let delta = lifecycle
+        .compile_delta(
+            &named,
+            model_terms.iter().map(|(coefficient, value)| {
+                casa_imaging_model::ModelDeltaTerm::new(
+                    casa_imaging_model::ModelCell::new(0, *coefficient, 0, [4, 4]),
+                    casa_imaging_model::ModelValue::new(*value).expect("model value"),
+                )
+            }),
+        )
+        .expect("model delta");
+    let preparation =
+        MajorCyclePreparation::prepare(&lifecycle, named, Some(delta)).expect("final preparation");
+    run(&mut lifecycle, preparation, Some(normal))
 }
 
-fn seal(
+fn generate(
     problem: &casa_imaging_model::CompiledProblem,
     join: &MajorCycleCompletion,
-) -> SealedContinuumGeneration {
-    seal_with_controls(problem, join, ContinuumProductControls::default())
+) -> GeneratedProducts {
+    generate_with_controls(problem, join, ContinuumProductControls::default())
 }
 
-fn seal_with_controls(
+fn generate_with_controls(
     problem: &casa_imaging_model::CompiledProblem,
     join: &MajorCycleCompletion,
     controls: ContinuumProductControls,
-) -> SealedContinuumGeneration {
-    let catalog =
-        ContinuumSourceCatalog::from_major_cycle(problem, join).expect("T44 Taylor source catalog");
-    let authority = ProductGenerationAuthority::bind(problem);
-    let planned = authority
-        .plan(&catalog, &controls)
-        .expect("T44 Taylor plan");
+) -> GeneratedProducts {
     let inputs = ContinuumProductInputs::from_major_cycle(problem, join).expect("Taylor inputs");
-    let produced = produce_continuum_members(&planned, &inputs).expect("T44 Taylor product family");
-    authority
-        .authorize(&planned, &produced)
-        .expect("Taylor seal")
+    let planned = PlannedContinuumGeneration::new(&inputs, &controls).expect("T44 Taylor plan");
+    let output = MemoryProductOutput::default();
+    let produced =
+        produce_continuum_members(&planned, &inputs, full_window(&planned), &(), &output)
+            .expect("T44 Taylor product family");
+    GeneratedProducts::from_output(&produced, &output)
 }
 
-fn member<'a>(sealed: &'a SealedContinuumGeneration, name: &str) -> &'a SealedMember {
-    sealed
+fn member<'a>(generated: &'a GeneratedProducts, name: &str) -> &'a GeneratedMember {
+    generated
         .members()
         .iter()
         .find(|member| member.name() == name)
@@ -739,12 +778,10 @@ fn t46_joint_products_publish_one_lineage_without_component_residuals() {
             ProductKind::SumWeights,
             ProductKind::Mask,
         ],
+        casa_imaging_model::UncorrectedImageMaskPolicy::None,
     );
     let join = run_round_with_terms(&problem, 146, &[(0, 1.0), (1, 2.0)]);
     let masks = joint_product_masks(&problem, join.final_model().generation_id());
-    let catalog =
-        ContinuumSourceCatalog::from_major_cycle_with_coupled_masks(&problem, &join, &masks)
-            .expect("joint source catalog");
     assert!(
         join.normal_state()
             .channel_sum_weights()
@@ -754,58 +791,61 @@ fn t46_joint_products_publish_one_lineage_without_component_residuals() {
         join.normal_state().channel_sum_weights(),
         join.normal_state().sum_weights()
     );
-    let authority = ProductGenerationAuthority::bind(&problem);
-    let planned = authority
-        .plan(&catalog, &ContinuumProductControls::default())
-        .expect("joint product plan");
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &join)
         .expect("joint inputs")
         .with_coupled_reconstruction_masks(&masks)
         .expect("bind joint masks");
-    let produced = produce_continuum_members(&planned, &inputs).expect("joint product family");
-    let sealed = authority
-        .authorize(&planned, &produced)
-        .expect("joint product seal");
+    let planned = PlannedContinuumGeneration::new(&inputs, &ContinuumProductControls::default())
+        .expect("joint product plan");
+    let output = MemoryProductOutput::default();
+    let produced =
+        produce_continuum_members(&planned, &inputs, full_window(&planned), &(), &output)
+            .expect("joint product family");
+    let generated = GeneratedProducts::from_output(&produced, &output);
 
     assert!(
-        member(&sealed, ".continuum.model.ct0")
+        member(&generated, ".continuum.model.ct0")
             .payload()
             .contains(&1.0)
     );
-    assert!(member(&sealed, ".line.model").payload().contains(&2.0));
-    assert!(member(&sealed, ".total.model").payload().contains(&3.0));
+    assert!(member(&generated, ".line.model").payload().contains(&2.0));
+    assert!(member(&generated, ".total.model").payload().contains(&3.0));
     assert_eq!(
-        member(&sealed, ".line.image").payload().len(),
+        member(&generated, ".line.image").payload().len(),
         2 * SHAPE[0] * SHAPE[1]
     );
     assert_eq!(
-        member(&sealed, ".total.image").payload().len(),
+        member(&generated, ".total.image").payload().len(),
         2 * SHAPE[0] * SHAPE[1]
     );
-    assert_eq!(sealed.restoring_beams().len(), 2);
-    assert!(sealed.restoring_beams().iter().all(Option::is_some));
+    assert_eq!(generated.restoring_beams().len(), 2);
+    assert!(generated.restoring_beams().iter().all(Option::is_some));
     assert!(
-        member(&sealed, ".psf.joint0_1")
+        member(&generated, ".psf.joint0_1")
             .payload()
             .iter()
             .any(|value| *value != 0.0)
     );
     assert_ne!(
-        member(&sealed, ".continuum.mask").payload(),
-        member(&sealed, ".line.mask").payload(),
+        member(&generated, ".continuum.mask").payload(),
+        member(&generated, ".line.mask").payload(),
         "distinct coupled supports must remain distinct published members"
     );
+    let normal = join.normal_state();
+    let window = normal
+        .read_window(normal.slab().core_range())
+        .expect("coupled joint fixture window");
     let mut expected_residual = (0..2)
         .flat_map(|channel| {
             let weight = join.normal_state().channel_sum_weights()[channel];
-            join.normal_state()
+            window
                 .joint_common_residual(channel)
                 .expect("common residual")
                 .iter()
                 .map(move |value| (value.re / weight) as f32)
         })
         .collect::<Vec<_>>();
-    let mut published_residual = member(&sealed, ".total.residual").payload().to_vec();
+    let mut published_residual = member(&generated, ".total.residual").payload().to_vec();
     expected_residual.sort_by(f32::total_cmp);
     published_residual.sort_by(f32::total_cmp);
     assert_eq!(published_residual.len(), expected_residual.len());
@@ -813,22 +853,22 @@ fn t46_joint_products_publish_one_lineage_without_component_residuals() {
         assert_close(actual, expected, "channel-normalized common residual");
     }
     assert_eq!(
-        sealed
+        generated
             .members()
             .iter()
             .filter(|member| member.name().contains("residual"))
-            .map(SealedMember::name)
+            .map(GeneratedMember::name)
             .collect::<Vec<_>>(),
         [".total.residual"]
     );
     assert!(
-        member(&sealed, ".continuum.mask")
+        member(&generated, ".continuum.mask")
             .payload()
             .iter()
             .all(|value| *value == 1.0)
     );
     assert_eq!(
-        member(&sealed, ".line.mask")
+        member(&generated, ".line.mask")
             .payload()
             .iter()
             .filter(|value| **value == 1.0)
@@ -837,11 +877,43 @@ fn t46_joint_products_publish_one_lineage_without_component_residuals() {
     );
 }
 
+#[test]
+fn joint_publication_rejects_unimplemented_primary_beam_masks_at_planning() {
+    let problem = joint_problem(
+        147,
+        &[
+            ProductKind::Psf,
+            ProductKind::Residual,
+            ProductKind::Model,
+            ProductKind::RestoredImage,
+        ],
+        casa_imaging_model::UncorrectedImageMaskPolicy::PrimaryBeam,
+    );
+    let join = run_round_with_terms(&problem, 147, &[(0, 1.0), (1, 2.0)]);
+    let masks = joint_product_masks(&problem, join.final_model().generation_id());
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &join)
+        .expect("joint inputs")
+        .with_coupled_reconstruction_masks(&masks)
+        .expect("bind joint masks");
+    assert_eq!(
+        PlannedContinuumGeneration::new(
+            &inputs,
+            &ContinuumProductControls::default()
+                .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaEvlaCommon),
+        )
+        .expect_err("joint publication has no PB-mask producer"),
+        ProductsError::UnsupportedProblem,
+    );
+}
+
 fn principal_residuals(join: &MajorCycleCompletion) -> [Vec<f32>; TERMS] {
     let normal = join.normal_state();
+    let window = normal
+        .read_window(normal.slab().core_range())
+        .expect("coupled Taylor fixture window");
     let cells = SHAPE[0] * SHAPE[1];
     let moments = (0..3)
-        .map(|term| normal.normal_moment(term).expect("Taylor normal moment"))
+        .map(|term| window.normal_moment(term).expect("Taylor normal moment"))
         .collect::<Vec<_>>();
     let peak = moments[0]
         .normal_approximation()
@@ -855,8 +927,8 @@ fn principal_residuals(join: &MajorCycleCompletion) -> [Vec<f32>; TERMS] {
     let h11 = moments[2].normal_approximation()[peak].re;
     let determinant = h00 * h11 - h01 * h01;
     assert!(determinant.is_finite() && determinant.abs() > f64::EPSILON);
-    let residual0 = normal.coefficient_term(0).expect("residual tt0").residual();
-    let residual1 = normal.coefficient_term(1).expect("residual tt1").residual();
+    let residual0 = window.coefficient_term(0).expect("residual tt0").residual();
+    let residual1 = window.coefficient_term(1).expect("residual tt1").residual();
     let mut principal = [vec![0.0; cells], vec![0.0; cells]];
     for index in 0..cells {
         principal[0][index] =
@@ -871,11 +943,11 @@ fn principal_residuals(join: &MajorCycleCompletion) -> [Vec<f32>; TERMS] {
 fn t44_taylor_families_preserve_raw_state_and_share_one_restoring_beam() {
     let problem = taylor_problem(201, &TAYLOR_PRODUCTS, InstrumentResponse::Scalar);
     let join = run_round(&problem, 202);
-    let sealed = seal(&problem, &join);
-    let names = sealed
+    let generated = generate(&problem, &join);
+    let names = generated
         .members()
         .iter()
-        .map(SealedMember::name)
+        .map(GeneratedMember::name)
         .collect::<Vec<_>>();
     assert_eq!(
         names,
@@ -898,26 +970,29 @@ fn t44_taylor_families_preserve_raw_state_and_share_one_restoring_beam() {
     );
 
     let normal = join.normal_state();
-    let principal_weight = normal.normal_moment(0).expect("moment zero").sum_weight();
+    let window = normal
+        .read_window(normal.slab().core_range())
+        .expect("coupled Taylor fixture window");
+    let principal_weight = window.normal_moment(0).expect("moment zero").sum_weight();
     for term in 0..3 {
-        let psf = member(&sealed, &format!(".psf.tt{term}"));
-        let sumwt = member(&sealed, &format!(".sumwt.tt{term}"));
+        let psf = member(&generated, &format!(".psf.tt{term}"));
+        let sumwt = member(&generated, &format!(".sumwt.tt{term}"));
         assert_eq!(psf.contract().unit(), ProductUnit::JyPerBeam);
         assert_eq!(sumwt.contract().unit(), ProductUnit::VisibilityWeight);
-        let moment = normal.normal_moment(term).expect("normal moment");
+        let moment = window.normal_moment(term).expect("normal moment");
         assert_eq!(sumwt.payload(), &[moment.sum_weight() as f32]);
         for (actual, raw) in psf.payload().iter().zip(moment.normal_approximation()) {
             assert_close(*actual, (raw.re / principal_weight) as f32, "Taylor PSF");
         }
     }
     for term in 0..TERMS {
-        let raw = normal
+        let raw = window
             .coefficient_term(term)
             .expect("raw Taylor residual")
             .residual();
-        let residual = member(&sealed, &format!(".residual.tt{term}"));
-        let model = member(&sealed, &format!(".model.tt{term}"));
-        let restored = member(&sealed, &format!(".image.tt{term}"));
+        let residual = member(&generated, &format!(".residual.tt{term}"));
+        let model = member(&generated, &format!(".model.tt{term}"));
+        let restored = member(&generated, &format!(".image.tt{term}"));
         assert_eq!(residual.contract().unit(), ProductUnit::JyPerBeam);
         assert_eq!(model.contract().unit(), ProductUnit::JyPerPixel);
         assert_eq!(restored.contract().unit(), ProductUnit::JyPerBeam);
@@ -930,19 +1005,19 @@ fn t44_taylor_families_preserve_raw_state_and_share_one_restoring_beam() {
         }
         assert_eq!(
             restored.resolved_beam(),
-            member(&sealed, ".image.tt0").resolved_beam(),
+            member(&generated, ".image.tt0").resolved_beam(),
             "every Taylor image must use the same common beam"
         );
     }
 
     let principal = principal_residuals(&join);
-    let beam = member(&sealed, ".image.tt0")
+    let beam = member(&generated, ".image.tt0")
         .resolved_beam()
         .expect("common restoring beam");
     let kernel = gaussian_beam_image(SHAPE, beam, [1.0e-6, 1.0e-6]);
     for (term, principal_term) in principal.iter().enumerate().take(TERMS) {
-        let model = member(&sealed, &format!(".model.tt{term}"));
-        let restored = member(&sealed, &format!(".image.tt{term}"));
+        let model = member(&generated, &format!(".model.tt{term}"));
+        let restored = member(&generated, &format!(".image.tt{term}"));
         let convolved = fft_convolve(
             model.payload(),
             kernel.as_slice().expect("contiguous kernel"),
@@ -963,11 +1038,11 @@ fn t44_alpha_and_error_use_strict_principal_support_and_zero_false_blanking() {
     let problem = taylor_problem(203, &TAYLOR_PRODUCTS, InstrumentResponse::Scalar);
     let join = run_round_with_model(&problem, 204, None);
     let principal = principal_residuals(&join);
-    let sealed = seal(&problem, &join);
-    let image0 = member(&sealed, ".image.tt0");
-    let image1 = member(&sealed, ".image.tt1");
-    let alpha = member(&sealed, ".alpha");
-    let error = member(&sealed, ".alpha.error");
+    let generated = generate(&problem, &join);
+    let image0 = member(&generated, ".image.tt0");
+    let image1 = member(&generated, ".image.tt1");
+    let alpha = member(&generated, ".alpha");
+    let error = member(&generated, ".alpha.error");
     assert_eq!(alpha.contract().unit(), ProductUnit::Dimensionless);
     assert_eq!(error.contract().unit(), ProductUnit::Dimensionless);
     let positive_max = principal[0]
@@ -1002,7 +1077,7 @@ fn t44_alpha_and_error_use_strict_principal_support_and_zero_false_blanking() {
     let strict_problem =
         taylor_problem_with_fraction(207, &TAYLOR_PRODUCTS, InstrumentResponse::Scalar, 1.0);
     let strict_join = run_round_with_model(&strict_problem, 208, None);
-    let strict = seal(&strict_problem, &strict_join);
+    let strict = generate(&strict_problem, &strict_join);
     for name in [".alpha", ".alpha.error"] {
         let product = member(&strict, name);
         assert!(product.validity().iter().all(|valid| !valid));
@@ -1071,35 +1146,35 @@ fn t44_standard_pb_family_uses_pb_tt0_and_does_not_invent_weight_or_alpha_pbcor(
     );
 
     let join = run_round(&problem, 206);
-    let catalog = ContinuumSourceCatalog::from_major_cycle(&problem, &join).expect("PB catalog");
-    let authority = ProductGenerationAuthority::bind(&problem);
-    let unmodelled = authority
-        .plan(&catalog, &ContinuumProductControls::default())
-        .expect("unmodelled PB plan");
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &join).expect("PB inputs");
+    assert_eq!(
+        PlannedContinuumGeneration::new(&inputs, &ContinuumProductControls::default())
+            .expect_err("requested PB needs a bound model at planning"),
+        ProductsError::UnsupportedProblem
+    );
     let controls = ContinuumProductControls::default()
         .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaEvlaCommon);
-    let planned = authority
-        .plan(&catalog, &controls)
-        .expect("analytic PB plan");
-    assert_ne!(planned.generation_id(), unmodelled.generation_id());
+    let planned = PlannedContinuumGeneration::new(&inputs, &controls).expect("analytic PB plan");
+    let alternate = PlannedContinuumGeneration::new(
+        &inputs,
+        &ContinuumProductControls::default()
+            .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaVlaBand),
+    )
+    .expect("alternate analytic PB plan");
+    assert_ne!(planned.primary_beam_model(), alternate.primary_beam_model());
     assert_eq!(
         planned.primary_beam_model(),
         Some(AnalyticPrimaryBeamModel::CasaEvlaCommon)
     );
-    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &join).expect("PB inputs");
-    assert_eq!(
-        produce_continuum_members(&unmodelled, &inputs).expect_err("requested PB needs a model"),
-        ProductsError::UnsupportedProblem
-    );
-    let sealed = seal_with_controls(&problem, &join, controls);
-    let pb0 = member(&sealed, ".pb.tt0");
-    let pb1 = member(&sealed, ".pb.tt1");
+    let generated = generate_with_controls(&problem, &join, controls);
+    let pb0 = member(&generated, ".pb.tt0");
+    let pb1 = member(&generated, ".pb.tt1");
     assert_eq!(pb0.payload()[4 * SHAPE[1] + 4], 1.0);
     assert!(pb1.payload().iter().all(|value| *value == 0.0));
     assert!(pb1.validity().iter().all(|valid| *valid));
     for term in 0..TERMS {
-        let restored = member(&sealed, &format!(".image.tt{term}"));
-        let corrected = member(&sealed, &format!(".image.tt{term}.pbcor"));
+        let restored = member(&generated, &format!(".image.tt{term}"));
+        let corrected = member(&generated, &format!(".image.tt{term}.pbcor"));
         for index in 0..pb0.payload().len() {
             let valid = pb0.payload()[index] > 0.2;
             assert_eq!(corrected.validity()[index], valid);
@@ -1135,21 +1210,23 @@ fn t47_mosaic_taylor_products_publish_weight_and_pb_corrected_alpha() {
     let join = run_round(&problem, 212);
     let controls = ContinuumProductControls::default()
         .with_primary_beam_model(AnalyticPrimaryBeamModel::MosaicSensitivity);
-    let sealed = seal_with_controls(&problem, &join, controls);
-    let weight0 = member(&sealed, ".weight.tt0");
-    let weight1 = member(&sealed, ".weight.tt1");
-    let sensitivity = member(&sealed, ".sensitivity");
-    let alpha = member(&sealed, ".alpha");
-    let alpha_pbcor = member(&sealed, ".alpha.pbcor");
+    let generated = generate_with_controls(&problem, &join, controls);
+    let weight0 = member(&generated, ".weight.tt0");
+    let weight1 = member(&generated, ".weight.tt1");
+    let sensitivity = member(&generated, ".sensitivity");
+    let alpha = member(&generated, ".alpha");
+    let alpha_pbcor = member(&generated, ".alpha.pbcor");
 
     assert!(weight0.payload().iter().any(|value| *value > 0.0));
-    let principal_sum_weight = join
-        .normal_state()
+    let normal = join.normal_state();
+    let window = normal
+        .read_window(normal.slab().core_range())
+        .expect("coupled Taylor fixture window");
+    let principal_sum_weight = window
         .normal_moment(0)
         .expect("principal normal moment")
         .sum_weight() as f32;
-    let raw_sensitivity = join
-        .normal_state()
+    let raw_sensitivity = window
         .normal_moment(0)
         .expect("principal normal moment")
         .sensitivity();
@@ -1166,8 +1243,7 @@ fn t47_mosaic_taylor_products_publish_weight_and_pb_corrected_alpha() {
         sensitivity.payload(),
         "normalized Weight must not alias raw Sensitivity"
     );
-    let raw_weight1 = join
-        .normal_state()
+    let raw_weight1 = window
         .normal_moment(1)
         .expect("first signed normal moment")
         .sensitivity();
@@ -1249,35 +1325,43 @@ fn t51_weight_derived_mtmfs_plan_matches_casa_eighteen_member_inventory() {
 fn taylor_generation_demand_charges_retained_families_and_algorithm_scratch() {
     let problem = taylor_problem(209, &TAYLOR_PRODUCTS, InstrumentResponse::Scalar);
     let join = run_round(&problem, 210);
-    let catalog =
-        ContinuumSourceCatalog::from_major_cycle(&problem, &join).expect("Taylor catalog");
-    let planned = ProductGenerationAuthority::bind(&problem)
-        .plan(&catalog, &ContinuumProductControls::default())
-        .expect("Taylor plan");
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &join).expect("Taylor inputs");
-    let demand = planned.demand(&inputs).expect("Taylor demand");
-    let values = planned
-        .members()
-        .iter()
-        .map(|member| member.payload_values() as u64)
-        .sum::<u64>();
+    let planned = PlannedContinuumGeneration::new(&inputs, &ContinuumProductControls::default())
+        .expect("Taylor plan");
+    let demand = planned
+        .demand(&inputs, full_window(&planned))
+        .expect("Taylor demand");
     let maximum = planned
         .members()
         .iter()
         .map(|member| member.payload_values() as u64)
         .max()
         .expect("Taylor members");
-    assert_eq!(demand.produced_residency_bytes(), values * 5);
-    assert_eq!(demand.sealed_residency_bytes(), values * 5);
     assert_eq!(demand.maximum_member_payload_bytes(), maximum * 4);
     assert_eq!(demand.maximum_member_validity_bytes(), maximum);
+    assert_eq!(demand.maximum_window_payload_bytes(), maximum * 4);
+    assert_eq!(demand.maximum_window_validity_bytes(), maximum);
     assert_eq!(
         demand.algorithm_scratch_bytes(),
-        9_100,
-        "8x8, two-term Taylor owner retains exact families, solve and rustfft buffers"
+        9_100 + maximum * 10,
+        "coupled Taylor scratch additionally overlaps its emitted member and bounded backing-write window"
     );
     assert_eq!(
         demand.peak_residency_bytes(),
-        (values * 10).max(values * 5 + 9_100)
+        demand.algorithm_scratch_bytes()
+            + demand.retained_metadata_bytes()
+            + demand.beam_scratch_bytes()
+    );
+    let generated = produce_continuum_members(
+        &planned,
+        &inputs,
+        full_window(&planned),
+        &(),
+        &MemoryProductOutput::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        demand.retained_metadata_bytes(),
+        common::retained_metadata_bytes(&generated)
     );
 }

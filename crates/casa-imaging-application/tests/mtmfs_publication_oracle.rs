@@ -113,7 +113,7 @@ fn t44_application_mtmfs_publishes_frozen_casa_product_contract() -> Result<(), 
         gain: 0.1,
         threshold_jy: 0.0,
         psf_cutoff: casa_imaging_products::DEFAULT_PSF_CUTOFF,
-        primary_beam_cutoff: 0.2,
+        primary_beam_limit: 0.2,
         normalization: casa_imaging_model::ProductNormalization::UnitResponse,
         beam_policy: ContinuumBeamPolicy::Common,
         mask: ContinuumMask::FullPlane,
@@ -138,7 +138,6 @@ fn t44_application_mtmfs_publishes_frozen_casa_product_contract() -> Result<(), 
     assert_eq!(result.outcome.output.major_cycle_count, 5);
 
     let outcome = &result.outcome.output;
-    assert_eq!(outcome.products.payload_residency_bytes(), 0);
     assert_eq!(
         outcome
             .products
@@ -164,12 +163,7 @@ fn t44_application_mtmfs_publishes_frozen_casa_product_contract() -> Result<(), 
         })
     );
     let nodes = outcome.publication_receipt.plan_node_identities();
-    for node in [
-        "product-generation-generate",
-        "product-generation-seal",
-        "product-publication-stage",
-        "product-publication-commit",
-    ] {
+    for node in ["product-generation-write", "product-publication-commit"] {
         assert!(
             nodes.contains(&WorkNodeId::new(node)),
             "missing {node} node"
@@ -347,7 +341,7 @@ fn representative_mtmfs_request(
         gain: 0.1,
         threshold_jy: 0.0,
         psf_cutoff: casa_imaging_products::DEFAULT_PSF_CUTOFF,
-        primary_beam_cutoff: 0.2,
+        primary_beam_limit: 0.2,
         normalization: casa_imaging_model::ProductNormalization::UnitResponse,
         beam_policy: ContinuumBeamPolicy::Common,
         mask: ContinuumMask::FullPlane,

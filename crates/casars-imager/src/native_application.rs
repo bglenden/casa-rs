@@ -198,7 +198,7 @@ pub(crate) fn application_request(config: &CliConfig) -> Result<ContinuumImaging
         gain: f64::from(config.gain),
         threshold_jy: f64::from(config.threshold_jy),
         psf_cutoff: config.psf_cutoff,
-        primary_beam_cutoff: config.mosaic_pb_limit.abs(),
+        primary_beam_limit: config.mosaic_pb_limit,
         normalization: if direction_dependent {
             match config.normalization {
                 AwProjectNormalization::FlatNoise => ProductNormalization::FlatNoise,
@@ -316,6 +316,11 @@ fn task_requirements(config: &CliConfig) -> Vec<TaskRequirement> {
     }
     if config.save_model != SaveModelMode::None {
         requirements.push(TaskRequirement::ModelColumnWrite);
+    }
+    if config.standard_mfs_acceleration == StandardMfsAccelerationPolicy::Cpu
+        && !requirements.contains(&TaskRequirement::SerialCpu)
+    {
+        requirements.push(TaskRequirement::SerialCpu);
     }
     requirements.extend(backend_requirements(config));
     requirements.extend(unsupported_native_controls(config));
@@ -638,6 +643,33 @@ mod tests {
             application_request(&parallel).unwrap().resource_policy,
             ResourcePolicy::Balanced
         );
+    }
+
+    #[test]
+    fn t55_serial_cpu_policy_is_independent_of_spectral_mode() {
+        for mode in ["mfs", "cube", "cubedata", "cubesource", "mvc"] {
+            let serial = config(&["--specmode", mode, "--no-parallel"]);
+            let ResourcePolicy::Explicit(policy) =
+                application_request(&serial).unwrap().resource_policy
+            else {
+                panic!("{mode} CPU baseline must carry an explicit serial policy");
+            };
+            assert_eq!(policy.workers, Some(1), "{mode}");
+            let parallel = config(&["--specmode", mode, "--parallel"]);
+            assert_eq!(
+                application_request(&parallel).unwrap().resource_policy,
+                ResourcePolicy::Balanced,
+                "{mode} explicit parallel request"
+            );
+        }
+    }
+
+    #[test]
+    fn t55_application_request_preserves_signed_primary_beam_limit() {
+        for pblimit in ["0.2", "-0.2"] {
+            let request = application_request(&config(&["--pblimit", pblimit])).unwrap();
+            assert_eq!(request.primary_beam_limit, pblimit.parse::<f32>().unwrap());
+        }
     }
 
     #[test]

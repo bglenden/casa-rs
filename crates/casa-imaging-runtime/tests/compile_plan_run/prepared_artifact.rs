@@ -513,19 +513,6 @@ impl WorkImplementation for PreparedSuiteImplementation {
         }
     }
 
-    fn complete_product_generation(
-        &self,
-        context: WorkExecutionContext<'_>,
-    ) -> Result<Option<PublicationProjection>, Self::Error> {
-        match self {
-            Self::Base(adapter) => adapter.complete_product_generation(context),
-            Self::Prepared(adapter) => adapter.complete_product_generation(context),
-            Self::Catalog(adapter) => adapter.complete_product_generation(context),
-            Self::Native(adapter) => adapter.complete_product_generation(context),
-            Self::Failure(adapter) => adapter.complete_product_generation(context),
-        }
-    }
-
     fn publish(&self, context: WorkExecutionContext<'_>) -> Result<(), Self::Error> {
         match self {
             Self::Base(adapter) => adapter.publish(context),
@@ -533,20 +520,6 @@ impl WorkImplementation for PreparedSuiteImplementation {
             Self::Catalog(adapter) => adapter.publish(context),
             Self::Native(adapter) => adapter.publish(context),
             Self::Failure(adapter) => adapter.publish(context),
-        }
-    }
-
-    fn publish_product_member(
-        &self,
-        context: WorkExecutionContext<'_>,
-        entry: AuthorizedProductPublicationEntry,
-    ) -> Option<Result<ArtifactMeasurement, ProductMemberPublicationFailure<Self::Error>>> {
-        match self {
-            Self::Base(adapter) => adapter.publish_product_member(context, entry),
-            Self::Prepared(adapter) => adapter.publish_product_member(context, entry),
-            Self::Catalog(adapter) => adapter.publish_product_member(context, entry),
-            Self::Native(adapter) => adapter.publish_product_member(context, entry),
-            Self::Failure(adapter) => adapter.publish_product_member(context, entry),
         }
     }
 }
@@ -2761,6 +2734,9 @@ fn reusable_cf_identity_does_not_authorize_another_compiled_problem() {
                  supplied: &PreparedArtifactDescriptor,
                  operation: PreparedArtifactOperation,
                  catalog: bool| {
+        let _guard = super::run_lock()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let store = open();
         let (mut suite, id) = if catalog {
             catalog_registry(problem, open(), vec![supplied.clone()])

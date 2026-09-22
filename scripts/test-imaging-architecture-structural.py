@@ -35,6 +35,66 @@ def live_metadata() -> dict:
     return checker.load_cargo_metadata(None)
 
 
+class ProductOwnershipTests(unittest.TestCase):
+    def test_prepared_model_may_transfer_but_not_rescan_owned_samples(self) -> None:
+        source = "fn initial_reprojected() { mint(prepared.samples.into_vec()); }"
+        checker.validate_prepared_model_transfer(source)
+        for inspection in ["audit(&prepared.samples);", "prepared.samples.iter().for_each(check);"]:
+            with self.assertRaisesRegex(checker.ArchitectureError, "must not inspect samples"):
+                checker.validate_prepared_model_transfer(source.replace("mint(", inspection + "mint("))
+
+    def setUp(self) -> None:
+        self.sources = {
+            "storage.rs": """pub trait ProductOutput {
+    fn begin_member(&self);
+}
+pub trait ProductWriter {
+    fn write(&mut self, window: ProductWindow);
+    fn finish(self: Box<Self>);
+}
+""",
+            "generation.rs": "fn generate(output: &dyn ProductOutput) {}",
+            "visibility.rs": "use sha2::Sha256;",
+        }
+
+    def test_write_only_contract_and_independent_visibility_hash_are_allowed(self) -> None:
+        checker.validate_product_write_only_sources(self.sources, "")
+
+    def test_hashing_under_a_different_name_is_rejected(self) -> None:
+        self.sources["audit.rs"] = "use sha2::Sha256 as PublicationCheck;"
+        with self.assertRaisesRegex(checker.ArchitectureError, "product hashing"):
+            checker.validate_product_write_only_sources(self.sources, "")
+
+    def test_arbitrary_new_reader_capability_is_rejected(self) -> None:
+        self.sources["storage.rs"] = self.sources["storage.rs"].replace(
+            "fn finish", "fn inspect(&self) -> Vec<f32>;\n    fn finish"
+        )
+        with self.assertRaisesRegex(checker.ArchitectureError, "write lifecycle"):
+            checker.validate_product_write_only_sources(self.sources, "")
+
+    def test_borrowed_window_substitution_is_rejected(self) -> None:
+        self.sources["storage.rs"] = self.sources["storage.rs"].replace(
+            "window: ProductWindow", "window: &ProductWindow"
+        )
+        with self.assertRaisesRegex(checker.ArchitectureError, "owned window"):
+            checker.validate_product_write_only_sources(self.sources, "")
+
+    def test_output_verification_pass_without_hashing_is_rejected(self) -> None:
+        with self.assertRaisesRegex(checker.ArchitectureError, "reread product"):
+            checker.validate_product_write_only_sources(
+                self.sources, "fn check(image: Image) { image.get_slice(start, shape); }"
+            )
+
+    def test_test_fingerprint_does_not_hide_later_production_read(self) -> None:
+        source = "#[cfg(test)] mod tests { fn fingerprint() { use sha2::Sha256; } }"
+        self.sources["checks.rs"] = source
+        checker.validate_product_write_only_sources(self.sources, "")
+        with self.assertRaisesRegex(checker.ArchitectureError, "reread product"):
+            checker.validate_product_write_only_sources(
+                self.sources, source + "\nfn publish() { output.read_window(0..1); }"
+            )
+
+
 class PolicyTests(unittest.TestCase):
     def setUp(self) -> None:
         self.policy = load_json(POLICY_PATH)
@@ -45,6 +105,7 @@ class PolicyTests(unittest.TestCase):
         checker.validate_workspace(self.policy, self.metadata)
         checker.validate_forward_invariants(self.policy, self.metadata)
         checker.validate_source_boundaries(self.policy)
+        checker.validate_product_write_only_path()
 
     def test_every_workspace_package_is_classified(self) -> None:
         packages, _edges, _dependencies = checker.workspace_edges(self.metadata)
@@ -214,7 +275,7 @@ class MatrixTests(unittest.TestCase):
     def test_live_matrix_is_valid(self) -> None:
         checker.validate_migration_matrix(self.matrix, self.policy)
 
-    def test_weighted_replay_requires_selected_aw_pointing_pixel(self) -> None:
+    def weighting_sources(self) -> dict:
         paths = {
             "model": "crates/casa-imaging-model/src/measurement_equation.rs",
             "sample_model": "crates/casa-imaging-model/src/selected_observation_sample.rs",
@@ -229,6 +290,13 @@ class MatrixTests(unittest.TestCase):
             path = REPO_ROOT / relative
             sources[name] = path.read_text(encoding="utf-8")
             sources[f"{name}_path"] = path
+        return sources
+
+    def test_live_weighting_sources_are_valid(self) -> None:
+        checker.validate_t18_global_weighting_sources(**self.weighting_sources())
+
+    def test_weighted_replay_requires_selected_aw_pointing_pixel(self) -> None:
+        sources = self.weighting_sources()
         field = "    aw_pointing_pixel: Option<[f64; 2]>,\n"
         self.assertEqual(sources["weighting"].count(field), 1)
         sources["weighting"] = sources["weighting"].replace(field, "", 1)
@@ -236,6 +304,78 @@ class MatrixTests(unittest.TestCase):
             checker.ArchitectureError, "T18 weighted replay does not project directly"
         ):
             checker.validate_t18_global_weighting_sources(**sources)
+
+    def test_initial_stream_requires_owner_terminal_completion(self) -> None:
+        sources = self.weighting_sources()
+        token = "SelectedObservationBlockConsumer::complete,"
+        self.assertEqual(sources["runtime_weighting"].count(token), 1)
+        sources["runtime_weighting"] = sources["runtime_weighting"].replace(
+            token, "unvalidated_completion,", 1
+        )
+        with self.assertRaisesRegex(
+            checker.ArchitectureError, "shared bounded selected-payload traversal"
+        ):
+            checker.validate_t18_global_weighting_sources(**sources)
+
+    def test_native_initial_stream_requires_authority_and_common_completion(self) -> None:
+        for token in (
+            ".authorize_source_observation(context, problem, selected.residency_certificate())",
+            "native_preparation::execute(",
+            "self.accept_initial_stream(context, fragment, problem, None, completed)",
+        ):
+            with self.subTest(token=token):
+                sources = self.weighting_sources()
+                body = checker.rust_function_body(
+                    sources["runtime_weighting"],
+                    "traverse_native_initial_stream",
+                    sources["runtime_weighting_path"],
+                )
+                self.assertEqual(body.count(token), 1)
+                sources["runtime_weighting"] = sources["runtime_weighting"].replace(
+                    body, body.replace(token, "removed_by_mutation", 1), 1
+                )
+                with self.assertRaisesRegex(
+                    checker.ArchitectureError, "native initial preparation must retain"
+                ):
+                    checker.validate_t18_global_weighting_sources(**sources)
+
+    def test_prepared_replay_requires_weighting_and_ordered_coverage(self) -> None:
+        for method, token in (
+            ("prepare_sample", "weighted_sample_from_state("),
+            ("commit_sample", "self.coverage.push(&weighted)"),
+            ("commit_sample", "self.block.push(weighted)"),
+        ):
+            with self.subTest(method=method, token=token):
+                sources = self.weighting_sources()
+                body = checker.rust_impl_method_body(
+                    sources["weighting"], "WeightingReplayPhase<'_>", method,
+                    sources["weighting_path"],
+                )
+                self.assertEqual(body.count(token), 1)
+                sources["weighting"] = sources["weighting"].replace(
+                    body, body.replace(token, "removed_by_mutation", 1), 1
+                )
+                with self.assertRaisesRegex(
+                    checker.ArchitectureError, "T18 weighted replay does not project directly"
+                ):
+                    checker.validate_t18_global_weighting_sources(**sources)
+
+    def test_restricted_replay_cannot_change_source_or_parent(self) -> None:
+        for token in (
+            "selected_generation != self.scope.proof.selected_generation",
+            "sample_count != self.actual.sample_count",
+            "frequency_bounds_hz != self.scope.frequency_bounds_hz",
+            "proof.selected_generation == selected_generation",
+            "proof.coverage == parent.coverage",
+        ):
+            with self.subTest(token=token):
+                sources = self.weighting_sources()
+                self.assertEqual(sources["weighting"].count(token), 1)
+                sources["weighting"] = sources["weighting"].replace(token, "false", 1)
+                with self.assertRaisesRegex(
+                    checker.ArchitectureError, "restricted replay must validate"
+                ):
+                    checker.validate_t18_global_weighting_sources(**sources)
 
     def test_fallback_status_is_rejected(self) -> None:
         matrix = copy.deepcopy(self.matrix)

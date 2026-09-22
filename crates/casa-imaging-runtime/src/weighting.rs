@@ -11,12 +11,13 @@ use std::{
 };
 
 use casa_imaging_model::{
-    CompiledProblem, CompiledProblemId, ContinuumTransformGenerationId, MeasurementSetIdentity,
+    CompiledProblem, CompiledProblemId, ContinuumTransformGenerationId,
     SelectedObservationGenerationId, SelectedObservationSampleView, SelectedSpectralContribution,
-    SelectedSpectralContributions, SelectedSpectralInterval, SequentialContinuumTransform,
+    SelectedSpectralContributions, SequentialContinuumTransform,
 };
 use casa_imaging_reconstruction::runtime_adapter::{
-    SpectralOperatorInitialPhaseResidency, WeightingReplayPhase,
+    SpectralOperatorInitialPhaseResidency, WeightingReplayPhase, WeightingReplayWindowSummary,
+    WeightingSpectralCache,
 };
 use casa_imaging_reconstruction::{
     FrozenWeightingCoverageProof, FusedWeightingPhase, WeightingAlgorithmState,
@@ -65,51 +66,31 @@ use crate::{
     ContinuumTransformedSample, plan_continuum_transform_row,
 };
 
-#[derive(Clone, Copy, PartialEq)]
-struct SpectralContributionKey {
-    measurement_set: MeasurementSetIdentity,
-    field_id: i32,
-    spectral_window_id: u32,
-    channel_index: u32,
-    native: SelectedSpectralInterval,
-    output_frame: SelectedSpectralInterval,
+mod native_preparation;
+mod replay_preparation;
+pub(crate) use native_preparation::NativePreparationPlan;
+use replay_preparation::ReplayPreparation;
+pub(crate) use replay_preparation::ReplayPreparationPlan;
+
+#[derive(Clone, Copy, Debug)]
+enum PreparationPlan {
+    Replay(ReplayPreparationPlan),
+    Native(NativePreparationPlan),
 }
 
-struct SpectralContributionCache {
-    last: Option<(SpectralContributionKey, SelectedSpectralContributions)>,
-}
-
-impl SpectralContributionCache {
-    const fn new() -> Self {
-        Self { last: None }
+impl PreparationPlan {
+    fn workers(self) -> usize {
+        match self {
+            Self::Replay(plan) => plan.workers(),
+            Self::Native(plan) => plan.workers,
+        }
     }
 
-    fn compile(
-        &mut self,
-        problem: &CompiledProblem,
-        reported: &SelectedObservationTraversalSample<'_>,
-    ) -> Result<SelectedSpectralContributions, WeightingError> {
-        let sample = reported.selected();
-        let address = sample.address();
-        let key = SpectralContributionKey {
-            measurement_set: address.measurement_set,
-            field_id: sample.metadata().field_id,
-            spectral_window_id: address.spectral_window_id,
-            channel_index: address.channel_index,
-            native: reported.spectral_evaluation().native(),
-            output_frame: reported.spectral_evaluation().output_frame(),
-        };
-        if let Some((cached_key, contributions)) = &self.last
-            && *cached_key == key
-        {
-            return Ok(contributions.clone());
+    fn admitted_heap_bytes(self) -> Result<u64, WeightingError> {
+        match self {
+            Self::Replay(plan) => plan.admitted_heap_bytes(),
+            Self::Native(plan) => Ok(plan.heap_bytes),
         }
-        let contributions =
-            compile_spectral_stencil(problem, sample, reported.spectral_evaluation())?
-                .contributions()
-                .clone();
-        self.last = Some((key, contributions.clone()));
-        Ok(contributions)
     }
 }
 
@@ -130,8 +111,7 @@ fn transformed_spectral_contributions(
 }
 
 fn density_spectral_contributions(
-    cache: &mut SpectralContributionCache,
-    problem: &CompiledProblem,
+    cache: &mut WeightingSpectralCache<'_>,
     reported: &SelectedObservationTraversalSample<'_>,
     continuum: &SequentialContinuumTransform,
 ) -> Result<SelectedSpectralContributions, ContinuumDensityCallbackError> {
@@ -147,7 +127,7 @@ fn density_spectral_contributions(
         }
     }
     cache
-        .compile(problem, reported)
+        .compile(reported.selected(), reported.spectral_evaluation())
         .map_err(ContinuumDensityCallbackError::Owner)
 }
 
@@ -191,6 +171,20 @@ impl OrderedBlockSource for SelectedBlockSource<'_> {
 trait StreamingWeightPhase: Send {
     type Finish: Send;
 
+    fn prepare_sample(
+        &self,
+        problem: &CompiledProblem,
+        sample: SelectedObservationSampleView<'_>,
+        output_frame_frequency_hz: f64,
+        contributions: SelectedSpectralContributions,
+    ) -> Result<ReconstructionWeightedSample, WeightingError>;
+
+    fn commit_prepared(
+        &mut self,
+        problem: &CompiledProblem,
+        prepared: &mut Vec<ReconstructionWeightedSample>,
+    ) -> Result<Option<ReconstructionWeightedBlock>, WeightingError>;
+
     fn consume_sample(
         &mut self,
         problem: &CompiledProblem,
@@ -211,6 +205,24 @@ trait StreamingWeightPhase: Send {
 
 impl StreamingWeightPhase for FusedWeightingPhase {
     type Finish = (WeightingAlgorithmState, WeightingReplaySummary);
+
+    fn prepare_sample(
+        &self,
+        problem: &CompiledProblem,
+        sample: SelectedObservationSampleView<'_>,
+        frequency: f64,
+        contributions: SelectedSpectralContributions,
+    ) -> Result<ReconstructionWeightedSample, WeightingError> {
+        self.prepare_sample(problem, sample, frequency, contributions)
+    }
+
+    fn commit_prepared(
+        &mut self,
+        problem: &CompiledProblem,
+        prepared: &mut Vec<ReconstructionWeightedSample>,
+    ) -> Result<Option<ReconstructionWeightedBlock>, WeightingError> {
+        self.commit_prepared(problem, prepared)
+    }
 
     fn consume_sample(
         &mut self,
@@ -240,6 +252,24 @@ impl StreamingWeightPhase for FusedWeightingPhase {
 impl StreamingWeightPhase for WeightingReplayPhase<'_> {
     type Finish = WeightingReplaySummary;
 
+    fn prepare_sample(
+        &self,
+        problem: &CompiledProblem,
+        sample: SelectedObservationSampleView<'_>,
+        frequency: f64,
+        contributions: SelectedSpectralContributions,
+    ) -> Result<ReconstructionWeightedSample, WeightingError> {
+        self.prepare_sample(problem, sample, frequency, contributions)
+    }
+
+    fn commit_prepared(
+        &mut self,
+        _problem: &CompiledProblem,
+        prepared: &mut Vec<ReconstructionWeightedSample>,
+    ) -> Result<Option<ReconstructionWeightedBlock>, WeightingError> {
+        self.commit_prepared(prepared)
+    }
+
     fn consume_sample(
         &mut self,
         problem: &CompiledProblem,
@@ -261,6 +291,54 @@ impl StreamingWeightPhase for WeightingReplayPhase<'_> {
         self,
     ) -> Result<(Option<ReconstructionWeightedBlock>, Self::Finish), WeightingError> {
         self.finish()
+    }
+}
+
+struct WindowReplayPhase<'a>(WeightingReplayPhase<'a>);
+
+impl StreamingWeightPhase for WindowReplayPhase<'_> {
+    type Finish = WeightingReplayWindowSummary;
+
+    fn prepare_sample(
+        &self,
+        problem: &CompiledProblem,
+        sample: SelectedObservationSampleView<'_>,
+        frequency: f64,
+        contributions: SelectedSpectralContributions,
+    ) -> Result<ReconstructionWeightedSample, WeightingError> {
+        self.0
+            .prepare_sample(problem, sample, frequency, contributions)
+    }
+
+    fn commit_prepared(
+        &mut self,
+        _problem: &CompiledProblem,
+        prepared: &mut Vec<ReconstructionWeightedSample>,
+    ) -> Result<Option<ReconstructionWeightedBlock>, WeightingError> {
+        self.0.commit_prepared(prepared)
+    }
+
+    fn consume_sample(
+        &mut self,
+        problem: &CompiledProblem,
+        sample: SelectedObservationSampleView<'_>,
+        frequency: f64,
+        contributions: SelectedSpectralContributions,
+    ) -> Result<Option<ReconstructionWeightedBlock>, WeightingError> {
+        self.0.consume(problem, sample, frequency, contributions)
+    }
+
+    fn reuse_emitted_block(
+        &mut self,
+        block: ReconstructionWeightedBlock,
+    ) -> Result<(), WeightingError> {
+        self.0.reuse_emitted_block(block)
+    }
+
+    fn finish_phase(
+        self,
+    ) -> Result<(Option<ReconstructionWeightedBlock>, Self::Finish), WeightingError> {
+        self.0.finish_window()
     }
 }
 
@@ -291,7 +369,8 @@ struct WeightingBlockKernel<'a, W, F> {
     weights: W,
     continuum: Option<ContinuumTransformStream<'a>>,
     spectral_support_sample_count: u64,
-    spectral_contributions: SpectralContributionCache,
+    spectral_contributions: WeightingSpectralCache<'a>,
+    preparation: Option<ReplayPreparation<'a>>,
     emit: F,
 }
 
@@ -300,13 +379,14 @@ struct WeightingBlockKernelCompletion<'a, T> {
     weights: T,
     continuum: Option<ContinuumTransformStream<'a>>,
     spectral_support_sample_count: u64,
+    prepared_samples: u64,
 }
 
 struct DensityBlockKernel<'a> {
     problem: &'a CompiledProblem,
     consumer: SelectedObservationBlockConsumer<'a>,
     density: WeightingDensityPhase,
-    spectral_contributions: SpectralContributionCache,
+    spectral_contributions: WeightingSpectralCache<'a>,
 }
 
 struct DensityBlockKernelCompletion<'a> {
@@ -316,20 +396,34 @@ struct DensityBlockKernelCompletion<'a> {
 
 impl<W, F, E> WeightingBlockKernel<'_, W, F>
 where
-    W: StreamingWeightPhase,
-    F: FnMut(&ReconstructionWeightedBlock) -> Result<(), E>,
-    E: Error + 'static,
+    W: StreamingWeightPhase + Sync,
+    F: FnMut(
+        &ReconstructionWeightedBlock,
+        crate::bounded_stream::BoundedExecution<'_>,
+    ) -> Result<(), E>,
+    E: Error + Send + 'static,
 {
     fn consume_selected_block(
         &mut self,
         storage: &SelectedObservationBlock,
+        execution: crate::bounded_stream::BoundedExecution<'_>,
     ) -> Result<(), WeightingBlockKernelError<E>> {
+        if let Some(preparation) = &mut self.preparation {
+            return preparation.consume(
+                self.problem,
+                &mut self.consumer,
+                &mut self.weights,
+                storage,
+                execution,
+                &mut self.emit,
+            );
+        }
         let problem = self.problem;
         let weights = &mut self.weights;
         let continuum = &mut self.continuum;
         let spectral_support_sample_count = &mut self.spectral_support_sample_count;
         let spectral_contributions = &mut self.spectral_contributions;
-        let emit = &mut self.emit;
+        let emit = &mut |block: &ReconstructionWeightedBlock| (self.emit)(block, execution);
         self.consumer
             .consume(storage, |run| {
                 for reported in run.samples() {
@@ -361,16 +455,20 @@ impl DensityBlockKernel<'_> {
         self.consumer
             .consume(storage, |run| {
                 for reported in run.samples() {
-                    let contributions = match continuum {
-                        Some(continuum) => density_spectral_contributions(
-                            spectral_contributions,
-                            problem,
-                            &reported,
-                            continuum,
-                        )?,
-                        None => spectral_contributions
-                            .compile(problem, &reported)
-                            .map_err(ContinuumDensityCallbackError::Owner)?,
+                    let contributions = if problem.weighting().casa_cube_density_padding().is_some()
+                    {
+                        SelectedSpectralContributions::empty()
+                    } else {
+                        match continuum {
+                            Some(continuum) => density_spectral_contributions(
+                                spectral_contributions,
+                                &reported,
+                                continuum,
+                            )?,
+                            None => spectral_contributions
+                                .compile(reported.selected(), reported.spectral_evaluation())
+                                .map_err(ContinuumDensityCallbackError::Owner)?,
+                        }
                     };
                     density
                         .consume(
@@ -402,12 +500,13 @@ impl fmt::Display for DensityBlockKernelError {
 
 impl Error for DensityBlockKernelError {}
 
-struct CompletedWeightingBlockStream<'a, T> {
+struct CompletedWeightingBlockStream<'a, T, C = SelectedObservationCompletion> {
     selected: BoundSelectedObservation,
-    owner_completion: SelectedObservationCompletion,
+    owner_completion: C,
     weights: T,
     continuum: Option<ContinuumTransformStream<'a>>,
     spectral_support_sample_count: u64,
+    prepared_samples: u64,
     measurements: BoundedStreamMeasurements,
 }
 
@@ -466,7 +565,7 @@ fn consume_weighting_sample<W, F, E>(
     weights: &mut W,
     continuum: &mut Option<ContinuumTransformStream<'_>>,
     spectral_support_sample_count: &mut u64,
-    spectral_contributions: &mut SpectralContributionCache,
+    spectral_contributions: &mut WeightingSpectralCache<'_>,
     emit: &mut F,
     reported: SelectedObservationTraversalSample<'_>,
 ) -> Result<(), ReplayCallbackError<E>>
@@ -504,7 +603,7 @@ where
         }
     } else {
         let contributions = spectral_contributions
-            .compile(problem, &reported)
+            .compile(reported.selected(), reported.spectral_evaluation())
             .map_err(ReplayCallbackError::Owner)?;
         if let Some(block) = weights
             .consume_sample(
@@ -527,7 +626,12 @@ where
 impl<'a, W, F, E> PartitionedKernel<SelectedObservationBlock> for WeightingBlockKernel<'a, W, F>
 where
     W: StreamingWeightPhase + Sync,
-    F: FnMut(&ReconstructionWeightedBlock) -> Result<(), E> + Send + Sync,
+    F: FnMut(
+            &ReconstructionWeightedBlock,
+            crate::bounded_stream::BoundedExecution<'_>,
+        ) -> Result<(), E>
+        + Send
+        + Sync,
     E: Error + Send + 'static,
 {
     type Partition = ();
@@ -567,11 +671,15 @@ where
         _work: WorkIdentity,
         storage: &SelectedObservationBlock,
         (): Self::Partial,
+        execution: crate::bounded_stream::BoundedExecution<'_>,
     ) -> Result<(), Self::Error> {
-        self.consume_selected_block(storage)
+        self.consume_selected_block(storage, execution)
     }
 
-    fn complete(mut self) -> Result<Self::Completion, Self::Error> {
+    fn complete(
+        mut self,
+        execution: crate::bounded_stream::BoundedExecution<'_>,
+    ) -> Result<Self::Completion, Self::Error> {
         if let Some(transform) = &mut self.continuum {
             for transformed in transform
                 .finish_rows()
@@ -595,7 +703,7 @@ where
                     )
                     .map_err(WeightingBlockKernelError::Owner)?
                 {
-                    (self.emit)(&block).map_err(WeightingBlockKernelError::Consumer)?;
+                    (self.emit)(&block, execution).map_err(WeightingBlockKernelError::Consumer)?;
                     self.weights
                         .reuse_emitted_block(block)
                         .map_err(WeightingBlockKernelError::Owner)?;
@@ -607,13 +715,20 @@ where
             .finish_phase()
             .map_err(WeightingBlockKernelError::Owner)?;
         if let Some(block) = final_block {
-            (self.emit)(&block).map_err(WeightingBlockKernelError::Consumer)?;
+            (self.emit)(&block, execution).map_err(WeightingBlockKernelError::Consumer)?;
+        }
+        if let Some(preparation) = &self.preparation {
+            preparation.log();
         }
         Ok(WeightingBlockKernelCompletion {
             consumer: self.consumer,
             weights,
             continuum: self.continuum,
             spectral_support_sample_count: self.spectral_support_sample_count,
+            prepared_samples: self
+                .preparation
+                .as_ref()
+                .map_or(0, ReplayPreparation::sample_count),
         })
     }
 }
@@ -656,11 +771,15 @@ impl<'a> PartitionedKernel<SelectedObservationBlock> for DensityBlockKernel<'a> 
         _work: WorkIdentity,
         storage: &SelectedObservationBlock,
         (): Self::Partial,
+        _execution: crate::bounded_stream::BoundedExecution<'_>,
     ) -> Result<(), Self::Error> {
         self.consume_selected_block(storage)
     }
 
-    fn complete(self) -> Result<Self::Completion, Self::Error> {
+    fn complete(
+        self,
+        _execution: crate::bounded_stream::BoundedExecution<'_>,
+    ) -> Result<Self::Completion, Self::Error> {
         Ok(DensityBlockKernelCompletion {
             consumer: self.consumer,
             density: self.density,
@@ -746,18 +865,67 @@ fn execute_weighting_block_stream<'a, W, F, E>(
     problem: &'a CompiledProblem,
     selected: BoundSelectedObservation,
     plan: BoundedStreamPlan,
+    preparation: Option<ReplayPreparationPlan>,
     weights: W,
     continuum: Option<ContinuumTransformStream<'a>>,
     emit: F,
 ) -> Result<CompletedWeightingBlockStream<'a, W::Finish>, WeightingBlockStreamFailure<E>>
 where
     W: StreamingWeightPhase + Sync,
-    F: FnMut(&ReconstructionWeightedBlock) -> Result<(), E> + Send + Sync,
+    F: FnMut(
+            &ReconstructionWeightedBlock,
+            crate::bounded_stream::BoundedExecution<'_>,
+        ) -> Result<(), E>
+        + Send
+        + Sync,
     E: Error + Send + 'static,
 {
+    if preparation.is_some() && continuum.is_some() {
+        return Err(WeightingReplayError::Evidence(WeightingEvidenceError).into());
+    }
     let (source, consumer) = selected.into_block_stream(problem).map_err(|error| {
         WeightingReplayError::Traversal(SelectedObservationTraversalError::Binding(error))
     })?;
+    execute_prebound_weighting_block_stream(
+        problem,
+        source,
+        consumer,
+        plan,
+        preparation,
+        weights,
+        continuum,
+        emit,
+        SelectedObservationBlockConsumer::complete,
+    )
+}
+
+fn execute_prebound_weighting_block_stream<'a, W, F, E, C>(
+    problem: &'a CompiledProblem,
+    source: SelectedObservationBlockSource<'a>,
+    consumer: SelectedObservationBlockConsumer<'a>,
+    plan: BoundedStreamPlan,
+    preparation: Option<ReplayPreparationPlan>,
+    weights: W,
+    continuum: Option<ContinuumTransformStream<'a>>,
+    emit: F,
+    complete: impl FnOnce(
+        SelectedObservationBlockConsumer<'a>,
+        SelectedObservationTerminal,
+    ) -> Result<
+        (BoundSelectedObservation, C),
+        SelectedObservationTraversalError<std::convert::Infallible>,
+    >,
+) -> Result<CompletedWeightingBlockStream<'a, W::Finish, C>, WeightingBlockStreamFailure<E>>
+where
+    W: StreamingWeightPhase + Sync,
+    F: FnMut(
+            &ReconstructionWeightedBlock,
+            crate::bounded_stream::BoundedExecution<'_>,
+        ) -> Result<(), E>
+        + Send
+        + Sync,
+    E: Error + Send + 'static,
+{
     let outcome = match execute_bounded(
         plan,
         0,
@@ -768,7 +936,12 @@ where
             weights,
             continuum,
             spectral_support_sample_count: 0,
-            spectral_contributions: SpectralContributionCache::new(),
+            spectral_contributions: WeightingSpectralCache::new(problem)
+                .map_err(WeightingReplayError::Owner)?,
+            preparation: preparation
+                .map(|plan| ReplayPreparation::new(problem, plan))
+                .transpose()
+                .map_err(WeightingReplayError::Owner)?,
             emit,
         },
     ) {
@@ -795,9 +968,9 @@ where
         weights,
         continuum,
         spectral_support_sample_count,
+        prepared_samples,
     } = outcome.kernel_completion;
-    let (selected, owner_completion) = consumer
-        .complete(terminal)
+    let (selected, owner_completion) = complete(consumer, terminal)
         .map_err(|error| WeightingReplayError::Traversal(widen_terminal_traversal_error(error)))?;
     Ok(CompletedWeightingBlockStream {
         selected,
@@ -805,6 +978,7 @@ where
         weights,
         continuum,
         spectral_support_sample_count,
+        prepared_samples,
         measurements: outcome.measurements,
     })
 }
@@ -959,6 +1133,7 @@ pub struct WeightingPlanFragment<'a> {
     streaming: Option<WeightingStreamingMode>,
     continuum_row_bytes: Option<u64>,
     initial_working_set: Option<InitialPhaseWorkingSetBinding>,
+    replay_preparation: Option<PreparationPlan>,
 }
 
 /// Production selected-payload traversal shape for one continuum major pass.
@@ -1019,6 +1194,7 @@ impl<'a> WeightingPlanFragment<'a> {
             streaming: None,
             continuum_row_bytes: None,
             initial_working_set: None,
+            replay_preparation: None,
         }
     }
 
@@ -1044,6 +1220,7 @@ impl<'a> WeightingPlanFragment<'a> {
             streaming: Some(mode),
             continuum_row_bytes,
             initial_working_set: None,
+            replay_preparation: None,
         }
     }
 
@@ -1112,6 +1289,31 @@ impl<'a> WeightingPlanFragment<'a> {
     ) -> Self {
         self.initial_working_set = binding.cloned();
         self
+    }
+
+    pub(crate) fn with_replay_preparation(
+        mut self,
+        preparation: Option<ReplayPreparationPlan>,
+    ) -> Self {
+        self.replay_preparation = preparation.map(PreparationPlan::Replay);
+        self
+    }
+
+    pub(crate) fn with_native_preparation(mut self, preparation: NativePreparationPlan) -> Self {
+        self.replay_preparation = Some(PreparationPlan::Native(preparation));
+        self
+    }
+
+    fn indexed_preparation<E>(
+        &self,
+    ) -> Result<Option<ReplayPreparationPlan>, WeightingReplayError<E>> {
+        match self.replay_preparation {
+            None => Ok(None),
+            Some(PreparationPlan::Replay(plan)) => Ok(Some(plan)),
+            Some(PreparationPlan::Native(_)) => {
+                Err(WeightingReplayError::Evidence(WeightingEvidenceError))
+            }
+        }
     }
 
     /// Return the sole terminal weighted payload traversal node.
@@ -1238,6 +1440,7 @@ impl<'a> WeightingPlanFragment<'a> {
                 .chain([
                     allocation_use(&self.ids.frozen_allocation, io_lifetime.clone()),
                     allocation_use(&self.ids.partial_allocation, io_lifetime.clone()),
+                    allocation_use(&self.ids.spectral_cache_allocation, io_lifetime.clone()),
                 ])
                 .collect(),
             fences: BTreeSet::from([FenceKind::Io]),
@@ -1266,6 +1469,7 @@ impl<'a> WeightingPlanFragment<'a> {
                     allocation_use(&self.ids.frozen_allocation, io_lifetime.clone()),
                     allocation_use(&self.ids.reduction_allocation, io_lifetime.clone()),
                     allocation_use(&self.ids.weighted_block_allocation, io_lifetime.clone()),
+                    allocation_use(&self.ids.spectral_cache_allocation, io_lifetime.clone()),
                 ])
                 .chain(self.continuum_row_bytes.map(|_| {
                     allocation_use(&self.ids.continuum_row_allocation, io_lifetime.clone())
@@ -1315,6 +1519,10 @@ impl<'a> WeightingPlanFragment<'a> {
             .find(|node| node.id == self.source_read)
             .ok_or_else(|| WeightingPlanFragmentError::MissingNode(self.source_read.clone()))?;
         source_node.claims = read_claims.clone();
+        source_node.allocations.push(allocation_use(
+            &self.ids.spectral_cache_allocation,
+            io_lifetime.clone(),
+        ));
         source_node
             .allocations
             .push(allocation_use(&self.ids.frozen_allocation, io_lifetime));
@@ -1437,7 +1645,7 @@ impl<'a> WeightingPlanFragment<'a> {
             base.artifacts().to_vec(),
             base.observation_transaction().clone(),
             base.publication_layouts().clone(),
-            base.product_publication_authority(),
+            base.product_publication_plan(),
         )?)
     }
 
@@ -1505,7 +1713,7 @@ impl<'a> WeightingPlanFragment<'a> {
             }
         }
         let terminal_fence = WorkDependency::Fence(FenceId::new(terminal.clone(), FenceKind::Io));
-        let allocations = legacy
+        let mut allocations: Vec<_> = legacy
             .execution_dag()
             .logical_allocations()
             .values()
@@ -1529,21 +1737,109 @@ impl<'a> WeightingPlanFragment<'a> {
                 allocation
             })
             .collect();
+        let mut alternative = legacy.execution_dag().resource_alternative().clone();
+        let mut knobs = legacy.execution_dag().initial_knobs().clone();
+        let mut slots: Vec<_> = legacy
+            .execution_dag()
+            .physical_slots()
+            .values()
+            .cloned()
+            .collect();
+        if matches!(self.replay_preparation, Some(PreparationPlan::Native(_))) {
+            let obsolete = BTreeSet::from([
+                self.ids.partial_allocation.clone(),
+                self.ids.reduction_allocation.clone(),
+                self.ids.weighted_block_allocation.clone(),
+                self.ids.spectral_cache_allocation.clone(),
+            ]);
+            for node in &mut nodes {
+                node.allocations
+                    .retain(|usage| !obsolete.contains(&usage.allocation));
+            }
+            allocations.retain(|allocation| !obsolete.contains(&allocation.id));
+            slots.retain(|slot| !matches!(&slot.lease_resource,
+                LeaseResource::Memory { allocation_id } if obsolete.iter().any(|id| id.as_str() == allocation_id)));
+            alternative.demand.memory.retain(|demand| {
+                !obsolete
+                    .iter()
+                    .any(|id| id.as_str() == demand.allocation_id)
+            });
+        }
+        if let Some(preparation) = self.replay_preparation {
+            let id = replay_preparation_allocation(&terminal);
+            let allocation = AllocationSpec::new(
+                id.clone(),
+                PhysicalSlotId::new(format!("{}-slot", id.as_str())),
+                usize::try_from(
+                    preparation
+                        .admitted_heap_bytes()
+                        .map_err(|_| WeightingPlanFragmentError::ResidencyOverflow)?,
+                )
+                .map_err(|_| WeightingPlanFragmentError::ResidencyOverflow)?,
+                "weighting-replay-preparation",
+                terminal.clone(),
+                BTreeSet::from([terminal_fence]),
+            )?;
+            let workers = preparation.workers() as u64;
+            let stacks = if workers > 1 {
+                workers
+                    .checked_mul(crate::bounded_stream::BOUNDED_WORKER_STACK_BYTES as u64)
+                    .ok_or(WeightingPlanFragmentError::ResidencyOverflow)?
+            } else {
+                0
+            };
+            let owner = nodes
+                .iter_mut()
+                .find(|node| node.id == terminal)
+                .expect("terminal node");
+            owner
+                .claims
+                .retain(|claim| claim.resource != LeaseResource::Workers);
+            owner.claims.push(ResourceClaim {
+                resource: LeaseResource::Workers,
+                amount: workers,
+                lifetime: ClaimLifetime::Work,
+            });
+            if stacks != 0 {
+                owner.claims.push(ResourceClaim {
+                    resource: LeaseResource::RuntimeOverhead(
+                        crate::RuntimeOverheadKind::ThreadStack,
+                    ),
+                    amount: stacks,
+                    lifetime: ClaimLifetime::Work,
+                });
+            }
+            owner.allocations.push(allocation_use(
+                &id,
+                ClaimLifetime::through_fence(FenceKind::Io),
+            ));
+            alternative.demand.workers = CountDemand::new(
+                alternative.demand.workers.hard().max(workers),
+                alternative.demand.workers.preferred().max(workers),
+            );
+            alternative.scaling.minimum_workers = alternative.demand.workers.hard();
+            alternative.scaling.maximum_workers = alternative.demand.workers.preferred();
+            alternative.demand.overhead.thread_stack_bytes = alternative
+                .demand
+                .overhead
+                .thread_stack_bytes
+                .checked_add(stacks)
+                .ok_or(WeightingPlanFragmentError::ResidencyOverflow)?;
+            alternative.demand.memory.push(allocation.memory_demand());
+            knobs.workers = alternative.demand.workers.hard();
+            allocations.push(allocation.logical_allocation());
+            slots.push(allocation.physical_slot());
+        }
         let dag = ExecutionDag::new(ExecutionDagSpecification {
             required_resource_capabilities: legacy
                 .execution_dag()
                 .required_resource_capabilities()
                 .clone(),
-            resource_alternative: legacy.execution_dag().resource_alternative().clone(),
+            resource_alternative: alternative,
             nodes,
             logical_allocations: allocations,
-            physical_slots: legacy
-                .execution_dag()
-                .physical_slots()
-                .values()
-                .cloned()
-                .collect(),
-            initial_knobs: legacy.execution_dag().initial_knobs().clone(),
+            physical_slots: slots,
+            initial_knobs: knobs,
             adaptations: legacy
                 .execution_dag()
                 .adaptations()
@@ -1594,13 +1890,14 @@ impl<'a> WeightingPlanFragment<'a> {
             legacy.artifacts().to_vec(),
             legacy.observation_transaction().clone(),
             legacy.publication_layouts().clone(),
-            legacy.product_publication_authority(),
+            legacy.product_publication_plan(),
         )?)
     }
 
     fn allocation_specs(&self) -> Result<Vec<AllocationSpec>, WeightingPlanFragmentError> {
         let residency = self.plan.planned_residency();
         let frozen_bytes = checked_sum([
+            residency.density_layout_bytes(),
             residency.density_grid_bytes(),
             residency.robust_factor_bytes(),
             residency.sum_weight_bytes(),
@@ -1644,6 +1941,14 @@ impl<'a> WeightingPlanFragment<'a> {
                 residency.weighted_block_bytes(),
                 "weighting-weighted-block",
                 self.ids.replay_node.clone(),
+                replay_fence.clone(),
+            )?,
+            AllocationSpec::new(
+                self.ids.spectral_cache_allocation.clone(),
+                self.ids.spectral_cache_slot.clone(),
+                residency.spectral_cache_bytes(),
+                "weighting-spectral-stencil-cache",
+                self.source_read.clone(),
                 replay_fence.clone(),
             )?,
         ];
@@ -1706,14 +2011,20 @@ impl<'a> WeightingPlanFragment<'a> {
             .allocation_specs()
             .map_err(|_| WeightingEvidenceError)?;
         let (expected_node, mut expected) = if context.node().id == self.ids.generation_node {
-            (&self.ids.generation_node, vec![&specs[0], &specs[1]])
+            (
+                &self.ids.generation_node,
+                vec![&specs[0], &specs[1], &specs[4]],
+            )
         } else if context.node().id == self.ids.replay_node {
-            (&self.ids.replay_node, vec![&specs[0], &specs[2], &specs[3]])
+            (
+                &self.ids.replay_node,
+                vec![&specs[0], &specs[2], &specs[3], &specs[4]],
+            )
         } else {
             return Err(WeightingEvidenceError);
         };
         if self.continuum_row_bytes.is_some() {
-            expected.push(&specs[4]);
+            expected.push(&specs[5]);
         }
         validate_work_authority(
             context,
@@ -1748,6 +2059,9 @@ impl<'a> WeightingPlanFragment<'a> {
             .allocation_specs()
             .map_err(|_| WeightingEvidenceError)?;
         let mut expected = vec![&specs[0]];
+        if !matches!(self.replay_preparation, Some(PreparationPlan::Native(_))) {
+            expected.push(&specs[4]);
+        }
         if self.initial_working_set.is_some() {
             expected.push(&specs[1]);
         }
@@ -1767,6 +2081,7 @@ impl<'a> WeightingPlanFragment<'a> {
     fn bounded_stream_plan(
         &self,
         context: WorkExecutionContext<'_>,
+        initial: bool,
     ) -> Result<BoundedStreamPlan, WeightingEvidenceError> {
         let mut workers = context
             .resources()
@@ -1776,11 +2091,101 @@ impl<'a> WeightingPlanFragment<'a> {
         if worker_claim.amount() == 0 || workers.next().is_some() {
             return Err(WeightingEvidenceError);
         }
-        // Delivery 1 has one scientific consumer. A second claimed worker may
-        // belong to visibility writeback, not to weighting/gridding execution.
+        if let Some(preparation) = self.replay_preparation {
+            let allocation = replay_preparation_allocation(&context.node().id);
+            let heap_bytes = preparation
+                .admitted_heap_bytes()
+                .map_err(|_| WeightingEvidenceError)?;
+            let stack_bytes = if preparation.workers() > 1 {
+                preparation.workers() as u64
+                    * crate::bounded_stream::BOUNDED_WORKER_STACK_BYTES as u64
+            } else {
+                0
+            };
+            let stacks = context
+                .resources()
+                .iter()
+                .filter(|capability| {
+                    capability.resource()
+                        == &LeaseResource::RuntimeOverhead(crate::RuntimeOverheadKind::ThreadStack)
+                })
+                .try_fold(0_u64, |sum, capability| {
+                    sum.checked_add(capability.amount())
+                });
+            if worker_claim.amount() != preparation.workers() as u64
+                || stacks != Some(stack_bytes)
+                || context
+                    .allocations()
+                    .iter()
+                    .filter(|capability| {
+                        capability.allocation() == &allocation
+                            && capability.capacity_bytes() == heap_bytes
+                            && capability.physical_slot()
+                                == &PhysicalSlotId::new(format!("{}-slot", allocation.as_str()))
+                            && capability.lifetime() == &ClaimLifetime::through_fence(FenceKind::Io)
+                    })
+                    .count()
+                    != 1
+            {
+                return Err(WeightingEvidenceError);
+            }
+            return BoundedStreamPlan::new::<(), ()>(
+                self.source_resources.residency.peak_live_blocks(),
+                preparation.workers(),
+                self.source_resources.residency.aggregate_resident_bytes() as u64,
+                1,
+                0,
+            )
+            .map_err(|_| WeightingEvidenceError);
+        }
+        let allocation = initial_consumer_team_allocation(&context.node().id);
+        let paired = initial
+            && context
+                .node()
+                .allocations
+                .iter()
+                .any(|usage| usage.allocation == allocation);
+        if paired {
+            let stack_bytes = 2 * crate::bounded_stream::BOUNDED_WORKER_STACK_BYTES as u64;
+            let heap_bytes = crate::bounded_stream::BoundedKernelPlan::new::<(), ()>(2, 1, 0)
+                .map_err(|_| WeightingEvidenceError)?
+                .capacity_bytes()
+                .checked_sub(stack_bytes)
+                .ok_or(WeightingEvidenceError)?;
+            if worker_claim.amount() != 2
+                || context
+                    .allocations()
+                    .iter()
+                    .filter(|capability| {
+                        capability.allocation() == &allocation
+                            && capability.capacity_bytes() == heap_bytes
+                            && capability.physical_slot()
+                                == &PhysicalSlotId::new(format!("{}-slot", allocation.as_str()))
+                            && capability.lifetime() == &ClaimLifetime::through_fence(FenceKind::Io)
+                    })
+                    .count()
+                    != 1
+                || context
+                    .resources()
+                    .iter()
+                    .filter(|capability| {
+                        capability.resource()
+                            == &LeaseResource::RuntimeOverhead(
+                                crate::RuntimeOverheadKind::ThreadStack,
+                            )
+                            && capability.amount() == stack_bytes
+                    })
+                    .count()
+                    != 1
+            {
+                return Err(WeightingEvidenceError);
+            }
+        }
+        // Generic worker claims can belong to writeback; only the explicit
+        // initial-consumer allocation authorizes the paired compute team.
         BoundedStreamPlan::new::<(), ()>(
             self.source_resources.residency.peak_live_blocks(),
-            1,
+            if paired { 2 } else { 1 },
             u64::try_from(self.source_resources.residency.aggregate_resident_bytes())
                 .map_err(|_| WeightingEvidenceError)?,
             1,
@@ -1804,7 +2209,7 @@ impl<'a> WeightingPlanFragment<'a> {
         let specs = self
             .allocation_specs()
             .map_err(|_| WeightingEvidenceError)?;
-        let expected = [&specs[0], &specs[1]];
+        let expected = [&specs[0], &specs[1], &specs[4]];
         validate_work_authority(
             context,
             &self.ids.generation_node,
@@ -1846,7 +2251,7 @@ impl<'a> WeightingPlanFragment<'a> {
         let specs = self
             .allocation_specs()
             .map_err(|_| WeightingEvidenceError)?;
-        let expected = [&specs[0], &specs[2], &specs[3]];
+        let expected = [&specs[0], &specs[2], &specs[3], &specs[4]];
         validate_work_authority(
             context,
             &self.ids.replay_node,
@@ -1932,6 +2337,14 @@ impl<'a> WeightingPlanFragment<'a> {
     }
 }
 
+pub(crate) fn initial_consumer_team_allocation(node: &WorkNodeId) -> AllocationId {
+    AllocationId::new(format!("initial-consumer-team-{}", node.as_str()))
+}
+
+pub(crate) fn replay_preparation_allocation(node: &WorkNodeId) -> AllocationId {
+    AllocationId::new(format!("initial-replay-preparation-{}", node.as_str()))
+}
+
 /// Opaque adapter-owned state for one scheduler-planned weighting lifecycle.
 ///
 /// This is the sole supported retention point across generation and replay
@@ -1945,6 +2358,7 @@ pub struct WeightingExecutionState {
     imported: Option<FrozenWeightingArtifact>,
     latest_traversal_measurements: Option<SelectedObservationTraversalMeasurements>,
     latest_stream_measurements: Option<BoundedStreamMeasurements>,
+    parallel_preparation_samples: u64,
 }
 
 struct RetainedWeightingObservation {
@@ -2014,6 +2428,7 @@ impl WeightingExecutionState {
             imported: None,
             latest_traversal_measurements: None,
             latest_stream_measurements: None,
+            parallel_preparation_samples: 0,
         }
     }
 
@@ -2027,6 +2442,7 @@ impl WeightingExecutionState {
             imported: Some(artifact),
             latest_traversal_measurements: None,
             latest_stream_measurements: None,
+            parallel_preparation_samples: 0,
         }
     }
 
@@ -2059,6 +2475,10 @@ impl WeightingExecutionState {
 
     pub(crate) const fn latest_stream_measurements(&self) -> Option<&BoundedStreamMeasurements> {
         self.latest_stream_measurements.as_ref()
+    }
+
+    pub(crate) const fn parallel_preparation_sample_count(&self) -> u64 {
+        self.parallel_preparation_samples
     }
 
     fn begin_measurement_scope(&mut self) {
@@ -2138,7 +2558,7 @@ impl WeightingExecutionState {
         let density = begin_weighting_generation(problem, fragment.plan)
             .map_err(ContinuumDensityTraversalError::Owner)?;
         let plan = fragment
-            .bounded_stream_plan(context)
+            .bounded_stream_plan(context, false)
             .map_err(ContinuumDensityTraversalError::Evidence)?;
         let (source, consumer) = selected.into_block_stream(problem).map_err(|error| {
             ContinuumDensityTraversalError::Traversal(SelectedObservationTraversalError::Binding(
@@ -2153,7 +2573,8 @@ impl WeightingExecutionState {
                 problem,
                 consumer,
                 density,
-                spectral_contributions: SpectralContributionCache::new(),
+                spectral_contributions: WeightingSpectralCache::new(problem)
+                    .map_err(ContinuumDensityTraversalError::Owner)?,
             },
         ) {
             Ok(outcome) => outcome,
@@ -2249,14 +2670,19 @@ impl WeightingExecutionState {
     ) -> Result<(), WeightingReplayError<E>>
     where
         E: Error + Send + 'static,
-        F: FnMut(&ReconstructionWeightedBlock) -> Result<(), E> + Send + Sync,
+        F: FnMut(
+                &ReconstructionWeightedBlock,
+                crate::bounded_stream::BoundedExecution<'_>,
+            ) -> Result<(), E>
+            + Send
+            + Sync,
     {
         self.begin_measurement_scope();
         if !matches!(self.phase, WeightingExecutionPhase::Empty) {
             return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
         }
         let plan = fragment
-            .bounded_stream_plan(context)
+            .bounded_stream_plan(context, true)
             .map_err(WeightingReplayError::Evidence)?;
         let (selected, stream, binding) = match fragment.streaming {
             Some(WeightingStreamingMode::NaturalInitial) => {
@@ -2306,6 +2732,7 @@ impl WeightingExecutionState {
             problem,
             selected,
             plan,
+            fragment.indexed_preparation()?,
             stream,
             begin_continuum_stream(problem)?,
             emit,
@@ -2316,16 +2743,84 @@ impl WeightingExecutionState {
                 return Err(*failure.error);
             }
         };
+        self.accept_initial_stream(context, fragment, problem, binding, completed)
+    }
+
+    pub(crate) fn traverse_native_initial_stream<F>(
+        &mut self,
+        context: WorkExecutionContext<'_>,
+        fragment: &WeightingPlanFragment<'_>,
+        problem: &CompiledProblem,
+        selected: BoundSelectedObservation,
+        emit: F,
+    ) -> Result<(), WeightingReplayError<io::Error>>
+    where
+        F: FnMut(
+                &[&casa_imaging_reconstruction::runtime_adapter::NativeBlock],
+                &casa_imaging_reconstruction::runtime_adapter::NativeLayout,
+            ) -> io::Result<()>
+            + Send
+            + Sync,
+    {
+        self.begin_measurement_scope();
+        if !matches!(self.phase, WeightingExecutionPhase::Empty)
+            || fragment.streaming != Some(WeightingStreamingMode::NaturalInitial)
+            || problem.visibility_transform().is_some()
+        {
+            return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
+        }
+        let Some(PreparationPlan::Native(preparation)) = fragment.replay_preparation else {
+            return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
+        };
+        fragment
+            .authorize_source_observation(context, problem, selected.residency_certificate())
+            .map_err(WeightingReplayError::Evidence)?;
+        let plan = fragment
+            .bounded_stream_plan(context, true)
+            .map_err(WeightingReplayError::Evidence)?;
+        let completed = match native_preparation::execute(
+            problem,
+            selected,
+            plan,
+            preparation,
+            fragment.plan,
+            emit,
+        ) {
+            Ok(completed) => completed,
+            Err(failure) => {
+                self.latest_stream_measurements = Some(*failure.measurements);
+                return Err(*failure.error);
+            }
+        };
+        self.accept_initial_stream(context, fragment, problem, None, completed)
+    }
+
+    fn accept_initial_stream<E>(
+        &mut self,
+        context: WorkExecutionContext<'_>,
+        fragment: &WeightingPlanFragment<'_>,
+        problem: &CompiledProblem,
+        binding: Option<WeightingGenerationBinding>,
+        completed: CompletedWeightingBlockStream<
+            '_,
+            (WeightingAlgorithmState, WeightingReplaySummary),
+        >,
+    ) -> Result<(), WeightingReplayError<E>> {
         let CompletedWeightingBlockStream {
             selected,
             owner_completion,
             weights: (state, summary),
             continuum,
             spectral_support_sample_count,
+            prepared_samples,
             measurements,
         } = completed;
         self.latest_traversal_measurements = Some(*owner_completion.measurements());
         self.latest_stream_measurements = Some(measurements);
+        self.parallel_preparation_samples = self
+            .parallel_preparation_samples
+            .checked_add(prepared_samples)
+            .ok_or(WeightingReplayError::Evidence(WeightingEvidenceError))?;
         let continuum_completion = continuum
             .map(|transform| transform.complete(owner_completion.generation_id()))
             .transpose()
@@ -2402,11 +2897,17 @@ impl WeightingExecutionState {
         context: WorkExecutionContext<'_>,
         fragment: &WeightingPlanFragment<'_>,
         problem: &CompiledProblem,
+        source_window_hz: Option<[f64; 2]>,
         emit: F,
-    ) -> Result<(), WeightingReplayError<E>>
+    ) -> Result<Option<WeightingReplayWindowSummary>, WeightingReplayError<E>>
     where
         E: Error + Send + 'static,
-        F: FnMut(&ReconstructionWeightedBlock) -> Result<(), E> + Send + Sync,
+        F: FnMut(
+                &ReconstructionWeightedBlock,
+                crate::bounded_stream::BoundedExecution<'_>,
+            ) -> Result<(), E>
+            + Send
+            + Sync,
     {
         self.begin_measurement_scope();
         let phase = std::mem::take(&mut self.phase);
@@ -2427,12 +2928,83 @@ impl WeightingExecutionState {
             return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
         }
         let plan = fragment
-            .bounded_stream_plan(context)
+            .bounded_stream_plan(context, false)
             .map_err(WeightingReplayError::Evidence)?;
         let coverage_proof = frozen
             .artifact
             .coverage_proof
             .ok_or(WeightingReplayError::Evidence(WeightingEvidenceError))?;
+        if let Some(bounds) = source_window_hz {
+            if frozen.artifact.continuum_transform.is_some()
+                || pending.continuum_transform.is_some()
+            {
+                return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
+            }
+            let replay = frozen
+                .artifact
+                .state
+                .begin_windowed_replay(problem, fragment.plan, coverage_proof, bounds)
+                .map_err(WeightingReplayError::Owner)?;
+            let (source, consumer) = retained
+                .selected
+                .into_windowed_block_stream(problem, bounds)
+                .map_err(|error| {
+                    WeightingReplayError::Traversal(SelectedObservationTraversalError::Binding(
+                        error,
+                    ))
+                })?;
+            let completed = match execute_prebound_weighting_block_stream(
+                problem,
+                source,
+                consumer,
+                plan,
+                fragment.indexed_preparation()?,
+                WindowReplayPhase(replay),
+                None,
+                emit,
+                SelectedObservationBlockConsumer::complete_window,
+            ) {
+                Ok(completed) => completed,
+                Err(failure) => {
+                    self.latest_stream_measurements = Some(*failure.measurements);
+                    return Err(*failure.error);
+                }
+            };
+            let CompletedWeightingBlockStream {
+                selected,
+                owner_completion,
+                weights: summary,
+                prepared_samples,
+                measurements,
+                ..
+            } = completed;
+            summary
+                .validate_source_completion(
+                    owner_completion.generation_id(),
+                    owner_completion.sample_count(),
+                    owner_completion.frequency_bounds_hz(),
+                )
+                .map_err(WeightingReplayError::Owner)?;
+            if owner_completion.generation_id() != pending.owner_completion.generation_id()
+                || summary.actual().weighting_generation() != pending.state.weighting_generation()
+            {
+                return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
+            }
+            self.latest_traversal_measurements = Some(*owner_completion.measurements());
+            self.latest_stream_measurements = Some(measurements);
+            self.parallel_preparation_samples = self
+                .parallel_preparation_samples
+                .checked_add(prepared_samples)
+                .ok_or(WeightingReplayError::Evidence(WeightingEvidenceError))?;
+            self.retained_observation = Some(RetainedWeightingObservation {
+                selected,
+                attempt_id: context.attempt_id(),
+                owner_node: fragment.source_read.clone(),
+                lease_epoch: context.lease_epoch(),
+            });
+            self.phase = WeightingExecutionPhase::PendingReplay { frozen, pending };
+            return Ok(Some(summary));
+        }
         let replay = frozen
             .artifact
             .state
@@ -2450,6 +3022,7 @@ impl WeightingExecutionState {
             problem,
             retained.selected,
             plan,
+            fragment.indexed_preparation()?,
             replay,
             begin_continuum_stream(problem)?,
             emit,
@@ -2466,6 +3039,7 @@ impl WeightingExecutionState {
             weights: summary,
             continuum,
             spectral_support_sample_count,
+            prepared_samples,
             measurements,
         } = completed;
         self.latest_traversal_measurements = Some(*owner_completion.measurements());
@@ -2485,6 +3059,10 @@ impl WeightingExecutionState {
         {
             return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
         }
+        self.parallel_preparation_samples = self
+            .parallel_preparation_samples
+            .checked_add(prepared_samples)
+            .ok_or(WeightingReplayError::Evidence(WeightingEvidenceError))?;
         self.retained_observation = Some(RetainedWeightingObservation {
             selected,
             attempt_id: context.attempt_id(),
@@ -2492,7 +3070,7 @@ impl WeightingExecutionState {
             lease_epoch: context.lease_epoch(),
         });
         self.phase = WeightingExecutionPhase::PendingReplay { frozen, pending };
-        Ok(())
+        Ok(None)
     }
 
     pub(crate) fn pending_replay_inputs(
@@ -2524,7 +3102,12 @@ impl WeightingExecutionState {
     ) -> Result<(), WeightingReplayError<E>>
     where
         E: Error + Send + 'static,
-        F: FnMut(&ReconstructionWeightedBlock) -> Result<(), E> + Send + Sync,
+        F: FnMut(
+                &ReconstructionWeightedBlock,
+                crate::bounded_stream::BoundedExecution<'_>,
+            ) -> Result<(), E>
+            + Send
+            + Sync,
     {
         self.begin_measurement_scope();
         if !matches!(self.phase, WeightingExecutionPhase::Empty)
@@ -2538,7 +3121,7 @@ impl WeightingExecutionState {
             .authorize_source_observation(context, problem, selected.residency_certificate())
             .map_err(WeightingReplayError::Evidence)?;
         let plan = fragment
-            .bounded_stream_plan(context)
+            .bounded_stream_plan(context, false)
             .map_err(WeightingReplayError::Evidence)?;
         let artifact = self
             .imported
@@ -2562,6 +3145,7 @@ impl WeightingExecutionState {
             problem,
             selected,
             plan,
+            None,
             replay,
             begin_continuum_stream(problem)?,
             emit,
@@ -2578,6 +3162,7 @@ impl WeightingExecutionState {
             weights: summary,
             continuum,
             spectral_support_sample_count,
+            prepared_samples: _,
             measurements,
         } = completed;
         self.latest_traversal_measurements = Some(*owner_completion.measurements());
@@ -2775,6 +3360,27 @@ impl WeightingExecutionState {
         Ok(())
     }
 
+    /// Transfer the original completed traversal with an owned native copy of
+    /// its samples. This is not a new selected-observation traversal.
+    pub(crate) fn release_retaining_replay(
+        &mut self,
+        context: WorkExecutionContext<'_>,
+        fragment: &WeightingPlanFragment<'_>,
+    ) -> Result<WeightingReplayCompletion, WeightingEvidenceError> {
+        fragment.authorize_release(context)?;
+        if !self.matches_attempt(context, fragment) {
+            return Err(WeightingEvidenceError);
+        }
+        let WeightingExecutionPhase::Replayed { completion, .. } = std::mem::take(&mut self.phase)
+        else {
+            return Err(WeightingEvidenceError);
+        };
+        self.retained_observation = None;
+        self.density = None;
+        self.imported = None;
+        Ok(*completion)
+    }
+
     /// Return whether the planned release has consumed all externally retained state.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
@@ -2847,11 +3453,13 @@ struct WeightingPlanIds {
     partial_allocation: AllocationId,
     reduction_allocation: AllocationId,
     weighted_block_allocation: AllocationId,
+    spectral_cache_allocation: AllocationId,
     continuum_row_allocation: AllocationId,
     frozen_slot: PhysicalSlotId,
     partial_slot: PhysicalSlotId,
     reduction_slot: PhysicalSlotId,
     weighted_block_slot: PhysicalSlotId,
+    spectral_cache_slot: PhysicalSlotId,
     continuum_row_slot: PhysicalSlotId,
 }
 
@@ -2872,6 +3480,9 @@ impl WeightingPlanIds {
             weighted_block_allocation: AllocationId::new(format!(
                 "weighting-weighted-block-{suffix}"
             )),
+            spectral_cache_allocation: AllocationId::new(format!(
+                "weighting-spectral-stencil-cache-{suffix}"
+            )),
             continuum_row_allocation: AllocationId::new(format!(
                 "continuum-transform-row-{suffix}"
             )),
@@ -2884,6 +3495,9 @@ impl WeightingPlanIds {
             )),
             weighted_block_slot: PhysicalSlotId::new(format!(
                 "weighting-weighted-block-slot-{suffix}"
+            )),
+            spectral_cache_slot: PhysicalSlotId::new(format!(
+                "weighting-spectral-stencil-cache-slot-{suffix}"
             )),
             continuum_row_slot: PhysicalSlotId::new(format!(
                 "continuum-transform-row-slot-{suffix}"
@@ -3106,6 +3720,7 @@ impl AllocationSpec {
             compatibility: self.compatibility.clone(),
             physical_slot: self.slot.clone(),
             lifetime: AllocationLifetime {
+                disposition: crate::AllocationDisposition::Release,
                 acquire_at: self.acquire_at.clone(),
                 release_after: self.release_after.clone(),
             },
@@ -3585,14 +4200,12 @@ pub struct FrozenWeightingReservation {
 }
 
 impl FrozenWeightingReservation {
-    /// Reserve the exact frozen density, robust-factor, and sum-weight state.
-    pub fn acquire(
-        authority: &ResourceAuthority,
-        policy: ResourcePolicy,
+    pub(crate) fn required_bytes(
         residency: WeightingResidency,
         replay_proof_bytes: usize,
-    ) -> Result<Self, ResourceError> {
+    ) -> Result<u64, ResourceError> {
         let weighting_bytes = [
+            residency.density_layout_bytes(),
             residency.density_grid_bytes(),
             residency.robust_factor_bytes(),
             residency.sum_weight_bytes(),
@@ -3608,9 +4221,21 @@ impl FrozenWeightingReservation {
         })?;
         let replay_proof_bytes = u64::try_from(replay_proof_bytes)
             .map_err(|_| ResourceError::Overflow("selected replay proof residency"))?;
-        let bytes = weighting_bytes
+        weighting_bytes
             .checked_add(replay_proof_bytes)
-            .ok_or(ResourceError::Overflow("cross-plan frozen residency"))?;
+            .ok_or(ResourceError::Overflow("cross-plan frozen residency"))
+    }
+
+    /// Reserve the exact frozen density, robust-factor, and sum-weight state.
+    pub fn acquire(
+        authority: &ResourceAuthority,
+        policy: ResourcePolicy,
+        residency: WeightingResidency,
+        replay_proof_bytes: usize,
+    ) -> Result<Self, ResourceError> {
+        let bytes = Self::required_bytes(residency, replay_proof_bytes)?;
+        let replay_proof_bytes = u64::try_from(replay_proof_bytes)
+            .map_err(|_| ResourceError::Overflow("selected replay proof residency"))?;
         let memory = MemoryDemand {
             allocation_id: "cross-plan-frozen-weighting".to_string(),
             hard_bytes: bytes,
@@ -3781,11 +4406,12 @@ impl FrozenWeightingGeneration {
             .state
             .begin_replay(problem, fragment.plan)
             .map_err(WeightingReplayError::Owner)?;
-        let mut spectral_contributions = SpectralContributionCache::new();
+        let mut spectral_contributions =
+            WeightingSpectralCache::new(problem).map_err(WeightingReplayError::Owner)?;
         let owner_completion = selected
             .traverse(problem, |reported| {
                 let contributions = spectral_contributions
-                    .compile(problem, &reported)
+                    .compile(reported.selected(), reported.spectral_evaluation())
                     .map_err(ReplayCallbackError::Owner)?;
                 if let Some(block) = phase
                     .consume(
@@ -3856,10 +4482,12 @@ fn traverse_weighting_generation(
     }
     let mut density = begin_weighting_generation(problem, fragment.plan)
         .map_err(WeightingGenerationError::Owner)?;
-    let mut spectral_contributions = SpectralContributionCache::new();
+    let mut spectral_contributions =
+        WeightingSpectralCache::new(problem).map_err(WeightingGenerationError::Owner)?;
     let density_completion = selected
         .traverse(problem, |reported| {
-            let contributions = spectral_contributions.compile(problem, &reported)?;
+            let contributions = spectral_contributions
+                .compile(reported.selected(), reported.spectral_evaluation())?;
             density.consume(
                 problem,
                 reported.selected(),
@@ -3872,10 +4500,10 @@ fn traverse_weighting_generation(
         .finish(problem)
         .map_err(WeightingGenerationError::Owner)?;
     let mut sum_weight = sum_weight;
-    let mut spectral_contributions = SpectralContributionCache::new();
     let sum_weight_completion = selected
         .traverse(problem, |reported| {
-            let contributions = spectral_contributions.compile(problem, &reported)?;
+            let contributions = spectral_contributions
+                .compile(reported.selected(), reported.spectral_evaluation())?;
             sum_weight.consume(
                 problem,
                 reported.selected(),

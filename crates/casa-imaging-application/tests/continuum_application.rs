@@ -38,7 +38,44 @@ use ndarray::ArrayD;
 const PRODUCT_SUFFIXES: [&str; 6] = [".psf", ".residual", ".model", ".image", ".sumwt", ".mask"];
 const DIRTY_PRODUCT_SUFFIXES: [&str; 5] = [".psf", ".residual", ".model", ".image", ".sumwt"];
 
+fn fixture_model_samples(
+    model: &casa_imaging_reconstruction::ModelGeneration,
+) -> Vec<casa_imaging_model::ModelSample> {
+    let mut samples = Vec::with_capacity(model.sample_count());
+    for domain in 0..model.shape().domains().len() {
+        for coefficient in 0..model.shape().coefficients() {
+            for polarization in 0..model.shape().polarizations() {
+                samples.extend_from_slice(
+                    &model
+                        .read_plane(domain, coefficient, polarization)
+                        .expect("fixture model plane"),
+                );
+            }
+        }
+    }
+    samples
+}
+
 static EXECUTION_LOCK: Mutex<()> = Mutex::new(());
+
+// Production admits one immutable storage calibration per process. AW adds a
+// prepared-reader queue and IOPS rate, so mode-specific fixtures need isolation.
+fn isolated_application_case(test: &str, family: &str) -> bool {
+    let selected = format!("{test}:{family}");
+    if let Ok(active) = std::env::var("CASA_RS_APPLICATION_ISOLATED_CASE") {
+        return active == selected;
+    }
+    let status = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args([test, "--exact", "--nocapture"])
+        .env("CASA_RS_APPLICATION_ISOLATED_CASE", selected)
+        .status()
+        .expect("isolated production application process");
+    assert!(
+        status.success(),
+        "{test} {family}: isolated execution failed"
+    );
+    false
+}
 
 #[path = "common/continuum_fixture.rs"]
 mod continuum_fixture;
@@ -46,6 +83,71 @@ use continuum_fixture::*;
 
 #[path = "continuum_application/t53_spectral_joins.rs"]
 mod t53_spectral_joins;
+
+#[path = "continuum_application/t55_cube_pipeline.rs"]
+mod t55_cube_pipeline;
+
+#[path = "continuum_application/t55_real_cube.rs"]
+mod t55_real_cube;
+
+#[test]
+fn unsupported_primary_beam_frequency_rejects_before_execution_receipts() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    // This existing fixture labels 44 GHz as EVLA; the selected common EVLA
+    // model represents only L/S/C, unlike the separate legacy-VLA Q model.
+    let measurement_set = vla_aw_measurement_set(root.path());
+    let image_name = root.path().join("unsupported-beam");
+    let mut imaging = request(measurement_set, image_name, ContinuumAlgorithm::Dirty);
+    imaging.write_primary_beam = true;
+    let error = execute_continuum(imaging)
+        .err()
+        .expect("unsupported beam frequency");
+    let casa_imaging_application::ApplicationDispatchError::Native(error) = error else {
+        panic!("expected native coverage validation, found {error:?}");
+    };
+    let Some(casa_imaging_products::ProductsError::UnsupportedPrimaryBeamFrequency {
+        model: casa_imaging_products::AnalyticPrimaryBeamModel::CasaEvlaCommon,
+        output_channel: 0,
+        frequency_hz,
+    }) = error.downcast_ref::<casa_imaging_products::ProductsError>()
+    else {
+        panic!("expected explicit coverage error, found {error:?}");
+    };
+    // The default continuum axis is LSRK: validate the transformed output
+    // frequency, not the source's exactly 44-GHz TOPO channel.
+    assert_ne!(*frequency_hz, 44.0e9);
+    assert!((*frequency_hz - 44.0e9).abs() < 2.0e6);
+    assert!(
+        std::fs::read_dir(root.path().join(".casa-rs-imaging-receipts"))
+            .expect("prepared receipt directory")
+            .next()
+            .is_none(),
+        "no weighting, replay, reconstruction or publication may execute"
+    );
+    assert!(!root.path().join("unsupported-beam.pb").exists());
+}
+
+#[test]
+fn image_pointing_center_preserves_casa_positive_pi_longitude() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let image_name = root.path().join("antimeridian");
+    let mut imaging = request(
+        tiny_measurement_set(root.path()),
+        image_name.clone(),
+        ContinuumAlgorithm::Dirty,
+    );
+    imaging.phase_center = Some("J2000 12h00m00s +34d04m43.5s".to_string());
+    execute_continuum(imaging).unwrap_or_else(|error| panic!("dirty image: {error}"));
+    let image = PagedImage::<f32>::open(root.path().join("antimeridian.image")).expect("image");
+    assert_eq!(
+        image.coordinates().obs_info().pointing_center_rad[0],
+        std::f64::consts::PI
+    );
+}
 
 fn assert_standard_products(image_name: &Path, product_names: &[String]) {
     assert_products(image_name, product_names, &PRODUCT_SUFFIXES);
@@ -132,14 +234,18 @@ fn application_executes_single_ddid_stokes_i_mfs_dirty_and_publishes_products() 
             PagedImage::<f32>::open(PathBuf::from(format!("{}{}", image_name.display(), suffix)))
                 .expect("reopen validity-bearing product");
         assert_eq!(product.default_mask_name(), None);
-        assert_eq!(product.units(), "Jy/beam", "ordinary {suffix} units");
+        assert_eq!(
+            product.units(),
+            if suffix == ".residual" { "" } else { "Jy/beam" },
+            "CASA {suffix} units"
+        );
     }
     assert_eq!(
         PagedImage::<f32>::open(PathBuf::from(format!("{}.psf", image_name.display())))
             .expect("reopen ordinary PSF")
             .units(),
-        "Jy/beam",
-        "ordinary PSF units remain unchanged"
+        "",
+        "CASA PSF has an empty serialized unit label"
     );
     assert_eq!(
         PagedImage::<f32>::open(PathBuf::from(format!("{}.model", image_name.display())))
@@ -180,6 +286,12 @@ fn t49_application_executes_nonzero_w_through_major_cycle_replay() {
 
 #[test]
 fn t51_lazy_aw_reader_executes_real_science_and_closes_at_its_io_fence() {
+    if !isolated_application_case(
+        "t51_lazy_aw_reader_executes_real_science_and_closes_at_its_io_fence",
+        "aw",
+    ) {
+        return;
+    }
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
@@ -382,6 +494,12 @@ fn t51_lazy_aw_reader_executes_real_science_and_closes_at_its_io_fence() {
 
 #[test]
 fn t52_native_evla_dirty_and_clean_without_a_casa_cache_or_runtime() {
+    if !isolated_application_case(
+        "t52_native_evla_dirty_and_clean_without_a_casa_cache_or_runtime",
+        "aw",
+    ) {
+        return;
+    }
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();
     let root = tempfile::tempdir().unwrap();
@@ -476,6 +594,12 @@ fn t52_native_evla_dirty_and_clean_without_a_casa_cache_or_runtime() {
 
 #[test]
 fn t51_aw_use_pointing_applies_distinct_nonzero_field_phase_gradients() {
+    if !isolated_application_case(
+        "t51_aw_use_pointing_applies_distinct_nonzero_field_phase_gradients",
+        "aw",
+    ) {
+        return;
+    }
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
@@ -518,11 +642,23 @@ fn t51_aw_use_pointing_applies_distinct_nonzero_field_phase_gradients() {
 
 #[test]
 fn t51_direct_taylor_aw_clean_executes_the_application_replay_path() {
+    if !isolated_application_case(
+        "t51_direct_taylor_aw_clean_executes_the_application_replay_path",
+        "aw",
+    ) {
+        return;
+    }
     execute_taylor_aw_clean_with_memory_policy(false);
 }
 
 #[test]
 fn t51_fixed_memory_aw_clean_preserves_prepared_projection_during_recompute() {
+    if !isolated_application_case(
+        "t51_fixed_memory_aw_clean_preserves_prepared_projection_during_recompute",
+        "aw",
+    ) {
+        return;
+    }
     execute_taylor_aw_clean_with_memory_policy(true);
 }
 
@@ -590,6 +726,7 @@ fn execute_taylor_aw_clean_with_memory_policy(fixed_memory: bool) {
     let normal = result.outcome.output.scientific.normal_state();
     assert_eq!(normal.coefficient_term_count(), 2);
     assert_eq!(normal.normal_moment_count(), 3);
+    let normal = normal.read_window(0..1).expect("coupled normal window");
     let response = casa_imaging_reconstruction::MosaicSensitivity::new(
         normal
             .normal_moment(0)
@@ -608,7 +745,7 @@ fn execute_taylor_aw_clean_with_memory_policy(fixed_memory: bool) {
     let policy = casa_imaging_model::PrimaryBeamValidityPolicy::new(
         0.2,
         casa_imaging_model::ProductSupportComparison::StrictlyGreater,
-        casa_imaging_model::ProductBlankingPolicy::ZeroAndFalseMask,
+        casa_imaging_model::ProductBlankingPolicy::Zero,
     )
     .expect("PB support");
     for term in 0..2 {
@@ -617,7 +754,9 @@ fn execute_taylor_aw_clean_with_memory_policy(fixed_memory: bool) {
             for y in 0..16 {
                 let cell = casa_imaging_model::ModelCell::new(0, term, 0, [x, y]);
                 let index = model.shape().flat_index(cell).expect("model cell");
-                let physical = model.samples()[index].value().value();
+                let physical = model.read_samples(index..index + 1).unwrap()[0]
+                    .value()
+                    .value();
                 let apparent = response
                     .physical_to_apparent(
                         f64::from(physical as f32),
@@ -644,6 +783,12 @@ fn execute_taylor_aw_clean_with_memory_policy(fixed_memory: bool) {
 
 #[test]
 fn t51_zero_iteration_mtmfs_executes_dirty_taylor_basis_and_publishes_products() {
+    if !isolated_application_case(
+        "t51_zero_iteration_mtmfs_executes_dirty_taylor_basis_and_publishes_products",
+        "aw",
+    ) {
+        return;
+    }
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
@@ -789,8 +934,8 @@ fn t51_taylor_publication_persists_casa_metadata_without_changing_logical_contra
     assert_eq!(planned.members().len(), published.members().len());
     for (planned, published) in planned.members().iter().zip(published.members()) {
         assert_eq!(
-            planned.artifact_id(),
-            published.artifact_id(),
+            planned.node(),
+            published.node(),
             "{} identity",
             planned.name()
         );
@@ -816,6 +961,12 @@ fn t51_taylor_publication_persists_casa_metadata_without_changing_logical_contra
             planned.validity(),
             published.contract().validity(),
             "{} validity",
+            planned.name()
+        );
+        assert_eq!(
+            planned.storage(),
+            published.contract().storage(),
+            "{} storage contract",
             planned.name()
         );
         assert_eq!(
@@ -919,9 +1070,10 @@ fn t51_taylor_publication_persists_casa_metadata_without_changing_logical_contra
         .expect("Taylor residual contract");
     assert_eq!(residual.unit(), ProductUnit::JyPerBeam);
     assert_eq!(residual.beam_rule(), ProductBeamRule::Fitted);
+    assert_eq!(residual.validity(), ProductValidityRule::FinalNormalState);
     assert!(matches!(
-        residual.validity(),
-        ProductValidityRule::PrimaryBeam(_)
+        residual.storage().pixel_mask(),
+        casa_imaging_model::ProductPixelMask::Explicit(ProductValidityRule::PrimaryBeam(_))
     ));
     let primary_beam = planned
         .members()
@@ -1207,10 +1359,10 @@ fn application_executes_full_stokes_mfs_clean_with_complete_products_and_axes() 
         );
         assert_eq!(
             product.units(),
-            if suffix == ".model" {
-                "Jy/pixel"
-            } else {
-                "Jy/beam"
+            match suffix {
+                ".model" => "Jy/pixel",
+                ".image" => "Jy/beam",
+                _ => "",
             }
         );
         assert!(
@@ -1284,7 +1436,7 @@ fn application_executes_raw_linear_correlation_products_with_exact_axis() {
             StokesType::YY
         ]
     );
-    assert_eq!(product.units(), "Jy/beam");
+    assert_eq!(product.units(), "");
 }
 
 #[test]
@@ -1402,12 +1554,7 @@ fn t31_application_executes_recentered_domains_through_one_scientific_route() {
             }
         }
 
-        let model_nonzero = result
-            .outcome
-            .output
-            .scientific
-            .final_model()
-            .samples()
+        let model_nonzero = fixture_model_samples(result.outcome.output.scientific.final_model())
             .iter()
             .filter(|sample| sample.value().value() != 0.0)
             .count();
@@ -1463,6 +1610,8 @@ fn t31_application_canonicalizes_reversed_outliers_before_domain_indexed_derivat
         .output
         .scientific
         .normal_state()
+        .read_window(0..1)
+        .expect("fixture domain window")
         .domains()
         .map(|domain| domain.role().clone())
         .collect::<Vec<_>>();
@@ -1474,9 +1623,9 @@ fn t31_application_canonicalizes_reversed_outliers_before_domain_indexed_derivat
             .collect::<Vec<_>>()
     );
     assert_eq!(
-        result.outcome.output.planned_products.generation_id(),
-        result.outcome.output.products.generation_id(),
-        "publication must retain the exact canonical domain generation"
+        result.outcome.output.planned_products.graph_id(),
+        result.outcome.output.products.graph_id(),
+        "publication must retain the canonical domain inventory"
     );
     for (planned, published) in result
         .outcome
@@ -1486,7 +1635,7 @@ fn t31_application_canonicalizes_reversed_outliers_before_domain_indexed_derivat
         .iter()
         .zip(result.outcome.output.products.members())
     {
-        assert_eq!(planned.artifact_id(), published.artifact_id());
+        assert_eq!(planned.node(), published.node());
         assert_eq!(
             planned.axes().domain(),
             published.contract().axes().domain()
@@ -1599,11 +1748,14 @@ fn application_preserves_the_bounded_source_budget_across_multiple_rows() {
     );
     let io_lifetime =
         casa_imaging_runtime::ClaimLifetime::through_fence(casa_imaging_runtime::FenceKind::Io);
-    assert_eq!(
-        receipt.planned_resource_amount(&source_read, &source_buffer, &io_lifetime),
-        Some(64 << 20),
-        "the application must preserve the admitted caller-owned source budget"
-    );
+    let planned = receipt
+        .planned_resource_amount(&source_read, &source_buffer, &io_lifetime)
+        .expect("source residency claim");
+    let actual = receipt
+        .actual_resource_peak(&source_read, &source_buffer, &io_lifetime)
+        .expect("measured source residency");
+    assert!(planned > 0 && planned <= 64 << 20);
+    assert!(actual > 0 && actual <= planned);
     let (_, operations) = receipt
         .stage_actual_io(
             &source_read,
@@ -1613,7 +1765,7 @@ fn application_preserves_the_bounded_source_budget_across_multiple_rows() {
 
     assert_eq!(
         operations, 19,
-        "the caller's admitted content budget should fill all eight rows in one bounded block"
+        "the owner's finalized budget should fill all eight rows in one bounded block"
     );
 }
 
@@ -1724,7 +1876,7 @@ fn mtmfs_via_cube_executes_one_bounded_sixteen_channel_axis_from_four_spectral_w
 }
 
 #[test]
-fn cube_common_beam_products_preserve_blank_validity_beams_units_and_descending_wcs() {
+fn cube_common_beam_products_preserve_blank_pixels_and_casa_metadata_without_pb() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
@@ -1760,13 +1912,13 @@ fn cube_common_beam_products_preserve_blank_validity_beams_units_and_descending_
     for product in [&psf, &residual, &restored] {
         assert_eq!(product.shape(), &[16, 16, 1, 4]);
     }
-    assert_eq!(psf.units(), "Jy/beam");
-    assert_eq!(residual.units(), "Jy/beam");
+    assert_eq!(psf.units(), "");
+    assert_eq!(residual.units(), "");
     assert_eq!(restored.units(), "Jy/beam");
 
     let psf_beams = psf.image_info().expect("PSF ImageInfo").beam_set;
     let residual_beams = residual.image_info().expect("residual ImageInfo").beam_set;
-    assert!(psf_beams.equivalent(&residual_beams));
+    assert!(residual_beams.is_empty());
     assert!(
         restored
             .image_info()
@@ -1781,17 +1933,16 @@ fn cube_common_beam_products_preserve_blank_validity_beams_units_and_descending_
     assert_eq!(*psf_beams.beam(0, 0), largest_valid);
 
     for product in [&residual, &restored] {
-        assert_eq!(product.default_mask_name().as_deref(), Some("mask0"));
+        assert_eq!(product.default_mask_name(), None);
+        assert!(product.mask_names().is_empty());
         let blank = product
-            .get_mask_slice(&[0, 0, 0, 0], &[16, 16, 1, 1], &[1; 4])
-            .expect("blank-channel mask")
-            .expect("product validity mask");
-        assert!(blank.iter().all(|valid| !*valid));
+            .get_slice(&[0, 0, 0, 0], &[16, 16, 1, 1])
+            .expect("blank channel");
+        assert!(blank.iter().all(|value| *value == 0.0));
         let valid = product
-            .get_mask_slice(&[0, 0, 0, 1], &[16, 16, 1, 1], &[1; 4])
-            .expect("valid-channel mask")
-            .expect("product validity mask");
-        assert!(valid.iter().all(|valid| *valid));
+            .get_slice(&[0, 0, 0, 1], &[16, 16, 1, 1])
+            .expect("emitting channel");
+        assert!(valid.iter().any(|value| *value != 0.0));
     }
     let first = restored
         .coordinates()
@@ -1925,12 +2076,12 @@ fn application_executes_single_ddid_stokes_i_mfs_hogbom_with_one_iteration() {
     let selected = final_receipt.selected_alternative_projection();
     let planned_workers = selected.demand.workers.hard();
     assert!((1..=4).contains(&planned_workers));
-    assert!(
-        selected
-            .id
-            .as_str()
-            .ends_with(&format!("-workers-{planned_workers}")),
-        "normal application composition must submit the scalable replay template to the planner",
+    assert_eq!(
+        selected.id.as_str(),
+        format!(
+            "spectral-cycle-gridded-1-workers-{planned_workers}-gridded-1-read-spectral-operator"
+        ),
+        "the owner-specific replay profile is fixed before artifact-route composition",
     );
     if std::thread::available_parallelism().is_ok_and(|threads| threads.get() > 1) {
         assert!(

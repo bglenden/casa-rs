@@ -18,7 +18,7 @@ coordinates, measures, and related workflows.
 | foundation crates (`casa-types`, `casa-measures-data`, `casa-measures-tools`) | Public scalar/quanta/measures algorithms and contracts plus explicit runtime-data validation, loading, installation, and maintenance | core codecs; `casa-measures-data` also uses canonical `casa-tables` accessors |
 | shared numerics (`casa-numerics`) | Domain-neutral numerical algorithms reused by observation, calibration, and imaging owners | Rust numerical ecosystem crates only |
 | persistent storage (`casa-tables`) | CASA table persistence, codecs, data managers/storage backends, schema/mutation APIs, and TaQL engine | core codecs, foundation crates |
-| native imaging contracts (`casa-imaging-model`, `casa-imaging-reconstruction`, `casa-imaging-products`, `casa-imaging-runtime`) | Dependency-free logical schemas and commitments; authoritative model-state ingest, reprojection, delta, and completion algorithms; continuum product algorithms and the Product Generation Authority with planned generations, artifact identities, seals, and independently atomic member publication; process-level resource topology, policies, demand envelopes, arbitration, leases, and planner-owned Metal device, unified-residency, queue, and fence execution | `casa-imaging-model` has no workspace dependencies; `casa-imaging-reconstruction` and `casa-imaging-products` depend inward on the model and domain-neutral numerics, with products also depending on reconstruction completions; `casa-imaging-runtime` depends on the model and the reconstruction-owned executable-problem brand at its execution boundary and composes product authority at its publication boundary |
+| native imaging contracts (`casa-imaging-model`, `casa-imaging-reconstruction`, `casa-imaging-products`, `casa-imaging-runtime`) | Dependency-free logical schemas and commitments; authoritative model-state ingest, reprojection, delta, and completion algorithms; continuum product algorithms with bounded owned windows streamed directly to CASA staging and atomic individual-image replacement; process-level resource topology, policies, demand envelopes, arbitration, leases, and planner-owned Metal device, unified-residency, queue, and fence execution | `casa-imaging-model` has no workspace dependencies; `casa-imaging-reconstruction` and `casa-imaging-products` depend inward on the model and domain-neutral numerics, with products also depending on reconstruction completions; `casa-imaging-runtime` depends on the model and the reconstruction-owned executable-problem brand at its execution boundary and composes bounded generation and ordinary publication lifecycle |
 | imaging application composition (`casa-imaging-application`) | Sole production composition seam across MeasurementSet authority, reconstruction, products, resources, execution, typed installed-implementation availability, and CASA product publication | Native imaging owners only; unavailable requests invoke no execution implementation |
 | domain libraries (`casa-ms`, `casa-simulation-synthesis`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-calibration`, `casa-vla`) | Higher-level astronomy data models and algorithms built on table/image persistence; simulation synthesis owns only the serial model predictor and Airy voltage pattern used by MeasurementSet simulation | foundation crates, `casa-tables`, selected peer domain crates where documented |
 | boundary contracts (`casa-provider-contracts`, `casars-imagebrowser-protocol`, `casars-tablebrowser-protocol`) | The generic provider envelope, canonical parameter and application catalogs, task/session surface definitions, and protocol surfaces between providers, apps, and Python/runtime layers | domain libraries and foundation crates; must not become a second source of truth |
@@ -49,6 +49,25 @@ model publication and restoration without changing the raw normal state.
 `casa-imaging-products` owns continuum product algorithms and may use the same
 domain-neutral `casa-numerics` algorithms directly; numerical helpers do not
 become reconstruction-owned merely because both owners require them.
+ADR-0014 requires trusted in-process generation to transfer bounded owned windows
+directly into private CASA image staging without product content attestation,
+verification-only array rereads or an intermediate readable product store.
+Source/run association, inventory, shape, complete writes, metadata and I/O
+checks remain. Each image replacement is atomic; a failure leaves the run and
+its output set incomplete and requires rerun. There is no per-member resumable
+recovery, content-based idempotency or whole-set rollback protocol.
+Generated publication has only generation/write and terminal publication work;
+it does not schedule an empty observation-consistency check. Planning and
+execution share one immutable routing inventory. The generation writer owns
+window shape, finite-value and complete-coverage validation; the CASA writer
+owns physical I/O. Explicit pending, generated, published and consumed states
+make generation/publication failures terminal and completion available once.
+The same ownership rule applies to model lifecycle and normal-state completion:
+validate scientific values/support at introduction or modification, retain exact
+run/model/weighting/replay/coverage associations, and do not hash or reread full
+owned arrays just to assign completion authority. Routine telemetry stays
+indexed in memory and persists a useful final summary, not full-plan checkpoints
+at each work/fence event or scans of historical receipts during admission.
 `casa-imaging-runtime` owns execution-resource contracts introduced by ADR-0010
 and depends inward on the model plus reconstruction's opaque executable-problem
 brand. That reconstruction edge is limited to admitting owner-prepared model
@@ -121,6 +140,17 @@ The first provider is EVLA-specific, not evidence of general telescope support.
 Its surface data is an explicit input, never discovered in an installed CASA
 runtime. Native cache files are private schema-7 implementation artifacts, not
 CASA-readable CF tables; existing CASA caches remain read-only import inputs.
+
+Run-scoped gridded replay exports a dedicated immutable Host/Data allocation
+from its original admitted execution lease. Work and I/O fences settle before
+scientific sealing transfers the existing permit; there is no release/reacquire
+gap or second lease. Runtime-owned shared backing couples the compiled program,
+temporary artifact, and retention capability to every reader and operator.
+The final owning alias releases the exact retained metadata and storage.
+Compiler transient and later minor-cycle heaps may reuse one max-sized host
+workspace only across ordered, disjoint lifetimes; exported allocations never
+reuse a physical slot. Private receipt schema 23 records each allocation's
+release or export disposition. CASA-interoperable formats are unchanged.
 
 `casa-imaging-application` owns production composition across
 MeasurementSet observation authority, reconstruction, products, and physical
@@ -384,7 +414,8 @@ own transaction. Controller polling ends when that transaction's Publication lau
 Initial-check, observation-read, and writeback nodes reserve one table lock
 per source; every read revalidates under those locks. Staging storage,
 writeback/publication buffers, and commit fences are ordinary Resource Authority
-claims. Product Publication activates exactly one conventional product member.
+claims. Product publication replaces conventional images individually; failure
+fails the run, without rollback or a resumable per-member recovery ledger.
 `MODEL_DATA` instead follows ADR-0008: the terminal replay writes selected cells
 in place under the retained lock and a small incomplete-write marker, then
 updates the owner generation and removes the marker only after a successful
@@ -453,16 +484,14 @@ not change casacore MeasurementSet or image-table columns, keywords, data
 managers, bytes, or on-disk identities. T13's focused gates therefore do not
 claim the programme's final Rust/C++ persistent-interoperability evidence,
 which remains required after the production storage adapters are integrated.
-Before the sole external publication operation, the runtime durably records a
-non-prunable `PublicationPrepared` receipt with exact Staged outputs and
-pre-syncs its terminal candidate. Prepared and terminal bytes are charged
-together, and the shared-root mutation guard remains held through publication
-and promotion. Publication success is the final runtime result:
-terminal-candidate promotion cannot turn visible output into a failed run, and
-a failed promotion leaves the prepared receipt for fail-closed reconciliation
-without republishing. Receipt-owned staging files use a closed name and are
-removed and directory-synced under that same guard when a store reopens after
-an interrupted process.
+ADR-0014 supersedes prepared-publication receipt choreography and partial-output
+recovery. Progress is maintained in memory without rewriting the whole receipt.
+A useful final success/failure summary is persisted; only small intermediate
+state with an actual storage/concurrency consumer is justified. Receipt-store
+I/O errors propagate as ordinary run failures, even if some output images have
+already been replaced. Such output sets are incomplete and require a rerun.
+Historical receipts do not constrain current resource admission and are not
+enumerated or reread during planning.
 
 ## Runtime model
 
@@ -832,3 +861,5 @@ backend selection available.
 | 0009 | Mathematical imaging architecture | accepted |
 | 0010 | Unified imaging resource authority | accepted |
 | 0011 | Distinct sequential and joint continuum-line reconstruction | accepted |
+| 0012 | Current-only sparse profile contracts | accepted |
+| 0013 | Non-cryptographic integrity for private run-scoped spill artifacts | accepted |

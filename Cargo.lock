@@ -633,10 +633,12 @@ dependencies = [
 name = "casa-imaging-reconstruction"
 version = "0.27.0"
 dependencies = [
+ "bytemuck",
  "casa-images",
  "casa-imaging-model",
  "casa-numerics",
  "casa-test-support",
+ "crc32c",
  "ndarray",
  "num-complex",
  "rustfft",
@@ -653,13 +655,17 @@ dependencies = [
  "casa-imaging-model",
  "casa-imaging-products",
  "casa-imaging-reconstruction",
+ "casa-lattices",
  "casa-ms",
  "casa-test-support",
  "casa-types",
+ "crc32c",
  "fs2",
  "libc",
+ "ndarray",
  "num-complex",
  "objc2",
+ "objc2-foundation",
  "objc2-metal",
  "rayon",
  "serde",
@@ -967,6 +973,7 @@ dependencies = [
  "flate2",
  "image 0.25.10",
  "ndarray",
+ "objc2-foundation",
  "serde",
  "serde_json",
  "tar",
@@ -1261,6 +1268,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "59ed5838eebb26a2bb2e58f6d5b5316989ae9d08bab10e0e6d103e656d1b0280"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "crc32c"
+version = "0.6.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a47af21622d091a8f0fb295b88bc886ac74efcc613efc19f5d0b21de5c89e47"
+dependencies = [
+ "rustc_version",
 ]
 
 [[package]]
@@ -2857,6 +2873,7 @@ version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73f88a1307638156682bada9d7604135552957b7818057dcef22705b4d509495"
 dependencies = [
+ "bytemuck",
  "num-traits",
 ]
 

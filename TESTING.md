@@ -135,10 +135,17 @@ or performance acceptance. Current results and restart authority live in the
 - Observation-transaction coverage must prove exact per-MS read/write sets,
   mechanically derived typed observation reads, mutation-before-read ordering,
   exact `ProductRequirements` staging coverage, reconciliation and
-  complete-staging cuts, mandatory sealing through `plan`, a terminal sole
-  lock-held atomic publication, no controller polling after publication launch,
+  complete-staging cuts, mandatory transaction binding through `plan`, a terminal
+  publication step with atomic individual-image replacement, no controller
+  polling after publication launch,
   and fail-closed cancellation plus admission, numerical, output, and
   staging-fence failures.
+- ADR-0014 product publication tests exercise write-only bounded ownership,
+  complete ordered coverage, unchanged science/metadata and ordinary I/O errors.
+  Failed publication leaves an incomplete output set requiring rerun, not
+  resumable member recovery or whole-set rollback. Architectural mutation tests
+  reject content hashing and output rereads even without sealing terminology;
+  test/benchmark fingerprints remain diagnostic, outside production execution.
 - Binary serialization changes need endian coverage.
 - Measures-data dependent tests must skip cleanly when runtime tables are unavailable.
 - C++ dependent tests must skip cleanly when `pkg-config casacore` is unavailable.

@@ -1913,6 +1913,9 @@ class FullSpatialStructureReducer:
             "left_raw_finite_pixels": self.left_raw_finite_pixels,
             "right_raw_finite_pixels": self.right_raw_finite_pixels,
             "paired_raw_finite_pixels": self.paired_raw_finite_pixels,
+            "paired_raw_left_abs_max": self.paired_raw_left_abs_max,
+            "paired_raw_right_abs_max": self.paired_raw_right_abs_max,
+            "paired_raw_diff_abs_max": self.paired_raw_diff_abs_max,
             "paired_image_mask_finite_pixels": (self.paired_image_mask_finite_pixels),
             "central_mask_mismatch_pixels": self.central_mask_mismatch_pixels,
             "workspace_lifecycle": "remove_on_success_retain_on_failure",
@@ -1937,7 +1940,7 @@ class FullSpatialStructureReducer:
         return bool(
             self.spatial_pixels_visited == self.shape[0] * self.shape[1]
             and self.overlap_write_pixels == 0
-            and self.paired_raw_finite_pixels > 0
+            and self.paired_raw_finite_pixels == self.shape[0] * self.shape[1]
             and self.paired_raw_left_abs_max == 0.0
             and self.paired_raw_right_abs_max == 0.0
             and self.paired_raw_diff_abs_max == 0.0
@@ -2779,7 +2782,7 @@ def exact_zero_structure_evidence(suffix, *, evidence_scope):
         "large_scale_power_fraction": None,
         "scale_offset_gradient_fit": {
             "status": label,
-            "reason": "both operands and their difference are exactly zero",
+            "reason": "both operands and their difference are exactly zero on the review plane",
         },
         "beam_block_rms_by_scale": [],
         "block_rms_decay_slope_vs_independent_beams": None,
@@ -2787,15 +2790,16 @@ def exact_zero_structure_evidence(suffix, *, evidence_scope):
         "review": {
             "label": label,
             "summary": (
-                f"{suffix}: structured difference is not applicable because full "
-                "evidence proves both operands and their difference are exactly zero."
+                f"{suffix}: structured difference is not applicable on the review plane; "
+                "both operands and their difference are exactly zero there. "
+                "Full-array numerical checks remain applicable."
             ),
             "checks": [
                 {
                     "name": "exact_zero_operands",
                     "label": label,
                     "value": True,
-                    "meaning": "full comparison domain proves both operands are zero",
+                    "meaning": "complete central review plane proves both operands are zero",
                 }
             ],
             "legend": structured_difference_review_legend(),
@@ -3722,7 +3726,8 @@ def structured_difference_review_legend():
         "bad": "Structured or large enough difference; do not close without explanation.",
         "unknown": "Check could not be evaluated for this product.",
         "not_applicable_exact_zero": (
-            "Full evidence proves both operands and their difference are exactly zero."
+            "Both operands and their difference are exactly zero on the complete "
+            "central review plane; full-array numerical checks remain applicable."
         ),
     }
 

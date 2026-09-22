@@ -427,7 +427,7 @@ mod tests {
         PrimaryBeamValidityPolicy::new(
             cutoff,
             ProductSupportComparison::StrictlyGreater,
-            ProductBlankingPolicy::ZeroAndFalseMask,
+            ProductBlankingPolicy::Zero,
         )
         .expect("PB policy")
     }

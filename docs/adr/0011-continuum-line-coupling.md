@@ -4,7 +4,7 @@ Status: accepted
 Date: 2026-08-31
 Truth class: normative
 Supersedes:
-Superseded by:
+Superseded by: ADR-0014 for product sealing/attestation only; scientific coupling remains normative.
 
 ## Context
 
@@ -127,8 +127,8 @@ not an independently authoritative model generation.
 
 ### Products and error propagation
 
-One planned and sealed Product Generation publishes projections of the same
-coupled state:
+One product generation publishes the same coupled state through bounded
+ownership transfer (ADR-0014 supersedes the former sealing requirement):
 
 - continuum coefficients and derived continuum products;
 - the channel-local line model and restored line cube;
@@ -162,8 +162,8 @@ do not claim propagated fit covariance.
   coupled Model Delta, stopping, and deterministic reduction.
 - `casa-imaging-runtime` owns only bounded execution, resources, buffers,
   scheduling, and measurements.
-- `casa-imaging-products` extends its single product-generation authority for
-  coupled sources and members.
+- `casa-imaging-products` generates coupled members from their common scientific
+  sources without production content attestation, as required by ADR-0014.
 - applications compose the owners, and frontends project parameters and units.
 
 There is one production execution path. This decision adds no mode runner,

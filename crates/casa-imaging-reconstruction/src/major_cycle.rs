@@ -13,7 +13,7 @@
 //! three members are never separable outside this operation, and none is a
 //! Product Generation seal or publication authority.
 
-use std::fmt;
+use std::{borrow::Cow, fmt};
 
 #[cfg(test)]
 pub(crate) mod native_minor_fixture;
@@ -30,9 +30,47 @@ use crate::{
     ModelGenerationId, ModelLifecycle, ModelLifecycleError, PreparedFinalModel,
     SpectralOperatorError, SpectralPrimitiveCatalog, WeightingGenerationId,
     WeightingReplayCoverageId, WeightingReplayId,
-    runtime_adapter::CompleteDataOwnerResult,
-    spectral_operator::{ReusableNormalState, SpectralPrimitiveDomains},
+    runtime_adapter::CompleteDataNormalState,
+    spectral_operator::{
+        ReusableNormalState,
+        normal_storage::{NormalStatePrimitives, NormalStateWindowPayload},
+    },
 };
+
+/// Heap bound for one domain's channel-local window and its backing-access
+/// scratch. Covers residual, invariant dirty, PSF, sensitivity, optional PB,
+/// exact channel metadata, and an overlapping scalar conversion/I/O pair.
+#[doc(hidden)]
+pub fn normal_state_window_residency_bytes(
+    shape: [usize; 2],
+    polarizations: usize,
+    total_channels: usize,
+    window_channels: usize,
+) -> Result<u64, SpectralOperatorError> {
+    let overflow = || SpectralOperatorError::ResidencyOverflow;
+    let planes = window_channels
+        .checked_mul(polarizations)
+        .ok_or_else(overflow)?;
+    let cells = shape[0].checked_mul(shape[1]).ok_or_else(overflow)?;
+    let image_bytes = cells
+        .checked_mul(planes)
+        .and_then(|values| {
+            values.checked_mul(5 * size_of::<num_complex::Complex64>() + 2 * size_of::<f64>())
+        })
+        .ok_or_else(overflow)?;
+    let metadata = total_channels
+        .checked_mul(size_of::<Option<usize>>())
+        .and_then(|bytes| {
+            planes
+                .checked_mul(2 * size_of::<f64>() + size_of::<crate::SpectralChannelValidity>())
+                .and_then(|planes| bytes.checked_add(planes))
+        })
+        .and_then(|bytes| {
+            bytes.checked_add(size_of::<crate::spectral_operator::SpectralDomainPrimitives>())
+        })
+        .ok_or_else(overflow)?;
+    u64::try_from(image_bytes.checked_add(metadata).ok_or_else(overflow)?).map_err(|_| overflow())
+}
 
 /// Versioned Normal State Generation catalog minted by a Major Cycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,7 +90,7 @@ pub enum NormalStateCatalog {
 /// Reconstruction-owned proof that the final Normal State generation exists.
 ///
 /// The record names exact lineage, the authoritative observation generation,
-/// and the content identity of the model-dependent unnormalized residual; it
+/// and the owned model-dependent unnormalized residual; it
 /// makes no promise that the state is fully resident, dense, or
 /// shift-invariant. It is not a Product Graph artifact and mints no
 /// publication authority.
@@ -74,7 +112,6 @@ pub struct FinalNormalState {
     replay: WeightingReplayId,
     coverage: WeightingReplayCoverageId,
     catalog: NormalStateCatalog,
-    content: LogicalIdentity,
     sample_count: u64,
     block_count: u64,
     input_model_generation: ModelGenerationId,
@@ -83,10 +120,96 @@ pub struct FinalNormalState {
     continuum_transform_generation: Option<ContinuumTransformGenerationId>,
     coupled_mask_generation: Option<crate::ReconstructionMaskGenerationId>,
     image_domain_mask_generation: Option<crate::ReconstructionMaskGenerationId>,
-    primitives: SpectralPrimitiveDomains,
+    primitives: NormalStatePrimitives,
 }
 
 impl FinalNormalState {
+    /// Live scalar payload already charged by its retained runtime allocation.
+    /// This is metadata-only; it does not load or verify any array contents.
+    #[doc(hidden)]
+    pub fn retained_resident_bytes(&self) -> Result<u64, SpectralOperatorError> {
+        self.primitives.retained_resident_bytes()
+    }
+
+    /// Start a residual-only candidate sharing this complete state's immutable
+    /// normal fields. Source/operator association is checked without array reads;
+    /// the previous complete state remains usable if the candidate fails.
+    #[doc(hidden)]
+    pub fn begin_streaming_cube_refresh(
+        &self,
+        specification: &crate::SpectralOperatorSpecification,
+        replay: &crate::weighting::WeightingReplaySummary,
+        selected: SelectedObservationGenerationId,
+        transform: Option<ContinuumTransformGenerationId>,
+        model: ModelGenerationId,
+        storage: &crate::spectral_operator::normal_storage::NormalStoragePlan,
+    ) -> Result<CubeNormalRefresh, SpectralOperatorError> {
+        let completion =
+            crate::spectral_operator::CompleteDataOwnerCompletion::from_streaming_cube(
+                specification,
+                replay,
+                selected,
+                transform,
+            )?;
+        if self.catalog != NormalStateCatalog::UnnormalizedChannelSlabV1
+            || self.problem != completion.problem_id()
+            || self.geometry != completion.geometry_id()
+            || self.numerics != completion.numerics_id()
+            || self.weighting_commitment != completion.weighting_commitment_id()
+            || self.weighting_generation != completion.weighting_generation()
+            || self.replay != completion.replay_id()
+            || self.coverage != completion.coverage()
+            || self.selected_generation != selected
+            || self.continuum_transform_generation != transform
+            || self.sample_count != replay.sample_count()
+            || self.block_count != replay.block_count()
+        {
+            return Err(SpectralOperatorError::ReusableNormalStateMismatch);
+        }
+        Ok(CubeNormalRefresh {
+            fold: crate::spectral_operator::normal_storage::StoredChannelNormalFold::refresh(
+                &self.primitives,
+                completion,
+                model,
+                storage,
+            )?,
+        })
+    }
+    /// Maximum channel window supported by this generation's backing capability.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn maximum_read_channels(&self) -> usize {
+        self.primitives.maximum_read_channels()
+    }
+
+    pub(crate) fn read_reusable_window(
+        &self,
+        channels: std::ops::Range<usize>,
+    ) -> Result<Vec<ReusableNormalState>, SpectralOperatorError> {
+        let NormalStateWindowPayload::ChannelLocal(domains) =
+            self.primitives.read_window(channels)?
+        else {
+            return Err(SpectralOperatorError::ReusableNormalStateMismatch);
+        };
+        Ok(domains
+            .into_iter()
+            .map(|domain| {
+                let (ordinal, _role, primitives) = domain.into_parts();
+                ReusableNormalState::new(
+                    ordinal,
+                    self.problem,
+                    self.geometry,
+                    self.numerics,
+                    self.weighting_commitment,
+                    self.weighting_generation,
+                    self.selected_generation,
+                    self.continuum_transform_generation,
+                    primitives,
+                )
+            })
+            .collect())
+    }
+
     pub(crate) fn into_reusable_domains(
         self,
     ) -> Result<Vec<ReusableNormalState>, SpectralOperatorError> {
@@ -101,7 +224,9 @@ impl FinalNormalState {
             primitives,
             ..
         } = self;
+        let channels = primitives.primary_metadata().slab.core_range();
         primitives
+            .into_window(channels)?
             .into_iter()
             .map(|domain| {
                 let (domain_ordinal, _role, primitives) = domain.into_parts();
@@ -126,29 +251,28 @@ impl FinalNormalState {
         self.primitives.len()
     }
 
-    /// Borrow one canonical image-domain view by ordinal.
+    /// Read one domain's shape without loading image payloads.
     #[must_use]
-    pub fn domain(&self, ordinal: usize) -> Option<FinalNormalDomainState<'_>> {
-        self.primitives
-            .get(ordinal)
-            .map(|domain| FinalNormalDomainState {
-                owner: self,
-                domain,
-            })
+    pub fn domain_shape(&self, ordinal: usize) -> Option<[usize; 2]> {
+        self.primitives.metadata(ordinal).map(|domain| domain.shape)
     }
 
-    /// Iterate image-domain normal states in compiled geometry order.
-    pub fn domains(&self) -> impl ExactSizeIterator<Item = FinalNormalDomainState<'_>> {
-        self.primitives.iter().map(|domain| FinalNormalDomainState {
-            owner: self,
-            domain,
-        })
-    }
-
-    /// Borrow the domain with this compiler-owned role.
+    /// Read channel support metadata without loading image payloads.
     #[must_use]
-    pub fn domain_by_role(&self, role: &ImageDomainRole) -> Option<FinalNormalDomainState<'_>> {
-        self.domains().find(|domain| domain.role() == role)
+    pub fn domain_channel_validity(
+        &self,
+        domain: usize,
+        channel: usize,
+        polarization: usize,
+    ) -> Option<crate::SpectralChannelValidity> {
+        let metadata = self.primitives.metadata(domain)?;
+        if channel >= metadata.slab.core_depth() || polarization >= metadata.polarizations {
+            return None;
+        }
+        metadata
+            .validity
+            .get(channel * metadata.polarizations + polarization)
+            .copied()
     }
 
     /// Return the completion identity.
@@ -205,13 +329,10 @@ impl FinalNormalState {
         self.catalog
     }
 
-    /// Return the owner-derived content identity of the exact residual evidence.
-    ///
-    /// The identity covers the model-dependent unnormalized normal state, so a
-    /// nonzero final model never shares content with an empty-model state.
-    #[must_use]
-    pub const fn content_identity(&self) -> LogicalIdentity {
-        self.content
+    /// Explicitly fingerprint the residual arrays for tests or diagnostics.
+    /// This reads the backing and is never required by the execution lifecycle.
+    pub fn diagnostic_content_identity(&self) -> Result<LogicalIdentity, SpectralOperatorError> {
+        self.primitives.content_identity()
     }
 
     /// Return the exhaustive selected-sample count behind the state.
@@ -264,6 +385,258 @@ impl FinalNormalState {
         self.image_domain_mask_generation
     }
 
+    /// Return the exact unnormalized plane shape of every primitive.
+    #[must_use]
+    pub fn shape(&self) -> [usize; 2] {
+        self.primitives.primary_metadata().shape
+    }
+
+    /// Return the exact output-channel slab represented by this state.
+    #[must_use]
+    pub fn slab(&self) -> crate::SpectralSlabPlan {
+        self.primitives.primary_metadata().slab
+    }
+
+    /// Return the number of channel planes resident in this state.
+    #[must_use]
+    pub fn channel_count(&self) -> usize {
+        self.slab().core_depth()
+    }
+
+    /// Return the number of reconstruction polarization planes.
+    #[must_use]
+    pub fn polarization_count(&self) -> usize {
+        self.primitives.primary_metadata().polarizations
+    }
+
+    /// Return the number of reconstruction-coefficient residual terms.
+    #[must_use]
+    pub fn coefficient_term_count(&self) -> usize {
+        self.primitives.primary_metadata().coefficient_terms
+    }
+
+    /// Return the number of retained normal moments.
+    #[must_use]
+    pub fn normal_moment_count(&self) -> usize {
+        self.primitives.primary_metadata().normal_moments
+    }
+
+    /// Return the polynomial reference frequency when this is continuum state.
+    #[must_use]
+    pub fn reference_frequency_hz(&self) -> Option<f64> {
+        self.primitives.primary_metadata().reference_frequency_hz
+    }
+
+    /// Return the exact accumulated sum weight.
+    #[must_use]
+    pub fn sum_weight(&self) -> f64 {
+        let weights = self.sum_weights();
+        assert_eq!(
+            weights.len(),
+            1,
+            "cube normal state has per-channel weights"
+        );
+        weights[0]
+    }
+
+    /// Return normal-moment-major, polarization-minor sum weights.
+    ///
+    /// The length is `normal_moment_count() * polarization_count()`.
+    #[must_use]
+    pub fn sum_weights(&self) -> &[f64] {
+        self.primitives.primary_metadata().sum_weights
+    }
+
+    /// Return CASA publication-statistic numerators in normal-moment-major,
+    /// polarization-minor order.
+    ///
+    /// The length is `normal_moment_count() * polarization_count()`. Product
+    /// formation owns any complete-family denominator; publication does not
+    /// change normal-state scaling.
+    #[must_use]
+    pub fn published_sum_weights(&self) -> &[f64] {
+        self.primitives.primary_metadata().published_sum_weights
+    }
+
+    /// Return exact channel-local response weights for a joint common residual.
+    #[must_use]
+    pub fn channel_sum_weights(&self) -> &[f64] {
+        self.primitives.primary_metadata().channel_sum_weights
+    }
+
+    /// Return support-entry-major, polarization-minor validity.
+    ///
+    /// The support-entry count is core-channel depth for channel-local state,
+    /// one for Taylor state, or total channel count for joint state.
+    #[must_use]
+    pub fn channel_validity(&self) -> &[crate::SpectralChannelValidity] {
+        self.primitives.primary_metadata().validity
+    }
+
+    /// Return the principal support state for a polynomial normal family.
+    #[must_use]
+    pub fn support_validity(&self) -> Option<crate::SpectralChannelValidity> {
+        if !matches!(
+            self.catalog,
+            NormalStateCatalog::UnnormalizedTaylorBlockV1
+                | NormalStateCatalog::UnnormalizedJointBlockV1
+        ) {
+            return None;
+        }
+        self.channel_validity().first().copied()
+    }
+
+    /// Return the smooth-coefficient prefix length for a joint normal block.
+    #[must_use]
+    pub fn joint_continuum_term_count(&self) -> Option<usize> {
+        self.primitives.primary_metadata().joint_continuum_terms
+    }
+
+    /// Load a channel-local window, or borrow the complete coupled coefficient
+    /// family. The returned guard owns every channel-local payload it exposes.
+    pub fn read_window(
+        &self,
+        channels: std::ops::Range<usize>,
+    ) -> Result<FinalNormalStateWindow<'_>, SpectralOperatorError> {
+        let primitives = self.primitives.read_window(channels)?;
+        Ok(FinalNormalStateWindow {
+            owner: self,
+            primitives,
+        })
+    }
+
+    /// Select one absolute channel and polarization without loading image data.
+    ///
+    /// Field reads are independently bounded to this plane and borrow this
+    /// completion owner. Channel-local and resident constant-basis state are
+    /// supported; multi-term Taylor and joint families use their complete-family path.
+    pub fn read_plane(
+        &self,
+        domain_ordinal: usize,
+        absolute_channel: usize,
+        polarization: usize,
+    ) -> Result<crate::FinalNormalPlaneReader<'_>, SpectralOperatorError> {
+        self.primitives
+            .read_plane(domain_ordinal, absolute_channel, polarization)
+    }
+
+    pub(crate) fn read_reconstruction_plane(
+        &self,
+        domain_ordinal: usize,
+        absolute_channel: usize,
+        polarization: usize,
+    ) -> Result<FinalNormalStatePlane<'_>, SpectralOperatorError> {
+        let plane = self.read_plane(domain_ordinal, absolute_channel, polarization)?;
+        Ok(FinalNormalStatePlane {
+            owner: self,
+            domain_ordinal,
+            output_channel: absolute_channel,
+            polarization,
+            shape: plane.shape(),
+            validity: plane.validity(),
+            sum_weight: plane.sum_weight(),
+            residual: plane.read_residual()?,
+            psf: plane.read_psf()?,
+        })
+    }
+}
+
+/// Incomplete residual-only candidate; no complete-state access until coverage
+/// closes. Its shared invariant owner never retains a previous residual epoch.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct CubeNormalRefresh {
+    fold: crate::spectral_operator::normal_storage::StoredChannelNormalFold,
+}
+
+impl CubeNormalRefresh {
+    /// Append the next exclusive channel range at the candidate's model epoch.
+    pub fn append(
+        &mut self,
+        residual: crate::streaming_cube::band::CubeResidual,
+    ) -> Result<(), SpectralOperatorError> {
+        self.fold.append_residual(residual)
+    }
+
+    /// Transfer a complete candidate only after ordered full-axis coverage.
+    pub fn finish(
+        self,
+    ) -> Result<
+        crate::spectral_operator::normal_storage::CompleteDataNormalState,
+        SpectralOperatorError,
+    > {
+        self.fold.finish()
+    }
+}
+
+/// Explicitly loaded Normal State data retaining its global completion owner.
+/// Channel-local windows do not mint local completion or mask identities.
+#[derive(Debug)]
+pub struct FinalNormalStateWindow<'a> {
+    owner: &'a FinalNormalState,
+    primitives: NormalStateWindowPayload<'a>,
+}
+
+impl std::ops::Deref for FinalNormalStateWindow<'_> {
+    type Target = FinalNormalState;
+    fn deref(&self) -> &Self::Target {
+        self.owner
+    }
+}
+
+impl FinalNormalStateWindow<'_> {
+    /// Global completion owner; channel windows have no separate authority.
+    #[must_use]
+    pub fn owner(&self) -> &FinalNormalState {
+        self.owner
+    }
+
+    /// The exact loaded channel interval, not the global coverage interval.
+    #[must_use]
+    pub fn slab(&self) -> crate::SpectralSlabPlan {
+        self.primitives.slab()
+    }
+
+    /// Number of loaded channels. Coupled state retains its complete basis.
+    #[must_use]
+    pub fn channel_count(&self) -> usize {
+        self.slab().core_depth()
+    }
+
+    /// Image-sized heap capacity owned by this guard.
+    #[must_use]
+    pub fn owned_bytes(&self) -> usize {
+        match &self.primitives {
+            NormalStateWindowPayload::ChannelLocal(domains) => domains.owned_bytes(),
+            NormalStateWindowPayload::Coupled(_) => 0,
+        }
+    }
+
+    /// Borrow one canonical image-domain view by ordinal.
+    #[must_use]
+    pub fn domain(&self, ordinal: usize) -> Option<FinalNormalDomainState<'_>> {
+        self.primitives
+            .get(ordinal)
+            .map(|domain| FinalNormalDomainState {
+                owner: self.owner,
+                domain,
+            })
+    }
+
+    /// Iterate image-domain normal states in compiled geometry order.
+    pub fn domains(&self) -> impl ExactSizeIterator<Item = FinalNormalDomainState<'_>> {
+        self.primitives.iter().map(|domain| FinalNormalDomainState {
+            owner: self.owner,
+            domain,
+        })
+    }
+
+    /// Borrow the domain with this compiler-owned role.
+    #[must_use]
+    pub fn domain_by_role(&self, role: &ImageDomainRole) -> Option<FinalNormalDomainState<'_>> {
+        self.domains().find(|domain| domain.role() == role)
+    }
+
     /// Return the authoritative model-dependent residual plane.
     #[must_use]
     pub fn residual(&self) -> &[num_complex::Complex64] {
@@ -286,48 +659,6 @@ impl FinalNormalState {
             .get(start..start.checked_add(cells)?)
     }
 
-    /// Return the exact unnormalized plane shape of every primitive.
-    #[must_use]
-    pub fn shape(&self) -> [usize; 2] {
-        self.primitives.shape()
-    }
-
-    /// Return the exact output-channel slab represented by this state.
-    #[must_use]
-    pub fn slab(&self) -> crate::SpectralSlabPlan {
-        self.primitives.slab()
-    }
-
-    /// Return the number of channel planes resident in this state.
-    #[must_use]
-    pub fn channel_count(&self) -> usize {
-        self.primitives.slab().core_depth()
-    }
-
-    /// Return the number of reconstruction polarization planes.
-    #[must_use]
-    pub fn polarization_count(&self) -> usize {
-        self.primitives.polarization_count()
-    }
-
-    /// Return the number of reconstruction-coefficient residual terms.
-    #[must_use]
-    pub fn coefficient_term_count(&self) -> usize {
-        self.primitives.coefficient_term_count()
-    }
-
-    /// Return the number of retained normal moments.
-    #[must_use]
-    pub fn normal_moment_count(&self) -> usize {
-        self.primitives.normal_moment_count()
-    }
-
-    /// Return the polynomial reference frequency when this is continuum state.
-    #[must_use]
-    pub fn reference_frequency_hz(&self) -> Option<f64> {
-        self.primitives.reference_frequency_hz()
-    }
-
     /// Return the T19 normal approximation paired with the residual.
     #[must_use]
     pub fn normal_approximation(&self) -> &[num_complex::Complex64] {
@@ -347,59 +678,6 @@ impl FinalNormalState {
         self.primitives.primary_beam_weighted_sum()
     }
 
-    /// Return the exact accumulated sum weight.
-    #[must_use]
-    pub fn sum_weight(&self) -> f64 {
-        self.primitives.sum_weight()
-    }
-
-    /// Return normal-moment-major, polarization-minor sum weights.
-    ///
-    /// The length is `normal_moment_count() * polarization_count()`.
-    #[must_use]
-    pub fn sum_weights(&self) -> &[f64] {
-        self.primitives.sum_weights()
-    }
-
-    /// Return CASA publication-statistic numerators in normal-moment-major,
-    /// polarization-minor order.
-    ///
-    /// The length is `normal_moment_count() * polarization_count()`. Product
-    /// formation owns any complete-family denominator; publication does not
-    /// change normal-state scaling.
-    #[must_use]
-    pub fn published_sum_weights(&self) -> &[f64] {
-        self.primitives.published_sum_weights()
-    }
-
-    /// Return exact channel-local response weights for a joint common residual.
-    #[must_use]
-    pub fn channel_sum_weights(&self) -> &[f64] {
-        self.primitives.channel_sum_weights()
-    }
-
-    /// Return support-entry-major, polarization-minor validity.
-    ///
-    /// The support-entry count is core-channel depth for channel-local state,
-    /// one for Taylor state, or total channel count for joint state.
-    #[must_use]
-    pub fn channel_validity(&self) -> &[crate::SpectralChannelValidity] {
-        self.primitives.channel_validity()
-    }
-
-    /// Return the principal support state for a polynomial normal family.
-    #[must_use]
-    pub fn support_validity(&self) -> Option<crate::SpectralChannelValidity> {
-        if !matches!(
-            self.catalog,
-            NormalStateCatalog::UnnormalizedTaylorBlockV1
-                | NormalStateCatalog::UnnormalizedJointBlockV1
-        ) {
-            return None;
-        }
-        self.primitives.channel_validity().first().copied()
-    }
-
     /// Borrow one reconstruction-coefficient residual term.
     #[must_use]
     pub fn coefficient_term(
@@ -417,7 +695,7 @@ impl FinalNormalState {
         let start = coefficient.checked_mul(cells)?;
         let end = start.checked_add(cells)?;
         Some(FinalNormalStateCoefficientTerm {
-            owner: self,
+            owner: self.owner,
             coefficient,
             residual: self.primitives.dirty().get(start..end)?,
         })
@@ -437,7 +715,7 @@ impl FinalNormalState {
         let start = moment.checked_mul(cells)?;
         let end = start.checked_add(cells)?;
         Some(FinalNormalStateNormalMoment {
-            owner: self,
+            owner: self.owner,
             moment,
             normal_approximation: self.primitives.psf().get(start..end)?,
             sensitivity: self.primitives.sensitivity().get(start..end)?,
@@ -454,12 +732,6 @@ impl FinalNormalState {
     ) -> Option<FinalNormalStateNormalMoment<'_>> {
         let moment = self.primitives.normal_moment_index(row, column)?;
         self.normal_moment(moment)
-    }
-
-    /// Return the smooth-coefficient prefix length for a joint normal block.
-    #[must_use]
-    pub fn joint_continuum_term_count(&self) -> Option<usize> {
-        self.primitives.joint_continuum_term_count()
     }
 
     /// Borrow one channel/polarization plane from this bounded Normal State slab.
@@ -488,13 +760,15 @@ impl FinalNormalState {
             return None;
         }
         Some(FinalNormalStatePlane {
-            owner: self,
-            domain: self.primitives.get(0)?,
-            local_channel,
+            owner: self.owner,
+            domain_ordinal: self.primitives.get(0)?.domain_ordinal(),
+            output_channel: self.primitives.slab().core_range().start + local_channel,
             polarization,
-            residual: self.primitives.dirty().get(start..end)?,
-            psf: self.primitives.psf().get(start..end)?,
-            sensitivity: self.primitives.sensitivity().get(start..end)?,
+            shape: self.shape(),
+            validity: *self.primitives.channel_validity().get(plane)?,
+            sum_weight: *self.primitives.sum_weights().get(plane)?,
+            residual: Cow::Borrowed(self.primitives.dirty().get(start..end)?),
+            psf: Cow::Borrowed(self.primitives.psf().get(start..end)?),
         })
     }
 }
@@ -603,12 +877,14 @@ impl<'a> FinalNormalDomainState<'a> {
         }
         Some(FinalNormalStatePlane {
             owner: self.owner,
-            domain: self.domain,
-            local_channel,
+            domain_ordinal: self.domain.domain_ordinal(),
+            output_channel: primitives.slab().core_range().start + local_channel,
             polarization,
-            residual: primitives.dirty().get(start..end)?,
-            psf: primitives.psf().get(start..end)?,
-            sensitivity: primitives.sensitivity().get(start..end)?,
+            shape: primitives.shape(),
+            validity: *primitives.channel_validity().get(plane)?,
+            sum_weight: *primitives.sum_weights().get(plane)?,
+            residual: Cow::Borrowed(primitives.dirty().get(start..end)?),
+            psf: Cow::Borrowed(primitives.psf().get(start..end)?),
         })
     }
 }
@@ -683,79 +959,78 @@ impl<'a> FinalNormalStateNormalMoment<'a> {
     }
 }
 
-/// Borrowed two-dimensional plane of one authoritative Normal State slab.
-#[derive(Debug, Clone, Copy)]
+/// Read-only reconstruction fields for one authoritative Normal State plane.
+/// Resident fields borrow their backing; paged fields own only the selected plane.
+#[derive(Debug)]
 pub struct FinalNormalStatePlane<'a> {
     owner: &'a FinalNormalState,
-    domain: &'a crate::spectral_operator::SpectralDomainPrimitives,
-    local_channel: usize,
+    domain_ordinal: usize,
+    output_channel: usize,
     polarization: usize,
-    residual: &'a [num_complex::Complex64],
-    psf: &'a [num_complex::Complex64],
-    sensitivity: &'a [f64],
+    shape: [usize; 2],
+    validity: crate::SpectralChannelValidity,
+    sum_weight: f64,
+    residual: Cow<'a, [num_complex::Complex64]>,
+    psf: Cow<'a, [num_complex::Complex64]>,
 }
 
 impl<'a> FinalNormalStatePlane<'a> {
+    pub(crate) fn into_normal_approximation(self) -> Cow<'a, [num_complex::Complex64]> {
+        self.psf
+    }
+
     /// Return the slab owner this view borrows.
     #[must_use]
-    pub const fn owner(self) -> &'a FinalNormalState {
+    pub const fn owner(&self) -> &'a FinalNormalState {
         self.owner
     }
 
     /// Return the canonical image-domain ordinal of this plane.
     #[must_use]
-    pub const fn domain_ordinal(self) -> usize {
-        self.domain.domain_ordinal()
+    pub const fn domain_ordinal(&self) -> usize {
+        self.domain_ordinal
     }
 
     /// Return the absolute output-channel ordinal.
     #[must_use]
-    pub fn output_channel(self) -> usize {
-        self.domain.primitives().slab().core_range().start + self.local_channel
+    pub const fn output_channel(&self) -> usize {
+        self.output_channel
     }
 
     /// Return the reconstruction polarization-plane ordinal.
     #[must_use]
-    pub const fn polarization(self) -> usize {
+    pub const fn polarization(&self) -> usize {
         self.polarization
     }
 
     /// Return this plane's model-dependent unnormalized residual.
     #[must_use]
-    pub const fn residual(self) -> &'a [num_complex::Complex64] {
-        self.residual
+    pub fn residual(&self) -> &[num_complex::Complex64] {
+        &self.residual
     }
 
     /// Return this plane's unnormalized PSF approximation.
     #[must_use]
-    pub const fn normal_approximation(self) -> &'a [num_complex::Complex64] {
-        self.psf
-    }
-
-    /// Return this plane's per-pixel sensitivity values.
-    #[must_use]
-    pub const fn sensitivity(self) -> &'a [f64] {
-        self.sensitivity
+    pub fn normal_approximation(&self) -> &[num_complex::Complex64] {
+        &self.psf
     }
 
     /// Return this plane's accumulated sum weight.
     #[must_use]
-    pub fn sum_weight(self) -> f64 {
-        self.domain.primitives().sum_weights()
-            [self.local_channel * self.domain.primitives().polarization_count() + self.polarization]
+    pub const fn sum_weight(&self) -> f64 {
+        self.sum_weight
     }
 
     /// Return the common direction-plane shape.
     #[must_use]
-    pub fn shape(self) -> [usize; 2] {
-        self.domain.primitives().shape()
+    pub const fn shape(&self) -> [usize; 2] {
+        self.shape
     }
 
     /// Return mapped, blank, or unmapped channel validity.
     #[must_use]
-    pub fn validity(self) -> crate::SpectralChannelValidity {
-        self.domain.primitives().channel_validity()
-            [self.local_channel * self.domain.primitives().polarization_count() + self.polarization]
+    pub const fn validity(&self) -> crate::SpectralChannelValidity {
+        self.validity
     }
 }
 
@@ -892,7 +1167,7 @@ pub struct MajorCycleOwner {
     image_domain_mask_generation: Option<crate::ReconstructionMaskGenerationId>,
     sample_count: u64,
     block_count: u64,
-    primitives: SpectralPrimitiveDomains,
+    primitives: NormalStatePrimitives,
     preparation: MajorCyclePreparation,
 }
 
@@ -906,13 +1181,16 @@ impl MajorCycleOwner {
     ///
     /// Rejects evidence whose replay did not prove exhaustive coverage.
     pub fn from_complete_data(
-        result: CompleteDataOwnerResult,
+        result: CompleteDataNormalState,
         preparation: MajorCyclePreparation,
     ) -> Result<Self, MajorCycleError> {
         if result.completion().sample_count() == 0 || result.completion().block_count() == 0 {
             return Err(MajorCycleError::IncompleteCoverage);
         }
-        let (primitives, completion) = result.into_parts();
+        let CompleteDataNormalState {
+            primitives,
+            completion,
+        } = result;
         let primitives = primitives
             .promote_major_cycle_residual(preparation.final_model_generation())
             .map_err(MajorCycleError::Residual)?;
@@ -1014,7 +1292,6 @@ impl MajorCycleOwner {
         let (final_model, model_completion) = update.into_parts();
         let input_model_generation = model_completion.base();
         let final_model_generation = model_completion.generation();
-        let content = self.primitives.normal_state_content_identity();
         let authority = lifecycle.authority();
         let attempt = lifecycle.attempt();
         let epoch = lifecycle.epoch();
@@ -1026,7 +1303,6 @@ impl MajorCycleOwner {
                 self.weighting_generation,
                 self.replay,
                 self.coverage,
-                content,
                 input_model_generation,
                 final_model_generation,
                 self.selected_generation,
@@ -1055,7 +1331,6 @@ impl MajorCycleOwner {
                     NormalStateCatalog::UnnormalizedJointBlockV1
                 }
             },
-            content,
             sample_count: self.sample_count,
             block_count: self.block_count,
             input_model_generation,
@@ -1094,7 +1369,6 @@ fn final_normal_state_id(
     weighting_generation: WeightingGenerationId,
     replay: WeightingReplayId,
     coverage: WeightingReplayCoverageId,
-    content: LogicalIdentity,
     input_model_generation: ModelGenerationId,
     final_model_generation: ModelGenerationId,
     selected_generation: SelectedObservationGenerationId,
@@ -1109,7 +1383,6 @@ fn final_normal_state_id(
     encoder.identity(weighting_generation.as_bytes());
     encoder.identity(replay.as_bytes());
     encoder.identity(coverage.as_bytes());
-    encoder.identity(content.as_bytes());
     encoder.identity(input_model_generation.as_bytes());
     encoder.identity(final_model_generation.as_bytes());
     encoder.identity(selected_generation.as_bytes());

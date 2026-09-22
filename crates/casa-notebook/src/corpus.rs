@@ -402,15 +402,7 @@ impl CorpusIndex {
             let content_sha256 = sha256(input.content.as_bytes());
             let chunks = chunk_content(&input.content);
             let first_citation_json = chunk_citation_json(&input.citation, &chunks[0])?;
-            let expected_fingerprint = index_fingerprint(
-                layer_name(input.layer),
-                &input.title,
-                &input.source_identity,
-                &content_sha256,
-                input.redistribution_cleared,
-                &first_citation_json,
-            )?;
-            let current_fingerprint: Option<String> = transaction
+            let unchanged: Option<bool> = transaction
                 .query_row(
                     "SELECT d.layer, d.title, d.source_identity, d.content_sha256,
                             d.redistribution_cleared, c.citation_json
@@ -422,28 +414,19 @@ impl CorpusIndex {
                         let layer = row.get::<_, String>(0)?;
                         let title = row.get::<_, String>(1)?;
                         let source_identity = row.get::<_, String>(2)?;
-                        let content_sha256 = row.get::<_, String>(3)?;
+                        let stored_content_sha256 = row.get::<_, String>(3)?;
                         let redistribution_cleared = row.get::<_, bool>(4)?;
                         let citation_json = row.get::<_, String>(5)?;
-                        index_fingerprint(
-                            &layer,
-                            &title,
-                            &source_identity,
-                            &content_sha256,
-                            redistribution_cleared,
-                            &citation_json,
-                        )
-                        .map_err(|error| {
-                            rusqlite::Error::FromSqlConversionFailure(
-                                5,
-                                rusqlite::types::Type::Text,
-                                Box::new(error),
-                            )
-                        })
+                        Ok(layer == layer_name(input.layer)
+                            && title == input.title
+                            && source_identity == input.source_identity
+                            && stored_content_sha256 == content_sha256
+                            && redistribution_cleared == input.redistribution_cleared
+                            && citation_json == first_citation_json)
                     },
                 )
                 .optional()?;
-            if current_fingerprint.as_deref() == Some(expected_fingerprint.as_str()) {
+            if unchanged == Some(true) {
                 unchanged_documents += 1;
                 continue;
             }
@@ -807,35 +790,6 @@ fn chunk_citation_json(
         citation.section = section_or_symbol_hint(&chunk.text);
     }
     serde_json::to_string(&citation)
-}
-
-#[derive(Serialize)]
-struct DocumentIndexFingerprint<'a> {
-    layer: &'a str,
-    title: &'a str,
-    source_identity: &'a str,
-    content_sha256: &'a str,
-    redistribution_cleared: bool,
-    first_chunk_citation_json: &'a str,
-}
-
-fn index_fingerprint(
-    layer: &str,
-    title: &str,
-    source_identity: &str,
-    content_sha256: &str,
-    redistribution_cleared: bool,
-    first_chunk_citation_json: &str,
-) -> Result<String, serde_json::Error> {
-    let fingerprint = DocumentIndexFingerprint {
-        layer,
-        title,
-        source_identity,
-        content_sha256,
-        redistribution_cleared,
-        first_chunk_citation_json,
-    };
-    serde_json::to_vec(&fingerprint).map(|bytes| sha256(&bytes))
 }
 
 fn validated_project_sources(

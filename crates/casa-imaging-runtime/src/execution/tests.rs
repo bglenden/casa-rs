@@ -47,14 +47,14 @@ fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
         casa_imaging_model::PrimaryBeamValidityPolicy::new(
             0.2,
             casa_imaging_model::ProductSupportComparison::StrictlyGreater,
-            casa_imaging_model::ProductBlankingPolicy::ZeroAndFalseMask,
+            casa_imaging_model::ProductBlankingPolicy::Zero,
         )
         .expect("valid PB policy"),
         casa_imaging_model::TaylorValidityPolicy::new(
             casa_imaging_model::TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
             0.1,
             casa_imaging_model::ProductSupportComparison::StrictlyGreater,
-            casa_imaging_model::ProductBlankingPolicy::ZeroAndFalseMask,
+            casa_imaging_model::ProductBlankingPolicy::Zero,
         )
         .expect("valid Taylor policy"),
     )
@@ -121,7 +121,6 @@ fn plan_with_receipts<E>(
         Err(crate::PlanError::InvalidCandidate(error)) => {
             Err(crate::PlanError::InvalidCandidate(error))
         }
-        Err(crate::PlanError::Receipt(error)) => Err(crate::PlanError::Receipt(error)),
         Err(crate::PlanError::Resource(error)) => Err(crate::PlanError::Resource(error)),
         Err(crate::PlanError::ObservationTransaction(error)) => {
             Err(crate::PlanError::ObservationTransaction(error))
@@ -140,7 +139,10 @@ fn compiled_problem_with_reference_data(
         casa_imaging_model::LogicalIdentity,
     )>,
 ) -> casa_imaging_model::CompiledProblem {
-    compiled_problem_with_reference_data_and_controls(reference_data, ReconstructionControls::new(10, 0.1, 0.0))
+    compiled_problem_with_reference_data_and_controls(
+        reference_data,
+        ReconstructionControls::new(10, 0.1, 0.0),
+    )
 }
 
 pub(crate) fn compiled_problem_with_reconstruction_controls(
@@ -150,7 +152,10 @@ pub(crate) fn compiled_problem_with_reconstruction_controls(
 }
 
 fn compiled_problem_with_reference_data_and_controls(
-    reference_data: Vec<(casa_imaging_model::ReferenceDataKind, casa_imaging_model::LogicalIdentity)>,
+    reference_data: Vec<(
+        casa_imaging_model::ReferenceDataKind,
+        casa_imaging_model::LogicalIdentity,
+    )>,
     controls: ReconstructionControls,
 ) -> casa_imaging_model::CompiledProblem {
     let direction = DirectionCoordinateSpec::new(
@@ -239,7 +244,7 @@ fn compiled_problem_with_reference_data_and_controls(
     .expect("valid scheduler test problem")
 }
 
-fn cpu_node(id: &str, dependencies: BTreeSet<WorkDependency>) -> WorkNode {
+pub(super) fn cpu_node(id: &str, dependencies: BTreeSet<WorkDependency>) -> WorkNode {
     WorkNode {
         id: WorkNodeId::new(id),
         kind: WorkKind::Compute,
@@ -271,7 +276,7 @@ fn synchronization_node(id: &str, dependencies: BTreeSet<WorkDependency>) -> Wor
     }
 }
 
-fn plan_spec(nodes: Vec<WorkNode>) -> ExecutionDagSpecification {
+pub(super) fn plan_spec(nodes: Vec<WorkNode>) -> ExecutionDagSpecification {
     let host = CapacityViewId::new("host-memory");
     ExecutionDagSpecification {
         required_resource_capabilities: BTreeSet::new(),
@@ -432,7 +437,10 @@ fn io_authority_with_workers(workers: u64) -> ResourceAuthority {
     io_authority_with_workers_and_memory(workers, 1_024)
 }
 
-fn io_authority_with_workers_and_memory(workers: u64, memory_bytes: u64) -> ResourceAuthority {
+pub(super) fn io_authority_with_workers_and_memory(
+    workers: u64,
+    memory_bytes: u64,
+) -> ResourceAuthority {
     let domain = CapacityDomainId::new("host-memory");
     let view = CapacityViewId::new("host-memory");
     let rate = RateResourceId::new("io-rate");
@@ -819,6 +827,7 @@ fn physical_work_binding_with_problem(
         compatibility: compatibility.clone(),
         physical_slot: publication_slot.clone(),
         lifetime: AllocationLifetime {
+            disposition: crate::AllocationDisposition::Release,
             acquire_at: commit.clone(),
             release_after: BTreeSet::from([
                 WorkDependency::Fence(FenceId::new(commit.clone(), FenceKind::Io)),
@@ -833,6 +842,7 @@ fn physical_work_binding_with_problem(
         compatibility: compatibility.clone(),
         physical_slot: writer_slot.clone(),
         lifetime: AllocationLifetime {
+            disposition: crate::AllocationDisposition::Release,
             acquire_at: stage.clone(),
             release_after: BTreeSet::from([WorkDependency::Work(stage.clone())]),
         },
@@ -977,7 +987,11 @@ fn publication_layout_ledger_names_every_atomic_member_and_staging_event() {
     );
     assert_eq!(ledger.staged_storage_bytes(), 128 * 3);
     assert_eq!(ledger.final_storage_bytes(), 96 * 3);
-    assert_eq!(ledger.writer_buffer_bytes(), 32 * 3);
+    assert_eq!(
+        ledger.writer_buffer_bytes(),
+        32,
+        "one shared writer is reused across members"
+    );
 }
 
 #[test]
@@ -1541,6 +1555,7 @@ fn inactive_release_predecessor_plan(fenced_predecessor: bool) -> (ExecutionDag,
             compatibility: active_compatibility.clone(),
             physical_slot: PhysicalSlotId::new("active-slot"),
             lifetime: AllocationLifetime {
+                disposition: crate::AllocationDisposition::Release,
                 acquire_at: active_prepare_id,
                 release_after: BTreeSet::from([WorkDependency::Work(active_release_id.clone())]),
             },
@@ -1552,6 +1567,7 @@ fn inactive_release_predecessor_plan(fenced_predecessor: bool) -> (ExecutionDag,
             compatibility: inactive_compatibility.clone(),
             physical_slot: PhysicalSlotId::new("inactive-slot"),
             lifetime: AllocationLifetime {
+                disposition: crate::AllocationDisposition::Release,
                 acquire_at: inactive_prepare_id,
                 release_after: BTreeSet::from([inactive_release_after]),
             },
@@ -1902,7 +1918,7 @@ fn planning_fails_before_sealing_when_no_candidate_is_feasible() {
 }
 
 #[test]
-fn recorded_quantitative_failures_constrain_planning_through_resource_authority() {
+fn historical_failures_do_not_override_current_resource_admission() {
     let problem = compiled_problem();
     let registry = ContractOnlyRegistry::new(
         ImplementationRegistryId::from_sha256([7; 32]),
@@ -2015,7 +2031,7 @@ fn recorded_quantitative_failures_constrain_planning_through_resource_authority(
         "current Resource Authority would admit the declared demand without the receipt region",
     );
 
-    let error = authority_plan(
+    let admitted = authority_plan(
         &problem,
         bindings(),
         &authority,
@@ -2023,26 +2039,12 @@ fn recorded_quantitative_failures_constrain_planning_through_resource_authority(
         &store,
         |_, _| Ok::<_, std::convert::Infallible>(vec![physical_work_binding(sealed_dag.clone())]),
     )
-    .expect_err("recorded quantitative failure must constrain the alternative");
-    let certificate = match &error {
-        crate::PlanError::Resource(crate::ResourceError::NoFeasibleAlternative(certificate)) => {
-            certificate
-        }
-        other => panic!("expected a recorded-infeasibility refusal, got {other:?}"),
-    };
-    assert_eq!(certificate.rejections().len(), 1);
-    assert_eq!(certificate.rejections()[0].alternative(), &alternative_id);
+    .expect("current admission is independent of historical failures");
     assert_eq!(
-        certificate.rejections()[0].reason(),
-        &crate::AlternativeRejectionReason::RecordedFailure {
-            attempt: crate::ExecutionAttemptId::from_sha256([91; 32]),
-            status: crate::ReceiptStatus::Failed,
-        }
+        admitted.execution_dag().resource_alternative().id,
+        alternative_id
     );
 
-    // The recorded region reopens once current availability exceeds the
-    // failure's recorded availability; current Resource Authority admission
-    // remains the sole feasibility decision.
     let recovered_authority = io_authority_with_workers(4);
     let recovered = authority_plan(
         &problem,
@@ -2052,11 +2054,77 @@ fn recorded_quantitative_failures_constrain_planning_through_resource_authority(
         &store,
         |_, _| Ok::<_, std::convert::Infallible>(vec![physical_work_binding(sealed_dag.clone())]),
     )
-    .expect("increased current capacity reopens the recorded pressure region");
+    .expect("increased current capacity remains admissible");
     assert_eq!(
         recovered.execution_dag().resource_alternative().id,
         alternative_id
     );
+}
+
+#[test]
+fn planning_resolves_each_distinct_implementation_once() {
+    struct CountingRegistry {
+        inner: ContractOnlyRegistry,
+        resolutions: std::cell::Cell<usize>,
+        contracts: std::cell::Cell<usize>,
+    }
+    impl crate::ImplementationRegistry for CountingRegistry {
+        type Implementation = MalformedRejectionImplementation;
+        fn registry_id(&self) -> ImplementationRegistryId {
+            self.inner.id
+        }
+        fn resolve(&self, id: &WorkImplementationId) -> Option<&Self::Implementation> {
+            self.resolutions.set(self.resolutions.get() + 1);
+            self.inner.implementations.get(id)
+        }
+        fn implementation_contract(
+            &self,
+            id: &WorkImplementationId,
+        ) -> Option<ImplementationContractMetadata> {
+            self.contracts.set(self.contracts.get() + 1);
+            self.inner
+                .implementations
+                .contains_key(id)
+                .then(|| self.inner.metadata.clone())
+        }
+    }
+    let problem = compiled_problem();
+    let registry = CountingRegistry {
+        inner: ContractOnlyRegistry::new(
+            ImplementationRegistryId::from_sha256([7; 32]),
+            ImplementationContractMetadata::new(
+                problem.problem_id(),
+                problem.numerics_id(),
+                problem.required_capabilities().clone(),
+            ),
+            [WorkImplementationId::new("cpu-reference")],
+        ),
+        resolutions: std::cell::Cell::new(0),
+        contracts: std::cell::Cell::new(0),
+    };
+    let dag = ExecutionDag::new(plan_spec(vec![
+        cpu_node("first", BTreeSet::new()),
+        cpu_node(
+            "second",
+            BTreeSet::from([WorkDependency::Work(WorkNodeId::new("first"))]),
+        ),
+    ]))
+    .expect("two nodes sharing one implementation");
+    authority_plan(
+        &problem,
+        PlanningBindings::new(
+            registry.inner.id,
+            ResourcePolicy::Exclusive,
+            PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
+        ),
+        &io_authority(),
+        &registry,
+        &empty_receipt_store(),
+        |_, _| Ok::<_, std::convert::Infallible>(vec![physical_work_binding(dag)]),
+    )
+    .expect("shared implementation plan");
+    assert_eq!(registry.resolutions.get(), 1);
+    assert_eq!(registry.contracts.get(), 1);
 }
 
 #[test]
@@ -2478,6 +2546,7 @@ fn unified_physical_slot_reuse_waits_for_every_declared_fence() {
             compatibility: compatibility.clone(),
             physical_slot: PhysicalSlotId::new("reused-slot"),
             lifetime: AllocationLifetime {
+                disposition: crate::AllocationDisposition::Release,
                 acquire_at: compute_id.clone(),
                 release_after: first_release,
             },
@@ -2489,6 +2558,7 @@ fn unified_physical_slot_reuse_waits_for_every_declared_fence() {
             compatibility: compatibility.clone(),
             physical_slot: PhysicalSlotId::new("reused-slot"),
             lifetime: AllocationLifetime {
+                disposition: crate::AllocationDisposition::Release,
                 acquire_at: reuse_id.clone(),
                 release_after: BTreeSet::from([WorkDependency::Work(reuse_id)]),
             },
@@ -2684,6 +2754,7 @@ fn disjoint_io_buffer_purposes_share_one_physical_memory_charge() {
         compatibility: compatibility.clone(),
         physical_slot: PhysicalSlotId::new("io-slot"),
         lifetime: AllocationLifetime {
+            disposition: crate::AllocationDisposition::Release,
             acquire_at: id.clone(),
             release_after: fences
                 .iter()
@@ -2782,6 +2853,7 @@ fn io_buffer_claims_and_logical_allocations_match_exactly() {
         compatibility: compatibility.clone(),
         physical_slot: PhysicalSlotId::new("prepare-slot"),
         lifetime: AllocationLifetime {
+            disposition: crate::AllocationDisposition::Release,
             acquire_at: WorkNodeId::new("prepare"),
             release_after: BTreeSet::from([WorkDependency::Work(WorkNodeId::new("prepare"))]),
         },
@@ -3014,6 +3086,7 @@ fn allocation_lifetime_rejects_release_before_an_async_use_fence() {
         compatibility: compatibility.clone(),
         physical_slot: PhysicalSlotId::new("slot"),
         lifetime: AllocationLifetime {
+            disposition: crate::AllocationDisposition::Release,
             acquire_at: node_id.clone(),
             release_after: BTreeSet::from([WorkDependency::Work(node_id.clone())]),
         },
@@ -3220,6 +3293,7 @@ fn mutable_allocation_use_waits_for_every_prior_async_use_fence() {
         compatibility: compatibility.clone(),
         physical_slot: PhysicalSlotId::new("slot"),
         lifetime: AllocationLifetime {
+            disposition: crate::AllocationDisposition::Release,
             acquire_at: first_id,
             release_after: BTreeSet::from([
                 WorkDependency::Fence(FenceId::new(WorkNodeId::new("first-use"), FenceKind::Io)),
@@ -3337,6 +3411,7 @@ fn cancellation_prevents_pending_publication_from_starting() {
         compatibility: compatibility.clone(),
         physical_slot: PhysicalSlotId::new("cancel-slot"),
         lifetime: AllocationLifetime {
+            disposition: crate::AllocationDisposition::Release,
             acquire_at: compute_id,
             release_after: BTreeSet::from([
                 WorkDependency::Fence(FenceId::new(publication_id.clone(), FenceKind::Io)),
@@ -3971,6 +4046,7 @@ fn adaptation_projection_cannot_strand_a_logical_allocation_terminal_fence() {
         compatibility: compatibility.clone(),
         physical_slot: slot_id.clone(),
         lifetime: AllocationLifetime {
+            disposition: crate::AllocationDisposition::Release,
             acquire_at: acquire_id,
             release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
                 terminal_id.clone(),
@@ -4065,6 +4141,7 @@ fn adaptation_projection_cannot_strand_a_retained_resource_release() {
         compatibility: compatibility.clone(),
         physical_slot: slot_id.clone(),
         lifetime: AllocationLifetime {
+            disposition: crate::AllocationDisposition::Release,
             acquire_at: release_id.clone(),
             release_after: BTreeSet::from([WorkDependency::Work(release_id.clone())]),
         },
@@ -4464,6 +4541,7 @@ fn release_node_can_atomically_own_multiple_external_allocations() {
             compatibility: first_compatibility.clone(),
             physical_slot: PhysicalSlotId::new("first-slot"),
             lifetime: AllocationLifetime {
+                disposition: crate::AllocationDisposition::Release,
                 acquire_at: first_prepare_id,
                 release_after: BTreeSet::from([WorkDependency::Work(release_id.clone())]),
             },
@@ -4475,6 +4553,7 @@ fn release_node_can_atomically_own_multiple_external_allocations() {
             compatibility: second_compatibility.clone(),
             physical_slot: PhysicalSlotId::new("second-slot"),
             lifetime: AllocationLifetime {
+                disposition: crate::AllocationDisposition::Release,
                 acquire_at: second_prepare_id,
                 release_after: BTreeSet::from([WorkDependency::Work(release_id)]),
             },
@@ -4578,6 +4657,7 @@ fn externally_retained_io_buffer_release_is_terminal_after_every_use() {
         compatibility: compatibility.clone(),
         physical_slot: PhysicalSlotId::new("mapped-slot"),
         lifetime: AllocationLifetime {
+            disposition: crate::AllocationDisposition::Release,
             acquire_at: prepare_id.clone(),
             release_after: BTreeSet::from([WorkDependency::Work(later_id.clone())]),
         },
@@ -4806,6 +4886,7 @@ fn cancellation_cleanup_respects_release_to_release_dependencies() {
             compatibility: mapped_compatibility.clone(),
             physical_slot: PhysicalSlotId::new("mapped-slot"),
             lifetime: AllocationLifetime {
+                disposition: crate::AllocationDisposition::Release,
                 acquire_at: mapped_prepare_id,
                 release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
                     first_release_id.clone(),
@@ -4820,6 +4901,7 @@ fn cancellation_cleanup_respects_release_to_release_dependencies() {
             compatibility: storage_compatibility.clone(),
             physical_slot: PhysicalSlotId::new("storage-slot"),
             lifetime: AllocationLifetime {
+                disposition: crate::AllocationDisposition::Release,
                 acquire_at: storage_prepare_id.clone(),
                 release_after: BTreeSet::from([WorkDependency::Work(second_release_id.clone())]),
             },
@@ -4981,6 +5063,7 @@ fn temporal_reuse_rejects_preserved_contents_from_another_allocation() {
             compatibility: compatibility.clone(),
             physical_slot: PhysicalSlotId::new("reused-slot"),
             lifetime: AllocationLifetime {
+                disposition: crate::AllocationDisposition::Release,
                 acquire_at: WorkNodeId::new(node),
                 release_after: BTreeSet::from([WorkDependency::Work(WorkNodeId::new(node))]),
             },
@@ -5040,6 +5123,7 @@ fn temporal_reuse_requires_release_strictly_before_the_next_acquisition() {
             compatibility: compatibility.clone(),
             physical_slot: PhysicalSlotId::new("shared-slot"),
             lifetime: AllocationLifetime {
+                disposition: crate::AllocationDisposition::Release,
                 acquire_at: WorkNodeId::new("first"),
                 release_after: BTreeSet::from([WorkDependency::Work(WorkNodeId::new("second"))]),
             },
@@ -5051,6 +5135,7 @@ fn temporal_reuse_requires_release_strictly_before_the_next_acquisition() {
             compatibility: compatibility.clone(),
             physical_slot: PhysicalSlotId::new("shared-slot"),
             lifetime: AllocationLifetime {
+                disposition: crate::AllocationDisposition::Release,
                 acquire_at: WorkNodeId::new("second"),
                 release_after: BTreeSet::from([WorkDependency::Work(WorkNodeId::new("second"))]),
             },
@@ -5074,7 +5159,7 @@ fn temporal_reuse_requires_release_strictly_before_the_next_acquisition() {
 }
 
 #[test]
-fn receipt_store_checkpoints_atomically_rejects_corruption_and_enforces_retention() {
+fn receipt_store_reserves_active_attempts_and_rejects_corrupt_terminal_evidence() {
     let problem = compiled_problem();
     let dag = ExecutionDag::new(plan_spec(vec![cpu_node("work", BTreeSet::new())]))
         .expect("valid physical work");
@@ -5096,13 +5181,15 @@ fn receipt_store_checkpoints_atomically_rejects_corruption_and_enforces_retentio
     let mut recorder = store
         .begin(first.clone(), &problem, &plan)
         .expect("begin receipt");
-    assert_eq!(
-        store
-            .open(first.attempt_id())
-            .expect("initial receipt")
-            .status(),
-        crate::ReceiptStatus::Running
-    );
+    let marker_path = directory
+        .path()
+        .join(format!("{}.active", first.attempt_id()));
+    let reservation = fs::read(&marker_path).expect("active reservation");
+    assert_eq!(reservation.len(), 8);
+    assert!(matches!(
+        store.open(first.attempt_id()),
+        Err(crate::ReceiptError::Io { .. })
+    ));
     assert!(matches!(
         store.begin(first.clone(), &problem, &plan),
         Err(crate::ReceiptError::AttemptAlreadyExists)
@@ -5111,14 +5198,15 @@ fn receipt_store_checkpoints_atomically_rejects_corruption_and_enforces_retentio
     let work = WorkNodeId::new("work");
     recorder
         .work_started(&work)
-        .expect("atomically checkpoint started work");
-    let checkpoint = store
-        .open(first.attempt_id())
-        .expect("reopen intermediate checkpoint");
+        .expect("record started work in memory");
     assert_eq!(
-        checkpoint.node_status(&work),
-        Some(crate::ReceiptStatus::Running)
+        fs::read(&marker_path).expect("unchanged reservation"),
+        reservation
     );
+    assert!(matches!(
+        store.open(first.attempt_id()),
+        Err(crate::ReceiptError::Io { .. })
+    ));
     drop(recorder);
     assert_eq!(
         store
@@ -5127,14 +5215,15 @@ fn receipt_store_checkpoints_atomically_rejects_corruption_and_enforces_retentio
             .status(),
         crate::ReceiptStatus::Aborted
     );
-    assert!(
+    assert_eq!(
         fs::read_dir(directory.path())
             .expect("receipt entries")
-            .all(|entry| entry
-                .expect("receipt entry")
-                .file_name()
-                .to_string_lossy()
-                .ends_with(".receipt.json"))
+            .count(),
+        2
+    );
+    assert_eq!(
+        fs::read(&marker_path).expect("retained reservation"),
+        reservation
     );
 
     let path = directory
@@ -5225,12 +5314,19 @@ fn receipt_store_checkpoints_atomically_rejects_corruption_and_enforces_retentio
         Err(crate::ReceiptError::RetentionExceeded)
     ));
     assert_eq!(
-        active_store
-            .open(active.attempt_id())
-            .expect("active evidence preserved")
-            .status(),
-        crate::ReceiptStatus::Running
+        fs::metadata(
+            active_directory
+                .path()
+                .join(format!("{}.active", active.attempt_id()))
+        )
+        .expect("active reservation preserved")
+        .len(),
+        8
     );
+    assert!(matches!(
+        active_store.open(active.attempt_id()),
+        Err(crate::ReceiptError::Io { .. })
+    ));
     drop(active_recorder);
 
     let byte_directory = tempfile::tempdir().expect("byte-bound directory");
@@ -5246,7 +5342,7 @@ fn receipt_store_checkpoints_atomically_rejects_corruption_and_enforces_retentio
 }
 
 #[test]
-fn active_receipt_revisions_use_the_reservation_admitted_at_begin() {
+fn active_receipt_progress_uses_the_reservation_without_reading_retained_history() {
     let problem = compiled_problem();
     let dag = ExecutionDag::new(plan_spec(vec![cpu_node("work", BTreeSet::new())]))
         .expect("valid physical work");
@@ -5274,6 +5370,11 @@ fn active_receipt_revisions_use_the_reservation_admitted_at_begin() {
     let mut recorder = store
         .begin(active.clone(), &problem, &plan)
         .expect("begin reserves active receipt capacity");
+    let marker = directory
+        .path()
+        .join(format!("{}.active", active.attempt_id()));
+    let reservation = fs::read(&marker).expect("reservation");
+    assert_eq!(reservation.len(), 8);
 
     let retained_path = directory
         .path()
@@ -5286,11 +5387,20 @@ fn active_receipt_revisions_use_the_reservation_admitted_at_begin() {
         .work_started(&work)
         .expect("active revision remains inside its admitted reservation");
     assert_eq!(
+        fs::read(&marker).expect("unchanged reservation"),
+        reservation
+    );
+    assert!(matches!(
+        store.open(active.attempt_id()),
+        Err(crate::ReceiptError::Io { .. })
+    ));
+    drop(recorder);
+    assert_eq!(
         store
             .open(active.attempt_id())
-            .expect("reopen active checkpoint")
-            .node_status(&work),
-        Some(crate::ReceiptStatus::Running)
+            .expect("final receipt")
+            .status(),
+        crate::ReceiptStatus::Aborted
     );
 }
 
@@ -5313,14 +5423,16 @@ fn reopened_reconstruction_receipt_has_no_publication_layout_evidence() {
     let recorder = store
         .begin(provenance.clone(), &problem, &plan)
         .expect("begin receipt");
-    let reopened = store.open(provenance.attempt_id()).expect("reopen receipt");
+    drop(recorder);
+    let reopened = store
+        .open(provenance.attempt_id())
+        .expect("reopen final receipt");
 
     assert_eq!(reopened.publication_layout_count(), 0);
-    drop(recorder);
 }
 
 #[test]
-fn receipt_store_rejects_an_initial_checkpoint_that_cannot_hold_terminal_evidence() {
+fn receipt_store_rejects_an_active_reservation_that_cannot_hold_terminal_evidence() {
     let problem = compiled_problem();
     let dag = ExecutionDag::new(plan_spec(vec![cpu_node("work", BTreeSet::new())]))
         .expect("valid physical work");
@@ -5341,22 +5453,31 @@ fn receipt_store_rejects_an_initial_checkpoint_that_cannot_hold_terminal_evidenc
     let sizing_provenance = provenance(73, 74);
     let recorder = sizing_store
         .begin(sizing_provenance.clone(), &problem, &plan)
-        .expect("initial checkpoint");
+        .expect("active reservation");
     let receipt_path = sizing_directory
         .path()
         .join(format!("{}.receipt.json", sizing_provenance.attempt_id()));
-    let running_bytes = fs::metadata(&receipt_path).expect("running receipt").len();
+    let marker = sizing_directory
+        .path()
+        .join(format!("{}.active", sizing_provenance.attempt_id()));
+    let reservation = fs::read(marker).expect("reservation bytes");
+    let reserved_bytes =
+        u64::from_le_bytes(reservation.try_into().expect("eight-byte reservation"));
+    assert!(
+        !receipt_path.exists(),
+        "begin must not persist a running document"
+    );
     drop(recorder);
     let terminal_bytes = fs::metadata(&receipt_path).expect("terminal receipt").len();
     assert!(
-        terminal_bytes > running_bytes,
-        "the fixture must expose the Running-to-terminal growth hazard"
+        reserved_bytes >= terminal_bytes + 8,
+        "admission must reserve the final document and retained marker"
     );
 
     let constrained_directory = tempfile::tempdir().expect("constrained directory");
     let constrained_store = crate::ExecutionReceiptStore::new(
         constrained_directory.path(),
-        crate::ReceiptRetention::new(1, terminal_bytes - 1).expect("retention"),
+        crate::ReceiptRetention::new(1, reserved_bytes - 1).expect("retention"),
     )
     .expect("constrained store");
 
@@ -5369,7 +5490,7 @@ fn receipt_store_rejects_an_initial_checkpoint_that_cannot_hold_terminal_evidenc
             .expect("constrained receipt directory")
             .next()
             .is_none(),
-        "failed preflight must not leave durable Running evidence"
+        "failed preflight must not leave an active reservation"
     );
 }
 

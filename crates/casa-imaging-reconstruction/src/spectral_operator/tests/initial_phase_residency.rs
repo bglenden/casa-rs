@@ -151,7 +151,7 @@ fn t51_initial_phase_residency_is_geometry_derived_and_fail_closed() {
 }
 
 #[test]
-fn t51_initial_phase_residency_bounds_actual_formation_and_parent_copy() {
+fn t51_initial_phase_residency_bounds_actual_formation_and_identity_transfer() {
     let (problem, model, _) = fixture();
     let specification = Arc::new(aw_specification(&problem, [8, 6]));
     let workload =
@@ -236,8 +236,7 @@ fn t51_initial_phase_residency_bounds_actual_formation_and_parent_copy() {
             let local = source.finish_bound(Some(
                 ReconstructionModelBinding::InitialCertifiedZero(model.generation_id()),
             ))?;
-            // The actual chart owner (including its arrays) has been consumed before
-            // the combiner can allocate its parent arrays.
+            // The chart owner releases its grids before transferring the primitives.
             assert!(provider_lifetime.upgrade().is_none());
             received_local = true;
             assert!(local.common_residual.is_none() && local.invariant_common_dirty.is_none());

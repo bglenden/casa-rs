@@ -145,14 +145,14 @@ fn validity() -> ProductValidityPolicies {
         PrimaryBeamValidityPolicy::new(
             0.2,
             ProductSupportComparison::StrictlyGreater,
-            ProductBlankingPolicy::ZeroAndFalseMask,
+            ProductBlankingPolicy::Zero,
         )
         .expect("valid primary-beam policy"),
         TaylorValidityPolicy::new(
             TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
             0.1,
             ProductSupportComparison::StrictlyGreater,
-            ProductBlankingPolicy::ZeroAndFalseMask,
+            ProductBlankingPolicy::Zero,
         )
         .expect("valid Taylor policy"),
     )
@@ -526,6 +526,8 @@ fn run_final_normal_state(
         executable,
         ModelExecutionAttemptId::new(identity(42, 120)),
         1,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("bind Taylor model lifecycle");
     let initial = lifecycle.initial_empty().expect("empty Taylor model");
@@ -538,10 +540,22 @@ fn run_final_normal_state(
         density_partitions,
         Some(&preparation),
     );
-    let completion = MajorCycleOwner::from_complete_data(complete_data, preparation)
-        .expect("join Taylor complete-data evidence")
-        .reconcile(&mut lifecycle)
-        .expect("reconcile Taylor normal state");
+    let completion = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    complete_data.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            complete_data
+                .seal(&storage)
+                .expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .expect("join Taylor complete-data evidence")
+    .reconcile(&mut lifecycle)
+    .expect("reconcile Taylor normal state");
     let (normal, model_completion, final_model) = completion.into_parts();
     assert_eq!(
         normal.input_model_generation(),
@@ -626,7 +640,13 @@ fn run_point(
     assert_eq!(normal.normal_moment_count(), 3);
     assert_eq!(model.shape().coefficients(), 2);
     assert_eq!(model.shape().domains()[0].pixels(), normal.shape());
-    assert_eq!(model.samples().len(), model.shape().sample_count());
+    assert_eq!(
+        model
+            .read_samples(0..model.sample_count())
+            .expect("read fixture model")
+            .len(),
+        model.shape().sample_count()
+    );
     let mask = mask_pixel.map_or_else(
         || full_mask(&normal, &model),
         |pixel| one_pixel_mask(&normal, &model, pixel),
@@ -764,6 +784,9 @@ fn t43_point_selection_solves_the_declared_cross_term_block_in_coefficient_order
 
     let pixel = terms[0].cell().pixel();
     let residual_index = pixel[0] * normal.shape()[1] + pixel[1];
+    let normal = normal
+        .read_window(normal.slab().core_range())
+        .expect("coupled Taylor window");
     let psf_peak_index = normal
         .normal_block(0, 0)
         .expect("principal normal block")

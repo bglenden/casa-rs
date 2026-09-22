@@ -51,15 +51,15 @@ ACCEPTED_ISSUE_OUTCOMES_SHA256 = (
     "1d2a77232fdc25a50053097b644b64cbdf0d21e1970590ec4180de6dce29738d"
 )
 ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
-    "daafa560c0e941fb3f2cea5c02a46de8a3363c2dd327cb839ef8ab2111f09835"
+    "f992a51a25a086e44cbd9be28453a8a345f7dbd0c6bce0cfc44fb8a6796db2c0"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "1e6e924803b005cbcd7d4d3bc0b456e90705cf1516b2c37d2a7efe642e860ed0"
+    "2974aee238509e5a86a9406d416bd1df3186e283b60be7ca5f5fb49aaf29ddb7"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "bac64f31e1f094a27b25d685246dfcdec9f3af9d68eec350dbe33e7a8e6451c8"
+    "c767f3fa0e3b14d2d77e1153542f93572433ceb2748216cbd7b59f277650fa58"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 88
+ACCEPTED_MATRIX_CONTRACT_REVISION = 90
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -164,7 +164,7 @@ ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "observation-transaction-v1",
         "laws",
-    ): "a40814e45997e423400d832bed908ad4240aab607f27ad3fd2884710bb74ac53",
+    ): "558610ecf88a5bf9247e90176e9abd8bdd92c3b44495cf90a6b97954824ed76a",
     (
         "observation-transaction-v1",
         "resource_gates",
@@ -1926,6 +1926,7 @@ def validate_t18_global_weighting_sources(
     ) or evaluation_fields != {
         "native": "SelectedSpectralInterval",
         "output_frame": "SelectedSpectralInterval",
+        "row_geometry": "Option<SelectedRowSpectralGeometry>",
         "effective_weight": "f64",
         "valid": "bool",
     }:
@@ -2081,6 +2082,7 @@ def validate_t18_global_weighting_sources(
             "imported": "Option<FrozenWeightingArtifact>",
             "latest_traversal_measurements": "Option<SelectedObservationTraversalMeasurements>",
             "latest_stream_measurements": "Option<BoundedStreamMeasurements>",
+            "parallel_preparation_samples": "u64",
         }
         or "pubfntraverse_density_source(" not in compact_runtime
         or "pub(crate)fntraverse_initial_bounded_stream<" not in compact_runtime
@@ -2104,6 +2106,16 @@ def validate_t18_global_weighting_sources(
     bounded_stream = rust_function_body(
         runtime_weighting, "execute_weighting_block_stream", runtime_weighting_path
     )
+    prebound_stream = rust_function_body(
+        runtime_weighting, "execute_prebound_weighting_block_stream", runtime_weighting_path
+    )
+    native_stream = re.sub(
+        r"\s+",
+        "",
+        rust_function_body(
+            runtime_weighting, "traverse_native_initial_stream", runtime_weighting_path
+        ),
+    )
     if (
         density.count("execute_bounded(") != 1
         or density.count("selected.into_block_stream(problem)") != 1
@@ -2119,12 +2131,26 @@ def validate_t18_global_weighting_sources(
         or selected_output_stream.count("execute_weighting_block_stream(") != 1
         or ".begin_derived_replay(" not in selected_output_stream
         or ".validate_derived_completion(" not in selected_output_stream
-        or bounded_stream.count("execute_bounded(") != 1
+        or bounded_stream.count("execute_prebound_weighting_block_stream(") != 1
         or bounded_stream.count("selected.into_block_stream(problem)") != 1
-        or ".complete(terminal)" not in bounded_stream
+        or "SelectedObservationBlockConsumer::complete," not in bounded_stream
+        or prebound_stream.count("execute_bounded(") != 1
+        or "complete(consumer, terminal)" not in prebound_stream
     ):
         raise ArchitectureError(
             "initial science and terminal visibility output must use the shared bounded selected-payload traversal"
+        )
+    if not all(token in native_stream for token in (
+        "fragment.streaming!=Some(WeightingStreamingMode::NaturalInitial)",
+        "problem.visibility_transform().is_some()",
+        "Some(PreparationPlan::Native(preparation))=fragment.replay_preparation",
+        "fragment.authorize_source_observation(context,problem,selected.residency_certificate())",
+        "fragment.bounded_stream_plan(context,true)",
+        "native_preparation::execute(",
+        "self.accept_initial_stream(context,fragment,problem,None,completed)",
+    )):
+        raise ArchitectureError(
+            "native initial preparation must retain source authority, admission and common terminal completion"
         )
     replay = rust_impl_method_body(
         runtime_weighting, "FrozenWeightingGeneration", "replay", runtime_weighting_path
@@ -2154,8 +2180,22 @@ def validate_t18_global_weighting_sources(
             weighting_path,
         ),
     )
+    window_validation = re.sub(
+        r"\s+",
+        "",
+        rust_impl_method_body(
+            weighting, "WeightingReplayWindowSummary", "validate_source_completion", weighting_path
+        ),
+    )
+    window_parent = re.sub(
+        r"\s+",
+        "",
+        rust_impl_method_body(
+            weighting, "WeightingReplayWindowSummary", "matches_parent", weighting_path
+        ),
+    )
     if (
-        weighting.count("SelectedObservationGenerationId") != 4
+        weighting.count("SelectedObservationGenerationId") != 6
         or coverage_proof_fields
         != {
             "problem": "CompiledProblemId",
@@ -2175,7 +2215,22 @@ def validate_t18_global_weighting_sources(
         not in coverage_proof_validation
     ):
         raise ArchitectureError(
-            "T18 reconstruction must confine T17 identity to the sealed frozen-coverage invariant and zero-hash derived validation"
+            "T18 reconstruction must confine T17 identity to frozen coverage and validated replay windows"
+        )
+    if not all(token in window_validation for token in (
+        "selected_generation!=self.scope.proof.selected_generation",
+        "sample_count!=self.actual.sample_count",
+        "frequency_bounds_hz!=self.scope.frequency_bounds_hz",
+    )) or not all(token in window_parent for token in (
+        "proof.problem==problem", "proof.commitment==commitment",
+        "proof.selected_generation==selected_generation",
+        "proof.continuum_transform_generation.is_none()",
+        "proof.generation==parent.generation", "proof.coverage==parent.coverage",
+        "proof.weighted_sample_count==parent.sample_count",
+        "self.actual.generation==parent.generation",
+    )):
+        raise ArchitectureError(
+            "T18 restricted replay must validate source generation, window and exhaustive parent coverage"
         )
     replay_completion = rust_struct_fields(
         runtime_weighting, "WeightingReplayCompletion", runtime_weighting_path
@@ -2218,6 +2273,12 @@ def validate_t18_global_weighting_sources(
     replay_consume = rust_impl_method_body(
         weighting, "WeightingReplayPhase<'_>", "consume", weighting_path
     )
+    replay_prepare = rust_impl_method_body(
+        weighting, "WeightingReplayPhase<'_>", "prepare_sample", weighting_path
+    )
+    replay_commit = rust_impl_method_body(
+        weighting, "WeightingReplayPhase<'_>", "commit_sample", weighting_path
+    )
     take_block = rust_impl_method_body(
         weighting, "WeightingReplayPhase<'_>", "take_block", weighting_path
     )
@@ -2241,6 +2302,7 @@ def validate_t18_global_weighting_sources(
             "parallactic_angles_rad": "[f64;2]",
             "density_uvw_m": "[f64;3]",
             "output_frame_frequency_hz": "f64",
+            "row_spectral_geometry": "Option<NativeRowSpectralGeometry>",
             "field_id": "i32",
             "pointing_directions": "SelectedPointingDirections",
             "aw_pointing_pixel": "Option<[f64;2]>",
@@ -2251,9 +2313,12 @@ def validate_t18_global_weighting_sources(
         or replay_phase_fields.get("block") != "Vec<WeightingSampleValue>"
         or sample_fields.get("generation") != "WeightingGenerationId"
         or "into_boxed_slice" in take_block
-        or "self.generation.weight(" not in replay_consume
-        or "self.coverage.push(&weighted)" not in replay_consume
-        or "self.block.push(weighted)" not in replay_consume
+        or "self.prepare_sample(" not in replay_consume
+        or "self.commit_sample(weighted)" not in replay_consume
+        or "weighted_sample_from_state(" not in replay_prepare
+        or "WeightingSelectedSample::from_selected(" not in replay_prepare
+        or "self.coverage.push(&weighted)" not in replay_commit
+        or "self.block.push(weighted)" not in replay_commit
         or "std::mem::take(&mut self.block)" not in take_block
         or "Vec::with_capacity(self.max_block_samples)" not in weighting
         or "WeightingReplayInputSample" in weighting
@@ -2413,7 +2478,7 @@ def validate_t18_global_weighting_sources(
         or "removed.contains" not in compose_streaming
         or "terminal_fence" not in compose_streaming
         or "kind: WorkKind::Release" not in compose
-        or allocation_specs.count("AllocationSpec::new(") != 5
+        or allocation_specs.count("AllocationSpec::new(") != 6
         or "if let Some(bytes) = self.continuum_row_bytes" not in allocation_specs
         or '"continuum-transform-row"' not in allocation_specs
         or "predecessor_observation_completion(&self.source_read)"
@@ -2469,7 +2534,7 @@ def validate_t18_global_weighting_sources(
         or "quarantine_external_permits" not in finish_draining
     ):
         raise ArchitectureError(
-            "T18 production fragment must own four core allocations plus optional continuum storage, exact queue authority, continuous retained-source authority, and fail-closed scheduler release"
+            "T18 production fragment must own five core allocations plus optional continuum storage, exact queue authority, continuous retained-source authority, and fail-closed scheduler release"
         )
 
     plan_projection = rust_impl_method_body(receipt, "PlanProjection", "new", receipt_path)
@@ -3360,6 +3425,97 @@ def resolve_input(path: Path, base: Path = REPO_ROOT) -> Path:
     return path if path.is_absolute() else base / path
 
 
+def without_inline_rust_tests(source: str) -> str:
+    """Remove cfg(test) modules while retaining production items after them."""
+    pattern = re.compile(r"#\[cfg\(test\)\]\s*mod\s+\w+\s*\{")
+    while match := pattern.search(source):
+        depth = 1
+        end = match.end()
+        while depth and end < len(source):
+            depth += (source[end] == "{") - (source[end] == "}")
+            end += 1
+        if depth:
+            raise ArchitectureError("ADR-0014: unterminated inline test module")
+        source = source[:match.start()] + source[end:]
+    return source
+
+
+def validate_product_write_only_sources(
+    product_sources: dict[str, str], sink_source: str
+) -> None:
+    """Guard ADR-0014's ownership seam, not the spelling of attestation types.
+
+    The visibility stream has an independent MeasurementSet-generation consumer.
+    Image generation has no hashing or persisted-output read capability. Runtime
+    counting/error tests additionally exercise the actual bounded write path.
+    """
+    storage = product_sources.get("storage.rs", "")
+    for trait, methods in {
+        "ProductOutput": {"begin_member"},
+        "ProductWriter": {"write", "finish"},
+    }.items():
+        declaration = re.search(
+            rf"pub\s+trait\s+{trait}\s*\{{(.*?)\n\}}", storage, re.S
+        )
+        if declaration is None or set(
+            re.findall(r"\bfn\s+(\w+)", declaration.group(1))
+        ) != methods:
+            raise ArchitectureError(
+                f"ADR-0014: {trait} must expose only its bounded write lifecycle"
+            )
+    if not re.search(
+        r"fn\s+write\s*\(\s*&mut\s+self\s*,\s*window\s*:\s*ProductWindow\s*\)",
+        storage,
+    ):
+        raise ArchitectureError("ADR-0014: the writer must consume an owned window")
+    forbidden = re.compile(
+        r"\b(?:sha1|sha2|sha3|blake3|crc32c|crc32fast|xxhash_rust|"
+        r"Sha256|Sha512|DefaultHasher|SipHasher)\b"
+        r"|\bstd\s*::\s*hash\b|\bHasher\s*::"
+        r"|\b(?:ProductMemberBacking|ProductArrayStorage|CanonicalWindows)\b"
+        r"|\b(?:std|tokio)\s*::\s*fs\b"
+    )
+    for name, source in product_sources.items():
+        if name == "visibility.rs":
+            continue
+        production = without_inline_rust_tests(source)
+        production = re.sub(r"//[^\n]*", "", production)
+        if forbidden.search(production):
+            raise ArchitectureError(
+                f"ADR-0014: {name} adds product hashing or readable output backing"
+            )
+    sink_production = without_inline_rust_tests(sink_source)
+    if re.search(
+        r"\bPagedImage\s*(?:::\s*<[^>]+>)?\s*::\s*open\b"
+        r"|\.(?:get_slice|read_window|read_payload|read_validity|content_digest)\s*\(",
+        sink_production,
+    ):
+        raise ArchitectureError("ADR-0014: publication must not reread product arrays")
+
+
+def validate_prepared_model_transfer(source: str) -> None:
+    body = rust_function_body(source, "initial_reprojected", Path("reconstruction/lib.rs"))
+    body = re.sub(r"//[^\n]*", "", body)
+    # The opaque prepared buffer may move into storage, but this trusted
+    # lifecycle transition has no scientific reason to inspect its samples.
+    body = re.sub(r"prepared\s*\.\s*samples\s*\.\s*into_vec\s*\(\s*\)", "", body)
+    if re.search(r"prepared\s*\.\s*samples\b", body):
+        raise ArchitectureError("ADR-0014: trusted prepared-model transfer must not inspect samples")
+
+
+def validate_product_write_only_path(repo_root: Path = REPO_ROOT) -> None:
+    root = repo_root / "crates/casa-imaging-products/src"
+    sources = {
+        str(path.relative_to(root)): path.read_text(encoding="utf-8")
+        for path in root.rglob("*.rs")
+        if path.name != "tests.rs" and "tests" not in path.relative_to(root).parts
+    }
+    sink = repo_root / "crates/casa-imaging-application/src/casa_product_sink.rs"
+    validate_product_write_only_sources(sources, sink.read_text(encoding="utf-8"))
+    reconstruction = repo_root / "crates/casa-imaging-reconstruction/src/lib.rs"
+    validate_prepared_model_transfer(reconstruction.read_text(encoding="utf-8"))
+
+
 def main() -> int:
     args = parse_args()
     try:
@@ -3376,6 +3532,7 @@ def main() -> int:
         validate_workspace(policy, metadata)
         validate_forward_invariants(policy, metadata)
         validate_source_boundaries(policy)
+        validate_product_write_only_path()
 
         matrix_path = (
             resolve_input(args.migration_matrix)

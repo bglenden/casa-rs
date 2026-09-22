@@ -44,6 +44,22 @@ set `CARGO_INCREMENTAL=0`.
 
 ## Engineering Direction
 
+- ADR-0014 forbids production product-content hashing or full-array rereads
+  solely to authorize publication from trusted in-process generation. Use
+  bounded ownership transfer to the CASA-compatible writer, preserving shape,
+  inventory, run/lifecycle, I/O and individual-image atomic replacement checks.
+  Publication failure fails the run and leaves an incomplete output set requiring
+  rerun, not per-member resumable recovery or whole-set rollback. Do not restore
+  attestation under another name or flag. Reintroduction requires an explicit
+  architectural decision and user approval, a concrete failure model and
+  measured cost. Historical sealing requirements are non-normative; unrelated
+  persistence/external-input checksums and test/benchmark fingerprints remain.
+- The same ownership rule applies to trusted reconstruction-model handoffs.
+  Validate values/support where introduced or modified, not by content-attesting
+  every lifecycle transition. Routine telemetry must not serialize/hash/rewrite
+  whole plans or scan historical receipts; keep lightweight progress and final
+  summaries. Exceptions require a concrete failure model and demonstrated benefit.
+
 This project is early and is not constrained by an existing external user
 base. Prefer the best long-term code, architecture, API, and testing shape over
 the smallest local patch, even when that means changing more in-repo code now.
@@ -98,6 +114,12 @@ implementation decision, test it instead of extending the measurement machinery.
   adjacent erosion instead of silently expanding the approved work.
 
 ## Work Record And State
+
+Anything needed after the current execution (inputs, reference binaries,
+results, logs, receipts, checkpoints, or handoffs) must live in durable storage,
+never under `/private` or any temporary/`tmp` directory. Use temporary storage
+only for disposable scratch. Keep restart-critical evidence outside removable
+worktrees and follow `docs/agent-reference.md` for verified checkpoints.
 
 GitHub issues and pull requests are the authoritative work record. Generic
 shaping, research, TDD, diagnosis, design, review, and conflict-resolution

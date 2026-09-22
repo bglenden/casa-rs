@@ -1008,6 +1008,15 @@ fn selected_observation_accepts_exact_ephemeris_and_certifies_its_retained_charg
         BoundSelectedObservation::certify_residency(&problem, std::slice::from_ref(&binding))
             .expect("certify exact ephemeris binding");
 
+    assert_eq!(
+        certificate.replay_proof_retained_heap_bytes(),
+        BoundSelectedObservation::replay_proof_retained_heap_bytes(
+            &problem,
+            std::slice::from_ref(&binding)
+        )
+        .expect("same selected-read reservation"),
+    );
+
     assert!(reference_data_bytes > 0);
     assert_eq!(
         certificate.reference_data_bytes(source.identity()),
@@ -1142,7 +1151,7 @@ fn real_ms_cube_traversal_compiles_source_backed_casa_cubic_stencils() {
 #[test]
 fn t35_source_backed_identity_and_nonidentity_tracers_match_casacore() {
     use casa_test_support::spectral_interop::{
-        SpectralInterpolationMethod, SpectralInterpolationOracle,
+        SpectralInterpolationEdge, SpectralInterpolationMethod, SpectralInterpolationOracle,
     };
 
     let directory = tempfile::tempdir().expect("temporary T35 source-backed fixture");
@@ -1241,6 +1250,7 @@ fn t35_source_backed_identity_and_nonidentity_tracers_match_casacore() {
         &output_centres,
         evaluation.output_frame().centre_hz(),
         SpectralInterpolationMethod::Cubic,
+        SpectralInterpolationEdge::FlagOutside,
     )
     .expect("CASA/casacore cubic spectral oracle");
     assert!(casa.valid);
@@ -1273,6 +1283,169 @@ fn t35_source_backed_identity_and_nonidentity_tracers_match_casacore() {
         .map(|term| model[term.output_channel() as usize] * term.factor() * source_visibility)
         .sum::<f64>();
     assert!((lhs - rhs).abs() <= f64::EPSILON * lhs.abs().max(1.0));
+}
+
+#[test]
+fn selected_row_spectral_geometry_uses_exact_selected_centres_including_flagged_channels() {
+    for (frequencies, selected) in [
+        (vec![1.4e9, 1.401e9, 1.402e9, 1.407e9, 1.408e9], vec![1, 3]),
+        (
+            vec![1.4e9, 1.401e9, 1.402e9, 1.407e9, 1.408e9],
+            vec![1, 3, 4],
+        ),
+        (vec![1.408e9, 1.407e9, 1.402e9, 1.401e9, 1.4e9], vec![1, 3]),
+        (vec![1.4e9, 1.401e9, 1.402e9, 1.407e9, 1.408e9], vec![2]),
+    ] {
+        let directory = tempfile::tempdir().expect("selected geometry fixture");
+        let path = directory.path().join("selected-geometry.ms");
+        generate_fixture_with_channel_count(&path, 2, frequencies.len());
+        let mut ms = MeasurementSet::open(&path).expect("open geometry fixture");
+        ms.spectral_window_mut()
+            .expect("SPW")
+            .table_mut()
+            .cell_accessor_mut(0, "CHAN_FREQ")
+            .expect("frequency cell")
+            .set(Value::Array(ArrayValue::Float64(
+                ArrayD::from_shape_vec(vec![frequencies.len()], frequencies.clone())
+                    .expect("frequency array"),
+            )))
+            .expect("set unequal centre spacing");
+        let mut flags = ArrayD::from_elem(vec![2, frequencies.len()], false);
+        flags[[0, selected[0] as usize]] = true;
+        flags[[1, selected[0] as usize]] = true;
+        ms.main_table_mut()
+            .cell_accessor_mut(0, "FLAG")
+            .expect("flag cell")
+            .set(Value::Array(ArrayValue::Bool(flags)))
+            .expect("flag only the first selected channel in the first row");
+        ms.save().expect("save geometry fixture");
+        drop(ms);
+        let base = compiled_problem(&path, 2);
+        let source = &base.inputs().observation_snapshot().sources()[0];
+        let selection = source.selection();
+        let snapshot = compile_observation(ObservationSnapshotInput::new(
+            vec![ObservationSourceInput::new(
+                source.identity(),
+                source.provenance().clone(),
+                ObservationSelection::new(
+                    selection.rows().clone(),
+                    selection.rows_filter().clone(),
+                    selection.data_descriptions().to_vec(),
+                    vec![SpectralWindowSelection::new(0, selected.clone())],
+                    selection.correlations().to_vec(),
+                ),
+                source.generations().clone(),
+            )],
+            vec![(ReferenceDataKind::Measures, identity(90))],
+            ModelStateIdentity::Empty,
+        ))
+        .expect("compile exact selected channels");
+        let problem = compile(ImagingRequest::new(
+            specification(),
+            geometry(),
+            ProblemInputIdentities::new(snapshot),
+            model_lifecycle(ModelStateIdentity::Empty),
+        ))
+        .expect("compile geometry problem");
+        let source = &problem.inputs().observation_snapshot().sources()[0];
+        let binding = ObservationSourceBinding::new(
+            source_state(source),
+            content_budget_for_rows(&problem, source, 1, 1),
+        );
+        let mut observation = BoundSelectedObservation::open(
+            &problem,
+            test_measures(&problem),
+            vec![binding.clone()],
+        )
+        .expect("bind selected geometry source");
+        let mut scalar_samples = Vec::new();
+        let scalar_completion = observation
+            .traverse(&problem, |reported| {
+                let sample = reported.selected();
+                let evaluation = reported.spectral_evaluation();
+                let geometry = evaluation
+                    .row_geometry()
+                    .expect("source-issued row geometry");
+                assert_eq!(sample.row_spectral_geometry(), Some(geometry));
+                assert!(geometry.matches_sample(sample, FrequencyFrame::Topocentric));
+                assert_eq!(geometry.selected_channels(), selected.len());
+                assert_eq!(
+                    geometry.first(),
+                    (selected[0], frequencies[selected[0] as usize])
+                );
+                assert_eq!(
+                    geometry.second(),
+                    selected
+                        .get(1)
+                        .map(|&index| (index, frequencies[index as usize]))
+                );
+                if let Some([first, second]) = geometry.first_pair_hz() {
+                    assert_ne!(
+                        (second - first).abs(),
+                        sample.address().channel_width_hz.abs()
+                    );
+                }
+                assert_eq!(
+                    evaluation.is_valid(),
+                    !(sample.address().physical_row == 0
+                        && sample.address().channel_index == selected[0])
+                );
+                scalar_samples.push((sample.to_owned(), evaluation));
+                Ok::<_, Infallible>(())
+            })
+            .expect("traverse selected geometry");
+        assert_eq!(scalar_samples.len(), 2 * 2 * selected.len());
+        assert_eq!(
+            collect_indexed_samples(&problem, binding.clone(), 2),
+            scalar_samples
+        );
+        let block =
+            BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding])
+                .expect("bind borrowed geometry source");
+        let (mut source, mut consumer) = block
+            .into_block_stream(&problem)
+            .expect("split borrowed source");
+        let mut storage = source.create_storage(0);
+        let mut borrowed_samples = Vec::new();
+        let mut peak_current = 0;
+        let mut peak_capacity = 0;
+        while source
+            .fill_next(&mut storage)
+            .expect("fill geometry block")
+            .is_some()
+        {
+            peak_current = peak_current.max(storage.resident_current_bytes().expect("block bytes"));
+            peak_capacity =
+                peak_capacity.max(storage.resident_capacity_bytes().expect("block capacity"));
+            consumer
+                .consume(&storage, |run| {
+                    for reported in run.samples() {
+                        assert_eq!(
+                            reported.selected().row_spectral_geometry(),
+                            reported.spectral_evaluation().row_geometry()
+                        );
+                        borrowed_samples.push((
+                            reported.selected().to_owned(),
+                            reported.spectral_evaluation(),
+                        ));
+                    }
+                    Ok::<_, Infallible>(())
+                })
+                .expect("consume geometry block");
+        }
+        let mut terminal = source.complete().expect("terminal source proof");
+        terminal
+            .record_runtime_residency(1, peak_current, peak_capacity)
+            .expect("one block residency");
+        let (_, borrowed_completion) = consumer
+            .complete(terminal)
+            .expect("complete borrowed source");
+        assert_eq!(
+            borrowed_completion.generation_id(),
+            scalar_completion.generation_id()
+        );
+        assert_eq!(borrowed_samples, scalar_samples);
+    }
 }
 
 #[test]
@@ -1372,6 +1545,18 @@ fn real_ms_cube_traversal_uses_the_native_field_frame_for_output_conversion() {
             assert!((image_anchor_hz - native_field_hz).abs() > 1.0);
             assert_ne!(image_anchor_boundaries, native_field_boundaries);
             let evaluation = reported.spectral_evaluation();
+            let geometry = evaluation.row_geometry().expect("transformed row geometry");
+            assert_eq!(sample.row_spectral_geometry(), Some(geometry));
+            assert!(geometry.matches_sample(sample, FrequencyFrame::Lsrk));
+            assert_eq!(geometry.selected_channels(), 2);
+            assert_eq!(
+                geometry.first(),
+                (0, transform_in_native_field_frame(1.4e9))
+            );
+            assert_eq!(
+                geometry.second(),
+                Some((2, transform_in_native_field_frame(1.402e9)))
+            );
             assert_eq!(
                 evaluation.native().centre_hz().to_bits(),
                 sample.address().frequency_centre_hz.to_bits()
@@ -2850,6 +3035,8 @@ fn refillable_block_stream_matches_scalar_traversal_and_returns_the_owner() {
         })
         .expect("complete scalar traversal");
 
+    let indexed_samples = collect_indexed_samples(&problem, binding.clone(), 3);
+    assert_eq!(indexed_samples, scalar_samples);
     let block = BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding])
         .expect("bind block traversal");
     let (mut source, mut consumer) = block
@@ -2923,6 +3110,523 @@ fn refillable_block_stream_matches_scalar_traversal_and_returns_the_owner() {
     );
     assert!(measurements.consumer_scratch_capacity_bytes() >= expected_scratch as u64);
     assert!(block.can_resume_after(&block_completion));
+}
+
+#[test]
+#[cfg(unix)]
+fn windowed_block_stream_exhausts_rows_without_reading_disjoint_payload() {
+    let directory = tempfile::tempdir().expect("temporary disjoint-window fixture");
+    let path = directory.path().join("disjoint-window.ms");
+    generate_fixture_with_rows(&path, 4);
+    initialize_measurement_set_owner_manifest(&path).expect("initialize disjoint-window owner");
+    let (problem, access) = owner_problem_and_access(owner_resolution_request(&path, 4));
+    let observation = access
+        .open(&problem)
+        .expect("bind source before window replay");
+    let (mut initial_source, mut initial_consumer) = observation
+        .into_block_stream(&problem)
+        .expect("split initial source replay");
+    let mut initial_storage = initial_source.create_storage(0);
+    while initial_source
+        .fill_next(&mut initial_storage)
+        .expect("fill initial source block")
+        .is_some()
+    {
+        initial_consumer
+            .consume(&initial_storage, |_| Ok::<_, Infallible>(()))
+            .expect("consume initial source block");
+    }
+    let initial_terminal = initial_source.complete().expect("initial terminal poll");
+    let (retained, initial_completion) = initial_consumer
+        .complete(initial_terminal)
+        .expect("mint initial replay proof");
+    assert_eq!(initial_completion.sample_count(), 16);
+
+    let (mut window_source, mut window_consumer) = retained
+        .into_windowed_block_stream(&problem, [1.5e9, 1.6e9])
+        .expect("split disjoint window replay");
+    let mut window_storage = window_source.create_storage(0);
+    let mut emitted_sample_count = 0_u64;
+    while window_source
+        .fill_next(&mut window_storage)
+        .expect("scan disjoint source rows")
+        .is_some()
+    {
+        emitted_sample_count += window_storage
+            .selected_sample_count()
+            .expect("count disjoint window block");
+        window_consumer
+            .consume(&window_storage, |_| Ok::<_, Infallible>(()))
+            .expect("consume disjoint window block");
+    }
+    let window_terminal = window_source.complete().expect("window terminal poll");
+    let (_, window_completion) = window_consumer
+        .complete_window(window_terminal)
+        .expect("complete disjoint window");
+    assert_eq!(emitted_sample_count, 0);
+    assert_eq!(window_completion.sample_count(), 0);
+    let measurements = window_completion.measurements();
+    assert_eq!(measurements.stored_row_count(), 0);
+    assert_eq!(measurements.logical_output_bytes(), 0);
+    assert_eq!(measurements.modeled_physical_read_bytes(), Some(0));
+}
+
+#[test]
+#[cfg(unix)]
+fn windowed_index_ranges_bound_rows_by_the_actual_channel_window() {
+    let directory = tempfile::tempdir().expect("temporary indexed-window fixture");
+    let path = directory.path().join("indexed-window-row-bound.ms");
+    generate_fixture_with_rows(&path, 6);
+    initialize_measurement_set_owner_manifest(&path).expect("initialize indexed-window owner");
+    let (problem, access) = owner_problem_and_access(owner_resolution_request_with_channels(
+        &path,
+        6,
+        vec![0, 1, 2],
+    ));
+    let observation = access
+        .open(&problem)
+        .expect("bind indexed source before window replay");
+    let (mut initial_source, mut initial_consumer) = observation
+        .into_block_stream(&problem)
+        .expect("split initial indexed replay");
+    let mut initial_storage = initial_source.create_storage(0);
+    while initial_source
+        .fill_next(&mut initial_storage)
+        .expect("fill initial indexed block")
+        .is_some()
+    {
+        initial_consumer
+            .consume(&initial_storage, |_| Ok::<_, Infallible>(()))
+            .expect("consume initial indexed block");
+    }
+    let initial_terminal = initial_source.complete().expect("initial indexed terminal");
+    let (retained, _) = initial_consumer
+        .complete(initial_terminal)
+        .expect("mint indexed replay proof");
+
+    let (mut window_source, mut window_consumer) = retained
+        .into_windowed_block_stream(&problem, [1.4001e9, 1.4009e9])
+        .expect("split narrowed indexed replay");
+    let index_plan = super::SelectedObservationBlockIndexPlan::new(&problem, 12)
+        .expect("plan indexed narrowed windows");
+    let mut index = index_plan.create_index();
+    let mut storage = window_source.create_storage(0);
+    let mut indexed_runs = 0_usize;
+    while window_source
+        .fill_next(&mut storage)
+        .expect("fill narrowed indexed block")
+        .is_some()
+    {
+        let count = storage.selected_run_count().expect("narrowed run count");
+        let mut start = 0;
+        while start < count {
+            let range = index_plan
+                .next_range(&storage, start)
+                .expect("bound indexed range by window rows");
+            assert!(range.end > range.start);
+            window_consumer
+                .index_block_range(&storage, range.clone(), &mut index)
+                .expect("index narrowed run range");
+            indexed_runs += range.len();
+            start = range.end;
+        }
+    }
+    let terminal = window_source.complete().expect("narrowed indexed terminal");
+    let (_, completion) = window_consumer
+        .complete_window(terminal)
+        .expect("complete narrowed indexed window");
+    assert_eq!(indexed_runs, 12);
+    assert_eq!(completion.sample_count(), 24);
+}
+
+#[test]
+fn borrowed_and_indexed_run_windows_preserve_complete_groups_across_row_splits_and_tail() {
+    let directory = tempfile::tempdir().expect("indexed window fixture");
+    let path = directory.path().join("indexed-windows.ms");
+    generate_fixture_with_rows(&path, 5);
+    let mut ms = MeasurementSet::open(&path).expect("open indexed fixture");
+    let mut flags = match ms
+        .main_table()
+        .cell_accessor(0, "FLAG")
+        .and_then(|cell| cell.array())
+        .expect("read fixture FLAG")
+        .clone()
+    {
+        ArrayValue::Bool(flags) => flags,
+        _ => panic!("fixture FLAG must be Bool"),
+    };
+    flags[[0, 0]] = true;
+    ms.main_table_mut()
+        .cell_accessor_mut(0, "FLAG")
+        .expect("FLAG")
+        .set(Value::Array(ArrayValue::Bool(flags)))
+        .expect("flag one parallel hand");
+    ms.main_table_mut()
+        .cell_accessor_mut(0, "WEIGHT")
+        .expect("WEIGHT")
+        .set(Value::Array(ArrayValue::Float32(
+            ArrayD::from_shape_vec(vec![2], vec![3.0, 7.0]).expect("weights"),
+        )))
+        .expect("unequal hand weights");
+    ms.save().expect("save indexed fixture");
+    drop(ms);
+    let problem = compiled_problem(&path, 5);
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let binding = ObservationSourceBinding::new(
+        source_state(source),
+        bound_content_budget_for_rows(&problem, source, 5, 1),
+    );
+    let observation =
+        BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding.clone()])
+            .expect("serial block source");
+    let (mut source, mut consumer) = observation
+        .into_block_stream(&problem)
+        .expect("serial block stream");
+    let mut storage = source.create_storage(0);
+    let mut serial = Vec::new();
+    while source
+        .fill_next(&mut storage)
+        .expect("serial fill")
+        .is_some()
+    {
+        consumer
+            .consume(&storage, |run| {
+                serial
+                    .extend(run.samples().map(|sample| {
+                        (sample.selected().to_owned(), sample.spectral_evaluation())
+                    }));
+                Ok::<_, Infallible>(())
+            })
+            .expect("serial consume");
+    }
+    consumer
+        .complete(source.complete().expect("serial terminal"))
+        .expect("serial completion");
+    assert!(serial[0].0.channel_flag);
+    assert!(!serial[1].0.channel_flag);
+    assert!(serial[1].0.parallel_hand_group_flag);
+    assert_eq!(
+        collect_indexed_samples(&problem, binding.clone(), 3),
+        serial
+    );
+    assert_eq!(collect_borrowed_samples(&problem, binding, 3), serial);
+}
+
+fn collect_borrowed_samples(
+    problem: &casa_imaging_model::CompiledProblem,
+    binding: ObservationSourceBinding,
+    maximum_runs: usize,
+) -> Vec<(SelectedObservationSample, SelectedSpectralEvaluation)> {
+    let observation =
+        BoundSelectedObservation::open(problem, test_measures(problem), vec![binding])
+            .expect("bind borrowed traversal");
+    let (mut source, mut consumer) = observation
+        .into_block_stream(problem)
+        .expect("split borrowed traversal");
+    let mut storage = source.create_storage(0);
+    let mut samples = Vec::new();
+    while source
+        .fill_next(&mut storage)
+        .expect("fill borrowed source")
+        .is_some()
+    {
+        let runs = storage.selected_run_count().expect("borrowed run count");
+        assert_eq!(
+            storage.selected_channels_per_row().expect("row channels"),
+            2
+        );
+        for start in (0..runs).step_by(maximum_runs) {
+            let end = (start + maximum_runs).min(runs);
+            consumer
+                .inspect_block_range(&storage, start..end)
+                .expect("inspect borrowed window");
+            let midpoint = start + (end - start).div_ceil(2);
+            let prepared = std::thread::scope(|scope| {
+                let handles: Vec<_> = [midpoint..end, start..midpoint]
+                    .into_iter()
+                    .map(|range| {
+                        let storage = &storage;
+                        scope.spawn(move || {
+                            let mut projector = super::SelectedObservationProjector::new(problem);
+                            let capacity = projector.capacity_bytes();
+                            assert_eq!(
+                                capacity,
+                                super::SelectedObservationProjector::required_bytes(problem)
+                            );
+                            let mut partition = Vec::new();
+                            projector
+                                .visit_block_range(problem, storage, range, |run| {
+                                    partition.extend(run.samples().map(|sample| {
+                                        (sample.selected().to_owned(), sample.spectral_evaluation())
+                                    }));
+                                    Ok::<_, Infallible>(())
+                                })
+                                .expect("project borrowed worker range");
+                            assert_eq!(projector.capacity_bytes(), capacity);
+                            partition
+                        })
+                    })
+                    .collect();
+                handles
+                    .into_iter()
+                    .rev()
+                    .flat_map(|handle| handle.join().expect("borrowed projection worker"))
+                    .collect::<Vec<_>>()
+            });
+            samples.extend(prepared);
+        }
+    }
+    let (_, completion) = consumer
+        .complete(source.complete().expect("borrowed terminal source"))
+        .expect("borrowed inspection completion");
+    assert_eq!(completion.sample_count(), samples.len() as u64);
+    assert_eq!(
+        completion
+            .measurements()
+            .peak_consumer_scratch_current_bytes(),
+        (2 * size_of::<SelectedObservationRunCorrelation>()) as u64
+    );
+    let (generation, _) = problem
+        .inspect_selected_observation(
+            samples
+                .iter()
+                .map(|(sample, _)| Ok::<_, Infallible>(sample.clone())),
+            |_| Ok::<_, Infallible>(()),
+        )
+        .expect("independent borrowed sample inspection");
+    assert_eq!(generation, completion.generation_id());
+    samples
+}
+
+#[test]
+fn borrowed_source_ranges_reject_invalid_windows_and_propagate_consumer_failure() {
+    let directory = tempfile::tempdir().expect("borrowed source validation fixture");
+    let path = directory.path().join("borrowed-ranges.ms");
+    generate_fixture_with_rows(&path, 2);
+    let problem = compiled_problem(&path, 2);
+    let snapshot_source = &problem.inputs().observation_snapshot().sources()[0];
+    let binding = ObservationSourceBinding::new(
+        source_state(snapshot_source),
+        bound_content_budget_for_rows(&problem, snapshot_source, 2, 1),
+    );
+    let observation =
+        BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding])
+            .expect("bind borrowed validation source");
+    let (mut source, mut consumer) = observation
+        .into_block_stream(&problem)
+        .expect("split borrowed validation stream");
+    let mut storage = source.create_storage(0);
+    let mut projector = super::SelectedObservationProjector::new(&problem);
+    let capacity = projector.capacity_bytes();
+    assert!(
+        projector
+            .visit_block_range(&problem, &storage, 0..0, |_| Ok::<_, Infallible>(()))
+            .is_err()
+    );
+    assert!(consumer.inspect_block_range(&storage, 0..0).is_err());
+    assert!(
+        source
+            .fill_next(&mut storage)
+            .expect("fill validation block")
+            .is_some()
+    );
+    let count = storage.selected_run_count().expect("validation run count");
+    let proof_bytes = consumer.generation_proof_bytes();
+    let proof_calls = consumer.generation_proof_hash_calls();
+    for range in [std::ops::Range { start: 2, end: 1 }, 0..count + 1] {
+        assert!(
+            projector
+                .visit_block_range(&problem, &storage, range.clone(), |_| Ok::<_, Infallible>(
+                    ()
+                ))
+                .is_err()
+        );
+        assert!(consumer.inspect_block_range(&storage, range).is_err());
+    }
+    assert_eq!(consumer.generation_proof_bytes(), proof_bytes);
+    assert_eq!(consumer.generation_proof_hash_calls(), proof_calls);
+    projector
+        .visit_block_range(
+            &problem,
+            &storage,
+            count..count,
+            |_| -> Result<(), Infallible> {
+                panic!("empty borrowed range must not call consumer");
+            },
+        )
+        .expect("empty range is valid");
+    let error = projector
+        .visit_block_range(&problem, &storage, 0..count, |_| {
+            Err(std::io::Error::other("borrowed consumer failed"))
+        })
+        .expect_err("consumer error must propagate");
+    assert!(matches!(
+        error,
+        SelectedObservationTraversalError::Consumer(_)
+    ));
+    assert_eq!(projector.capacity_bytes(), capacity);
+    consumer
+        .inspect_block_range(&storage, 0..count)
+        .expect("inspect valid range after validation failures");
+    while source
+        .fill_next(&mut storage)
+        .expect("remaining validation blocks")
+        .is_some()
+    {
+        consumer
+            .inspect_block_range(
+                &storage,
+                0..storage.selected_run_count().expect("remaining runs"),
+            )
+            .expect("inspect remaining validation block");
+    }
+    consumer
+        .complete(source.complete().expect("validation terminal"))
+        .expect("invalid windows did not corrupt ordered inspection");
+}
+
+#[test]
+#[cfg(unix)]
+fn borrowed_source_inspection_preserves_rebound_sample_counts_and_completion() {
+    let directory = tempfile::tempdir().expect("borrowed rebound fixture");
+    let path = directory.path().join("borrowed-rebound.ms");
+    generate_fixture_with_rows(&path, 3);
+    initialize_measurement_set_owner_manifest(&path).expect("initialize borrowed rebound owner");
+    let request = owner_resolution_request(&path, 3);
+    let (problem, access) = owner_problem_and_access(request.clone());
+    let mut observation = access.open(&problem).expect("open borrowed rebound source");
+    let initial = observation
+        .traverse(&problem, |_| Ok::<_, Infallible>(()))
+        .expect("initial exhaustive source inspection");
+    let proof = initial.replay_proof().expect("initial replay proof");
+    drop(observation);
+    let (_, access) = owner_problem_and_access(request);
+    let observation = access
+        .rebind(&problem, &proof)
+        .expect("rebind selected source");
+    let (mut source, mut consumer) = observation
+        .into_block_stream(&problem)
+        .expect("split borrowed rebound source");
+    let mut storage = source.create_storage(0);
+    while source
+        .fill_next(&mut storage)
+        .expect("fill rebound block")
+        .is_some()
+    {
+        let runs = storage.selected_run_count().expect("rebound run count");
+        for start in (0..runs).step_by(3) {
+            consumer
+                .inspect_block_range(&storage, start..(start + 3).min(runs))
+                .expect("inspect borrowed rebound range");
+        }
+    }
+    assert_eq!(consumer.generation_proof_bytes(), 0);
+    assert_eq!(consumer.generation_proof_hash_calls(), 0);
+    let (_, completion) = consumer
+        .complete(source.complete().expect("rebound terminal"))
+        .expect("complete borrowed rebound source");
+    let authorization = proof
+        .authorize_rebound_completion(&completion)
+        .expect("ordered borrowed windows preserve rebound authorization");
+    assert_eq!(authorization.generation_id(), initial.generation_id());
+    assert_eq!(authorization.sample_count(), initial.sample_count());
+}
+
+fn collect_indexed_samples(
+    problem: &casa_imaging_model::CompiledProblem,
+    binding: ObservationSourceBinding,
+    maximum_runs: usize,
+) -> Vec<(SelectedObservationSample, SelectedSpectralEvaluation)> {
+    let observation =
+        BoundSelectedObservation::open(problem, test_measures(problem), vec![binding])
+            .expect("bind indexed traversal");
+    let (mut source, mut consumer) = observation
+        .into_block_stream(problem)
+        .expect("split indexed traversal");
+    let mut storage = source.create_storage(0);
+    let plan =
+        super::SelectedObservationBlockIndexPlan::new(problem, maximum_runs).expect("index plan");
+    let mut index = plan.create_index();
+    let initial_capacity = index.capacity_bytes().expect("index capacity");
+    assert_eq!(initial_capacity, plan.capacity_bytes());
+    let mut samples = Vec::new();
+    let mut last_block_was_indexed = false;
+    while source
+        .fill_next(&mut storage)
+        .expect("fill indexed source")
+        .is_some()
+    {
+        if last_block_was_indexed {
+            assert!(
+                index.view(&storage, problem).is_err(),
+                "refill invalidates the old index"
+            );
+        }
+        let runs = storage.selected_run_count().expect("run count");
+        for start in (0..runs).step_by(maximum_runs) {
+            let end = (start + maximum_runs).min(runs);
+            consumer
+                .index_block_range(&storage, start..end, &mut index)
+                .expect("inspect window");
+            let view = index
+                .view(&storage, problem)
+                .expect("borrow indexed window");
+            assert_eq!(view.run_count(), end - start);
+            let midpoint = view.run_count().div_ceil(2);
+            let prepared = std::thread::scope(|scope| {
+                // Start the later range first, then restore canonical order on join.
+                let handles: Vec<_> = [midpoint..view.run_count(), 0..midpoint]
+                    .into_iter()
+                    .map(|range| {
+                        let view = &view;
+                        scope.spawn(move || {
+                            let mut projector = super::SelectedObservationProjector::new(problem);
+                            assert_eq!(
+                                projector.capacity_bytes(),
+                                super::SelectedObservationProjector::required_bytes(problem)
+                            );
+                            let mut partition = Vec::new();
+                            view.visit_range(&mut projector, range, |run| {
+                                partition.extend(run.samples().map(|sample| {
+                                    (sample.selected().to_owned(), sample.spectral_evaluation())
+                                }));
+                                Ok::<_, Infallible>(())
+                            })
+                            .expect("project disjoint range");
+                            partition
+                        })
+                    })
+                    .collect();
+                handles
+                    .into_iter()
+                    .rev()
+                    .flat_map(|handle| handle.join().expect("projection worker"))
+                    .collect::<Vec<_>>()
+            });
+            samples.extend(prepared);
+            assert_eq!(
+                index.capacity_bytes().expect("reused index capacity"),
+                initial_capacity
+            );
+            assert!(index.current_bytes().expect("index populated bytes") <= initial_capacity);
+        }
+        last_block_was_indexed = true;
+    }
+    let terminal = source.complete().expect("indexed terminal source");
+    let (_, completion) = consumer
+        .complete(terminal)
+        .expect("indexed inspection completion");
+    assert_eq!(completion.sample_count(), samples.len() as u64);
+    let (generation, _) = problem
+        .inspect_selected_observation(
+            samples
+                .iter()
+                .map(|(sample, _)| Ok::<_, Infallible>(sample.clone())),
+            |_| Ok::<_, Infallible>(()),
+        )
+        .expect("independent indexed sample inspection");
+    assert_eq!(generation, completion.generation_id());
+    samples
 }
 
 #[test]
@@ -4015,6 +4719,14 @@ fn generate_fixture(path: &std::path::Path) {
 }
 
 fn generate_fixture_with_rows(path: &std::path::Path, row_count: usize) {
+    generate_fixture_with_channel_count(path, row_count, 3);
+}
+
+fn generate_fixture_with_channel_count(
+    path: &std::path::Path,
+    row_count: usize,
+    channel_count: usize,
+) {
     let mut antennas = tutorial_vla_a_antennas();
     antennas.truncate(2);
     let mut request = SyntheticObservationRequest::vla_ppdisk("unused.fits", path, antennas);
@@ -4026,7 +4738,7 @@ fn generate_fixture_with_rows(path: &std::path::Path, row_count: usize) {
         name: "three-channel".to_string(),
         start_frequency_hz: 1.4e9,
         channel_width_hz: 1.0e6,
-        channel_count: 3,
+        channel_count,
     };
     request.worker_policy = SyntheticWorkerPolicy::Fixed;
     request.row_workers = Some(1);
@@ -4073,6 +4785,35 @@ fn owner_resolution_request_with_identity(
     row_count: usize,
     selection_request: LogicalIdentity,
 ) -> SelectedObservationResolutionRequest {
+    owner_resolution_request_with_identity_and_channels(
+        path,
+        row_count,
+        selection_request,
+        vec![0, 2],
+    )
+}
+
+#[cfg(unix)]
+fn owner_resolution_request_with_channels(
+    path: &std::path::Path,
+    row_count: usize,
+    channel_indices: Vec<u32>,
+) -> SelectedObservationResolutionRequest {
+    owner_resolution_request_with_identity_and_channels(
+        path,
+        row_count,
+        identity(2),
+        channel_indices,
+    )
+}
+
+#[cfg(unix)]
+fn owner_resolution_request_with_identity_and_channels(
+    path: &std::path::Path,
+    row_count: usize,
+    selection_request: LogicalIdentity,
+    channel_indices: Vec<u32>,
+) -> SelectedObservationResolutionRequest {
     let selected_rows = SelectedRows::from_ordered_main_rows(
         row_count as u64,
         (0..row_count).map(|row| SelectedMainRow::new(row as u64, 0)),
@@ -4081,7 +4822,7 @@ fn owner_resolution_request_with_identity(
     SelectedObservationResolutionRequest::new(
         path.display().to_string(),
         selection_request,
-        fixture_selection(
+        fixture_selection_with_channels(
             selected_rows,
             RowSelection::new(
                 IdSelection::All,
@@ -4093,6 +4834,7 @@ fn owner_resolution_request_with_identity(
                 IntentSelection::All,
                 IdSelection::All,
             ),
+            channel_indices,
         ),
         VisibilityColumn::Data,
         WeightColumn::Weight,
@@ -4651,11 +5393,19 @@ fn fixture_selection(
     selected_rows: SelectedRows,
     rows_filter: RowSelection,
 ) -> ObservationSelection {
+    fixture_selection_with_channels(selected_rows, rows_filter, vec![0, 2])
+}
+
+fn fixture_selection_with_channels(
+    selected_rows: SelectedRows,
+    rows_filter: RowSelection,
+    channel_indices: Vec<u32>,
+) -> ObservationSelection {
     ObservationSelection::new(
         selected_rows,
         rows_filter,
         vec![DataDescriptionSelection::new(0, 0, 0)],
-        vec![SpectralWindowSelection::new(0, vec![0, 2])],
+        vec![SpectralWindowSelection::new(0, channel_indices)],
         vec![CorrelationSelection::new(
             0,
             vec![
@@ -4894,14 +5644,14 @@ fn specification_with_science(
                 PrimaryBeamValidityPolicy::new(
                     0.2,
                     ProductSupportComparison::StrictlyGreater,
-                    ProductBlankingPolicy::ZeroAndFalseMask,
+                    ProductBlankingPolicy::Zero,
                 )
                 .expect("valid PB policy"),
                 TaylorValidityPolicy::new(
                     TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
                     0.1,
                     ProductSupportComparison::StrictlyGreater,
-                    ProductBlankingPolicy::ZeroAndFalseMask,
+                    ProductBlankingPolicy::Zero,
                 )
                 .expect("valid Taylor policy"),
             ),

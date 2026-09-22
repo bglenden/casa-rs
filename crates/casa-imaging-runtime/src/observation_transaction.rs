@@ -31,8 +31,8 @@ pub enum ObservationTransactionPublicationScope {
     ReconstructionOnly,
     /// Stage and atomically publish every required Product Graph member.
     ProductPublication,
-    /// Publish already sealed conventional products without observation I/O.
-    SealedProductPublication,
+    /// Publish generated conventional products without observation I/O.
+    GeneratedProductPublication,
 }
 
 /// Exact execution-DAG events that implement one observation transaction.
@@ -40,7 +40,7 @@ pub enum ObservationTransactionPublicationScope {
 pub struct ObservationTransactionWork {
     publication_scope: ObservationTransactionPublicationScope,
     source_free_reconstruction: bool,
-    initial_consistency_check: WorkNodeId,
+    initial_consistency_check: Option<WorkNodeId>,
     observation_reads: BTreeSet<WorkDependency>,
     final_model_preparation: Option<WorkNodeId>,
     post_replay_reconciliation: Option<WorkNodeId>,
@@ -63,7 +63,7 @@ impl ObservationTransactionWork {
         Self {
             publication_scope: ObservationTransactionPublicationScope::ReconstructionOnly,
             source_free_reconstruction: false,
-            initial_consistency_check,
+            initial_consistency_check: Some(initial_consistency_check),
             observation_reads: BTreeSet::new(),
             final_model_preparation: None,
             post_replay_reconciliation: Some(post_replay_reconciliation),
@@ -84,7 +84,7 @@ impl ObservationTransactionWork {
         Self {
             publication_scope: ObservationTransactionPublicationScope::ReconstructionOnly,
             source_free_reconstruction: true,
-            initial_consistency_check,
+            initial_consistency_check: Some(initial_consistency_check),
             observation_reads: BTreeSet::new(),
             final_model_preparation: None,
             post_replay_reconciliation: Some(post_replay_reconciliation),
@@ -94,7 +94,7 @@ impl ObservationTransactionWork {
         }
     }
 
-    /// Name every checkpoint for an atomic product-publication transaction.
+    /// Name checkpoints for publication with independent atomic image replacements.
     #[must_use]
     pub const fn new_product_publication(
         initial_consistency_check: WorkNodeId,
@@ -104,7 +104,7 @@ impl ObservationTransactionWork {
         Self {
             publication_scope: ObservationTransactionPublicationScope::ProductPublication,
             source_free_reconstruction: false,
-            initial_consistency_check,
+            initial_consistency_check: Some(initial_consistency_check),
             observation_reads: BTreeSet::new(),
             final_model_preparation: None,
             post_replay_reconciliation: Some(post_replay_reconciliation),
@@ -114,16 +114,13 @@ impl ObservationTransactionWork {
         }
     }
 
-    /// Name a publication-only transaction over already sealed products.
+    /// Name a publication-only transaction over generated products.
     #[must_use]
-    pub const fn new_sealed_product_publication(
-        publication_check: WorkNodeId,
-        commit: WorkNodeId,
-    ) -> Self {
+    pub const fn new_generated_product_publication(commit: WorkNodeId) -> Self {
         Self {
-            publication_scope: ObservationTransactionPublicationScope::SealedProductPublication,
+            publication_scope: ObservationTransactionPublicationScope::GeneratedProductPublication,
             source_free_reconstruction: false,
-            initial_consistency_check: publication_check,
+            initial_consistency_check: None,
             observation_reads: BTreeSet::new(),
             final_model_preparation: None,
             post_replay_reconciliation: None,
@@ -157,8 +154,8 @@ impl ObservationTransactionWork {
 
     /// Return the consistency check that must precede observation reads.
     #[must_use]
-    pub const fn initial_consistency_check(&self) -> &WorkNodeId {
-        &self.initial_consistency_check
+    pub const fn initial_consistency_check(&self) -> Option<&WorkNodeId> {
+        self.initial_consistency_check.as_ref()
     }
 
     /// Return exact completion events for all physical observation reads.
@@ -197,10 +194,10 @@ impl ObservationTransactionWork {
 
     /// Return the sole node permitted to revalidate and publish side effects.
     ///
-    /// The node holds every MeasurementSet lock while it rechecks the exact
-    /// read/write preconditions. Successful completion of its publication
-    /// fence establishes readiness only; the runtime's final publish call
-    /// atomically activates conventional-product members. In-place
+    /// For MS-backed transactions, the node holds source locks while it rechecks
+    /// exact read/write preconditions. Generated-product publication takes no MS
+    /// locks. Its fence establishes readiness only; the runtime's final publish
+    /// call replaces each image atomically, not the whole output set. In-place
     /// selected visibility completion is owned by its terminal replay instead.
     #[must_use]
     pub const fn commit(&self) -> &WorkNodeId {
@@ -317,10 +314,10 @@ pub(crate) fn bind_observation_transaction(
                 ));
             }
         }
-        ObservationTransactionPublicationScope::SealedProductPublication => {
+        ObservationTransactionPublicationScope::GeneratedProductPublication => {
             if declared_products != expected_products {
                 return invalid(format!(
-                    "sealed publication product nodes {declared_products:?} do not match graph members {expected_products:?}"
+                    "generated publication product nodes {declared_products:?} do not match graph members {expected_products:?}"
                 ));
             }
         }
@@ -374,9 +371,9 @@ pub(crate) fn bind_observation_transaction(
                 return invalid("product publication layout is empty");
             }
         }
-        ObservationTransactionPublicationScope::SealedProductPublication => {
+        ObservationTransactionPublicationScope::GeneratedProductPublication => {
             if work.product_staging.is_empty() {
-                return invalid("sealed product publication layout is empty");
+                return invalid("generated product publication layout is empty");
             }
         }
     }
@@ -392,7 +389,7 @@ pub(crate) fn bind_observation_transaction(
     };
     work.observation_reads =
         validate_transaction_nodes(read_sources, phase_visibility_columns, dag.nodes(), &work)?;
-    if work.publication_scope != ObservationTransactionPublicationScope::SealedProductPublication
+    if work.publication_scope != ObservationTransactionPublicationScope::GeneratedProductPublication
         && !work.source_free_reconstruction
     {
         validate_measurement_set_lock_identities(&measurement_sets, dag.nodes(), &work)?;
@@ -412,7 +409,8 @@ fn validate_transaction_nodes(
     nodes: &BTreeMap<WorkNodeId, WorkNode>,
     work: &ObservationTransactionWork,
 ) -> Result<BTreeSet<WorkDependency>, ObservationTransactionPlanError> {
-    if work.publication_scope == ObservationTransactionPublicationScope::SealedProductPublication {
+    if work.publication_scope == ObservationTransactionPublicationScope::GeneratedProductPublication
+    {
         return validate_product_publication_nodes(nodes, work);
     }
     if let Some(node) = nodes
@@ -427,7 +425,11 @@ fn validate_transaction_nodes(
 
     let initial = require_node(
         nodes,
-        &work.initial_consistency_check,
+        work.initial_consistency_check.as_ref().ok_or_else(|| {
+            ObservationTransactionPlanError::InvalidPlan {
+                reason: "observation transaction lacks initial consistency check".into(),
+            }
+        })?,
         "initial consistency",
     )?;
     require_kind(initial, WorkKind::DataCensus, "initial consistency")?;
@@ -648,10 +650,9 @@ fn validate_product_publication_nodes(
         ));
     }
 
-    let initial = require_node(nodes, &work.initial_consistency_check, "publication check")?;
-    require_kind(initial, WorkKind::DataCensus, "publication check")?;
-    require_exact_lock_count(initial, 0, "publication check")?;
-    let initial_completions = completion_events(initial);
+    if work.initial_consistency_check.is_some() {
+        return invalid("generated publication declares an observation consistency check");
+    }
 
     let mut staged_nodes = Vec::new();
     for producer in
@@ -664,9 +665,6 @@ fn validate_product_publication_nodes(
             "staged-output storage",
             "product staging",
         )?;
-        for completion in &initial_completions {
-            require_precedes(nodes, completion, &producer.id, "publication check")?;
-        }
         staged_nodes.push(producer);
     }
 
@@ -886,7 +884,11 @@ fn validate_measurement_set_lock_identities(
     let mut lock_nodes = vec![
         require_node(
             nodes,
-            &work.initial_consistency_check,
+            work.initial_consistency_check.as_ref().ok_or_else(|| {
+                ObservationTransactionPlanError::InvalidPlan {
+                    reason: "observation transaction lacks initial consistency check".into(),
+                }
+            })?,
             "initial consistency",
         )?,
         require_node(nodes, &work.commit, "atomic commit")?,
@@ -1309,6 +1311,7 @@ mod tests {
                     compatibility: writeback_compatibility.clone(),
                     physical_slot: PhysicalSlotId::new("writeback-slot"),
                     lifetime: AllocationLifetime {
+                        disposition: crate::AllocationDisposition::Release,
                         acquire_at: model.clone(),
                         release_after: BTreeSet::from([model_completion.clone()]),
                     },
@@ -1320,6 +1323,7 @@ mod tests {
                     compatibility: publication_compatibility.clone(),
                     physical_slot: PhysicalSlotId::new("publication-slot"),
                     lifetime: AllocationLifetime {
+                        disposition: crate::AllocationDisposition::Release,
                         acquire_at: commit.clone(),
                         release_after: BTreeSet::from([
                             WorkDependency::Fence(FenceId::new(commit.clone(), FenceKind::Io)),
@@ -1751,7 +1755,10 @@ mod tests {
         assert!(validate_transaction_nodes(1, 0, &nodes, &writable).is_err());
 
         let mut read_only = ObservationTransactionWork::new_product_publication(
-            writable.initial_consistency_check.clone(),
+            writable
+                .initial_consistency_check
+                .clone()
+                .expect("observation check"),
             writable
                 .post_replay_reconciliation
                 .clone()

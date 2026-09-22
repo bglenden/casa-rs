@@ -112,7 +112,10 @@ pub(super) fn export(scientific: &MajorCycleCompletion, root: &Path) -> io::Resu
     let payload_name = "samples.f64-support.bin";
     let payload = File::create_new(directory.join(payload_name))?;
     let mut writer = BufWriter::with_capacity(1 << 20, payload);
-    let summary = write_samples(model.samples(), &mut writer)?;
+    let samples = model
+        .read_samples(0..shape.sample_count())
+        .map_err(io::Error::other)?;
+    let summary = write_samples(&samples, &mut writer)?;
     writer.flush()?;
     writer.get_ref().sync_all()?;
     if summary.samples != shape.sample_count() {

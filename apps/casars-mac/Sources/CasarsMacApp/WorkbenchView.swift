@@ -812,10 +812,7 @@ struct LeftDockView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityIdentifier("dock.files")
         } else if store.state.hasProject {
-            let nodes = ProjectFileNode.scan(
-                rootPath: store.state.project.rootPath,
-                datasetPaths: Set(store.state.project.datasets.map(\.path))
-            )
+            let nodes = store.projectFileNodes
             if nodes.isEmpty {
                 EmptyDockState(
                     title: "No project files",
@@ -940,105 +937,6 @@ private struct HorizontalResizeHandle: View {
             }
             .accessibilityLabel("Resize panel")
             .accessibilityIdentifier(accessibilityID)
-    }
-}
-
-private struct ProjectFileNode: Identifiable, Hashable {
-    let id: String
-    let name: String
-    let path: String
-    let relativePath: String
-    let isDirectory: Bool
-    let sizeBytes: Int?
-    let children: [ProjectFileNode]?
-
-    static func scan(rootPath: String, datasetPaths: Set<String>) -> [ProjectFileNode] {
-        let rootURL = URL(fileURLWithPath: rootPath, isDirectory: true).standardizedFileURL
-        let datasetDirectoryPaths = Set(datasetPaths.compactMap { path -> String? in
-            var isDirectory = ObjCBool(false)
-            guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
-                  isDirectory.boolValue
-            else {
-                return nil
-            }
-            return URL(fileURLWithPath: path).standardizedFileURL.path
-        })
-        var remaining = 700
-        return scanDirectory(
-            rootURL,
-            rootURL: rootURL,
-            datasetDirectoryPaths: datasetDirectoryPaths,
-            depth: 0,
-            remaining: &remaining
-        )
-    }
-
-    private static func scanDirectory(
-        _ directory: URL,
-        rootURL: URL,
-        datasetDirectoryPaths: Set<String>,
-        depth: Int,
-        remaining: inout Int
-    ) -> [ProjectFileNode] {
-        guard depth <= 5, remaining > 0 else {
-            return []
-        }
-        let entries = (try? FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey],
-            options: []
-        )) ?? []
-        return entries
-            .filter { $0.lastPathComponent != ".DS_Store" }
-            .sorted { lhs, rhs in
-                let lhsIsDirectory = (try? lhs.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
-                let rhsIsDirectory = (try? rhs.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
-                if lhsIsDirectory != rhsIsDirectory {
-                    return lhsIsDirectory
-                }
-                return lhs.lastPathComponent.localizedStandardCompare(rhs.lastPathComponent) == .orderedAscending
-            }
-            .compactMap { entry -> ProjectFileNode? in
-                guard remaining > 0 else {
-                    return nil
-                }
-                remaining -= 1
-                let values = try? entry.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
-                let isDirectory = values?.isDirectory == true
-                let standardizedPath = entry.standardizedFileURL.path
-                let relativePath = relativePath(for: entry, rootURL: rootURL)
-                let children: [ProjectFileNode]?
-                if isDirectory, !datasetDirectoryPaths.contains(standardizedPath) {
-                    children = scanDirectory(
-                        entry,
-                        rootURL: rootURL,
-                        datasetDirectoryPaths: datasetDirectoryPaths,
-                        depth: depth + 1,
-                        remaining: &remaining
-                    )
-                } else {
-                    children = nil
-                }
-                return ProjectFileNode(
-                    id: standardizedPath,
-                    name: entry.lastPathComponent,
-                    path: standardizedPath,
-                    relativePath: relativePath,
-                    isDirectory: isDirectory,
-                    sizeBytes: values?.fileSize,
-                    children: children
-                )
-            }
-    }
-
-    private static func relativePath(for url: URL, rootURL: URL) -> String {
-        let rootPath = rootURL.path
-        let path = url.standardizedFileURL.path
-        let prefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
-        guard path.hasPrefix(prefix) else {
-            return path
-        }
-        return String(path.dropFirst(prefix.count))
     }
 }
 
