@@ -1742,7 +1742,7 @@ impl PhysicalWorkBinding {
                 crate::PublicationParticipant::Product { .. }
             )
         });
-        if has_product_layout && matches!(product_publication, None) {
+        if has_product_layout && product_publication.is_none() {
             return invalid_product_publication(
                 "Product layouts require an exact planned native generation",
             );

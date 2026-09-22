@@ -8777,7 +8777,7 @@ impl ProjectScan {
                                 let evicted = tree.pop().unwrap();
                                 let entry = &children[&evicted];
                                 if entry.raw_order >= MAX_PROJECT_SCAN_ENTRIES
-                                    && !entry.loose_order.is_some_and(|rank| rank < 500)
+                                    && entry.loose_order.is_none_or(|rank| rank >= 500)
                                 {
                                     children.remove(&evicted);
                                 }

@@ -207,6 +207,9 @@ pub struct PlannedGriddedNormalBinding {
     kind: PlannedGriddedNormalKind,
 }
 
+// A cycle owns one compilation-or-replay capability. Keep its admission and
+// descriptor inline rather than allocating another owner for the larger variant.
+#[allow(clippy::large_enum_variant)]
 enum PlannedGriddedNormalKind {
     Compilation {
         storage: ManagedSpillStorage,

@@ -424,101 +424,6 @@ fn beam_area(beam: RestoringBeam) -> f64 {
     beam.major_fwhm_rad() * beam.minor_fwhm_rad()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{CasaImageDomainOutput, CasaImageProductSink, persisted_beam_set};
-    use casa_coordinates::CoordinateSystem;
-    use casa_imaging_model::ImageDomainRole;
-    use casa_imaging_products::RestoringBeam;
-
-    #[test]
-    fn beam_metadata_demand_scales_with_planes_and_bounds_keyword_storage() {
-        let mut previous = 0;
-        for count in [1, 16, 512, 16_384] {
-            let bytes = super::beam_metadata_residency_bytes(count).unwrap();
-            assert!(bytes > previous);
-            previous = bytes;
-        }
-        let beams = (0..16)
-            .map(|index| {
-                Some(RestoringBeam::new(2.0e-6 + index as f64 * 1.0e-8, 1.0e-6, 0.0).unwrap())
-            })
-            .collect::<Vec<_>>();
-        let record_bytes = persisted_beam_set(&beams)
-            .to_record()
-            .retained_heap_bytes()
-            .unwrap();
-        assert!(super::beam_metadata_residency_bytes(16).unwrap() >= 4 * record_bytes as u64);
-        assert!(super::beam_metadata_residency_bytes(usize::MAX).is_err());
-    }
-
-    #[test]
-    fn domain_outputs_require_unique_roles_roots_and_one_main() {
-        let main = CasaImageDomainOutput::new(
-            ImageDomainRole::Main,
-            "main".into(),
-            CoordinateSystem::new(),
-        );
-        let outlier = CasaImageDomainOutput::new(
-            ImageDomainRole::Outlier("north".into()),
-            "north".into(),
-            CoordinateSystem::new(),
-        );
-        let sink = CasaImageProductSink::for_domains([main.clone(), outlier])
-            .expect("unique domain outputs");
-        assert_eq!(sink.domains.len(), 2);
-        assert!(CasaImageProductSink::for_domains([main.clone(), main]).is_err());
-        assert!(
-            CasaImageProductSink::for_domains([CasaImageDomainOutput::new(
-                ImageDomainRole::Outlier("north".into()),
-                "north".into(),
-                CoordinateSystem::new(),
-            )])
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn blank_beam_slots_use_the_largest_valid_casa_persistence_filler() {
-        let small = RestoringBeam::new(2.0e-6, 1.0e-6, 0.1).expect("small beam");
-        let large = RestoringBeam::new(4.0e-6, 3.0e-6, -0.2).expect("large beam");
-        let persisted = persisted_beam_set(&[Some(small), None, Some(large)]);
-
-        assert_eq!(persisted.shape(), (3, 1));
-        assert_eq!(persisted.beam(0, 0).major, small.major_fwhm_rad());
-        assert_eq!(persisted.beam(1, 0).major, large.major_fwhm_rad());
-        assert_eq!(persisted.beam(2, 0).major, large.major_fwhm_rad());
-    }
-
-    #[test]
-    fn all_blank_beam_slots_use_only_the_casa_imageinfo_placeholder() {
-        let persisted = persisted_beam_set(&[None, None]);
-        let filler = persisted.beam(0, 0);
-        assert_eq!(persisted.shape(), (2, 1));
-        assert!(filler.major > 0.0);
-        assert_eq!(filler.major, filler.minor);
-        assert_eq!(persisted.beam(1, 0), filler);
-    }
-
-    #[test]
-    fn individual_outputs_replace_atomically_and_failed_sets_require_rerun() {
-        let root = tempfile::tempdir().unwrap();
-        let target = root.path().join("image");
-        std::fs::create_dir(&target).unwrap();
-        std::fs::write(target.join("pixels"), b"old").unwrap();
-        let private = tempfile::tempdir_in(root.path()).unwrap();
-        let staged = private.path().join("image");
-        std::fs::create_dir(&staged).unwrap();
-        std::fs::write(staged.join("pixels"), b"new").unwrap();
-        super::promote_atomically(&staged, &target).unwrap();
-        assert_eq!(std::fs::read(target.join("pixels")).unwrap(), b"new");
-        assert_eq!(std::fs::read(staged.join("pixels")).unwrap(), b"old");
-        let missing = private.path().join("missing");
-        assert!(super::promote_atomically(&missing, &target).is_err());
-        assert_eq!(std::fs::read(target.join("pixels")).unwrap(), b"new");
-    }
-}
-
 const fn unit_label(unit: ProductUnit) -> &'static str {
     match unit {
         ProductUnit::NotApplicable | ProductUnit::Dimensionless | ProductUnit::VisibilityWeight => {
@@ -620,4 +525,99 @@ fn exchange_directories(_: &Path, _: &Path) -> std::io::Result<()> {
         std::io::ErrorKind::Unsupported,
         "atomic non-empty directory exchange is unavailable",
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CasaImageDomainOutput, CasaImageProductSink, persisted_beam_set};
+    use casa_coordinates::CoordinateSystem;
+    use casa_imaging_model::ImageDomainRole;
+    use casa_imaging_products::RestoringBeam;
+
+    #[test]
+    fn beam_metadata_demand_scales_with_planes_and_bounds_keyword_storage() {
+        let mut previous = 0;
+        for count in [1, 16, 512, 16_384] {
+            let bytes = super::beam_metadata_residency_bytes(count).unwrap();
+            assert!(bytes > previous);
+            previous = bytes;
+        }
+        let beams = (0..16)
+            .map(|index| {
+                Some(RestoringBeam::new(2.0e-6 + index as f64 * 1.0e-8, 1.0e-6, 0.0).unwrap())
+            })
+            .collect::<Vec<_>>();
+        let record_bytes = persisted_beam_set(&beams)
+            .to_record()
+            .retained_heap_bytes()
+            .unwrap();
+        assert!(super::beam_metadata_residency_bytes(16).unwrap() >= 4 * record_bytes as u64);
+        assert!(super::beam_metadata_residency_bytes(usize::MAX).is_err());
+    }
+
+    #[test]
+    fn domain_outputs_require_unique_roles_roots_and_one_main() {
+        let main = CasaImageDomainOutput::new(
+            ImageDomainRole::Main,
+            "main".into(),
+            CoordinateSystem::new(),
+        );
+        let outlier = CasaImageDomainOutput::new(
+            ImageDomainRole::Outlier("north".into()),
+            "north".into(),
+            CoordinateSystem::new(),
+        );
+        let sink = CasaImageProductSink::for_domains([main.clone(), outlier])
+            .expect("unique domain outputs");
+        assert_eq!(sink.domains.len(), 2);
+        assert!(CasaImageProductSink::for_domains([main.clone(), main]).is_err());
+        assert!(
+            CasaImageProductSink::for_domains([CasaImageDomainOutput::new(
+                ImageDomainRole::Outlier("north".into()),
+                "north".into(),
+                CoordinateSystem::new(),
+            )])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn blank_beam_slots_use_the_largest_valid_casa_persistence_filler() {
+        let small = RestoringBeam::new(2.0e-6, 1.0e-6, 0.1).expect("small beam");
+        let large = RestoringBeam::new(4.0e-6, 3.0e-6, -0.2).expect("large beam");
+        let persisted = persisted_beam_set(&[Some(small), None, Some(large)]);
+
+        assert_eq!(persisted.shape(), (3, 1));
+        assert_eq!(persisted.beam(0, 0).major, small.major_fwhm_rad());
+        assert_eq!(persisted.beam(1, 0).major, large.major_fwhm_rad());
+        assert_eq!(persisted.beam(2, 0).major, large.major_fwhm_rad());
+    }
+
+    #[test]
+    fn all_blank_beam_slots_use_only_the_casa_imageinfo_placeholder() {
+        let persisted = persisted_beam_set(&[None, None]);
+        let filler = persisted.beam(0, 0);
+        assert_eq!(persisted.shape(), (2, 1));
+        assert!(filler.major > 0.0);
+        assert_eq!(filler.major, filler.minor);
+        assert_eq!(persisted.beam(1, 0), filler);
+    }
+
+    #[test]
+    fn individual_outputs_replace_atomically_and_failed_sets_require_rerun() {
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("image");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("pixels"), b"old").unwrap();
+        let private = tempfile::tempdir_in(root.path()).unwrap();
+        let staged = private.path().join("image");
+        std::fs::create_dir(&staged).unwrap();
+        std::fs::write(staged.join("pixels"), b"new").unwrap();
+        super::promote_atomically(&staged, &target).unwrap();
+        assert_eq!(std::fs::read(target.join("pixels")).unwrap(), b"new");
+        assert_eq!(std::fs::read(staged.join("pixels")).unwrap(), b"old");
+        let missing = private.path().join("missing");
+        assert!(super::promote_atomically(&missing, &target).is_err());
+        assert_eq!(std::fs::read(target.join("pixels")).unwrap(), b"new");
+    }
 }

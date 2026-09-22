@@ -622,6 +622,9 @@ impl SerialProductPublicationCompletion {
         (self.planned, self.scientific, self.published)
     }
 }
+// Each executor holds one state and moves its owned inputs through publication;
+// a separate allocation for the pending variant would not bound additional work.
+#[allow(clippy::large_enum_variant)]
 enum SerialProductPublicationState {
     Pending {
         problem: CompiledProblem,

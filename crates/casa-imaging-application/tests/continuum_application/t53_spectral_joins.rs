@@ -413,6 +413,7 @@ fn t53_nonidentity_linear_sampling_preserves_affine_spectra_across_all_families(
             }
             let result = execute_continuum(imaging)
                 .unwrap_or_else(|error| panic!("{family} affine={}: {error}", !unit));
+            super::t55_cube_pipeline::assert_cube_execution_route(&result, family == "standard");
             assert!(
                 result
                     .outcome

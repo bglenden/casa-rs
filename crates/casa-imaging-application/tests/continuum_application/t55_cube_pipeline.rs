@@ -2,7 +2,6 @@
 
 use super::*;
 
-#[cfg(casa_streaming_cube_comparison)]
 #[test]
 fn streaming_cube_complete_application_handoff() {
     use casa_imaging_runtime::{CapacityDomainId, ResourceOverride, ResourcePolicy};
@@ -42,7 +41,23 @@ fn streaming_cube_complete_application_handoff() {
         )]),
         ..ResourceOverride::default()
     });
-    let result = execute_continuum(imaging).expect("complete native cube application");
+    let mut capped = imaging.clone();
+    capped.resource_policy = ResourcePolicy::Explicit(ResourceOverride {
+        workers: Some(1),
+        memory_bytes: std::collections::BTreeMap::from([(
+            CapacityDomainId::new("host-memory"),
+            1 << 20,
+        )]),
+        ..ResourceOverride::default()
+    });
+    let error = execute_continuum(capped)
+        .err()
+        .expect("insufficient memory must fail closed");
+    assert!(error.to_string().contains("memory"), "{error}");
+    assert!(!image_name.with_extension("image").exists());
+
+    let result = execute_continuum(imaging.clone()).expect("complete native cube application");
+    assert_cube_execution_route(&result, true);
     assert_standard_products(&image_name, &result.product_names);
     assert_eq!(result.outcome.output.major_cycle_count, 3);
     assert_eq!(result.outcome.output.minor_cycles.len(), 2);
@@ -62,6 +77,44 @@ fn streaming_cube_complete_application_handoff() {
                 .all(|v| v.re.is_finite() && v.im.is_finite())
         );
     }
+    drop(result);
+    imaging.image_name = root.path().join("cube-model-column");
+    imaging.save_model_column = true;
+    // Visibility publication admits the selected-source and writer lanes.
+    if let ResourcePolicy::Explicit(resources) = &mut imaging.resource_policy {
+        resources.workers = Some(2);
+    }
+    let output = execute_continuum(imaging).expect("cube visibility output keeps its owner");
+    assert_cube_execution_route(&output, false);
+    assert_eq!(output.outcome.output.major_cycle_count, 3);
+}
+
+pub(super) fn assert_cube_execution_route(
+    result: &casa_imaging_application::ContinuumImagingResult,
+    native: bool,
+) {
+    let memory = &result
+        .outcome
+        .output
+        .initial_receipt
+        .selected_alternative_projection()
+        .demand
+        .memory;
+    assert_eq!(
+        memory.iter().any(
+            |allocation| allocation.allocation_id.starts_with("native-cube-")
+                && allocation.allocation_id.ends_with("-workspace")
+        ),
+        native,
+        "execution must select the capability's storage owner"
+    );
+    assert_eq!(
+        memory.iter().any(|allocation| allocation
+            .allocation_id
+            .starts_with("spectral-operator-grids-")),
+        !native,
+        "the migrated cube must not construct the historical grid owner"
+    );
 }
 
 #[test]
@@ -153,6 +206,10 @@ fn t55_per_channel_density_request_is_bound_into_the_executed_cube() {
                         .push(casa_imaging_application::TaskRequirement::PerChannelWeightDensity);
                 }
                 let result = execute_continuum(imaging).expect("density scope execution");
+                assert_cube_execution_route(
+                    &result,
+                    cube && weighting == ContinuumWeighting::Natural,
+                );
                 let expected = if weighting == ContinuumWeighting::Natural {
                     "not_applicable"
                 } else if cube && per_channel {
@@ -179,7 +236,11 @@ fn t55_per_channel_density_request_is_bound_into_the_executed_cube() {
 
 #[test]
 fn t55_clark_cube_products_and_repeated_cycles_are_exact_across_worker_counts() {
-    compare_clark_cube_cases(&[(1, None), (2, None), (3, None)], false);
+    compare_clark_cube_cases(
+        &[(1, None), (2, None), (4, None)],
+        false,
+        &[ContinuumWeighting::Natural, ContinuumWeighting::Briggs(0.5)],
+    );
 }
 
 #[test]
@@ -187,20 +248,25 @@ fn t55_clark_cube_products_and_repeated_cycles_are_exact_across_channel_windows(
     compare_clark_cube_cases(
         &[
             (1, None),
-            (1, Some(9 << 20)),
-            (1, Some(10 << 20)),
-            (1, Some(11 << 20)),
+            (1, Some((9 << 20) + (128 << 10))),
+            (1, Some((10 << 20) + (128 << 10))),
+            (1, Some((11 << 20) + (640 << 10))),
         ],
         true,
+        &[ContinuumWeighting::Briggs(0.5)],
     );
 }
 
-fn compare_clark_cube_cases(cases: &[(u64, Option<u64>)], require_window_variation: bool) {
+fn compare_clark_cube_cases(
+    cases: &[(u64, Option<u64>)],
+    require_window_variation: bool,
+    weightings: &[ContinuumWeighting],
+) {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = spectral_line_measurement_set(root.path());
-    for weighting in [ContinuumWeighting::Natural, ContinuumWeighting::Briggs(0.5)] {
+    for &weighting in weightings {
         let mut baseline = None;
         let mut depths = std::collections::BTreeSet::new();
         for &(workers, memory_bytes) in cases {
@@ -263,24 +329,28 @@ fn compare_clark_cube_cases(cases: &[(u64, Option<u64>)], require_window_variati
             );
             assert!(result.actual_minor_iterations > 0);
             let receipt = &result.outcome.output.initial_receipt;
-            let depth = receipt
-                .selected_alternative_projection()
-                .demand
-                .memory
-                .iter()
-                .find(|allocation| {
-                    allocation
-                        .allocation_id
-                        .starts_with("spectral-operator-grids-")
-                })
-                .and_then(|allocation| allocation.allocation_id.rsplit('-').next())
-                .unwrap()
-                .parse::<usize>()
-                .unwrap();
-            depths.insert(depth);
-            eprintln!(
-                "t55_canonical_cube_window weighting={weighting:?} memory_bytes={memory_bytes:?} initial_core_depth={depth}"
-            );
+            let native = weighting == ContinuumWeighting::Natural;
+            assert_cube_execution_route(&result, native);
+            if !native {
+                let depth = receipt
+                    .selected_alternative_projection()
+                    .demand
+                    .memory
+                    .iter()
+                    .find(|allocation| {
+                        allocation
+                            .allocation_id
+                            .starts_with("spectral-operator-grids-")
+                    })
+                    .and_then(|allocation| allocation.allocation_id.rsplit('-').next())
+                    .unwrap()
+                    .parse::<usize>()
+                    .unwrap();
+                depths.insert(depth);
+                eprintln!(
+                    "t55_canonical_cube_window weighting={weighting:?} memory_bytes={memory_bytes:?} initial_core_depth={depth}"
+                );
+            }
             assert_eq!(
                 receipt
                     .selected_alternative_projection()
@@ -291,7 +361,11 @@ fn compare_clark_cube_cases(cases: &[(u64, Option<u64>)], require_window_variati
             );
             let actual_workers = receipt
                 .actual_resource_peak(
-                    &casa_imaging_runtime::WorkNodeId::new("spectral-cycle-minor-cycle"),
+                    &casa_imaging_runtime::WorkNodeId::new(if native {
+                        "native-cube-minor-0"
+                    } else {
+                        "spectral-cycle-minor-cycle"
+                    }),
                     &LeaseResource::Workers,
                     &ClaimLifetime::Work,
                 )

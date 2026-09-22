@@ -11,6 +11,24 @@ use casa_imaging_model::{
 use smallvec::SmallVec;
 use thiserror::Error;
 
+/// The next representable value toward positive infinity, including subnormals.
+/// This is the bit-exact `f64::next_up` operation for the Rust 1.85 MSRV.
+pub(crate) fn next_f64_up(value: f64) -> f64 {
+    if value.is_nan() || value == f64::INFINITY {
+        return value;
+    }
+    if value == 0.0 {
+        return f64::from_bits(1);
+    }
+    let bits = value.to_bits();
+    f64::from_bits(if value > 0.0 { bits + 1 } else { bits - 1 })
+}
+
+/// The next representable value toward negative infinity, preserving NaN bits.
+pub(crate) fn next_f64_down(value: f64) -> f64 {
+    -next_f64_up(-value)
+}
+
 /// Keep the observed/predicted pair interpolation in the same arithmetic order.
 pub(crate) fn interpolate_complex_pair(
     left: num_complex::Complex64,
@@ -1120,6 +1138,56 @@ fn sparse_terms(
 mod tests {
     use super::*;
 
+    #[test]
+    fn neighboring_floats_cover_ieee_edges() {
+        let tiny = f64::from_bits(1);
+        for (value, down, up) in [
+            (0.0, -tiny, tiny),
+            (-0.0, -tiny, tiny),
+            (tiny, 0.0, f64::from_bits(2)),
+            (-tiny, -f64::from_bits(2), -0.0),
+            (
+                1.0,
+                f64::from_bits(1.0_f64.to_bits() - 1),
+                f64::from_bits(1.0_f64.to_bits() + 1),
+            ),
+            (
+                -1.0,
+                -f64::from_bits(1.0_f64.to_bits() + 1),
+                -f64::from_bits(1.0_f64.to_bits() - 1),
+            ),
+            (
+                f64::MIN_POSITIVE,
+                f64::from_bits(f64::MIN_POSITIVE.to_bits() - 1),
+                f64::from_bits(f64::MIN_POSITIVE.to_bits() + 1),
+            ),
+            (
+                f64::MAX,
+                f64::from_bits(f64::MAX.to_bits() - 1),
+                f64::INFINITY,
+            ),
+            (
+                -f64::MAX,
+                f64::NEG_INFINITY,
+                -f64::from_bits(f64::MAX.to_bits() - 1),
+            ),
+            (f64::INFINITY, f64::MAX, f64::INFINITY),
+            (f64::NEG_INFINITY, f64::NEG_INFINITY, -f64::MAX),
+        ] {
+            assert_eq!(next_f64_down(value).to_bits(), down.to_bits());
+            assert_eq!(next_f64_up(value).to_bits(), up.to_bits());
+        }
+        for bits in [
+            0x7ff8_0000_0000_0001,
+            0xfff8_0000_0000_0001,
+            0x7ff0_0000_0000_0001,
+        ] {
+            let value = f64::from_bits(bits);
+            assert_eq!(next_f64_down(value).to_bits(), bits);
+            assert_eq!(next_f64_up(value).to_bits(), bits);
+        }
+    }
+
     fn linear_pair_next(
         grid: CasaLinearGrid,
         cursor: &mut usize,
@@ -1180,9 +1248,9 @@ mod tests {
                     for target in [0, 1, count / 2, count - 1, count] {
                         let centre = grid.fine_frequency_hz(target);
                         for left in [
-                            centre.next_down(),
+                            next_f64_down(centre),
                             centre,
-                            centre.next_up(),
+                            next_f64_up(centre),
                             centre + 0.25 * native_increment,
                         ] {
                             for start in [0, target / 2, target.min(count), count] {

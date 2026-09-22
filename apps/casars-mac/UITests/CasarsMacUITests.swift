@@ -64,7 +64,7 @@ final class CasarsMacUITests: XCTestCase {
             "-ApplePersistenceIgnoreState", "YES",
             "--open-imager-ms", measurementSet.path,
             "--imagename", "products/t64-readiness",
-            "--set-task-toggle", "write_preview_pngs", "true",
+            "--set-task-toggle", "fullsummary", "true",
         ]
         launchTestApplication()
         app.activate()
@@ -76,9 +76,9 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(try require("task.imagerReadiness").exists)
         XCTAssertTrue(try textValue(try require("task.imagerReadiness.capability")).contains("Unsupported request"))
         XCTAssertTrue(try textValue(try require("task.imagerReadiness.plan")).contains("Pending launch"))
-        XCTAssertTrue(try textValue(try require("task.imagerReadiness.cache")).contains("auto"))
-        XCTAssertTrue(try textValue(try require("task.imagerReadiness.provider")).contains("casa_imager_task v6"))
-        XCTAssertTrue(try require("task.imagerReadiness.unsupported.task.preview_png").exists)
+        XCTAssertTrue(try textValue(try require("task.imagerReadiness.cache")).contains("none"))
+        XCTAssertTrue(try textValue(try require("task.imagerReadiness.provider")).contains("casa_imager_task v8"))
+        XCTAssertTrue(try require("task.imagerReadiness.unsupported.task.full_summary").exists)
         XCTAssertFalse(try require("task.run").isEnabled)
     }
 
@@ -2379,15 +2379,7 @@ final class CasarsMacUITests: XCTestCase {
         try clickIdentified("notebook.parameters.open.\(cellID)")
         try bringIntoView("task.parameter.vis", in: "task.parameters.scroll", deltaY: -420)
         XCTAssertEqual(try accessibilityValue("task.parameterSource.vis"), "tutorial override")
-        let taskScroll = try XCTUnwrap(
-            app.scrollViews.allElementsBoundByIndex.max {
-                $0.frame.width < $1.frame.width
-            },
-            app.debugDescription
-        )
-        for _ in 0..<6 {
-            taskScroll.scroll(byDeltaX: 0, deltaY: -420)
-        }
+        try bringIntoView("task.parameter.robust", in: "task.parameters.scroll", deltaY: -240)
         XCTAssertEqual(try accessibilityValue("task.parameterSource.robust"), "tutorial override")
     }
 

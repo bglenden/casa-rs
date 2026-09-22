@@ -133,6 +133,9 @@ enum PlanePartition<'a> {
     Solve(ReconstructionPlaneInput<'a>),
 }
 
+// The bounded kernel folds these owned partials directly; boxing would add an
+// allocation to each solve completion just to shrink the statistics variant.
+#[allow(clippy::large_enum_variant)]
 enum PlanePartial<'a> {
     Statistics(ReconstructionPlaneStatistics<'a>),
     Solve(ReconstructionPlanePartial<'a>),

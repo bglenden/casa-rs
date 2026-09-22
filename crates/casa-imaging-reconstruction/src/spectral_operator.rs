@@ -44,6 +44,7 @@ use crate::{
     primary_beam::PreparedPrimaryBeamPower,
     spectral_sampling::{
         CasaLinearOutputGrid, CasaLinearRowCursor, CasaLinearSample, interpolate_complex_pair,
+        next_f64_down, next_f64_up,
     },
     trace_complex_values,
     weighting::{
@@ -5075,6 +5076,9 @@ impl<P> CasaLinearRowResampler<P> {
         }
     }
 
+    // Row geometry, numeric policy, and the two callbacks are independent inputs
+    // to this private streaming kernel, rather than persistent resampler state.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn push<T>(
         &mut self,
         current: NativeSpectralGroup<'_, P>,
@@ -7080,8 +7084,8 @@ impl CompleteDataOwnerState {
             || frequencies[self.specification.slab.core_range()]
                 .iter()
                 .any(|frequency| {
-                    (*frequency - half_width).next_down() < bounds[0].next_down()
-                        || (*frequency + half_width).next_up() > bounds[1].next_up()
+                    next_f64_down(*frequency - half_width) < next_f64_down(bounds[0])
+                        || next_f64_up(*frequency + half_width) > next_f64_up(bounds[1])
                 })
         {
             return Err(SpectralOperatorError::IncompleteCoverage);
@@ -7139,14 +7143,16 @@ impl CompleteDataOwnerState {
         let first_centre = frequencies[range.start];
         let last_centre = frequencies[range.end - 1];
         Some([
-            first
-                .min(last)
-                .min(first_centre.min(last_centre) - half_width)
-                .next_down(),
-            first
-                .max(last)
-                .max(first_centre.max(last_centre) + half_width)
-                .next_up(),
+            next_f64_down(
+                first
+                    .min(last)
+                    .min(first_centre.min(last_centre) - half_width),
+            ),
+            next_f64_up(
+                first
+                    .max(last)
+                    .max(first_centre.max(last_centre) + half_width),
+            ),
         ])
     }
 
@@ -11829,10 +11835,6 @@ pub struct PreparedFft<T: FftNum = f64> {
     lane: Vec<Complex<T>>,
     scratch: Vec<Complex<T>>,
 }
-
-#[cfg(test)]
-#[path = "streaming_cube/reference.rs"]
-pub(crate) mod streaming_reference;
 
 impl<T: FftNum> PreparedFft<T> {
     pub(crate) fn shape(&self) -> [usize; 2] {

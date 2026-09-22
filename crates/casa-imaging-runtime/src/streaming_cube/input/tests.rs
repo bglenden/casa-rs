@@ -297,6 +297,9 @@ fn cache_eviction_and_failed_load_never_relabel_overwritten_bytes() {
     file.read_exact_at(&mut byte, offset + 8).unwrap();
     byte[0] ^= 1;
     file.write_all_at(&byte, offset + 8).unwrap();
+    // Preserve the finished writer's clean-page invariant after fault injection;
+    // Linux cache release must not mask the checksum or later read errors.
+    file.sync_data().unwrap();
     assert_eq!(
         reader.read_frame(0, Some(2)).unwrap_err().kind(),
         io::ErrorKind::InvalidData
@@ -305,6 +308,7 @@ fn cache_eviction_and_failed_load_never_relabel_overwritten_bytes() {
     assert_eq!(reader.io.operations, 4);
     assert_eq!(reader.io.cache_hits, 1);
     reader.store.file.as_file().set_len(offset).unwrap();
+    reader.store.file.as_file().sync_data().unwrap();
     assert_eq!(
         reader.read_frame(0, Some(2)).unwrap_err().kind(),
         io::ErrorKind::UnexpectedEof
@@ -493,6 +497,8 @@ fn truncated_or_unreadable_input_is_an_error_not_end_of_stream() {
         .as_file()
         .set_len(plan.artifact_bytes - 1)
         .unwrap();
+    // Flush the truncated tail page before replay exercises the EOF boundary.
+    store.file.as_file().sync_data().unwrap();
     let error = store
         .reader(1)
         .unwrap()
@@ -529,6 +535,8 @@ fn misplaced_or_corrupt_frames_fail_at_the_persistence_boundary() {
         .as_file()
         .write_all_at(&frame, destination)
         .unwrap();
+    // A valid metadata frame shares the dirty page with this injected fault.
+    store.file.as_file().sync_data().unwrap();
     let mut output = NativeBlock::new(plan.block_rows, plan.channels, plan.correlations).unwrap();
     let error = store
         .reader(1)
@@ -538,6 +546,7 @@ fn misplaced_or_corrupt_frames_fail_at_the_persistence_boundary() {
     assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     frame[12] ^= 1;
     store.file.as_file().write_all_at(&frame, source).unwrap();
+    store.file.as_file().sync_data().unwrap();
     let error = store
         .reader(1)
         .unwrap()

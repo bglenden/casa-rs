@@ -805,6 +805,9 @@ impl PreparedGriddedNormalTwoDomainWindow {
         })
     }
 
+    // The frame inputs and borrowed routing owners have distinct lifetimes;
+    // keeping them explicit avoids a one-use parameter carrier in this kernel.
+    #[allow(clippy::too_many_arguments)]
     fn prepare<'a, I>(
         &mut self,
         first_sequence: u64,

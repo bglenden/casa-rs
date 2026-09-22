@@ -319,6 +319,7 @@ impl NativeStoreWriter {
         })
     }
 
+    #[cfg(test)]
     pub(super) fn append(&mut self, block: &NativeBlock) -> io::Result<()> {
         self.append_parts(&[block])
     }
@@ -427,6 +428,7 @@ impl NativeStoreWriter {
         Ok(NativeStore {
             file: self.file,
             plan: self.plan,
+            #[cfg(test)]
             written: self.io,
             retention: None,
             metadata_retention: None,
@@ -438,6 +440,7 @@ impl NativeStoreWriter {
 pub(super) struct NativeStore {
     file: NamedTempFile,
     pub(super) plan: StorePlan,
+    #[cfg(test)]
     written: StoreIo,
     // Drop file ownership before releasing its retained capacity and descriptor.
     retention: Option<crate::RetainedArtifactPermit>,
@@ -621,6 +624,7 @@ pub(super) struct NativeSource<'a> {
 }
 
 impl<'a> NativeSource<'a> {
+    #[cfg(test)]
     pub(super) fn new(store: &'a mut NativeStore, channels: Range<usize>) -> io::Result<Self> {
         if channels.is_empty() || channels.end > store.plan.channels {
             return Err(invalid_input("invalid native source window"));
@@ -635,6 +639,7 @@ impl<'a> NativeSource<'a> {
     }
 
     /// Charge once, in addition to the store/file owner and each source slot.
+    #[cfg(test)]
     fn shared_capacity_bytes(&self) -> u64 {
         size_of::<Self>() as u64
             + self.reader.encoded.capacity() as u64
@@ -643,6 +648,7 @@ impl<'a> NativeSource<'a> {
     }
 
     /// Per slot; BoundedStreamPlan's source capacity is the sum over its slots.
+    #[cfg(test)]
     fn slot_capacity_bytes(&self) -> u64 {
         self.block_bytes(self.reader.store.plan.block_rows)
     }

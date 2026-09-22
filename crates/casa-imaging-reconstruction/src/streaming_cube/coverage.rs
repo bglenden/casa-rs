@@ -444,7 +444,8 @@ mod tests {
     #[test]
     fn row_framing_preserves_every_existing_covered_field() {
         let base = sample(0, 0);
-        let mutations: &[(&str, fn(&mut WeightingSampleValue))] = &[
+        type Mutation = (&'static str, fn(&mut WeightingSampleValue));
+        let mutations: &[Mutation] = &[
             ("MS", |s| {
                 s.sample.address.measurement_set =
                     MeasurementSetIdentity::new(LogicalIdentity::from_sha256([9; 32]))

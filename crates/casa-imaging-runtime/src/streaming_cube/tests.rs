@@ -13,7 +13,8 @@ use casa_ms::*;
 use std::convert::Infallible;
 
 #[path = "../../../casa-imaging-reconstruction/tests/support/streaming_cube.rs"]
-#[allow(dead_code)]
+// Reuse the shared fixture in each isolated test module and its nested model fixture.
+#[allow(dead_code, clippy::duplicate_mod)]
 mod fixture;
 
 struct SourceFixture {
@@ -22,6 +23,12 @@ struct SourceFixture {
     access: DeferredSelectedObservationAccess,
     authority: ResourceAuthority,
     storage: ManagedSpillStorage,
+}
+
+#[test]
+fn streaming_cube_capability_requires_linear_channel_local_geometry() {
+    assert!(InitialCube::supports(&fixture::problem(SpectralSamplingLaw::LINEAR)).unwrap());
+    assert!(!InitialCube::supports(&fixture::problem(SpectralSamplingLaw::NEAREST)).unwrap());
 }
 
 fn source_fixture(basis: SyntheticPolarizationBasis, channels: u32) -> SourceFixture {
