@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["SpectralInterpolationMethod"],"struct":["SpectralInterpolationOracle","SpectralInterpolationOracleResult"]};
+window.SIDEBAR_ITEMS = {"enum":["SpectralInterpolationEdge","SpectralInterpolationMethod"],"struct":["SpectralInterpolationOracle","SpectralInterpolationOracleResult"]};

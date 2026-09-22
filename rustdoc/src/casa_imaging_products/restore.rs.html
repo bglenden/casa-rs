@@ -88,238 +88,296 @@
 <a href=#88 id=88 data-nosnippet>88</a>    kernel
 <a href=#89 id=89 data-nosnippet>89</a>}
 <a href=#90 id=90 data-nosnippet>90</a>
-<a href=#91 id=91 data-nosnippet>91</a><span class="doccomment">/// Result of rescaling one normalized residual plane to a selected beam.
-<a href=#92 id=92 data-nosnippet>92</a>///
-<a href=#93 id=93 data-nosnippet>93</a>/// The diagnostics are the first-divergence seam used by the focused CASA
-<a href=#94 id=94 data-nosnippet>94</a>/// comparator: fitted and common beams are compared before any final restored
-<a href=#95 id=95 data-nosnippet>95</a>/// image can hide whether selection or smoothing first diverged.
-<a href=#96 id=96 data-nosnippet>96</a></span><span class="attr">#[derive(Debug, Clone, PartialEq)]
-<a href=#97 id=97 data-nosnippet>97</a></span><span class="kw">pub struct </span>ResidualBeamScaling {
-<a href=#98 id=98 data-nosnippet>98</a>    values: Vec&lt;f32&gt;,
-<a href=#99 id=99 data-nosnippet>99</a>    smoothing_beam: <span class="prelude-ty">Option</span>&lt;RestoringBeam&gt;,
-<a href=#100 id=100 data-nosnippet>100</a>    area_ratio: f64,
-<a href=#101 id=101 data-nosnippet>101</a>    applied: bool,
-<a href=#102 id=102 data-nosnippet>102</a>}
-<a href=#103 id=103 data-nosnippet>103</a>
-<a href=#104 id=104 data-nosnippet>104</a><span class="kw">impl </span>ResidualBeamScaling {
-<a href=#105 id=105 data-nosnippet>105</a>    <span class="doccomment">/// Borrow the scaled residual values.
-<a href=#106 id=106 data-nosnippet>106</a>    </span><span class="attr">#[must_use]
-<a href=#107 id=107 data-nosnippet>107</a>    </span><span class="kw">pub fn </span>values(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[f32] {
-<a href=#108 id=108 data-nosnippet>108</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.values
-<a href=#109 id=109 data-nosnippet>109</a>    }
-<a href=#110 id=110 data-nosnippet>110</a>
-<a href=#111 id=111 data-nosnippet>111</a>    <span class="doccomment">/// Return the deconvolved smoothing beam, if the beams differed.
-<a href=#112 id=112 data-nosnippet>112</a>    </span><span class="attr">#[must_use]
-<a href=#113 id=113 data-nosnippet>113</a>    </span><span class="kw">pub const fn </span>smoothing_beam(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;RestoringBeam&gt; {
-<a href=#114 id=114 data-nosnippet>114</a>        <span class="self">self</span>.smoothing_beam
-<a href=#115 id=115 data-nosnippet>115</a>    }
-<a href=#116 id=116 data-nosnippet>116</a>
-<a href=#117 id=117 data-nosnippet>117</a>    <span class="doccomment">/// Return the target/source beam-area ratio.
-<a href=#118 id=118 data-nosnippet>118</a>    </span><span class="attr">#[must_use]
-<a href=#119 id=119 data-nosnippet>119</a>    </span><span class="kw">pub const fn </span>area_ratio(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
-<a href=#120 id=120 data-nosnippet>120</a>        <span class="self">self</span>.area_ratio
-<a href=#121 id=121 data-nosnippet>121</a>    }
-<a href=#122 id=122 data-nosnippet>122</a>
-<a href=#123 id=123 data-nosnippet>123</a>    <span class="doccomment">/// Return whether CASA's pixel-width gate applied smoothing and scaling.
-<a href=#124 id=124 data-nosnippet>124</a>    </span><span class="attr">#[must_use]
-<a href=#125 id=125 data-nosnippet>125</a>    </span><span class="kw">pub const fn </span>applied(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#126 id=126 data-nosnippet>126</a>        <span class="self">self</span>.applied
-<a href=#127 id=127 data-nosnippet>127</a>    }
-<a href=#128 id=128 data-nosnippet>128</a>
-<a href=#129 id=129 data-nosnippet>129</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>into_values(<span class="self">self</span>) -&gt; Vec&lt;f32&gt; {
-<a href=#130 id=130 data-nosnippet>130</a>        <span class="self">self</span>.values
-<a href=#131 id=131 data-nosnippet>131</a>    }
-<a href=#132 id=132 data-nosnippet>132</a>}
+<a href=#91 id=91 data-nosnippet>91</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>restore_model_plane(
+<a href=#92 id=92 data-nosnippet>92</a>    model: <span class="kw-2">&amp;</span>[f32],
+<a href=#93 id=93 data-nosnippet>93</a>    residual: Vec&lt;f32&gt;,
+<a href=#94 id=94 data-nosnippet>94</a>    shape: [usize; <span class="number">2</span>],
+<a href=#95 id=95 data-nosnippet>95</a>    beam: <span class="kw-2">&amp;</span>RestoringBeam,
+<a href=#96 id=96 data-nosnippet>96</a>    cell_size_rad: [f64; <span class="number">2</span>],
+<a href=#97 id=97 data-nosnippet>97</a>) -&gt; Vec&lt;f32&gt; {
+<a href=#98 id=98 data-nosnippet>98</a>    <span class="comment">// FFT zero signs cannot affect addition except when the residual is -0.
+<a href=#99 id=99 data-nosnippet>99</a>    </span><span class="kw">if </span>model.iter().all(|value| <span class="kw-2">*</span>value == <span class="number">0.0</span>)
+<a href=#100 id=100 data-nosnippet>100</a>        &amp;&amp; residual
+<a href=#101 id=101 data-nosnippet>101</a>            .iter()
+<a href=#102 id=102 data-nosnippet>102</a>            .all(|value| value.to_bits() != (-<span class="number">0.0_f32</span>).to_bits())
+<a href=#103 id=103 data-nosnippet>103</a>    {
+<a href=#104 id=104 data-nosnippet>104</a>        <span class="kw">return </span>residual;
+<a href=#105 id=105 data-nosnippet>105</a>    }
+<a href=#106 id=106 data-nosnippet>106</a>    <span class="kw">let </span>kernel = gaussian_beam_image(shape, beam, cell_size_rad);
+<a href=#107 id=107 data-nosnippet>107</a>    <span class="kw">let </span><span class="kw-2">mut </span>restored = fft_convolve(model, kernel.as_slice().expect(<span class="string">"contiguous"</span>), shape);
+<a href=#108 id=108 data-nosnippet>108</a>    <span class="kw">for </span>(restored, residual) <span class="kw">in </span>restored.iter_mut().zip(residual) {
+<a href=#109 id=109 data-nosnippet>109</a>        <span class="kw-2">*</span>restored += residual;
+<a href=#110 id=110 data-nosnippet>110</a>    }
+<a href=#111 id=111 data-nosnippet>111</a>    restored
+<a href=#112 id=112 data-nosnippet>112</a>}
+<a href=#113 id=113 data-nosnippet>113</a>
+<a href=#114 id=114 data-nosnippet>114</a><span class="doccomment">/// Result of rescaling one normalized residual plane to a selected beam.
+<a href=#115 id=115 data-nosnippet>115</a>///
+<a href=#116 id=116 data-nosnippet>116</a>/// The diagnostics are the first-divergence seam used by the focused CASA
+<a href=#117 id=117 data-nosnippet>117</a>/// comparator: fitted and common beams are compared before any final restored
+<a href=#118 id=118 data-nosnippet>118</a>/// image can hide whether selection or smoothing first diverged.
+<a href=#119 id=119 data-nosnippet>119</a></span><span class="attr">#[derive(Debug, Clone, PartialEq)]
+<a href=#120 id=120 data-nosnippet>120</a></span><span class="kw">pub struct </span>ResidualBeamScaling {
+<a href=#121 id=121 data-nosnippet>121</a>    values: Vec&lt;f32&gt;,
+<a href=#122 id=122 data-nosnippet>122</a>    smoothing_beam: <span class="prelude-ty">Option</span>&lt;RestoringBeam&gt;,
+<a href=#123 id=123 data-nosnippet>123</a>    area_ratio: f64,
+<a href=#124 id=124 data-nosnippet>124</a>    applied: bool,
+<a href=#125 id=125 data-nosnippet>125</a>}
+<a href=#126 id=126 data-nosnippet>126</a>
+<a href=#127 id=127 data-nosnippet>127</a><span class="kw">impl </span>ResidualBeamScaling {
+<a href=#128 id=128 data-nosnippet>128</a>    <span class="doccomment">/// Borrow the scaled residual values.
+<a href=#129 id=129 data-nosnippet>129</a>    </span><span class="attr">#[must_use]
+<a href=#130 id=130 data-nosnippet>130</a>    </span><span class="kw">pub fn </span>values(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[f32] {
+<a href=#131 id=131 data-nosnippet>131</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.values
+<a href=#132 id=132 data-nosnippet>132</a>    }
 <a href=#133 id=133 data-nosnippet>133</a>
-<a href=#134 id=134 data-nosnippet>134</a><span class="doccomment">/// Rescale a normalized residual plane from its fitted beam to a selected beam.
-<a href=#135 id=135 data-nosnippet>135</a>///
-<a href=#136 id=136 data-nosnippet>136</a>/// This follows CASA `SIImageStore::rescaleResolution`: deconvolve the fitted
-<a href=#137 id=137 data-nosnippet>137</a>/// beam from the selected beam, skip effectively identical or sub-pixel
-<a href=#138 id=138 data-nosnippet>138</a>/// smoothing, otherwise convolve with unit volume and multiply by the
-<a href=#139 id=139 data-nosnippet>139</a>/// selected/fitted beam-area ratio.
-<a href=#140 id=140 data-nosnippet>140</a>///
-<a href=#141 id=141 data-nosnippet>141</a>/// # Errors
-<a href=#142 id=142 data-nosnippet>142</a>///
-<a href=#143 id=143 data-nosnippet>143</a>/// Returns [`ProductsError::BeamFitFailed`] when beam deconvolution fails.
-<a href=#144 id=144 data-nosnippet>144</a></span><span class="kw">pub fn </span>rescale_residual_to_beam(
-<a href=#145 id=145 data-nosnippet>145</a>    residual: <span class="kw-2">&amp;</span>[f32],
-<a href=#146 id=146 data-nosnippet>146</a>    shape: [usize; <span class="number">2</span>],
-<a href=#147 id=147 data-nosnippet>147</a>    cell_size_rad: [f64; <span class="number">2</span>],
-<a href=#148 id=148 data-nosnippet>148</a>    fitted: RestoringBeam,
-<a href=#149 id=149 data-nosnippet>149</a>    selected: RestoringBeam,
-<a href=#150 id=150 data-nosnippet>150</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ResidualBeamScaling, ProductsError&gt; {
-<a href=#151 id=151 data-nosnippet>151</a>    <span class="kw">let </span>area_ratio = selected.area_sr() / fitted.area_sr();
-<a href=#152 id=152 data-nosnippet>152</a>    <span class="kw">let </span>smoothing_beam = selected
-<a href=#153 id=153 data-nosnippet>153</a>        .deconvolving_beam(fitted)
-<a href=#154 id=154 data-nosnippet>154</a>        .map_err(|error| ProductsError::BeamFitFailed(error.to_string()))<span class="question-mark">?</span>;
-<a href=#155 id=155 data-nosnippet>155</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(smoothing_beam) = smoothing_beam <span class="kw">else </span>{
-<a href=#156 id=156 data-nosnippet>156</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(ResidualBeamScaling {
-<a href=#157 id=157 data-nosnippet>157</a>            values: residual.to_vec(),
-<a href=#158 id=158 data-nosnippet>158</a>            smoothing_beam: <span class="prelude-val">None</span>,
-<a href=#159 id=159 data-nosnippet>159</a>            area_ratio,
-<a href=#160 id=160 data-nosnippet>160</a>            applied: <span class="bool-val">false</span>,
-<a href=#161 id=161 data-nosnippet>161</a>        });
-<a href=#162 id=162 data-nosnippet>162</a>    };
-<a href=#163 id=163 data-nosnippet>163</a>    <span class="kw">if </span>smoothing_beam.minor_fwhm_rad() &lt;= cell_size_rad[<span class="number">0</span>].hypot(cell_size_rad[<span class="number">1</span>]) {
-<a href=#164 id=164 data-nosnippet>164</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(ResidualBeamScaling {
-<a href=#165 id=165 data-nosnippet>165</a>            values: residual.to_vec(),
-<a href=#166 id=166 data-nosnippet>166</a>            smoothing_beam: <span class="prelude-val">Some</span>(smoothing_beam),
-<a href=#167 id=167 data-nosnippet>167</a>            area_ratio,
-<a href=#168 id=168 data-nosnippet>168</a>            applied: <span class="bool-val">false</span>,
-<a href=#169 id=169 data-nosnippet>169</a>        });
-<a href=#170 id=170 data-nosnippet>170</a>    }
-<a href=#171 id=171 data-nosnippet>171</a>
-<a href=#172 id=172 data-nosnippet>172</a>    <span class="kw">let </span><span class="kw-2">mut </span>kernel = gaussian_beam_image(shape, <span class="kw-2">&amp;</span>smoothing_beam, cell_size_rad);
-<a href=#173 id=173 data-nosnippet>173</a>    <span class="kw">let </span>volume = f64::from(kernel.sum());
-<a href=#174 id=174 data-nosnippet>174</a>    <span class="kw">if </span>!(volume.is_finite() &amp;&amp; volume &gt; <span class="number">0.0</span>) {
-<a href=#175 id=175 data-nosnippet>175</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::GeneratedNonfinite);
-<a href=#176 id=176 data-nosnippet>176</a>    }
-<a href=#177 id=177 data-nosnippet>177</a>    kernel.mapv_inplace(|value| (f64::from(value) / volume) <span class="kw">as </span>f32);
-<a href=#178 id=178 data-nosnippet>178</a>    <span class="kw">let </span><span class="kw-2">mut </span>values = fft_convolve(
-<a href=#179 id=179 data-nosnippet>179</a>        residual,
-<a href=#180 id=180 data-nosnippet>180</a>        kernel.as_slice().expect(<span class="string">"Gaussian kernel is contiguous"</span>),
-<a href=#181 id=181 data-nosnippet>181</a>        shape,
-<a href=#182 id=182 data-nosnippet>182</a>    );
-<a href=#183 id=183 data-nosnippet>183</a>    <span class="kw">for </span>value <span class="kw">in </span><span class="kw-2">&amp;mut </span>values {
-<a href=#184 id=184 data-nosnippet>184</a>        <span class="kw-2">*</span>value <span class="kw-2">*</span>= area_ratio <span class="kw">as </span>f32;
-<a href=#185 id=185 data-nosnippet>185</a>    }
-<a href=#186 id=186 data-nosnippet>186</a>    <span class="prelude-val">Ok</span>(ResidualBeamScaling {
-<a href=#187 id=187 data-nosnippet>187</a>        values,
-<a href=#188 id=188 data-nosnippet>188</a>        smoothing_beam: <span class="prelude-val">Some</span>(smoothing_beam),
-<a href=#189 id=189 data-nosnippet>189</a>        area_ratio,
-<a href=#190 id=190 data-nosnippet>190</a>        applied: <span class="bool-val">true</span>,
-<a href=#191 id=191 data-nosnippet>191</a>    })
-<a href=#192 id=192 data-nosnippet>192</a>}
-<a href=#193 id=193 data-nosnippet>193</a>
-<a href=#194 id=194 data-nosnippet>194</a><span class="doccomment">/// Convolve one real plane with an equal-shape kernel through even-shifted
-<a href=#195 id=195 data-nosnippet>195</a>/// FFTs, matching the reconstruction owner's transform conventions.
-<a href=#196 id=196 data-nosnippet>196</a></span><span class="attr">#[must_use]
-<a href=#197 id=197 data-nosnippet>197</a></span><span class="kw">pub fn </span>fft_convolve(plane: <span class="kw-2">&amp;</span>[f32], kernel: <span class="kw-2">&amp;</span>[f32], shape: [usize; <span class="number">2</span>]) -&gt; Vec&lt;f32&gt; {
-<a href=#198 id=198 data-nosnippet>198</a>    <span class="kw">let </span>cells = shape[<span class="number">0</span>] * shape[<span class="number">1</span>];
-<a href=#199 id=199 data-nosnippet>199</a>    <span class="kw">let </span><span class="kw-2">mut </span>planner = FftPlanner::&lt;f64&gt;::new();
-<a href=#200 id=200 data-nosnippet>200</a>    <span class="kw">let </span><span class="kw-2">mut </span>signal = Array2::&lt;Complex64&gt;::from_shape_vec(
-<a href=#201 id=201 data-nosnippet>201</a>        (shape[<span class="number">0</span>], shape[<span class="number">1</span>]),
-<a href=#202 id=202 data-nosnippet>202</a>        plane
-<a href=#203 id=203 data-nosnippet>203</a>            .iter()
-<a href=#204 id=204 data-nosnippet>204</a>            .map(|v| Complex64::new(f64::from(<span class="kw-2">*</span>v), <span class="number">0.0</span>))
-<a href=#205 id=205 data-nosnippet>205</a>            .collect(),
-<a href=#206 id=206 data-nosnippet>206</a>    )
-<a href=#207 id=207 data-nosnippet>207</a>    .expect(<span class="string">"shape matches payload"</span>);
-<a href=#208 id=208 data-nosnippet>208</a>    <span class="kw">let </span><span class="kw-2">mut </span>response = Array2::&lt;Complex64&gt;::from_shape_vec(
-<a href=#209 id=209 data-nosnippet>209</a>        (shape[<span class="number">0</span>], shape[<span class="number">1</span>]),
-<a href=#210 id=210 data-nosnippet>210</a>        kernel
-<a href=#211 id=211 data-nosnippet>211</a>            .iter()
-<a href=#212 id=212 data-nosnippet>212</a>            .map(|v| Complex64::new(f64::from(<span class="kw-2">*</span>v), <span class="number">0.0</span>))
-<a href=#213 id=213 data-nosnippet>213</a>            .collect(),
-<a href=#214 id=214 data-nosnippet>214</a>    )
-<a href=#215 id=215 data-nosnippet>215</a>    .expect(<span class="string">"shape matches kernel"</span>);
+<a href=#134 id=134 data-nosnippet>134</a>    <span class="doccomment">/// Return the deconvolved smoothing beam, if the beams differed.
+<a href=#135 id=135 data-nosnippet>135</a>    </span><span class="attr">#[must_use]
+<a href=#136 id=136 data-nosnippet>136</a>    </span><span class="kw">pub const fn </span>smoothing_beam(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;RestoringBeam&gt; {
+<a href=#137 id=137 data-nosnippet>137</a>        <span class="self">self</span>.smoothing_beam
+<a href=#138 id=138 data-nosnippet>138</a>    }
+<a href=#139 id=139 data-nosnippet>139</a>
+<a href=#140 id=140 data-nosnippet>140</a>    <span class="doccomment">/// Return the target/source beam-area ratio.
+<a href=#141 id=141 data-nosnippet>141</a>    </span><span class="attr">#[must_use]
+<a href=#142 id=142 data-nosnippet>142</a>    </span><span class="kw">pub const fn </span>area_ratio(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+<a href=#143 id=143 data-nosnippet>143</a>        <span class="self">self</span>.area_ratio
+<a href=#144 id=144 data-nosnippet>144</a>    }
+<a href=#145 id=145 data-nosnippet>145</a>
+<a href=#146 id=146 data-nosnippet>146</a>    <span class="doccomment">/// Return whether CASA's pixel-width gate applied smoothing and scaling.
+<a href=#147 id=147 data-nosnippet>147</a>    </span><span class="attr">#[must_use]
+<a href=#148 id=148 data-nosnippet>148</a>    </span><span class="kw">pub const fn </span>applied(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#149 id=149 data-nosnippet>149</a>        <span class="self">self</span>.applied
+<a href=#150 id=150 data-nosnippet>150</a>    }
+<a href=#151 id=151 data-nosnippet>151</a>
+<a href=#152 id=152 data-nosnippet>152</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>into_values(<span class="self">self</span>) -&gt; Vec&lt;f32&gt; {
+<a href=#153 id=153 data-nosnippet>153</a>        <span class="self">self</span>.values
+<a href=#154 id=154 data-nosnippet>154</a>    }
+<a href=#155 id=155 data-nosnippet>155</a>}
+<a href=#156 id=156 data-nosnippet>156</a>
+<a href=#157 id=157 data-nosnippet>157</a><span class="doccomment">/// Rescale a normalized residual plane from its fitted beam to a selected beam.
+<a href=#158 id=158 data-nosnippet>158</a>///
+<a href=#159 id=159 data-nosnippet>159</a>/// This follows CASA `SIImageStore::rescaleResolution`: deconvolve the fitted
+<a href=#160 id=160 data-nosnippet>160</a>/// beam from the selected beam, skip effectively identical or sub-pixel
+<a href=#161 id=161 data-nosnippet>161</a>/// smoothing, otherwise convolve with unit volume and multiply by the
+<a href=#162 id=162 data-nosnippet>162</a>/// selected/fitted beam-area ratio.
+<a href=#163 id=163 data-nosnippet>163</a>///
+<a href=#164 id=164 data-nosnippet>164</a>/// # Errors
+<a href=#165 id=165 data-nosnippet>165</a>///
+<a href=#166 id=166 data-nosnippet>166</a>/// Returns [`ProductsError::BeamFitFailed`] when beam deconvolution fails.
+<a href=#167 id=167 data-nosnippet>167</a></span><span class="kw">pub fn </span>rescale_residual_to_beam(
+<a href=#168 id=168 data-nosnippet>168</a>    residual: <span class="kw-2">&amp;</span>[f32],
+<a href=#169 id=169 data-nosnippet>169</a>    shape: [usize; <span class="number">2</span>],
+<a href=#170 id=170 data-nosnippet>170</a>    cell_size_rad: [f64; <span class="number">2</span>],
+<a href=#171 id=171 data-nosnippet>171</a>    fitted: RestoringBeam,
+<a href=#172 id=172 data-nosnippet>172</a>    selected: RestoringBeam,
+<a href=#173 id=173 data-nosnippet>173</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ResidualBeamScaling, ProductsError&gt; {
+<a href=#174 id=174 data-nosnippet>174</a>    <span class="kw">let </span>area_ratio = selected.area_sr() / fitted.area_sr();
+<a href=#175 id=175 data-nosnippet>175</a>    <span class="kw">let </span>smoothing_beam = selected
+<a href=#176 id=176 data-nosnippet>176</a>        .deconvolving_beam(fitted)
+<a href=#177 id=177 data-nosnippet>177</a>        .map_err(|error| ProductsError::BeamFitFailed(error.to_string()))<span class="question-mark">?</span>;
+<a href=#178 id=178 data-nosnippet>178</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(smoothing_beam) = smoothing_beam <span class="kw">else </span>{
+<a href=#179 id=179 data-nosnippet>179</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(ResidualBeamScaling {
+<a href=#180 id=180 data-nosnippet>180</a>            values: residual.to_vec(),
+<a href=#181 id=181 data-nosnippet>181</a>            smoothing_beam: <span class="prelude-val">None</span>,
+<a href=#182 id=182 data-nosnippet>182</a>            area_ratio,
+<a href=#183 id=183 data-nosnippet>183</a>            applied: <span class="bool-val">false</span>,
+<a href=#184 id=184 data-nosnippet>184</a>        });
+<a href=#185 id=185 data-nosnippet>185</a>    };
+<a href=#186 id=186 data-nosnippet>186</a>    <span class="kw">if </span>smoothing_beam.minor_fwhm_rad() &lt;= cell_size_rad[<span class="number">0</span>].hypot(cell_size_rad[<span class="number">1</span>]) {
+<a href=#187 id=187 data-nosnippet>187</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(ResidualBeamScaling {
+<a href=#188 id=188 data-nosnippet>188</a>            values: residual.to_vec(),
+<a href=#189 id=189 data-nosnippet>189</a>            smoothing_beam: <span class="prelude-val">Some</span>(smoothing_beam),
+<a href=#190 id=190 data-nosnippet>190</a>            area_ratio,
+<a href=#191 id=191 data-nosnippet>191</a>            applied: <span class="bool-val">false</span>,
+<a href=#192 id=192 data-nosnippet>192</a>        });
+<a href=#193 id=193 data-nosnippet>193</a>    }
+<a href=#194 id=194 data-nosnippet>194</a>
+<a href=#195 id=195 data-nosnippet>195</a>    <span class="kw">let </span><span class="kw-2">mut </span>kernel = gaussian_beam_image(shape, <span class="kw-2">&amp;</span>smoothing_beam, cell_size_rad);
+<a href=#196 id=196 data-nosnippet>196</a>    <span class="kw">let </span>volume = f64::from(kernel.sum());
+<a href=#197 id=197 data-nosnippet>197</a>    <span class="kw">if </span>!(volume.is_finite() &amp;&amp; volume &gt; <span class="number">0.0</span>) {
+<a href=#198 id=198 data-nosnippet>198</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::GeneratedNonfinite);
+<a href=#199 id=199 data-nosnippet>199</a>    }
+<a href=#200 id=200 data-nosnippet>200</a>    kernel.mapv_inplace(|value| (f64::from(value) / volume) <span class="kw">as </span>f32);
+<a href=#201 id=201 data-nosnippet>201</a>    <span class="kw">let </span><span class="kw-2">mut </span>values = fft_convolve(
+<a href=#202 id=202 data-nosnippet>202</a>        residual,
+<a href=#203 id=203 data-nosnippet>203</a>        kernel.as_slice().expect(<span class="string">"Gaussian kernel is contiguous"</span>),
+<a href=#204 id=204 data-nosnippet>204</a>        shape,
+<a href=#205 id=205 data-nosnippet>205</a>    );
+<a href=#206 id=206 data-nosnippet>206</a>    <span class="kw">for </span>value <span class="kw">in </span><span class="kw-2">&amp;mut </span>values {
+<a href=#207 id=207 data-nosnippet>207</a>        <span class="kw-2">*</span>value <span class="kw-2">*</span>= area_ratio <span class="kw">as </span>f32;
+<a href=#208 id=208 data-nosnippet>208</a>    }
+<a href=#209 id=209 data-nosnippet>209</a>    <span class="prelude-val">Ok</span>(ResidualBeamScaling {
+<a href=#210 id=210 data-nosnippet>210</a>        values,
+<a href=#211 id=211 data-nosnippet>211</a>        smoothing_beam: <span class="prelude-val">Some</span>(smoothing_beam),
+<a href=#212 id=212 data-nosnippet>212</a>        area_ratio,
+<a href=#213 id=213 data-nosnippet>213</a>        applied: <span class="bool-val">true</span>,
+<a href=#214 id=214 data-nosnippet>214</a>    })
+<a href=#215 id=215 data-nosnippet>215</a>}
 <a href=#216 id=216 data-nosnippet>216</a>
-<a href=#217 id=217 data-nosnippet>217</a>    <span class="kw">for </span>data <span class="kw">in </span>[<span class="kw-2">&amp;mut </span>signal, <span class="kw-2">&amp;mut </span>response] {
-<a href=#218 id=218 data-nosnippet>218</a>        shift_even(data);
-<a href=#219 id=219 data-nosnippet>219</a>        <span class="kw">for </span>axis <span class="kw">in </span><span class="number">0</span>..<span class="number">2 </span>{
-<a href=#220 id=220 data-nosnippet>220</a>            <span class="kw">let </span>plan = planner.plan_fft_forward(data.len_of(Axis(axis)));
-<a href=#221 id=221 data-nosnippet>221</a>            <span class="kw">let </span>scratch_len = plan.get_inplace_scratch_len();
-<a href=#222 id=222 data-nosnippet>222</a>            <span class="kw">let </span>length = data.len_of(Axis(axis));
-<a href=#223 id=223 data-nosnippet>223</a>            <span class="kw">let </span><span class="kw-2">mut </span>lane = <span class="macro">vec!</span>[Complex64::default(); length];
-<a href=#224 id=224 data-nosnippet>224</a>            <span class="kw">let </span><span class="kw-2">mut </span>scratch = <span class="macro">vec!</span>[Complex64::default(); scratch_len];
-<a href=#225 id=225 data-nosnippet>225</a>            <span class="kw">for </span><span class="kw-2">mut </span>view <span class="kw">in </span>data.lanes_mut(Axis(axis)) {
-<a href=#226 id=226 data-nosnippet>226</a>                lane.iter_mut()
-<a href=#227 id=227 data-nosnippet>227</a>                    .zip(view.iter())
-<a href=#228 id=228 data-nosnippet>228</a>                    .for_each(|(target, source)| {
-<a href=#229 id=229 data-nosnippet>229</a>                        <span class="kw-2">*</span>target = <span class="kw-2">*</span>source;
-<a href=#230 id=230 data-nosnippet>230</a>                    });
-<a href=#231 id=231 data-nosnippet>231</a>                plan.process_with_scratch(<span class="kw-2">&amp;mut </span>lane, <span class="kw-2">&amp;mut </span>scratch);
-<a href=#232 id=232 data-nosnippet>232</a>                lane.iter()
-<a href=#233 id=233 data-nosnippet>233</a>                    .zip(view.iter_mut())
-<a href=#234 id=234 data-nosnippet>234</a>                    .for_each(|(source, target)| <span class="kw-2">*</span>target = <span class="kw-2">*</span>source);
-<a href=#235 id=235 data-nosnippet>235</a>            }
-<a href=#236 id=236 data-nosnippet>236</a>        }
-<a href=#237 id=237 data-nosnippet>237</a>        shift_even(data);
-<a href=#238 id=238 data-nosnippet>238</a>    }
-<a href=#239 id=239 data-nosnippet>239</a>    <span class="kw">for </span>(signal, response) <span class="kw">in </span>signal.iter_mut().zip(response.iter()) {
-<a href=#240 id=240 data-nosnippet>240</a>        <span class="kw-2">*</span>signal <span class="kw-2">*</span>= <span class="kw-2">*</span>response;
-<a href=#241 id=241 data-nosnippet>241</a>    }
-<a href=#242 id=242 data-nosnippet>242</a>    shift_even(<span class="kw-2">&amp;mut </span>signal);
-<a href=#243 id=243 data-nosnippet>243</a>    <span class="kw">for </span>axis <span class="kw">in </span><span class="number">0</span>..<span class="number">2 </span>{
-<a href=#244 id=244 data-nosnippet>244</a>        <span class="kw">let </span>plan = planner.plan_fft_inverse(signal.len_of(Axis(axis)));
-<a href=#245 id=245 data-nosnippet>245</a>        <span class="kw">let </span>scratch_len = plan.get_inplace_scratch_len();
-<a href=#246 id=246 data-nosnippet>246</a>        <span class="kw">let </span>length = signal.len_of(Axis(axis));
-<a href=#247 id=247 data-nosnippet>247</a>        <span class="kw">let </span><span class="kw-2">mut </span>lane = <span class="macro">vec!</span>[Complex64::default(); length];
-<a href=#248 id=248 data-nosnippet>248</a>        <span class="kw">let </span><span class="kw-2">mut </span>scratch = <span class="macro">vec!</span>[Complex64::default(); scratch_len];
-<a href=#249 id=249 data-nosnippet>249</a>        <span class="kw">for </span><span class="kw-2">mut </span>view <span class="kw">in </span>signal.lanes_mut(Axis(axis)) {
-<a href=#250 id=250 data-nosnippet>250</a>            lane.iter_mut()
-<a href=#251 id=251 data-nosnippet>251</a>                .zip(view.iter())
-<a href=#252 id=252 data-nosnippet>252</a>                .for_each(|(target, source)| <span class="kw-2">*</span>target = <span class="kw-2">*</span>source);
-<a href=#253 id=253 data-nosnippet>253</a>            plan.process_with_scratch(<span class="kw-2">&amp;mut </span>lane, <span class="kw-2">&amp;mut </span>scratch);
-<a href=#254 id=254 data-nosnippet>254</a>            lane.iter()
-<a href=#255 id=255 data-nosnippet>255</a>                .zip(view.iter_mut())
-<a href=#256 id=256 data-nosnippet>256</a>                .for_each(|(source, target)| <span class="kw-2">*</span>target = <span class="kw-2">*</span>source);
-<a href=#257 id=257 data-nosnippet>257</a>        }
-<a href=#258 id=258 data-nosnippet>258</a>    }
-<a href=#259 id=259 data-nosnippet>259</a>    shift_even(<span class="kw-2">&amp;mut </span>signal);
-<a href=#260 id=260 data-nosnippet>260</a>
-<a href=#261 id=261 data-nosnippet>261</a>    <span class="kw">let </span>scale = <span class="number">1.0 </span>/ cells <span class="kw">as </span>f64;
-<a href=#262 id=262 data-nosnippet>262</a>    signal
-<a href=#263 id=263 data-nosnippet>263</a>        .iter()
-<a href=#264 id=264 data-nosnippet>264</a>        .map(|value| (value.re * scale) <span class="kw">as </span>f32)
-<a href=#265 id=265 data-nosnippet>265</a>        .collect()
-<a href=#266 id=266 data-nosnippet>266</a>}
-<a href=#267 id=267 data-nosnippet>267</a>
-<a href=#268 id=268 data-nosnippet>268</a><span class="kw">fn </span>shift_even(data: <span class="kw-2">&amp;mut </span>Array2&lt;Complex64&gt;) {
-<a href=#269 id=269 data-nosnippet>269</a>    <span class="kw">let </span>[width, height] = [data.shape()[<span class="number">0</span>], data.shape()[<span class="number">1</span>]];
-<a href=#270 id=270 data-nosnippet>270</a>    <span class="macro">debug_assert_eq!</span>(width % <span class="number">2</span>, <span class="number">0</span>);
-<a href=#271 id=271 data-nosnippet>271</a>    <span class="macro">debug_assert_eq!</span>(height % <span class="number">2</span>, <span class="number">0</span>);
-<a href=#272 id=272 data-nosnippet>272</a>    <span class="kw">for </span>x <span class="kw">in </span><span class="number">0</span>..width / <span class="number">2 </span>{
-<a href=#273 id=273 data-nosnippet>273</a>        <span class="kw">for </span>y <span class="kw">in </span><span class="number">0</span>..height / <span class="number">2 </span>{
-<a href=#274 id=274 data-nosnippet>274</a>            data.swap((x, y), (x + width / <span class="number">2</span>, y + height / <span class="number">2</span>));
-<a href=#275 id=275 data-nosnippet>275</a>            data.swap((x + width / <span class="number">2</span>, y), (x, y + height / <span class="number">2</span>));
-<a href=#276 id=276 data-nosnippet>276</a>        }
-<a href=#277 id=277 data-nosnippet>277</a>    }
-<a href=#278 id=278 data-nosnippet>278</a>}
-<a href=#279 id=279 data-nosnippet>279</a>
-<a href=#280 id=280 data-nosnippet>280</a><span class="attr">#[cfg(test)]
-<a href=#281 id=281 data-nosnippet>281</a></span><span class="kw">mod </span>tests {
-<a href=#282 id=282 data-nosnippet>282</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#217 id=217 data-nosnippet>217</a><span class="doccomment">/// Convolve one real plane with an equal-shape kernel through even-shifted
+<a href=#218 id=218 data-nosnippet>218</a>/// FFTs, matching the reconstruction owner's transform conventions.
+<a href=#219 id=219 data-nosnippet>219</a></span><span class="attr">#[must_use]
+<a href=#220 id=220 data-nosnippet>220</a></span><span class="kw">pub fn </span>fft_convolve(plane: <span class="kw-2">&amp;</span>[f32], kernel: <span class="kw-2">&amp;</span>[f32], shape: [usize; <span class="number">2</span>]) -&gt; Vec&lt;f32&gt; {
+<a href=#221 id=221 data-nosnippet>221</a>    <span class="kw">let </span>cells = shape[<span class="number">0</span>] * shape[<span class="number">1</span>];
+<a href=#222 id=222 data-nosnippet>222</a>    <span class="kw">let </span><span class="kw-2">mut </span>planner = FftPlanner::&lt;f64&gt;::new();
+<a href=#223 id=223 data-nosnippet>223</a>    <span class="kw">let </span><span class="kw-2">mut </span>signal = Array2::&lt;Complex64&gt;::from_shape_vec(
+<a href=#224 id=224 data-nosnippet>224</a>        (shape[<span class="number">0</span>], shape[<span class="number">1</span>]),
+<a href=#225 id=225 data-nosnippet>225</a>        plane
+<a href=#226 id=226 data-nosnippet>226</a>            .iter()
+<a href=#227 id=227 data-nosnippet>227</a>            .map(|v| Complex64::new(f64::from(<span class="kw-2">*</span>v), <span class="number">0.0</span>))
+<a href=#228 id=228 data-nosnippet>228</a>            .collect(),
+<a href=#229 id=229 data-nosnippet>229</a>    )
+<a href=#230 id=230 data-nosnippet>230</a>    .expect(<span class="string">"shape matches payload"</span>);
+<a href=#231 id=231 data-nosnippet>231</a>    <span class="kw">let </span><span class="kw-2">mut </span>response = Array2::&lt;Complex64&gt;::from_shape_vec(
+<a href=#232 id=232 data-nosnippet>232</a>        (shape[<span class="number">0</span>], shape[<span class="number">1</span>]),
+<a href=#233 id=233 data-nosnippet>233</a>        kernel
+<a href=#234 id=234 data-nosnippet>234</a>            .iter()
+<a href=#235 id=235 data-nosnippet>235</a>            .map(|v| Complex64::new(f64::from(<span class="kw-2">*</span>v), <span class="number">0.0</span>))
+<a href=#236 id=236 data-nosnippet>236</a>            .collect(),
+<a href=#237 id=237 data-nosnippet>237</a>    )
+<a href=#238 id=238 data-nosnippet>238</a>    .expect(<span class="string">"shape matches kernel"</span>);
+<a href=#239 id=239 data-nosnippet>239</a>
+<a href=#240 id=240 data-nosnippet>240</a>    <span class="kw">for </span>data <span class="kw">in </span>[<span class="kw-2">&amp;mut </span>signal, <span class="kw-2">&amp;mut </span>response] {
+<a href=#241 id=241 data-nosnippet>241</a>        shift_even(data);
+<a href=#242 id=242 data-nosnippet>242</a>        <span class="kw">for </span>axis <span class="kw">in </span><span class="number">0</span>..<span class="number">2 </span>{
+<a href=#243 id=243 data-nosnippet>243</a>            <span class="kw">let </span>plan = planner.plan_fft_forward(data.len_of(Axis(axis)));
+<a href=#244 id=244 data-nosnippet>244</a>            <span class="kw">let </span>scratch_len = plan.get_inplace_scratch_len();
+<a href=#245 id=245 data-nosnippet>245</a>            <span class="kw">let </span>length = data.len_of(Axis(axis));
+<a href=#246 id=246 data-nosnippet>246</a>            <span class="kw">let </span><span class="kw-2">mut </span>lane = <span class="macro">vec!</span>[Complex64::default(); length];
+<a href=#247 id=247 data-nosnippet>247</a>            <span class="kw">let </span><span class="kw-2">mut </span>scratch = <span class="macro">vec!</span>[Complex64::default(); scratch_len];
+<a href=#248 id=248 data-nosnippet>248</a>            <span class="kw">for </span><span class="kw-2">mut </span>view <span class="kw">in </span>data.lanes_mut(Axis(axis)) {
+<a href=#249 id=249 data-nosnippet>249</a>                lane.iter_mut()
+<a href=#250 id=250 data-nosnippet>250</a>                    .zip(view.iter())
+<a href=#251 id=251 data-nosnippet>251</a>                    .for_each(|(target, source)| {
+<a href=#252 id=252 data-nosnippet>252</a>                        <span class="kw-2">*</span>target = <span class="kw-2">*</span>source;
+<a href=#253 id=253 data-nosnippet>253</a>                    });
+<a href=#254 id=254 data-nosnippet>254</a>                plan.process_with_scratch(<span class="kw-2">&amp;mut </span>lane, <span class="kw-2">&amp;mut </span>scratch);
+<a href=#255 id=255 data-nosnippet>255</a>                lane.iter()
+<a href=#256 id=256 data-nosnippet>256</a>                    .zip(view.iter_mut())
+<a href=#257 id=257 data-nosnippet>257</a>                    .for_each(|(source, target)| <span class="kw-2">*</span>target = <span class="kw-2">*</span>source);
+<a href=#258 id=258 data-nosnippet>258</a>            }
+<a href=#259 id=259 data-nosnippet>259</a>        }
+<a href=#260 id=260 data-nosnippet>260</a>        shift_even(data);
+<a href=#261 id=261 data-nosnippet>261</a>    }
+<a href=#262 id=262 data-nosnippet>262</a>    <span class="kw">for </span>(signal, response) <span class="kw">in </span>signal.iter_mut().zip(response.iter()) {
+<a href=#263 id=263 data-nosnippet>263</a>        <span class="kw-2">*</span>signal <span class="kw-2">*</span>= <span class="kw-2">*</span>response;
+<a href=#264 id=264 data-nosnippet>264</a>    }
+<a href=#265 id=265 data-nosnippet>265</a>    shift_even(<span class="kw-2">&amp;mut </span>signal);
+<a href=#266 id=266 data-nosnippet>266</a>    <span class="kw">for </span>axis <span class="kw">in </span><span class="number">0</span>..<span class="number">2 </span>{
+<a href=#267 id=267 data-nosnippet>267</a>        <span class="kw">let </span>plan = planner.plan_fft_inverse(signal.len_of(Axis(axis)));
+<a href=#268 id=268 data-nosnippet>268</a>        <span class="kw">let </span>scratch_len = plan.get_inplace_scratch_len();
+<a href=#269 id=269 data-nosnippet>269</a>        <span class="kw">let </span>length = signal.len_of(Axis(axis));
+<a href=#270 id=270 data-nosnippet>270</a>        <span class="kw">let </span><span class="kw-2">mut </span>lane = <span class="macro">vec!</span>[Complex64::default(); length];
+<a href=#271 id=271 data-nosnippet>271</a>        <span class="kw">let </span><span class="kw-2">mut </span>scratch = <span class="macro">vec!</span>[Complex64::default(); scratch_len];
+<a href=#272 id=272 data-nosnippet>272</a>        <span class="kw">for </span><span class="kw-2">mut </span>view <span class="kw">in </span>signal.lanes_mut(Axis(axis)) {
+<a href=#273 id=273 data-nosnippet>273</a>            lane.iter_mut()
+<a href=#274 id=274 data-nosnippet>274</a>                .zip(view.iter())
+<a href=#275 id=275 data-nosnippet>275</a>                .for_each(|(target, source)| <span class="kw-2">*</span>target = <span class="kw-2">*</span>source);
+<a href=#276 id=276 data-nosnippet>276</a>            plan.process_with_scratch(<span class="kw-2">&amp;mut </span>lane, <span class="kw-2">&amp;mut </span>scratch);
+<a href=#277 id=277 data-nosnippet>277</a>            lane.iter()
+<a href=#278 id=278 data-nosnippet>278</a>                .zip(view.iter_mut())
+<a href=#279 id=279 data-nosnippet>279</a>                .for_each(|(source, target)| <span class="kw-2">*</span>target = <span class="kw-2">*</span>source);
+<a href=#280 id=280 data-nosnippet>280</a>        }
+<a href=#281 id=281 data-nosnippet>281</a>    }
+<a href=#282 id=282 data-nosnippet>282</a>    shift_even(<span class="kw-2">&amp;mut </span>signal);
 <a href=#283 id=283 data-nosnippet>283</a>
-<a href=#284 id=284 data-nosnippet>284</a>    <span class="attr">#[test]
-<a href=#285 id=285 data-nosnippet>285</a>    </span><span class="kw">fn </span>identical_beams_leave_the_residual_bit_exact() {
-<a href=#286 id=286 data-nosnippet>286</a>        <span class="kw">let </span>beam = RestoringBeam::new(<span class="number">4.0e-6</span>, <span class="number">3.0e-6</span>, <span class="number">0.2</span>).expect(<span class="string">"beam"</span>);
-<a href=#287 id=287 data-nosnippet>287</a>        <span class="kw">let </span>residual = <span class="macro">vec!</span>[<span class="number">0.0</span>, <span class="number">1.0</span>, -<span class="number">2.0</span>, <span class="number">3.0</span>];
-<a href=#288 id=288 data-nosnippet>288</a>        <span class="kw">let </span>scaling = rescale_residual_to_beam(<span class="kw-2">&amp;</span>residual, [<span class="number">2</span>, <span class="number">2</span>], [<span class="number">1.0e-6</span>; <span class="number">2</span>], beam, beam).unwrap();
-<a href=#289 id=289 data-nosnippet>289</a>        <span class="macro">assert!</span>(!scaling.applied());
-<a href=#290 id=290 data-nosnippet>290</a>        <span class="macro">assert_eq!</span>(scaling.smoothing_beam(), <span class="prelude-val">None</span>);
-<a href=#291 id=291 data-nosnippet>291</a>        <span class="macro">assert_eq!</span>(scaling.area_ratio(), <span class="number">1.0</span>);
-<a href=#292 id=292 data-nosnippet>292</a>        <span class="macro">assert_eq!</span>(scaling.values(), residual);
-<a href=#293 id=293 data-nosnippet>293</a>    }
-<a href=#294 id=294 data-nosnippet>294</a>
-<a href=#295 id=295 data-nosnippet>295</a>    <span class="attr">#[test]
-<a href=#296 id=296 data-nosnippet>296</a>    </span><span class="kw">fn </span>common_beam_scaling_uses_unit_volume_and_the_beam_area_ratio() {
-<a href=#297 id=297 data-nosnippet>297</a>        <span class="kw">let </span>source = RestoringBeam::new(<span class="number">4.0e-6</span>, <span class="number">3.0e-6</span>, <span class="number">0.0</span>).expect(<span class="string">"source beam"</span>);
-<a href=#298 id=298 data-nosnippet>298</a>        <span class="kw">let </span>target = RestoringBeam::new(<span class="number">8.0e-6</span>, <span class="number">6.0e-6</span>, <span class="number">0.0</span>).expect(<span class="string">"target beam"</span>);
-<a href=#299 id=299 data-nosnippet>299</a>        <span class="kw">let </span>shape = [<span class="number">32</span>, <span class="number">32</span>];
-<a href=#300 id=300 data-nosnippet>300</a>        <span class="kw">let </span><span class="kw-2">mut </span>residual = <span class="macro">vec!</span>[<span class="number">0.0_f32</span>; shape[<span class="number">0</span>] * shape[<span class="number">1</span>]];
-<a href=#301 id=301 data-nosnippet>301</a>        residual[(shape[<span class="number">0</span>] / <span class="number">2</span>) * shape[<span class="number">1</span>] + shape[<span class="number">1</span>] / <span class="number">2</span>] = <span class="number">1.0</span>;
+<a href=#284 id=284 data-nosnippet>284</a>    <span class="kw">let </span>scale = <span class="number">1.0 </span>/ cells <span class="kw">as </span>f64;
+<a href=#285 id=285 data-nosnippet>285</a>    signal
+<a href=#286 id=286 data-nosnippet>286</a>        .iter()
+<a href=#287 id=287 data-nosnippet>287</a>        .map(|value| (value.re * scale) <span class="kw">as </span>f32)
+<a href=#288 id=288 data-nosnippet>288</a>        .collect()
+<a href=#289 id=289 data-nosnippet>289</a>}
+<a href=#290 id=290 data-nosnippet>290</a>
+<a href=#291 id=291 data-nosnippet>291</a><span class="kw">fn </span>shift_even(data: <span class="kw-2">&amp;mut </span>Array2&lt;Complex64&gt;) {
+<a href=#292 id=292 data-nosnippet>292</a>    <span class="kw">let </span>[width, height] = [data.shape()[<span class="number">0</span>], data.shape()[<span class="number">1</span>]];
+<a href=#293 id=293 data-nosnippet>293</a>    <span class="macro">debug_assert_eq!</span>(width % <span class="number">2</span>, <span class="number">0</span>);
+<a href=#294 id=294 data-nosnippet>294</a>    <span class="macro">debug_assert_eq!</span>(height % <span class="number">2</span>, <span class="number">0</span>);
+<a href=#295 id=295 data-nosnippet>295</a>    <span class="kw">for </span>x <span class="kw">in </span><span class="number">0</span>..width / <span class="number">2 </span>{
+<a href=#296 id=296 data-nosnippet>296</a>        <span class="kw">for </span>y <span class="kw">in </span><span class="number">0</span>..height / <span class="number">2 </span>{
+<a href=#297 id=297 data-nosnippet>297</a>            data.swap((x, y), (x + width / <span class="number">2</span>, y + height / <span class="number">2</span>));
+<a href=#298 id=298 data-nosnippet>298</a>            data.swap((x + width / <span class="number">2</span>, y), (x, y + height / <span class="number">2</span>));
+<a href=#299 id=299 data-nosnippet>299</a>        }
+<a href=#300 id=300 data-nosnippet>300</a>    }
+<a href=#301 id=301 data-nosnippet>301</a>}
 <a href=#302 id=302 data-nosnippet>302</a>
-<a href=#303 id=303 data-nosnippet>303</a>        <span class="kw">let </span>scaling =
-<a href=#304 id=304 data-nosnippet>304</a>            rescale_residual_to_beam(<span class="kw-2">&amp;</span>residual, shape, [<span class="number">1.0e-6</span>; <span class="number">2</span>], source, target).unwrap();
-<a href=#305 id=305 data-nosnippet>305</a>        <span class="macro">assert!</span>(scaling.applied());
-<a href=#306 id=306 data-nosnippet>306</a>        <span class="macro">assert!</span>(scaling.smoothing_beam().is_some());
-<a href=#307 id=307 data-nosnippet>307</a>        <span class="macro">assert!</span>((scaling.area_ratio() - <span class="number">4.0</span>).abs() &lt; <span class="number">1.0e-12</span>);
-<a href=#308 id=308 data-nosnippet>308</a>        <span class="kw">let </span>sum = scaling
-<a href=#309 id=309 data-nosnippet>309</a>            .values()
-<a href=#310 id=310 data-nosnippet>310</a>            .iter()
-<a href=#311 id=311 data-nosnippet>311</a>            .map(|value| f64::from(<span class="kw-2">*</span>value))
-<a href=#312 id=312 data-nosnippet>312</a>            .sum::&lt;f64&gt;();
-<a href=#313 id=313 data-nosnippet>313</a>        <span class="macro">assert!</span>((sum - scaling.area_ratio()).abs() &lt; <span class="number">1.0e-5</span>, <span class="string">"{sum}"</span>);
-<a href=#314 id=314 data-nosnippet>314</a>    }
-<a href=#315 id=315 data-nosnippet>315</a>
-<a href=#316 id=316 data-nosnippet>316</a>    <span class="attr">#[test]
-<a href=#317 id=317 data-nosnippet>317</a>    </span><span class="kw">fn </span>smaller_selected_beam_fails_instead_of_silently_skipping_scaling() {
-<a href=#318 id=318 data-nosnippet>318</a>        <span class="kw">let </span>fitted = RestoringBeam::new(<span class="number">8.0e-6</span>, <span class="number">6.0e-6</span>, <span class="number">0.0</span>).expect(<span class="string">"fitted beam"</span>);
-<a href=#319 id=319 data-nosnippet>319</a>        <span class="kw">let </span>selected = RestoringBeam::new(<span class="number">4.0e-6</span>, <span class="number">3.0e-6</span>, <span class="number">0.0</span>).expect(<span class="string">"selected beam"</span>);
-<a href=#320 id=320 data-nosnippet>320</a>        <span class="kw">let </span>error = rescale_residual_to_beam(<span class="kw-2">&amp;</span>[<span class="number">1.0</span>; <span class="number">16</span>], [<span class="number">4</span>, <span class="number">4</span>], [<span class="number">1.0e-6</span>; <span class="number">2</span>], fitted, selected)
-<a href=#321 id=321 data-nosnippet>321</a>            .expect_err(<span class="string">"smaller target must fail"</span>);
-<a href=#322 id=322 data-nosnippet>322</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(error, ProductsError::BeamFitFailed(<span class="kw">_</span>)));
-<a href=#323 id=323 data-nosnippet>323</a>    }
-<a href=#324 id=324 data-nosnippet>324</a>}
+<a href=#303 id=303 data-nosnippet>303</a><span class="attr">#[cfg(test)]
+<a href=#304 id=304 data-nosnippet>304</a></span><span class="kw">mod </span>tests {
+<a href=#305 id=305 data-nosnippet>305</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#306 id=306 data-nosnippet>306</a>
+<a href=#307 id=307 data-nosnippet>307</a>    <span class="attr">#[test]
+<a href=#308 id=308 data-nosnippet>308</a>    </span><span class="kw">fn </span>model_restoration_matches_fft_for_empty_sparse_and_dense_planes() {
+<a href=#309 id=309 data-nosnippet>309</a>        <span class="kw">let </span>beam = RestoringBeam::new(<span class="number">4.0e-6</span>, <span class="number">3.0e-6</span>, <span class="number">0.2</span>).unwrap();
+<a href=#310 id=310 data-nosnippet>310</a>        <span class="kw">let </span>shape = [<span class="number">8</span>, <span class="number">16</span>];
+<a href=#311 id=311 data-nosnippet>311</a>        <span class="kw">let </span>kernel = gaussian_beam_image(shape, <span class="kw-2">&amp;</span>beam, [<span class="number">1.0e-6</span>; <span class="number">2</span>]);
+<a href=#312 id=312 data-nosnippet>312</a>        <span class="kw">let </span><span class="kw-2">mut </span>sparse = <span class="macro">vec!</span>[<span class="number">0.0</span>; <span class="number">128</span>];
+<a href=#313 id=313 data-nosnippet>313</a>        sparse[<span class="number">37</span>] = -<span class="number">2.5</span>;
+<a href=#314 id=314 data-nosnippet>314</a>        <span class="kw">for </span>model <span class="kw">in </span>[
+<a href=#315 id=315 data-nosnippet>315</a>            <span class="macro">vec!</span>[<span class="number">0.0</span>; <span class="number">128</span>],
+<a href=#316 id=316 data-nosnippet>316</a>            <span class="macro">vec!</span>[-<span class="number">0.0</span>; <span class="number">128</span>],
+<a href=#317 id=317 data-nosnippet>317</a>            sparse,
+<a href=#318 id=318 data-nosnippet>318</a>            (<span class="number">0</span>..<span class="number">128</span>)
+<a href=#319 id=319 data-nosnippet>319</a>                .map(|index| (index <span class="kw">as </span>f32 - <span class="number">60.0</span>) / <span class="number">128.0</span>)
+<a href=#320 id=320 data-nosnippet>320</a>                .collect(),
+<a href=#321 id=321 data-nosnippet>321</a>        ] {
+<a href=#322 id=322 data-nosnippet>322</a>            <span class="kw">for </span>residual <span class="kw">in </span>[<span class="macro">vec!</span>[<span class="number">0.0</span>; <span class="number">128</span>], <span class="macro">vec!</span>[-<span class="number">0.0</span>; <span class="number">128</span>], <span class="macro">vec!</span>[<span class="number">1.25</span>; <span class="number">128</span>]] {
+<a href=#323 id=323 data-nosnippet>323</a>                <span class="kw">let </span><span class="kw-2">mut </span>expected = fft_convolve(<span class="kw-2">&amp;</span>model, kernel.as_slice().unwrap(), shape);
+<a href=#324 id=324 data-nosnippet>324</a>                <span class="kw">for </span>(value, residual) <span class="kw">in </span>expected.iter_mut().zip(<span class="kw-2">&amp;</span>residual) {
+<a href=#325 id=325 data-nosnippet>325</a>                    <span class="kw-2">*</span>value += residual;
+<a href=#326 id=326 data-nosnippet>326</a>                }
+<a href=#327 id=327 data-nosnippet>327</a>                <span class="kw">let </span>actual = restore_model_plane(<span class="kw-2">&amp;</span>model, residual, shape, <span class="kw-2">&amp;</span>beam, [<span class="number">1.0e-6</span>; <span class="number">2</span>]);
+<a href=#328 id=328 data-nosnippet>328</a>                <span class="macro">assert_eq!</span>(
+<a href=#329 id=329 data-nosnippet>329</a>                    actual
+<a href=#330 id=330 data-nosnippet>330</a>                        .iter()
+<a href=#331 id=331 data-nosnippet>331</a>                        .map(|value| value.to_bits())
+<a href=#332 id=332 data-nosnippet>332</a>                        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
+<a href=#333 id=333 data-nosnippet>333</a>                    expected
+<a href=#334 id=334 data-nosnippet>334</a>                        .iter()
+<a href=#335 id=335 data-nosnippet>335</a>                        .map(|value| value.to_bits())
+<a href=#336 id=336 data-nosnippet>336</a>                        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+<a href=#337 id=337 data-nosnippet>337</a>                );
+<a href=#338 id=338 data-nosnippet>338</a>            }
+<a href=#339 id=339 data-nosnippet>339</a>        }
+<a href=#340 id=340 data-nosnippet>340</a>    }
+<a href=#341 id=341 data-nosnippet>341</a>
+<a href=#342 id=342 data-nosnippet>342</a>    <span class="attr">#[test]
+<a href=#343 id=343 data-nosnippet>343</a>    </span><span class="kw">fn </span>identical_beams_leave_the_residual_bit_exact() {
+<a href=#344 id=344 data-nosnippet>344</a>        <span class="kw">let </span>beam = RestoringBeam::new(<span class="number">4.0e-6</span>, <span class="number">3.0e-6</span>, <span class="number">0.2</span>).expect(<span class="string">"beam"</span>);
+<a href=#345 id=345 data-nosnippet>345</a>        <span class="kw">let </span>residual = <span class="macro">vec!</span>[<span class="number">0.0</span>, <span class="number">1.0</span>, -<span class="number">2.0</span>, <span class="number">3.0</span>];
+<a href=#346 id=346 data-nosnippet>346</a>        <span class="kw">let </span>scaling = rescale_residual_to_beam(<span class="kw-2">&amp;</span>residual, [<span class="number">2</span>, <span class="number">2</span>], [<span class="number">1.0e-6</span>; <span class="number">2</span>], beam, beam).unwrap();
+<a href=#347 id=347 data-nosnippet>347</a>        <span class="macro">assert!</span>(!scaling.applied());
+<a href=#348 id=348 data-nosnippet>348</a>        <span class="macro">assert_eq!</span>(scaling.smoothing_beam(), <span class="prelude-val">None</span>);
+<a href=#349 id=349 data-nosnippet>349</a>        <span class="macro">assert_eq!</span>(scaling.area_ratio(), <span class="number">1.0</span>);
+<a href=#350 id=350 data-nosnippet>350</a>        <span class="macro">assert_eq!</span>(scaling.values(), residual);
+<a href=#351 id=351 data-nosnippet>351</a>    }
+<a href=#352 id=352 data-nosnippet>352</a>
+<a href=#353 id=353 data-nosnippet>353</a>    <span class="attr">#[test]
+<a href=#354 id=354 data-nosnippet>354</a>    </span><span class="kw">fn </span>common_beam_scaling_uses_unit_volume_and_the_beam_area_ratio() {
+<a href=#355 id=355 data-nosnippet>355</a>        <span class="kw">let </span>source = RestoringBeam::new(<span class="number">4.0e-6</span>, <span class="number">3.0e-6</span>, <span class="number">0.0</span>).expect(<span class="string">"source beam"</span>);
+<a href=#356 id=356 data-nosnippet>356</a>        <span class="kw">let </span>target = RestoringBeam::new(<span class="number">8.0e-6</span>, <span class="number">6.0e-6</span>, <span class="number">0.0</span>).expect(<span class="string">"target beam"</span>);
+<a href=#357 id=357 data-nosnippet>357</a>        <span class="kw">let </span>shape = [<span class="number">32</span>, <span class="number">32</span>];
+<a href=#358 id=358 data-nosnippet>358</a>        <span class="kw">let </span><span class="kw-2">mut </span>residual = <span class="macro">vec!</span>[<span class="number">0.0_f32</span>; shape[<span class="number">0</span>] * shape[<span class="number">1</span>]];
+<a href=#359 id=359 data-nosnippet>359</a>        residual[(shape[<span class="number">0</span>] / <span class="number">2</span>) * shape[<span class="number">1</span>] + shape[<span class="number">1</span>] / <span class="number">2</span>] = <span class="number">1.0</span>;
+<a href=#360 id=360 data-nosnippet>360</a>
+<a href=#361 id=361 data-nosnippet>361</a>        <span class="kw">let </span>scaling =
+<a href=#362 id=362 data-nosnippet>362</a>            rescale_residual_to_beam(<span class="kw-2">&amp;</span>residual, shape, [<span class="number">1.0e-6</span>; <span class="number">2</span>], source, target).unwrap();
+<a href=#363 id=363 data-nosnippet>363</a>        <span class="macro">assert!</span>(scaling.applied());
+<a href=#364 id=364 data-nosnippet>364</a>        <span class="macro">assert!</span>(scaling.smoothing_beam().is_some());
+<a href=#365 id=365 data-nosnippet>365</a>        <span class="macro">assert!</span>((scaling.area_ratio() - <span class="number">4.0</span>).abs() &lt; <span class="number">1.0e-12</span>);
+<a href=#366 id=366 data-nosnippet>366</a>        <span class="kw">let </span>sum = scaling
+<a href=#367 id=367 data-nosnippet>367</a>            .values()
+<a href=#368 id=368 data-nosnippet>368</a>            .iter()
+<a href=#369 id=369 data-nosnippet>369</a>            .map(|value| f64::from(<span class="kw-2">*</span>value))
+<a href=#370 id=370 data-nosnippet>370</a>            .sum::&lt;f64&gt;();
+<a href=#371 id=371 data-nosnippet>371</a>        <span class="macro">assert!</span>((sum - scaling.area_ratio()).abs() &lt; <span class="number">1.0e-5</span>, <span class="string">"{sum}"</span>);
+<a href=#372 id=372 data-nosnippet>372</a>    }
+<a href=#373 id=373 data-nosnippet>373</a>
+<a href=#374 id=374 data-nosnippet>374</a>    <span class="attr">#[test]
+<a href=#375 id=375 data-nosnippet>375</a>    </span><span class="kw">fn </span>smaller_selected_beam_fails_instead_of_silently_skipping_scaling() {
+<a href=#376 id=376 data-nosnippet>376</a>        <span class="kw">let </span>fitted = RestoringBeam::new(<span class="number">8.0e-6</span>, <span class="number">6.0e-6</span>, <span class="number">0.0</span>).expect(<span class="string">"fitted beam"</span>);
+<a href=#377 id=377 data-nosnippet>377</a>        <span class="kw">let </span>selected = RestoringBeam::new(<span class="number">4.0e-6</span>, <span class="number">3.0e-6</span>, <span class="number">0.0</span>).expect(<span class="string">"selected beam"</span>);
+<a href=#378 id=378 data-nosnippet>378</a>        <span class="kw">let </span>error = rescale_residual_to_beam(<span class="kw-2">&amp;</span>[<span class="number">1.0</span>; <span class="number">16</span>], [<span class="number">4</span>, <span class="number">4</span>], [<span class="number">1.0e-6</span>; <span class="number">2</span>], fitted, selected)
+<a href=#379 id=379 data-nosnippet>379</a>            .expect_err(<span class="string">"smaller target must fail"</span>);
+<a href=#380 id=380 data-nosnippet>380</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(error, ProductsError::BeamFitFailed(<span class="kw">_</span>)));
+<a href=#381 id=381 data-nosnippet>381</a>    }
+<a href=#382 id=382 data-nosnippet>382</a>}
 </code></pre></div></section></main></body></html>

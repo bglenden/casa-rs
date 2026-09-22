@@ -1988,381 +1988,395 @@
 <a href=#1988 id=1988 data-nosnippet>1988</a>    /// this logical payload projection.
 <a href=#1989 id=1989 data-nosnippet>1989</a>    </span><span class="attr">#[doc(hidden)]
 <a href=#1990 id=1990 data-nosnippet>1990</a>    </span><span class="kw">pub fn </span>retained_read_metadata_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;usize&gt; {
-<a href=#1991 id=1991 data-nosnippet>1991</a>        <span class="kw">if </span>!<span class="self">self</span>.virtual_bindings.is_empty()
-<a href=#1992 id=1992 data-nosnippet>1992</a>            || <span class="self">self</span>.external_sync.is_some()
-<a href=#1993 id=1993 data-nosnippet>1993</a>            || <span class="self">self</span>.measures.is_some()
-<a href=#1994 id=1994 data-nosnippet>1994</a>        {
-<a href=#1995 id=1995 data-nosnippet>1995</a>            <span class="kw">return </span><span class="prelude-val">None</span>;
-<a href=#1996 id=1996 data-nosnippet>1996</a>        }
-<a href=#1997 id=1997 data-nosnippet>1997</a>        <span class="kw">let </span><span class="kw-2">mut </span>bytes = <span class="self">self
-<a href=#1998 id=1998 data-nosnippet>1998</a>            </span>.inner
-<a href=#1999 id=1999 data-nosnippet>1999</a>            .retained_lazy_metadata_heap_bytes()<span class="question-mark">?
-<a href=#2000 id=2000 data-nosnippet>2000</a>            </span>.checked_add(
-<a href=#2001 id=2001 data-nosnippet>2001</a>                <span class="self">self</span>.virtual_columns
-<a href=#2002 id=2002 data-nosnippet>2002</a>                    .capacity()
-<a href=#2003 id=2003 data-nosnippet>2003</a>                    .checked_mul(size_of::&lt;String&gt;())<span class="question-mark">?</span>,
-<a href=#2004 id=2004 data-nosnippet>2004</a>            )<span class="question-mark">?
-<a href=#2005 id=2005 data-nosnippet>2005</a>            </span>.checked_add(
-<a href=#2006 id=2006 data-nosnippet>2006</a>                <span class="self">self</span>.virtual_bindings
-<a href=#2007 id=2007 data-nosnippet>2007</a>                    .capacity()
-<a href=#2008 id=2008 data-nosnippet>2008</a>                    .checked_mul(size_of::&lt;VirtualColumnBinding&gt;())<span class="question-mark">?</span>,
-<a href=#2009 id=2009 data-nosnippet>2009</a>            )<span class="question-mark">?
-<a href=#2010 id=2010 data-nosnippet>2010</a>            </span>.checked_add(<span class="self">self</span>.table_info.table_type.capacity())<span class="question-mark">?
-<a href=#2011 id=2011 data-nosnippet>2011</a>            </span>.checked_add(<span class="self">self</span>.table_info.sub_type.capacity())<span class="question-mark">?
-<a href=#2012 id=2012 data-nosnippet>2012</a>            </span>.checked_add(
-<a href=#2013 id=2013 data-nosnippet>2013</a>                <span class="self">self</span>.table_info
-<a href=#2014 id=2014 data-nosnippet>2014</a>                    .readme
-<a href=#2015 id=2015 data-nosnippet>2015</a>                    .capacity()
-<a href=#2016 id=2016 data-nosnippet>2016</a>                    .checked_mul(size_of::&lt;String&gt;())<span class="question-mark">?</span>,
-<a href=#2017 id=2017 data-nosnippet>2017</a>            )<span class="question-mark">?
-<a href=#2018 id=2018 data-nosnippet>2018</a>            </span>.checked_add(
-<a href=#2019 id=2019 data-nosnippet>2019</a>                <span class="self">self</span>.dm_info
-<a href=#2020 id=2020 data-nosnippet>2020</a>                    .capacity()
-<a href=#2021 id=2021 data-nosnippet>2021</a>                    .checked_mul(size_of::&lt;<span class="kw">crate</span>::storage::DataManagerInfo&gt;())<span class="question-mark">?</span>,
-<a href=#2022 id=2022 data-nosnippet>2022</a>            )<span class="question-mark">?</span>;
-<a href=#2023 id=2023 data-nosnippet>2023</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(path) = <span class="kw-2">&amp;</span><span class="self">self</span>.source_path {
-<a href=#2024 id=2024 data-nosnippet>2024</a>            bytes = bytes.checked_add(<span class="kw">crate</span>::table_impl::path_heap_bytes(path))<span class="question-mark">?</span>;
-<a href=#2025 id=2025 data-nosnippet>2025</a>        }
-<a href=#2026 id=2026 data-nosnippet>2026</a>        <span class="kw">for </span>column <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.virtual_columns {
-<a href=#2027 id=2027 data-nosnippet>2027</a>            bytes = bytes.checked_add(column.capacity())<span class="question-mark">?</span>;
-<a href=#2028 id=2028 data-nosnippet>2028</a>        }
-<a href=#2029 id=2029 data-nosnippet>2029</a>        <span class="kw">for </span>line <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.table_info.readme {
-<a href=#2030 id=2030 data-nosnippet>2030</a>            bytes = bytes.checked_add(line.capacity())<span class="question-mark">?</span>;
-<a href=#2031 id=2031 data-nosnippet>2031</a>        }
-<a href=#2032 id=2032 data-nosnippet>2032</a>        <span class="kw">for </span>manager <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.dm_info {
-<a href=#2033 id=2033 data-nosnippet>2033</a>            bytes = bytes.checked_add(manager.dm_type.capacity())<span class="question-mark">?</span>.checked_add(
-<a href=#2034 id=2034 data-nosnippet>2034</a>                manager
-<a href=#2035 id=2035 data-nosnippet>2035</a>                    .columns
-<a href=#2036 id=2036 data-nosnippet>2036</a>                    .capacity()
-<a href=#2037 id=2037 data-nosnippet>2037</a>                    .checked_mul(size_of::&lt;String&gt;())<span class="question-mark">?</span>,
-<a href=#2038 id=2038 data-nosnippet>2038</a>            )<span class="question-mark">?</span>;
-<a href=#2039 id=2039 data-nosnippet>2039</a>            <span class="kw">for </span>column <span class="kw">in </span><span class="kw-2">&amp;</span>manager.columns {
-<a href=#2040 id=2040 data-nosnippet>2040</a>                bytes = bytes.checked_add(column.capacity())<span class="question-mark">?</span>;
-<a href=#2041 id=2041 data-nosnippet>2041</a>            }
+<a href=#1991 id=1991 data-nosnippet>1991</a>        <span class="self">self</span>.retained_table_metadata_bytes(<span class="bool-val">false</span>)
+<a href=#1992 id=1992 data-nosnippet>1992</a>    }
+<a href=#1993 id=1993 data-nosnippet>1993</a>
+<a href=#1994 id=1994 data-nosnippet>1994</a>    <span class="doccomment">/// Logical owned heap for a metadata writer, including explicit eager rows.
+<a href=#1995 id=1995 data-nosnippet>1995</a>    /// Returns `None` for unmodeled lazy cell caches or pending column writes.
+<a href=#1996 id=1996 data-nosnippet>1996</a>    /// Uses the same collection-capacity projection as the read-only ledger.
+<a href=#1997 id=1997 data-nosnippet>1997</a>    </span><span class="attr">#[doc(hidden)]
+<a href=#1998 id=1998 data-nosnippet>1998</a>    </span><span class="kw">pub fn </span>retained_owned_metadata_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;usize&gt; {
+<a href=#1999 id=1999 data-nosnippet>1999</a>        <span class="self">self</span>.retained_table_metadata_bytes(<span class="bool-val">true</span>)
+<a href=#2000 id=2000 data-nosnippet>2000</a>    }
+<a href=#2001 id=2001 data-nosnippet>2001</a>
+<a href=#2002 id=2002 data-nosnippet>2002</a>    <span class="kw">fn </span>retained_table_metadata_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>, eager: bool) -&gt; <span class="prelude-ty">Option</span>&lt;usize&gt; {
+<a href=#2003 id=2003 data-nosnippet>2003</a>        <span class="kw">if </span>!<span class="self">self</span>.virtual_bindings.is_empty()
+<a href=#2004 id=2004 data-nosnippet>2004</a>            || <span class="self">self</span>.external_sync.is_some()
+<a href=#2005 id=2005 data-nosnippet>2005</a>            || <span class="self">self</span>.measures.is_some()
+<a href=#2006 id=2006 data-nosnippet>2006</a>        {
+<a href=#2007 id=2007 data-nosnippet>2007</a>            <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#2008 id=2008 data-nosnippet>2008</a>        }
+<a href=#2009 id=2009 data-nosnippet>2009</a>        <span class="kw">let </span><span class="kw-2">mut </span>bytes = <span class="kw">if </span>eager {
+<a href=#2010 id=2010 data-nosnippet>2010</a>            <span class="self">self</span>.inner.retained_owned_metadata_heap_bytes()<span class="question-mark">?
+<a href=#2011 id=2011 data-nosnippet>2011</a>        </span>} <span class="kw">else </span>{
+<a href=#2012 id=2012 data-nosnippet>2012</a>            <span class="self">self</span>.inner.retained_lazy_metadata_heap_bytes()<span class="question-mark">?
+<a href=#2013 id=2013 data-nosnippet>2013</a>        </span>}
+<a href=#2014 id=2014 data-nosnippet>2014</a>        .checked_add(
+<a href=#2015 id=2015 data-nosnippet>2015</a>            <span class="self">self</span>.virtual_columns
+<a href=#2016 id=2016 data-nosnippet>2016</a>                .capacity()
+<a href=#2017 id=2017 data-nosnippet>2017</a>                .checked_mul(size_of::&lt;String&gt;())<span class="question-mark">?</span>,
+<a href=#2018 id=2018 data-nosnippet>2018</a>        )<span class="question-mark">?
+<a href=#2019 id=2019 data-nosnippet>2019</a>        </span>.checked_add(
+<a href=#2020 id=2020 data-nosnippet>2020</a>            <span class="self">self</span>.virtual_bindings
+<a href=#2021 id=2021 data-nosnippet>2021</a>                .capacity()
+<a href=#2022 id=2022 data-nosnippet>2022</a>                .checked_mul(size_of::&lt;VirtualColumnBinding&gt;())<span class="question-mark">?</span>,
+<a href=#2023 id=2023 data-nosnippet>2023</a>        )<span class="question-mark">?
+<a href=#2024 id=2024 data-nosnippet>2024</a>        </span>.checked_add(<span class="self">self</span>.table_info.table_type.capacity())<span class="question-mark">?
+<a href=#2025 id=2025 data-nosnippet>2025</a>        </span>.checked_add(<span class="self">self</span>.table_info.sub_type.capacity())<span class="question-mark">?
+<a href=#2026 id=2026 data-nosnippet>2026</a>        </span>.checked_add(
+<a href=#2027 id=2027 data-nosnippet>2027</a>            <span class="self">self</span>.table_info
+<a href=#2028 id=2028 data-nosnippet>2028</a>                .readme
+<a href=#2029 id=2029 data-nosnippet>2029</a>                .capacity()
+<a href=#2030 id=2030 data-nosnippet>2030</a>                .checked_mul(size_of::&lt;String&gt;())<span class="question-mark">?</span>,
+<a href=#2031 id=2031 data-nosnippet>2031</a>        )<span class="question-mark">?
+<a href=#2032 id=2032 data-nosnippet>2032</a>        </span>.checked_add(
+<a href=#2033 id=2033 data-nosnippet>2033</a>            <span class="self">self</span>.dm_info
+<a href=#2034 id=2034 data-nosnippet>2034</a>                .capacity()
+<a href=#2035 id=2035 data-nosnippet>2035</a>                .checked_mul(size_of::&lt;<span class="kw">crate</span>::storage::DataManagerInfo&gt;())<span class="question-mark">?</span>,
+<a href=#2036 id=2036 data-nosnippet>2036</a>        )<span class="question-mark">?</span>;
+<a href=#2037 id=2037 data-nosnippet>2037</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(path) = <span class="kw-2">&amp;</span><span class="self">self</span>.source_path {
+<a href=#2038 id=2038 data-nosnippet>2038</a>            bytes = bytes.checked_add(<span class="kw">crate</span>::table_impl::path_heap_bytes(path))<span class="question-mark">?</span>;
+<a href=#2039 id=2039 data-nosnippet>2039</a>        }
+<a href=#2040 id=2040 data-nosnippet>2040</a>        <span class="kw">for </span>column <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.virtual_columns {
+<a href=#2041 id=2041 data-nosnippet>2041</a>            bytes = bytes.checked_add(column.capacity())<span class="question-mark">?</span>;
 <a href=#2042 id=2042 data-nosnippet>2042</a>        }
-<a href=#2043 id=2043 data-nosnippet>2043</a>        <span class="attr">#[cfg(unix)]
-<a href=#2044 id=2044 data-nosnippet>2044</a>        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(lock) = <span class="kw-2">&amp;</span><span class="self">self</span>.lock_state {
-<a href=#2045 id=2045 data-nosnippet>2045</a>            bytes = bytes
-<a href=#2046 id=2046 data-nosnippet>2046</a>                .checked_add(<span class="kw">crate</span>::table_impl::path_heap_bytes(<span class="kw-2">&amp;</span>lock.path))<span class="question-mark">?
-<a href=#2047 id=2047 data-nosnippet>2047</a>                </span>.checked_add(lock.lock_file.retained_heap_bytes())<span class="question-mark">?
-<a href=#2048 id=2048 data-nosnippet>2048</a>                </span>.checked_add(
-<a href=#2049 id=2049 data-nosnippet>2049</a>                    lock.sync_data
-<a href=#2050 id=2050 data-nosnippet>2050</a>                        .data_man_change_counters
-<a href=#2051 id=2051 data-nosnippet>2051</a>                        .capacity()
-<a href=#2052 id=2052 data-nosnippet>2052</a>                        .checked_mul(size_of::&lt;u32&gt;())<span class="question-mark">?</span>,
-<a href=#2053 id=2053 data-nosnippet>2053</a>                )<span class="question-mark">?</span>;
-<a href=#2054 id=2054 data-nosnippet>2054</a>        }
-<a href=#2055 id=2055 data-nosnippet>2055</a>        <span class="prelude-val">Some</span>(bytes)
-<a href=#2056 id=2056 data-nosnippet>2056</a>    }
-<a href=#2057 id=2057 data-nosnippet>2057</a>
-<a href=#2058 id=2058 data-nosnippet>2058</a>    <span class="doccomment">/// Creates a new, empty table with no rows, no schema, and no keywords.
-<a href=#2059 id=2059 data-nosnippet>2059</a>    </span><span class="kw">pub fn </span>new() -&gt; <span class="self">Self </span>{
-<a href=#2060 id=2060 data-nosnippet>2060</a>        <span class="self">Self </span>{
-<a href=#2061 id=2061 data-nosnippet>2061</a>            inner: TableImpl::new(),
-<a href=#2062 id=2062 data-nosnippet>2062</a>            source_path: <span class="prelude-val">None</span>,
-<a href=#2063 id=2063 data-nosnippet>2063</a>            kind: TableKind::Plain,
-<a href=#2064 id=2064 data-nosnippet>2064</a>            virtual_columns: HashSet::new(),
-<a href=#2065 id=2065 data-nosnippet>2065</a>            virtual_bindings: Vec::new(),
-<a href=#2066 id=2066 data-nosnippet>2066</a>            table_info: TableInfo::default(),
-<a href=#2067 id=2067 data-nosnippet>2067</a>            dm_info: <span class="macro">vec!</span>[],
-<a href=#2068 id=2068 data-nosnippet>2068</a>            external_sync: <span class="prelude-val">None</span>,
-<a href=#2069 id=2069 data-nosnippet>2069</a>            measures: <span class="prelude-val">None</span>,
-<a href=#2070 id=2070 data-nosnippet>2070</a>            marked_for_delete: <span class="bool-val">false</span>,
-<a href=#2071 id=2071 data-nosnippet>2071</a>            <span class="attr">#[cfg(unix)]
-<a href=#2072 id=2072 data-nosnippet>2072</a>            </span>lock_state: <span class="prelude-val">None</span>,
-<a href=#2073 id=2073 data-nosnippet>2073</a>        }
-<a href=#2074 id=2074 data-nosnippet>2074</a>    }
-<a href=#2075 id=2075 data-nosnippet>2075</a>
-<a href=#2076 id=2076 data-nosnippet>2076</a>    <span class="doccomment">/// Creates a new, empty table with the given schema but no rows.
-<a href=#2077 id=2077 data-nosnippet>2077</a>    ///
-<a href=#2078 id=2078 data-nosnippet>2078</a>    /// Rows added later via [`add_row`][Table::add_row] will be validated
-<a href=#2079 id=2079 data-nosnippet>2079</a>    /// against this schema.
-<a href=#2080 id=2080 data-nosnippet>2080</a>    </span><span class="kw">pub fn </span>with_schema(schema: TableSchema) -&gt; <span class="self">Self </span>{
-<a href=#2081 id=2081 data-nosnippet>2081</a>        <span class="kw">let </span><span class="kw-2">mut </span>inner = TableImpl::new();
-<a href=#2082 id=2082 data-nosnippet>2082</a>        inner.set_schema(<span class="prelude-val">Some</span>(schema));
-<a href=#2083 id=2083 data-nosnippet>2083</a>        <span class="self">Self </span>{
-<a href=#2084 id=2084 data-nosnippet>2084</a>            inner,
-<a href=#2085 id=2085 data-nosnippet>2085</a>            source_path: <span class="prelude-val">None</span>,
-<a href=#2086 id=2086 data-nosnippet>2086</a>            kind: TableKind::Plain,
-<a href=#2087 id=2087 data-nosnippet>2087</a>            virtual_columns: HashSet::new(),
-<a href=#2088 id=2088 data-nosnippet>2088</a>            virtual_bindings: Vec::new(),
-<a href=#2089 id=2089 data-nosnippet>2089</a>            table_info: TableInfo::default(),
-<a href=#2090 id=2090 data-nosnippet>2090</a>            dm_info: <span class="macro">vec!</span>[],
-<a href=#2091 id=2091 data-nosnippet>2091</a>            external_sync: <span class="prelude-val">None</span>,
-<a href=#2092 id=2092 data-nosnippet>2092</a>            measures: <span class="prelude-val">None</span>,
-<a href=#2093 id=2093 data-nosnippet>2093</a>            marked_for_delete: <span class="bool-val">false</span>,
-<a href=#2094 id=2094 data-nosnippet>2094</a>            <span class="attr">#[cfg(unix)]
-<a href=#2095 id=2095 data-nosnippet>2095</a>            </span>lock_state: <span class="prelude-val">None</span>,
-<a href=#2096 id=2096 data-nosnippet>2096</a>        }
-<a href=#2097 id=2097 data-nosnippet>2097</a>    }
-<a href=#2098 id=2098 data-nosnippet>2098</a>
-<a href=#2099 id=2099 data-nosnippet>2099</a>    <span class="doccomment">/// Creates a table from an existing `Vec` of rows without schema validation.
-<a href=#2100 id=2100 data-nosnippet>2100</a>    ///
-<a href=#2101 id=2101 data-nosnippet>2101</a>    /// This is a low-cost constructor: the `Vec` is moved in directly. No
-<a href=#2102 id=2102 data-nosnippet>2102</a>    /// schema is attached, so any column structure is accepted.
-<a href=#2103 id=2103 data-nosnippet>2103</a>    </span><span class="kw">pub fn </span>from_rows(rows: Vec&lt;RecordValue&gt;) -&gt; <span class="self">Self </span>{
-<a href=#2104 id=2104 data-nosnippet>2104</a>        <span class="self">Self </span>{
-<a href=#2105 id=2105 data-nosnippet>2105</a>            inner: TableImpl::from_rows(rows),
-<a href=#2106 id=2106 data-nosnippet>2106</a>            source_path: <span class="prelude-val">None</span>,
-<a href=#2107 id=2107 data-nosnippet>2107</a>            kind: TableKind::Plain,
-<a href=#2108 id=2108 data-nosnippet>2108</a>            virtual_columns: HashSet::new(),
-<a href=#2109 id=2109 data-nosnippet>2109</a>            virtual_bindings: Vec::new(),
-<a href=#2110 id=2110 data-nosnippet>2110</a>            table_info: TableInfo::default(),
-<a href=#2111 id=2111 data-nosnippet>2111</a>            dm_info: <span class="macro">vec!</span>[],
-<a href=#2112 id=2112 data-nosnippet>2112</a>            external_sync: <span class="prelude-val">None</span>,
-<a href=#2113 id=2113 data-nosnippet>2113</a>            measures: <span class="prelude-val">None</span>,
-<a href=#2114 id=2114 data-nosnippet>2114</a>            marked_for_delete: <span class="bool-val">false</span>,
-<a href=#2115 id=2115 data-nosnippet>2115</a>            <span class="attr">#[cfg(unix)]
-<a href=#2116 id=2116 data-nosnippet>2116</a>            </span>lock_state: <span class="prelude-val">None</span>,
-<a href=#2117 id=2117 data-nosnippet>2117</a>        }
-<a href=#2118 id=2118 data-nosnippet>2118</a>    }
-<a href=#2119 id=2119 data-nosnippet>2119</a>
-<a href=#2120 id=2120 data-nosnippet>2120</a>    <span class="doccomment">/// Creates a table from an existing `Vec` of rows, validated against `schema`.
-<a href=#2121 id=2121 data-nosnippet>2121</a>    ///
-<a href=#2122 id=2122 data-nosnippet>2122</a>    /// Returns [`TableError`] if any row violates the schema. On success, the
-<a href=#2123 id=2123 data-nosnippet>2123</a>    /// schema is stored and future mutations are also validated.
-<a href=#2124 id=2124 data-nosnippet>2124</a>    </span><span class="kw">pub fn </span>from_rows_with_schema(
-<a href=#2125 id=2125 data-nosnippet>2125</a>        rows: Vec&lt;RecordValue&gt;,
-<a href=#2126 id=2126 data-nosnippet>2126</a>        schema: TableSchema,
-<a href=#2127 id=2127 data-nosnippet>2127</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, TableError&gt; {
-<a href=#2128 id=2128 data-nosnippet>2128</a>        <span class="kw">let </span>undefined_cells = collect_undefined_cells_for_schema(<span class="kw-2">&amp;</span>rows, <span class="kw-2">&amp;</span>schema);
-<a href=#2129 id=2129 data-nosnippet>2129</a>        <span class="kw">let </span>table = <span class="self">Self </span>{
-<a href=#2130 id=2130 data-nosnippet>2130</a>            inner: TableImpl::with_rows_keywords_and_schema(
-<a href=#2131 id=2131 data-nosnippet>2131</a>                rows,
-<a href=#2132 id=2132 data-nosnippet>2132</a>                undefined_cells,
-<a href=#2133 id=2133 data-nosnippet>2133</a>                RecordValue::default(),
-<a href=#2134 id=2134 data-nosnippet>2134</a>                std::collections::HashMap::new(),
-<a href=#2135 id=2135 data-nosnippet>2135</a>                <span class="prelude-val">Some</span>(schema),
-<a href=#2136 id=2136 data-nosnippet>2136</a>            ),
-<a href=#2137 id=2137 data-nosnippet>2137</a>            source_path: <span class="prelude-val">None</span>,
-<a href=#2138 id=2138 data-nosnippet>2138</a>            kind: TableKind::Plain,
-<a href=#2139 id=2139 data-nosnippet>2139</a>            virtual_columns: HashSet::new(),
-<a href=#2140 id=2140 data-nosnippet>2140</a>            virtual_bindings: Vec::new(),
-<a href=#2141 id=2141 data-nosnippet>2141</a>            table_info: TableInfo::default(),
-<a href=#2142 id=2142 data-nosnippet>2142</a>            dm_info: <span class="macro">vec!</span>[],
-<a href=#2143 id=2143 data-nosnippet>2143</a>            external_sync: <span class="prelude-val">None</span>,
-<a href=#2144 id=2144 data-nosnippet>2144</a>            measures: <span class="prelude-val">None</span>,
-<a href=#2145 id=2145 data-nosnippet>2145</a>            marked_for_delete: <span class="bool-val">false</span>,
-<a href=#2146 id=2146 data-nosnippet>2146</a>            <span class="attr">#[cfg(unix)]
-<a href=#2147 id=2147 data-nosnippet>2147</a>            </span>lock_state: <span class="prelude-val">None</span>,
-<a href=#2148 id=2148 data-nosnippet>2148</a>        };
-<a href=#2149 id=2149 data-nosnippet>2149</a>        table.validate()<span class="question-mark">?</span>;
-<a href=#2150 id=2150 data-nosnippet>2150</a>        <span class="prelude-val">Ok</span>(table)
-<a href=#2151 id=2151 data-nosnippet>2151</a>    }
-<a href=#2152 id=2152 data-nosnippet>2152</a>
-<a href=#2153 id=2153 data-nosnippet>2153</a>    <span class="comment">// -----------------------------------------------------------------------
-<a href=#2154 id=2154 data-nosnippet>2154</a>    // Memory-table constructors
-<a href=#2155 id=2155 data-nosnippet>2155</a>    // -----------------------------------------------------------------------
-<a href=#2156 id=2156 data-nosnippet>2156</a>
-<a href=#2157 id=2157 data-nosnippet>2157</a>    </span><span class="doccomment">/// Creates a new, empty memory table with no rows and no schema.
-<a href=#2158 id=2158 data-nosnippet>2158</a>    ///
-<a href=#2159 id=2159 data-nosnippet>2159</a>    /// The table is transient: all data is lost when it is dropped. Locking
-<a href=#2160 id=2160 data-nosnippet>2160</a>    /// operations are no-ops. Use [`save`](Table::save) to materialize the
-<a href=#2161 id=2161 data-nosnippet>2161</a>    /// data to disk as a plain table.
-<a href=#2162 id=2162 data-nosnippet>2162</a>    ///
-<a href=#2163 id=2163 data-nosnippet>2163</a>    /// C++ equivalent: constructing a `Table` with `Table::Memory`.
-<a href=#2164 id=2164 data-nosnippet>2164</a>    </span><span class="kw">pub fn </span>new_memory() -&gt; <span class="self">Self </span>{
-<a href=#2165 id=2165 data-nosnippet>2165</a>        <span class="self">Self </span>{
-<a href=#2166 id=2166 data-nosnippet>2166</a>            inner: TableImpl::new(),
-<a href=#2167 id=2167 data-nosnippet>2167</a>            source_path: <span class="prelude-val">None</span>,
-<a href=#2168 id=2168 data-nosnippet>2168</a>            kind: TableKind::Memory,
-<a href=#2169 id=2169 data-nosnippet>2169</a>            virtual_columns: HashSet::new(),
-<a href=#2170 id=2170 data-nosnippet>2170</a>            virtual_bindings: Vec::new(),
-<a href=#2171 id=2171 data-nosnippet>2171</a>            table_info: TableInfo::default(),
-<a href=#2172 id=2172 data-nosnippet>2172</a>            dm_info: <span class="macro">vec!</span>[],
-<a href=#2173 id=2173 data-nosnippet>2173</a>            external_sync: <span class="prelude-val">None</span>,
-<a href=#2174 id=2174 data-nosnippet>2174</a>            measures: <span class="prelude-val">None</span>,
-<a href=#2175 id=2175 data-nosnippet>2175</a>            marked_for_delete: <span class="bool-val">false</span>,
-<a href=#2176 id=2176 data-nosnippet>2176</a>            <span class="attr">#[cfg(unix)]
-<a href=#2177 id=2177 data-nosnippet>2177</a>            </span>lock_state: <span class="prelude-val">None</span>,
-<a href=#2178 id=2178 data-nosnippet>2178</a>        }
-<a href=#2179 id=2179 data-nosnippet>2179</a>    }
-<a href=#2180 id=2180 data-nosnippet>2180</a>
-<a href=#2181 id=2181 data-nosnippet>2181</a>    <span class="doccomment">/// Creates a new memory table with the given schema but no rows.
-<a href=#2182 id=2182 data-nosnippet>2182</a>    ///
-<a href=#2183 id=2183 data-nosnippet>2183</a>    /// Rows added via [`add_row`](Table::add_row) will be validated against
-<a href=#2184 id=2184 data-nosnippet>2184</a>    /// the schema. The table is transient: all data is lost when dropped.
-<a href=#2185 id=2185 data-nosnippet>2185</a>    ///
-<a href=#2186 id=2186 data-nosnippet>2186</a>    /// C++ equivalent: constructing a `Table` with `Table::Memory` and a
-<a href=#2187 id=2187 data-nosnippet>2187</a>    /// `SetupNewTable` containing a `TableDesc`.
-<a href=#2188 id=2188 data-nosnippet>2188</a>    </span><span class="kw">pub fn </span>with_schema_memory(schema: TableSchema) -&gt; <span class="self">Self </span>{
-<a href=#2189 id=2189 data-nosnippet>2189</a>        <span class="kw">let </span><span class="kw-2">mut </span>inner = TableImpl::new();
-<a href=#2190 id=2190 data-nosnippet>2190</a>        inner.set_schema(<span class="prelude-val">Some</span>(schema));
-<a href=#2191 id=2191 data-nosnippet>2191</a>        <span class="self">Self </span>{
-<a href=#2192 id=2192 data-nosnippet>2192</a>            inner,
-<a href=#2193 id=2193 data-nosnippet>2193</a>            source_path: <span class="prelude-val">None</span>,
-<a href=#2194 id=2194 data-nosnippet>2194</a>            kind: TableKind::Memory,
-<a href=#2195 id=2195 data-nosnippet>2195</a>            virtual_columns: HashSet::new(),
-<a href=#2196 id=2196 data-nosnippet>2196</a>            virtual_bindings: Vec::new(),
-<a href=#2197 id=2197 data-nosnippet>2197</a>            table_info: TableInfo::default(),
-<a href=#2198 id=2198 data-nosnippet>2198</a>            dm_info: <span class="macro">vec!</span>[],
-<a href=#2199 id=2199 data-nosnippet>2199</a>            external_sync: <span class="prelude-val">None</span>,
-<a href=#2200 id=2200 data-nosnippet>2200</a>            measures: <span class="prelude-val">None</span>,
-<a href=#2201 id=2201 data-nosnippet>2201</a>            marked_for_delete: <span class="bool-val">false</span>,
-<a href=#2202 id=2202 data-nosnippet>2202</a>            <span class="attr">#[cfg(unix)]
-<a href=#2203 id=2203 data-nosnippet>2203</a>            </span>lock_state: <span class="prelude-val">None</span>,
-<a href=#2204 id=2204 data-nosnippet>2204</a>        }
-<a href=#2205 id=2205 data-nosnippet>2205</a>    }
-<a href=#2206 id=2206 data-nosnippet>2206</a>
-<a href=#2207 id=2207 data-nosnippet>2207</a>    <span class="doccomment">/// Creates a memory table from pre-built rows without schema validation.
-<a href=#2208 id=2208 data-nosnippet>2208</a>    ///
-<a href=#2209 id=2209 data-nosnippet>2209</a>    /// The `Vec` is moved in directly. The table is transient.
-<a href=#2210 id=2210 data-nosnippet>2210</a>    </span><span class="kw">pub fn </span>from_rows_memory(rows: Vec&lt;RecordValue&gt;) -&gt; <span class="self">Self </span>{
-<a href=#2211 id=2211 data-nosnippet>2211</a>        <span class="self">Self </span>{
-<a href=#2212 id=2212 data-nosnippet>2212</a>            inner: TableImpl::from_rows(rows),
-<a href=#2213 id=2213 data-nosnippet>2213</a>            source_path: <span class="prelude-val">None</span>,
-<a href=#2214 id=2214 data-nosnippet>2214</a>            kind: TableKind::Memory,
-<a href=#2215 id=2215 data-nosnippet>2215</a>            virtual_columns: HashSet::new(),
-<a href=#2216 id=2216 data-nosnippet>2216</a>            virtual_bindings: Vec::new(),
-<a href=#2217 id=2217 data-nosnippet>2217</a>            table_info: TableInfo::default(),
-<a href=#2218 id=2218 data-nosnippet>2218</a>            dm_info: <span class="macro">vec!</span>[],
-<a href=#2219 id=2219 data-nosnippet>2219</a>            external_sync: <span class="prelude-val">None</span>,
-<a href=#2220 id=2220 data-nosnippet>2220</a>            measures: <span class="prelude-val">None</span>,
-<a href=#2221 id=2221 data-nosnippet>2221</a>            marked_for_delete: <span class="bool-val">false</span>,
-<a href=#2222 id=2222 data-nosnippet>2222</a>            <span class="attr">#[cfg(unix)]
-<a href=#2223 id=2223 data-nosnippet>2223</a>            </span>lock_state: <span class="prelude-val">None</span>,
-<a href=#2224 id=2224 data-nosnippet>2224</a>        }
-<a href=#2225 id=2225 data-nosnippet>2225</a>    }
-<a href=#2226 id=2226 data-nosnippet>2226</a>
-<a href=#2227 id=2227 data-nosnippet>2227</a>    <span class="doccomment">/// Creates a memory table from rows validated against a schema.
-<a href=#2228 id=2228 data-nosnippet>2228</a>    ///
-<a href=#2229 id=2229 data-nosnippet>2229</a>    /// Returns [`TableError`] if any row violates the schema. On success the
-<a href=#2230 id=2230 data-nosnippet>2230</a>    /// schema is stored and future mutations are validated. The table is
-<a href=#2231 id=2231 data-nosnippet>2231</a>    /// transient.
-<a href=#2232 id=2232 data-nosnippet>2232</a>    </span><span class="kw">pub fn </span>from_rows_with_schema_memory(
-<a href=#2233 id=2233 data-nosnippet>2233</a>        rows: Vec&lt;RecordValue&gt;,
-<a href=#2234 id=2234 data-nosnippet>2234</a>        schema: TableSchema,
-<a href=#2235 id=2235 data-nosnippet>2235</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, TableError&gt; {
-<a href=#2236 id=2236 data-nosnippet>2236</a>        <span class="kw">let </span>undefined_cells = collect_undefined_cells_for_schema(<span class="kw-2">&amp;</span>rows, <span class="kw-2">&amp;</span>schema);
-<a href=#2237 id=2237 data-nosnippet>2237</a>        <span class="kw">let </span>table = <span class="self">Self </span>{
-<a href=#2238 id=2238 data-nosnippet>2238</a>            inner: TableImpl::with_rows_keywords_and_schema(
-<a href=#2239 id=2239 data-nosnippet>2239</a>                rows,
-<a href=#2240 id=2240 data-nosnippet>2240</a>                undefined_cells,
-<a href=#2241 id=2241 data-nosnippet>2241</a>                RecordValue::default(),
-<a href=#2242 id=2242 data-nosnippet>2242</a>                std::collections::HashMap::new(),
-<a href=#2243 id=2243 data-nosnippet>2243</a>                <span class="prelude-val">Some</span>(schema),
-<a href=#2244 id=2244 data-nosnippet>2244</a>            ),
-<a href=#2245 id=2245 data-nosnippet>2245</a>            source_path: <span class="prelude-val">None</span>,
-<a href=#2246 id=2246 data-nosnippet>2246</a>            kind: TableKind::Memory,
-<a href=#2247 id=2247 data-nosnippet>2247</a>            virtual_columns: HashSet::new(),
-<a href=#2248 id=2248 data-nosnippet>2248</a>            virtual_bindings: Vec::new(),
-<a href=#2249 id=2249 data-nosnippet>2249</a>            table_info: TableInfo::default(),
-<a href=#2250 id=2250 data-nosnippet>2250</a>            dm_info: <span class="macro">vec!</span>[],
-<a href=#2251 id=2251 data-nosnippet>2251</a>            external_sync: <span class="prelude-val">None</span>,
-<a href=#2252 id=2252 data-nosnippet>2252</a>            measures: <span class="prelude-val">None</span>,
-<a href=#2253 id=2253 data-nosnippet>2253</a>            marked_for_delete: <span class="bool-val">false</span>,
-<a href=#2254 id=2254 data-nosnippet>2254</a>            <span class="attr">#[cfg(unix)]
-<a href=#2255 id=2255 data-nosnippet>2255</a>            </span>lock_state: <span class="prelude-val">None</span>,
-<a href=#2256 id=2256 data-nosnippet>2256</a>        };
-<a href=#2257 id=2257 data-nosnippet>2257</a>        table.validate()<span class="question-mark">?</span>;
-<a href=#2258 id=2258 data-nosnippet>2258</a>        <span class="prelude-val">Ok</span>(table)
-<a href=#2259 id=2259 data-nosnippet>2259</a>    }
-<a href=#2260 id=2260 data-nosnippet>2260</a>
-<a href=#2261 id=2261 data-nosnippet>2261</a>    <span class="comment">// -----------------------------------------------------------------------
-<a href=#2262 id=2262 data-nosnippet>2262</a>    // Table kind and memory conversion
-<a href=#2263 id=2263 data-nosnippet>2263</a>    // -----------------------------------------------------------------------
-<a href=#2264 id=2264 data-nosnippet>2264</a>
-<a href=#2265 id=2265 data-nosnippet>2265</a>    </span><span class="doccomment">/// Returns the kind of this table (plain or memory).
-<a href=#2266 id=2266 data-nosnippet>2266</a>    ///
-<a href=#2267 id=2267 data-nosnippet>2267</a>    /// C++ equivalent: `Table::tableType()`.
-<a href=#2268 id=2268 data-nosnippet>2268</a>    </span><span class="kw">pub fn </span>table_kind(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; TableKind {
-<a href=#2269 id=2269 data-nosnippet>2269</a>        <span class="self">self</span>.kind
-<a href=#2270 id=2270 data-nosnippet>2270</a>    }
-<a href=#2271 id=2271 data-nosnippet>2271</a>
-<a href=#2272 id=2272 data-nosnippet>2272</a>    <span class="doccomment">/// Returns `true` if this is a transient in-memory table.
-<a href=#2273 id=2273 data-nosnippet>2273</a>    ///
-<a href=#2274 id=2274 data-nosnippet>2274</a>    /// Equivalent to `self.table_kind() == TableKind::Memory`.
-<a href=#2275 id=2275 data-nosnippet>2275</a>    </span><span class="kw">pub fn </span>is_memory(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#2276 id=2276 data-nosnippet>2276</a>        <span class="self">self</span>.kind == TableKind::Memory
-<a href=#2277 id=2277 data-nosnippet>2277</a>    }
+<a href=#2043 id=2043 data-nosnippet>2043</a>        <span class="kw">for </span>line <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.table_info.readme {
+<a href=#2044 id=2044 data-nosnippet>2044</a>            bytes = bytes.checked_add(line.capacity())<span class="question-mark">?</span>;
+<a href=#2045 id=2045 data-nosnippet>2045</a>        }
+<a href=#2046 id=2046 data-nosnippet>2046</a>        <span class="kw">for </span>manager <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.dm_info {
+<a href=#2047 id=2047 data-nosnippet>2047</a>            bytes = bytes.checked_add(manager.dm_type.capacity())<span class="question-mark">?</span>.checked_add(
+<a href=#2048 id=2048 data-nosnippet>2048</a>                manager
+<a href=#2049 id=2049 data-nosnippet>2049</a>                    .columns
+<a href=#2050 id=2050 data-nosnippet>2050</a>                    .capacity()
+<a href=#2051 id=2051 data-nosnippet>2051</a>                    .checked_mul(size_of::&lt;String&gt;())<span class="question-mark">?</span>,
+<a href=#2052 id=2052 data-nosnippet>2052</a>            )<span class="question-mark">?</span>;
+<a href=#2053 id=2053 data-nosnippet>2053</a>            <span class="kw">for </span>column <span class="kw">in </span><span class="kw-2">&amp;</span>manager.columns {
+<a href=#2054 id=2054 data-nosnippet>2054</a>                bytes = bytes.checked_add(column.capacity())<span class="question-mark">?</span>;
+<a href=#2055 id=2055 data-nosnippet>2055</a>            }
+<a href=#2056 id=2056 data-nosnippet>2056</a>        }
+<a href=#2057 id=2057 data-nosnippet>2057</a>        <span class="attr">#[cfg(unix)]
+<a href=#2058 id=2058 data-nosnippet>2058</a>        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(lock) = <span class="kw-2">&amp;</span><span class="self">self</span>.lock_state {
+<a href=#2059 id=2059 data-nosnippet>2059</a>            bytes = bytes
+<a href=#2060 id=2060 data-nosnippet>2060</a>                .checked_add(<span class="kw">crate</span>::table_impl::path_heap_bytes(<span class="kw-2">&amp;</span>lock.path))<span class="question-mark">?
+<a href=#2061 id=2061 data-nosnippet>2061</a>                </span>.checked_add(lock.lock_file.retained_heap_bytes())<span class="question-mark">?
+<a href=#2062 id=2062 data-nosnippet>2062</a>                </span>.checked_add(
+<a href=#2063 id=2063 data-nosnippet>2063</a>                    lock.sync_data
+<a href=#2064 id=2064 data-nosnippet>2064</a>                        .data_man_change_counters
+<a href=#2065 id=2065 data-nosnippet>2065</a>                        .capacity()
+<a href=#2066 id=2066 data-nosnippet>2066</a>                        .checked_mul(size_of::&lt;u32&gt;())<span class="question-mark">?</span>,
+<a href=#2067 id=2067 data-nosnippet>2067</a>                )<span class="question-mark">?</span>;
+<a href=#2068 id=2068 data-nosnippet>2068</a>        }
+<a href=#2069 id=2069 data-nosnippet>2069</a>        <span class="prelude-val">Some</span>(bytes)
+<a href=#2070 id=2070 data-nosnippet>2070</a>    }
+<a href=#2071 id=2071 data-nosnippet>2071</a>
+<a href=#2072 id=2072 data-nosnippet>2072</a>    <span class="doccomment">/// Creates a new, empty table with no rows, no schema, and no keywords.
+<a href=#2073 id=2073 data-nosnippet>2073</a>    </span><span class="kw">pub fn </span>new() -&gt; <span class="self">Self </span>{
+<a href=#2074 id=2074 data-nosnippet>2074</a>        <span class="self">Self </span>{
+<a href=#2075 id=2075 data-nosnippet>2075</a>            inner: TableImpl::new(),
+<a href=#2076 id=2076 data-nosnippet>2076</a>            source_path: <span class="prelude-val">None</span>,
+<a href=#2077 id=2077 data-nosnippet>2077</a>            kind: TableKind::Plain,
+<a href=#2078 id=2078 data-nosnippet>2078</a>            virtual_columns: HashSet::new(),
+<a href=#2079 id=2079 data-nosnippet>2079</a>            virtual_bindings: Vec::new(),
+<a href=#2080 id=2080 data-nosnippet>2080</a>            table_info: TableInfo::default(),
+<a href=#2081 id=2081 data-nosnippet>2081</a>            dm_info: <span class="macro">vec!</span>[],
+<a href=#2082 id=2082 data-nosnippet>2082</a>            external_sync: <span class="prelude-val">None</span>,
+<a href=#2083 id=2083 data-nosnippet>2083</a>            measures: <span class="prelude-val">None</span>,
+<a href=#2084 id=2084 data-nosnippet>2084</a>            marked_for_delete: <span class="bool-val">false</span>,
+<a href=#2085 id=2085 data-nosnippet>2085</a>            <span class="attr">#[cfg(unix)]
+<a href=#2086 id=2086 data-nosnippet>2086</a>            </span>lock_state: <span class="prelude-val">None</span>,
+<a href=#2087 id=2087 data-nosnippet>2087</a>        }
+<a href=#2088 id=2088 data-nosnippet>2088</a>    }
+<a href=#2089 id=2089 data-nosnippet>2089</a>
+<a href=#2090 id=2090 data-nosnippet>2090</a>    <span class="doccomment">/// Creates a new, empty table with the given schema but no rows.
+<a href=#2091 id=2091 data-nosnippet>2091</a>    ///
+<a href=#2092 id=2092 data-nosnippet>2092</a>    /// Rows added later via [`add_row`][Table::add_row] will be validated
+<a href=#2093 id=2093 data-nosnippet>2093</a>    /// against this schema.
+<a href=#2094 id=2094 data-nosnippet>2094</a>    </span><span class="kw">pub fn </span>with_schema(schema: TableSchema) -&gt; <span class="self">Self </span>{
+<a href=#2095 id=2095 data-nosnippet>2095</a>        <span class="kw">let </span><span class="kw-2">mut </span>inner = TableImpl::new();
+<a href=#2096 id=2096 data-nosnippet>2096</a>        inner.set_schema(<span class="prelude-val">Some</span>(schema));
+<a href=#2097 id=2097 data-nosnippet>2097</a>        <span class="self">Self </span>{
+<a href=#2098 id=2098 data-nosnippet>2098</a>            inner,
+<a href=#2099 id=2099 data-nosnippet>2099</a>            source_path: <span class="prelude-val">None</span>,
+<a href=#2100 id=2100 data-nosnippet>2100</a>            kind: TableKind::Plain,
+<a href=#2101 id=2101 data-nosnippet>2101</a>            virtual_columns: HashSet::new(),
+<a href=#2102 id=2102 data-nosnippet>2102</a>            virtual_bindings: Vec::new(),
+<a href=#2103 id=2103 data-nosnippet>2103</a>            table_info: TableInfo::default(),
+<a href=#2104 id=2104 data-nosnippet>2104</a>            dm_info: <span class="macro">vec!</span>[],
+<a href=#2105 id=2105 data-nosnippet>2105</a>            external_sync: <span class="prelude-val">None</span>,
+<a href=#2106 id=2106 data-nosnippet>2106</a>            measures: <span class="prelude-val">None</span>,
+<a href=#2107 id=2107 data-nosnippet>2107</a>            marked_for_delete: <span class="bool-val">false</span>,
+<a href=#2108 id=2108 data-nosnippet>2108</a>            <span class="attr">#[cfg(unix)]
+<a href=#2109 id=2109 data-nosnippet>2109</a>            </span>lock_state: <span class="prelude-val">None</span>,
+<a href=#2110 id=2110 data-nosnippet>2110</a>        }
+<a href=#2111 id=2111 data-nosnippet>2111</a>    }
+<a href=#2112 id=2112 data-nosnippet>2112</a>
+<a href=#2113 id=2113 data-nosnippet>2113</a>    <span class="doccomment">/// Creates a table from an existing `Vec` of rows without schema validation.
+<a href=#2114 id=2114 data-nosnippet>2114</a>    ///
+<a href=#2115 id=2115 data-nosnippet>2115</a>    /// This is a low-cost constructor: the `Vec` is moved in directly. No
+<a href=#2116 id=2116 data-nosnippet>2116</a>    /// schema is attached, so any column structure is accepted.
+<a href=#2117 id=2117 data-nosnippet>2117</a>    </span><span class="kw">pub fn </span>from_rows(rows: Vec&lt;RecordValue&gt;) -&gt; <span class="self">Self </span>{
+<a href=#2118 id=2118 data-nosnippet>2118</a>        <span class="self">Self </span>{
+<a href=#2119 id=2119 data-nosnippet>2119</a>            inner: TableImpl::from_rows(rows),
+<a href=#2120 id=2120 data-nosnippet>2120</a>            source_path: <span class="prelude-val">None</span>,
+<a href=#2121 id=2121 data-nosnippet>2121</a>            kind: TableKind::Plain,
+<a href=#2122 id=2122 data-nosnippet>2122</a>            virtual_columns: HashSet::new(),
+<a href=#2123 id=2123 data-nosnippet>2123</a>            virtual_bindings: Vec::new(),
+<a href=#2124 id=2124 data-nosnippet>2124</a>            table_info: TableInfo::default(),
+<a href=#2125 id=2125 data-nosnippet>2125</a>            dm_info: <span class="macro">vec!</span>[],
+<a href=#2126 id=2126 data-nosnippet>2126</a>            external_sync: <span class="prelude-val">None</span>,
+<a href=#2127 id=2127 data-nosnippet>2127</a>            measures: <span class="prelude-val">None</span>,
+<a href=#2128 id=2128 data-nosnippet>2128</a>            marked_for_delete: <span class="bool-val">false</span>,
+<a href=#2129 id=2129 data-nosnippet>2129</a>            <span class="attr">#[cfg(unix)]
+<a href=#2130 id=2130 data-nosnippet>2130</a>            </span>lock_state: <span class="prelude-val">None</span>,
+<a href=#2131 id=2131 data-nosnippet>2131</a>        }
+<a href=#2132 id=2132 data-nosnippet>2132</a>    }
+<a href=#2133 id=2133 data-nosnippet>2133</a>
+<a href=#2134 id=2134 data-nosnippet>2134</a>    <span class="doccomment">/// Creates a table from an existing `Vec` of rows, validated against `schema`.
+<a href=#2135 id=2135 data-nosnippet>2135</a>    ///
+<a href=#2136 id=2136 data-nosnippet>2136</a>    /// Returns [`TableError`] if any row violates the schema. On success, the
+<a href=#2137 id=2137 data-nosnippet>2137</a>    /// schema is stored and future mutations are also validated.
+<a href=#2138 id=2138 data-nosnippet>2138</a>    </span><span class="kw">pub fn </span>from_rows_with_schema(
+<a href=#2139 id=2139 data-nosnippet>2139</a>        rows: Vec&lt;RecordValue&gt;,
+<a href=#2140 id=2140 data-nosnippet>2140</a>        schema: TableSchema,
+<a href=#2141 id=2141 data-nosnippet>2141</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, TableError&gt; {
+<a href=#2142 id=2142 data-nosnippet>2142</a>        <span class="kw">let </span>undefined_cells = collect_undefined_cells_for_schema(<span class="kw-2">&amp;</span>rows, <span class="kw-2">&amp;</span>schema);
+<a href=#2143 id=2143 data-nosnippet>2143</a>        <span class="kw">let </span>table = <span class="self">Self </span>{
+<a href=#2144 id=2144 data-nosnippet>2144</a>            inner: TableImpl::with_rows_keywords_and_schema(
+<a href=#2145 id=2145 data-nosnippet>2145</a>                rows,
+<a href=#2146 id=2146 data-nosnippet>2146</a>                undefined_cells,
+<a href=#2147 id=2147 data-nosnippet>2147</a>                RecordValue::default(),
+<a href=#2148 id=2148 data-nosnippet>2148</a>                std::collections::HashMap::new(),
+<a href=#2149 id=2149 data-nosnippet>2149</a>                <span class="prelude-val">Some</span>(schema),
+<a href=#2150 id=2150 data-nosnippet>2150</a>            ),
+<a href=#2151 id=2151 data-nosnippet>2151</a>            source_path: <span class="prelude-val">None</span>,
+<a href=#2152 id=2152 data-nosnippet>2152</a>            kind: TableKind::Plain,
+<a href=#2153 id=2153 data-nosnippet>2153</a>            virtual_columns: HashSet::new(),
+<a href=#2154 id=2154 data-nosnippet>2154</a>            virtual_bindings: Vec::new(),
+<a href=#2155 id=2155 data-nosnippet>2155</a>            table_info: TableInfo::default(),
+<a href=#2156 id=2156 data-nosnippet>2156</a>            dm_info: <span class="macro">vec!</span>[],
+<a href=#2157 id=2157 data-nosnippet>2157</a>            external_sync: <span class="prelude-val">None</span>,
+<a href=#2158 id=2158 data-nosnippet>2158</a>            measures: <span class="prelude-val">None</span>,
+<a href=#2159 id=2159 data-nosnippet>2159</a>            marked_for_delete: <span class="bool-val">false</span>,
+<a href=#2160 id=2160 data-nosnippet>2160</a>            <span class="attr">#[cfg(unix)]
+<a href=#2161 id=2161 data-nosnippet>2161</a>            </span>lock_state: <span class="prelude-val">None</span>,
+<a href=#2162 id=2162 data-nosnippet>2162</a>        };
+<a href=#2163 id=2163 data-nosnippet>2163</a>        table.validate()<span class="question-mark">?</span>;
+<a href=#2164 id=2164 data-nosnippet>2164</a>        <span class="prelude-val">Ok</span>(table)
+<a href=#2165 id=2165 data-nosnippet>2165</a>    }
+<a href=#2166 id=2166 data-nosnippet>2166</a>
+<a href=#2167 id=2167 data-nosnippet>2167</a>    <span class="comment">// -----------------------------------------------------------------------
+<a href=#2168 id=2168 data-nosnippet>2168</a>    // Memory-table constructors
+<a href=#2169 id=2169 data-nosnippet>2169</a>    // -----------------------------------------------------------------------
+<a href=#2170 id=2170 data-nosnippet>2170</a>
+<a href=#2171 id=2171 data-nosnippet>2171</a>    </span><span class="doccomment">/// Creates a new, empty memory table with no rows and no schema.
+<a href=#2172 id=2172 data-nosnippet>2172</a>    ///
+<a href=#2173 id=2173 data-nosnippet>2173</a>    /// The table is transient: all data is lost when it is dropped. Locking
+<a href=#2174 id=2174 data-nosnippet>2174</a>    /// operations are no-ops. Use [`save`](Table::save) to materialize the
+<a href=#2175 id=2175 data-nosnippet>2175</a>    /// data to disk as a plain table.
+<a href=#2176 id=2176 data-nosnippet>2176</a>    ///
+<a href=#2177 id=2177 data-nosnippet>2177</a>    /// C++ equivalent: constructing a `Table` with `Table::Memory`.
+<a href=#2178 id=2178 data-nosnippet>2178</a>    </span><span class="kw">pub fn </span>new_memory() -&gt; <span class="self">Self </span>{
+<a href=#2179 id=2179 data-nosnippet>2179</a>        <span class="self">Self </span>{
+<a href=#2180 id=2180 data-nosnippet>2180</a>            inner: TableImpl::new(),
+<a href=#2181 id=2181 data-nosnippet>2181</a>            source_path: <span class="prelude-val">None</span>,
+<a href=#2182 id=2182 data-nosnippet>2182</a>            kind: TableKind::Memory,
+<a href=#2183 id=2183 data-nosnippet>2183</a>            virtual_columns: HashSet::new(),
+<a href=#2184 id=2184 data-nosnippet>2184</a>            virtual_bindings: Vec::new(),
+<a href=#2185 id=2185 data-nosnippet>2185</a>            table_info: TableInfo::default(),
+<a href=#2186 id=2186 data-nosnippet>2186</a>            dm_info: <span class="macro">vec!</span>[],
+<a href=#2187 id=2187 data-nosnippet>2187</a>            external_sync: <span class="prelude-val">None</span>,
+<a href=#2188 id=2188 data-nosnippet>2188</a>            measures: <span class="prelude-val">None</span>,
+<a href=#2189 id=2189 data-nosnippet>2189</a>            marked_for_delete: <span class="bool-val">false</span>,
+<a href=#2190 id=2190 data-nosnippet>2190</a>            <span class="attr">#[cfg(unix)]
+<a href=#2191 id=2191 data-nosnippet>2191</a>            </span>lock_state: <span class="prelude-val">None</span>,
+<a href=#2192 id=2192 data-nosnippet>2192</a>        }
+<a href=#2193 id=2193 data-nosnippet>2193</a>    }
+<a href=#2194 id=2194 data-nosnippet>2194</a>
+<a href=#2195 id=2195 data-nosnippet>2195</a>    <span class="doccomment">/// Creates a new memory table with the given schema but no rows.
+<a href=#2196 id=2196 data-nosnippet>2196</a>    ///
+<a href=#2197 id=2197 data-nosnippet>2197</a>    /// Rows added via [`add_row`](Table::add_row) will be validated against
+<a href=#2198 id=2198 data-nosnippet>2198</a>    /// the schema. The table is transient: all data is lost when dropped.
+<a href=#2199 id=2199 data-nosnippet>2199</a>    ///
+<a href=#2200 id=2200 data-nosnippet>2200</a>    /// C++ equivalent: constructing a `Table` with `Table::Memory` and a
+<a href=#2201 id=2201 data-nosnippet>2201</a>    /// `SetupNewTable` containing a `TableDesc`.
+<a href=#2202 id=2202 data-nosnippet>2202</a>    </span><span class="kw">pub fn </span>with_schema_memory(schema: TableSchema) -&gt; <span class="self">Self </span>{
+<a href=#2203 id=2203 data-nosnippet>2203</a>        <span class="kw">let </span><span class="kw-2">mut </span>inner = TableImpl::new();
+<a href=#2204 id=2204 data-nosnippet>2204</a>        inner.set_schema(<span class="prelude-val">Some</span>(schema));
+<a href=#2205 id=2205 data-nosnippet>2205</a>        <span class="self">Self </span>{
+<a href=#2206 id=2206 data-nosnippet>2206</a>            inner,
+<a href=#2207 id=2207 data-nosnippet>2207</a>            source_path: <span class="prelude-val">None</span>,
+<a href=#2208 id=2208 data-nosnippet>2208</a>            kind: TableKind::Memory,
+<a href=#2209 id=2209 data-nosnippet>2209</a>            virtual_columns: HashSet::new(),
+<a href=#2210 id=2210 data-nosnippet>2210</a>            virtual_bindings: Vec::new(),
+<a href=#2211 id=2211 data-nosnippet>2211</a>            table_info: TableInfo::default(),
+<a href=#2212 id=2212 data-nosnippet>2212</a>            dm_info: <span class="macro">vec!</span>[],
+<a href=#2213 id=2213 data-nosnippet>2213</a>            external_sync: <span class="prelude-val">None</span>,
+<a href=#2214 id=2214 data-nosnippet>2214</a>            measures: <span class="prelude-val">None</span>,
+<a href=#2215 id=2215 data-nosnippet>2215</a>            marked_for_delete: <span class="bool-val">false</span>,
+<a href=#2216 id=2216 data-nosnippet>2216</a>            <span class="attr">#[cfg(unix)]
+<a href=#2217 id=2217 data-nosnippet>2217</a>            </span>lock_state: <span class="prelude-val">None</span>,
+<a href=#2218 id=2218 data-nosnippet>2218</a>        }
+<a href=#2219 id=2219 data-nosnippet>2219</a>    }
+<a href=#2220 id=2220 data-nosnippet>2220</a>
+<a href=#2221 id=2221 data-nosnippet>2221</a>    <span class="doccomment">/// Creates a memory table from pre-built rows without schema validation.
+<a href=#2222 id=2222 data-nosnippet>2222</a>    ///
+<a href=#2223 id=2223 data-nosnippet>2223</a>    /// The `Vec` is moved in directly. The table is transient.
+<a href=#2224 id=2224 data-nosnippet>2224</a>    </span><span class="kw">pub fn </span>from_rows_memory(rows: Vec&lt;RecordValue&gt;) -&gt; <span class="self">Self </span>{
+<a href=#2225 id=2225 data-nosnippet>2225</a>        <span class="self">Self </span>{
+<a href=#2226 id=2226 data-nosnippet>2226</a>            inner: TableImpl::from_rows(rows),
+<a href=#2227 id=2227 data-nosnippet>2227</a>            source_path: <span class="prelude-val">None</span>,
+<a href=#2228 id=2228 data-nosnippet>2228</a>            kind: TableKind::Memory,
+<a href=#2229 id=2229 data-nosnippet>2229</a>            virtual_columns: HashSet::new(),
+<a href=#2230 id=2230 data-nosnippet>2230</a>            virtual_bindings: Vec::new(),
+<a href=#2231 id=2231 data-nosnippet>2231</a>            table_info: TableInfo::default(),
+<a href=#2232 id=2232 data-nosnippet>2232</a>            dm_info: <span class="macro">vec!</span>[],
+<a href=#2233 id=2233 data-nosnippet>2233</a>            external_sync: <span class="prelude-val">None</span>,
+<a href=#2234 id=2234 data-nosnippet>2234</a>            measures: <span class="prelude-val">None</span>,
+<a href=#2235 id=2235 data-nosnippet>2235</a>            marked_for_delete: <span class="bool-val">false</span>,
+<a href=#2236 id=2236 data-nosnippet>2236</a>            <span class="attr">#[cfg(unix)]
+<a href=#2237 id=2237 data-nosnippet>2237</a>            </span>lock_state: <span class="prelude-val">None</span>,
+<a href=#2238 id=2238 data-nosnippet>2238</a>        }
+<a href=#2239 id=2239 data-nosnippet>2239</a>    }
+<a href=#2240 id=2240 data-nosnippet>2240</a>
+<a href=#2241 id=2241 data-nosnippet>2241</a>    <span class="doccomment">/// Creates a memory table from rows validated against a schema.
+<a href=#2242 id=2242 data-nosnippet>2242</a>    ///
+<a href=#2243 id=2243 data-nosnippet>2243</a>    /// Returns [`TableError`] if any row violates the schema. On success the
+<a href=#2244 id=2244 data-nosnippet>2244</a>    /// schema is stored and future mutations are validated. The table is
+<a href=#2245 id=2245 data-nosnippet>2245</a>    /// transient.
+<a href=#2246 id=2246 data-nosnippet>2246</a>    </span><span class="kw">pub fn </span>from_rows_with_schema_memory(
+<a href=#2247 id=2247 data-nosnippet>2247</a>        rows: Vec&lt;RecordValue&gt;,
+<a href=#2248 id=2248 data-nosnippet>2248</a>        schema: TableSchema,
+<a href=#2249 id=2249 data-nosnippet>2249</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, TableError&gt; {
+<a href=#2250 id=2250 data-nosnippet>2250</a>        <span class="kw">let </span>undefined_cells = collect_undefined_cells_for_schema(<span class="kw-2">&amp;</span>rows, <span class="kw-2">&amp;</span>schema);
+<a href=#2251 id=2251 data-nosnippet>2251</a>        <span class="kw">let </span>table = <span class="self">Self </span>{
+<a href=#2252 id=2252 data-nosnippet>2252</a>            inner: TableImpl::with_rows_keywords_and_schema(
+<a href=#2253 id=2253 data-nosnippet>2253</a>                rows,
+<a href=#2254 id=2254 data-nosnippet>2254</a>                undefined_cells,
+<a href=#2255 id=2255 data-nosnippet>2255</a>                RecordValue::default(),
+<a href=#2256 id=2256 data-nosnippet>2256</a>                std::collections::HashMap::new(),
+<a href=#2257 id=2257 data-nosnippet>2257</a>                <span class="prelude-val">Some</span>(schema),
+<a href=#2258 id=2258 data-nosnippet>2258</a>            ),
+<a href=#2259 id=2259 data-nosnippet>2259</a>            source_path: <span class="prelude-val">None</span>,
+<a href=#2260 id=2260 data-nosnippet>2260</a>            kind: TableKind::Memory,
+<a href=#2261 id=2261 data-nosnippet>2261</a>            virtual_columns: HashSet::new(),
+<a href=#2262 id=2262 data-nosnippet>2262</a>            virtual_bindings: Vec::new(),
+<a href=#2263 id=2263 data-nosnippet>2263</a>            table_info: TableInfo::default(),
+<a href=#2264 id=2264 data-nosnippet>2264</a>            dm_info: <span class="macro">vec!</span>[],
+<a href=#2265 id=2265 data-nosnippet>2265</a>            external_sync: <span class="prelude-val">None</span>,
+<a href=#2266 id=2266 data-nosnippet>2266</a>            measures: <span class="prelude-val">None</span>,
+<a href=#2267 id=2267 data-nosnippet>2267</a>            marked_for_delete: <span class="bool-val">false</span>,
+<a href=#2268 id=2268 data-nosnippet>2268</a>            <span class="attr">#[cfg(unix)]
+<a href=#2269 id=2269 data-nosnippet>2269</a>            </span>lock_state: <span class="prelude-val">None</span>,
+<a href=#2270 id=2270 data-nosnippet>2270</a>        };
+<a href=#2271 id=2271 data-nosnippet>2271</a>        table.validate()<span class="question-mark">?</span>;
+<a href=#2272 id=2272 data-nosnippet>2272</a>        <span class="prelude-val">Ok</span>(table)
+<a href=#2273 id=2273 data-nosnippet>2273</a>    }
+<a href=#2274 id=2274 data-nosnippet>2274</a>
+<a href=#2275 id=2275 data-nosnippet>2275</a>    <span class="comment">// -----------------------------------------------------------------------
+<a href=#2276 id=2276 data-nosnippet>2276</a>    // Table kind and memory conversion
+<a href=#2277 id=2277 data-nosnippet>2277</a>    // -----------------------------------------------------------------------
 <a href=#2278 id=2278 data-nosnippet>2278</a>
-<a href=#2279 id=2279 data-nosnippet>2279</a>    <span class="doccomment">/// Attach the explicit scientific-data provider used by TaQL `meas.*`.
-<a href=#2280 id=2280 data-nosnippet>2280</a>    </span><span class="kw">pub fn </span>set_measures_provider(
-<a href=#2281 id=2281 data-nosnippet>2281</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#2282 id=2282 data-nosnippet>2282</a>        measures: Arc&lt;<span class="kw">dyn </span>casa_types::measures::MeasuresProvider&gt;,
-<a href=#2283 id=2283 data-nosnippet>2283</a>    ) {
-<a href=#2284 id=2284 data-nosnippet>2284</a>        <span class="self">self</span>.measures = <span class="prelude-val">Some</span>(measures);
-<a href=#2285 id=2285 data-nosnippet>2285</a>    }
-<a href=#2286 id=2286 data-nosnippet>2286</a>
-<a href=#2287 id=2287 data-nosnippet>2287</a>    <span class="doccomment">/// Return the scientific-data provider attached to this table, if any.
-<a href=#2288 id=2288 data-nosnippet>2288</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>measures_provider(
-<a href=#2289 id=2289 data-nosnippet>2289</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#2290 id=2290 data-nosnippet>2290</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Arc&lt;<span class="kw">dyn </span>casa_types::measures::MeasuresProvider&gt;&gt; {
-<a href=#2291 id=2291 data-nosnippet>2291</a>        <span class="self">self</span>.measures.as_ref()
-<a href=#2292 id=2292 data-nosnippet>2292</a>    }
-<a href=#2293 id=2293 data-nosnippet>2293</a>
-<a href=#2294 id=2294 data-nosnippet>2294</a>    <span class="doccomment">/// Creates an in-memory copy of this table.
-<a href=#2295 id=2295 data-nosnippet>2295</a>    ///
-<a href=#2296 id=2296 data-nosnippet>2296</a>    /// All rows, keywords, column keywords, and schema are cloned into a
-<a href=#2297 id=2297 data-nosnippet>2297</a>    /// new table with [`TableKind::Memory`]. The source path and lock state
-<a href=#2298 id=2298 data-nosnippet>2298</a>    /// are not copied.
-<a href=#2299 id=2299 data-nosnippet>2299</a>    ///
-<a href=#2300 id=2300 data-nosnippet>2300</a>    /// This can be called on any table (plain or memory). Calling it on a
-<a href=#2301 id=2301 data-nosnippet>2301</a>    /// memory table produces an independent clone.
-<a href=#2302 id=2302 data-nosnippet>2302</a>    ///
-<a href=#2303 id=2303 data-nosnippet>2303</a>    /// C++ equivalent: `Table::copyToMemoryTable`.
-<a href=#2304 id=2304 data-nosnippet>2304</a>    </span><span class="kw">pub fn </span>to_memory(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, TableError&gt; {
-<a href=#2305 id=2305 data-nosnippet>2305</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
-<a href=#2306 id=2306 data-nosnippet>2306</a>            inner: TableImpl::with_rows_keywords_and_schema(
-<a href=#2307 id=2307 data-nosnippet>2307</a>                <span class="self">self</span>.inner.rows()<span class="question-mark">?</span>.to_vec(),
-<a href=#2308 id=2308 data-nosnippet>2308</a>                <span class="self">self</span>.inner.undefined_cells()<span class="question-mark">?</span>.to_vec(),
-<a href=#2309 id=2309 data-nosnippet>2309</a>                <span class="self">self</span>.inner.keywords().clone(),
-<a href=#2310 id=2310 data-nosnippet>2310</a>                <span class="self">self</span>.inner.all_column_keywords().clone(),
-<a href=#2311 id=2311 data-nosnippet>2311</a>                <span class="self">self</span>.inner.schema().cloned(),
-<a href=#2312 id=2312 data-nosnippet>2312</a>            ),
-<a href=#2313 id=2313 data-nosnippet>2313</a>            source_path: <span class="prelude-val">None</span>,
-<a href=#2314 id=2314 data-nosnippet>2314</a>            kind: TableKind::Memory,
-<a href=#2315 id=2315 data-nosnippet>2315</a>            virtual_columns: HashSet::new(),
-<a href=#2316 id=2316 data-nosnippet>2316</a>            virtual_bindings: Vec::new(),
-<a href=#2317 id=2317 data-nosnippet>2317</a>            table_info: <span class="self">self</span>.table_info.clone(),
-<a href=#2318 id=2318 data-nosnippet>2318</a>            dm_info: <span class="macro">vec!</span>[],
-<a href=#2319 id=2319 data-nosnippet>2319</a>            external_sync: <span class="prelude-val">None</span>,
-<a href=#2320 id=2320 data-nosnippet>2320</a>            measures: <span class="self">self</span>.measures.clone(),
-<a href=#2321 id=2321 data-nosnippet>2321</a>            marked_for_delete: <span class="bool-val">false</span>,
-<a href=#2322 id=2322 data-nosnippet>2322</a>            <span class="attr">#[cfg(unix)]
-<a href=#2323 id=2323 data-nosnippet>2323</a>            </span>lock_state: <span class="prelude-val">None</span>,
-<a href=#2324 id=2324 data-nosnippet>2324</a>        })
-<a href=#2325 id=2325 data-nosnippet>2325</a>    }
-<a href=#2326 id=2326 data-nosnippet>2326</a>}
-<a href=#2327 id=2327 data-nosnippet>2327</a>
-<a href=#2328 id=2328 data-nosnippet>2328</a><span class="comment">// ── Drop ──────────────────────────────────────────────────────────────
-<a href=#2329 id=2329 data-nosnippet>2329</a>
-<a href=#2330 id=2330 data-nosnippet>2330</a></span><span class="kw">impl </span>Drop <span class="kw">for </span>Table {
-<a href=#2331 id=2331 data-nosnippet>2331</a>    <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-<a href=#2332 id=2332 data-nosnippet>2332</a>        <span class="attr">#[cfg(unix)]
-<a href=#2333 id=2333 data-nosnippet>2333</a>        </span>{
-<a href=#2334 id=2334 data-nosnippet>2334</a>            <span class="kw">if </span><span class="self">self</span>.kind != TableKind::Memory {
-<a href=#2335 id=2335 data-nosnippet>2335</a>                <span class="kw">let </span>had_write_lock = <span class="self">self
-<a href=#2336 id=2336 data-nosnippet>2336</a>                    </span>.lock_state
-<a href=#2337 id=2337 data-nosnippet>2337</a>                    .as_ref()
-<a href=#2338 id=2338 data-nosnippet>2338</a>                    .is_some_and(|state| state.lock_file.has_lock(LockType::Write));
-<a href=#2339 id=2339 data-nosnippet>2339</a>
-<a href=#2340 id=2340 data-nosnippet>2340</a>                <span class="kw">if </span>had_write_lock {
-<a href=#2341 id=2341 data-nosnippet>2341</a>                    <span class="kw">let </span>save_opts = <span class="self">self</span>.lock_state.as_ref().map(|state| {
-<a href=#2342 id=2342 data-nosnippet>2342</a>                        TableOptions::new(<span class="kw-2">&amp;</span>state.path)
-<a href=#2343 id=2343 data-nosnippet>2343</a>                            .with_data_manager(state.data_manager)
-<a href=#2344 id=2344 data-nosnippet>2344</a>                            .with_endian_format(state.endian_format)
-<a href=#2345 id=2345 data-nosnippet>2345</a>                    });
-<a href=#2346 id=2346 data-nosnippet>2346</a>
-<a href=#2347 id=2347 data-nosnippet>2347</a>                    <span class="kw">if let </span><span class="prelude-val">Some</span>(save_opts) = save_opts
-<a href=#2348 id=2348 data-nosnippet>2348</a>                        &amp;&amp; <span class="self">self</span>.save(save_opts).is_ok()
-<a href=#2349 id=2349 data-nosnippet>2349</a>                    {
-<a href=#2350 id=2350 data-nosnippet>2350</a>                        <span class="kw">let </span>nrrow = <span class="self">self</span>.row_count() <span class="kw">as </span>u64;
-<a href=#2351 id=2351 data-nosnippet>2351</a>                        <span class="kw">let </span>nrcolumn = <span class="self">self</span>.schema().map(|s| s.columns().len() <span class="kw">as </span>u32).unwrap_or(<span class="number">0</span>);
-<a href=#2352 id=2352 data-nosnippet>2352</a>                        <span class="kw">if let </span><span class="prelude-val">Some</span>(state) = <span class="self">self</span>.lock_state.as_mut() {
-<a href=#2353 id=2353 data-nosnippet>2353</a>                            state.sync_data.record_write(nrrow, nrcolumn, <span class="bool-val">true</span>, <span class="kw-2">&amp;</span>[<span class="bool-val">true</span>]);
-<a href=#2354 id=2354 data-nosnippet>2354</a>                            <span class="kw">let _ </span>= state.lock_file.write_sync_data(<span class="kw-2">&amp;</span>state.sync_data);
-<a href=#2355 id=2355 data-nosnippet>2355</a>                        }
-<a href=#2356 id=2356 data-nosnippet>2356</a>                    }
-<a href=#2357 id=2357 data-nosnippet>2357</a>                }
-<a href=#2358 id=2358 data-nosnippet>2358</a>            }
-<a href=#2359 id=2359 data-nosnippet>2359</a>        }
+<a href=#2279 id=2279 data-nosnippet>2279</a>    </span><span class="doccomment">/// Returns the kind of this table (plain or memory).
+<a href=#2280 id=2280 data-nosnippet>2280</a>    ///
+<a href=#2281 id=2281 data-nosnippet>2281</a>    /// C++ equivalent: `Table::tableType()`.
+<a href=#2282 id=2282 data-nosnippet>2282</a>    </span><span class="kw">pub fn </span>table_kind(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; TableKind {
+<a href=#2283 id=2283 data-nosnippet>2283</a>        <span class="self">self</span>.kind
+<a href=#2284 id=2284 data-nosnippet>2284</a>    }
+<a href=#2285 id=2285 data-nosnippet>2285</a>
+<a href=#2286 id=2286 data-nosnippet>2286</a>    <span class="doccomment">/// Returns `true` if this is a transient in-memory table.
+<a href=#2287 id=2287 data-nosnippet>2287</a>    ///
+<a href=#2288 id=2288 data-nosnippet>2288</a>    /// Equivalent to `self.table_kind() == TableKind::Memory`.
+<a href=#2289 id=2289 data-nosnippet>2289</a>    </span><span class="kw">pub fn </span>is_memory(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#2290 id=2290 data-nosnippet>2290</a>        <span class="self">self</span>.kind == TableKind::Memory
+<a href=#2291 id=2291 data-nosnippet>2291</a>    }
+<a href=#2292 id=2292 data-nosnippet>2292</a>
+<a href=#2293 id=2293 data-nosnippet>2293</a>    <span class="doccomment">/// Attach the explicit scientific-data provider used by TaQL `meas.*`.
+<a href=#2294 id=2294 data-nosnippet>2294</a>    </span><span class="kw">pub fn </span>set_measures_provider(
+<a href=#2295 id=2295 data-nosnippet>2295</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#2296 id=2296 data-nosnippet>2296</a>        measures: Arc&lt;<span class="kw">dyn </span>casa_types::measures::MeasuresProvider&gt;,
+<a href=#2297 id=2297 data-nosnippet>2297</a>    ) {
+<a href=#2298 id=2298 data-nosnippet>2298</a>        <span class="self">self</span>.measures = <span class="prelude-val">Some</span>(measures);
+<a href=#2299 id=2299 data-nosnippet>2299</a>    }
+<a href=#2300 id=2300 data-nosnippet>2300</a>
+<a href=#2301 id=2301 data-nosnippet>2301</a>    <span class="doccomment">/// Return the scientific-data provider attached to this table, if any.
+<a href=#2302 id=2302 data-nosnippet>2302</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>measures_provider(
+<a href=#2303 id=2303 data-nosnippet>2303</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#2304 id=2304 data-nosnippet>2304</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Arc&lt;<span class="kw">dyn </span>casa_types::measures::MeasuresProvider&gt;&gt; {
+<a href=#2305 id=2305 data-nosnippet>2305</a>        <span class="self">self</span>.measures.as_ref()
+<a href=#2306 id=2306 data-nosnippet>2306</a>    }
+<a href=#2307 id=2307 data-nosnippet>2307</a>
+<a href=#2308 id=2308 data-nosnippet>2308</a>    <span class="doccomment">/// Creates an in-memory copy of this table.
+<a href=#2309 id=2309 data-nosnippet>2309</a>    ///
+<a href=#2310 id=2310 data-nosnippet>2310</a>    /// All rows, keywords, column keywords, and schema are cloned into a
+<a href=#2311 id=2311 data-nosnippet>2311</a>    /// new table with [`TableKind::Memory`]. The source path and lock state
+<a href=#2312 id=2312 data-nosnippet>2312</a>    /// are not copied.
+<a href=#2313 id=2313 data-nosnippet>2313</a>    ///
+<a href=#2314 id=2314 data-nosnippet>2314</a>    /// This can be called on any table (plain or memory). Calling it on a
+<a href=#2315 id=2315 data-nosnippet>2315</a>    /// memory table produces an independent clone.
+<a href=#2316 id=2316 data-nosnippet>2316</a>    ///
+<a href=#2317 id=2317 data-nosnippet>2317</a>    /// C++ equivalent: `Table::copyToMemoryTable`.
+<a href=#2318 id=2318 data-nosnippet>2318</a>    </span><span class="kw">pub fn </span>to_memory(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, TableError&gt; {
+<a href=#2319 id=2319 data-nosnippet>2319</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+<a href=#2320 id=2320 data-nosnippet>2320</a>            inner: TableImpl::with_rows_keywords_and_schema(
+<a href=#2321 id=2321 data-nosnippet>2321</a>                <span class="self">self</span>.inner.rows()<span class="question-mark">?</span>.to_vec(),
+<a href=#2322 id=2322 data-nosnippet>2322</a>                <span class="self">self</span>.inner.undefined_cells()<span class="question-mark">?</span>.to_vec(),
+<a href=#2323 id=2323 data-nosnippet>2323</a>                <span class="self">self</span>.inner.keywords().clone(),
+<a href=#2324 id=2324 data-nosnippet>2324</a>                <span class="self">self</span>.inner.all_column_keywords().clone(),
+<a href=#2325 id=2325 data-nosnippet>2325</a>                <span class="self">self</span>.inner.schema().cloned(),
+<a href=#2326 id=2326 data-nosnippet>2326</a>            ),
+<a href=#2327 id=2327 data-nosnippet>2327</a>            source_path: <span class="prelude-val">None</span>,
+<a href=#2328 id=2328 data-nosnippet>2328</a>            kind: TableKind::Memory,
+<a href=#2329 id=2329 data-nosnippet>2329</a>            virtual_columns: HashSet::new(),
+<a href=#2330 id=2330 data-nosnippet>2330</a>            virtual_bindings: Vec::new(),
+<a href=#2331 id=2331 data-nosnippet>2331</a>            table_info: <span class="self">self</span>.table_info.clone(),
+<a href=#2332 id=2332 data-nosnippet>2332</a>            dm_info: <span class="macro">vec!</span>[],
+<a href=#2333 id=2333 data-nosnippet>2333</a>            external_sync: <span class="prelude-val">None</span>,
+<a href=#2334 id=2334 data-nosnippet>2334</a>            measures: <span class="self">self</span>.measures.clone(),
+<a href=#2335 id=2335 data-nosnippet>2335</a>            marked_for_delete: <span class="bool-val">false</span>,
+<a href=#2336 id=2336 data-nosnippet>2336</a>            <span class="attr">#[cfg(unix)]
+<a href=#2337 id=2337 data-nosnippet>2337</a>            </span>lock_state: <span class="prelude-val">None</span>,
+<a href=#2338 id=2338 data-nosnippet>2338</a>        })
+<a href=#2339 id=2339 data-nosnippet>2339</a>    }
+<a href=#2340 id=2340 data-nosnippet>2340</a>}
+<a href=#2341 id=2341 data-nosnippet>2341</a>
+<a href=#2342 id=2342 data-nosnippet>2342</a><span class="comment">// ── Drop ──────────────────────────────────────────────────────────────
+<a href=#2343 id=2343 data-nosnippet>2343</a>
+<a href=#2344 id=2344 data-nosnippet>2344</a></span><span class="kw">impl </span>Drop <span class="kw">for </span>Table {
+<a href=#2345 id=2345 data-nosnippet>2345</a>    <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+<a href=#2346 id=2346 data-nosnippet>2346</a>        <span class="attr">#[cfg(unix)]
+<a href=#2347 id=2347 data-nosnippet>2347</a>        </span>{
+<a href=#2348 id=2348 data-nosnippet>2348</a>            <span class="kw">if </span><span class="self">self</span>.kind != TableKind::Memory {
+<a href=#2349 id=2349 data-nosnippet>2349</a>                <span class="kw">let </span>had_write_lock = <span class="self">self
+<a href=#2350 id=2350 data-nosnippet>2350</a>                    </span>.lock_state
+<a href=#2351 id=2351 data-nosnippet>2351</a>                    .as_ref()
+<a href=#2352 id=2352 data-nosnippet>2352</a>                    .is_some_and(|state| state.lock_file.has_lock(LockType::Write));
+<a href=#2353 id=2353 data-nosnippet>2353</a>
+<a href=#2354 id=2354 data-nosnippet>2354</a>                <span class="kw">if </span>had_write_lock {
+<a href=#2355 id=2355 data-nosnippet>2355</a>                    <span class="kw">let </span>save_opts = <span class="self">self</span>.lock_state.as_ref().map(|state| {
+<a href=#2356 id=2356 data-nosnippet>2356</a>                        TableOptions::new(<span class="kw-2">&amp;</span>state.path)
+<a href=#2357 id=2357 data-nosnippet>2357</a>                            .with_data_manager(state.data_manager)
+<a href=#2358 id=2358 data-nosnippet>2358</a>                            .with_endian_format(state.endian_format)
+<a href=#2359 id=2359 data-nosnippet>2359</a>                    });
 <a href=#2360 id=2360 data-nosnippet>2360</a>
-<a href=#2361 id=2361 data-nosnippet>2361</a>        <span class="kw">if </span><span class="self">self</span>.marked_for_delete {
-<a href=#2362 id=2362 data-nosnippet>2362</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(path) = <span class="kw-2">&amp;</span><span class="self">self</span>.source_path {
-<a href=#2363 id=2363 data-nosnippet>2363</a>                <span class="kw">let _ </span>= std::fs::remove_dir_all(path);
-<a href=#2364 id=2364 data-nosnippet>2364</a>            }
-<a href=#2365 id=2365 data-nosnippet>2365</a>        }
-<a href=#2366 id=2366 data-nosnippet>2366</a>    }
-<a href=#2367 id=2367 data-nosnippet>2367</a>}
+<a href=#2361 id=2361 data-nosnippet>2361</a>                    <span class="kw">if let </span><span class="prelude-val">Some</span>(save_opts) = save_opts
+<a href=#2362 id=2362 data-nosnippet>2362</a>                        &amp;&amp; <span class="self">self</span>.save(save_opts).is_ok()
+<a href=#2363 id=2363 data-nosnippet>2363</a>                    {
+<a href=#2364 id=2364 data-nosnippet>2364</a>                        <span class="kw">let </span>nrrow = <span class="self">self</span>.row_count() <span class="kw">as </span>u64;
+<a href=#2365 id=2365 data-nosnippet>2365</a>                        <span class="kw">let </span>nrcolumn = <span class="self">self</span>.schema().map(|s| s.columns().len() <span class="kw">as </span>u32).unwrap_or(<span class="number">0</span>);
+<a href=#2366 id=2366 data-nosnippet>2366</a>                        <span class="kw">if let </span><span class="prelude-val">Some</span>(state) = <span class="self">self</span>.lock_state.as_mut() {
+<a href=#2367 id=2367 data-nosnippet>2367</a>                            state.sync_data.record_write(nrrow, nrcolumn, <span class="bool-val">true</span>, <span class="kw-2">&amp;</span>[<span class="bool-val">true</span>]);
+<a href=#2368 id=2368 data-nosnippet>2368</a>                            <span class="kw">let _ </span>= state.lock_file.write_sync_data(<span class="kw-2">&amp;</span>state.sync_data);
+<a href=#2369 id=2369 data-nosnippet>2369</a>                        }
+<a href=#2370 id=2370 data-nosnippet>2370</a>                    }
+<a href=#2371 id=2371 data-nosnippet>2371</a>                }
+<a href=#2372 id=2372 data-nosnippet>2372</a>            }
+<a href=#2373 id=2373 data-nosnippet>2373</a>        }
+<a href=#2374 id=2374 data-nosnippet>2374</a>
+<a href=#2375 id=2375 data-nosnippet>2375</a>        <span class="kw">if </span><span class="self">self</span>.marked_for_delete {
+<a href=#2376 id=2376 data-nosnippet>2376</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(path) = <span class="kw-2">&amp;</span><span class="self">self</span>.source_path {
+<a href=#2377 id=2377 data-nosnippet>2377</a>                <span class="kw">let _ </span>= std::fs::remove_dir_all(path);
+<a href=#2378 id=2378 data-nosnippet>2378</a>            }
+<a href=#2379 id=2379 data-nosnippet>2379</a>        }
+<a href=#2380 id=2380 data-nosnippet>2380</a>    }
+<a href=#2381 id=2381 data-nosnippet>2381</a>}
 </code></pre></div></section></main></body></html>

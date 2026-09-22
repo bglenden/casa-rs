@@ -228,8 +228,8 @@
 <a href=#228 id=228 data-nosnippet>228</a>
 <a href=#229 id=229 data-nosnippet>229</a>    <span class="doccomment">/// Returns the configured maximum tile-cache size in pixels.
 <a href=#230 id=230 data-nosnippet>230</a>    ///
-<a href=#231 id=231 data-nosnippet>231</a>    /// Returns `0` for in-memory lattices and for paged lattices with no
-<a href=#232 id=232 data-nosnippet>232</a>    /// explicit request; persistent storage then uses its fixed default.
+<a href=#231 id=231 data-nosnippet>231</a>    /// Returns `0` for in-memory lattices. Paged lattices report their effective
+<a href=#232 id=232 data-nosnippet>232</a>    /// positive cache budget, including the fixed default when not overridden.
 <a href=#233 id=233 data-nosnippet>233</a>    </span><span class="kw">pub fn </span>maximum_cache_size_pixels(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
 <a href=#234 id=234 data-nosnippet>234</a>        <span class="self">self</span>.paged_array()
 <a href=#235 id=235 data-nosnippet>235</a>            .map(PagedArray::maximum_cache_size_pixels)
@@ -238,8 +238,8 @@
 <a href=#238 id=238 data-nosnippet>238</a>
 <a href=#239 id=239 data-nosnippet>239</a>    <span class="doccomment">/// Sets the maximum tile-cache size in pixels for the paged variant.
 <a href=#240 id=240 data-nosnippet>240</a>    ///
-<a href=#241 id=241 data-nosnippet>241</a>    /// No-op for in-memory lattices. A value of `0` removes the explicit
-<a href=#242 id=242 data-nosnippet>242</a>    /// maximum request. Mirrors C++ `TempLattice::setMaximumCacheSize`.
+<a href=#241 id=241 data-nosnippet>241</a>    /// No-op for in-memory lattices. Paged lattices require a positive value;
+<a href=#242 id=242 data-nosnippet>242</a>    /// rejection leaves their previous cache setting in effect.
 <a href=#243 id=243 data-nosnippet>243</a>    </span><span class="kw">pub fn </span>set_maximum_cache_size_pixels(
 <a href=#244 id=244 data-nosnippet>244</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
 <a href=#245 id=245 data-nosnippet>245</a>        how_many_pixels: usize,
@@ -252,8 +252,8 @@
 <a href=#252 id=252 data-nosnippet>252</a>
 <a href=#253 id=253 data-nosnippet>253</a>    <span class="doccomment">/// Sets the tile cache to hold approximately `how_many_tiles` tiles.
 <a href=#254 id=254 data-nosnippet>254</a>    ///
-<a href=#255 id=255 data-nosnippet>255</a>    /// No-op for in-memory lattices. A value of `0` removes the explicit
-<a href=#256 id=256 data-nosnippet>256</a>    /// maximum request. Mirrors C++ `TempLattice::setCacheSizeInTiles`.
+<a href=#255 id=255 data-nosnippet>255</a>    /// No-op for in-memory lattices. Paged lattices require at least one tile;
+<a href=#256 id=256 data-nosnippet>256</a>    /// rejection leaves their previous cache setting in effect.
 <a href=#257 id=257 data-nosnippet>257</a>    </span><span class="kw">pub fn </span>set_cache_size_in_tiles(<span class="kw-2">&amp;mut </span><span class="self">self</span>, how_many_tiles: usize) -&gt; <span class="prelude-ty">Result</span>&lt;(), LatticeError&gt; {
 <a href=#258 id=258 data-nosnippet>258</a>        <span class="kw">match </span><span class="self">self</span>.paged_array_mut() {
 <a href=#259 id=259 data-nosnippet>259</a>            <span class="prelude-val">Some</span>(pa) =&gt; pa.set_cache_size_in_tiles(how_many_tiles),

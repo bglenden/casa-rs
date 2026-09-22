@@ -1,0 +1,1208 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Obit data-structure and gridding source notes - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#obit-data-structure-and-gridding-source-notes" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Obit data-structure and gridding source notes
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scientific Workbench
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Scientific Workbench
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../scientific-notebooks-and-assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Notebooks, Tutorials, Python, and AI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mac-native-gui-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native macOS Product Spec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#local-reference-timing-addendum" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Local reference timing addendum
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Evidence
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Evidence">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#flat-visibility-records-and-descriptor-indexing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Flat visibility records and descriptor indexing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bounded-strip-mining-and-io" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bounded strip-mining and I/O
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gridding-ownership-and-phase-boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gridding ownership and phase boundaries
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cpu-preparation-reuse-and-simd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CPU preparation, reuse, and SIMD
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limits-and-casa-rs-relevance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limits and casa-rs relevance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#spectral-processing-two-different-parallelization-strategies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Spectral processing: two different parallelization strategies
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Spectral processing: two different parallelization strategies">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#independent-processing-streams-2008" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Independent processing streams (2008)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#grouped-channel-advancement-2022-and-current-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Grouped channel advancement (2022 and current source)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#other-architectural-lessons-and-counterexamples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Other architectural lessons and counterexamples
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#application-to-the-current-casa-rs-problem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Application to the current casa-rs problem
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Application to the current casa-rs problem">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#recommended-discriminating-prototype-proposal-not-implemented" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommended discriminating prototype (proposal, not implemented)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reproduction-and-durable-evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reproduction and durable evidence
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="obit-data-structure-and-gridding-source-notes">Obit data-structure and gridding source notes<a class="headerlink" href="#obit-data-structure-and-gridding-source-notes" title="Permanent link">&para;</a></h1>
+<p>Truth class: non-normative primary-source implementation research
+Last reality check: 2026-09-20
+Verification: primary-source inspection plus separately qualified local reference timings</p>
+<p>This note records a bounded inspection of the official <a href="https://github.com/bill-cotton/Obit">Bill Cotton Obit
+repository</a> at master commit
+<a href="https://github.com/bill-cotton/Obit/tree/ebc1c229e5e3870b5ce3c342bddb7313d986a06f"><code>ebc1c229e5e3870b5ce3c342bddb7313d986a06f</code></a>.
+The <a href="https://www.cv.nrao.edu/~bcotton/Obit.html">Obit project page</a> is the
+official project context; the repository is the implementation source. These
+observations are research inputs, not casa-rs API, persistence, or acceptance
+contracts.</p>
+<h2 id="local-reference-timing-addendum">Local reference timing addendum<a class="headerlink" href="#local-reference-timing-addendum" title="Permanent link">&para;</a></h2>
+<p>On 2026-09-20 the user requested local timings for reference only. A pinned native
+ARM64 core/Imager build completed without global installation. Same 42,120 rows,
+512 channels and 512x512 pixels: dirty W1 47.586538 s, W4 20.210558 s; all dirty
+pixels match exactly. CLEAN9 raw times are 77.163547 / 39.505559 s, but images
+differ by 4.2503% relative L2; <strong>do not treat that ratio as equal-output scaling</strong>.
+One observation per configuration, no significance claim.</p>
+<p>Obit forces different single-plane/grouped-line execution paths at one/four
+threads. Native topocentric spectral channels, float grids, per-channel CLEAN
+controls, product inventory and storage location differ from the CASA acceptance
+reference. These numbers neither satisfy nor lower casa-rs acceptance targets.
+No Obit numerical code was modified or copied into casa-rs.</p>
+<p>Durable build, input/output validation, exact settings, logs and interpretation:
+<code>/Users/brianglendenning/SoftwareProjects/casa-rs-evidence/t55/obit-build/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/REFERENCE.md</code>.</p>
+<h2 id="evidence">Evidence<a class="headerlink" href="#evidence" title="Permanent link">&para;</a></h2>
+<h3 id="flat-visibility-records-and-descriptor-indexing">Flat visibility records and descriptor indexing<a class="headerlink" href="#flat-visibility-records-and-descriptor-indexing" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>ObitUV</code> owns one flat <code>ofloat *buffer</code> with a float-count <code>bufferSize</code>; it
+  also has optional <code>nParallel</code>, <code>multiBufIO</code>, and <code>multiBuf</code> arrays for
+  parallel-buffer reads (<a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/include/ObitUVDef.h#L34-L47"><code>ObitUVDef.h</code>, lines 34-47</a>).</li>
+<li><code>ObitUVDesc</code> carries the record stride <code>lrec</code> (floats), random-parameter
+  count <code>nrparm</code>, 1-relative <code>firstVis</code>, buffered count <code>numVisBuff</code>, axis
+  dimensions/labels, frequency arrays, random-parameter offsets (<code>ilocu</code>,
+  <code>ilocv</code>, <code>ilocw</code>, etc.), regular-axis locations (<code>jlocf</code>, <code>jlocif</code>, ...),
+  increments, and total complex-correlation count (<code>ncorr</code>)
+  (<a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/include/ObitUVDescDef.h#L34-L45"><code>ObitUVDescDef.h</code>, lines 34-45 and 117-180</a>,
+  <a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/include/ObitUVDescDef.h#L117-L180"><code>ObitUVDescDef.h</code>, lines 117-180</a>).</li>
+<li>Descriptor indexing scans labels to assign random-parameter offsets, derives
+  the correlation count, and sets <code>lrec = nrparm + size</code>; regular-axis
+  indexing separately identifies frequency, IF, Stokes, and sky axes
+  (<a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitUVDesc.c#L410-L449"><code>ObitUVDesc.c</code>, lines 410-449</a>,
+  <a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitUVDesc.c#L456-L492"><code>ObitUVDesc.c</code>, lines 456-492</a>).</li>
+<li>The base CPU gridder uses that contract directly: <code>ivis = kvis * lenvis</code>,
+  reads <code>u,v,w</code> from the record start, then locates each channel's three
+  visibility floats after <code>nrparm</code> (<a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitThreadGrid.c#L1293-L1319"><code>ObitThreadGrid.c</code>, lines 1293-1319</a>).</li>
+</ul>
+<h3 id="bounded-strip-mining-and-io">Bounded strip-mining and I/O<a class="headerlink" href="#bounded-strip-mining-and-io" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>ObitUVOpen</code> treats <code>nVisPIO</code> as the maximum transfer target, allocates a
+  selector-sized buffer, and keeps the descriptor's <code>firstVis</code> and
+  <code>numVisBuff</code> as the current window state (<a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitUV.c#L1004-L1019"><code>ObitUV.c</code>, lines 1004-1019</a>,
+  <a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitUV.c#L1130-L1171"><code>ObitUV.c</code>, lines 1130-1171</a>).</li>
+<li>When using its internal buffer, <code>ObitUVRead</code> validates
+  <code>nVisPIO*lrec &lt;= bufferSize</code>, performs one backend
+  read, and copies the backend's <code>firstVis</code>/<code>numVisBuff</code> back to the public
+  descriptor (<a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitUV.c#L1296-L1342"><code>ObitUV.c</code>, lines 1296-1342</a>).</li>
+<li>The transfer-size helper accounts for <code>nThreads</code>, caps the aggregate
+  requested record volume at one billion bytes, and then caps the returned
+  <code>nVisPIO</code> at the caller's requested <code>nvis</code> (<a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitUVDesc.c#L1387-L1420"><code>ObitUVDesc.c</code>, lines 1387-1420</a>).</li>
+<li>In the FITS backend, one read transfers exactly
+  <code>sel-&gt;numVisRead * desc-&gt;lrec * sizeof(ofloat)</code> bytes; compressed input uses
+  a bounded compression buffer and a per-record conversion/decompression loop,
+  while uncompressed input is byte-swapped into the output window
+  (<a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitIOUVFITS.c#L647-L725"><code>ObitIOUVFITS.c</code>, lines 647-725</a>).</li>
+<li>Multi-buffer reads still issue one underlying block read. When no independent
+  calibration is needed, the FITS implementation copies the transformed first
+  buffer to the remaining buffers with <code>memcpy</code>; calibration/select paths can
+  process buffers independently (<a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitUV.c#L1345-L1433"><code>ObitUV.c</code>, lines 1345-1433</a>,
+  <a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitIOUVFITS.c#L1008-L1017"><code>ObitIOUVFITS.c</code>, lines 1008-1017</a>).</li>
+</ul>
+<h3 id="gridding-ownership-and-phase-boundaries">Gridding ownership and phase boundaries<a class="headerlink" href="#gridding-ownership-and-phase-boundaries" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>ObitUVGridReadUVPar</code> reads one UV window at a time, invokes the threaded
+  grid operation on that window, and only after EOF performs conjugate folding
+  and grid merge (<a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitUVGrid.c#L516-L648"><code>ObitUVGrid.c</code>, lines 516-648</a>).</li>
+<li>Base setup derives <code>nGpI</code> replicated grids per image from <code>nPar</code> and
+  <code>nThreads</code> (with a minimum of four replicas when at least four threads are
+  available), sets contiguous visibility ranges, points every worker at the
+  same <code>UVin-&gt;buffer</code>, and allocates a separate zeroed <code>grid</code> for each
+  replica; <code>outGrid</code> points at the final image/beam grid
+  (<a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitThreadGrid.c#L244-L313"><code>ObitThreadGrid.c</code>, lines 244-313</a>,
+  <a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitThreadGrid.c#L315-L405"><code>ObitThreadGrid.c</code>, lines 315-405</a>).</li>
+<li>Each window's visibility ranges are dispatched in batches of at most
+  <code>nThreads</code>; a short final batch adjusts its upper bound to the actual
+  <code>numVisBuff</code> (<a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitThreadGrid.c#L827-L866"><code>ObitThreadGrid.c</code>, lines 827-866</a>).</li>
+<li>A worker prepares each visibility once and then grids its selected channels
+  into its private grid. The separate flip phase adds conjugate rows, and the
+  merge phase accumulates replica grids into the output in row-major loops
+  (<a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitThreadGrid.c#L960-L991"><code>ObitThreadGrid.c</code>, lines 960-991</a>,
+  <a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitThreadGrid.c#L998-L1105"><code>ObitThreadGrid.c</code>, lines 998-1105</a>).</li>
+</ul>
+<h3 id="cpu-preparation-reuse-and-simd">CPU preparation, reuse, and SIMD<a class="headerlink" href="#cpu-preparation-reuse-and-simd" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>fast_prep_grid</code> rotates <code>u,v,w</code> once per visibility, then for each channel
+  applies frequency scaling, validity/guardband/baseline tests, tapering, and
+  weighted complex-data preparation. It caches per-channel cell coordinates
+  and pointers into the convolution table (<code>iuarr</code>, <code>ivarr</code>, <code>cnvfnu</code>, and
+  <code>cnvfnv</code>) for the subsequent stencil loop (<a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitThreadGrid.c#L1263-L1387"><code>ObitThreadGrid.c</code>, lines 1263-1387</a>).</li>
+<li><code>fast_grid7</code> has compile-time AVX-512 and AVX paths. They duplicate complex
+  kernel coefficients, broadcast/interleave the complex visibility, load grid
+  rows, multiply by the separable convolution coefficients, and store updated
+  rows; the AVX-512 path uses FMA. The C fallback walks contiguous <code>u</code> cells
+  inside each <code>v</code> row and skips zero <code>cvv</code> rows (<a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitThreadGrid.c#L1886-L1989"><code>ObitThreadGrid.c</code>, lines 1886-1989</a>,
+  <a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitThreadGrid.c#L1990-L2028"><code>ObitThreadGrid.c</code>, lines 1990-2028</a>).</li>
+<li>The phase rotation path also has an AVX-512 channel-block implementation
+  using vector frequency/phase arithmetic and gather/scatter of visibility
+  samples; the remainder falls back to scalar loops
+  (<a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitThreadGrid.c#L2087-L2177"><code>ObitThreadGrid.c</code>, lines 2087-2177</a>).</li>
+</ul>
+<h2 id="limits-and-casa-rs-relevance">Limits and casa-rs relevance<a class="headerlink" href="#limits-and-casa-rs-relevance" title="Permanent link">&para;</a></h2>
+<ul>
+<li>The private-grid observations describe the base <code>ObitThreadGrid</code> path. The
+  source has separate multifrequency and wideband setup routines; this note
+  does not claim that all spectral modes have identical worker ownership or
+  perfect spectral parallelism (<a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitThreadGrid.c#L419-L621"><code>ObitThreadGrid.c</code>, lines 419-621</a>).</li>
+<li>Shared input-buffer ownership does not mean grids are always shared: the
+  base CPU path gives each replica a private accumulator and merges later; the
+  multi-buffer I/O path has its own copy/calibration conditions. Replica grids
+  can therefore multiply memory, and this source inspection provides no
+  workload-specific topology or speed claim.</li>
+<li>The AVX/AVX-512 code is conditional on build macros; no claim is made that a
+  particular Obit binary enabled those paths. No benchmark or numerical parity
+  result was collected here.</li>
+<li>Cited files carry the Obit GPL notice, including GPL version 2 or later
+  language (<a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitThreadGrid.c#L1-L18"><code>ObitThreadGrid.c</code>, lines 1-18</a>).
+  Treat the source as an implementation reference; any code reuse or derived
+  distribution needs an explicit license review. The observations do not grant
+  permission to copy Obit code into casa-rs.</li>
+</ul>
+<p>The transferable questions include record interpretation outside hot loops,
+bounded source ownership, and accumulation locality. The larger scheduling and
+representation questions below are more important than copying individual
+loops. Obit's source alone does not establish the best casa-rs design.</p>
+<h2 id="spectral-processing-two-different-parallelization-strategies">Spectral processing: two different parallelization strategies<a class="headerlink" href="#spectral-processing-two-different-parallelization-strategies" title="Permanent link">&para;</a></h2>
+<h3 id="independent-processing-streams-2008">Independent processing streams (2008)<a class="headerlink" href="#independent-processing-streams-2008" title="Permanent link">&para;</a></h3>
+<p>Cotton's <a href="https://www.cv.nrao.edu/~bcotton/ObitDoc/Line.pdf">memo 2, sections II-III and Table I</a>
+describes calibrating and splitting channels once with SplitCh, independent
+streams that image and deconvolve their assigned channels, and serial assembly
+with MCube. Its dual-core, 109-channel VLBA test reported 5.68 minutes for one
+single-threaded stream, 5.23 for one two-threaded stream, and 2.70 total for two
+independent streams, including splitting and assembly. This is historical
+evidence for moving the parallel boundary outward, not a speed prediction for
+our machine or a claim of identical numerical contracts.</p>
+<h3 id="grouped-channel-advancement-2022-and-current-source">Grouped channel advancement (2022 and current source)<a class="headerlink" href="#grouped-channel-advancement-2022-and-current-source" title="Permanent link">&para;</a></h3>
+<p><a href="https://www.cv.nrao.edu/~bcotton/ObitDoc/ParallelLine.pdf">Memo 74, sections II-B, III-D and IV</a>
+describes doLine groups with one CPU thread per channel. Imaging-only work
+benefited from channel parallelism, but unequal CLEAN workloads left some work
+on finished channels until the whole group completed. The 24-channel example
+needed 1-18 major cycles per channel. Its apparent single-channel CLEAN advantage
+is qualified: that mode used a more relaxed convergence criterion, and all
+CLEAN runs used GPU degridding. These are not clean CPU-only or equal-acceptance
+comparisons. The lesson is to avoid unnecessary lockstep work, not that spectral
+line imaging is inherently unsuitable for parallel execution. Both memo timing
+tables were inspected as rendered PDF pages, not just extracted text.</p>
+<p>Current <a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/tasks/Imager.c#L1609-L1619">Imager.c:1609-1619</a>
+caps parallel channels by threads and selected channel groups.
+<a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/tasks/Imager.c#L1680-L1703">Lines 1680-1703</a>
+iterate channel blocks and copy/calibrate or average selected data;
+<a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/tasks/Imager.c#L1755-L1803">1755-1803</a>
+construct the single/group CLEAN owner;
+<a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/tasks/Imager.c#L1869-L1896">1869-1896</a>
+insert results into the cube before advancing the group. This is not a dynamic
+queue that immediately replaces each finished channel with another.</p>
+<p><a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitDConCleanVisLine.c#L1125-L1150"><code>ObitDConCleanVisLineSelect</code>:1125-1150</a>
+loops over channels, calls parent selection for unfinished ones, and aggregates
+completion. <a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitDConCleanVisLine.c#L1933-L1941">MakeResidualsLine:1933-1941</a>
+passes done flags to imaging. Thus a parallel-imaging label does not imply
+every phase is concurrently executing independent channel lifecycles.</p>
+<h2 id="other-architectural-lessons-and-counterexamples">Other architectural lessons and counterexamples<a class="headerlink" href="#other-architectural-lessons-and-counterexamples" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="https://www.cv.nrao.edu/~bcotton/ObitDoc/ParallelFacets.pdf">Memo 6, section II</a>
+  changes facet imaging from repeated dataset traversals to one read feeding
+  multiple grids. It also documents buffer copies, replicated accumulators,
+  and serial normalization/output. Transfer the reuse principle, not the
+  entire allocation strategy. Facets share data differently from independent
+  spectral channels; direction-dependent calibration can limit reuse.</li>
+<li><a href="https://www.cv.nrao.edu/~bcotton/ObitDoc/DoubleBuffer.pdf">Memo 57, sections II-IV</a>
+  found no significant improvement from its explicit double-buffering scheme
+  on the tested systems. More queues or asynchronous I/O are not automatically
+  useful. This does not prove all buffering is useless, especially on other
+  hardware or workloads.</li>
+<li>Obit does not eliminate intermediate I/O. In
+  <a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitSkyModel.c#L973-L1018"><code>ObitSkyModelSubUV</code>:973-1018</a>,
+  a block is read, the model is calculated/subtracted in that buffer, and the
+  modified block is written. Model loading and loops over images/PB channel
+  groups also occur. The inspected path is a direct visibility-space alternative
+  to our compiled normal replay, not evidence of a globally zero-copy system.</li>
+</ul>
+<h2 id="application-to-the-current-casa-rs-problem">Application to the current casa-rs problem<a class="headerlink" href="#application-to-the-current-casa-rs-problem" title="Permanent link">&para;</a></h2>
+<p>Local evidence: <code>t55/tranche5-20260916/CURRENT.md</code> and the pinned
+<code>initial-planes-candidate</code> under
+<code>t55/q-band-rebaseline-20260918/overnight-scaling-20260919</code> in the durable
+<code>/Users/brianglendenning/SoftwareProjects/casa-rs-evidence</code> tree.
+The 42,120-row dataset has 363,586,532 logical bytes; initial compilation writes
+4,305,043,032 bytes / 107,616,600 records. That roughly twelvefold expansion
+includes a reusable operator representation, not simply another copy of the
+input. Current four-worker task time is 85.42 s versus CASA serial 66.53 s;
+these are single observations. Initial plane dispatch improved selected stages
+but not convincingly the whole task. Obit was not timed on this workload.</p>
+<p>Two mathematical details prevent a naive port:</p>
+<ol>
+<li><a href="https://github.com/bglenden/casa-rs/blob/9d53664c53ec7fde002250ba03ccb7dc7bc354a7/crates/casa-imaging-reconstruction/src/gridded_normal_operator/spectral_records.rs"><code>spectral_records.rs::standard_predictions</code></a>
+   derives native prediction contributions. <code>resampled_record_groups</code> combines
+   prediction banks with interpolation factors before the accumulation stencil.
+   These records encode scientific work; deleting the representation must not
+   delete that work or assume all output channels can evolve independently.</li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/9d53664c53ec7fde002250ba03ccb7dc7bc354a7/crates/casa-imaging-runtime/src/spectral_cycle.rs"><code>spectral_cycle.rs::run_stream</code></a>
+   currently overlaps first-slab science and compilation, then traverses later
+   slabs sequentially. More threads inside <code>consume_bounded_replay_chunk</code> do
+   not move this outer lifecycle boundary. Existing plane-owned reconstruction
+   and bounded execution mechanisms should be reused, not another thread pool.</li>
+</ol>
+<h3 id="recommended-discriminating-prototype-proposal-not-implemented">Recommended discriminating prototype (proposal, not implemented)<a class="headerlink" href="#recommended-discriminating-prototype-proposal-not-implemented" title="Permanent link">&para;</a></h3>
+<p>Compare the existing compiled-record route with a bounded compact-visibility
+route for the same scientific workload. Give each worker a plane or the minimum
+mathematically coupled channel band, owning its grids and FFT/reconstruction
+scratch across substantial processing stages. Arrange selected data for those
+owners once where beneficial; preserve exact native-frequency prediction,
+resampling, weights, masks, convergence and ordered output semantics. Admit
+work using the existing shared memory budget and bounded queues. Do not require
+all channels resident or introduce per-worker full-cube grids.</p>
+<p>The experiment must include preparation, any compact-data write/read, gridding,
+FFT, deconvolution, final residual and product output. Measure total work bytes,
+repeated transformations, worker idle time and end-to-end time as well as RSS.
+This tests both representation amplification and the scheduling boundary, rather
+than polishing one more local loop. Explicitly account for any legitimate
+cross-channel dependencies and common stopping decisions before allowing
+independent CLEAN advancement. An alternative may lose if repeated computation
+costs more than compiled replay, particularly over many major cycles.</p>
+<p>Do not import Obit's averaging, precision, FMA/reduction order, faceting or
+CLEAN thresholds to obtain a speedup. Its x86 AVX paths are not Apple Silicon
+performance evidence. Private-grid replication is not approved for our current
+budget. The scientific and CASA-compatible persistence contracts stay fixed.
+This research authorizes neither a new algorithm nor implementation; a scoped
+design review, including the previously proposed Oracle challenge, comes before
+an architectural experiment. No production files changed in this investigation.</p>
+<h2 id="reproduction-and-durable-evidence">Reproduction and durable evidence<a class="headerlink" href="#reproduction-and-durable-evidence" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Source-only sparse checkout (28 MiB observed):
+  <code>/Users/brianglendenning/SoftwareProjects/casa-rs-evidence/t55/obit-source-study-20260920/Obit</code>.
+  Checked HEAD equals the revision above, dated 2026-08-20.</li>
+<li>The same directory's parent contains <code>Line.pdf</code>, <code>ParallelLine.pdf</code>, their
+  page-2 PNG renders, and a durable copy of this report. No installation scripts
+  were run and no data were sent to Obit.</li>
+<li>Primary source inventory was delegated to Luna Max; main-agent inspection
+  verified key buffer, gridding, task-loop and model-subtraction claims and
+  supplied the interpretation. Research/PDF procedures informed this record;
+  no timing campaign, production patch, push, merge or cleanup was performed.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

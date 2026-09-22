@@ -312,9 +312,9 @@
 <a href=#312 id=312 data-nosnippet>312</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
 <a href=#313 id=313 data-nosnippet>313</a>
 <a href=#314 id=314 data-nosnippet>314</a>    <span class="attr">#[test]
-<a href=#315 id=315 data-nosnippet>315</a>    </span><span class="kw">fn </span>inventory_and_parameter_catalog_resolve_the_same_42_surfaces() {
+<a href=#315 id=315 data-nosnippet>315</a>    </span><span class="kw">fn </span>inventory_and_parameter_catalog_resolve_the_same_41_surfaces() {
 <a href=#316 id=316 data-nosnippet>316</a>        <span class="kw">let </span>apps = registered_apps();
-<a href=#317 id=317 data-nosnippet>317</a>        <span class="macro">assert_eq!</span>(apps.len(), <span class="number">42</span>);
+<a href=#317 id=317 data-nosnippet>317</a>        <span class="macro">assert_eq!</span>(apps.len(), <span class="number">41</span>);
 <a href=#318 id=318 data-nosnippet>318</a>        <span class="kw">for </span>app <span class="kw">in </span>apps {
 <a href=#319 id=319 data-nosnippet>319</a>            <span class="kw">let </span>schema = app.load_schema().expect(<span class="string">"canonical surface projection"</span>);
 <a href=#320 id=320 data-nosnippet>320</a>            <span class="macro">assert_eq!</span>(schema.command_id, app.id);

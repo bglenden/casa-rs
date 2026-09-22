@@ -734,10 +734,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#planning-completion-and-publication-are-different-phases" class="md-nav__link">
+  <a href="#generation-ownership-and-publication-lifecycle" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Planning, completion, and publication are different phases
+        Generation ownership and publication lifecycle
       
     </span>
   </a>
@@ -943,21 +943,18 @@ acceptance implementation for any participating ticket.</p>
 ticket graph. Do not bridge the gap with a raw digest, caller-filled map,
 test-only public constructor, placeholder completion, compatibility adapter, or
 second authority.</p>
-<h3 id="planning-completion-and-publication-are-different-phases">Planning, completion, and publication are different phases<a class="headerlink" href="#planning-completion-and-publication-are-different-phases" title="Permanent link">&para;</a></h3>
-<p>The logical compiler owns immutable commitments. A scientific owner later
-mints completion evidence from the actual bounded execution. Product
-publication consumes an exact set of those typed completions and yields a
-seal. These records have distinct identities and schema revisions:</p>
-<ol>
-<li>compiler-owned commitment;</li>
-<li>owner-minted, attempt-bound completion;</li>
-<li>planned product generation;</li>
-<li>authorized product-generation seal; and</li>
-<li>durable publication result.</li>
-</ol>
-<p>None may be reconstructed from another record's digest. Runtime transports the
-closed evidence envelope and enforces attempt/fence placement; it does not
-reinterpret science or maintain a second source-role catalog.</p>
+<h3 id="generation-ownership-and-publication-lifecycle">Generation ownership and publication lifecycle<a class="headerlink" href="#generation-ownership-and-publication-lifecycle" title="Permanent link">&para;</a></h3>
+<p><a href="../../adr/0014-trusted-product-generation-without-content-attestation/">ADR-0014</a>
+supersedes this document's former product commitment/completion/seal choreography.
+Those historical requirements are non-normative. The compiler owns product
+contracts; scientific owners provide the matching final state; generation
+transfers bounded owned windows directly to private CASA staging. No content
+hash, attestation object or full-array verification pass grants publication
+permission. Runtime preserves run association, exact inventory, complete writes,
+fence placement and atomic individual-image replacement. Publication failure
+fails the run with an incomplete output set requiring rerun, not per-member
+resumable recovery or whole-set rollback.
+It does not reinterpret science or maintain a second source-role catalog.</p>
 <h3 id="exact-evidence-is-derived-not-declared">Exact evidence is derived, not declared<a class="headerlink" href="#exact-evidence-is-derived-not-declared" title="Permanent link">&para;</a></h3>
 <p>Caller-supplied <code>ProductKind</code> staging maps, raw artifact digests, broad count
 reports, and open string maps collapse identities and create parallel
@@ -984,12 +981,12 @@ from the actual canonical sample stream. The latter can demonstrate equal
 content across distinct logical sources but never replaces the snapshot,
 provenance, access capability, or attempt evidence.</p>
 <h3 id="visibility-is-the-irreversible-boundary">Visibility is the irreversible boundary<a class="headerlink" href="#visibility-is-the-irreversible-boundary" title="Permanent link">&para;</a></h3>
-<p>T08 established the required publication choreography: durably prepare the
-exact staged result and terminal candidate, perform the sole external
-visibility operation once, then promote or retain fail-closed reconciliation
-evidence. No fallible scientific validation, receipt mutation that can change
-the run result, retry, or alternate publisher is legal after visibility.
-Pre-publication artifacts are <code>Staged</code>, never <code>Published</code>.</p>
+<p>ADR-0014 supersedes T08's durable prepared/terminal-candidate choreography and
+fail-closed reconciliation requirement. Each image replacement remains atomic,
+but the complete output set is not transactional or resumable. Ordinary write,
+promotion or final-receipt failures fail the run; an incomplete set requires a
+rerun and already replaced images are not rolled back. No publication ledger,
+content attestation or whole-receipt progress rewrite is required.</p>
 <h3 id="merge-checkpoints-are-architecture-gates">Merge checkpoints are architecture gates<a class="headerlink" href="#merge-checkpoints-are-architecture-gates" title="Permanent link">&para;</a></h3>
 <p>The first tranche showed that waiting for a large composition branch increases
 semantic conflict and hides ticket ownership. Merge a reviewed ticket when its
@@ -1121,6 +1118,10 @@ non-harmful early work, but T48 is not retroactively added to the #607 or T67
 matrix and neither dirty nor clean heterogeneous-mosaic acceptance can block an
 otherwise complete T-ticket closure.</p>
 <h2 id="corrected-next-tranche">Corrected next tranche<a class="headerlink" href="#corrected-next-tranche" title="Permanent link">&para;</a></h2>
+<p>The following delivered-ticket sequence is historical. Its T13/T22 product
+attestation and partial-publication recovery requirements are superseded and
+non-normative under ADR-0014; the scientific ownership and deletion outcomes
+remain applicable.</p>
 <table>
 <thead>
 <tr>
@@ -1265,10 +1266,11 @@ cutover are:</p>
   and owns model, weighting, replay, complete-data, and normal-state algorithms
   and their opaque completions. It does not import MeasurementSet/storage APIs.</li>
 <li><code>casa-imaging-products</code> depends on the model and reconstruction owners. It
-  owns the entire product-generation construction capability: typed source
-  catalog, planned generation, artifact identities, authority, seal, product
-  algorithms, and publication projection. Leaving raw generation construction
-  in the model would preserve the bypass and make this module shallow.</li>
+  owns scientific product generation, source/run and shape checks, bounded
+  windows and scientific metadata. Its writer interface transfers ownership;
+  it does not attest, retain a second full-product store, or reread generated
+  content to authorize publication. The former source-commitment, seal and
+  publication-projection requirements are superseded by ADR-0014.</li>
 <li><code>casa-imaging-runtime</code> depends inward on the owners it schedules. It retains
   physical plans, leases, layouts, attempts, fences, receipt I/O, and the sole
   publication capability; it does not own scientific completion meaning.</li>
@@ -1299,8 +1301,8 @@ migration atomically.</p>
   Manual fallback data is conservative and never an alternate work record.</li>
 </ul>
 <h2 id="persistent-interoperability-boundary">Persistent interoperability boundary<a class="headerlink" href="#persistent-interoperability-boundary" title="Permanent link">&para;</a></h2>
-<p>The new commitment, completion, generation, seal, plan, and receipt records are
-CASA-RS control/evidence schemas. They do not alter casacore MeasurementSet or
+<p>The remaining plan, run and receipt records are CASA-RS control/evidence
+schemas; removed product-attestation records must not be restored. They do not alter casacore MeasurementSet or
 image-table persistence. Any proposal for a new MS sidecar, intrinsic dataset
 identifier, co-committed receipt, or other CASA-visible persisted structure
 still stops for a separate interoperability decision and Rust/C++ evidence.</p>

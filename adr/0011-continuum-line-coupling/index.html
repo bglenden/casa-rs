@@ -870,7 +870,7 @@
 Date: 2026-08-31
 Truth class: normative
 Supersedes:
-Superseded by:</p>
+Superseded by: ADR-0014 for product sealing/attestation only; scientific coupling remains normative.</p>
 <h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
 <p>CASA-RS already supports CASA-compatible visibility-domain continuum fitting
 and subtraction followed by channel-local line reconstruction. That sequential
@@ -969,8 +969,8 @@ Weighting Generation, coupled mask generation, all four normal blocks, shared
 residual, Numerics Contract, and provenance. A continuum or line projection is
 not an independently authoritative model generation.</p>
 <h3 id="products-and-error-propagation">Products and error propagation<a class="headerlink" href="#products-and-error-propagation" title="Permanent link">&para;</a></h3>
-<p>One planned and sealed Product Generation publishes projections of the same
-coupled state:</p>
+<p>One product generation publishes the same coupled state through bounded
+ownership transfer (ADR-0014 supersedes the former sealing requirement):</p>
 <ul>
 <li>continuum coefficients and derived continuum products;</li>
 <li>the channel-local line model and restored line cube;</li>
@@ -1001,8 +1001,8 @@ do not claim propagated fit covariance.</p>
   coupled Model Delta, stopping, and deterministic reduction.</li>
 <li><code>casa-imaging-runtime</code> owns only bounded execution, resources, buffers,
   scheduling, and measurements.</li>
-<li><code>casa-imaging-products</code> extends its single product-generation authority for
-  coupled sources and members.</li>
+<li><code>casa-imaging-products</code> generates coupled members from their common scientific
+  sources without production content attestation, as required by ADR-0014.</li>
 <li>applications compose the owners, and frontends project parameters and units.</li>
 </ul>
 <p>There is one production execution path. This decision adds no mode runner,
