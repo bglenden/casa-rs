@@ -16,6 +16,8 @@ use casa_imaging_reconstruction::{
 use num_complex::Complex64;
 
 #[path = "../../../../casa-imaging-reconstruction/tests/support/streaming_cube.rs"]
+// Reuse the shared fixture in each isolated test module and its nested model fixture.
+#[allow(clippy::duplicate_mod)]
 mod fixture;
 
 const OUTPUT: [f64; 4] = [1e9, 1.001e9, 1.002e9, 1.003e9];

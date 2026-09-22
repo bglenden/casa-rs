@@ -7,6 +7,9 @@
 //! assertions can inspect the exact generated values without adding a backing
 //! or digest capability to the library.
 
+// The continuum and Taylor integration binaries exercise different fixture members.
+#![allow(dead_code)]
+
 use std::sync::{Arc, Mutex};
 
 use casa_imaging_model::ProductNodeId;

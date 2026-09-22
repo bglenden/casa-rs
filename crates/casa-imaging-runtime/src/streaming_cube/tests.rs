@@ -13,7 +13,8 @@ use casa_ms::*;
 use std::convert::Infallible;
 
 #[path = "../../../casa-imaging-reconstruction/tests/support/streaming_cube.rs"]
-#[allow(dead_code)]
+// Reuse the shared fixture in each isolated test module and its nested model fixture.
+#[allow(dead_code, clippy::duplicate_mod)]
 mod fixture;
 
 struct SourceFixture {

@@ -439,7 +439,7 @@ fn t44_real_ms_mtmfs_products_match_frozen_casa() -> Result<(), Box<dyn Error>> 
         problem,
         final_completion,
         cycles,
-        artifact_directory,
+        artifact_directory: _artifact_directory,
     } = execute_four_cycle_clean(true)?;
     let controls = ContinuumProductControls::default()
         .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaEvlaCommon);

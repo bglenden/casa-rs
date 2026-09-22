@@ -562,15 +562,6 @@ struct ContinuumRound {
     join: MajorCycleCompletion,
 }
 
-fn run_continuum_round_with_flux_scale(
-    problem: &casa_imaging_model::CompiledProblem,
-    attempt_byte: u8,
-    flux_scale: f64,
-) -> ContinuumRound {
-    let samples = fixture_samples_with_flux(problem, flux_scale);
-    run_round_with_samples(problem, attempt_byte, samples)
-}
-
 fn run_continuum_round(
     problem: &casa_imaging_model::CompiledProblem,
     attempt_byte: u8,
@@ -1408,12 +1399,13 @@ fn direct_generation_rejects_same_problem_with_foreign_completions() {
         .into_parts();
 
     let second_round = rerun_two_domain_with_masks(&problem, 147, 8, first_round.join, &masks);
-    let second_inputs = ContinuumProductInputs::from_major_cycle(&problem, &second_round.join)
-        .expect("second inputs")
-        .with_domain_reconstruction_masks(&masks)
-        .expect("second mask-bound inputs");
-    let planned = planned_for(&second_inputs, &ContinuumProductControls::default());
-    drop(second_inputs);
+    let planned = {
+        let second_inputs = ContinuumProductInputs::from_major_cycle(&problem, &second_round.join)
+            .expect("second inputs")
+            .with_domain_reconstruction_masks(&masks)
+            .expect("second mask-bound inputs");
+        planned_for(&second_inputs, &ContinuumProductControls::default())
+    };
 
     let third_round = rerun_two_domain_with_masks(&problem, 148, 9, second_round.join, &masks);
     let third_inputs = ContinuumProductInputs::from_major_cycle(&problem, &third_round.join)

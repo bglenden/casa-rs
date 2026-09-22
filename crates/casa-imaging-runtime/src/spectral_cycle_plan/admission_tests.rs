@@ -19,6 +19,8 @@ use casa_ms::{
 };
 
 #[path = "../../../casa-imaging-model/tests/common/mod.rs"]
+// Test modules independently include this fixture, including through reconstruction support.
+#[allow(clippy::duplicate_mod)]
 mod model_fixture;
 
 fn lifecycle() -> ModelLifecycleRequirements {

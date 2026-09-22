@@ -16,6 +16,9 @@ use casa_imaging_reconstruction::{
 };
 use std::{io, mem::size_of, sync::Mutex, time::Instant};
 
+// WavePlan admits the full Mutex<Option<BandJob>> size for each job, including
+// completed results; boxing a variant would add an allocation to this handoff.
+#[allow(clippy::large_enum_variant)]
 enum BandJob {
     Pending(BandPlan),
     Completed(BandResult, (usize, usize), BandProfile),

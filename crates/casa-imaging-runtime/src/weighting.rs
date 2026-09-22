@@ -899,6 +899,9 @@ where
     )
 }
 
+// This private execution boundary consumes separate source, policy, and callback
+// owners; a parameter carrier would only repackage this one call boundary.
+#[allow(clippy::too_many_arguments)]
 fn execute_prebound_weighting_block_stream<'a, W, F, E, C>(
     problem: &'a CompiledProblem,
     source: SelectedObservationBlockSource<'a>,

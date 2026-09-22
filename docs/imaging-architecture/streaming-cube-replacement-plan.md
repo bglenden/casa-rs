@@ -832,12 +832,22 @@ under checked phase-liveness wave admission. The complete application comparison
 path has run the approved workload with one and four workers; both passed the
 unchanged seven-product/nine-check CASA comparison. Native-buffer batching is
 retained after measured end-to-end improvement with identical products.
-The retained application measured W1 48.458422917s and W4 20.251546125s
-(2.392826x), meeting serial parity and the revised 2x first-implementation bar.
-The rejected source/initial fusion prototype is not retained. No experiment is
-running. This checkpoint does not claim the former 3x target, production
-cutover, remaining-mode acceptance or full-size T55 completion. See CURRENT.md
-for exact source, verification, merge state and remaining work.
+The retained comparison-seam checkpoint measured W1 48.458422917s and W4
+20.251546125s (2.392826x). The ordinary production path at
+e9f1abee174361b004b65429104cfd3af25ebee0 now measures W1 49.166385083s and W4
+20.288550792s (2.423356x), versus the matched CASA serial reference 66.526070500s.
+Both production runs pass all seven-product/nine-check CASA comparisons; all
+14 review panels were inspected. Peak sampled aggregate RSS is 6,963,691,520B
+and 9,126,789,120B under the 16GiB limit. These are single full-application
+observations, not a statistical speedup claim over the previous checkpoint.
+Subsequent CI repairs are lint/test-only or equivalent boolean simplifications;
+they do not change the measured imaging path. The ordinary application suite
+passes 49 tests (6 data-dependent ignores), and strict workspace Clippy passes.
+The rejected source/initial fusion prototype is not retained. No optimization
+experiment is running. The covered production route and its displaced adapter
+are integrated/deleted; hosted CI and final integration state are recorded in
+CURRENT.md. This does not claim the former 3x target, remaining-mode acceptance
+or full-size T55 completion.
 Do not first rerun all past gates, restart autoresearch, or assemble another
 architecture survey. The current source pin and unaffected green evidence are
 already preserved.
