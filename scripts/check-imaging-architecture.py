@@ -57,7 +57,7 @@ ACCEPTED_MATRIX_ROWS_SHA256 = (
     "2974aee238509e5a86a9406d416bd1df3186e283b60be7ca5f5fb49aaf29ddb7"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "b5899430292cf6e6ff87480910fbcabf16cdee6330a3003d5e9b71e542d20c93"
+    "c767f3fa0e3b14d2d77e1153542f93572433ceb2748216cbd7b59f277650fa58"
 )
 ACCEPTED_MATRIX_CONTRACT_REVISION = 90
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
@@ -2082,6 +2082,7 @@ def validate_t18_global_weighting_sources(
             "imported": "Option<FrozenWeightingArtifact>",
             "latest_traversal_measurements": "Option<SelectedObservationTraversalMeasurements>",
             "latest_stream_measurements": "Option<BoundedStreamMeasurements>",
+            "parallel_preparation_samples": "u64",
         }
         or "pubfntraverse_density_source(" not in compact_runtime
         or "pub(crate)fntraverse_initial_bounded_stream<" not in compact_runtime
@@ -2105,6 +2106,16 @@ def validate_t18_global_weighting_sources(
     bounded_stream = rust_function_body(
         runtime_weighting, "execute_weighting_block_stream", runtime_weighting_path
     )
+    prebound_stream = rust_function_body(
+        runtime_weighting, "execute_prebound_weighting_block_stream", runtime_weighting_path
+    )
+    native_stream = re.sub(
+        r"\s+",
+        "",
+        rust_function_body(
+            runtime_weighting, "traverse_native_initial_stream", runtime_weighting_path
+        ),
+    )
     if (
         density.count("execute_bounded(") != 1
         or density.count("selected.into_block_stream(problem)") != 1
@@ -2120,12 +2131,26 @@ def validate_t18_global_weighting_sources(
         or selected_output_stream.count("execute_weighting_block_stream(") != 1
         or ".begin_derived_replay(" not in selected_output_stream
         or ".validate_derived_completion(" not in selected_output_stream
-        or bounded_stream.count("execute_bounded(") != 1
+        or bounded_stream.count("execute_prebound_weighting_block_stream(") != 1
         or bounded_stream.count("selected.into_block_stream(problem)") != 1
-        or ".complete(terminal)" not in bounded_stream
+        or "SelectedObservationBlockConsumer::complete," not in bounded_stream
+        or prebound_stream.count("execute_bounded(") != 1
+        or "complete(consumer, terminal)" not in prebound_stream
     ):
         raise ArchitectureError(
             "initial science and terminal visibility output must use the shared bounded selected-payload traversal"
+        )
+    if not all(token in native_stream for token in (
+        "fragment.streaming!=Some(WeightingStreamingMode::NaturalInitial)",
+        "problem.visibility_transform().is_some()",
+        "Some(PreparationPlan::Native(preparation))=fragment.replay_preparation",
+        "fragment.authorize_source_observation(context,problem,selected.residency_certificate())",
+        "fragment.bounded_stream_plan(context,true)",
+        "native_preparation::execute(",
+        "self.accept_initial_stream(context,fragment,problem,None,completed)",
+    )):
+        raise ArchitectureError(
+            "native initial preparation must retain source authority, admission and common terminal completion"
         )
     replay = rust_impl_method_body(
         runtime_weighting, "FrozenWeightingGeneration", "replay", runtime_weighting_path
@@ -2155,8 +2180,22 @@ def validate_t18_global_weighting_sources(
             weighting_path,
         ),
     )
+    window_validation = re.sub(
+        r"\s+",
+        "",
+        rust_impl_method_body(
+            weighting, "WeightingReplayWindowSummary", "validate_source_completion", weighting_path
+        ),
+    )
+    window_parent = re.sub(
+        r"\s+",
+        "",
+        rust_impl_method_body(
+            weighting, "WeightingReplayWindowSummary", "matches_parent", weighting_path
+        ),
+    )
     if (
-        weighting.count("SelectedObservationGenerationId") != 4
+        weighting.count("SelectedObservationGenerationId") != 6
         or coverage_proof_fields
         != {
             "problem": "CompiledProblemId",
@@ -2176,7 +2215,22 @@ def validate_t18_global_weighting_sources(
         not in coverage_proof_validation
     ):
         raise ArchitectureError(
-            "T18 reconstruction must confine T17 identity to the sealed frozen-coverage invariant and zero-hash derived validation"
+            "T18 reconstruction must confine T17 identity to frozen coverage and validated replay windows"
+        )
+    if not all(token in window_validation for token in (
+        "selected_generation!=self.scope.proof.selected_generation",
+        "sample_count!=self.actual.sample_count",
+        "frequency_bounds_hz!=self.scope.frequency_bounds_hz",
+    )) or not all(token in window_parent for token in (
+        "proof.problem==problem", "proof.commitment==commitment",
+        "proof.selected_generation==selected_generation",
+        "proof.continuum_transform_generation.is_none()",
+        "proof.generation==parent.generation", "proof.coverage==parent.coverage",
+        "proof.weighted_sample_count==parent.sample_count",
+        "self.actual.generation==parent.generation",
+    )):
+        raise ArchitectureError(
+            "T18 restricted replay must validate source generation, window and exhaustive parent coverage"
         )
     replay_completion = rust_struct_fields(
         runtime_weighting, "WeightingReplayCompletion", runtime_weighting_path
@@ -2219,6 +2273,12 @@ def validate_t18_global_weighting_sources(
     replay_consume = rust_impl_method_body(
         weighting, "WeightingReplayPhase<'_>", "consume", weighting_path
     )
+    replay_prepare = rust_impl_method_body(
+        weighting, "WeightingReplayPhase<'_>", "prepare_sample", weighting_path
+    )
+    replay_commit = rust_impl_method_body(
+        weighting, "WeightingReplayPhase<'_>", "commit_sample", weighting_path
+    )
     take_block = rust_impl_method_body(
         weighting, "WeightingReplayPhase<'_>", "take_block", weighting_path
     )
@@ -2253,9 +2313,12 @@ def validate_t18_global_weighting_sources(
         or replay_phase_fields.get("block") != "Vec<WeightingSampleValue>"
         or sample_fields.get("generation") != "WeightingGenerationId"
         or "into_boxed_slice" in take_block
-        or "weighted_sample_from_state(" not in replay_consume
-        or "self.coverage.push(&weighted)" not in replay_consume
-        or "self.block.push(weighted)" not in replay_consume
+        or "self.prepare_sample(" not in replay_consume
+        or "self.commit_sample(weighted)" not in replay_consume
+        or "weighted_sample_from_state(" not in replay_prepare
+        or "WeightingSelectedSample::from_selected(" not in replay_prepare
+        or "self.coverage.push(&weighted)" not in replay_commit
+        or "self.block.push(weighted)" not in replay_commit
         or "std::mem::take(&mut self.block)" not in take_block
         or "Vec::with_capacity(self.max_block_samples)" not in weighting
         or "WeightingReplayInputSample" in weighting

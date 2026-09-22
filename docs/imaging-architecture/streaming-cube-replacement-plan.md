@@ -1,7 +1,7 @@
 # Bounded streaming cube replacement plan
 
 Truth class: user-approved implementation plan, not an accepted architectural decision
-Last reality check: 2026-09-21
+Last reality check: 2026-09-22
 Status: milestones 1–3 approved; local preservation checkpoint complete
 Review: GPT-6 Pro, [conversation](https://chatgpt.com/c/6aaff6ec-fdbc-83e8-b7eb-8ca40186f3db)
 Verification: just docs-check; git diff --check; source pins compared to tested binary
@@ -36,7 +36,7 @@ it does not use the density-weighted cube's resampling state. Current validation
 and application measurements, including rejected attempts, remain in CURRENT.md.
 The locally retained ownership checkpoint is `186b4c8b50`: residual refresh shares
 immutable PSF/sensitivity backing, and bounded product windows prepare on the
-existing team before ordered writing. The next measured candidate uses borrowed
+existing team before ordered writing. Retained checkpoint `c1837d106c` uses borrowed
 resident normal-plane views (owned decoded windows when paged), worker-side
 plane setup, an exact ordered threshold-statistics barrier before the existing
 CLEAN solve, and bounded parallel beam fits. It preserves the common-beam policy
@@ -510,18 +510,23 @@ reused encoding arena and one decoding arena per admitted source slot, with no
 per-sample allocation. Preparation/serialization, reads, checksums and copies all
 remain inside the eventual end-to-end timer.
 
-`NativeSource` implements the existing `OrderedBlockSource`: a mutable store reader
-owns file I/O, and one or two executor-owned decoded windows are borrowed by
-disjoint partitions. One worker team is reused across all row blocks. This
-avoids duplicate worker input buffers and retains existing page-cache control
-(`F_NOCACHE` on macOS; release and verification on Linux) without concurrent reads
-repopulating pages during strict release checks. This does not serialize numeric
-band work or introduce another worker pool. Buffer-source admission and epoch
-jobs are now composed in `execute.rs`; source/run completion is connected to the
-existing application controller and writer. The source separately reports its
-encoding/cache arena and each decoded-slot capacity, reads each row/tile frame
-once per wave, requires exact ordered terminal coverage, poisons failed/cancelled
-input and preserves original errors through the bounded executor.
+The retained `execute.rs` uses `BandKernel` on the existing bounded worker team.
+Each job owns a band's numerical state and one decoded native-window buffer.
+All jobs share a locked `NativeStoreReader`; the lock covers frame reads, decode
+and cache release, and is dropped before numeric band work. Gridding and FFTs
+remain worker-local and parallel. Admission includes the live job buffers,
+reader/cache capacity and kernel state. Existing page-cache control (`F_NOCACHE`
+on macOS; release and verification on Linux) is retained without concurrent reads
+repopulating pages during strict release checks. A joined wave returns owned band
+results or the original I/O/kernel error before the controller can mutate the
+model epoch. The application controller and writer are connected.
+
+`NativeSource` still implements `OrderedBlockSource`, but the earlier description
+of shared decoded union windows driving current execution is superseded and
+non-normative. The current executor uses its memory calculation, not its source
+traversal. Do not infer once-per-wave reads or shared decoded buffers from that
+historical implementation; the retained reader's bounded frame cache serves the
+band jobs.
 
 Preparation unions all bands' native/model support in one native-pair traversal
 per row, rather than rescanning the native axis independently for every band.
@@ -530,7 +535,7 @@ the complete contiguous native closure, including interior samples that emit no
 fine channel. Reference tests cover reversed axes, gaps, shifts and unmapped rows
 and pin pair visits independent of band count. There is no per-row directory.
 At execution, `consume_block` recomputes each row's exact
-native-pair window inside the shared decoded union, then takes zero-copy subviews.
+native-pair window inside the band's decoded window, then takes zero-copy subviews.
 This matters when Doppler shifts vary: predicting every sample in the wider
 union could ask for model planes outside that row's declared closure. The
 original global spectral pair and fine-grid phase are preserved when narrowing.
