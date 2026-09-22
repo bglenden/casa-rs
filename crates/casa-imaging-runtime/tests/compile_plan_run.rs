@@ -3469,7 +3469,9 @@ fn execute_spectral_cycle_with_weighting_mode(
         ImageShape::new(image_edge, image_edge),
         [-1.0e-6, 1.0e-6],
     );
-    let low_memory_channels = 8;
+    // Fit the whole cube inside the fixed 1 MiB test authority so this fixture
+    // exercises retained-to-recompute adaptation, not static spectral windows.
+    let low_memory_channels = 4;
     if verify_low_memory_plan {
         let spectral = geometry.spectral().clone().with_wcs(SpectralWcs::Linear {
             channels: low_memory_channels,
@@ -4433,6 +4435,11 @@ fn execute_initial_reconstruction_cycle(
         [implementation(byte)],
     );
     let channel_count = problem.geometry().spectral().output_channels();
+    let resource_policy = ResourcePolicy::Explicit(ResourceOverride {
+        memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 1 << 20)]),
+        workers: Some(1),
+        ..ResourceOverride::default()
+    });
     let policy = SpectralCycleExecutionPolicy::new(
         implementation(byte),
         WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
@@ -4444,7 +4451,7 @@ fn execute_initial_reconstruction_cycle(
             900_000,
         ),
         authority().clone(),
-        ResourcePolicy::Balanced,
+        resource_policy.clone(),
     )
     .with_gridded_normal_storage(artifact_storage());
     let planned = SpectralCyclePlan::initial(problem, &planning_registry, policy)
@@ -4456,7 +4463,7 @@ fn execute_initial_reconstruction_cycle(
         InitialCycleTestPlan {
             planned,
             authority: authority(),
-            resource_policy: ResourcePolicy::Balanced,
+            resource_policy,
             expected_workers: 1,
             require_multiple_slabs: false,
             model_executables: None,
@@ -11166,10 +11173,15 @@ fn multi_source_weighting_receipts_certified_aggregate_residency_through_release
 }
 
 #[test]
-fn native_row_workspace_is_reserved_only_for_multichannel_sources() {
+fn selected_source_workspace_charges_row_carry_and_initial_plane_batches() {
     for channels in [1, 2, 8] {
         let problem = compile(channel_local_request(237, channels)).unwrap();
         let specification = SpectralOperatorSpecification::new(&problem).unwrap();
+        let row_carry_bytes =
+            spectral_operator_workload(&specification, 4, SpectralOperatorPass::ResidualRefresh)
+                .unwrap()
+                .source_row_workspace_bytes();
+        assert_eq!(row_carry_bytes > 0, channels > 1);
         for pass in [
             SpectralOperatorPass::InitialMajor,
             SpectralOperatorPass::ResidualRefresh,
@@ -11182,7 +11194,12 @@ fn native_row_workspace_is_reserved_only_for_multichannel_sources() {
                 pass,
             )
             .unwrap();
-            assert_eq!(workload.source_row_workspace_bytes() > 0, channels > 1);
+            if pass == SpectralOperatorPass::InitialMajor {
+                assert!(
+                    workload.source_row_workspace_bytes() > row_carry_bytes,
+                    "initial plane batching needs storage even for a single channel"
+                );
+            }
             assert_eq!(
                 fragment.residency().forward_workspace_bytes(),
                 workload.forward_complex_values() * size_of::<num_complex::Complex64>()

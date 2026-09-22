@@ -2,7 +2,7 @@
 
 Truth class: user-approved implementation plan, not an accepted architectural decision
 Last reality check: 2026-09-22
-Status: milestones 1–3 approved; local preservation checkpoint complete
+Status: complete comparison application retained; checkpoint merge authorized; revised 2x target
 Review: GPT-6 Pro, [conversation](https://chatgpt.com/c/6aaff6ec-fdbc-83e8-b7eb-8ca40186f3db)
 Verification: just docs-check; git diff --check; source pins compared to tested binary
 
@@ -40,7 +40,8 @@ existing team before ordered writing. Retained checkpoint `c1837d106c` uses borr
 resident normal-plane views (owned decoded windows when paged), worker-side
 plane setup, an exact ordered threshold-statistics barrier before the existing
 CLEAN solve, and bounded parallel beam fits. It preserves the common-beam policy
-and single writer. These connections do not establish the 3x target; current
+and single writer. The user has replaced the original 3x threshold with 2x;
+this is an explicit acceptance revision, not a measured 3x result. Current
 measurements, source identity and acceptance status remain in CURRENT.md.
 The user additionally authorized local Obit timings as reference only, including
 the isolated native CPU core/task setup described below.
@@ -69,15 +70,19 @@ persistence-boundary checksums and diagnostic fingerprints remain distinct.
 Resources: 16 GiB shared native planner; sampled 16 GiB process-scope RSS guard;
 two Cargo jobs; `CARGO_INCREMENTAL=0`. No full MeasurementSet materialization or
 per-worker duplicate full cubes. Strict interactive time cutoffs are suspended;
-unattended work still needs an agreed checkpoint. No push, merge, release,
-cleanup, another optimization controller, or full-32GB run.
+unattended work still needs an agreed checkpoint. The user explicitly authorized
+commit/push/merge of the retained implementation as an engineering checkpoint.
+No release, cleanup, another optimization controller, or full-32GB run.
 The user increased the memory allowance on 2026-09-20 after candidate12; older
 4-GiB-planning/8-GiB-RSS observations remain labelled as such. The allowance is
 a ceiling, not a requirement to maximize resident bands or fill available RAM.
 
 First-implementation performance acceptance on the same 42,120-row / 512-channel /
 512x512 workload: new W1 must be no slower than matched CASA serial (currently
-66.526070500 s), and new W1 / new W4 must be at least 3.0. Include preparation,
+66.526070500 s), and new W1 / new W4 must be at least 2.0. The user explicitly
+directed moving the scaling goalposts from 3x at the merge checkpoint and
+approved the revised >=2x goal; scientific and resource acceptance is unchanged.
+Include preparation,
 intermediate I/O and publication; do not pad the serial baseline. Use one matched
 observation initially, repeating only to resolve ambiguous timing. All seven
 products / nine full-field CASA checks and panels remain required. Obit numbers
@@ -799,10 +804,13 @@ Real epoch-band jobs now use the native source and existing bounded executor
 under checked phase-liveness wave admission. The complete application comparison
 path has run the approved workload with one and four workers; both passed the
 unchanged seven-product/nine-check CASA comparison. Native-buffer batching is
-retained after measured end-to-end improvement with identical products. The
-serial-parity and 3x scaling requirements remain unmet. Subsequent changes must
-target measured complete-application bottlenecks; see CURRENT.md for current
-source identity, timings and the one active experiment.
+retained after measured end-to-end improvement with identical products.
+The retained application measured W1 48.458422917s and W4 20.251546125s
+(2.392826x), meeting serial parity and the revised 2x first-implementation bar.
+The rejected source/initial fusion prototype is not retained. No experiment is
+running. This checkpoint does not claim the former 3x target, production
+cutover, remaining-mode acceptance or full-size T55 completion. See CURRENT.md
+for exact source, verification, merge state and remaining work.
 Do not first rerun all past gates, restart autoresearch, or assemble another
 architecture survey. The current source pin and unaffected green evidence are
 already preserved.

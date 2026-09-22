@@ -231,16 +231,18 @@ struct RuntimeObservationFixture {
 fn runtime_observation_fixture(channel_count: usize) -> &'static Path {
     static CONTINUUM: OnceLock<RuntimeObservationFixture> = OnceLock::new();
     static TWO_CHANNEL: OnceLock<RuntimeObservationFixture> = OnceLock::new();
+    static FOUR_CHANNEL: OnceLock<RuntimeObservationFixture> = OnceLock::new();
     static EIGHT_CHANNEL: OnceLock<RuntimeObservationFixture> = OnceLock::new();
     static TWENTY_EIGHT_CHANNEL: OnceLock<RuntimeObservationFixture> = OnceLock::new();
     static THIRTY_TWO_CHANNEL: OnceLock<RuntimeObservationFixture> = OnceLock::new();
     let fixture = match channel_count {
         1 => &CONTINUUM,
         2 => &TWO_CHANNEL,
+        4 => &FOUR_CHANNEL,
         8 => &EIGHT_CHANNEL,
         28 => &TWENTY_EIGHT_CHANNEL,
         32 => &THIRTY_TWO_CHANNEL,
-        _ => panic!("runtime fixture supports only one, two, eight, 28, or 32 channels"),
+        _ => panic!("runtime fixture supports only one, two, four, eight, 28, or 32 channels"),
     };
     &fixture
         .get_or_init(|| {

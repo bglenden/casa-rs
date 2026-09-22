@@ -503,8 +503,8 @@ impl<T: LatticeElement> PagedArray<T> {
 
     /// Opens an existing `PagedArray` from disk with an explicit cache size.
     ///
-    /// A `max_cache_bytes` value of `0` disables tile retention. Use [`Self::open`]
-    /// for the repository's fixed 64 MiB default.
+    /// The cache budget must be positive, as required by typed tiled storage.
+    /// Use [`Self::open`] for the repository's fixed 64 MiB default.
     pub fn open_with_cache(
         path: impl AsRef<Path>,
         max_cache_bytes: usize,
@@ -561,7 +561,8 @@ impl<T: LatticeElement> PagedArray<T> {
 
     /// Sets the maximum tile-cache size in pixels.
     ///
-    /// A value of `0` disables tile retention.
+    /// Persistent arrays require a positive budget. An invalid budget or an
+    /// I/O failure leaves the previous cache setting in effect.
     ///
     /// Mirrors C++ `PagedArray::setMaximumCacheSize`.
     pub fn set_maximum_cache_size_pixels(
@@ -574,13 +575,22 @@ impl<T: LatticeElement> PagedArray<T> {
         } else {
             how_many_pixels.saturating_mul(elem_size)
         };
-        self.max_cache_bytes.set(max_cache_bytes);
-        self.refresh_tiled_io()
+        if self.path.is_some() && max_cache_bytes == 0 {
+            return Err(LatticeError::Table(
+                "persistent array cache budget must be positive".into(),
+            ));
+        }
+        let previous = self.max_cache_bytes.replace(max_cache_bytes);
+        if let Err(error) = self.refresh_tiled_io() {
+            self.max_cache_bytes.set(previous);
+            return Err(error);
+        }
+        Ok(())
     }
 
     /// Sets the cache size to hold approximately `how_many_tiles` tiles.
     ///
-    /// A value of `0` disables tile retention.
+    /// Persistent arrays require at least one tile.
     ///
     /// Mirrors C++ `PagedArray::setCacheSizeInTiles`.
     pub fn set_cache_size_in_tiles(&mut self, how_many_tiles: usize) -> Result<(), LatticeError> {
@@ -1290,6 +1300,28 @@ mod tests {
         pa.temp_close().unwrap();
         pa.reopen().unwrap();
         assert_eq!(pa.maximum_cache_size_pixels(), 3 * 8 * 4 * 2);
+    }
+
+    #[test]
+    fn persistent_zero_cache_rejection_preserves_budget_and_contents() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("zero_cache.table");
+        let shape = TiledShape::with_tile_shape(vec![8, 8], vec![4, 4]).unwrap();
+        let mut array = PagedArray::<f32>::create_with_cache(shape, &path, 64).unwrap();
+        array.set(2.0).unwrap();
+        let pixels = array.maximum_cache_size_pixels();
+        assert!(array.set_maximum_cache_size_pixels(0).is_err());
+        assert_eq!(array.maximum_cache_size_pixels(), pixels);
+        assert!(array.set_cache_size_in_tiles(0).is_err());
+        assert_eq!(array.maximum_cache_size_pixels(), pixels);
+        assert_eq!(array.get_at(&[7, 7]).unwrap(), 2.0);
+        array.temp_close().unwrap();
+        assert!(array.set_maximum_cache_size_pixels(0).is_err());
+        assert!(array.is_temp_closed());
+        array.reopen().unwrap();
+        assert_eq!(array.maximum_cache_size_pixels(), pixels);
+        assert_eq!(array.get_at(&[7, 7]).unwrap(), 2.0);
+        assert!(PagedArray::<f32>::open_with_cache(&path, 0).is_err());
     }
 
     #[test]
