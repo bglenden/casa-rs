@@ -12,18 +12,13 @@ use crate::bounded_stream::{
 };
 use casa_imaging_reconstruction::{
     ModelGeneration, PolarizationOperator,
-    runtime_adapter::{BandPlan, BandResult, NativeBlock, NativeLayout, PreparedFft},
+    runtime_adapter::{BandPlan, BandResult, NativeBlock, NativeLayout},
 };
 use std::{io, mem::size_of, sync::Mutex, time::Instant};
 
-pub(super) struct BandInput {
-    pub(super) plan: BandPlan,
-    pub(super) fft: Option<PreparedFft>,
-}
-
 enum BandJob {
-    Pending(BandInput),
-    Completed(BandResult, PreparedFft, (usize, usize), BandProfile),
+    Pending(BandPlan),
+    Completed(BandResult, (usize, usize), BandProfile),
 }
 
 // Diagnostic only: aggregate at block boundaries and print after the worker join.
@@ -66,23 +61,17 @@ fn overflow() -> io::Error {
 
 impl WavePlan {
     /// `shared_bytes` includes live compiled inputs/model/storage/sink owners
-    /// outside this wave. All jobs can retain grids or completed images at once,
-    /// so charge the sum of their individual peaks, never just worker_count.
+    /// outside this wave. Pending jobs own only plans; at most `workers` jobs
+    /// allocate workspaces. Completed results stay live until the wave drains.
     pub(super) fn new(
         store: &NativeStore,
-        jobs: &[BandInput],
+        jobs: &[BandPlan],
         workers: usize,
         source_slots: usize,
         shared_bytes: u64,
         budget: u64,
     ) -> io::Result<Self> {
-        let plan = Self::project(
-            store.plan,
-            jobs.iter().map(|job| &job.plan),
-            workers,
-            source_slots,
-            shared_bytes,
-        )?;
+        let plan = Self::project(store.plan, jobs.iter(), workers, source_slots, shared_bytes)?;
         if plan.peak_bytes > budget {
             return Err(io::Error::other("cube band wave exceeds its memory budget"));
         }
@@ -139,7 +128,8 @@ impl WavePlan {
         let mut has_source = false;
         let mut native_tiles = 0;
         let mut job_bytes = Vec::with_capacity(count);
-        let mut dynamic = 0_u64;
+        let mut active_excesses = Vec::with_capacity(count);
+        let mut retained = 0_u64;
         let mut previous_end = None;
         for band in jobs {
             if previous_end.is_some_and(|end| end != band.core().start) {
@@ -156,20 +146,39 @@ impl WavePlan {
                 );
                 NativeSource::memory(store, native)?.1
             };
-            let bytes = u64::try_from(band.memory().map_err(io::Error::other)?.peak_bytes())
+            let memory = band.memory().map_err(io::Error::other)?;
+            let bytes = u64::try_from(memory.peak_bytes())
                 .map_err(|_| overflow())?
                 .checked_add(input)
                 .ok_or_else(overflow)?;
-            dynamic = dynamic.checked_add(bytes).ok_or_else(overflow)?;
+            // The library's returned-result bound includes an FFT, which this
+            // executor drops immediately. Keeping that bound is conservative.
+            let dormant = u64::try_from(
+                memory.retained_bytes.max(
+                    band.preparation_metadata_bytes()
+                        .map_err(io::Error::other)?,
+                ),
+            )
+            .map_err(|_| overflow())?;
+            retained = retained.checked_add(dormant).ok_or_else(overflow)?;
+            active_excesses.push(bytes.saturating_sub(dormant));
             job_bytes.push(bytes);
         }
+        // Charge every pending/completed owner plus the largest possible active
+        // excesses. This also bounds mixed completion order and unequal bands;
+        // charging only workers' peaks would omit previously completed results.
+        active_excesses.sort_unstable_by(|a, b| b.cmp(a));
+        let dynamic = active_excesses[..workers]
+            .iter()
+            .try_fold(retained, |sum, bytes| sum.checked_add(*bytes))
+            .ok_or_else(overflow)?;
         // Collection storage and by-value conversion can overlap at the handoff.
         let headers = count
             .checked_mul(
-                size_of::<BandInput>()
+                size_of::<BandPlan>()
                     + size_of::<Mutex<Option<BandJob>>>()
-                    + size_of::<(BandResult, PreparedFft)>()
-                    + 2 * size_of::<u64>(),
+                    + size_of::<BandResult>()
+                    + 3 * size_of::<u64>(),
             )
             .and_then(|bytes| {
                 bytes.checked_add(
@@ -205,7 +214,7 @@ impl WavePlan {
 }
 
 pub(super) struct WaveResult {
-    pub(super) bands: Vec<(BandResult, PreparedFft)>,
+    pub(super) bands: Vec<BandResult>,
     pub(super) source: StoreIo,
 }
 
@@ -215,7 +224,7 @@ pub(super) struct WaveResult {
 #[allow(clippy::too_many_arguments)]
 pub(super) fn execute(
     store: &mut NativeStore,
-    jobs: Vec<BandInput>,
+    jobs: Vec<BandPlan>,
     generation: &ModelGeneration,
     layout: &NativeLayout,
     output_hz: &[f64],
@@ -309,10 +318,10 @@ impl PartitionedKernel<()> for BandKernel<'_> {
         let Some(BandJob::Pending(input)) = slot.take() else {
             return Err(io::Error::other("cube band lifecycle mismatch"));
         };
-        let window = input.plan.native_range();
+        let window = input.native_range();
         let mut profile = BandProfile::default();
         let cpu_started = if self.profile {
-            profile.channel = input.plan.core().start;
+            profile.channel = input.core().start;
             profile.thread = Some(std::thread::current().id());
             profile.start_nanos = self.started.elapsed().as_nanos();
             thread_cpu_nanos()
@@ -321,8 +330,7 @@ impl PartitionedKernel<()> for BandKernel<'_> {
         };
         let prepare_started = self.profile.then(Instant::now);
         let mut job = input
-            .plan
-            .prepare(self.generation, input.fft)
+            .prepare(self.generation, None)
             .map_err(io::Error::other)?;
         if let Some(started) = prepare_started {
             profile.prepare_nanos = started.elapsed().as_nanos();
@@ -369,12 +377,13 @@ impl PartitionedKernel<()> for BandKernel<'_> {
         let counts = job.model_plane_counts();
         let complete_started = self.profile.then(Instant::now);
         let (normal, fft) = job.complete(self.generation).map_err(io::Error::other)?;
+        drop(fft);
         if let Some(started) = complete_started {
             profile.complete_nanos = started.elapsed().as_nanos();
             profile.end_nanos = self.started.elapsed().as_nanos();
             profile.cpu_nanos = cpu_started.zip(thread_cpu_nanos()).map(|(a, b)| b - a);
         }
-        *slot = Some(BandJob::Completed(normal, fft, counts, profile));
+        *slot = Some(BandJob::Completed(normal, counts, profile));
         Ok(())
     }
     fn commit(
@@ -391,7 +400,7 @@ impl PartitionedKernel<()> for BandKernel<'_> {
             self.jobs
                 .iter_mut()
                 .try_fold((0, 0), |(planes, ffts), slot| {
-                    let Some(BandJob::Completed(_, _, (job_planes, job_ffts), profile)) = slot
+                    let Some(BandJob::Completed(_, (job_planes, job_ffts), profile)) = slot
                         .get_mut()
                         .map_err(|_| io::Error::other("cube band owner poisoned"))?
                     else {
@@ -409,7 +418,7 @@ impl PartitionedKernel<()> for BandKernel<'_> {
             .jobs
             .into_iter()
             .map(|slot| match slot.into_inner() {
-                Ok(Some(BandJob::Completed(normal, fft, _, _))) => Ok((normal, fft)),
+                Ok(Some(BandJob::Completed(normal, _, _))) => Ok(normal),
                 _ => Err(io::Error::other("cube band completion missing")),
             })
             .collect::<io::Result<_>>()?;

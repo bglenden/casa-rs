@@ -319,10 +319,19 @@ arrays have zero payload allocation. `BandPlan::memory` projects preparation,
 accumulation, completion and retained-result bytes with checked shape arithmetic.
 It includes full prior state while new grids allocate, one loaded model plane,
 FFT construction/residency, convolution storage, and image allocations overlapping
-grids. Runtime `WavePlan` sums every resident band's peak, not only the number of
-workers, and adds the shared source arena, one/two decoded slots, collection
-storage, stacks and externally owned shared bytes. Application admission still
-has to supply the complete external-owner term and select bounded wave shapes.
+grids. The lazy runtime executor keeps descriptors for pending bands, allocates
+at most one workspace per active worker, and retains completed results until the
+wave drains. `WavePlan` therefore sums every band's pending/retained bound plus
+the largest worker-count active excesses, then adds reader/cache storage,
+collection storage, stacks and externally owned shared bytes. This supersedes
+the previous sum-of-all-job-peaks projection, which charged nonoverlapping
+workspace lifetimes simultaneously. Runtime drops each completed FFT immediately;
+only the library's independent FFT-reuse API remains. The retained-result byte
+bound still conservatively includes its FFT allowance. Application admission
+supplies the complete external-owner term and selects bounded wave shapes.
+This lazy-executor formula does not apply to a proposed source-driven prefix
+whose grids would all stay live throughout traversal; that changed lifetime and
+its joint source/workspace admission require separate architectural approval.
 
 `EpochBand` now holds an immutable borrow of the exact `ModelGeneration` while
 preparing and executing a band. Preparation reads one canonical y/x support plane

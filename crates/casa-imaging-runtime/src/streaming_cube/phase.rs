@@ -4,7 +4,7 @@
 //! Native storage and band ownership replace the historical numerical executor.
 
 use super::{
-    execute::{self, BandInput, WavePlan},
+    execute::{self, WavePlan},
     plan::NativePhasePlan,
     prepare::{NativePreparation, PreparedNative},
 };
@@ -736,11 +736,7 @@ impl WorkImplementation for InitialCube {
                     self.native_plan.shared_bytes,
                     self.native_plan.workspace_bytes,
                 )?;
-                let jobs = pending
-                    .by_ref()
-                    .take(count)
-                    .map(|plan| BandInput { plan, fft: None })
-                    .collect::<Vec<_>>();
+                let jobs = pending.by_ref().take(count).collect::<Vec<_>>();
                 let mut measurements = None;
                 let wave = execute::execute(
                     &mut store,
@@ -765,7 +761,7 @@ impl WorkImplementation for InitialCube {
                         wave.source
                     );
                 }
-                for (normal, _) in wave.bands {
+                for normal in wave.bands {
                     let normal = match normal {
                         BandResult::Residual(residual) => {
                             refresh

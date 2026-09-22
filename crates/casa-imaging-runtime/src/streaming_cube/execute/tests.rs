@@ -202,7 +202,7 @@ fn native_preparation_and_real_bands_feed_the_existing_fold_and_controller() {
     )
     .unwrap();
     let mut fold: Option<CompleteDataOwnerSlabFold> = None;
-    for ((normal, _), specification) in result.bands.into_iter().zip(&specifications) {
+    for (normal, specification) in result.bands.into_iter().zip(&specifications) {
         let BandResult::Initial(normal) = normal else {
             panic!("initial normal required")
         };
@@ -476,19 +476,13 @@ fn input(
     (directory, writer.finish().unwrap(), bands, problem)
 }
 
-fn initial_jobs(plans: &[BandPlan]) -> Vec<BandInput> {
-    plans
-        .iter()
-        .map(|plan| BandInput {
-            plan: plan.clone(),
-            fft: None,
-        })
-        .collect()
+fn initial_jobs(plans: &[BandPlan]) -> Vec<BandPlan> {
+    plans.to_vec()
 }
 
 fn run(
     store: &mut NativeStore,
-    jobs: Vec<BandInput>,
+    jobs: Vec<BandPlan>,
     model: &ModelGeneration,
     workers: usize,
     slots: usize,
@@ -512,8 +506,8 @@ fn run(
     (result, measured.unwrap())
 }
 
-fn assert_same(expected: &BandResult, bands: &[(BandResult, PreparedFft)]) {
-    for (band, _) in bands {
+fn assert_same(expected: &BandResult, bands: &[BandResult]) {
+    for band in bands {
         let (expected, band) = match (expected, band) {
             (BandResult::Residual(expected), BandResult::Residual(band)) => {
                 let core = band.core();
@@ -546,19 +540,8 @@ fn complete_band_jobs_match_across_workers_and_epochs_without_row_block_dispatch
     let owner = lifecycle(&problem, 64);
     let empty = owner.initial_empty().unwrap();
     let (initial_reference, _) = run(&mut store, initial_jobs(&whole), &empty, 1, 1);
-    let (mut initial, _) = run(&mut store, initial_jobs(&whole), &empty, 1, 1);
     let model = changed_model(&owner, empty);
-    let (_, fft) = initial.bands.pop().unwrap();
-    let (expected, _) = run(
-        &mut store,
-        vec![BandInput {
-            plan: whole[0].residual_refresh(),
-            fft: Some(fft),
-        }],
-        &model,
-        1,
-        1,
-    );
+    let (expected, _) = run(&mut store, vec![whole[0].residual_refresh()], &model, 1, 1);
     for depth in [1, 2, 4] {
         for workers in [1, 2, 4] {
             for slots in [1, 2] {
@@ -567,7 +550,7 @@ fn complete_band_jobs_match_across_workers_and_epochs_without_row_block_dispatch
                 let empty = owner.initial_empty().unwrap();
                 let (initial, measurements) =
                     run(&mut store, initial_jobs(&plans), &empty, workers, slots);
-                assert_same(&initial_reference.bands[0].0, &initial.bands);
+                assert_same(&initial_reference.bands[0], &initial.bands);
                 assert_eq!(measurements.logical_units_filled, 0);
                 assert_eq!(measurements.blocks_filled, 0);
                 assert_eq!(
@@ -593,21 +576,14 @@ fn complete_band_jobs_match_across_workers_and_epochs_without_row_block_dispatch
                     "each band reads at most one metadata and three tile frames per block"
                 );
                 let model = changed_model(&owner, empty);
-                let jobs = plans
-                    .iter()
-                    .zip(initial.bands)
-                    .map(|(plan, (_, fft))| BandInput {
-                        plan: plan.residual_refresh(),
-                        fft: Some(fft),
-                    })
-                    .collect();
+                let jobs = plans.iter().map(BandPlan::residual_refresh).collect();
                 let (refreshed, _) = run(&mut store, jobs, &model, workers, slots);
-                assert_same(&expected.bands[0].0, &refreshed.bands);
+                assert_same(&expected.bands[0], &refreshed.bands);
                 assert!(
                     refreshed
                         .bands
                         .iter()
-                        .all(|(band, _)| matches!(band, BandResult::Residual(_)))
+                        .all(|band| matches!(band, BandResult::Residual(_)))
                 );
             }
         }
@@ -652,7 +628,7 @@ fn native_read_failure_joins_complete_band_jobs_without_returning_products() {
 }
 
 #[test]
-fn wave_admission_counts_all_jobs_and_rejects_before_work() {
+fn wave_admission_counts_retained_results_and_only_active_workspaces() {
     let (_dir, store, bands, _) = input(1, false);
     let jobs = initial_jobs(&bands);
     for workers in [1, 2, 4] {
@@ -663,11 +639,51 @@ fn wave_admission_counts_all_jobs_and_rejects_before_work() {
                 WavePlan::new(&store, &jobs, workers, slots, 4096, plan.peak_bytes - 1).is_err()
             );
             assert_eq!(plan.job_bytes.len(), 4);
-            let dynamic: u64 = jobs
-                .iter()
-                .map(|job| job.plan.memory().unwrap().peak_bytes() as u64)
-                .sum();
-            assert!(plan.peak_bytes > dynamic);
+            let mut dormant = 0;
+            let mut excesses = Vec::new();
+            for job in &jobs {
+                let memory = job.memory().unwrap();
+                let retained = memory
+                    .retained_bytes
+                    .max(job.preparation_metadata_bytes().unwrap())
+                    as u64;
+                dormant += retained;
+                let input = NativeSource::memory(store.plan, job.native_range())
+                    .unwrap()
+                    .1;
+                excesses.push((memory.peak_bytes() as u64 + input).saturating_sub(retained));
+            }
+            excesses.sort_unstable_by(|a, b| b.cmp(a));
+            let dynamic = dormant + excesses[..workers].iter().sum::<u64>();
+            let expected =
+                BoundedKernelPlan::new::<usize, ()>(workers, jobs.len(), dynamic).unwrap();
+            assert_eq!(plan.kernel.capacity_bytes(), expected.capacity_bytes());
+            if workers < jobs.len() {
+                assert!(dynamic < plan.job_bytes.iter().sum());
+            }
+            // Every assignment of pending/completed and up to W active jobs
+            // fits, including non-prefix completion and heterogeneous support.
+            for mask in 0_u32..1 << jobs.len() {
+                if mask.count_ones() as usize > workers {
+                    continue;
+                }
+                let live: u64 = jobs
+                    .iter()
+                    .enumerate()
+                    .map(|(index, job)| {
+                        if mask & (1 << index) != 0 {
+                            plan.job_bytes[index]
+                        } else {
+                            let memory = job.memory().unwrap();
+                            memory
+                                .retained_bytes
+                                .max(job.preparation_metadata_bytes().unwrap())
+                                as u64
+                        }
+                    })
+                    .sum();
+                assert!(live <= dynamic);
+            }
         }
     }
     assert!(WavePlan::new(&store, &jobs, 0, 1, 0, u64::MAX).is_err());
@@ -732,7 +748,7 @@ fn initial_wave_selection_uses_shape_budget_and_drains_before_next_wave() {
                     .unwrap();
                     for (actual, reference) in wave.bands.iter().zip(&expected.bands[start..]) {
                         let (BandResult::Initial(actual), BandResult::Initial(reference)) =
-                            (&actual.0, &reference.0)
+                            (actual, reference)
                         else {
                             panic!("initial normal required")
                         };
@@ -742,7 +758,7 @@ fn initial_wave_selection_uses_shape_budget_and_drains_before_next_wave() {
                         assert_eq!(actual.sum_weights(), reference.sum_weights());
                     }
                     start += depth;
-                    // Returned images/FFT owners leave scope before next selection.
+                    // Returned images leave scope before next selection.
                 }
             }
         }
@@ -763,7 +779,7 @@ fn wholly_unmapped_wave_uses_no_source_or_fabricated_rows() {
     assert_eq!(measurements.source_read_operations, 0);
     assert_eq!(measurements.logical_units_filled, 0);
     assert_eq!(measurements.worker_threads_started, 4);
-    for (normal, _) in result.bands {
+    for normal in result.bands {
         let BandResult::Initial(normal) = normal else {
             panic!("initial normal required")
         };
@@ -785,16 +801,8 @@ fn model_read_failure_joins_the_wave_without_completion() {
     let (_dir, mut store, bands, problem) = input(1, false);
     let owner = lifecycle(&problem, 8);
     let empty = owner.initial_empty().unwrap();
-    let (initial, _) = run(&mut store, initial_jobs(&bands), &empty, 4, 2);
     let model = changed_model(&owner, empty);
-    let jobs = bands
-        .iter()
-        .zip(initial.bands)
-        .map(|(plan, (_, fft))| BandInput {
-            plan: plan.residual_refresh(),
-            fft: Some(fft),
-        })
-        .collect();
+    let jobs = bands.iter().map(BandPlan::residual_refresh).collect();
     let mut measurements = None;
     let error = execute(
         &mut store,
