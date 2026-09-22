@@ -2,7 +2,7 @@
 
 Truth class: user-approved implementation plan, not an accepted architectural decision
 Last reality check: 2026-09-22
-Status: complete comparison application retained; checkpoint merge authorized; revised 2x target
+Status: production cutover/deletion and current-head CI authorized and in progress
 Review: GPT-6 Pro, [conversation](https://chatgpt.com/c/6aaff6ec-fdbc-83e8-b7eb-8ca40186f3db)
 Verification: just docs-check; git diff --check; source pins compared to tested binary
 
@@ -23,9 +23,12 @@ Do not infer that an old uncommitted experiment was promoted.
 **Current implementation:** the segregated reconstruction `streaming_cube` module
 now has shared flat native blocks and direct whole-row worker preparation,
 borrowed compact rows, contiguous band grids, exact row support, native prediction
-and residual/normal accumulation. The numerical/runtime replacement still uses a
-test-only seam, not a production selector. The current check/result and next
-executable action are in CURRENT.md. The active Goal covers milestones 1–3.
+and residual/normal accumulation. The production cutover replaces the
+comparison-only route with semantic capability selection at the ordinary
+application entry point. One shared CLEAN loop consumes phase-owned replay and
+scientific completions; no failed native execution falls back to the displaced
+route. The current check/result and next executable action are in CURRENT.md.
+The active Goal covers milestone 4 and repair/verification of current-head CI.
 Local pre-preparation-refactor checkpoint: `608ff13395edc604d5ee8db403db52b8c5da59e8`.
 The verified direct-preparation candidate and revised skills are preserved at
 `e8729a9058` before the row/channel-kernel change. That change lends numeric source
@@ -271,8 +274,8 @@ APIs. This is a small initial layout, not a requirement to manufacture files:
 
 Shared science stays in clearly named existing helpers or is extracted once to a
 neutral sibling within its current owning crate. Never copy the entire historical
-operator into the new directory. Keep the old files in place during test-only
-comparison, and list displaced symbols in the cutover record. Do not rename a
+operator into the new directory. The test-only comparison period is finished;
+retain historical files only for the remaining consumers listed below. Do not rename a
 large historical tree just to make it look segregated.
 
 ### Temporary coexistence and mandatory retirement
@@ -284,16 +287,20 @@ a named block/job seam, not repeatedly inside the sample/pixel loop; account for
 its copies and peak simultaneous storage. Do not force a worse new representation
 solely to preserve an old interface.
 
-Initial retirement inventory (all paths below are relative to reconstruction
-`src/` unless qualified). These old containers are frozen against new production
-consumers. The table describes migration obligations, not completed deletions.
+Production retirement inventory, updated 2026-09-22 (paths below are relative to
+reconstruction `src/` unless qualified). The covered capability is the
+natural-weight, Stokes-I, linear, homogeneous single-source/channel-local cube
+with an initially empty model and no visibility transform or output. Old
+containers are frozen against new production consumers. The covered cube now
+selects its native owner before execution; an execution failure never retries
+with a historical owner. Full current-cutover acceptance is recorded in CURRENT.
 
 | Displaced representation | New representation | Remaining consumers and temporary seam | Acceptance / deletion point |
 | --- | --- | --- | --- |
-| `NativeSpectralGroup`, `RetainedNativeSpectralGroup`, `CasaResampledGroup`, `CasaLinearRowResampler` | `streaming_cube::VisibilityRow` borrows flat channel/correlation arrays; `RowAccumulator` retains only a cursor and the previous inline prediction | `spectral_operator.rs::CompleteDataOwnerState`; `gridded_normal_operator.rs::GriddedNormalOperatorCompiler` and `gridded_normal_operator/spectral_records.rs`; their adjacent tests; `weighting.rs` uses retained-group size for admission. No production adapter added yet. | Native prediction/residual/normal and flags/weights/chunk coverage; remove covered cube consumers at milestone 4, then delete types when other-mode consumers migrate. |
-| `SpectralSlabOperator`'s separately owned per-plane arrays and lifecycle state | `streaming_cube::BandWorkspace`: contiguous `[channel,x,y]` arrays and borrowed disjoint plane views, geometry/FFT separate from elements | `spectral_operator.rs::CompleteDataOwnerState`, `spectral_operator/initial_planes.rs::InitialPlaneBatch`, adjacent operator/initial-phase tests. Test-only `streaming_cube/reference.rs::Reference` uses the old operator for comparison. | Bitwise fixed-model gridding and full application acceptance; delete cube construction/initial-plane plumbing and reference seam at milestone 4. Other spectral bases, W/AW and mosaic still need explicit migration before deleting the shared owner. |
-| `ReducedRecordKey`, `RecordRole`, `StandardRecordScratch`, cube use of `GriddedNormalCompilationPlan` | Direct native-pair prediction/accumulation; shared reconstruction `streaming_cube/input.rs::NativeBlock`, runtime `streaming_cube/input.rs::{NativeStoreWriter,NativeStore}` hold the original native payload in bounded tiles | `gridded_normal_operator.rs`, its `compilation.rs`, `spectral_records.rs`, `bounded_records.rs`, `two_domain.rs`; runtime `complete_data_operator.rs`; reconstruction `tests/major_cycle.rs` and `tests/support/gridded_frames.rs`. The new store is test-only pending application integration, with no old-store adapter. | No flattened cube artifact; complete-data numerical/I/O/resource checks and end-to-end timing. Remove covered cube compiler/store calls at milestone 4; shared non-cube replay remains until its named migration. |
-| Cube preparation's `WeightingSampleValue`/`WeightingReplayChunk` payload | `NativePreparationWorker` consumes borrowed row/channel correlation slices through shared weight/taper/finite-value primitives directly into `NativeBlock`; no rich per-sample intermediate | The complete comparison path uses runtime `weighting/native_preparation.rs` and the existing bounded team. `NativeInput` is now entirely test-only; generic non-cube weighting still owns its replay route. | The covered cube's indexed/prepared-sample collection, weighted-chunk conversion and rich per-sample packing API are removed. Scalar/group/worker/batch tests cover the replacement; current application timing and CASA acceptance are required before promotion. |
+| `NativeSpectralGroup`, `RetainedNativeSpectralGroup`, `CasaResampledGroup`, `CasaLinearRowResampler` | `streaming_cube::VisibilityRow` borrows flat channel/correlation arrays; `RowAccumulator` keeps a cursor and previous inline prediction | Historical complete-data/gridded operators still serve MFS/Taylor, density-weighted cubes, W/AW, mosaic/facets/multiple domains, seeded/visibility-transform/output requests, non-linear interpolation and heterogeneous sources. `weighting.rs` still accounts for those consumers. | Removed from the covered cube's production call chain; no conversion adapter. Delete the shared types only when their listed remaining modes migrate. |
+| `SpectralSlabOperator`'s separately owned per-plane arrays and lifecycle state | `streaming_cube::BandWorkspace`: contiguous `[channel,x,y]` arrays and borrowed disjoint plane views | `CompleteDataOwnerState` and `InitialPlaneBatch` retain the same remaining modes above. Shared `SpectralOperatorPrimitives` remains the normal-state handoff to the one CLEAN controller, not an old gridding executor. | Covered-cube construction/initial-plane calls removed by phase ownership. Deleted `streaming_cube/reference.rs::Reference` and its module. Replacement tests assert band/chunk/worker/phase equivalence; independent CASA acceptance remains mandatory. |
+| `ReducedRecordKey`, `RecordRole`, `StandardRecordScratch`, covered-cube `GriddedNormalCompilationPlan` | Native-pair prediction/accumulation and runtime `NativeStoreWriter`/`NativeStore` bounded native tiles | `gridded_normal_operator` compilation/spectral-record/bounded-record/two-domain modules and runtime `complete_data_operator` serve the remaining modes above. | Covered-cube compiler, flattened record store and gridded replay handoff removed. Native store now runs in ordinary production builds; no old-store adapter. Shared exports remain only for unmigrated capabilities and their tests. |
+| Cube preparation's `WeightingSampleValue`/`WeightingReplayChunk` payload | `NativePreparationWorker` consumes borrowed correlation slices through shared scientific primitives directly into `NativeBlock` | Ordinary native phase uses `weighting/native_preparation.rs` and the existing bounded team. Density-weighted and other remaining modes retain generic weighting replay. `NativeInput` is test-only. | Covered-cube indexed/prepared-sample collection, weighted-chunk conversion and rich per-sample packing API removed. No equivalent intermediate representation was introduced. |
 
 No application API was added or removed. Nine internal friend-surface exports
 (`NativeBlock`, `NativeLayout`, `RowMetadata`, `NativeWeightingPreparation`,
@@ -301,11 +308,16 @@ No application API was added or removed. Nine internal friend-surface exports
 share the flat payload, preparation, numerical band owner and recyclable FFT
 across reconstruction and runtime. `NativeInput` is no longer exported. No
 duplicate runtime payload buffer or scientific kernel remains.
-Runtime's future cube migration removes its use of
-`GriddedNormalCompilationPlan`, `GriddedNormalOperatorCompiler`,
-`GriddedNormalOperatorProgram` and associated replay work/storage operations;
-the shared exports cannot be deleted while other modes still consume them.
-Inventory those consumers again at the actual runtime/cutover boundary.
+Application `run_native` now dispatches the supported capability to `CubePhase`
+and uses one `run_native_phases` CLEAN/stopping/publication loop. Its associated
+`NativeReplay` transfers native storage across epochs. Remaining-mode
+`SpectralCycleExecutor` owns its frozen weighting/gridded replay independently;
+neither replay representation is converted into the other. Removed the
+`casa_streaming_cube_comparison` selector and explicit-only worker override.
+Normal host admission derives useful workers, with enclosing process data
+charged before phase admission. Ordinary-build route tests pin both storage
+owners and the retained visibility-output route. Source searches find no
+comparison selector or `streaming_reference` module in `crates/` or `tools/`.
 
 The first payload layout is explicit: Complex64 values (16 bytes), f64 weights
 (8), and two distinct one-byte flags per correlation sample; u32 selected-channel
@@ -453,10 +465,13 @@ full-channel encoding arena bounds the narrower chosen layout; actual spectral
 support is still discovered from rows, not approximated by that I/O tiling.
 Tests cover smaller memory allowances and 16k-channel storage shapes, not a
 16k-channel dataset timing. Complete application composition, later-epoch import
-and shared minor-cycle wiring now run through the private compile-time comparison
-seam. The application reuses its existing stopping/mask loop and product writer.
-The macOS comparison conservatively charges the enclosing process's live heap
-in addition to explicit phase bounds; this is not a portable production cutover.
+and shared minor-cycle wiring now run in the ordinary application. The
+application reuses its existing stopping/mask loop and product writer. macOS
+charges aggregate live malloc-zone bytes; Linux conservatively charges VmData
+(including reserved data mappings, not a live-heap or RSS assertion). Both
+subtract only exact already-permitted normal payload, then add phase bounds;
+missing/invalid census data fails closed. The sampled aggregate RSS guard remains
+an independent acceptance limit.
 
 The one-use `InitialMajorPhaseCompletion` wrapper has been deleted. Its unchanged
 mask/coupling/minor-cycle operation is now the crate-internal
@@ -476,8 +491,8 @@ spectral sampling helpers. Convolution methods now accept zero-copy ndarray
 views without changing their scalar loops. Scalar pair interpolation is shared
 with the old resampler, preserving observed/predicted arithmetic separately.
 The focused dependency test rejects old containers, replay records, I/O and
-per-sample reference-count/lock owners in the new numerical implementation;
-`reference.rs` is its explicit test-only exception, deleted at cutover.
+per-sample reference-count/lock owners in the new numerical implementation.
+The former test-only `reference.rs` exception has been deleted at cutover.
 
 Direct preparation borrows source ranges without constructing a channel-run
 index. Whole rows are partitioned over the existing admitted team. Workers use
@@ -787,7 +802,19 @@ plan's CASA acceptance or motivates another comparator investigation now.
 
 ## Approval and first action
 
-Requested approval covers the identified local WIP checkpoint and milestones
+On 2026-09-22 the user explicitly authorized working all the way through
+production integration and deletion, then fixing CI problems. This supersedes
+the milestones-1–3-only approval below. Retain the demonstrated first-slice
+scientific boundary, one controller/writer, ordinary build coverage, the unchanged
+seven-product/nine-check CASA comparison and panels, W1 <=66.5260705s and
+W1/W4 >=2.0 on the existing workload, and 16GiB imaging limits/two Cargo jobs.
+The approved cutover does not complete remaining scientific modes/full T55 or
+authorize release, cleanup, additional Obit installation or a full32GB run.
+Source starts at merged9d53664c53, preserved by
+codex/pre-t55-production-cutover-20260922; work is on
+codex/t55-production-cutover. CURRENT.md owns evolving executable evidence.
+
+The earlier approval covered the identified local WIP checkpoint and milestones
 1–3: one test-only native-store/band replacement through full serial and bounded
 parallel comparisons, with the existing resource/science limits. Milestone 4's
 production ownership/cutover map is presented after evidence; remaining-mode

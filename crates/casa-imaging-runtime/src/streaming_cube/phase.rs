@@ -52,7 +52,7 @@ struct State {
     published: bool,
 }
 
-/// Internal comparison executor; application CLEAN and publication stay shared.
+/// Native cube executor; application CLEAN and publication stay shared.
 pub struct InitialCube {
     problem: CompiledProblem,
     implementation: WorkImplementationId,
@@ -95,9 +95,48 @@ enum Failure {
 }
 
 impl InitialCube {
+    /// Identify the migrated capability from compiled science and source shape.
+    /// Other scientific modes retain their own execution owners; a failed native
+    /// phase never retries through another implementation.
+    pub fn supports(problem: &CompiledProblem) -> io::Result<bool> {
+        if problem.weighting().scheme() != casa_imaging_model::WeightingScheme::Natural
+            || !matches!(
+                problem.model_lifecycle().input(),
+                casa_imaging_model::ModelInputCommitment::Empty
+            )
+            || problem.visibility_transform().is_some()
+            || !matches!(
+                problem.reconstruction().basis(),
+                casa_imaging_model::ReconstructionBasis::ChannelLocal { .. }
+            )
+        {
+            return Ok(false);
+        }
+        let [source] = problem.selected_observation().read_set().sources() else {
+            return Ok(false);
+        };
+        let ([dd], [spw], [pol]) = (
+            source.selection().data_descriptions(),
+            source.selection().spectral_windows(),
+            source.selection().correlations(),
+        ) else {
+            return Ok(false);
+        };
+        if dd.spectral_window_id() != spw.spectral_window_id()
+            || dd.polarization_id() != pol.polarization_id()
+            || spw.channel_indices().len() < 2
+        {
+            return Ok(false);
+        }
+        let specification =
+            SpectralOperatorSpecification::for_slab(problem, 0, 1).map_err(io::Error::other)?;
+        Ok(BandPlan::supports(&specification))
+    }
+
     /// Compose the initial source, paged state and native wave reservations.
     /// `enclosing_owner_bytes` counts live application owners not charged by
     /// these components; it must be supplied by complete application composition.
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(super) fn plan(
         problem: CompiledProblem,
@@ -108,31 +147,6 @@ impl InitialCube {
         workers: usize,
         source_slots: usize,
         enclosing_owner_bytes: u64,
-    ) -> io::Result<(PhysicalWorkBinding, Self)> {
-        Self::initial(
-            problem,
-            registry,
-            policy,
-            storage,
-            selected,
-            workers,
-            source_slots,
-            enclosing_owner_bytes,
-            None,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn initial(
-        problem: CompiledProblem,
-        registry: &impl ImplementationRegistry,
-        policy: SpectralCycleExecutionPolicy,
-        storage: ManagedSpillStorage,
-        selected: DeferredSelectedObservationAccess,
-        workers: usize,
-        source_slots: usize,
-        enclosing_owner_bytes: u64,
-        minor: Option<(ImageDomainReconstructionMaskPlans, MinorCycleProgram)>,
     ) -> io::Result<(PhysicalWorkBinding, Self)> {
         Self::build(
             problem,
@@ -146,10 +160,38 @@ impl InitialCube {
             workers,
             source_slots,
             enclosing_owner_bytes,
+            None,
+        )
+    }
+
+    /// Prepare selected native data and execute the first cube major phase.
+    /// Worker admission uses the normal host policy, bounded by useful planes.
+    pub fn initial(
+        problem: CompiledProblem,
+        registry: &impl ImplementationRegistry,
+        policy: SpectralCycleExecutionPolicy,
+        storage: ManagedSpillStorage,
+        selected: DeferredSelectedObservationAccess,
+        minor: Option<(ImageDomainReconstructionMaskPlans, MinorCycleProgram)>,
+    ) -> io::Result<(PhysicalWorkBinding, Self)> {
+        let workers = Self::workers(&problem, &policy)?;
+        Self::build(
+            problem,
+            registry,
+            policy,
+            storage,
+            Some(selected),
+            None,
+            None,
+            0,
+            workers,
+            1,
+            0,
             minor,
         )
     }
 
+    /// Refresh the residual from the owned native store and immutable model epoch.
     #[allow(clippy::too_many_arguments)]
     pub fn refresh(
         problem: CompiledProblem,
@@ -159,11 +201,9 @@ impl InitialCube {
         retained: NativeReplay,
         input: FinalMajorPhaseInput,
         ordinal: u32,
-        workers: usize,
-        source_slots: usize,
-        enclosing_owner_bytes: u64,
         minor: Option<(ImageDomainReconstructionMaskPlans, MinorCycleProgram)>,
     ) -> io::Result<(PhysicalWorkBinding, Self)> {
+        let workers = Self::workers(&problem, &policy)?;
         let prior = input.evidence().normal_state();
         if ordinal == 0
             || retained.replay.problem_id() != problem.problem_id()
@@ -190,10 +230,27 @@ impl InitialCube {
             Some(input),
             ordinal,
             workers,
-            source_slots,
-            enclosing_owner_bytes,
+            1,
+            0,
             minor,
         )
+    }
+
+    fn workers(
+        problem: &CompiledProblem,
+        policy: &SpectralCycleExecutionPolicy,
+    ) -> io::Result<usize> {
+        let workers = policy
+            .authority
+            .planning_worker_capacity(&policy.resource_policy)
+            .map_err(io::Error::other)?
+            .min(problem.geometry().spectral().output_channels() as u64);
+        if workers == 0 {
+            return Err(io::Error::other(
+                "native cube has no admitted worker capacity",
+            ));
+        }
+        usize::try_from(workers).map_err(io::Error::other)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -366,8 +423,8 @@ impl InitialCube {
                 .map_err(io::Error::other)?
         };
         // Unit fixtures pass their controlled enclosing-owner bound explicitly.
-        #[cfg(all(casa_streaming_cube_comparison, not(test)))]
-        let enclosing_owner_bytes = enclosing_owner_bytes.max(super::comparison_live_heap_bytes(
+        #[cfg(not(test))]
+        let enclosing_owner_bytes = enclosing_owner_bytes.max(super::enclosing_memory_bytes(
             pass_input
                 .as_ref()
                 .map_or(Ok(0), |input| {
@@ -502,6 +559,7 @@ impl InitialCube {
         ))
     }
 
+    /// Transfer the prepared store and its original source/weighting completion once.
     pub fn take_native_replay(&self) -> Option<NativeReplay> {
         let mut state = self.state.lock().ok()?;
         Some(NativeReplay {
@@ -510,10 +568,12 @@ impl InitialCube {
         })
     }
 
+    /// Transfer the reconciled major-cycle scientific completion once.
     pub fn take_completion(&self) -> Option<MajorCycleOperatorResult> {
         self.state.lock().ok()?.complete.take()
     }
 
+    /// Transfer the existing CLEAN controller's completion once.
     pub fn take_reconstruction_cycle_completion(
         &self,
     ) -> Option<ReconstructionCyclePhaseCompletion> {

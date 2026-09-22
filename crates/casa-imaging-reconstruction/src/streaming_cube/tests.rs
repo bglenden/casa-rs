@@ -2,7 +2,6 @@
 
 use super::*;
 use crate::MuellerMatrix;
-use crate::spectral_operator::streaming_reference::{Reference, ReferenceGrids};
 use casa_imaging_model::{
     CorrelationType, DirectionCoordinateSpec, DirectionFrame, FrequencyFrame, LogicalIdentity,
     MeasurementSetIdentity, Projection, SkyDirection,
@@ -124,68 +123,15 @@ fn workspace(
     band
 }
 
-fn reference_operator(input: &Input, output: &[f64], model: &Array3<Complex64>) -> Reference {
-    let mut reference = Reference::new(model.as_slice().unwrap());
-    let row = input.row(0..input.channels.len());
+fn full_band(input: &Input, output: &[f64], model: &Array3<Complex64>) -> BandWorkspace {
+    let mut band = workspace(0..4, (0..4).collect(), model);
     let polarization = polarization();
-    let mut predictions = Vec::new();
-    for &frequency in &input.frequencies {
-        let value = casa_linear_prediction_terms(output, frequency, row.original_pair_hz)
-            .unwrap()
-            .iter()
-            .fold(Complex64::default(), |sum, term| {
-                sum + reference.predict(row.uvw_m, row.phase_shift_m, *term)
-            });
-        predictions.push(polarization.predict(&[value]).unwrap());
-    }
-    let grid = CasaLinearGrid::compile(output, input.frequencies[0], input.frequencies[1]).unwrap();
-    let mut cursor = 0;
-    for (left, pair) in input.frequencies.windows(2).enumerate() {
-        for fine in grid
-            .samples_for_pair(&mut cursor, pair[0], pair[1])
-            .unwrap()
-        {
-            let [a, b] = fine.factors();
-            let nearest = left + usize::from(fine.nearest_is_right());
-            let weights = input.weights.row(nearest);
-            let flags: Vec<_> = (0..2)
-                .map(|corr| {
-                    fine.linear_flag(input.flags[(left, corr)], input.flags[(left + 1, corr)])
-                        || input.weight_flags[(nearest, corr)]
-                })
-                .collect();
-            let observed: Vec<_> = (0..2)
-                .map(|corr| input.values[(left, corr)] * a + input.values[(left + 1, corr)] * b)
-                .collect();
-            let predicted: Vec<_> = (0..2)
-                .map(|corr| predictions[left][corr] * a + predictions[left + 1][corr] * b)
-                .collect();
-            let weights = weights.as_slice().unwrap();
-            let weight = polarization_diagonal(&polarization, weights, &flags)[0];
-            let normalized = |values: &[Complex64]| {
-                let weighted = polarization
-                    .weighted_adjoint(values, weights, &flags)
-                    .unwrap()[0];
-                if weight == 0.0 {
-                    Complex64::default()
-                } else {
-                    weighted / weight
-                }
-            };
-            reference.push(
-                (row.uvw_m, row.phase_shift_m),
-                fine,
-                normalized(&observed),
-                normalized(&predicted),
-                weight,
-            );
-        }
-    }
-    reference
-}
-
-fn reference(input: &Input, output: &[f64], model: &Array3<Complex64>) -> ReferenceGrids {
-    reference_operator(input, output, model).finish()
+    let mut row = band
+        .begin_row(input.row(0..input.channels.len()), output, &polarization)
+        .unwrap();
+    row.push(0..input.channels.len()).unwrap();
+    row.finish().unwrap();
+    band
 }
 
 fn assert_bits(
@@ -343,20 +289,34 @@ fn exact_zero_model_planes_skip_forward_work_without_losing_halo_terms() {
     sparse[(1, 3, 4)] = Complex64::new(1e-20, -1e-21);
     let mut band = workspace(0..4, vec![0, 1, 2, 3], &sparse);
     assert_eq!(band.forward_nonzero, [false, true, false, false]);
-    let mut expected = Reference::new(sparse.as_slice().unwrap());
+    let halo = workspace(0..1, vec![0, 1], &sparse);
     let row = input.row(0..input.channels.len());
+    let mut unskipped = workspace(0..4, vec![0, 1, 2, 3], &sparse);
+    // Exercise the zero-valued degrid terms that the sparse path skips.
+    unskipped.forward_nonzero.fill(true);
     for &frequency in &input.frequencies {
-        let prediction = casa_linear_prediction_terms(&output, frequency, row.original_pair_hz)
-            .unwrap()
-            .into_iter()
-            .fold(Complex64::default(), |sum, term| {
-                sum + expected.predict(row.uvw_m, row.phase_shift_m, term)
-            });
         assert_bits(
             band.predict_native(&row, frequency, &output, &polarization)
                 .unwrap(),
-            polarization.predict(&[prediction]).unwrap(),
+            unskipped
+                .predict_native(&row, frequency, &output, &polarization)
+                .unwrap(),
         );
+    }
+    for &frequency in &output[..2] {
+        let predicted = band
+            .predict_native(&row, frequency, &output, &polarization)
+            .unwrap();
+        assert_bits(
+            halo.predict_native(&row, frequency, &output, &polarization)
+                .unwrap(),
+            predicted.iter().copied(),
+        );
+        if frequency == output[0] {
+            assert!(predicted.iter().all(|value| value.norm() == 0.0));
+        } else {
+            assert!(predicted.iter().any(|value| value.norm() > 0.0));
+        }
     }
     assert!(
         !band
@@ -389,7 +349,7 @@ fn exact_zero_model_planes_skip_forward_work_without_losing_halo_terms() {
 }
 
 #[test]
-fn nonzero_native_prediction_and_band_grids_match_historical_operator() {
+fn nonzero_native_prediction_and_band_grids_are_partition_and_chunk_invariant() {
     // Direct, fractional-wide and wide-grid cases, including reversed axes.
     for (step, shift) in [(1.0, 0.0), (1.0, 0.25), (2.75, 0.31), (4.0, 0.0)] {
         for native_direction in [1.0, -1.0] {
@@ -406,16 +366,9 @@ fn nonzero_native_prediction_and_band_grids_match_historical_operator() {
                 }
                 let input = Input::new(native);
                 let model = model();
-                let reference = reference(&input, &output, &model);
-                assert!(
-                    reference
-                        .residual
-                        .iter()
-                        .flatten()
-                        .any(|value| value.norm() > 0.0)
-                );
+                let reference = full_band(&input, &output, &model);
+                assert!(reference.residual.iter().any(|value| value.norm() > 0.0));
                 let polarization = polarization();
-                let mut prediction_reference = Reference::new(model.as_slice().unwrap());
                 for depth in [1, 2, 4] {
                     for start in (0..4).step_by(depth) {
                         let core = start..start + depth;
@@ -435,21 +388,10 @@ fn nonzero_native_prediction_and_band_grids_match_historical_operator() {
                                 .predict_native(&input_row, frequency, &output, &polarization)
                                 .unwrap();
                             assert!(!predicted.spilled());
-                            let expected = casa_linear_prediction_terms(
-                                &output,
-                                frequency,
-                                input_row.original_pair_hz,
-                            )
-                            .unwrap()
-                            .into_iter()
-                            .fold(Complex64::default(), |sum, term| {
-                                sum + prediction_reference.predict(
-                                    input_row.uvw_m,
-                                    input_row.phase_shift_m,
-                                    term,
-                                )
-                            });
-                            assert_bits(predicted, polarization.predict(&[expected]).unwrap());
+                            let expected = reference
+                                .predict_native(&input_row, frequency, &output, &polarization)
+                                .unwrap();
+                            assert_bits(predicted, expected);
                         }
                         let mut row = band
                             .begin_row(input.row(support.native), &output, &polarization)
@@ -461,15 +403,19 @@ fn nonzero_native_prediction_and_band_grids_match_historical_operator() {
                         for (local, global) in core.enumerate() {
                             assert_bits(
                                 band.dirty.index_axis(Axis(0), local).iter().copied(),
-                                reference.dirty[global].iter().copied(),
+                                reference.dirty.index_axis(Axis(0), global).iter().copied(),
                             );
                             assert_bits(
                                 band.residual.index_axis(Axis(0), local).iter().copied(),
-                                reference.residual[global].iter().copied(),
+                                reference
+                                    .residual
+                                    .index_axis(Axis(0), global)
+                                    .iter()
+                                    .copied(),
                             );
                             assert_bits(
                                 band.psf.index_axis(Axis(0), local).iter().copied(),
-                                reference.psf[global].iter().copied(),
+                                reference.psf.index_axis(Axis(0), global).iter().copied(),
                             );
                             assert_eq!(
                                 band.sum_weight[local].to_bits(),
@@ -1016,55 +962,85 @@ fn delayed_band_cannot_complete_into_another_model_epoch_and_model_io_errors_pro
 }
 
 #[test]
-fn completed_epoch_images_match_historical_normal_state_without_dirty_clone() {
+fn completed_epoch_images_preserve_partitioned_fields_and_model_binding() {
     let (model, _) = generation(64, real_model);
-    let raw = Array3::from_shape_fn((4, 8, 8), |(channel, x, y)| {
-        Complex64::new(real_model(channel, x, y).value().value(), 0.0)
-    });
     let output = [1e9, 1.001e9, 1.002e9, 1.003e9];
     let input = Input::new((0..8).map(|ch| 1e9 - 0.25e6 + ch as f64 * 0.7e6).collect());
-    let expected = reference_operator(&input, &output, &raw).finish_images(model.generation_id());
-    let workspace = BandWorkspace::new(
-        geometry(),
-        0..4,
-        (0..4).collect(),
-        PreparedFft::new([10, 10], 7690).unwrap(),
-        BandPhase::Full,
-    );
-    let mut job = EpochBand::prepare(workspace, &model, 0..8).unwrap();
     let polarization = polarization();
-    let mut row = job
-        .workspace
-        .begin_row(input.row(0..8), &output, &polarization)
-        .unwrap();
-    row.push(0..8).unwrap();
-    row.finish().unwrap();
-    let (actual, _) = job.complete(&model).unwrap();
-    let BandResult::Initial(actual) = actual else {
-        panic!("initial normal required")
+    let complete = |core: Range<usize>, partitioned: bool| {
+        let support = if partitioned {
+            BandSupport::compile(
+                &output,
+                core.clone(),
+                &input.frequencies,
+                [input.frequencies[0], input.frequencies[1]],
+            )
+            .unwrap()
+        } else {
+            BandSupport {
+                native: 0..8,
+                model: (0..4).collect(),
+            }
+        };
+        let plan = BandPlan {
+            geometry: geometry(),
+            core,
+            total_channels: 4,
+            phase: BandPhase::Full,
+            support,
+        };
+        let mut job = plan.prepare(&model, None).unwrap();
+        let count = job.native_range.len();
+        let mut row = job
+            .workspace
+            .begin_row(input.row(job.native_range.clone()), &output, &polarization)
+            .unwrap();
+        if partitioned {
+            for channel in 0..count {
+                row.push(channel..channel + 1).unwrap();
+            }
+        } else {
+            row.push(0..count).unwrap();
+        }
+        row.finish().unwrap();
+        let (result, _) = job.complete(&model).unwrap();
+        let BandResult::Initial(result) = result else {
+            panic!("initial normal required")
+        };
+        result
     };
-    assert_bits(
-        actual.dirty().iter().copied(),
-        expected.dirty().iter().copied(),
-    );
-    assert_bits(actual.psf().iter().copied(), expected.psf().iter().copied());
-    assert_eq!(actual.sensitivity(), expected.sensitivity());
-    assert_eq!(actual.sum_weights(), expected.sum_weights());
-    assert_eq!(
-        actual.published_sum_weights(),
-        expected.published_sum_weights()
-    );
-    assert_eq!(actual.channel_validity(), expected.channel_validity());
-    // Diagnostic-only comparison of the controller-facing numerical fields.
-    assert_eq!(
-        actual.normal_state_content_identity(),
-        expected.normal_state_content_identity()
-    );
-    assert!(
-        actual
-            .promote_major_cycle_residual(model.generation_id())
-            .is_ok()
-    );
+    let expected = complete(0..4, false);
+    assert!(expected.dirty().iter().any(|value| value.norm() > 0.0));
+    for depth in [1, 2] {
+        for start in (0..4).step_by(depth) {
+            let core = start..start + depth;
+            let pixels = start * 64..(start + depth) * 64;
+            let actual = complete(core.clone(), true);
+            assert_bits(
+                actual.dirty().iter().copied(),
+                expected.dirty()[pixels.clone()].iter().copied(),
+            );
+            assert_bits(
+                actual.psf().iter().copied(),
+                expected.psf()[pixels.clone()].iter().copied(),
+            );
+            assert_eq!(actual.sensitivity(), &expected.sensitivity()[pixels]);
+            assert_eq!(actual.sum_weights(), &expected.sum_weights()[core.clone()]);
+            assert_eq!(
+                actual.published_sum_weights(),
+                &expected.published_sum_weights()[core.clone()]
+            );
+            assert_eq!(
+                actual.channel_validity(),
+                &expected.channel_validity()[core]
+            );
+            assert!(
+                actual
+                    .promote_major_cycle_residual(model.generation_id())
+                    .is_ok()
+            );
+        }
+    }
 }
 
 #[test]
@@ -1153,8 +1129,12 @@ fn empty_initial_and_residual_refresh_omit_dead_grids_and_do_not_load_prior_arra
     let BandResult::Initial(initial) = initial else {
         panic!("initial normal required")
     };
-    let expected = reference_operator(&input, &output, &Array3::zeros((4, 8, 8)))
-        .finish_images(empty.generation_id());
+    let mut full = EpochBand::prepare(new(BandPhase::Full), &empty, 0..8).unwrap();
+    consume(&mut full);
+    let (expected, _) = full.complete(&empty).unwrap();
+    let BandResult::Initial(expected) = expected else {
+        panic!("initial normal required")
+    };
     assert_eq!(
         initial.normal_state_content_identity(),
         expected.normal_state_content_identity()
@@ -1172,10 +1152,12 @@ fn empty_initial_and_residual_refresh_omit_dead_grids_and_do_not_load_prior_arra
     let BandResult::Residual(actual) = actual else {
         panic!("residual-only result required")
     };
-    let raw = Array3::from_shape_fn((4, 8, 8), |(ch, x, y)| {
-        Complex64::new(real_model(ch, x, y).value().value(), 0.0)
-    });
-    let expected = reference_operator(&input, &output, &raw).finish_images(model.generation_id());
+    let mut full = EpochBand::prepare(new(BandPhase::Full), &model, 0..8).unwrap();
+    consume(&mut full);
+    let (expected, _) = full.complete(&model).unwrap();
+    let BandResult::Initial(expected) = expected else {
+        panic!("initial normal required")
+    };
     assert_eq!(actual.values.as_ref(), expected.dirty());
     assert_eq!(actual.model, model.generation_id());
     assert_eq!(

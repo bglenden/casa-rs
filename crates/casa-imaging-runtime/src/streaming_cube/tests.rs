@@ -24,6 +24,12 @@ struct SourceFixture {
     storage: ManagedSpillStorage,
 }
 
+#[test]
+fn streaming_cube_capability_requires_linear_channel_local_geometry() {
+    assert!(InitialCube::supports(&fixture::problem(SpectralSamplingLaw::LINEAR)).unwrap());
+    assert!(!InitialCube::supports(&fixture::problem(SpectralSamplingLaw::NEAREST)).unwrap());
+}
+
 fn source_fixture(basis: SyntheticPolarizationBasis, channels: u32) -> SourceFixture {
     let directory = tempfile::tempdir().unwrap();
     let ms = directory.path().join("cube.ms");

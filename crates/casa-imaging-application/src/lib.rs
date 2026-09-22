@@ -12,9 +12,11 @@ mod aw_cache;
 mod casa_product_sink;
 mod continuum_domains;
 mod continuum_request;
+mod major_cycle;
 mod prepared_aw_phase;
-#[cfg(casa_streaming_cube_comparison)]
 mod streaming_cube;
+
+use major_cycle::{MajorCyclePhase, PhaseContext};
 
 pub use availability::{
     ImagingCapabilityCatalogEntry, ImagingCapabilityRequirement, ImplementationUnavailable,
@@ -373,9 +375,29 @@ struct NativeInput<S> {
 
 fn run_native<S>(
     problem: &CompiledProblem,
+    input: NativeInput<S>,
+) -> Result<NativeApplicationOutcome, ApplicationError>
+where
+    S: SerialProductPublicationSink + Send + 'static,
+    S::Error: Send + Sync,
+{
+    if !input.write_model_column
+        && !input.write_corrected_data
+        && casa_imaging_runtime::CubePhase::supports(problem)?
+    {
+        run_native_phases::<casa_imaging_runtime::CubePhase, S>(problem, input)
+    } else {
+        run_native_phases::<SpectralCycleExecutor, S>(problem, input)
+    }
+}
+
+fn run_native_phases<P, S>(
+    problem: &CompiledProblem,
     mut input: NativeInput<S>,
 ) -> Result<NativeApplicationOutcome, ApplicationError>
 where
+    P: MajorCyclePhase,
+    P::Error: Send + Sync,
     S: SerialProductPublicationSink + Send + 'static,
     S::Error: Send + Sync,
 {
@@ -414,120 +436,26 @@ where
         policy = policy
             .with_visibility_write(initial_access.selected_visibility_storage_plan(write_targets)?);
     }
-    #[cfg(not(casa_streaming_cube_comparison))]
-    let (initial_plan, executor, initial_terminal_replay) = {
-        let planned = if minor_cycle_requested {
-            SpectralCyclePlan::initial(problem, &planning_registry, policy)?
-        } else {
-            SpectralCyclePlan::dirty(problem, &planning_registry, policy)?
-        };
-        let replay_proof_bytes = initial_access.replay_proof_retained_heap_bytes(problem)?;
-        let frozen_reservation = minor_cycle_requested
-            .then(|| {
-                FrozenWeightingReservation::acquire(
-                    &runtime.authority,
-                    runtime.resource_policy.clone(),
-                    planned.weighting_plan().planned_residency(),
-                    replay_proof_bytes,
-                )
-            })
-            .transpose()?;
-        let initial_plan = plan(
+    let minor = minor_cycle_requested
+        .then(|| {
+            streaming_cube::minor_program(problem, input.minor_cycle_image_response, None)
+                .map(|program| (input.masks.clone(), program))
+        })
+        .transpose()?;
+    let (initial_plan, executor, initial_terminal_replay) = P::initial(
+        PhaseContext {
             problem,
-            PlanningBindings::new(
-                runtime.registry,
-                runtime.resource_policy.clone(),
-                runtime.cost_model,
-            ),
-            &runtime.authority,
-            &planning_registry,
-            &runtime.receipts,
-            |_, _| Ok::<_, std::convert::Infallible>(planned.physical_candidates()),
-        )?;
-        let SpectralCyclePlanParts {
-            weighting,
-            complete_data: complete,
-            source_resources: resources,
-            pass,
-            minor_cycle_node: minor_node,
-            gridded_normal: planned_gridded_normal,
-            ..
-        } = planned.into_parts(&initial_plan)?;
-        let initial_source_state = initial_access.source_state().clone();
-        let mut executor = SpectralCycleExecutor::new(
-            runtime.implementation.clone(),
-            problem.clone(),
-            weighting,
-            resources,
-            pass,
-            complete,
-            initial_access.into_deferred(),
-            ExecutableModelProblem::from_compiled(problem.clone())?,
-            SpectralCyclePassInput::Initial,
-        );
-        if let Some(binding) = initial_aw {
-            executor = executor.with_prepared_artifact_reader(binding.execution)?;
-        }
-        if minor_cycle_requested {
-            executor = executor.with_frozen_weighting_reservation(
-                frozen_reservation.expect("minor-cycle execution reserves frozen weighting"),
-            );
-            executor = executor.with_planned_gridded_normal_binding(
-                planned_gridded_normal.ok_or_else(|| {
-                    boxed("minor-cycle initial plan omitted gridded replay binding")
-                })?,
-            )?;
-            let mut program =
-                MinorCycleProgram::for_problem(problem)?.record_component_sequence(64)?;
-            if let Some(response) = input.minor_cycle_image_response {
-                program = program.with_image_response(response);
-            }
-            executor = executor.with_reconstruction_cycle(
-                minor_node.ok_or_else(|| boxed("initial plan omitted its minor-cycle node"))?,
-                input.masks.clone(),
-                program,
-            );
-        }
-        let mut initial_terminal_replay = None;
-        if initial_write {
-            let (replay, sink) = FinalVisibilityReplay::with_visibility_write(
-                std::path::PathBuf::from(input.observation.locator()),
-                initial_source_state,
-                visibility_write_selection(problem, input.observation.selection())?,
-                write_targets,
-            )?;
-            executor = executor.with_final_visibility_sink(sink);
-            initial_terminal_replay = Some(replay);
-        }
-        (initial_plan, executor, initial_terminal_replay)
-    };
-    #[cfg(casa_streaming_cube_comparison)]
-    let (initial_plan, executor, initial_terminal_replay) = {
-        if visibility_write_requested || prepared_aw.is_some() {
-            return Err(boxed(
-                "streaming cube comparison excludes AW and visibility output",
-            ));
-        }
-        let minor = minor_cycle_requested
-            .then(|| {
-                streaming_cube::minor_program(problem, input.minor_cycle_image_response, None)
-                    .map(|program| (input.masks.clone(), program))
-            })
-            .transpose()?;
-        let (physical, executor) = casa_imaging_runtime::CubePhase::initial(
-            problem.clone(),
-            &planning_registry,
+            runtime: &runtime,
+            registry: &planning_registry,
             policy,
-            runtime.gridded_normal_storage.clone(),
-            initial_access.into_deferred(),
-            streaming_cube::workers(&runtime)?,
-            1,
-            0,
             minor,
-        )?;
-        let initial_plan = streaming_cube::admit(problem, &runtime, &planning_registry, physical)?;
-        (initial_plan, executor, None::<FinalVisibilityReplay>)
-    };
+        },
+        initial_access,
+        initial_aw,
+        initial_write,
+        write_targets,
+        &input.observation,
+    )?;
     let registry = SpectralCycleRegistry::new(
         runtime.registry,
         runtime.implementation.clone(),
@@ -578,21 +506,7 @@ where
             )
         }
         true => {
-            #[cfg(not(casa_streaming_cube_comparison))]
-            let mut frozen_weighting = registry
-                .implementation()
-                .take_frozen_weighting()
-                .ok_or_else(|| boxed("initial major omitted frozen weighting"))?;
-            #[cfg(not(casa_streaming_cube_comparison))]
-            let mut gridded_replay = registry
-                .implementation()
-                .take_gridded_normal_replay()
-                .ok_or_else(|| boxed("initial major omitted sealed gridded-normal replay"))?;
-            #[cfg(casa_streaming_cube_comparison)]
-            let mut native_replay = registry
-                .implementation()
-                .take_native_replay()
-                .ok_or_else(|| boxed("initial major omitted native replay ownership"))?;
+            let mut replay = registry.implementation().take_replay()?;
             let mut minor = registry
                 .implementation()
                 .take_reconstruction_cycle_completion()
@@ -723,118 +637,33 @@ where
                 let final_policy = execution_policy(&runtime, residency.clone(), final_aw.as_ref());
                 let ordinal =
                     u32::try_from(cycle).map_err(|_| boxed("major-cycle ordinal exceeds u32"))?;
-                #[cfg(not(casa_streaming_cube_comparison))]
-                let (final_plan, executor) = {
-                    let final_planned = if continue_cleaning {
-                        SpectralCyclePlan::continuing_major(
+                let minor_program = continue_cleaning
+                    .then(|| {
+                        streaming_cube::minor_program(
                             problem,
-                            &planning_registry,
-                            final_policy,
-                            &final_input,
-                            ordinal,
-                            gridded_replay,
-                        )?
-                    } else {
-                        SpectralCyclePlan::final_major_at(
-                            problem,
-                            &planning_registry,
-                            final_policy,
-                            &final_input,
-                            ordinal,
-                            gridded_replay,
-                        )?
-                    };
-                    let final_plan = plan(
+                            input.minor_cycle_image_response,
+                            Some(
+                                controls
+                                    .max_minor_iterations()
+                                    .saturating_sub(total_iterations),
+                            ),
+                        )
+                        .map(|program| (next_masks.clone(), program))
+                    })
+                    .transpose()?;
+                let (final_plan, executor) = P::refresh(
+                    PhaseContext {
                         problem,
-                        PlanningBindings::new(
-                            runtime.registry,
-                            runtime.resource_policy.clone(),
-                            runtime.cost_model,
-                        ),
-                        &runtime.authority,
-                        &planning_registry,
-                        &runtime.receipts,
-                        |_, _| {
-                            Ok::<_, std::convert::Infallible>(final_planned.physical_candidates())
-                        },
-                    )?;
-                    let SpectralCyclePlanParts {
-                        weighting,
-                        complete_data: complete,
-                        pass,
-                        minor_cycle_node: minor_node,
-                        gridded_normal: planned_gridded_normal,
-                        ..
-                    } = final_planned.into_parts(&final_plan)?;
-                    let mut executor = SpectralCycleExecutor::new_gridded(
-                        runtime.implementation.clone(),
-                        problem.clone(),
-                        weighting,
-                        pass,
-                        complete,
-                        ExecutableModelProblem::from_compiled(problem.clone())?,
-                        SpectralCyclePassInput::FinalMajor(final_input),
-                        planned_gridded_normal.ok_or_else(|| {
-                            boxed("later-major plan omitted gridded replay binding")
-                        })?,
-                    )?
-                    .with_frozen_weighting(frozen_weighting);
-                    if let Some(binding) = final_aw {
-                        executor = executor.with_prepared_artifact_reader(binding.execution)?;
-                    }
-                    if continue_cleaning {
-                        let remaining = controls
-                            .max_minor_iterations()
-                            .saturating_sub(total_iterations);
-                        let mut program = MinorCycleProgram::for_problem(problem)?
-                            .record_component_sequence(64)?
-                            .limit_iterations(remaining)?;
-                        if let Some(response) = input.minor_cycle_image_response {
-                            program = program.with_image_response(response);
-                        }
-                        executor = executor.with_reconstruction_cycle(
-                            minor_node
-                                .ok_or_else(|| boxed("continuing plan omitted minor node"))?,
-                            next_masks.clone(),
-                            program,
-                        );
-                    }
-                    (final_plan, executor)
-                };
-                #[cfg(casa_streaming_cube_comparison)]
-                let (final_plan, executor) = {
-                    let minor = continue_cleaning
-                        .then(|| {
-                            streaming_cube::minor_program(
-                                problem,
-                                input.minor_cycle_image_response,
-                                Some(
-                                    controls
-                                        .max_minor_iterations()
-                                        .saturating_sub(total_iterations),
-                                ),
-                            )
-                            .map(|program| (next_masks.clone(), program))
-                        })
-                        .transpose()?;
-                    let (physical, executor) = casa_imaging_runtime::CubePhase::refresh(
-                        problem.clone(),
-                        &planning_registry,
-                        final_policy,
-                        runtime.gridded_normal_storage.clone(),
-                        native_replay,
-                        final_input,
-                        ordinal,
-                        streaming_cube::workers(&runtime)?,
-                        1,
-                        0,
-                        minor,
-                    )?;
-                    (
-                        streaming_cube::admit(problem, &runtime, &planning_registry, physical)?,
-                        executor,
-                    )
-                };
+                        runtime: &runtime,
+                        registry: &planning_registry,
+                        policy: final_policy,
+                        minor: minor_program,
+                    },
+                    final_input,
+                    ordinal,
+                    replay,
+                    final_aw,
+                )?;
                 let registry = SpectralCycleRegistry::new(
                     runtime.registry,
                     runtime.implementation.clone(),
@@ -844,26 +673,7 @@ where
                 let attempt = major_cycle_attempt(runtime.attempts[1], ordinal);
                 run_phase(problem, &final_plan, &registry, &runtime, attempt)?;
                 let receipt = runtime.receipts.open(attempt)?;
-                #[cfg(not(casa_streaming_cube_comparison))]
-                {
-                    frozen_weighting = registry
-                        .implementation()
-                        .take_frozen_weighting()
-                        .ok_or_else(|| boxed("later major omitted reusable frozen weighting"))?;
-                    gridded_replay = registry
-                        .implementation()
-                        .take_gridded_normal_replay()
-                        .ok_or_else(|| {
-                            boxed("later major omitted reusable gridded-normal replay")
-                        })?;
-                }
-                #[cfg(casa_streaming_cube_comparison)]
-                {
-                    native_replay = registry
-                        .implementation()
-                        .take_native_replay()
-                        .ok_or_else(|| boxed("later major omitted native replay ownership"))?;
-                }
+                replay = registry.implementation().take_replay()?;
                 if continue_cleaning {
                     minor = registry
                         .implementation()
@@ -899,11 +709,6 @@ where
                         None,
                     );
                 }
-                #[cfg(casa_streaming_cube_comparison)]
-                return Err(boxed(
-                    "streaming cube comparison excludes visibility output",
-                ));
-                #[cfg(not(casa_streaming_cube_comparison))]
                 {
                     let resolved = resolve_selected_observation(input.observation.clone())?;
                     let (_, access) = resolved.into_parts();
@@ -960,7 +765,7 @@ where
                         output_complete,
                         access.into_deferred(),
                         completion,
-                        frozen_weighting,
+                        P::visibility_weighting(replay)?,
                     )
                     .with_final_visibility_sink(sink);
                     if let Some(binding) = output_aw {

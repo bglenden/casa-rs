@@ -138,6 +138,7 @@ impl NormalArrayStorage for ResidentNormalArray {
 
 #[cfg(test)]
 #[path = "../../../casa-imaging-reconstruction/tests/support/streaming_cube.rs"]
+#[allow(dead_code)]
 mod fixture;
 
 #[cfg(test)]

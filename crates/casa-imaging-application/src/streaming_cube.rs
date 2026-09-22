@@ -1,23 +1,89 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Private, compile-time comparison composition. The ordinary application CLEAN
-//! loop and product writer are unchanged; there is no runtime fallback selector.
+//! Native cube phases for the ordinary application CLEAN loop and product writer.
 
 use super::*;
+use casa_imaging_runtime::{
+    CubePhase, ExecutionPlan, FinalMajorPhaseInput, MajorCycleOperatorResult, NativeReplay,
+    ReconstructionCyclePhaseCompletion,
+};
+use prepared_aw_phase::PreparedAwPlanBinding;
 
-pub(super) fn workers(runtime: &ApplicationRuntime) -> Result<usize, ApplicationError> {
-    let ResourcePolicy::Explicit(policy) = &runtime.resource_policy else {
-        return Err(boxed(
-            "streaming comparison requires an explicit worker ceiling",
-        ));
-    };
-    usize::try_from(
-        policy
-            .workers
-            .filter(|n| *n > 0)
-            .ok_or_else(|| boxed("streaming comparison lacks workers"))?,
-    )
-    .map_err(Into::into)
+impl MajorCyclePhase for CubePhase {
+    type Replay = NativeReplay;
+
+    fn initial(
+        context: PhaseContext<'_>,
+        access: ResolvedSelectedObservationAccess,
+        aw: Option<PreparedAwPlanBinding>,
+        initial_write: bool,
+        _: SelectedVisibilityWriteTargets,
+        _: &SelectedObservationResolutionRequest,
+    ) -> Result<(ExecutionPlan, Self, Option<FinalVisibilityReplay>), ApplicationError> {
+        if aw.is_some() || initial_write {
+            return Err(boxed(
+                "native cube phase received unsupported observation output",
+            ));
+        }
+        let (physical, executor) = Self::initial(
+            context.problem.clone(),
+            context.registry,
+            context.policy,
+            context.runtime.gridded_normal_storage.clone(),
+            access.into_deferred(),
+            context.minor,
+        )?;
+        Ok((
+            admit(context.problem, context.runtime, context.registry, physical)?,
+            executor,
+            None,
+        ))
+    }
+
+    fn refresh(
+        context: PhaseContext<'_>,
+        input: FinalMajorPhaseInput,
+        ordinal: u32,
+        replay: Self::Replay,
+        aw: Option<PreparedAwPlanBinding>,
+    ) -> Result<(ExecutionPlan, Self), ApplicationError> {
+        if aw.is_some() {
+            return Err(boxed("native cube phase received an AW binding"));
+        }
+        let (physical, executor) = Self::refresh(
+            context.problem.clone(),
+            context.registry,
+            context.policy,
+            context.runtime.gridded_normal_storage.clone(),
+            replay,
+            input,
+            ordinal,
+            context.minor,
+        )?;
+        Ok((
+            admit(context.problem, context.runtime, context.registry, physical)?,
+            executor,
+        ))
+    }
+
+    fn take_replay(&self) -> Result<Self::Replay, ApplicationError> {
+        self.take_native_replay()
+            .ok_or_else(|| boxed("major phase omitted native replay ownership"))
+    }
+
+    fn take_completion(&self) -> Option<MajorCycleOperatorResult> {
+        self.take_completion()
+    }
+
+    fn visibility_weighting(
+        _: Self::Replay,
+    ) -> Result<casa_imaging_runtime::FrozenWeightingArtifact, ApplicationError> {
+        Err(boxed("native cube does not own visibility output"))
+    }
+
+    fn take_reconstruction_cycle_completion(&self) -> Option<ReconstructionCyclePhaseCompletion> {
+        self.take_reconstruction_cycle_completion()
+    }
 }
 
 pub(super) fn minor_program(
