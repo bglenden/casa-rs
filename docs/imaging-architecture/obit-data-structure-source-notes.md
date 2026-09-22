@@ -218,12 +218,12 @@ but not convincingly the whole task. Obit was not timed on this workload.
 
 Two mathematical details prevent a naive port:
 
-1. [`spectral_records.rs::standard_predictions`](../../crates/casa-imaging-reconstruction/src/gridded_normal_operator/spectral_records.rs)
+1. [`spectral_records.rs::standard_predictions`](https://github.com/bglenden/casa-rs/blob/9d53664c53ec7fde002250ba03ccb7dc7bc354a7/crates/casa-imaging-reconstruction/src/gridded_normal_operator/spectral_records.rs)
    derives native prediction contributions. `resampled_record_groups` combines
    prediction banks with interpolation factors before the accumulation stencil.
    These records encode scientific work; deleting the representation must not
    delete that work or assume all output channels can evolve independently.
-2. [`spectral_cycle.rs::run_stream`](../../crates/casa-imaging-runtime/src/spectral_cycle.rs)
+2. [`spectral_cycle.rs::run_stream`](https://github.com/bglenden/casa-rs/blob/9d53664c53ec7fde002250ba03ccb7dc7bc354a7/crates/casa-imaging-runtime/src/spectral_cycle.rs)
    currently overlaps first-slab science and compilation, then traverses later
    slabs sequentially. More threads inside `consume_bounded_replay_chunk` do
    not move this outer lifecycle boundary. Existing plane-owned reconstruction
