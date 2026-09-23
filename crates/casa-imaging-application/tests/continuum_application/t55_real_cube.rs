@@ -44,7 +44,6 @@ fn required_path(variable: &str) -> PathBuf {
 #[test]
 #[ignore = "Q-band diagnostic only: requires owner-initialized reduced-row/512-channel fixture, fresh durable artifacts and an external RSS guard"]
 fn t55_q_band_rebaseline_preflight() {
-    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let image_size: usize = std::env::var("CASA_RS_T55_PREFLIGHT_IMAGE_SIZE")
         .map(|value| value.parse().expect("positive diagnostic image size"))
         .unwrap_or(64);
@@ -53,7 +52,17 @@ fn t55_q_band_rebaseline_preflight() {
         .map(|value| value.parse().expect("positive diagnostic row count"))
         .unwrap_or(351);
     assert!(expected_rows > 0 && expected_rows <= 84_240 && expected_rows % 351 == 0);
-    let workers: u64 = std::env::var("CASA_RS_T55_PREFLIGHT_WORKERS")
+    run_q_band_cube(expected_rows, image_size, false);
+}
+
+fn run_q_band_cube(expected_rows: usize, image_size: usize, full_input: bool) {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let worker_variable = if full_input {
+        "CASA_RS_T55_FULL_WORKERS"
+    } else {
+        "CASA_RS_T55_PREFLIGHT_WORKERS"
+    };
+    let workers: u64 = std::env::var(worker_variable)
         .map(|value| value.parse().expect("positive diagnostic worker count"))
         .unwrap_or(1);
     assert!([1, 2, 4].contains(&workers));
@@ -66,8 +75,20 @@ fn t55_q_band_rebaseline_preflight() {
     assert_eq!(
         ms.row_count(),
         expected_rows,
-        "explicit reduced-row fixture"
+        "all rows of the explicitly selected fixture are required"
     );
+    {
+        let spectral = ms.spectral_window().expect("Q-band spectral window");
+        assert_eq!(spectral.row_count(), 1);
+        assert_eq!(spectral.num_chan(0).unwrap(), 512);
+        assert_eq!(
+            spectral.chan_freq(0).unwrap(),
+            (0..512)
+                .map(|channel| 44e9 + f64::from(channel) * 2e6)
+                .collect::<Vec<_>>(),
+            "the retired out-of-band fixture must not be used"
+        );
+    }
     drop(ms);
     let root = required_path("CASA_RS_T55_ARTIFACT_ROOT");
     fs::create_dir(&root).expect("fresh retained artifact directory");
@@ -120,6 +141,9 @@ fn t55_q_band_rebaseline_preflight() {
         panic!("Q-band preflight failed: {error}");
     });
     let task_wall_seconds = started.elapsed().as_secs_f64();
+    super::t55_cube_pipeline::assert_cube_execution_route(&result, true);
+    assert!(result.outcome.output.major_cycle_count > 1);
+    assert!(result.actual_minor_iterations > 0);
     if std::env::var_os("CASA_RS_PROFILE_CUBE").is_some() {
         eprintln!(
             "cube_profile_application end_unix_nanos={}",
@@ -143,6 +167,7 @@ fn t55_q_band_rebaseline_preflight() {
     ]
     .into_iter()
     .map(|(phase, receipt)| {
+        assert_eq!(receipt.status(), ReceiptStatus::Completed);
         assert_eq!(receipt.initial_execution_knobs().workers, workers);
         let peaks = receipt
             .plan_node_identities()
@@ -184,7 +209,12 @@ fn t55_q_band_rebaseline_preflight() {
     fs::write(
         root.join("summary.json"),
         serde_json::to_vec_pretty(&serde_json::json!({
-            "scope": "diagnostic only: reduced rows, all 512 Q-band channels, CPU Clark cube",
+            "scope": if full_input {
+                "full corrected Q-band input, all 512 channels/pixels, ordinary CPU Clark cube"
+            } else {
+                "diagnostic only: reduced rows, all 512 Q-band channels, CPU Clark cube"
+            },
+            "execution_route": "native-streaming-cube",
             "rows": expected_rows,
             "requested_workers": workers,
             "native_memory_bytes": memory_bytes,
@@ -247,112 +277,9 @@ fn publication_probe_fingerprints(root: &std::path::Path) -> BTreeMap<&'static s
 }
 
 #[test]
-#[ignore = "requires isolated complete 32 GiB VLA input, explicit resources, fresh artifacts, and an external wall/RSS guard"]
+#[ignore = "requires complete corrected Q-band input, explicit 16-GiB resources, fresh durable artifacts and external RSS guard"]
 fn t55_full_dataset_clark_timing() {
-    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    let measurement_set = required_path("CASA_RS_T55_REAL_MS")
-        .canonicalize()
-        .expect("existing full MeasurementSet");
-    assert_eq!(
-        measurement_set.file_name().unwrap(),
-        "wave1-vla-single-medium.ms"
-    );
-    let ms = MeasurementSet::open(&measurement_set).unwrap();
-    assert_eq!(ms.row_count(), 4_094_064, "all benchmark rows are required");
-    drop(ms);
-    let workers: u64 = std::env::var("CASA_RS_T55_FULL_WORKERS")
-        .expect("explicit worker count")
-        .parse()
-        .unwrap();
-    assert!([1, 4, 10].contains(&workers));
-    let memory_bytes: u64 = std::env::var("CASA_RS_T55_NATIVE_MEMORY_BYTES")
-        .expect("explicit native memory limit")
-        .parse()
-        .unwrap();
-    assert!(memory_bytes > 0 && memory_bytes <= 24 << 30);
-    let root = required_path("CASA_RS_T55_ARTIFACT_ROOT");
-    fs::create_dir(&root).expect("fresh retained artifact root");
-    let image_name = root.join("image");
-    let mut imaging = request(
-        measurement_set,
-        image_name.clone(),
-        ContinuumAlgorithm::Clark,
-    );
-    imaging.image_size = 512;
-    imaging.cell_arcsec = 0.35;
-    imaging.data_description = None;
-    imaging.spectral_window = Some("0".into());
-    imaging.channel_count = Some(512);
-    imaging.spectral_mode = SpectralImagingMode::Cube {
-        axis: CubeAxisConfig {
-            outframe: FrequencyRef::LSRK,
-            start: Some(CubeAxisValue::Channel(0)),
-            width: Some(CubeAxisValue::Channel(1)),
-            ..CubeAxisConfig::default()
-        },
-        output_channels: Some(512),
-    };
-    imaging.iterations = 9;
-    imaging.cycle_iterations = 1;
-    imaging.maximum_major_cycles = Some(3);
-    imaging.gain = 0.1;
-    imaging.threshold_jy = 0.0;
-    imaging.psf_cutoff = casa_imaging_products::DEFAULT_PSF_CUTOFF;
-    imaging.primary_beam_limit = -0.2;
-    imaging.write_primary_beam = true;
-    imaging.task_requirements = vec![TaskRequirement::PerChannelWeightDensity];
-    imaging.resource_policy = ResourcePolicy::Explicit(ResourceOverride {
-        workers: Some(workers),
-        memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), memory_bytes)]),
-        ..ResourceOverride::default()
-    });
-    fs::write(root.join("request.txt"), format!("{imaging:#?}\n")).unwrap();
-    eprintln!(
-        "T55 full-data timing start workers={workers} root={}",
-        root.display()
-    );
-    let started = std::time::Instant::now();
-    let result = match execute_continuum(imaging) {
-        Ok(result) => result,
-        Err(error) => {
-            fs::write(root.join("failure.txt"), format!("{error:#?}\n")).unwrap();
-            panic!("full-data timing failed: {error}");
-        }
-    };
-    let task_wall_seconds = started.elapsed().as_secs_f64();
-    let output = &result.outcome.output;
-    let final_receipt = output.final_major_receipt.as_ref().expect("final major");
-    let receipts = [
-        &output.initial_receipt,
-        final_receipt,
-        &output.publication_receipt,
-    ];
-    assert!(
-        receipts
-            .iter()
-            .all(|receipt| receipt.status() == ReceiptStatus::Completed)
-    );
-    assert!(output.major_cycle_count > 1 && result.actual_minor_iterations > 0);
-    assert_products(&image_name, &result.product_names, &REAL_PRODUCTS);
-    let minor_workers = output
-        .initial_receipt
-        .actual_resource_peak(
-            &WorkNodeId::new("spectral-cycle-minor-cycle"),
-            &LeaseResource::Workers,
-            &ClaimLifetime::Work,
-        )
-        .expect("executed minor worker evidence");
-    assert!(minor_workers > 0 && minor_workers <= workers);
-    fs::write(root.join("summary.json"), serde_json::to_vec_pretty(&serde_json::json!({
-        "scope": "full input, Natural, linear LSRK Clark cube; numerical CASA comparison required separately",
-        "selected_rows": 4_094_064, "source_channels": 512, "output_channels": 512,
-        "image_size": 512, "requested_workers": workers, "actual_minor_workers": minor_workers,
-        "task_wall_seconds": task_wall_seconds, "native_memory_bytes": memory_bytes,
-        "major_cycles": output.major_cycle_count, "minor_iterations": result.minor_iterations,
-        "actual_minor_iterations": result.actual_minor_iterations, "products": result.product_names,
-        "timing_boundary": "execute_continuum: selection and preparation through final publication, excluding staging and post-run comparison",
-        "receipt_ids": receipts.iter().map(|receipt| receipt.attempt_id().to_string()).collect::<Vec<_>>(),
-    })).unwrap()).unwrap();
+    run_q_band_cube(4_094_064, 512, true);
 }
 
 #[test]

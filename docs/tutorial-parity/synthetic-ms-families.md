@@ -9,6 +9,16 @@ to exercise single-field, mosaic, MFS, continuum, spectral cube, cubedata, and
 MT-MFS imaging diagnostics. CASA remains the oracle for selected small parity
 cases.
 
+### Synthetic spectral frame (2026-09-22)
+
+The native simulator now emits LSRK spectral windows by default, replacing its
+previous hard-coded TOPO frame. It uses the supplied channel frequencies directly
+for prediction; this is an idealized fixed-frame simulation, not a model of
+time-dependent topocentric tuning or Doppler resampling. Both `CHAN_FREQ` and
+`REF_FREQUENCY` identify `MEAS_FREQ_REF` through their standard MEASINFO keywords.
+Use LSRK output cubes for same-frame comparisons. Relabelling an existing
+synthetic fixture does not constitute a valid frame conversion of observed data.
+
 ## Model Inputs
 
 Task protocol v2 keeps legacy `model_image` FITS requests and adds

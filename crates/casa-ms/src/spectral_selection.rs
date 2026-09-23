@@ -869,7 +869,11 @@ impl CubeSpectralSetup {
             ),
             output_frame_reference_time_mjd_sec: reference_row_time_mjd_sec,
             output_frame_field_id: field_id,
-            output_channel_widths_hz: channel_widths_from_centers(&output_channel_frequencies_hz)?,
+            output_channel_widths_hz: if nchan == 1 {
+                vec![delta_hz.abs()]
+            } else {
+                channel_widths_from_centers(&output_channel_frequencies_hz)?
+            },
             output_channel_frequencies_hz,
         };
         let support = cube_source_channel_support(
@@ -3545,6 +3549,38 @@ mod tests {
         .unwrap();
         assert_eq!(setup.output_channel_frequencies_hz, vec![1.0e9]);
         assert_eq!(setup.output_channel_widths_hz, vec![5.0e7]);
+    }
+
+    #[test]
+    fn for_casa_cube_frequency_axis_keeps_single_output_channel_width() {
+        let engine = test_engine();
+        let axis_config = CubeAxisConfig {
+            outframe: FrequencyRef::LSRK,
+            start: Some(CubeAxisValue::FrequencyHz {
+                hz: 44.0e9,
+                frame: None,
+            }),
+            width: Some(CubeAxisValue::FrequencyHz {
+                hz: 2.0e6,
+                frame: None,
+            }),
+            ..CubeAxisConfig::default()
+        };
+        let (setup, _support) = CubeSpectralSetup::for_casa_cube_axis(
+            FrequencyRef::LSRK,
+            &[44.0e9, 44.002e9, 44.004e9],
+            &[2.0e6; 3],
+            1,
+            &axis_config,
+            59_000.0 * 86_400.0,
+            0,
+            None,
+            [59_000.0 * 86_400.0, 59_000.1 * 86_400.0],
+            &engine,
+        )
+        .unwrap();
+        assert_eq!(setup.output_channel_frequencies_hz, vec![44.0e9]);
+        assert_eq!(setup.output_channel_widths_hz, vec![2.0e6]);
     }
 
     #[test]

@@ -2362,12 +2362,6 @@ pub enum CompileProblemError {
         /// Stable human-readable reason.
         reason: &'static str,
     },
-    /// Product normalization requirements contradict the product set.
-    #[error("invalid normalization combination: {reason}")]
-    InvalidNormalizationCombination {
-        /// Stable human-readable reason.
-        reason: &'static str,
-    },
     /// Numerical requirements are incomplete or invalid.
     #[error("invalid numerics contract: {reason}")]
     InvalidNumerics {
@@ -2918,17 +2912,6 @@ fn validate_products(
     if products.products.is_empty() {
         return Err(CompileProblemError::InvalidProductCombination {
             reason: "at least one product must be requested",
-        });
-    }
-    if matches!(
-        products.normalization,
-        ProductNormalization::FlatNoise | ProductNormalization::FlatSky
-    ) && !products.contains(ProductKind::Sensitivity)
-        && !products.contains(ProductKind::Weight)
-        && science.measurement_equation.aw_projection.is_none()
-    {
-        return Err(CompileProblemError::InvalidNormalizationCombination {
-            reason: "flat-noise and flat-sky normalization require sensitivity or weight state",
         });
     }
     let restored_image_requested = products.contains(ProductKind::RestoredImage);

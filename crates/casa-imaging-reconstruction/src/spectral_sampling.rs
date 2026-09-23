@@ -131,6 +131,48 @@ pub(crate) struct CasaLinearGrid {
     output_increment_hz: f64,
 }
 
+/// CASA bypasses spectral interpolation for a one-plane image. Native channels
+/// map by rounded spectral WCS pixel and retain their own spatial frequency.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct CasaSingleChannel {
+    pub(crate) centre_hz: f64,
+    pub(crate) increment_hz: f64,
+}
+
+impl CasaSingleChannel {
+    pub(crate) fn from_spectral(
+        spectral: &casa_imaging_model::SpectralCoordinateSpec,
+    ) -> Option<Self> {
+        let casa_imaging_model::SpectralWcs::Linear {
+            channels: 1,
+            increment_hz,
+            ..
+        } = spectral.wcs()
+        else {
+            return None;
+        };
+        Some(Self {
+            centre_hz: spectral.channel_centre_hz(0)?,
+            increment_hz: *increment_hz,
+        })
+    }
+
+    pub(crate) fn contains(self, frequency_hz: f64) -> bool {
+        ((frequency_hz - self.centre_hz) / self.increment_hz + 0.5).floor() == 0.0
+    }
+
+    pub(crate) fn native_window(self, frequencies_hz: &[f64]) -> std::ops::Range<usize> {
+        let Some(first) = frequencies_hz.iter().position(|&hz| self.contains(hz)) else {
+            return 0..0;
+        };
+        let last = frequencies_hz
+            .iter()
+            .rposition(|&hz| self.contains(hz))
+            .expect("first exists");
+        first..last + 1
+    }
+}
+
 /// Copy-only image-frequency geometry used to compile row-local CASA grids.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct CasaLinearOutputGrid {

@@ -1,8 +1,8 @@
 # Bounded streaming cube replacement plan
 
 Truth class: user-approved implementation plan, not an accepted architectural decision
-Last reality check: 2026-09-22
-Status: production cutover/deletion and current-head CI authorized and in progress
+Last reality check: 2026-09-23
+Status: production cutover merged; C-array all-channel rule v2 under validation
 Review: GPT-6 Pro, [conversation](https://chatgpt.com/c/6aaff6ec-fdbc-83e8-b7eb-8ca40186f3db)
 Verification: just docs-check; git diff --check; source pins compared to tested binary
 
@@ -90,6 +90,79 @@ intermediate I/O and publication; do not pad the serial baseline. Use one matche
 observation initially, repeating only to resolve ambiguous timing. All seven
 products / nine full-field CASA checks and panels remain required. Obit numbers
 are reference evidence, not a substitute acceptance target.
+
+### C-array deep-CLEAN all-channel rule v3 (2026-09-23 revision)
+
+The owner superseded v2's saved-model restoration-closure requirement on
+2026-09-23. The full-field seven-product/nine-check CASA comparison still
+covers `.model` inventory, metadata, topology, finite values, and its
+diagnostic raw pixel difference. The per-channel science gate need not read
+`.model` again: saved-product corruption is not an acceptance failure model
+requiring a separate full-cube convolution. Compare `.image`, `.residual`,
+and their difference directly against CASA. In particular, the nominal
+restored-component difference is calculated from
+`(native.image - native.residual) - (CASA.image - CASA.residual)` at the
+existing 0.001/CASA restored-component-RMS threshold and remains reviewable.
+Keep the independent convergence, flux, centroid, per-plane deterministic
+product/beam, topology, resource, visual-review, and exact review-identity
+requirements below. No saved-model convolution, publication-closure metric,
+or second review-time scan is required. A rule change needs a fresh
+assessment and review identity; historical v2 results remain evidence.
+
+### Superseded C-array deep-CLEAN all-channel rule v2 (historical, non-normative)
+
+Independent rule review: [ChatGPT 6 Pro](https://chatgpt.com/c/6ab421d9-a1a0-83e8-9bd2-cf7e2ac48f5e),
+evaluated against the local gate and saved arrays; it did not access those
+uncommitted inputs itself.
+
+This supersedes the 2026-09-22 C-array rule, not the frozen comparator or
+other mode/full-size contracts. Apply it independently to **every imaged
+channel** of the noisy, natural-weight, standard-gridder Clark C-array cube;
+there is no channel whitelist. Read all seven persisted products over the full
+field. Exact inventory, complete coverage, WCS/metadata, mask and finite
+topology, CASA-compatible formats, PB/PSF/sum-weight and restoring-beam checks
+are non-waivable. Their existing 0.001 normalized-RMS ceilings remain hard.
+Likewise retain the 16-GiB native resource bound, matched selection, and
+visual review. The raw pixelwise `.model` and `.residual` differences remain
+visible diagnostics, not hard equality tests for a nonlinear component history.
+
+Within the fixed 27.5-arcsec CLEAN circle, both runs must independently reach
+the declared 0.5-mJy/beam threshold within 1%, with native residual RMS at
+most 1.05 times CASA's. Each published Jy/pixel model convolved with its own
+persisted beam must reproduce its own `.image - .residual` within 0.0001
+relative RMS on CASA's restored-model scale. Signed restored flux must agree
+within 1%, positive-emission centroids within one pixel, and all required
+values must be finite. These are non-waivable science checks.
+
+The previous cross-run ceilings remain *nominal agreement checks*: restored
+image normalized RMS 0.001 (whole cube and each plane), residual-difference
+RMS 0.05 times CASA residual RMS, and convolved-model difference RMS 0.001
+times CASA's restored-model RMS. The maximum residual difference at 0.5 times
+CASA residual RMS remains a sparse-discrepancy **review trigger**. CASA's
+residual RMS is a measured comparison scale, not assumed thermal noise. A
+breach is never an unattended pass and is not, by itself, proof of a bug.
+Do not fit larger ceilings to observed cases, clip outliers, change supports
+or normalization, or average away a failing channel.
+
+`tools/perf/imager/t55_c_array_clean_gate.py` implements two acceptance routes.
+Ordinary acceptance requires no hard failure and no review trigger. Otherwise
+the result is `review_required` (unsuccessful) unless a recorded owner review
+binds the exact saved assessment and comparison, all seven product arrays/masks
+and beams, gate
+source version, affected channels and failed check IDs. That review records
+the difference maps/extrema, causal or other discriminating evidence, reviewer,
+owner decision, limitations and rationale. One group may cover genuinely
+related planes; a future output needs its own comparison-bound disposition.
+Only then may the result be `accepted_reviewed`, with the original metrics and
+failed v1 result retained visibly. Hard failures, unexplained localized
+defects, missing evidence or stale identity cannot be waived. The existing
+compensated-spike negative control must still require review; structural,
+convergence and restoration corruptions must fail even with a review record.
+Review finalization reads only the saved assessment and review record; it must
+never repeat the full product or convolution pass. New products or a changed
+measurement rule need a new assessment, not a review-time recheck. The earlier
+duplicate reviewed pass is retained as historical evidence, not the procedure.
+This mechanism does not imply bitwise equivalence or complete T55 acceptance.
 
 Approval of the final brief must explicitly cover the new execution/ownership
 boundary and the staging/cutover strategy. Do not edit accepted ADRs silently.

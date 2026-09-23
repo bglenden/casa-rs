@@ -9,6 +9,12 @@ use crate::streaming_cube::band::{BandImages, BandPhase};
 use std::mem::size_of_val;
 
 impl SpectralOperatorSpecification {
+    pub(crate) fn cube_single_channel(
+        &self,
+    ) -> Option<crate::spectral_sampling::CasaSingleChannel> {
+        self.single_output_channel
+    }
+
     pub(crate) fn cube_geometry(&self) -> Result<SpectralOperatorGeometry, SpectralOperatorError> {
         if self.basis != SpectralBasisPlan::ChannelLocal
             || self.domains.len() != 1
@@ -21,6 +27,8 @@ impl SpectralOperatorSpecification {
             || self.instrument_model.is_some()
             || self.mosaic
             || self.spectral_kernel != SpectralKernel::Linear
+            || (self.output_channel_frequencies_hz.len() == 1
+                && self.single_output_channel.is_none())
         {
             return Err(SpectralOperatorError::UnsupportedProblem);
         }

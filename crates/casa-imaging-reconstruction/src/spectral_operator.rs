@@ -551,6 +551,7 @@ pub struct SpectralOperatorSpecification {
     basis: SpectralBasisPlan,
     joint_line_term_by_channel: Box<[Option<usize>]>,
     output_channel_frequencies_hz: Box<[f64]>,
+    single_output_channel: Option<crate::spectral_sampling::CasaSingleChannel>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1408,6 +1409,9 @@ impl SpectralOperatorSpecification {
             cube_native_weight_transfer: problem.weighting().casa_cube_density_padding().is_some(),
             basis,
             joint_line_term_by_channel: joint_line_term_by_channel(problem, basis)?,
+            single_output_channel: crate::spectral_sampling::CasaSingleChannel::from_spectral(
+                problem.geometry().spectral(),
+            ),
             output_channel_frequencies_hz: (0..problem.geometry().spectral().output_channels())
                 .map(|channel| {
                     problem
@@ -11894,7 +11898,7 @@ impl<T: FftNum> PreparedFft<T> {
         shift_even(data);
     }
 
-    fn transform_unshifted<S: DataMut<Elem = Complex<T>>>(
+    pub(crate) fn transform_unshifted<S: DataMut<Elem = Complex<T>>>(
         &mut self,
         data: &mut ArrayBase<S, Ix2>,
         inverse: bool,

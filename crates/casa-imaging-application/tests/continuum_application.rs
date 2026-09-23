@@ -90,6 +90,9 @@ mod t55_cube_pipeline;
 #[path = "continuum_application/t55_real_cube.rs"]
 mod t55_real_cube;
 
+#[path = "continuum_application/t55_c_array_turnaround.rs"]
+mod t55_c_array_turnaround;
+
 #[test]
 fn unsupported_primary_beam_frequency_rejects_before_execution_receipts() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");

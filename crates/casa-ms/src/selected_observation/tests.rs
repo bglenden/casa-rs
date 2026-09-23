@@ -4744,6 +4744,7 @@ fn generate_fixture_with_channel_count(
     request.row_workers = Some(1);
     request.channel_workers = Some(1);
     generate_synthetic_observation_ms(&request).expect("generate bounded disk fixture");
+    set_fixture_frequency_frame_topocentric(path);
 }
 
 fn generate_fixture_with_phase_center(
@@ -4769,6 +4770,23 @@ fn generate_fixture_with_phase_center(
     request.row_workers = Some(1);
     request.channel_workers = Some(1);
     generate_synthetic_observation_ms(&request).expect("generate fixed-centre disk fixture");
+    set_fixture_frequency_frame_topocentric(path);
+}
+
+fn set_fixture_frequency_frame_topocentric(path: &std::path::Path) {
+    let mut spectral = Table::open(TableOptions::new(path.join("SPECTRAL_WINDOW")))
+        .expect("open generated fixture spectral window");
+    spectral
+        .row_accessor_mut()
+        .set_cell(
+            0,
+            "MEAS_FREQ_REF",
+            Value::Scalar(ScalarValue::Int32(FrequencyRef::TOPO.casacore_code())),
+        )
+        .expect("set explicit TOPO fixture frame");
+    spectral
+        .flush()
+        .expect("persist explicit TOPO fixture frame");
 }
 
 #[cfg(unix)]

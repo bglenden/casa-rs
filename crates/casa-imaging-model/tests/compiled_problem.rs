@@ -848,10 +848,7 @@ fn compiler_owns_the_exact_product_graph_and_atomic_publication_contract() {
         restored.beam(),
         ProductBeamRule::Restoring(RestoringBeamPolicy::PerPlane)
     );
-    assert_eq!(
-        restored.validity(),
-        ProductValidityRule::PrimaryBeam(product_validity().primary_beam())
-    );
+    assert_eq!(restored.validity(), ProductValidityRule::FinalNormalState);
     assert_eq!(restored.schema(), ProductSchema::ImageF32V1);
 
     let spectral_index = graph
@@ -1212,8 +1209,8 @@ fn product_graph_identity_is_content_derived_and_stable_across_unrelated_problem
     assert_eq!(
         first.product_graph().graph_id().as_bytes(),
         [
-            226, 86, 70, 9, 128, 137, 8, 177, 64, 235, 56, 129, 92, 254, 223, 99, 204, 213, 226,
-            23, 33, 81, 13, 186, 217, 0, 75, 136, 230, 104, 29, 122,
+            121, 68, 178, 157, 98, 102, 34, 7, 39, 144, 194, 32, 116, 61, 74, 92, 166, 24, 205,
+            230, 209, 202, 252, 4, 105, 157, 222, 219, 105, 236, 179, 213,
         ]
     );
 }
@@ -1593,7 +1590,7 @@ fn one_term_mfs_uses_the_constant_basis_instead_of_taylor() {
 }
 
 #[test]
-fn flat_normalization_without_sensitivity_fails_at_compile_time() {
+fn flat_normalization_uses_internal_sensitivity_without_publishing_it() {
     let specification = ProblemSpecification::new(
         science(),
         reconstruction(),
@@ -1616,10 +1613,14 @@ fn flat_normalization_without_sensitivity_fails_at_compile_time() {
         numerics(false),
     );
 
-    assert!(matches!(
-        compile_request(specification, inputs(false)),
-        Err(CompileProblemError::InvalidNormalizationCombination { .. })
-    ));
+    let compiled = compile_request(specification, inputs(false))
+        .expect("flat normalization reads the reconstruction normal state");
+    assert!(
+        compiled
+            .product_graph()
+            .node(ProductRole::Sensitivity)
+            .is_none()
+    );
 }
 
 #[test]
@@ -2312,7 +2313,7 @@ fn compiled_problem_identity_has_a_pinned_schema_twenty_five_digest() {
     assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 25);
     assert_eq!(
         compiled.problem_id().to_string(),
-        "8abd9c3a057e097d4c392f33b0e553f0306a206c4b5dcd64bcdfbadbc0d731d6"
+        "c1030692a03bd794f6aedf485330e4646481310ee9f6749a54823845b2970577"
     );
     let lifecycle = casa_imaging_model::LogicalIdentity::from_sha256(
         compiled.model_lifecycle().contract_id().as_bytes(),

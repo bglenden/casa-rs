@@ -118,6 +118,51 @@ pub(super) fn assert_cube_execution_route(
 }
 
 #[test]
+fn streaming_cube_single_output_runs_clean_refresh_and_publication() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = spectral_line_measurement_set(root.path());
+    let mut imaging = request(
+        measurement_set,
+        root.path().join("single-plane"),
+        ContinuumAlgorithm::Clark,
+    );
+    imaging.image_size = 64;
+    imaging.spectral_window = Some("0:0~3".into());
+    imaging.channel_count = Some(4);
+    imaging.spectral_mode = SpectralImagingMode::Cube {
+        axis: CubeAxisConfig {
+            outframe: FrequencyRef::TOPO,
+            ..CubeAxisConfig::default()
+        },
+        output_channels: Some(1),
+    };
+    imaging.iterations = 3;
+    imaging.cycle_iterations = 1;
+    imaging.maximum_major_cycles = Some(3);
+    imaging.gain = 0.37;
+    imaging.threshold_jy = 1.0e-12;
+    imaging.task_requirements = vec![TaskRequirement::SerialCpu];
+    let prefix = imaging.image_name.clone();
+    let result = execute_continuum(imaging).expect("one output plane on native cube path");
+    assert_cube_execution_route(&result, true);
+    assert_standard_products(&prefix, &result.product_names);
+    assert_eq!(result.actual_minor_iterations, 3);
+    assert_eq!(result.outcome.output.major_cycle_count, 4);
+    assert_eq!(
+        PagedImage::<f32>::open(prefix.with_extension("image"))
+            .unwrap()
+            .shape(),
+        &[64, 64, 1, 1]
+    );
+    assert_eq!(
+        result.outcome.output.publication_receipt.status(),
+        ReceiptStatus::Completed
+    );
+}
+
+#[test]
 fn t55_shifted_cube_density_retains_native_endpoint_weights() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();
@@ -526,6 +571,24 @@ fn t55_signed_primary_beam_limit_separates_pixels_search_support_and_stored_mask
                     resource_policy_for_task_requirements(&imaging.task_requirements);
                 let result = execute_continuum(imaging).expect("signed PB cube");
                 assert!(result.outcome.output.major_cycle_count > 1);
+                for role in [
+                    ProductRole::Residual(ProductTerm::Single),
+                    ProductRole::RestoredImage(ProductTerm::Single),
+                ] {
+                    assert_eq!(
+                        result
+                            .outcome
+                            .output
+                            .planned_products
+                            .members()
+                            .iter()
+                            .find(|member| member.role() == role)
+                            .expect("uncorrected image product")
+                            .validity(),
+                        ProductValidityRule::FinalNormalState,
+                        "PB cutoff must not zero uncorrected image pixels"
+                    );
+                }
                 let open = |suffix: &str| {
                     PagedImage::<f32>::open(PathBuf::from(format!(
                         "{}{suffix}",

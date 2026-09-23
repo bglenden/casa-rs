@@ -118,6 +118,7 @@ fn workspace(
         model_channels,
         PreparedFft::new([10, 10], 7690).unwrap(),
         BandPhase::Full,
+        None,
     );
     band.prepare_model(model.view()).unwrap();
     band
@@ -148,6 +149,123 @@ fn assert_bits(
         bits(actual.into_iter().collect()),
         bits(expected.into_iter().collect())
     );
+}
+
+#[test]
+fn single_output_uses_native_frequencies_and_ignores_neighbour_flags() {
+    use super::super::input::RowMetadata;
+    for increment in [2e6, -2e6, 8e6] {
+        let single = CasaSingleChannel {
+            centre_hz: 1e9,
+            increment_hz: increment,
+        };
+        assert!(single.contains(1e9 - increment * 0.5));
+        assert!(!single.contains(1e9 + increment * 0.5));
+        for centre in [0.998e9, 1e9, 1.002e9] {
+            let single = CasaSingleChannel {
+                centre_hz: centre,
+                ..single
+            };
+            let mut input = Input::new(vec![0.998e9, 1e9, 1.002e9]);
+            input.weights.fill(1.0);
+            for ch in 0..3 {
+                input
+                    .flags
+                    .row_mut(ch)
+                    .fill(!single.contains(input.frequencies[ch]));
+            }
+            let expected_range = single.native_window(&input.frequencies);
+            let mut block = NativeBlock::new(1, 3, 2).unwrap();
+            block.frequencies_hz.copy_from_slice(&input.frequencies);
+            block.metadata[0] = RowMetadata {
+                original_pair_hz: [0.998e9, 1e9],
+                ..RowMetadata::default()
+            };
+            let mut plan = BandPlan {
+                geometry: geometry(),
+                core: 0..1,
+                total_channels: 1,
+                single_channel: Some(single),
+                phase: BandPhase::Full,
+                support: BandSupport {
+                    native: 0..0,
+                    model: vec![],
+                },
+            };
+            assert_eq!(
+                BandPlan::observe_all(std::slice::from_mut(&mut plan), &block, &[centre]).unwrap(),
+                0
+            );
+            assert_eq!(plan.support.native, expected_range);
+            assert_eq!(plan.support.model, [0]);
+            let model = model().slice(s![0..1, .., ..]).to_owned();
+            let make = || {
+                let mut band = BandWorkspace::new(
+                    geometry(),
+                    0..1,
+                    vec![0],
+                    PreparedFft::new([10, 10], 7690).unwrap(),
+                    BandPhase::Full,
+                    Some(single),
+                );
+                band.prepare_model(model.view()).unwrap();
+                band
+            };
+            let mut actual = make();
+            let mut expected = make();
+            let polarization = polarization();
+            actual
+                .consume_single_row(input.row(0..3), single, &[centre], &polarization)
+                .unwrap();
+            let row = input.row(0..3);
+            for channel in expected_range {
+                let frequency = input.frequencies[channel];
+                let taps = expected
+                    .convolution
+                    .taps([
+                        row.uvw_m[0] * frequency / SPEED_OF_LIGHT_M_PER_S,
+                        row.uvw_m[1] * frequency / SPEED_OF_LIGHT_M_PER_S,
+                    ])
+                    .unwrap();
+                let predicted = expected
+                    .convolution
+                    .degrid(&expected.forward.index_axis(Axis(0), 0), taps)
+                    * phase(row.phase_shift_m, frequency).conj();
+                let observed = (input.values[(channel, 0)] + input.values[(channel, 1)]) / 2.0;
+                expected
+                    .grid_sample(0, frequency, &row, observed, predicted, 2.0)
+                    .unwrap();
+            }
+            for (actual, expected) in actual
+                .dirty
+                .iter()
+                .chain(actual.residual.iter())
+                .chain(actual.psf.iter())
+                .zip(
+                    expected
+                        .dirty
+                        .iter()
+                        .chain(expected.residual.iter())
+                        .chain(expected.psf.iter()),
+                )
+            {
+                assert!((*actual - *expected).norm() <= 1e-14 * expected.norm().max(1.0));
+            }
+            assert!((actual.sum_weight[0] - expected.sum_weight[0]).abs() < 1e-14);
+            assert!(actual.residual.iter().any(|value| value.norm() != 0.0));
+            // The retained native window can contain just one contributing channel.
+            let mut selected = make();
+            selected
+                .consume_single_row(
+                    row.window(plan.support.native).unwrap(),
+                    single,
+                    &[centre],
+                    &polarization,
+                )
+                .unwrap();
+            assert_eq!(selected.residual, actual.residual);
+        }
+    }
 }
 
 #[test]
@@ -187,6 +305,7 @@ fn preparation_support_matches_row_reference_with_one_pair_sweep_for_all_bands()
                             geometry: geometry(),
                             core: start..start + depth,
                             total_channels: 4,
+                            single_channel: None,
                             phase: BandPhase::Full,
                             support: BandSupport {
                                 native: 0..0,
@@ -251,6 +370,7 @@ fn preparation_reuses_only_identical_spectral_rows_without_losing_support() {
             geometry: geometry(),
             core: channel..channel + 1,
             total_channels: 4,
+            single_channel: None,
             phase: BandPhase::Full,
             support: BandSupport {
                 native: 0..0,
@@ -731,6 +851,7 @@ fn band_memory_accounts_for_actual_phase_buffers_and_completed_ownership() {
                 geometry: geometry(),
                 core: 0..depth,
                 total_channels: 4,
+                single_channel: None,
                 phase,
                 support: BandSupport {
                     native: 0..6,
@@ -814,6 +935,7 @@ fn band_memory_scales_from_shapes_and_rejects_overflow_without_allocating() {
         geometry: geometry(),
         core: 0..1,
         total_channels: 16_384,
+        single_channel: None,
         phase: BandPhase::InitialZero,
         support: BandSupport {
             native: 0..0,
@@ -880,6 +1002,7 @@ fn model_epoch_reads_only_support_planes_with_correct_axes_and_invalid_support()
         vec![0, 2],
         PreparedFft::new([10, 10], 7690).unwrap(),
         BandPhase::Full,
+        None,
     );
     let job = EpochBand::prepare(owned, &model, 0..8).unwrap();
     assert_bits(
@@ -906,6 +1029,7 @@ fn model_epoch_reads_only_support_planes_with_correct_axes_and_invalid_support()
         support.model.clone(),
         PreparedFft::new([10, 10], 7690).unwrap(),
         BandPhase::Full,
+        None,
     );
     let mut job = EpochBand::prepare(prepared, &model, support.native.clone()).unwrap();
     let mut expected = workspace(1..2, support.model, &raw);
@@ -934,6 +1058,7 @@ fn delayed_band_cannot_complete_into_another_model_epoch_and_model_io_errors_pro
             vec![0],
             PreparedFft::new([10, 10], 7690).unwrap(),
             BandPhase::Full,
+            None,
         )
     };
     let job = EpochBand::prepare(new(), &model, 0..8).unwrap();
@@ -986,6 +1111,7 @@ fn completed_epoch_images_preserve_partitioned_fields_and_model_binding() {
             geometry: geometry(),
             core,
             total_channels: 4,
+            single_channel: None,
             phase: BandPhase::Full,
             support,
         };
@@ -1102,6 +1228,7 @@ fn empty_initial_and_residual_refresh_omit_dead_grids_and_do_not_load_prior_arra
             (0..4).collect(),
             PreparedFft::new([10, 10], 7690).unwrap(),
             phase,
+            None,
         )
     };
     assert!(matches!(
@@ -1214,9 +1341,20 @@ fn shared_wide_window_narrows_row_dependent_support_without_copies() {
         block.frequencies_hz[15..].as_ptr()
     );
     assert_eq!(narrow.original_pair_hz, block.metadata[1].original_pair_hz);
-    assert!(block.row(&layout, 0, 0..12).unwrap().window(0..1).is_err());
+    assert!(block.row(&layout, 0, 0..12).unwrap().window(0..0).is_err());
     let polarization = polarization();
     let raw = model();
+    let mut linear = workspace(0..4, (0..4).collect(), &raw);
+    assert!(
+        linear
+            .begin_row(
+                block.row(&layout, 0, 0..12).unwrap().window(0..1).unwrap(),
+                &output,
+                &polarization
+            )
+            .is_err(),
+        "multi-plane interpolation still requires a native pair"
+    );
     for depth in [1, 2, 4] {
         for start in (0..4).step_by(depth) {
             let core = start..start + depth;

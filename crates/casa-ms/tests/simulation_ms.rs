@@ -3,15 +3,18 @@
 
 use casa_ms::columns::main_ids;
 use casa_ms::{
-    MeasurementSet, SyntheticAnalyticComponent, SyntheticAnalyticSpectrum, SyntheticAntenna,
-    SyntheticBandpassCorruption, SyntheticBandpassMode, SyntheticCorruptionConfig, SyntheticField,
-    SyntheticGainCorruption, SyntheticGainMode, SyntheticNoiseCorruption, SyntheticNoiseMode,
-    SyntheticObservationMode, SyntheticObservationRequest, SyntheticPointingCorruption,
-    SyntheticPolarizationBasis, SyntheticPolarizationLeakageCorruption,
-    SyntheticPolarizationLeakageMode, SyntheticPolarizationSetup, SyntheticSkyModel,
-    SyntheticSpectralSetup, generate_synthetic_observation_ms, tutorial_vla_a_antennas,
+    MeasurementSet, SubTable, SyntheticAnalyticComponent, SyntheticAnalyticSpectrum,
+    SyntheticAntenna, SyntheticBandpassCorruption, SyntheticBandpassMode,
+    SyntheticCorruptionConfig, SyntheticField, SyntheticGainCorruption, SyntheticGainMode,
+    SyntheticNoiseCorruption, SyntheticNoiseMode, SyntheticObservationMode,
+    SyntheticObservationRequest, SyntheticPointingCorruption, SyntheticPolarizationBasis,
+    SyntheticPolarizationLeakageCorruption, SyntheticPolarizationLeakageMode,
+    SyntheticPolarizationSetup, SyntheticSkyModel, SyntheticSpectralSetup,
+    generate_synthetic_observation_ms, tutorial_vla_a_antennas,
 };
+use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
 use casa_test_support::{discover_casa_python, tutorial_dataset_path};
+use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::position::MPosition;
 use casa_types::{ArrayValue, ScalarValue, Value};
 use std::process::Command;
@@ -66,6 +69,33 @@ fn generates_vla_ppdisk_synthetic_ms_skeleton() {
     assert_eq!(ms.antenna().unwrap().name(0).unwrap(), "VLA01");
     assert_eq!(ms.field().unwrap().name(0).unwrap(), "ppdisk");
     assert_eq!(ms.spectral_window().unwrap().num_chan(0).unwrap(), 4);
+    let spectral = ms.spectral_window().unwrap();
+    assert_eq!(
+        spectral.meas_freq_ref(0).unwrap(),
+        FrequencyRef::LSRK.casacore_code()
+    );
+    assert_eq!(
+        spectral.chan_freq(0).unwrap().to_vec(),
+        request.spectral_setup.channel_frequencies_hz()
+    );
+    for column in ["CHAN_FREQ", "REF_FREQUENCY"] {
+        let descriptor = TableMeasDesc::reconstruct(spectral.table(), column).unwrap();
+        let MeasRefDesc::VariableInt {
+            ref_column,
+            tab_ref_types,
+            tab_ref_codes,
+        } = descriptor.ref_desc()
+        else {
+            panic!("{column} must use the MS frequency reference column");
+        };
+        assert_eq!(ref_column, "MEAS_FREQ_REF");
+        let code = spectral.meas_freq_ref(0).unwrap();
+        let index = tab_ref_codes
+            .iter()
+            .position(|value| *value == code)
+            .unwrap();
+        assert_eq!(tab_ref_types[index], "LSRK");
+    }
     let observation = ms.observation().unwrap();
     let telescope = observation
         .table()
@@ -733,9 +763,17 @@ fn casa_can_open_generated_synthetic_ms_when_available() {
     let script = r#"
 import json
 import sys
-from casatools import table
+from casatools import table, ms
 
 path = sys.argv[1]
+tool = ms()
+tool.open(path, nomodify=True)
+try:
+    actual = list(tool.cvelfreqs(spwids=[0], fieldids=[0], mode="channel",
+                                nchan=4, start=0, width=1, outframe="LSRK"))
+finally:
+    tool.close()
+    tool.done()
 tb = table()
 tb.open(path)
 try:
@@ -746,6 +784,18 @@ try:
     }
 finally:
     tb.close()
+tb.open(path + "/SPECTRAL_WINDOW")
+try:
+    assert tb.getcell("MEAS_FREQ_REF", 0) == 1
+    expected = tb.getcell("CHAN_FREQ", 0).tolist()
+    for column in ("CHAN_FREQ", "REF_FREQUENCY"):
+        info = tb.getcolkeyword(column, "MEASINFO")
+        assert info["VarRefCol"] == "MEAS_FREQ_REF"
+        assert info["TabRefTypes"][1] == "LSRK"
+finally:
+    tb.close()
+assert actual == expected
+result["frequency_frame"] = "LSRK"
 print(json.dumps(result, sort_keys=True))
 "#;
     let output = Command::new(&casa.program)
@@ -764,6 +814,7 @@ print(json.dumps(result, sort_keys=True))
     assert!(stdout.contains(&format!("\"rows\": {}", report.main_row_count)));
     assert!(stdout.contains("\"nonzero\": "));
     assert!(!stdout.contains("\"nonzero\": 0"));
+    assert!(stdout.contains("\"frequency_frame\": \"LSRK\""));
 }
 
 fn write_test_fits_model(path: &std::path::Path, nx: usize, ny: usize) {

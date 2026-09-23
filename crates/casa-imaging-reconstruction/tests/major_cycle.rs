@@ -2427,6 +2427,12 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
                 .with_cycle_threshold(1.0, 0.05, 0.8),
         );
         let mut samples = fixture_samples(&problem);
+        if matches!(&algorithm, ReconstructionAlgorithm::Hogbom) && !blank_second_channel {
+            let SelectedVisibilitySample::Complex32(value) = &mut samples[1].visibility else {
+                panic!("fixture visibility layout");
+            };
+            value[0] *= 2.0;
+        }
         if blank_second_channel {
             samples[1].input_weight = 0.0;
         }
@@ -2465,6 +2471,57 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
             normal.shape(),
         )
         .expect("cube mask");
+        if matches!(&algorithm, ReconstructionAlgorithm::Hogbom) && !blank_second_channel {
+            let peaks = (0..3)
+                .filter_map(|ordinal| {
+                    let channel = normal.slab().core_range().start + ordinal;
+                    let window = normal.read_window(channel..channel + 1).unwrap();
+                    let plane = window.polarization_plane(0, 0).unwrap();
+                    if plane.validity() != SpectralChannelValidity::Valid {
+                        return None;
+                    }
+                    let psf_peak = plane
+                        .normal_approximation()
+                        .iter()
+                        .map(|value| value.re.abs())
+                        .fold(0.0_f64, f64::max);
+                    let peak = plane
+                        .residual()
+                        .iter()
+                        .map(|value| value.re.abs() / psf_peak)
+                        .fold(0.0_f64, f64::max);
+                    Some((ordinal, peak))
+                })
+                .collect::<Vec<_>>();
+            assert!(peaks.len() >= 2);
+            let (near_channel, near_peak) = peaks
+                .iter()
+                .copied()
+                .min_by(|left, right| left.1.total_cmp(&right.1))
+                .unwrap();
+            let threshold = near_peak / 1.005;
+            assert!(
+                peaks.iter().any(|(_, peak)| *peak > 1.01 * threshold),
+                "fixture needs a second active plane: {peaks:?}"
+            );
+            let near_cycle = ReconstructionCycle::new(
+                ChannelCyclePolicy::Independent,
+                MinorCycleProgram::for_algorithm(
+                    ReconstructionAlgorithm::Hogbom,
+                    ReconstructionControls::new(1, 0.1, threshold),
+                )
+                .unwrap(),
+            );
+            let near_result = near_cycle.run(&lifecycle, base, &normal, &mask).unwrap();
+            assert_eq!(
+                near_result.evidence().channels()[near_channel]
+                    .minor_cycle()
+                    .unwrap()
+                    .iterations(),
+                1,
+                "a near-threshold plane remains eligible while another plane is above the global stop"
+            );
+        }
         let program =
             MinorCycleProgram::for_algorithm(algorithm, problem.reconstruction().controls())
                 .expect("point CLEAN program")
@@ -2522,6 +2579,54 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
             thresholds[0].to_bits(),
             (peak * sidelobe.clamp(0.05, 0.8)).to_bits()
         );
+
+        // CASA derives the shared control from peaks inside the CLEAN mask,
+        // not a brighter excluded source. Exercise the actual prepared path.
+        let shape = normal.shape();
+        let mut pixel_peaks = vec![0.0_f64; shape[0] * shape[1]];
+        for channel in normal.slab().core_range() {
+            let window = normal.read_window(channel..channel + 1).unwrap();
+            let plane = window.polarization_plane(0, 0).unwrap();
+            if plane.validity() != SpectralChannelValidity::Valid {
+                continue;
+            }
+            let normalization = plane
+                .normal_approximation()
+                .iter()
+                .map(|value| f64::from((value.re as f32).abs()))
+                .fold(0.0_f64, f64::max);
+            for (peak, value) in pixel_peaks.iter_mut().zip(plane.residual()) {
+                *peak = peak.max(value.re.abs() / normalization);
+            }
+        }
+        let (index, masked_peak) = pixel_peaks
+            .iter()
+            .enumerate()
+            .min_by(|left, right| left.1.total_cmp(right.1))
+            .unwrap();
+        assert!(
+            *masked_peak < 0.99 * peak,
+            "fixture must exclude a brighter pixel"
+        );
+        let pixel = [index / shape[1], index % shape[1]];
+        let restricted = ReconstructionMask::from_boxes(
+            problem.problem_id(),
+            base.generation_id(),
+            problem.geometry().domains()[0].direction(),
+            shape,
+            [casa_imaging_reconstruction::MaskBox::new(pixel, pixel).unwrap()],
+        )
+        .unwrap();
+        let masked = cycle.run(&lifecycle, base, &normal, &restricted).unwrap();
+        for channel in masked.evidence().channels() {
+            if let Some(minor) = channel.minor_cycle() {
+                assert_eq!(
+                    minor.cycle_threshold().unwrap().to_bits(),
+                    (masked_peak * sidelobe.clamp(0.05, 0.8)).to_bits(),
+                    "cube threshold must exclude pixels outside the CLEAN mask"
+                );
+            }
+        }
 
         for workers in [1, 2, 3] {
             let mut work = cycle

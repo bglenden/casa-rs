@@ -1,7 +1,7 @@
 # Testing Strategy
 
 Truth class: normative
-Last reality check: 2026-09-02
+Last reality check: 2026-09-23
 Verification: just verify
 
 ## Test categories
@@ -54,6 +54,29 @@ identity and selection, image and solver parameters, comparator, and artifact
 inventory. Regenerate only when one of those contracts changes. Tiny fixtures
 remain required when they provide faster failure localization, but a green toy
 end-to-end test cannot make a matrix row representative.
+
+Nonlinear deconvolution can amplify numerical-scale near-ties into different
+component histories. A mode-specific gate may classify cross-run pixelwise
+agreement limits as *review triggers*, rather than silently widen them or
+require bitwise component identity, only when the owner approves a versioned
+replacement rule. Structural and deterministic-product checks, independent
+convergence, resource limits, and relevant scientific checks remain hard.
+The T55 C-array v3 rule compares the saved model directly with CASA but does
+not convolve either saved model to verify publication consistency; the owner
+removed that corruption-only check on 2026-09-23. Other modes retain their
+own approved checks. A trigger is unsuccessful until a reviewed
+disposition binds the exact input/comparison, gate version, all affected
+products and planes, unchanged measurements, visual evidence, rationale and
+owner decision. Unexplained localized defects, known implementation errors,
+missing evidence and stale review identities fail closed. Similar future
+outputs may reuse the review procedure, never another output's approval. The
+measurement pass runs once per unchanged product set; a later owner review
+finalizes its saved, identity-bound report without reopening product arrays or
+repeating scientific calculations. A changed product or rule requires a new
+measurement, not a review-time verification pass. The
+T55 C-array implementation and unchanged per-plane measurements are in
+`tools/perf/imager/t55_c_array_clean_gate.py`; this paragraph alone changes
+no other mode's established thresholds or acceptance status.
 
 For #607's frozen MT-MFS row, the programme owner approved one narrow support
 rule on 2026-09-02: `.alpha` and `.alpha.error` validity is exact within CASA's

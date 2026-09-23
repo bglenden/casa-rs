@@ -565,7 +565,6 @@ impl<'a> GraphBuilder<'a> {
                 }
             }
             ProductKind::Residual => {
-                let validity = self.normalized_image_validity();
                 for term in self.residual_terms() {
                     self.add_image(
                         domain_index,
@@ -576,7 +575,7 @@ impl<'a> GraphBuilder<'a> {
                         ProductUnit::JyPerBeam,
                         Some(self.products.normalization()),
                         ProductBeamRule::Fitted,
-                        validity,
+                        ProductValidityRule::FinalNormalState,
                         [],
                     );
                 }
@@ -598,7 +597,6 @@ impl<'a> GraphBuilder<'a> {
                 }
             }
             ProductKind::RestoredImage => {
-                let validity = self.normalized_image_validity();
                 for term in self.restored_terms() {
                     let residual = if matches!(
                         self.reconstruction.basis(),
@@ -621,7 +619,7 @@ impl<'a> GraphBuilder<'a> {
                         ProductUnit::JyPerBeam,
                         Some(self.products.normalization()),
                         ProductBeamRule::Restoring(self.products.restoring_beam()),
-                        validity,
+                        ProductValidityRule::FinalNormalState,
                         dependencies,
                     );
                 }
@@ -887,15 +885,6 @@ impl<'a> GraphBuilder<'a> {
                     ProductBeamRule::Metadata(self.products.restoring_beam()),
                     dependencies,
                 );
-            }
-        }
-    }
-
-    fn normalized_image_validity(&self) -> ProductValidityRule {
-        match self.products.normalization() {
-            ProductNormalization::UnitResponse => ProductValidityRule::FinalNormalState,
-            ProductNormalization::FlatNoise | ProductNormalization::FlatSky => {
-                ProductValidityRule::PrimaryBeam(self.products.validity().primary_beam())
             }
         }
     }

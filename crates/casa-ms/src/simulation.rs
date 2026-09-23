@@ -15,10 +15,12 @@ use casa_simulation_synthesis::{
     AiryPrimaryBeam, AiryVoltagePattern, ImageGeometry, StandardMfsModelPredictor,
 };
 use casa_tables::ColumnOverrides;
+use casa_tables::table_measures::{MeasureType, TableMeasDesc};
 use casa_types::measures::MeasuresProvider;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::measures::frame::MeasFrame;
+use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::position::MPosition;
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use libm::j1;
@@ -275,12 +277,16 @@ const VLA_A_ANTENNAS: &[VLaAntennaDef] = &[
     },
 ];
 
-/// Single spectral-window setup for a synthetic observation.
+/// Single LSRK spectral-window setup for an idealized synthetic observation.
+///
+/// Channel frequencies are used directly for prediction and recorded as LSRK
+/// in the MeasurementSet. The simulator does not model time-dependent TOPO
+/// tuning or Doppler resampling of an observed spectrum.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SyntheticSpectralSetup {
     /// Spectral-window name.
     pub name: String,
-    /// First channel center frequency in Hz.
+    /// First channel center frequency in Hz, in LSRK.
     pub start_frequency_hz: f64,
     /// Channel width in Hz.
     pub channel_width_hz: f64,
@@ -1831,7 +1837,7 @@ fn populate_spectral_window(
             ("CHAN_WIDTH", f64_array(&widths, vec![widths.len()])),
             ("EFFECTIVE_BW", f64_array(&widths, vec![widths.len()])),
             ("RESOLUTION", f64_array(&widths, vec![widths.len()])),
-            ("MEAS_FREQ_REF", i(5)),
+            ("MEAS_FREQ_REF", i(FrequencyRef::LSRK.casacore_code())),
             (
                 "NET_SIDEBAND",
                 i(if spectral_setup.channel_width_hz >= 0.0 {
@@ -1846,7 +1852,24 @@ fn populate_spectral_window(
             ("FLAG_ROW", b(false)),
         ],
     );
-    subtable_mut(ms, SubtableId::SpectralWindow)?.add_row(row)?;
+    let spectral_window = subtable_mut(ms, SubtableId::SpectralWindow)?;
+    spectral_window.add_row(row)?;
+    for column in ["CHAN_FREQ", "REF_FREQUENCY"] {
+        TableMeasDesc::new_variable_int(
+            column,
+            MeasureType::Frequency,
+            "MEAS_FREQ_REF",
+            FrequencyRef::ALL
+                .iter()
+                .map(|refer| refer.as_str().to_owned())
+                .collect(),
+            FrequencyRef::ALL
+                .iter()
+                .map(|refer| refer.casacore_code())
+                .collect(),
+        )?
+        .write(spectral_window)?;
+    }
     Ok(())
 }
 

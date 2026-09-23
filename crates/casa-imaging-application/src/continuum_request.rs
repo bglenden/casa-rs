@@ -3107,7 +3107,6 @@ fn specification(
             requested_products(
                 &request.algorithm,
                 minor_cycle_requested,
-                request.normalization,
                 mosaic,
                 weight_image,
                 request.write_primary_beam,
@@ -3160,7 +3159,6 @@ fn specification(
 fn requested_products(
     algorithm: &ContinuumAlgorithm,
     minor_cycle_requested: bool,
-    normalization: ProductNormalization,
     mosaic: bool,
     weight_image: bool,
     write_primary_beam: bool,
@@ -3186,10 +3184,6 @@ fn requested_products(
     }
     if weight_image {
         products.push(ProductKind::Weight);
-    }
-    // Mosaic and AW publish the sensitivity normalization through `.weight`.
-    if !matches!(normalization, ProductNormalization::UnitResponse) && !weight_image {
-        products.push(ProductKind::Sensitivity);
     }
     if write_primary_beam || pbcor {
         products.push(ProductKind::PrimaryBeam);
@@ -3798,28 +3792,23 @@ mod tests {
 
     #[test]
     fn dirty_execution_does_not_request_a_clean_mask() {
-        let dirty = requested_products(
-            &ContinuumAlgorithm::Dirty,
-            false,
-            casa_imaging_model::ProductNormalization::UnitResponse,
-            false,
-            false,
-            true,
-            false,
-        );
+        let dirty =
+            requested_products(&ContinuumAlgorithm::Dirty, false, false, false, true, false);
         assert!(!dirty.contains(&casa_imaging_model::ProductKind::Mask));
         assert!(dirty.contains(&casa_imaging_model::ProductKind::PrimaryBeam));
 
-        let clean = requested_products(
-            &ContinuumAlgorithm::Hogbom,
-            true,
-            casa_imaging_model::ProductNormalization::UnitResponse,
-            false,
-            false,
-            true,
-            false,
-        );
+        let clean =
+            requested_products(&ContinuumAlgorithm::Hogbom, true, false, false, true, false);
         assert!(clean.contains(&casa_imaging_model::ProductKind::Mask));
+    }
+
+    #[test]
+    fn clark_requested_products_do_not_publish_internal_sensitivity() {
+        let products =
+            requested_products(&ContinuumAlgorithm::Clark, true, false, false, true, false);
+        assert!(products.contains(&casa_imaging_model::ProductKind::RestoredImage));
+        assert!(!products.contains(&casa_imaging_model::ProductKind::Sensitivity));
+        assert!(!products.contains(&casa_imaging_model::ProductKind::Weight));
     }
 
     #[test]
@@ -3831,7 +3820,6 @@ mod tests {
                 small_scale_bias: 0.0,
             },
             false,
-            casa_imaging_model::ProductNormalization::FlatNoise,
             false,
             true,
             true,
@@ -3867,7 +3855,6 @@ mod tests {
                 small_scale_bias: 0.0,
             },
             true,
-            casa_imaging_model::ProductNormalization::FlatNoise,
             true,
             true,
             true,

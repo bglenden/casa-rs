@@ -742,15 +742,16 @@ fn annular_aperture_power_plane(
     table: &AnnularApertureVoltageTable,
 ) -> Vec<f32> {
     let mut values = vec![0.0; shape[0] * shape[1]];
+    let increment_deg = increment_rad.map(f64::to_degrees);
+    let frequency_factor = 60.0 * frequency_hz / 1.0e9;
     for x in 0..shape[0] {
         let pixel_x = x as f64 - reference_pixel[0];
+        let rx2 = (pixel_x * increment_deg[0]).powi(2) as f32;
         for y in 0..shape[1] {
             let pixel_y = y as f64 - reference_pixel[1];
-            let longitude_deg = (pixel_x * increment_rad[0]).to_degrees() as f32;
-            let latitude_deg = (pixel_y * increment_rad[1]).to_degrees() as f32;
-            let radius_deg = longitude_deg.hypot(latitude_deg);
+            let ry2 = (pixel_y * increment_deg[1]).powi(2) as f32;
             let radius_arcmin_ghz =
-                (f64::from(radius_deg) * 60.0 * (frequency_hz / 1.0e9)) as f32 as f64;
+                (f64::from((rx2 + ry2).sqrt()) * frequency_factor) as f32 as f64;
             let voltage = table.evaluate(radius_arcmin_ghz);
             values[x * shape[1] + y] = voltage * voltage;
         }
@@ -956,6 +957,21 @@ fn model_term(
 #[cfg(test)]
 mod tests {
     use casa_imaging_model::ProductNormalization;
+
+    #[test]
+    fn vla_pb_channel_455_edge_matches_casa_support() {
+        let table = super::vla_band_voltage_table(44.91e9).expect("VLA Q-band table");
+        let plane = super::annular_aperture_power_plane(
+            [3, 43],
+            [512.0, 512.0],
+            [-2.908_882_086_657_215_7e-7, 2.908_882_086_657_215_7e-7],
+            44.91e9,
+            &table,
+        );
+        let edge = plane[2 * 43 + 42];
+        assert!((edge - 0.200_095_06).abs() < 1e-6, "edge PB={edge}");
+        assert!(edge > 0.2, "CASA keeps this channel-455 PB pixel");
+    }
 
     #[test]
     fn beam_coverage_preserves_the_existing_open_band_boundaries() {

@@ -801,7 +801,7 @@ impl<'a> ReconstructionPlaneWork<'a> {
         let normal = self.binding.normal;
         let channel = normal.slab().core_range().start + ordinal % normal.channel_count();
         let plane = normal.read_plane(0, channel, ordinal / normal.channel_count())?;
-        let (peak, sidelobe) = plane_cycle_statistics(&plane)?;
+        let (peak, sidelobe) = plane_cycle_statistics(&plane, self.binding.mask)?;
         Ok(ReconstructionPlaneStatistics {
             binding: self.binding,
             ordinal,
@@ -871,11 +871,14 @@ impl<'a> ReconstructionPlaneWork<'a> {
         let (delta, minor_cycle) = if validity == SpectralChannelValidity::Valid {
             let plane = normal.read_reconstruction_plane(0, channel, polarization)?;
             let model = base.read_window(0, channel..channel + 1)?;
-            let program = cycle
+            let mut program = cycle
                 .program
                 .clone()
                 .with_fixed_cycle_threshold(self.shared_cycle_threshold)
                 .on_model_plane(MinorCycleModelPlane::new(0, channel, polarization));
+            if self.plane_count == 1 {
+                program = program.with_global_convergence_check();
+            }
             let (delta, evidence) =
                 run_minor_cycle_plane(lifecycle, &model, plane, mask, program)?.into_parts();
             (delta, Some(evidence))
@@ -1074,7 +1077,11 @@ fn shared_cycle_threshold_from_statistics(
 
 fn plane_cycle_statistics(
     plane: &crate::FinalNormalPlaneReader<'_>,
+    mask: &crate::ReconstructionMask,
 ) -> Result<(f64, f64), MinorCycleError> {
+    if mask.shape() != plane.shape() {
+        return Err(MinorCycleError::ModelShapeMismatch);
+    }
     if plane.validity() != SpectralChannelValidity::Valid {
         return Ok((0.0, 0.0));
     }
@@ -1093,7 +1100,9 @@ fn plane_cycle_statistics(
     let peak = plane
         .read_residual()?
         .iter()
-        .map(|value| value.re.abs() / psf_peak)
+        .enumerate()
+        .filter(|(index, _)| mask.contains([index / plane.shape()[1], index % plane.shape()[1]]))
+        .map(|(_, value)| value.re.abs() / psf_peak)
         .fold(0.0_f64, f64::max);
     Ok((
         peak,

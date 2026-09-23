@@ -26,7 +26,7 @@ use crate::spectral_operator::{
     polarization_diagonal,
 };
 use crate::spectral_sampling::{
-    CasaLinearGrid, CasaLinearOutputGrid, CasaLinearRowCursor, CasaLinearSample,
+    CasaLinearGrid, CasaLinearOutputGrid, CasaLinearRowCursor, CasaSingleChannel,
     NativeRowSpectralGeometry, casa_linear_prediction_terms, interpolate_complex_pair,
 };
 use crate::{
@@ -42,6 +42,7 @@ pub struct BandPlan {
     geometry: SpectralOperatorGeometry,
     core: Range<usize>,
     total_channels: usize,
+    single_channel: Option<CasaSingleChannel>,
     phase: BandPhase,
     support: BandSupport,
 }
@@ -62,6 +63,7 @@ impl BandPlan {
             geometry: specification.cube_geometry()?,
             core: specification.slab().core_range(),
             total_channels: specification.slab().total_channels(),
+            single_channel: specification.cube_single_channel(),
             phase: match pass {
                 SpectralOperatorPass::InitialMajor
                     if specification.is_initial_certified_zero(pass) =>
@@ -113,6 +115,27 @@ impl BandPlan {
             .map_err(|_| SpectralOperatorError::InvalidSample)?;
         if block.channels < 2 {
             return Err(SpectralOperatorError::InvalidSample);
+        }
+        if let Some(single) = bands[0].single_channel {
+            if bands.len() != 1 || output_hz != [single.centre_hz] {
+                return Err(SpectralOperatorError::ProblemMismatch);
+            }
+            let band = &mut bands[0];
+            for frequencies in block.frequencies_hz.chunks_exact(block.channels) {
+                let native = single.native_window(frequencies);
+                if !native.is_empty() {
+                    band.support.native = if band.support.native.is_empty() {
+                        native
+                    } else {
+                        band.support.native.start.min(native.start)
+                            ..band.support.native.end.max(native.end)
+                    };
+                }
+            }
+            if !band.support.native.is_empty() && band.support.model.is_empty() {
+                band.support.model.push(0);
+            }
+            return Ok(0);
         }
         let mut ranges = vec![block.channels..0; bands.len()];
         let mut pairs = 0_u64;
@@ -250,6 +273,7 @@ impl BandPlan {
                 self.support.model,
                 fft,
                 self.phase,
+                self.single_channel,
             ),
             generation,
             self.support.native,
@@ -587,7 +611,7 @@ impl NativeBlock {
 
 impl<'a> VisibilityRow<'a> {
     fn window(self, channels: Range<usize>) -> Result<Self, SpectralOperatorError> {
-        if channels.len() < 2 || channels.end > self.channels.len() {
+        if channels.is_empty() || channels.end > self.channels.len() {
             return Err(SpectralOperatorError::InvalidSample);
         }
         Ok(Self {
@@ -603,7 +627,7 @@ impl<'a> VisibilityRow<'a> {
 
     fn validate(&self, correlations: usize) -> Result<(), SpectralOperatorError> {
         let shape = (self.channels.len(), correlations);
-        if self.channels.len() < 2
+        if self.channels.is_empty()
             || self.frequencies_hz.len() != shape.0
             || correlations == 0
             || correlations > 4
@@ -635,6 +659,7 @@ impl<'a> VisibilityRow<'a> {
 /// support may extend beyond the output band. Admission supplies both ranges.
 struct BandWorkspace {
     phase: BandPhase,
+    single_channel: Option<CasaSingleChannel>,
     geometry: SpectralOperatorGeometry,
     core: Range<usize>,
     model_channels: Vec<usize>,
@@ -660,6 +685,7 @@ impl BandWorkspace {
         model_channels: Vec<usize>,
         fft: PreparedFft,
         phase: BandPhase,
+        single_channel: Option<CasaSingleChannel>,
     ) -> Self {
         let shape = (core.len(), geometry.grid_shape[0], geometry.grid_shape[1]);
         let normal = if phase == BandPhase::Residual {
@@ -675,6 +701,7 @@ impl BandWorkspace {
         let normal_planes = normal.0;
         Self {
             phase,
+            single_channel,
             forward_nonzero: vec![
                 false;
                 if phase == BandPhase::InitialZero {
@@ -778,6 +805,7 @@ impl BandWorkspace {
             psf_error,
             model_channels,
             sum_weight_error,
+            single_channel: _,
         } = self;
         // Prediction and compensation are dead before image allocations begin.
         drop((
@@ -838,9 +866,20 @@ impl BandWorkspace {
             .collect());
         }
         let mut predicted = Complex64::default();
-        for term in casa_linear_prediction_terms(output_hz, frequency_hz, row.original_pair_hz)
-            .map_err(|_| SpectralOperatorError::InvalidSample)?
-        {
+        let terms = if let Some(single) = self.single_channel {
+            let mut terms = SmallVec::new();
+            if single.contains(frequency_hz) {
+                terms.push(
+                    casa_imaging_model::SelectedSpectralContribution::new(0, 1.0, frequency_hz)
+                        .ok_or(SpectralOperatorError::InvalidSample)?,
+                );
+            }
+            terms
+        } else {
+            casa_linear_prediction_terms(output_hz, frequency_hz, row.original_pair_hz)
+                .map_err(|_| SpectralOperatorError::InvalidSample)?
+        };
+        for term in terms {
             let plane = self
                 .model_channels
                 .binary_search(&(term.output_channel() as usize))
@@ -873,6 +912,9 @@ impl BandWorkspace {
         polarization: &'a PolarizationOperator,
     ) -> Result<RowAccumulator<'a>, SpectralOperatorError> {
         row.validate(polarization.correlations().len())?;
+        if row.channels.len() < 2 {
+            return Err(SpectralOperatorError::InvalidSample);
+        }
         if polarization.model_coordinates() != [PolarizationCoordinate::StokesI] {
             return Err(SpectralOperatorError::InvalidSample);
         }
@@ -892,13 +934,14 @@ impl BandWorkspace {
 
     fn grid_sample(
         &mut self,
-        fine: CasaLinearSample,
+        output_channel: usize,
+        frequency_hz: f64,
         row: &VisibilityRow<'_>,
         observed: Complex64,
         predicted: Complex64,
         weight: f64,
     ) -> Result<(), SpectralOperatorError> {
-        let plane = fine.output_channel() - self.core.start;
+        let plane = output_channel - self.core.start;
         if self.phase != BandPhase::Residual {
             self.mapped[plane] = self.mapped[plane]
                 .checked_add(1)
@@ -907,14 +950,14 @@ impl BandWorkspace {
         if weight == 0.0 {
             return Ok(());
         }
-        let wavelength_scale = fine.frequency_hz() / SPEED_OF_LIGHT_M_PER_S;
+        let wavelength_scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
         let Some(taps) = self.convolution.taps([
             row.uvw_m[0] * wavelength_scale,
             row.uvw_m[1] * wavelength_scale,
         ]) else {
             return Ok(());
         };
-        let rotation = phase(row.phase_shift_m, fine.frequency_hz());
+        let rotation = phase(row.phase_shift_m, frequency_hz);
         for (grid, error, value) in [
             (
                 &mut self.dirty,
@@ -971,6 +1014,10 @@ impl BandWorkspace {
             let row = block
                 .row(layout, row, window.clone())?
                 .window(local.clone())?;
+            if let Some(single) = self.single_channel {
+                self.consume_single_row(row, single, output_hz, polarization)?;
+                continue;
+            }
             let native = BandSupport::native_window(
                 output_hz,
                 self.core.clone(),
@@ -987,6 +1034,74 @@ impl BandWorkspace {
         }
         Ok(())
     }
+
+    fn consume_single_row(
+        &mut self,
+        row: VisibilityRow<'_>,
+        single: CasaSingleChannel,
+        output_hz: &[f64],
+        polarization: &PolarizationOperator,
+    ) -> Result<(), SpectralOperatorError> {
+        row.validate(polarization.correlations().len())?;
+        for channel in single.native_window(row.frequencies_hz) {
+            let frequency = row.frequencies_hz[channel];
+            let predicted = self.predict_native(&row, frequency, output_hz, polarization)?;
+            let values = row.values.row(channel);
+            let weights = row.weights.row(channel);
+            let flags = row
+                .flags
+                .row(channel)
+                .iter()
+                .zip(row.weight_flags.row(channel))
+                .map(|(&flag, &weight_flag)| flag || weight_flag)
+                .collect::<SmallVec<[bool; 4]>>();
+            let (observed, predicted, weight) = polarized_sample(
+                polarization,
+                values.as_slice().expect("validated contiguous row"),
+                &predicted,
+                weights.as_slice().expect("validated contiguous row"),
+                &flags,
+            )?;
+            self.grid_sample(0, frequency, &row, observed, predicted, weight)?;
+        }
+        Ok(())
+    }
+}
+
+fn polarized_sample(
+    polarization: &PolarizationOperator,
+    observed: &[Complex64],
+    predicted: &[Complex64],
+    weights: &[f64],
+    flags: &[bool],
+) -> Result<(Complex64, Complex64, f64), SpectralOperatorError> {
+    let observed_adjoint = polarization
+        .weighted_adjoint(observed, weights, flags)
+        .map_err(|_| SpectralOperatorError::InvalidSample)?[0];
+    let predicted_adjoint = polarization
+        .weighted_adjoint(predicted, weights, flags)
+        .map_err(|_| SpectralOperatorError::InvalidSample)?[0];
+    let weight = polarization_diagonal(polarization, weights, flags)[0];
+    let direct = (polarization.feed_basis() == crate::FeedBasis::Stokes)
+        .then(|| {
+            polarization
+                .coefficients()
+                .iter()
+                .position(|value| *value == Complex64::new(1.0, 0.0))
+        })
+        .flatten();
+    let normalize = |adjoint, values: &[Complex64]| {
+        if weight == 0.0 {
+            Complex64::default()
+        } else {
+            direct.map_or_else(|| adjoint / weight, |index| values[index])
+        }
+    };
+    Ok((
+        normalize(observed_adjoint, observed),
+        normalize(predicted_adjoint, predicted),
+        weight,
+    ))
 }
 
 fn phase(shift_m: f64, frequency_hz: f64) -> Complex64 {
@@ -1067,35 +1182,19 @@ impl RowAccumulator<'_> {
                     }
                     // Interpolate observed and predicted separately, then apply
                     // polarization/weights, then subtract in the existing order.
-                    let observed_adjoint = self
-                        .polarization
-                        .weighted_adjoint(&observed, &weights, &flags)
-                        .map_err(|_| SpectralOperatorError::InvalidSample)?[0];
-                    let predicted_adjoint = self
-                        .polarization
-                        .weighted_adjoint(&predicted, &weights, &flags)
-                        .map_err(|_| SpectralOperatorError::InvalidSample)?[0];
-                    let weight = polarization_diagonal(self.polarization, &weights, &flags)[0];
-                    let direct = (self.polarization.feed_basis() == crate::FeedBasis::Stokes)
-                        .then(|| {
-                            self.polarization
-                                .coefficients()
-                                .iter()
-                                .position(|value| *value == Complex64::new(1.0, 0.0))
-                        })
-                        .flatten();
-                    let normalize = |adjoint, values: &[Complex64]| {
-                        if weight == 0.0 {
-                            Complex64::default()
-                        } else {
-                            direct.map_or_else(|| adjoint / weight, |index| values[index])
-                        }
-                    };
+                    let (observed, predicted, weight) = polarized_sample(
+                        self.polarization,
+                        &observed,
+                        &predicted,
+                        &weights,
+                        &flags,
+                    )?;
                     self.band.grid_sample(
-                        fine,
+                        fine.output_channel(),
+                        fine.frequency_hz(),
                         &self.row,
-                        normalize(observed_adjoint, &observed),
-                        normalize(predicted_adjoint, &predicted),
+                        observed,
+                        predicted,
                         weight,
                     )?;
                 }

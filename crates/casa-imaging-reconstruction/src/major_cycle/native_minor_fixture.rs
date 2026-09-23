@@ -127,8 +127,22 @@ fn validity() -> ProductValidityPolicies {
     )
 }
 
-fn problem_with_scales(scales_px: Vec<f64>) -> casa_imaging_model::CompiledProblem {
-    let centre = IMAGE_WIDTH as f64 / 2.0;
+fn problem(
+    width: usize,
+    basis: ReconstructionBasis,
+    algorithm: ReconstructionAlgorithm,
+) -> casa_imaging_model::CompiledProblem {
+    let centre = width as f64 / 2.0;
+    let mut products = vec![
+        ProductKind::Psf,
+        ProductKind::Residual,
+        ProductKind::Model,
+        ProductKind::SumWeights,
+        ProductKind::Sensitivity,
+    ];
+    if matches!(basis, ReconstructionBasis::Taylor { .. }) {
+        products.push(ProductKind::TaylorTerms);
+    }
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
@@ -140,7 +154,7 @@ fn problem_with_scales(scales_px: Vec<f64>) -> casa_imaging_model::CompiledProbl
     let geometry = GeometryInput::new(
         vec![ImageDomainSpec::new(
             ImageDomainRole::Main,
-            ImageShape::new(IMAGE_WIDTH, IMAGE_WIDTH),
+            ImageShape::new(width, width),
             direction,
             FacetLayout::Single,
             AxisOrder::new([
@@ -189,11 +203,8 @@ fn problem_with_scales(scales_px: Vec<f64>) -> casa_imaging_model::CompiledProbl
                 ),
             ),
             ReconstructionContract::new(
-                ReconstructionBasis::Taylor { terms: 2 },
-                ReconstructionAlgorithm::Mtmfs {
-                    scales_px,
-                    small_scale_bias: 0.0,
-                },
+                basis,
+                algorithm,
                 ReconstructionControls::new(30, f64::from(0.1_f32), 0.0),
                 PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
             ),
@@ -202,14 +213,7 @@ fn problem_with_scales(scales_px: Vec<f64>) -> casa_imaging_model::CompiledProbl
                 WeightDensityScope::GlobalSelection,
             ),
             ProductRequirements::new(
-                vec![
-                    ProductKind::Psf,
-                    ProductKind::Residual,
-                    ProductKind::Model,
-                    ProductKind::SumWeights,
-                    ProductKind::Sensitivity,
-                    ProductKind::TaylorTerms,
-                ],
+                products,
                 ProductNormalization::UnitResponse,
                 RestoringBeamPolicy::None,
                 validity(),
@@ -234,7 +238,7 @@ fn problem_with_scales(scales_px: Vec<f64>) -> casa_imaging_model::CompiledProbl
             ModelInputCommitment::Empty,
         ),
     ))
-    .expect("compile native minor fixture MT-MFS problem")
+    .expect("compile native minor fixture problem")
 }
 
 fn samples(problem: &casa_imaging_model::CompiledProblem) -> [SelectedObservationSample; 2] {
@@ -325,7 +329,63 @@ pub(crate) fn build(
     ModelGeneration,
     FinalNormalState,
 ) {
-    let problem = problem_with_scales(vec![0.0, 5.0, 12.0]);
+    build_problem(
+        problem(
+            IMAGE_WIDTH,
+            ReconstructionBasis::Taylor { terms: 2 },
+            ReconstructionAlgorithm::Mtmfs {
+                scales_px: vec![0.0, 5.0, 12.0],
+                small_scale_bias: 0.0,
+            },
+        ),
+        residuals,
+        psfs,
+        response,
+    )
+}
+
+/// A small scalar plane with the same validated owner path as captured fixtures.
+pub(crate) fn build_clark(
+    width: usize,
+    residual: Box<[Complex64]>,
+    psf: Box<[Complex64]>,
+) -> (
+    CompiledProblem,
+    ModelLifecycle,
+    ModelGeneration,
+    FinalNormalState,
+) {
+    build_problem(
+        problem(
+            width,
+            ReconstructionBasis::Constant,
+            ReconstructionAlgorithm::Clark,
+        ),
+        residual,
+        psf,
+        None,
+    )
+}
+
+fn build_problem(
+    problem: CompiledProblem,
+    residuals: Box<[Complex64]>,
+    psfs: Box<[Complex64]>,
+    response: Option<(Vec<f64>, f64, f64)>,
+) -> (
+    CompiledProblem,
+    ModelLifecycle,
+    ModelGeneration,
+    FinalNormalState,
+) {
+    let catalog = if matches!(
+        problem.reconstruction().basis(),
+        ReconstructionBasis::Constant
+    ) {
+        NormalStateCatalog::UnnormalizedPlaneV1
+    } else {
+        NormalStateCatalog::UnnormalizedTaylorBlockV1
+    };
     let lifecycle = ModelLifecycle::bind(
         crate::ExecutableModelProblem::from_compiled(problem.clone()).expect("executable fixture"),
         ModelExecutionAttemptId::new(identity(51, 100)),
@@ -368,7 +428,7 @@ pub(crate) fn build(
         weighting_generation,
         replay,
         coverage,
-        catalog: NormalStateCatalog::UnnormalizedTaylorBlockV1,
+        catalog,
         sample_count,
         block_count: 1,
         input_model_generation: base.generation_id(),
