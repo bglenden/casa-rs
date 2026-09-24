@@ -100,7 +100,7 @@ fn captured_first_minor_matches_casa_clark_component_positions() {
 }
 
 #[test]
-fn deep_clark_batches_patch_updates_and_refreshes_the_exact_residual() {
+fn deep_clark_batches_patch_updates_and_refreshes_the_linear_residual() {
     const EDGE: usize = 32;
     const GAIN: f64 = 0.1;
     let cells = EDGE * EDGE;
@@ -178,7 +178,11 @@ fn deep_clark_batches_patch_updates_and_refreshes_the_exact_residual() {
             "must visit many distinct positions"
         );
         let final_peak = reference.iter().fold(0.0_f64, |m, v| m.max(v.abs()));
-        assert!((actual.evidence().final_peak_flux() - final_peak).abs() < 1e-10);
+        assert!(
+            (actual.evidence().final_peak_flux() - final_peak).abs() < 1e-6 * final_peak.max(1.0),
+            "actual={}, direct={final_peak}",
+            actual.evidence().final_peak_flux()
+        );
         assert!(final_peak < dirty.iter().copied().fold(0.0_f64, f64::max));
         assert_eq!(
             normal

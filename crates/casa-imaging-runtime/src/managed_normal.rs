@@ -218,6 +218,29 @@ impl NormalArrayStorage for ManagedNormal {
         })
     }
 
+    fn write_real(&mut self, start: usize, values: &[f32]) -> Result<(), SpectralOperatorError> {
+        self.for_each_window(start, values.len(), |plane, in_plane, input| {
+            let source = &values[input];
+            if source.iter().any(|value| !value.is_finite()) {
+                return Err(storage_error("normal value is not finite in Float storage"));
+            }
+            let pins = self
+                .residency
+                .admit(
+                    &[self.array.request(plane, true).map_err(storage_error)?],
+                    0,
+                )
+                .map_err(storage_error)?;
+            let mut destination = self
+                .array
+                .write(&pins, plane, in_plane)
+                .map_err(storage_error)?;
+            destination.copy_from_slice(source);
+            destination.finish();
+            Ok(())
+        })
+    }
+
     fn retire(self: Box<Self>) -> Result<(), SpectralOperatorError> {
         self.array.retire_dead().map_err(storage_error)
     }
@@ -308,6 +331,7 @@ mod tests {
         normal
             .write(10, &[1.25, 7.0, -0.125, -4.0, 0.5, 1.0])
             .unwrap();
+        normal.write_real(16, &[2.5, -1.0]).unwrap();
         let found = normal.read_complex(10, 3).unwrap();
         assert_eq!(
             &*found,
@@ -316,6 +340,10 @@ mod tests {
                 Complex64::new(-0.125, 0.0),
                 Complex64::new(0.5, 0.0)
             ]
+        );
+        assert_eq!(
+            normal.read_complex(16, 2).unwrap().as_ref(),
+            &[Complex64::new(2.5, 0.0), Complex64::new(-1.0, 0.0),]
         );
         let live = manager.used_bytes();
         normal.retire().unwrap();

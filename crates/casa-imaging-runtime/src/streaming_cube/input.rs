@@ -18,7 +18,7 @@ use std::{
 use casa_imaging_reconstruction::runtime_adapter::NativeBlock;
 #[cfg(test)]
 use casa_imaging_reconstruction::runtime_adapter::RowMetadata;
-use num_complex::Complex64;
+use num_complex::Complex32;
 use tempfile::NamedTempFile;
 
 use crate::bounded_stream::{OrderedBlockSource, SourceFillCancellation, SourcePoll};
@@ -27,7 +27,7 @@ use crate::managed_spill::{
 };
 
 const ROW_BYTES: usize = 7 * 8;
-const SAMPLE_BYTES: usize = 2 * 8 + 8 + 2;
+const SAMPLE_BYTES: usize = 2 * 4 + 4 + 2;
 const CRC_BYTES: usize = 4;
 
 fn invalid_input(message: &'static str) -> io::Error {
@@ -593,13 +593,13 @@ impl NativeStoreReader<'_> {
                     for corr in 0..plan.correlations {
                         let position = offset + 8 + corr * SAMPLE_BYTES;
                         let sample = cell * plan.correlations + corr;
-                        output.values[sample] = Complex64::new(
-                            decode_f64(encoded, position),
-                            decode_f64(encoded, position + 8),
+                        output.values[sample] = Complex32::new(
+                            decode_f32(encoded, position),
+                            decode_f32(encoded, position + 4),
                         );
-                        output.weights[sample] = decode_f64(encoded, position + 16);
-                        output.flags[sample] = decode_flag(encoded[position + 24])?;
-                        output.weight_flags[sample] = decode_flag(encoded[position + 25])?;
+                        output.weights[sample] = decode_f32(encoded, position + 8);
+                        output.flags[sample] = decode_flag(encoded[position + 12])?;
+                        output.weight_flags[sample] = decode_flag(encoded[position + 13])?;
                     }
                 }
             }
@@ -741,6 +741,10 @@ impl OrderedBlockSource for NativeSource<'_> {
 
 fn decode_f64(bytes: &[u8], offset: usize) -> f64 {
     f64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap())
+}
+
+fn decode_f32(bytes: &[u8], offset: usize) -> f32 {
+    f32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
 }
 
 fn decode_flag(byte: u8) -> io::Result<bool> {

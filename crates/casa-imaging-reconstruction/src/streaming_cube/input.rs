@@ -9,7 +9,7 @@ use std::{io, mem::size_of};
 use casa_imaging_model::{CorrelationType, SelectedSampleAddress};
 #[cfg(test)]
 use casa_imaging_model::{FiniteValuePolicy, SelectedVisibilitySample};
-use num_complex::Complex64;
+use num_complex::Complex32;
 use smallvec::SmallVec;
 
 #[cfg(test)]
@@ -86,10 +86,10 @@ pub struct NativeBlock {
     pub metadata: Vec<RowMetadata>,
     /// Row/channel centres transformed into the imaging output frame.
     pub frequencies_hz: Vec<f64>,
-    /// Selected visibilities in reconstruction precision.
-    pub values: Vec<Complex64>,
+    /// Selected visibilities in their native Float precision.
+    pub values: Vec<Complex32>,
     /// Native imaging weights, before nearest-channel transfer.
-    pub weights: Vec<f64>,
+    pub weights: Vec<f32>,
     /// Rejected input flags, before pair interpolation.
     pub flags: Vec<bool>,
     /// Native weight-group flags, transferred from the nearest endpoint.
@@ -114,7 +114,7 @@ impl NativeBlock {
         }
         maximum_rows
             .checked_mul(maximum_channels)
-            .and_then(|cells| cells.checked_mul(8 + 26 * correlations))
+            .and_then(|cells| cells.checked_mul(8 + 14 * correlations))
             .and_then(|bytes| {
                 bytes.checked_add(maximum_rows.checked_mul(size_of::<RowMetadata>())?)
             })
@@ -136,7 +136,7 @@ impl NativeBlock {
         Ok(Self {
             metadata: vec![RowMetadata::default(); maximum_rows],
             frequencies_hz: vec![0.0; cells],
-            values: vec![Complex64::default(); samples],
+            values: vec![Complex32::default(); samples],
             weights: vec![0.0; samples],
             flags: vec![false; samples],
             weight_flags: vec![false; samples],
@@ -159,7 +159,7 @@ impl NativeBlock {
         self.metadata.resize(rows, RowMetadata::default());
         self.frequencies_hz.resize(rows * channels, 0.0);
         let samples = rows * channels * self.correlations;
-        self.values.resize(samples, Complex64::default());
+        self.values.resize(samples, Complex32::default());
         self.weights.resize(samples, 0.0);
         self.flags.resize(samples, false);
         self.weight_flags.resize(samples, false);
@@ -172,8 +172,8 @@ impl NativeBlock {
         size_of::<Self>()
             + self.metadata.capacity() * size_of::<RowMetadata>()
             + self.frequencies_hz.capacity() * size_of::<f64>()
-            + self.values.capacity() * size_of::<Complex64>()
-            + self.weights.capacity() * size_of::<f64>()
+            + self.values.capacity() * size_of::<Complex32>()
+            + self.weights.capacity() * size_of::<f32>()
             + self.flags.capacity()
             + self.weight_flags.capacity()
     }
@@ -324,14 +324,13 @@ impl NativeInput {
                 sample.output_frame_frequency_hz();
         }
         self.block.values[self.next] = match sample.visibility() {
-            SelectedVisibilitySample::Float32(value) => Complex64::new(f64::from(value), 0.0),
-            SelectedVisibilitySample::Complex32([re, im]) => {
-                Complex64::new(f64::from(re), f64::from(im))
-            }
+            SelectedVisibilitySample::Float32(value) => Complex32::new(value, 0.0),
+            SelectedVisibilitySample::Complex32([re, im]) => Complex32::new(re, im),
         };
         self.block.weights[self.next] = weighted
             .source_imaging_weight()
-            .ok_or_else(|| invalid("missing native imaging weight"))?;
+            .ok_or_else(|| invalid("missing native imaging weight"))?
+            as f32;
         self.block.flags[self.next] =
             !accept_polarization_input(sample, self.finite_values).map_err(io::Error::other)?;
         self.block.weight_flags[self.next] =

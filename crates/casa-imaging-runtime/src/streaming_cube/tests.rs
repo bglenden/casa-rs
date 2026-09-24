@@ -202,16 +202,6 @@ fn streaming_cube_initial_source_fence_controls_runtime_reconciliation() {
             .unwrap()
             .id
             .clone();
-        let prepare = base
-            .observation_transaction()
-            .final_model_preparation()
-            .unwrap()
-            .clone();
-        let reconcile = base
-            .observation_transaction()
-            .post_replay_reconciliation()
-            .unwrap()
-            .clone();
         let weighting = plan_weighting(problem, weighting_limits).unwrap();
         let physical = WeightingPlanFragment::streaming_for_pass(
             &weighting,
@@ -235,28 +225,6 @@ fn streaming_cube_initial_source_fence_controls_runtime_reconciliation() {
         )
         .compose(&base)
         .unwrap();
-        let cube_state = CubeStatePlan::streaming_cube(
-            problem,
-            &fixture.storage,
-            1,
-            prepare.clone(),
-            reconcile.clone(),
-            // This fixture's 8-MiB host cannot fit a full four-worker wave
-            // alongside resident storage. Keep executing that low-memory case.
-            workers == 1,
-            false,
-        )
-        .unwrap();
-        let physical = cube_state
-            .compose(
-                &registry,
-                support::implementation_id(),
-                &fixture.storage,
-                physical,
-                &read,
-                &reconcile,
-            )
-            .unwrap();
         let output_hz: Vec<_> = (0..problem.geometry().spectral().output_channels())
             .map(|channel| {
                 problem
@@ -364,7 +332,6 @@ fn streaming_cube_initial_source_fence_controls_runtime_reconciliation() {
             )
             .is_err()
         );
-        let expected_physical = native_plan.compose(physical, &fixture.storage).unwrap();
         let (minimum_cache, full_cache) =
             CubeStatePlan::managed_cache_limits(problem, &fixture.storage, workers).unwrap();
         drop(bands);
@@ -384,18 +351,6 @@ fn streaming_cube_initial_source_fence_controls_runtime_reconciliation() {
         assert_eq!(
             executor.native_plan.workspace_bytes,
             native_plan.workspace_bytes
-        );
-        assert_eq!(
-            physical
-                .execution_dag()
-                .resource_alternative()
-                .demand
-                .io_buffers,
-            expected_physical
-                .execution_dag()
-                .resource_alternative()
-                .demand
-                .io_buffers,
         );
         let cache = executor.cube_state.managed_run().unwrap();
         assert!((minimum_cache..=full_cache).contains(&cache.residency.limit_bytes()));

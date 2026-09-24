@@ -980,6 +980,16 @@ mod tests {
         let layout = CubeArrayLayout::new_spatial(logical, 2048, 2048, 2048 * 2048, 1).unwrap();
         assert_eq!(layout.values.cube_shape(), &[2048, 2048, 2048]);
         assert_eq!(layout.values.tile_shape(), &[2048, 2048, 1]);
+        assert!(layout.values.storage_bytes().unwrap() > i32::MAX as usize);
+        let large_offset = 1024usize * 2048 * 2048;
+        assert!(large_offset > i32::MAX as usize);
+        let mut large_visit = Vec::new();
+        transfer_range(2048, 2048, large_offset, 2, |start, shape, destination| {
+            large_visit.push((start, shape, destination));
+            Ok::<_, ()>(())
+        })
+        .unwrap();
+        assert_eq!(large_visit, vec![([0, 0, 1024], [2, 1, 1], 0..2)]);
         assert!(CubeArrayLayout::new_spatial(logical, logical, 1, 1, 1).is_err());
 
         let mut visits = Vec::new();

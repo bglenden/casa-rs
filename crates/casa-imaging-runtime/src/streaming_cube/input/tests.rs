@@ -41,11 +41,11 @@ fn fill(block: &mut NativeBlock, first_row: u64) {
             block.frequencies_hz[cell] = start + channel as f64 * step;
             for corr in 0..block.correlations {
                 let sample = cell * block.correlations + corr;
-                block.values[sample] = Complex64::new(
-                    source_row as f64 + channel as f64 * 0.13,
-                    -0.0 - corr as f64 * 0.2,
+                block.values[sample] = Complex32::new(
+                    source_row as f32 + channel as f32 * 0.13,
+                    -0.0 - corr as f32 * 0.2,
                 );
-                block.weights[sample] = 0.7 + channel as f64 * 0.11;
+                block.weights[sample] = 0.7 + channel as f32 * 0.11;
                 block.flags[sample] = channel % 3 == corr;
                 block.weight_flags[sample] = channel == 4;
             }
@@ -53,7 +53,7 @@ fn fill(block: &mut NativeBlock, first_row: u64) {
     }
     // Flagged input payloads still belong in the native store, bit for bit.
     if block.values.len() > 3 {
-        block.values[3].re = f64::from_bits(0x7ff8_0000_0000_0017);
+        block.values[3].re = f32::from_bits(0x7fc0_0017);
         block.flags[3] = true;
     }
 }
@@ -222,7 +222,7 @@ fn invalid_row_partitions_poison_the_writer_before_any_frame_is_written() {
 
 #[test]
 fn overlapping_band_windows_reuse_checked_frames_with_bounded_storage() {
-    let plan = plan(7, 64, 2, 1, 2);
+    let plan = plan(7, 64, 2, 1, 3);
     let (_directory, mut store) = store(plan);
     let slots = plan.reader_cache_slots(4, 2).unwrap();
     assert_eq!(slots, plan.blocks() as usize * 9);
@@ -651,8 +651,8 @@ impl PartitionedKernel<Option<NativeBlock>> for ObservedBands {
         Ok((
             band,
             view.iter().fold(0_u64, |sum, v| {
-                sum.wrapping_add(v.re.to_bits())
-                    .wrapping_add(v.im.to_bits())
+                sum.wrapping_add(u64::from(v.re.to_bits()))
+                    .wrapping_add(u64::from(v.im.to_bits()))
             }),
         ))
     }

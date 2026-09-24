@@ -652,12 +652,15 @@ fn assert_native_preparation_equivalence(
                         block.frequencies_hz[index],
                         sample.output_frame_frequency_hz()
                     );
-                    assert_eq!(Some(block.weights[index]), weighted.source_imaging_weight());
+                    assert_eq!(
+                        Some(block.weights[index]),
+                        weighted.source_imaging_weight().map(|weight| weight as f32)
+                    );
                     let SelectedVisibilitySample::Complex32([re, im]) = sample.visibility() else {
                         panic!("complex fixture");
                     };
-                    assert_eq!(block.values[index].re.to_bits(), f64::from(re).to_bits());
-                    assert_eq!(block.values[index].im.to_bits(), f64::from(im).to_bits());
+                    assert_eq!(block.values[index].re.to_bits(), re.to_bits());
+                    assert_eq!(block.values[index].im.to_bits(), im.to_bits());
                     assert_eq!(
                         block.flags[index],
                         samples[offset + index].channel_flag || samples[offset + index].row_flag
@@ -841,7 +844,7 @@ fn native_channel_kernel_preserves_group_weights_raw_flags_and_exact_sums() {
             for (index, (actual, expected)) in block.weights.iter().zip(&expected).enumerate() {
                 assert_eq!(
                     actual.to_bits(),
-                    expected.source_imaging_weight().unwrap().to_bits(),
+                    (expected.source_imaging_weight().unwrap() as f32).to_bits(),
                     "count={count}, sample={index}"
                 );
                 let sample = &groups[index / count][index % count];

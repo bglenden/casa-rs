@@ -38,9 +38,9 @@ fn scalar_complex(values: Cow<'_, [f64]>) -> Result<Cow<'_, [Complex64]>, Spectr
 /// Physical scalar-array capability used only by the Normal State owner.
 ///
 /// Complex values are stored as consecutive real/imaginary f64 values. Access
-/// must preserve every bit and must not enlarge an admitted cache. The owner
-/// writes every logical value before sealing a generation; storage handles
-/// must not permit mutation through aliases retained outside this capability.
+/// must not enlarge an admitted cache. The owner writes every logical value
+/// before transferring the generation; storage handles must not permit
+/// mutation through aliases retained outside this capability.
 #[doc(hidden)]
 pub trait NormalArrayStorage: fmt::Debug + Send + Sync {
     /// Logical scalar capacity, excluding physical tile padding.
@@ -71,6 +71,26 @@ pub trait NormalArrayStorage: fmt::Debug + Send + Sync {
     }
     /// Replace a bounded scalar window without resizing the array.
     fn write(&mut self, start: usize, values: &[f64]) -> Result<(), SpectralOperatorError>;
+    /// Write a real Float image window at complex-scalar offsets. Other normal
+    /// implementations may widen through their scalar interface; the managed
+    /// cube backing writes Float planes directly.
+    fn write_real(&mut self, start: usize, values: &[f32]) -> Result<(), SpectralOperatorError> {
+        if start % 2 != 0 {
+            return Err(SpectralOperatorError::InvalidSlab);
+        }
+        let mut widened = [0.0_f64; 512];
+        for (chunk_index, chunk) in values.chunks(256).enumerate() {
+            let offset = chunk_index
+                .checked_mul(widened.len())
+                .and_then(|offset| start.checked_add(offset))
+                .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+            for (pair, &value) in widened.chunks_exact_mut(2).zip(chunk) {
+                pair[0] = f64::from(value);
+            }
+            self.write(offset, &widened[..chunk.len() * 2])?;
+        }
+        Ok(())
+    }
 
     /// Release a superseded epoch after its replacement is complete.
     fn retire(self: Box<Self>) -> Result<(), SpectralOperatorError> {
@@ -605,7 +625,7 @@ mod tests {
             let next_model = ModelGenerationId(LogicalIdentity::from_sha256([epoch; 32]));
             let mut next = old.refresh(next_model, &plan).unwrap();
             let values: Box<[_]> = (0..CHANNELS * POLARIZATIONS * CELLS)
-                .map(|index| Complex64::new(index as f64 + f64::from(epoch), -0.0))
+                .map(|index| index as f32 + f32::from(epoch))
                 .collect();
             next.append_residual(&crate::streaming_cube::band::CubeResidual {
                 shape: [3, 2],
@@ -632,8 +652,8 @@ mod tests {
             );
             assert_eq!(p.validity, expected.primitives().validity);
             for (actual, expected) in p.dirty.iter().zip(values.iter()) {
-                assert_eq!(actual.re.to_bits(), expected.re.to_bits());
-                assert_eq!(actual.im.to_bits(), expected.im.to_bits());
+                assert_eq!(actual.re, f64::from(*expected));
+                assert_eq!(actual.im, 0.0);
             }
             accesses.store(0, Ordering::Relaxed);
             old = next;
@@ -668,7 +688,7 @@ mod tests {
             core: 1..CHANNELS,
             total_channels: CHANNELS,
             model: model(),
-            values: vec![Complex64::new(3.0, -0.0); (CHANNELS - 1) * POLARIZATIONS * CELLS].into(),
+            values: vec![3.0; (CHANNELS - 1) * POLARIZATIONS * CELLS].into(),
         };
         assert_eq!(
             next.append_residual(&residual),
@@ -679,7 +699,7 @@ mod tests {
         assert!(!next.is_complete());
         next.storage = Box::new(WriteFailure);
         residual.core = CHANNELS - 1..CHANNELS;
-        residual.values = vec![Complex64::new(3.0, -0.0); POLARIZATIONS * CELLS].into();
+        residual.values = vec![3.0; POLARIZATIONS * CELLS].into();
         assert!(matches!(
             next.append_residual(&residual),
             Err(SpectralOperatorError::NormalStorage(_))
@@ -836,37 +856,12 @@ impl ChannelNormalStorageRequirement {
         specification: &SpectralOperatorSpecification,
         window_channels: usize,
     ) -> Result<Box<[Self]>, SpectralOperatorError> {
-        Self::for_fields(specification, window_channels, true, true, false, false)
-    }
-
-    /// Native initial-empty imaging followed by residual refresh retains only
-    /// the promoted residual, PSF and sensitivity. This bound is specific to
-    /// that chain; nonempty full-normal construction uses `for_specification`.
-    /// The storage factory rejects allocations exceeding the projected capacity.
-    #[doc(hidden)]
-    pub fn for_streaming_cube(
-        specification: &SpectralOperatorSpecification,
-        window_channels: usize,
-    ) -> Result<Box<[Self]>, SpectralOperatorError> {
-        Self::for_fields(specification, window_channels, false, false, false, true)
-    }
-
-    /// Allocate only the new complex residual; imported invariants retain their
-    /// original physical owner and resource permit.
-    pub fn for_streaming_cube_refresh(
-        specification: &SpectralOperatorSpecification,
-        window_channels: usize,
-    ) -> Result<Box<[Self]>, SpectralOperatorError> {
-        Self::for_fields(specification, window_channels, false, false, true, true)
+        Self::for_fields(specification, window_channels)
     }
 
     fn for_fields(
         specification: &SpectralOperatorSpecification,
         window_channels: usize,
-        invariant: bool,
-        residual: bool,
-        residual_only: bool,
-        scalar_sensitivity: bool,
     ) -> Result<Box<[Self]>, SpectralOperatorError> {
         let channels = specification.slab.total_channels();
         if specification.basis != SpectralBasisPlan::ChannelLocal
@@ -890,8 +885,7 @@ impl ChannelNormalStorageRequirement {
                 let values = plane_values
                     .checked_mul(channels)
                     .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-                let fields =
-                    ChannelNormalFields::new(values, invariant, residual, scalar_sensitivity)?;
+                let fields = ChannelNormalFields::new(values, true, true, false)?;
                 let metadata_values = channels
                     .checked_mul(polarizations)
                     .ok_or(SpectralOperatorError::ResidencyOverflow)?;
@@ -920,17 +914,16 @@ impl ChannelNormalStorageRequirement {
                         .ok_or(SpectralOperatorError::ResidencyOverflow)?,
                     retained_metadata_bytes,
                 };
-                let mut allocations = vec![epoch];
-                if !residual_only {
-                    allocations.push(Self {
+                Ok(vec![
+                    epoch,
+                    Self {
                         allocation_ordinal: ordinal * 2 + 1,
                         scalar_capacity: fields.scalars - fields.epoch_scalars,
                         retained_metadata_bytes: size_of::<Box<dyn NormalArrayStorage>>()
                             + 2 * size_of::<usize>(),
                         ..epoch
-                    });
-                }
-                Ok(allocations)
+                    },
+                ])
             })
             .collect::<Result<Vec<_>, SpectralOperatorError>>()
             .map(|domains| domains.into_iter().flatten().collect())
@@ -1704,10 +1697,9 @@ impl StoredChannelNormalDomain {
         {
             return Err(SpectralOperatorError::ProblemMismatch);
         }
-        let scalars = complex_scalars(&residual.values)?;
-        self.storage.write(
+        self.storage.write_real(
             range.start * self.polarizations * checked_cells(self.shape)? * 2,
-            scalars,
+            &residual.values,
         )?;
         self.next_channel = range.end;
         Ok(())

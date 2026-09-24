@@ -165,7 +165,7 @@ fn native_preparation_and_real_bands_feed_the_existing_fold_and_controller() {
         .iter()
         .map(|spec| BandPlan::new(spec, SpectralOperatorPass::InitialMajor).unwrap())
         .collect();
-    let budget = size_of::<NativeBlock>() + size_of::<Vec<u8>>() + 4 + 2 * (56 + 6 * 60 + 2 * 60);
+    let budget = size_of::<NativeBlock>() + size_of::<Vec<u8>>() + 4 + 2 * (56 + 6 * 36 + 2 * 36);
     let plan = StorePlan::new(5, 6, 2, 2, budget, u64::MAX).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let (_, storage) = test_authority(directory.path(), plan.artifact_bytes);
@@ -276,7 +276,7 @@ fn native_preparation_and_real_bands_feed_the_existing_fold_and_controller() {
 fn native_preparation_rejects_missing_duplicate_and_out_of_order_row_parts() {
     use crate::streaming_cube::prepare::NativePreparation;
     let problem = fixture::problem(SpectralSamplingLaw::LINEAR);
-    let budget = size_of::<NativeBlock>() + size_of::<Vec<u8>>() + 4 + 2 * (56 + 6 * 60 + 2 * 60);
+    let budget = size_of::<NativeBlock>() + size_of::<Vec<u8>>() + 4 + 2 * (56 + 6 * 36 + 2 * 36);
     let plan = StorePlan::new(5, 6, 2, 2, budget, u64::MAX).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let (_, storage) = test_authority(directory.path(), plan.artifact_bytes);
@@ -438,7 +438,7 @@ fn input(
         })
         .collect();
     // Two rows per block, with a short final row block and native-channel tile.
-    let budget = size_of::<NativeBlock>() + size_of::<Vec<u8>>() + 4 + 2 * (56 + 6 * 60 + 2 * 60);
+    let budget = size_of::<NativeBlock>() + size_of::<Vec<u8>>() + 4 + 2 * (56 + 6 * 36 + 2 * 36);
     let plan = StorePlan::new(5, 6, 2, 2, budget, u64::MAX).unwrap();
     assert_eq!(plan.block_rows, 2);
     let directory = tempfile::tempdir().unwrap();
@@ -465,12 +465,14 @@ fn input(
                 block.frequencies_hz[cell] = start + channel as f64 * 1e6;
                 for corr in 0..2 {
                     let sample = cell * 2 + corr;
-                    block.values[sample] =
-                        Complex64::new(0.25 + channel as f64 * 0.12, -0.8 + corr as f64 * 0.2);
+                    block.values[sample] = num_complex::Complex32::new(
+                        0.25 + channel as f32 * 0.12,
+                        -0.8 + corr as f32 * 0.2,
+                    );
                     block.weights[sample] = if channel == 2 {
                         0.0
                     } else {
-                        0.3 + channel as f64 * 0.17 + corr as f64 * 0.11
+                        0.3 + channel as f32 * 0.17 + corr as f32 * 0.11
                     };
                     block.flags[sample] = channel == 3 && corr == 1;
                     block.weight_flags[sample] = channel == 5;

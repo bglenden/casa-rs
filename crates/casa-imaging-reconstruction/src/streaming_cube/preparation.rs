@@ -14,7 +14,7 @@ use casa_imaging_model::{
     FrequencyFrame, SelectedObservationRunChannel, SelectedObservationRunCorrelation,
     SelectedObservationRunRow, SelectedRowSpectralGeometry,
 };
-use num_complex::Complex64;
+use num_complex::Complex32;
 
 const NATIVE_COVERAGE_DOMAIN: &[u8] = b"casa-rs-native-weighting-row-coverage";
 const NATIVE_COVERAGE_VERSION: u32 = 1;
@@ -469,17 +469,13 @@ impl NativePreparationWorker {
                     return Err(invalid("native correlation order mismatch"));
                 }
                 *value = match sample.visibility {
-                    SelectedVisibilitySample::Float32(value) => {
-                        Complex64::new(f64::from(value), 0.0)
-                    }
-                    SelectedVisibilitySample::Complex32([re, im]) => {
-                        Complex64::new(f64::from(re), f64::from(im))
-                    }
+                    SelectedVisibilitySample::Float32(value) => Complex32::new(value, 0.0),
+                    SelectedVisibilitySample::Complex32([re, im]) => Complex32::new(re, im),
                 };
                 *weight = if sample.parallel_hand_group_flag {
                     0.0
                 } else {
-                    base_weight
+                    base_weight as f32
                 };
                 *flag = !accept_polarization_value(
                     sample.visibility,

@@ -49,8 +49,8 @@ fn polarization() -> PolarizationOperator {
 struct Input {
     frequencies: Vec<f64>,
     channels: Vec<u32>,
-    values: Array2<Complex64>,
-    weights: Array2<f64>,
+    values: Array2<Complex32>,
+    weights: Array2<f32>,
     flags: Array2<bool>,
     weight_flags: Array2<bool>,
 }
@@ -62,13 +62,13 @@ impl Input {
             frequencies,
             channels: (0..count as u32).map(|channel| channel * 2).collect(),
             values: Array2::from_shape_fn((count, 2), |(ch, corr)| {
-                Complex64::new(0.25 + ch as f64 * 0.12, -0.8 + corr as f64 * 0.2)
+                Complex32::new(0.25 + ch as f32 * 0.12, -0.8 + corr as f32 * 0.2)
             }),
             weights: Array2::from_shape_fn((count, 2), |(ch, corr)| {
                 if ch == 2 {
                     0.0
                 } else {
-                    0.3 + ch as f64 * 0.17 + corr as f64 * 0.11
+                    0.3 + ch as f32 * 0.17 + corr as f32 * 0.11
                 }
             }),
             flags: Array2::from_shape_fn((count, 2), |(ch, corr)| ch == 3 && corr == 1),
@@ -135,20 +135,22 @@ fn full_band(input: &Input, output: &[f64], model: &Array3<Complex64>) -> BandWo
     band
 }
 
-fn assert_bits(
-    actual: impl IntoIterator<Item = Complex64>,
-    expected: impl IntoIterator<Item = Complex64>,
+fn assert_close<T: Copy + Into<f64>>(
+    actual: impl IntoIterator<Item = num_complex::Complex<T>>,
+    expected: impl IntoIterator<Item = num_complex::Complex<T>>,
 ) {
-    let bits = |values: Vec<Complex64>| {
-        values
-            .into_iter()
-            .map(|value| [value.re.to_bits(), value.im.to_bits()])
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(
-        bits(actual.into_iter().collect()),
-        bits(expected.into_iter().collect())
-    );
+    let actual = actual.into_iter().collect::<Vec<_>>();
+    let expected = expected.into_iter().collect::<Vec<_>>();
+    assert_eq!(actual.len(), expected.len());
+    for (actual, expected) in actual.into_iter().zip(expected) {
+        let difference =
+            (actual.re.into() - expected.re.into()).hypot(actual.im.into() - expected.im.into());
+        let scale = expected.re.into().hypot(expected.im.into()).max(1.0);
+        assert!(
+            difference <= 2e-6 * scale,
+            "difference={difference}, scale={scale}"
+        );
+    }
 }
 
 #[test]
@@ -229,9 +231,10 @@ fn single_output_uses_native_frequencies_and_ignores_neighbour_flags() {
                     .unwrap();
                 let predicted = expected
                     .convolution
-                    .degrid(&expected.forward.index_axis(Axis(0), 0), taps)
-                    * phase(row.phase_shift_m, frequency).conj();
-                let observed = (input.values[(channel, 0)] + input.values[(channel, 1)]) / 2.0;
+                    .degrid_float(&expected.forward.index_axis(Axis(0), 0), taps);
+                let predicted = widen(predicted) * phase(row.phase_shift_m, frequency).conj();
+                let observed =
+                    (widen(input.values[(channel, 0)]) + widen(input.values[(channel, 1)])) / 2.0;
                 expected
                     .grid_sample(0, frequency, &row, observed, predicted, 2.0)
                     .unwrap();
@@ -415,7 +418,7 @@ fn exact_zero_model_planes_skip_forward_work_without_losing_halo_terms() {
     // Exercise the zero-valued degrid terms that the sparse path skips.
     unskipped.forward_nonzero.fill(true);
     for &frequency in &input.frequencies {
-        assert_bits(
+        assert_close(
             band.predict_native(&row, frequency, &output, &polarization)
                 .unwrap(),
             unskipped
@@ -427,7 +430,7 @@ fn exact_zero_model_planes_skip_forward_work_without_losing_halo_terms() {
         let predicted = band
             .predict_native(&row, frequency, &output, &polarization)
             .unwrap();
-        assert_bits(
+        assert_close(
             halo.predict_native(&row, frequency, &output, &polarization)
                 .unwrap(),
             predicted.iter().copied(),
@@ -447,7 +450,7 @@ fn exact_zero_model_planes_skip_forward_work_without_losing_halo_terms() {
     assert!(
         band.forward
             .iter()
-            .all(|value| *value == Complex64::default())
+            .all(|value| *value == Complex32::default())
     );
     assert!(
         band.prepare_plane(1, |x, y| if (x, y) == (3, 4) {
@@ -511,7 +514,7 @@ fn nonzero_native_prediction_and_band_grids_are_partition_and_chunk_invariant() 
                             let expected = reference
                                 .predict_native(&input_row, frequency, &output, &polarization)
                                 .unwrap();
-                            assert_bits(predicted, expected);
+                            assert_close(predicted, expected);
                         }
                         let mut row = band
                             .begin_row(input.row(support.native), &output, &polarization)
@@ -521,11 +524,11 @@ fn nonzero_native_prediction_and_band_grids_are_partition_and_chunk_invariant() 
                         row.push(1..count).unwrap();
                         row.finish().unwrap();
                         for (local, global) in core.enumerate() {
-                            assert_bits(
+                            assert_close(
                                 band.dirty.index_axis(Axis(0), local).iter().copied(),
                                 reference.dirty.index_axis(Axis(0), global).iter().copied(),
                             );
-                            assert_bits(
+                            assert_close(
                                 band.residual.index_axis(Axis(0), local).iter().copied(),
                                 reference
                                     .residual
@@ -533,7 +536,7 @@ fn nonzero_native_prediction_and_band_grids_are_partition_and_chunk_invariant() 
                                     .iter()
                                     .copied(),
                             );
-                            assert_bits(
+                            assert_close(
                                 band.psf.index_axis(Axis(0), local).iter().copied(),
                                 reference.psf.index_axis(Axis(0), global).iter().copied(),
                             );
@@ -583,7 +586,7 @@ fn closure_includes_neighbors_and_excludes_unrelated_model_planes() {
     changed
         .index_axis_mut(Axis(0), 3)
         .fill(Complex64::new(1000.0, -300.0));
-    assert_bits(
+    assert_close(
         evaluate(&changed, support.model.clone()).unwrap(),
         expected.iter().copied(),
     );
@@ -629,8 +632,8 @@ fn compact_views_are_zero_copy_and_reject_bad_shape_or_partial_rows() {
         Err(SpectralOperatorError::IncompleteCoverage)
     ));
     let (mut first, mut second) = band.dirty.view_mut().split_at(Axis(0), 2);
-    first.fill(Complex64::new(1.0, 0.0));
-    second.fill(Complex64::new(2.0, 0.0));
+    first.fill(Complex32::new(1.0, 0.0));
+    second.fill(Complex32::new(2.0, 0.0));
     assert!(
         band.dirty
             .slice(s![0..2, .., ..])
@@ -867,25 +870,17 @@ fn band_memory_accounts_for_actual_phase_buffers_and_completed_ownership() {
             let job = plan.clone().prepare(generation, None).unwrap();
             assert_eq!(job.native_range, plan.native_range());
             let w = &job.workspace;
-            let grids = [
-                &w.forward,
-                &w.dirty,
-                &w.dirty_error,
-                &w.residual,
-                &w.residual_error,
-                &w.psf,
-                &w.psf_error,
-            ];
+            let grids = [&w.forward, &w.dirty, &w.residual, &w.psf];
             let payload = grids
                 .iter()
-                .map(|grid| grid.len() * size_of::<Complex64>())
+                .map(|grid| grid.len() * size_of::<Complex32>())
                 .sum::<usize>()
-                + (w.sum_weight.capacity() + w.sum_weight_error.capacity()) * size_of::<f64>()
+                + w.sum_weight.capacity() * size_of::<f64>()
                 + w.mapped.capacity() * size_of::<u64>()
                 + w.model_channels.capacity() * size_of::<usize>()
                 + w.forward_nonzero.capacity();
             let fft = fft_resident_complex_values_for_shape(geometry().grid_shape).unwrap()
-                * size_of::<Complex64>();
+                * size_of::<Complex32>();
             let convolution = StandardConvolution::dynamic_bytes(geometry().grid_shape).unwrap();
             assert_eq!(
                 memory.accumulation_bytes,
@@ -898,12 +893,12 @@ fn band_memory_accounts_for_actual_phase_buffers_and_completed_ownership() {
             assert_eq!(
                 memory.retained_bytes,
                 normal.cube_owned_bytes(true).unwrap() - size_of::<SpectralOperatorPrimitives>()
-                    + size_of::<(BandResult, PreparedFft)>()
+                    + size_of::<(BandResult, PreparedFft<f32>)>()
                     + fft
             );
             let refresh = plan.residual_refresh();
             let memory = refresh.memory().unwrap();
-            let residual_image = depth * 64 * size_of::<Complex64>();
+            let residual_image = depth * 64 * size_of::<f32>();
             assert!(
                 memory.preparation_bytes
                     >= memory.accumulation_bytes
@@ -917,13 +912,10 @@ fn band_memory_accounts_for_actual_phase_buffers_and_completed_ownership() {
             let BandResult::Residual(updated) = updated else {
                 panic!("residual-only result required")
             };
-            assert_eq!(
-                updated.values.len() * size_of::<Complex64>(),
-                residual_image
-            );
+            assert_eq!(updated.values.len() * size_of::<f32>(), residual_image);
             assert_eq!(
                 memory.retained_bytes,
-                residual_image + size_of::<(BandResult, PreparedFft)>() + fft
+                residual_image + size_of::<(BandResult, PreparedFft<f32>)>() + fft
             );
         }
     }
@@ -956,7 +948,7 @@ fn band_memory_scales_from_shapes_and_rejects_overflow_without_allocating() {
             assert!(memory.peak_bytes() > previous);
             assert!(
                 memory.accumulation_bytes
-                    >= 4 * depth * grid * grid * std::mem::size_of::<Complex64>()
+                    >= 2 * depth * grid * grid * std::mem::size_of::<Complex32>()
             );
             previous = memory.peak_bytes();
         }
@@ -1005,7 +997,7 @@ fn model_epoch_reads_only_support_planes_with_correct_axes_and_invalid_support()
         None,
     );
     let job = EpochBand::prepare(owned, &model, 0..8).unwrap();
-    assert_bits(
+    assert_close(
         job.workspace.forward.iter().copied(),
         expected.forward.iter().copied(),
     );
@@ -1041,7 +1033,7 @@ fn model_epoch_reads_only_support_planes_with_correct_axes_and_invalid_support()
         row.push(0..support.native.len()).unwrap();
         row.finish().unwrap();
     }
-    assert_bits(
+    assert_close(
         job.workspace.residual.iter().copied(),
         expected.residual.iter().copied(),
     );
@@ -1142,11 +1134,11 @@ fn completed_epoch_images_preserve_partitioned_fields_and_model_binding() {
             let core = start..start + depth;
             let pixels = start * 64..(start + depth) * 64;
             let actual = complete(core.clone(), true);
-            assert_bits(
+            assert_close(
                 actual.dirty().iter().copied(),
                 expected.dirty()[pixels.clone()].iter().copied(),
             );
-            assert_bits(
+            assert_close(
                 actual.psf().iter().copied(),
                 expected.psf()[pixels.clone()].iter().copied(),
             );
@@ -1250,7 +1242,6 @@ fn empty_initial_and_residual_refresh_omit_dead_grids_and_do_not_load_prior_arra
     );
     assert!(initial.workspace.forward.is_empty());
     assert!(initial.workspace.residual.is_empty());
-    assert!(initial.workspace.residual_error.is_empty());
     consume(&mut initial);
     let (initial, _) = initial.complete(&empty).unwrap();
     let BandResult::Initial(initial) = initial else {
@@ -1269,9 +1260,7 @@ fn empty_initial_and_residual_refresh_omit_dead_grids_and_do_not_load_prior_arra
     let original_identity = initial.normal_state_content_identity();
     let mut refresh = EpochBand::prepare(new(BandPhase::Residual), &model, 0..8).unwrap();
     assert!(refresh.workspace.dirty.is_empty());
-    assert!(refresh.workspace.dirty_error.is_empty());
     assert!(refresh.workspace.psf.is_empty());
-    assert!(refresh.workspace.psf_error.is_empty());
     assert!(refresh.workspace.sum_weight.is_empty());
     assert!(refresh.workspace.mapped.is_empty());
     consume(&mut refresh);
@@ -1285,7 +1274,9 @@ fn empty_initial_and_residual_refresh_omit_dead_grids_and_do_not_load_prior_arra
     let BandResult::Initial(expected) = expected else {
         panic!("initial normal required")
     };
-    assert_eq!(actual.values.as_ref(), expected.dirty());
+    for (&actual, expected) in actual.values.iter().zip(expected.dirty()) {
+        assert!((f64::from(actual) - expected.re).abs() < 1e-6);
+    }
     assert_eq!(actual.model, model.generation_id());
     assert_eq!(
         initial.normal_state_content_identity(),

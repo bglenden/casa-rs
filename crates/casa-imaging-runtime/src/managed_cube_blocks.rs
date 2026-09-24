@@ -1924,6 +1924,50 @@ mod tests {
     }
 
     #[test]
+    fn large_spatial_plane_evicts_and_reloads_under_one_plane_budget() {
+        let root = tempfile::tempdir().unwrap();
+        let manager = CubeResidency::new(128 << 20).unwrap();
+        let cells = 2048 * 2048;
+        let array = ManagedPlaneArray::<f32>::create(
+            manager.clone(),
+            root.path(),
+            2048,
+            2048,
+            2,
+            Some(0.0),
+        )
+        .unwrap();
+        {
+            let mut state = manager.state.lock().unwrap();
+            state.limit = state.fixed_bytes()
+                + state.backends[&array.backend_id].staging_bytes
+                + state.entries[&array.blocks[0].0].bytes
+                + operation_metadata_bytes(1).unwrap();
+        }
+        let pins = manager
+            .admit(&[array.request(0, true).unwrap()], 0)
+            .unwrap();
+        let mut edge = array.write(&pins, 0, cells - 4..cells).unwrap();
+        edge.copy_from_slice(&[1.0, -2.0, 3.0, 4.0]);
+        edge.finish();
+        drop(pins);
+        drop(
+            manager
+                .admit(&[array.request(1, false).unwrap()], 0)
+                .unwrap(),
+        );
+        assert!(!array.blocks[0].1.resident());
+        let pins = manager
+            .admit(&[array.request(0, false).unwrap()], 0)
+            .unwrap();
+        assert_eq!(
+            &*array.read(&pins, 0, cells - 4..cells).unwrap(),
+            &[1.0, -2.0, 3.0, 4.0]
+        );
+        assert!(manager.used_bytes() <= manager.limit_bytes());
+    }
+
+    #[test]
     fn scratch_only_workspaces_wait_without_partial_pins() {
         let manager = CubeResidency::new(4096).unwrap();
         let available = {

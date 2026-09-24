@@ -170,7 +170,7 @@ pub(crate) fn minor_cycle_workspace(
         let padded = cells.saturating_mul(4);
         cells
             .saturating_mul(size_of_u64::<clark::ClarkActivePixel>())
-            .saturating_add(padded.saturating_mul(2 * size_of_u64::<num_complex::Complex64>()))
+            .saturating_add(padded.saturating_mul(2 * size_of_u64::<num_complex::Complex32>()))
             .saturating_add(
                 sat_u64(
                     crate::spectral_operator::fft_resident_complex_values_for_shape([
@@ -179,7 +179,7 @@ pub(crate) fn minor_cycle_workspace(
                     ])
                     .unwrap_or(usize::MAX),
                 )
-                .saturating_mul(size_of_u64::<num_complex::Complex64>()),
+                .saturating_mul(size_of_u64::<num_complex::Complex32>()),
             )
     } else {
         0
@@ -4920,7 +4920,7 @@ mod tests {
         let clark = bytes(&ReconstructionAlgorithm::Clark, 8, 0);
         assert!(hogbom > 16 * (shape[0] * shape[1]) as u64);
         let padded_complex_planes =
-            8 * (shape[0] * shape[1]) as u64 * size_of::<num_complex::Complex64>() as u64;
+            8 * (shape[0] * shape[1]) as u64 * size_of::<num_complex::Complex32>() as u64;
         assert!(clark - hogbom >= padded_complex_planes);
         assert!(clark - hogbom < 16 << 20);
         assert!(bytes(&ReconstructionAlgorithm::Clark, 16, 0) > clark);

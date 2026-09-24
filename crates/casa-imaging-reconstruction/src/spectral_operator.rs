@@ -11791,6 +11791,47 @@ impl StandardConvolution {
         }
     }
 
+    pub(crate) fn grid_float<S: DataMut<Elem = Complex32>>(
+        &self,
+        grid: &mut ArrayBase<S, Ix2>,
+        taps: SampleTaps,
+        value: Complex32,
+    ) {
+        let row_stride = grid.ncols();
+        let grid = grid
+            .as_slice_mut()
+            .expect("spectral grids use standard contiguous layout");
+        let x_weights = self.weights[taps.x.weight_index].map(|weight| weight as f32);
+        let y_weights = self.weights[taps.y.weight_index].map(|weight| weight as f32);
+        for (x, x_weight) in x_weights.into_iter().enumerate() {
+            let start = (taps.x.start + x) * row_stride + taps.y.start;
+            for (cell, y_weight) in grid[start..start + y_weights.len()]
+                .iter_mut()
+                .zip(y_weights)
+            {
+                *cell += value * x_weight * y_weight;
+            }
+        }
+    }
+
+    pub(crate) fn degrid_float<S: Data<Elem = Complex32>>(
+        &self,
+        grid: &ArrayBase<S, Ix2>,
+        taps: SampleTaps,
+    ) -> Complex32 {
+        let x_weights = self.weights[taps.x.weight_index].map(|weight| weight as f32);
+        let y_weights = self.weights[taps.y.weight_index].map(|weight| weight as f32);
+        let mut value = Complex32::default();
+        for (x, x_weight) in x_weights.into_iter().enumerate() {
+            let mut row_values = [Complex32::default(); 2];
+            for (y, y_weight) in y_weights.into_iter().enumerate() {
+                row_values[y % 2] += grid[(taps.x.start + x, taps.y.start + y)] * y_weight;
+            }
+            value += (row_values[0] + row_values[1]) * x_weight;
+        }
+        value
+    }
+
     pub(crate) fn degrid<S: Data<Elem = Complex64>>(
         &self,
         grid: &ArrayBase<S, Ix2>,

@@ -1,8 +1,13 @@
 # Cube buffer refactor
 
-Truth class: proposed design within an owner-approved outcome; implementation paused
+Truth class: approved implementation plan; milestone-C review pending
 Last reality check: 2026-09-24
-Verification: focused reconstruction/runtime/application tests and matched CASA runs (pending)
+Verification: focused reconstruction/runtime/application tests and matched CASA runs; see CURRENT
+
+The design and proposed-size sections below record the preimplementation decision.
+The current implementation and measured results are in the single T55 `CURRENT.md`
+and its linked Review-3 evidence. Passing this cube workload does not by itself
+complete T55 or migrate MFS.
 
 ## Outcome and sequence
 

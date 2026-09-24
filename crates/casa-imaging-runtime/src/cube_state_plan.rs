@@ -367,41 +367,6 @@ impl CubeStatePlan {
             acquire,
             terminal,
             requirements,
-            false,
-            false,
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn streaming_cube(
-        problem: &CompiledProblem,
-        storage: &ManagedSpillStorage,
-        window_channels: usize,
-        acquire: WorkNodeId,
-        terminal: WorkNodeId,
-        resident: bool,
-        residual_only: bool,
-    ) -> io::Result<Self> {
-        let specification =
-            SpectralOperatorSpecification::new(problem).map_err(io::Error::other)?;
-        let requirements = if residual_only {
-            ChannelNormalStorageRequirement::for_streaming_cube_refresh(
-                &specification,
-                window_channels,
-            )
-        } else {
-            ChannelNormalStorageRequirement::for_streaming_cube(&specification, window_channels)
-        }
-        .map_err(io::Error::other)?;
-        Self::with_normal(
-            problem,
-            storage,
-            window_channels,
-            acquire,
-            terminal,
-            requirements,
-            resident,
-            true,
         )
     }
 
@@ -413,8 +378,6 @@ impl CubeStatePlan {
         acquire: WorkNodeId,
         terminal: WorkNodeId,
         requirements: Box<[ChannelNormalStorageRequirement]>,
-        resident: bool,
-        scalar_sensitivity: bool,
     ) -> io::Result<Self> {
         let shape = problem.model_lifecycle().target();
         let model_window_samples = shape.domains().iter().try_fold(0usize, |largest, domain| {
@@ -501,13 +464,9 @@ impl CubeStatePlan {
             )
             .ok_or_else(overflow)?;
         for ((_, layout), requirement) in layouts.iter().zip(&requirements) {
-            let ledger = if resident {
-                crate::streaming_cube::normal::ResidentNormalFactory::ledger(*requirement)?
-            } else {
-                layout
-                    .normal_ledger(storage.directory())
-                    .map_err(io::Error::other)?
-            };
+            let ledger = layout
+                .normal_ledger(storage.directory())
+                .map_err(io::Error::other)?;
             let normal_retention = Arc::new(CubeBackingRetention {
                 heap: OnceLock::new(),
                 _shared: retention.clone(),
@@ -544,26 +503,15 @@ impl CubeStatePlan {
                     .max(ledger.flush_scratch_bytes),
             );
         }
-        let (normal, normal_metadata): (Arc<dyn NormalStorageFactory>, usize) = if resident {
-            let factory = crate::streaming_cube::normal::ResidentNormalFactory::new(
-                requirements,
-                normal_retentions.into_boxed_slice(),
-                metrics.clone(),
-                scalar_sensitivity,
-            );
-            let metadata = factory.metadata_bytes();
-            (Arc::new(factory), metadata)
-        } else {
-            let factory = PagedNormalStorageFactory::new(
-                storage.directory(),
-                layouts,
-                normal_retentions.into_boxed_slice(),
-                metrics.clone(),
-                scalar_sensitivity,
-            );
-            let metadata = factory.owned_metadata_bytes().map_err(io::Error::other)?;
-            (Arc::new(factory), metadata)
-        };
+        let factory = PagedNormalStorageFactory::new(
+            storage.directory(),
+            layouts,
+            normal_retentions.into_boxed_slice(),
+            metrics.clone(),
+            false,
+        );
+        let normal_metadata = factory.owned_metadata_bytes().map_err(io::Error::other)?;
+        let normal: Arc<dyn NormalStorageFactory> = Arc::new(factory);
         retained_bytes = add(
             retained_bytes,
             model.owned_metadata_bytes().map_err(io::Error::other)?,
@@ -1078,5 +1026,19 @@ mod managed_cache_tests {
         eprintln!("review2_cache_formula minimum_bytes={minimum} full_bytes={full}");
         assert!(minimum < full);
         assert!(minimum < 16 << 30);
+    }
+
+    #[test]
+    fn large_spatial_working_plane_does_not_require_channel_count_payload_residency() {
+        let directory = std::path::Path::new("cube");
+        let (short_floor, short_full) =
+            CubeStatePlan::managed_cache_limits_for_shape(directory, 2048, 2048, 64, 4).unwrap();
+        let (long_floor, long_full) =
+            CubeStatePlan::managed_cache_limits_for_shape(directory, 2048, 2048, 2048, 4).unwrap();
+        let plane_bytes = 2048 * 2048 * size_of::<f32>();
+        assert!(short_floor >= 4 * plane_bytes);
+        assert!(long_floor < short_floor + 32 * plane_bytes);
+        assert!(long_full > short_full * 16);
+        assert!(long_floor < 16 << 30);
     }
 }

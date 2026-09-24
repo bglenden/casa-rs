@@ -3,7 +3,7 @@
 //! Clark's compact active pixels and linear residual refreshes.
 
 use ndarray::Array2;
-use num_complex::Complex64;
+use num_complex::{Complex32, Complex64};
 
 use super::{ClarkApproximation, MinorCycleError};
 use crate::spectral_operator::{PreparedFft, fft_resident_complex_values_for_shape};
@@ -16,9 +16,9 @@ pub(super) struct ClarkActivePixel {
 struct LinearRefresh {
     shape: [usize; 2],
     padded: [usize; 2],
-    psf_spectrum: Array2<Complex64>,
-    components: Array2<Complex64>,
-    fft: PreparedFft,
+    psf_spectrum: Array2<Complex32>,
+    components: Array2<Complex32>,
+    fft: PreparedFft<f32>,
 }
 
 impl LinearRefresh {
@@ -36,18 +36,20 @@ impl LinearRefresh {
                 .ok_or(MinorCycleError::ModelShapeMismatch)?,
         ];
         let mut fft = PreparedFft::new(padded, fft_resident_complex_values_for_shape(padded)?)?;
-        let mut psf_spectrum = Array2::from_elem((padded[0], padded[1]), Complex64::new(0.0, 0.0));
+        let mut psf_spectrum = Array2::from_elem((padded[0], padded[1]), Complex32::default());
         for x in 0..shape[0] {
             for y in 0..shape[1] {
                 let offset = [
                     (x + padded[0] - center[0]) % padded[0],
                     (y + padded[1] - center[1]) % padded[1],
                 ];
-                psf_spectrum[(offset[0], offset[1])] = psf[x * shape[1] + y];
+                let value = psf[x * shape[1] + y];
+                psf_spectrum[(offset[0], offset[1])] =
+                    Complex32::new(value.re as f32, value.im as f32);
             }
         }
         fft.transform_unshifted(&mut psf_spectrum, false);
-        let components = Array2::from_elem((padded[0], padded[1]), Complex64::new(0.0, 0.0));
+        let components = Array2::from_elem((padded[0], padded[1]), Complex32::default());
         Ok(Self {
             shape,
             padded,
@@ -59,7 +61,7 @@ impl LinearRefresh {
 
     fn add(&mut self, index: usize, flux: f64) {
         let pixel = [index / self.shape[1], index % self.shape[1]];
-        self.components[(pixel[0], pixel[1])].re += flux;
+        self.components[(pixel[0], pixel[1])].re += flux as f32;
     }
 
     fn refresh(&mut self, residual: &mut [f64]) -> Result<(), MinorCycleError> {
@@ -72,13 +74,13 @@ impl LinearRefresh {
         for x in 0..self.shape[0] {
             for y in 0..self.shape[1] {
                 let index = x * self.shape[1] + y;
-                residual[index] -= self.components[(x, y)].re / normalization;
+                residual[index] -= f64::from(self.components[(x, y)].re) / normalization;
                 if !residual[index].is_finite() {
                     return Err(MinorCycleError::GeneratedNonfinite);
                 }
             }
         }
-        self.components.fill(Complex64::new(0.0, 0.0));
+        self.components.fill(Complex32::default());
         Ok(())
     }
 }
@@ -296,5 +298,60 @@ impl ClarkWorkState {
 
     pub(super) fn stopped_at_subcycle_bound(&self) -> bool {
         self.subcycles >= 10 && self.max_residual > self.threshold
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compact_refresh_matches_linear_asymmetric_psf_at_edges_and_off_center() {
+        for (shape, center) in [
+            ([4, 6], [2, 3]),
+            ([5, 7], [2, 3]),
+            ([6, 5], [1, 3]),
+            ([5, 4], [0, 1]),
+        ] {
+            let psf = (0..shape[0] * shape[1])
+                .map(|index| {
+                    let x = index / shape[1];
+                    let y = index % shape[1];
+                    Complex64::new((x as f64 * 0.17 + y as f64 * 0.11).sin(), 0.0)
+                })
+                .collect::<Vec<_>>();
+            let mut refresh = LinearRefresh::new(&psf, shape, center).unwrap();
+            let components = [
+                (0, 0, 0.75),
+                (shape[0] - 1, shape[1] - 1, -0.375),
+                (shape[0] / 2, 1, 0.125),
+            ];
+            let mut expected = vec![0.5; psf.len()];
+            for &(source_x, source_y, flux) in &components {
+                refresh.add(source_x * shape[1] + source_y, flux);
+                for x in 0..shape[0] {
+                    for y in 0..shape[1] {
+                        let psf_x = center[0] as isize + x as isize - source_x as isize;
+                        let psf_y = center[1] as isize + y as isize - source_y as isize;
+                        if psf_x >= 0
+                            && psf_x < shape[0] as isize
+                            && psf_y >= 0
+                            && psf_y < shape[1] as isize
+                        {
+                            expected[x * shape[1] + y] -=
+                                flux * psf[psf_x as usize * shape[1] + psf_y as usize].re;
+                        }
+                    }
+                }
+            }
+            let mut actual = vec![0.5; psf.len()];
+            refresh.refresh(&mut actual).unwrap();
+            for (&actual, &expected) in actual.iter().zip(&expected) {
+                assert!(
+                    (actual - expected).abs() < 1e-5,
+                    "shape={shape:?}, center={center:?}, actual={actual}, expected={expected}"
+                );
+            }
+        }
     }
 }

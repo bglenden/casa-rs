@@ -4,7 +4,6 @@
 
 mod execute;
 mod input;
-pub(crate) mod normal;
 mod phase;
 mod plan;
 mod prepare;

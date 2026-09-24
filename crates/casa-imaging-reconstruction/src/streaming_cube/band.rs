@@ -3,8 +3,8 @@
 //! Direct standard-gridder, natural-weight, Stokes-I cube band kernels.
 //!
 //! The input is borrowed channel-major/correlation-minor numeric arrays, with
-//! geometry once per row. Grids are contiguous [channel, x, y] Complex64 arrays;
-//! compensation is a separate, equally shaped allocation. Plane views neither
+//! geometry once per row. Grids are contiguous [channel, x, y] Complex32 arrays.
+//! Plane views neither
 //! allocate nor copy. The coarse epoch job loads bounded model planes before
 //! numerical work; payload elements carry no workflow or publication state.
 
@@ -16,14 +16,13 @@ use casa_imaging_model::{
 #[cfg(test)]
 use ndarray::ArrayView3;
 use ndarray::{Array3, ArrayView2, Axis, s};
-use num_complex::Complex64;
+use num_complex::{Complex32, Complex64};
 use smallvec::SmallVec;
 
 use super::input::{NativeBlock, NativeLayout};
 use crate::spectral_operator::{
     PreparedFft, SPEED_OF_LIGHT_M_PER_S, SpectralOperatorGeometry, SpectralOperatorPass,
-    StandardConvolution, append_image_plane, fft_resident_complex_values_for_shape,
-    polarization_diagonal,
+    StandardConvolution, fft_resident_complex_values_for_shape, polarization_diagonal,
 };
 use crate::spectral_sampling::{
     CasaLinearGrid, CasaLinearOutputGrid, CasaLinearRowCursor, CasaSingleChannel,
@@ -255,7 +254,7 @@ impl BandPlan {
     pub fn prepare<'a>(
         self,
         generation: &'a ModelGeneration,
-        fft: Option<PreparedFft>,
+        fft: Option<PreparedFft<f32>>,
     ) -> Result<EpochBand<'a>, SpectralOperatorError> {
         self.memory()?;
         let fft = match fft {
@@ -311,7 +310,7 @@ pub struct CubeResidual {
     pub(crate) core: Range<usize>,
     pub(crate) total_channels: usize,
     pub(crate) model: ModelGenerationId,
-    pub(crate) values: Box<[Complex64]>,
+    pub(crate) values: Box<[f32]>,
 }
 
 impl CubeResidual {
@@ -325,8 +324,8 @@ impl CubeResidual {
         self.model
     }
 
-    /// Borrow the generated complex values in channel/x/y order.
-    pub fn values(&self) -> &[Complex64] {
+    /// Borrow generated real Float values in channel/x/y order.
+    pub fn values(&self) -> &[f32] {
         &self.values
     }
 }
@@ -420,26 +419,31 @@ impl<'a> EpochBand<'a> {
     pub fn complete(
         self,
         expected: &ModelGeneration,
-    ) -> Result<(BandResult, PreparedFft), SpectralOperatorError> {
+    ) -> Result<(BandResult, PreparedFft<f32>), SpectralOperatorError> {
         if !std::ptr::eq(self.generation, expected) {
             return Err(SpectralOperatorError::ModelMismatch);
         }
         let channels = self.generation.shape().coefficients();
         let model = self.generation.generation_id();
+        if self.workspace.phase == BandPhase::Residual {
+            let shape = self.workspace.geometry.image_shape;
+            let core = self.workspace.core.clone();
+            let (values, fft) = self.workspace.finish_residual()?;
+            return Ok((
+                BandResult::Residual(CubeResidual {
+                    shape,
+                    core,
+                    total_channels: channels,
+                    model,
+                    values,
+                }),
+                fft,
+            ));
+        }
         let (images, fft) = self.workspace.finish_images()?;
-        let result = if images.phase == BandPhase::Residual {
-            BandResult::Residual(CubeResidual {
-                shape: images.shape,
-                core: images.core,
-                total_channels: channels,
-                model,
-                values: images.residual.into_boxed_slice(),
-            })
-        } else {
-            BandResult::Initial(SpectralOperatorPrimitives::from_cube_band(
-                images, channels, model,
-            )?)
-        };
+        let result = BandResult::Initial(SpectralOperatorPrimitives::from_cube_band(
+            images, channels, model,
+        )?);
         Ok((result, fft))
     }
 }
@@ -551,7 +555,7 @@ impl BandSupport {
 
 /// Borrowed compact native row, including a selected native-channel window.
 ///
-/// Values/weights retain Complex64/f64 precision, flags occupy one byte each.
+/// Values/weights retain native Float precision, flags occupy one byte each.
 /// `flags` have already applied finite-value/input acceptance; `weight_flags`
 /// are the native weight-group/parallel-hand/row flags used by nearest weight
 /// transfer. Keeping the latter distinct preserves CASA's endpoint behavior.
@@ -563,8 +567,8 @@ struct VisibilityRow<'a> {
     original_pair_hz: [f64; 2],
     channels: &'a [u32],
     frequencies_hz: &'a [f64],
-    values: ArrayView2<'a, Complex64>,
-    weights: ArrayView2<'a, f64>,
+    values: ArrayView2<'a, Complex32>,
+    weights: ArrayView2<'a, f32>,
     flags: ArrayView2<'a, bool>,
     weight_flags: ArrayView2<'a, bool>,
 }
@@ -664,17 +668,13 @@ struct BandWorkspace {
     core: Range<usize>,
     model_channels: Vec<usize>,
     convolution: StandardConvolution,
-    fft: PreparedFft,
-    forward: Array3<Complex64>,
+    fft: PreparedFft<f32>,
+    forward: Array3<Complex32>,
     forward_nonzero: Vec<bool>,
-    dirty: Array3<Complex64>,
-    dirty_error: Array3<Complex64>,
-    residual: Array3<Complex64>,
-    residual_error: Array3<Complex64>,
-    psf: Array3<Complex64>,
-    psf_error: Array3<Complex64>,
+    dirty: Array3<Complex32>,
+    residual: Array3<Complex32>,
+    psf: Array3<Complex32>,
     sum_weight: Vec<f64>,
-    sum_weight_error: Vec<f64>,
     mapped: Vec<u64>,
 }
 
@@ -683,7 +683,7 @@ impl BandWorkspace {
         geometry: SpectralOperatorGeometry,
         core: Range<usize>,
         model_channels: Vec<usize>,
-        fft: PreparedFft,
+        fft: PreparedFft<f32>,
         phase: BandPhase,
         single_channel: Option<CasaSingleChannel>,
     ) -> Self {
@@ -720,13 +720,9 @@ impl BandWorkspace {
                 shape.2,
             )),
             dirty: Array3::zeros(normal),
-            dirty_error: Array3::zeros(normal),
             residual: Array3::zeros(residual),
-            residual_error: Array3::zeros(residual),
             psf: Array3::zeros(normal),
-            psf_error: Array3::zeros(normal),
             sum_weight: vec![0.0; normal_planes],
-            sum_weight_error: vec![0.0; normal_planes],
             mapped: vec![0; normal_planes],
             convolution: StandardConvolution::new(&geometry),
             geometry,
@@ -760,16 +756,17 @@ impl BandWorkspace {
         value: impl Fn(usize, usize) -> Complex64,
     ) -> Result<bool, SpectralOperatorError> {
         let mut grid = self.forward.index_axis_mut(Axis(0), plane);
-        grid.fill(Complex64::default());
+        grid.fill(Complex32::default());
         let mut nonzero = false;
         for y in 0..self.geometry.image_shape[1] {
             for x in 0..self.geometry.image_shape[0] {
                 let corrected = value(x, y) * self.convolution.image_correction(x, y);
-                nonzero |= corrected != Complex64::default();
+                let prepared = Complex32::new(corrected.re as f32, corrected.im as f32);
+                nonzero |= prepared != Complex32::default();
                 grid[(
                     self.geometry.image_blc[0] + x,
                     self.geometry.image_blc[1] + y,
-                )] = corrected;
+                )] = prepared;
             }
         }
         self.forward_nonzero[plane] = nonzero;
@@ -786,7 +783,7 @@ impl BandWorkspace {
         Ok(true)
     }
 
-    fn finish_images(self) -> Result<(BandImages, PreparedFft), SpectralOperatorError> {
+    fn finish_images(self) -> Result<(BandImages, PreparedFft<f32>), SpectralOperatorError> {
         let Self {
             phase,
             geometry,
@@ -800,36 +797,26 @@ impl BandWorkspace {
             mapped,
             forward,
             forward_nonzero,
-            dirty_error,
-            residual_error,
-            psf_error,
             model_channels,
-            sum_weight_error,
             single_channel: _,
         } = self;
-        // Prediction and compensation are dead before image allocations begin.
-        drop((
-            forward,
-            forward_nonzero,
-            dirty_error,
-            residual_error,
-            psf_error,
-            model_channels,
-            sum_weight_error,
-        ));
-        let mut image = |mut grids: Array3<Complex64>| {
+        drop((forward, forward_nonzero, model_channels));
+        let mut image = |mut grids: Array3<Complex32>| {
             let mut values = Vec::with_capacity(
                 grids.len_of(Axis(0)) * geometry.image_shape[0] * geometry.image_shape[1],
             );
             for mut grid in grids.axis_iter_mut(Axis(0)) {
                 fft.transform(&mut grid, true);
-                append_image_plane(
-                    grid.view(),
-                    &geometry,
-                    &mut values,
-                    |x, y| convolution.image_correction(x, y),
-                    false,
-                )?;
+                for x in 0..geometry.image_shape[0] {
+                    for y in 0..geometry.image_shape[1] {
+                        let value = grid[(geometry.image_blc[0] + x, geometry.image_blc[1] + y)];
+                        let corrected = widen(value) * convolution.image_correction(x, y);
+                        if !corrected.re.is_finite() || !corrected.im.is_finite() {
+                            return Err(SpectralOperatorError::GeneratedNonfinite);
+                        }
+                        values.push(corrected);
+                    }
+                }
             }
             Ok::<_, SpectralOperatorError>(values)
         };
@@ -849,6 +836,34 @@ impl BandWorkspace {
             },
             fft,
         ))
+    }
+
+    fn finish_residual(self) -> Result<(Box<[f32]>, PreparedFft<f32>), SpectralOperatorError> {
+        let Self {
+            geometry,
+            convolution,
+            mut fft,
+            mut residual,
+            ..
+        } = self;
+        let mut values = Vec::with_capacity(
+            residual.len_of(Axis(0)) * geometry.image_shape[0] * geometry.image_shape[1],
+        );
+        for mut grid in residual.axis_iter_mut(Axis(0)) {
+            fft.transform(&mut grid, true);
+            for x in 0..geometry.image_shape[0] {
+                for y in 0..geometry.image_shape[1] {
+                    let value = grid[(geometry.image_blc[0] + x, geometry.image_blc[1] + y)];
+                    let corrected = widen(value) * convolution.image_correction(x, y);
+                    let real = corrected.re as f32;
+                    if !corrected.re.is_finite() || !corrected.im.is_finite() || !real.is_finite() {
+                        return Err(SpectralOperatorError::GeneratedNonfinite);
+                    }
+                    values.push(real);
+                }
+            }
+        }
+        Ok((values.into_boxed_slice(), fft))
     }
 
     fn predict_native(
@@ -893,10 +908,10 @@ impl BandWorkspace {
                 row.uvw_m[0] * wavelength_scale,
                 row.uvw_m[1] * wavelength_scale,
             ]) {
-                predicted += self
-                    .convolution
-                    .degrid(&self.forward.index_axis(Axis(0), plane), taps)
-                    * phase(row.phase_shift_m, frequency).conj()
+                predicted += widen(
+                    self.convolution
+                        .degrid_float(&self.forward.index_axis(Axis(0), plane), taps),
+                ) * phase(row.phase_shift_m, frequency).conj()
                     * term.factor();
             }
         }
@@ -958,38 +973,25 @@ impl BandWorkspace {
             return Ok(());
         };
         let rotation = phase(row.phase_shift_m, frequency_hz);
-        for (grid, error, value) in [
-            (
-                &mut self.dirty,
-                &mut self.dirty_error,
-                observed * rotation * weight,
-            ),
+        for (grid, value) in [
+            (&mut self.dirty, observed * rotation * weight),
             (
                 &mut self.residual,
-                &mut self.residual_error,
                 (observed - predicted) * rotation * weight,
             ),
-            (
-                &mut self.psf,
-                &mut self.psf_error,
-                Complex64::new(weight, 0.0),
-            ),
+            (&mut self.psf, Complex64::new(weight, 0.0)),
         ] {
             if grid.is_empty() {
                 continue;
             }
-            self.convolution.grid_compensated(
+            self.convolution.grid_float(
                 &mut grid.index_axis_mut(Axis(0), plane),
-                &mut error.index_axis_mut(Axis(0), plane),
                 taps,
-                value,
+                Complex32::new(value.re as f32, value.im as f32),
             );
         }
         if self.phase != BandPhase::Residual {
-            let increment = weight - self.sum_weight_error[plane];
-            let updated = self.sum_weight[plane] + increment;
-            self.sum_weight_error[plane] = (updated - self.sum_weight[plane]) - increment;
-            self.sum_weight[plane] = updated;
+            self.sum_weight[plane] += weight;
         }
         Ok(())
     }
@@ -1046,8 +1048,19 @@ impl BandWorkspace {
         for channel in single.native_window(row.frequencies_hz) {
             let frequency = row.frequencies_hz[channel];
             let predicted = self.predict_native(&row, frequency, output_hz, polarization)?;
-            let values = row.values.row(channel);
-            let weights = row.weights.row(channel);
+            let values = row
+                .values
+                .row(channel)
+                .iter()
+                .copied()
+                .map(widen)
+                .collect::<SmallVec<[Complex64; 4]>>();
+            let weights = row
+                .weights
+                .row(channel)
+                .iter()
+                .map(|&weight| f64::from(weight))
+                .collect::<SmallVec<[f64; 4]>>();
             let flags = row
                 .flags
                 .row(channel)
@@ -1055,13 +1068,8 @@ impl BandWorkspace {
                 .zip(row.weight_flags.row(channel))
                 .map(|(&flag, &weight_flag)| flag || weight_flag)
                 .collect::<SmallVec<[bool; 4]>>();
-            let (observed, predicted, weight) = polarized_sample(
-                polarization,
-                values.as_slice().expect("validated contiguous row"),
-                &predicted,
-                weights.as_slice().expect("validated contiguous row"),
-                &flags,
-            )?;
+            let (observed, predicted, weight) =
+                polarized_sample(polarization, &values, &predicted, &weights, &flags)?;
             self.grid_sample(0, frequency, &row, observed, predicted, weight)?;
         }
         Ok(())
@@ -1109,6 +1117,10 @@ fn phase(shift_m: f64, frequency_hz: f64) -> Complex64 {
         1.0,
         std::f64::consts::TAU * shift_m * frequency_hz / SPEED_OF_LIGHT_M_PER_S,
     )
+}
+
+fn widen(value: Complex32) -> Complex64 {
+    Complex64::new(f64::from(value.re), f64::from(value.im))
 }
 
 /// A row cursor survives chunk boundaries; only the previous prediction is
@@ -1163,8 +1175,8 @@ impl RowAccumulator<'_> {
                     let mut flags = SmallVec::<[bool; 4]>::new();
                     for correlation in 0..prediction.len() {
                         observed.push(interpolate_complex_pair(
-                            self.row.values[(channel - 1, correlation)],
-                            self.row.values[(channel, correlation)],
+                            widen(self.row.values[(channel - 1, correlation)]),
+                            widen(self.row.values[(channel, correlation)]),
                             fine.factors(),
                         ));
                         predicted.push(interpolate_complex_pair(
@@ -1172,7 +1184,7 @@ impl RowAccumulator<'_> {
                             prediction[correlation],
                             fine.factors(),
                         ));
-                        weights.push(self.row.weights[(nearest, correlation)]);
+                        weights.push(f64::from(self.row.weights[(nearest, correlation)]));
                         flags.push(
                             fine.linear_flag(
                                 self.row.flags[(channel - 1, correlation)],

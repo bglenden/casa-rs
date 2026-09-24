@@ -14,7 +14,7 @@ use std::mem::size_of;
 pub struct BandMemory {
     /// FFT construction, grid allocation and bounded model-plane loading.
     pub preparation_bytes: usize,
-    /// Grids, compensation, mapping, FFT and reused normal during row work.
+    /// Compact grids, mapping, FFT and reused normal during row work.
     pub accumulation_bytes: usize,
     /// Simultaneously live grids, images and normal-field construction.
     pub completion_bytes: usize,
@@ -55,11 +55,18 @@ impl BandPlan {
         let depth = self.core.len();
         let grid_cells = mul(self.geometry.grid_shape[0], self.geometry.grid_shape[1])?;
         let image_cells = mul(self.geometry.image_shape[0], self.geometry.image_shape[1])?;
-        let grid = mul(mul(depth, grid_cells)?, size_of::<Complex64>())?;
-        let image = mul(mul(depth, image_cells)?, size_of::<Complex64>())?;
+        let grid = mul(mul(depth, grid_cells)?, size_of::<Complex32>())?;
+        let image = mul(
+            mul(depth, image_cells)?,
+            if self.phase == BandPhase::Residual {
+                size_of::<f32>()
+            } else {
+                size_of::<Complex64>()
+            },
+        )?;
         let fft = mul(
             fft_resident_complex_values_for_shape(self.geometry.grid_shape)?,
-            size_of::<Complex64>(),
+            size_of::<Complex32>(),
         )?;
         let planning = mul(
             fft_planning_words_for_shape(self.geometry.grid_shape)?,
@@ -70,15 +77,15 @@ impl BandPlan {
         let normal = self.phase != BandPhase::Residual;
         let predicts = self.phase != BandPhase::InitialZero;
         let grid_count = match self.phase {
-            BandPhase::InitialZero => 4,
-            BandPhase::Full => 6,
-            BandPhase::Residual => 2,
+            BandPhase::InitialZero => 2,
+            BandPhase::Full => 3,
+            BandPhase::Residual => 1,
         };
-        let image_count = grid_count / 2;
+        let image_count = grid_count;
         let forward = if predicts {
             mul(
                 mul(self.support.model.len(), grid_cells)?,
-                size_of::<Complex64>(),
+                size_of::<Complex32>(),
             )?
         } else {
             0
@@ -89,7 +96,7 @@ impl BandPlan {
             0
         };
         let stats = if normal {
-            mul(depth, 2 * size_of::<f64>() + size_of::<u64>())?
+            mul(depth, size_of::<f64>() + size_of::<u64>())?
         } else {
             0
         };
@@ -114,7 +121,7 @@ impl BandPlan {
         let preparation_bytes = workspace
             .max(add(&[accumulation_bytes, model_window])?)
             .max(add(&[headers, support, fft, planning])?);
-        // Compensation/forward/support arrays are explicitly dropped first.
+        // Forward/support arrays are explicitly dropped first.
         // Each image allocation overlaps all not-yet-consumed grids and the
         // already completed images; a grid is dropped after its conversion.
         let completion_base = add(&[
@@ -143,7 +150,7 @@ impl BandPlan {
         } else {
             0
         };
-        let result_headers = size_of::<(BandResult, PreparedFft)>();
+        let result_headers = size_of::<(BandResult, PreparedFft<f32>)>();
         let retained_bytes = add(&[
             result_headers,
             fft,
