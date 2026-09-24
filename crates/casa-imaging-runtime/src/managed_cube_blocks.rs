@@ -52,6 +52,8 @@ struct ResidencyState {
     clock: u64,
     version: u64,
     admitting: bool,
+    next_block_id: BlockId,
+    next_backend_id: BackendId,
     entries: BTreeMap<BlockId, Entry>,
     backends: BTreeMap<BackendId, BackendEntry>,
 }
@@ -75,6 +77,8 @@ impl CubeResidency {
                 clock: 0,
                 version: 0,
                 admitting: false,
+                next_block_id: 0,
+                next_backend_id: 0,
                 entries: BTreeMap::new(),
                 backends: BTreeMap::new(),
             }),
@@ -112,7 +116,10 @@ impl CubeResidency {
         if staging_bytes > state.limit {
             return Err(invalid("one codec tile exceeds admitted resident capacity"));
         }
-        let id = state.backends.len();
+        let id = state.next_backend_id;
+        state.next_backend_id = id
+            .checked_add(1)
+            .ok_or_else(|| invalid("backend identity overflow"))?;
         state.backends.insert(
             id,
             BackendEntry {
@@ -140,7 +147,10 @@ impl CubeResidency {
                 "one pinned plane and its codec tile exceed admitted capacity",
             ));
         }
-        let id = state.entries.len();
+        let id = state.next_block_id;
+        state.next_block_id = id
+            .checked_add(1)
+            .ok_or_else(|| invalid("block identity overflow"))?;
         state.entries.insert(
             id,
             Entry {
@@ -605,6 +615,7 @@ impl<T: LatticeElement + TilePixel> BlockIo for PlaneBlock<T> {
 pub(crate) struct ManagedPlaneArray<T: LatticeElement + TilePixel> {
     manager: Arc<CubeResidency>,
     blocks: Vec<(BlockId, Arc<PlaneBlock<T>>)>,
+    backend_id: BackendId,
     _backend: Arc<ArrayBackend<T>>,
 }
 
@@ -664,8 +675,54 @@ impl<T: LatticeElement + TilePixel> ManagedPlaneArray<T> {
         Ok(Self {
             manager,
             blocks,
+            backend_id,
             _backend: backend,
         })
+    }
+
+    /// Release a dead scientific owner without spilling its no-longer-needed
+    /// resident values. A live pin or backend close failure remains visible.
+    pub(crate) fn retire_dead(self) -> io::Result<()> {
+        let mut state = self.manager.state.lock().map_err(poison)?;
+        if state.admitting
+            || self
+                .blocks
+                .iter()
+                .any(|(id, _)| state.entries[id].pins != 0)
+        {
+            return Err(busy("cannot retire an active cube array"));
+        }
+        state.admitting = true;
+        let backend = state.backends[&self.backend_id].backend.clone();
+        let open = state.backends[&self.backend_id].open;
+        drop(state);
+        if open {
+            if let Err(error) = backend.close() {
+                let mut state = self.manager.state.lock().map_err(poison)?;
+                state.admitting = false;
+                state.version += 1;
+                self.manager.wake.notify_all();
+                return Err(error);
+            }
+        }
+        let mut state = self.manager.state.lock().map_err(poison)?;
+        for (id, _) in &self.blocks {
+            let entry = state.entries.remove(id).expect("registered cube block");
+            if entry.resident {
+                state.used -= entry.bytes;
+            }
+        }
+        let retired = state
+            .backends
+            .remove(&self.backend_id)
+            .expect("registered cube backend");
+        if retired.open {
+            state.used -= retired.staging_bytes;
+        }
+        state.admitting = false;
+        state.version += 1;
+        self.manager.wake.notify_all();
+        Ok(())
     }
 
     pub(crate) fn request(&self, index: usize, write: bool) -> io::Result<BlockRequest> {
@@ -1040,6 +1097,33 @@ mod tests {
             drop(first);
             worker.join().unwrap();
         });
+    }
+
+    #[test]
+    fn dead_owner_retires_payload_backend_and_registry_capacity() {
+        let root = tempfile::tempdir().unwrap();
+        let manager = CubeResidency::new(32).unwrap();
+        let array =
+            ManagedPlaneArray::<f32>::create(manager.clone(), root.path(), 2, 2, 1, Some(0.0))
+                .unwrap();
+        let pins = manager
+            .admit(&[array.request(0, true).unwrap()], 0)
+            .unwrap();
+        let mut window = array.write(&pins, 0, 0..4).unwrap();
+        window.copy_from_slice(&[1.0, 2.0, 3.0, 4.0]);
+        window.finish();
+        drop(pins);
+        assert_eq!(manager.used_bytes(), 32);
+        array.retire_dead().unwrap();
+        assert_eq!(manager.used_bytes(), 0);
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+        let replacement =
+            ManagedPlaneArray::<f32>::create(manager.clone(), root.path(), 2, 2, 1, Some(0.0))
+                .unwrap();
+        let pins = manager
+            .admit(&[replacement.request(0, false).unwrap()], 0)
+            .unwrap();
+        assert_eq!(&*replacement.read(&pins, 0, 0..4).unwrap(), &[0.0; 4]);
     }
 
     #[test]
