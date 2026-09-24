@@ -12,13 +12,17 @@ use casa_numerics::solve_symmetric_ldlt_casacore_dynamic;
 use crate::AnalyticPrimaryBeamModel;
 use crate::beam::{RestoringBeam, fit_restoring_beam};
 use crate::error::ProductsError;
-use crate::restore::{MosaicSensitivity, fft_convolve, gaussian_beam_image, normalize_plane};
+use crate::restore::{
+    MosaicSensitivity, fft_convolve, gaussian_beam_image, normalize_plane, normalized_psf_value,
+    psf_peak,
+};
 use crate::source::ContinuumProductInputs;
 use casa_numerics::AnnularApertureVoltageTable;
 
 pub(crate) struct TaylorProducts {
     shape: [usize; 2],
     psf: Vec<Vec<f32>>,
+    principal_psf_peak: f32,
     residual: Vec<Vec<f32>>,
     model: Vec<Vec<f32>>,
     restored: Vec<Vec<f32>>,
@@ -507,10 +511,12 @@ impl TaylorProducts {
         };
         let clean_mask =
             crate::generation::reconstruction_support_plane(inputs, domain_role, cells)?;
+        let principal_psf_peak = psf_peak(psf[0].iter().copied())?;
 
         Ok(Self {
             shape,
             psf,
+            principal_psf_peak,
             residual,
             model,
             restored,
@@ -551,7 +557,20 @@ impl TaylorProducts {
             }),
         };
         match role {
-            ProductRole::Psf(value) => self.psf.get(term(value)?),
+            ProductRole::Psf(value) => {
+                // Keep the solver/restoration Hessian's sum-weight normalization.
+                // Fuse publication-only peak normalization into the payload copy.
+                return self
+                    .psf
+                    .get(term(value)?)
+                    .map(|values| {
+                        values
+                            .iter()
+                            .map(|value| normalized_psf_value(*value, self.principal_psf_peak))
+                            .collect()
+                    })
+                    .ok_or(ProductsError::SourceLineageMismatch);
+            }
             ProductRole::Residual(value) => self.residual.get(term(value)?),
             ProductRole::Model(value) => self.model.get(term(value)?),
             ProductRole::RestoredImage(value) => self.restored.get(term(value)?),
@@ -657,16 +676,37 @@ pub(crate) fn analytic_evla_primary_beam(
         .ok_or(ProductsError::UnsupportedProblem)?;
     let coefficients = nearest_evla_common_coefficients(frequency_hz * 1.0e-6)
         .ok_or(ProductsError::UnsupportedProblem)?;
+    Ok(evla_common_power_plane(
+        shape,
+        reference_pixel,
+        increment_rad,
+        frequency_hz,
+        coefficients,
+    ))
+}
+
+fn evla_common_power_plane(
+    shape: [usize; 2],
+    reference_pixel: [f64; 2],
+    increment_rad: [f64; 2],
+    frequency_hz: f64,
+    coefficients: [f64; 4],
+) -> Vec<f32> {
     let mut values = vec![0.0; shape[0] * shape[1]];
+    let increment_deg = increment_rad.map(f64::to_degrees);
+    let frequency_factor = 60.0 * frequency_hz / 1.0e9;
     for x in 0..shape[0] {
+        let rx2 = ((x as f64 - reference_pixel[0]) * increment_deg[0]).powi(2) as f32;
         for y in 0..shape[1] {
-            let longitude = (x as f64 - reference_pixel[0]) * increment_rad[0];
-            let latitude = (y as f64 - reference_pixel[1]) * increment_rad[1];
+            let ry2 = ((y as f64 - reference_pixel[1]) * increment_deg[1]).powi(2) as f32;
+            // PBMath1D::apply stores squared degree offsets and scaled radius
+            // as Float. Rounding before the table lookup matters at bin edges.
+            let radius_arcmin_ghz = (f64::from((rx2 + ry2).sqrt()) * frequency_factor) as f32;
             values[x * shape[1] + y] =
-                evla_common_power_pattern(longitude.hypot(latitude), frequency_hz, coefficients);
+                evla_common_power_pattern(f64::from(radius_arcmin_ghz), coefficients);
         }
     }
-    Ok(values)
+    values
 }
 
 pub(crate) fn analytic_vla_primary_beam(
@@ -759,20 +799,12 @@ fn annular_aperture_power_plane(
     values
 }
 
-fn evla_common_power_pattern(radius_rad: f64, frequency_hz: f64, coefficients: [f64; 4]) -> f32 {
-    if !(radius_rad.is_finite()
-        && radius_rad >= 0.0
-        && frequency_hz.is_finite()
-        && frequency_hz > 0.0)
-    {
+fn evla_common_power_pattern(radius_arcmin_ghz: f64, coefficients: [f64; 4]) -> f32 {
+    if !(radius_arcmin_ghz.is_finite() && (0.0..=58.0).contains(&radius_arcmin_ghz)) {
         return 0.0;
     }
     // CASA PBMath1DEVLA::nearestVPArray(), PBMath1DPoly::fillPBArray(), and
     // PBMath1D::apply() use 10,000 samples and integer-truncated radial lookup.
-    let radius_arcmin_ghz = radius_rad.to_degrees() * 60.0 * (frequency_hz / 1.0e9);
-    if radius_arcmin_ghz > 58.0 {
-        return 0.0;
-    }
     let inverse_increment_radius = 9_999.0 / 58.0;
     let sample_index = (radius_arcmin_ghz * inverse_increment_radius).floor();
     let sampled_radius_arcmin_ghz = sample_index / inverse_increment_radius;
@@ -786,7 +818,9 @@ fn evla_common_power_pattern(radius_rad: f64, frequency_hz: f64, coefficients: [
     if response <= 0.0 {
         0.0
     } else {
-        response as f32
+        // CASA stores the voltage table as Complex<Float>, then squares it.
+        let voltage = response.sqrt() as f32;
+        voltage * voltage
     }
 }
 
@@ -848,7 +882,8 @@ fn nearest_evla_common_coefficients(frequency_mhz: f64) -> Option<[f64; 4]> {
     let mut best_delta_mhz = f64::INFINITY;
     for &(candidate_frequency_mhz, candidate_coefficients) in coefficients {
         let delta_mhz = (frequency_mhz - candidate_frequency_mhz).abs();
-        if delta_mhz < best_delta_mhz {
+        // CASA PBMath1DEVLA::nearestVPArray chooses the upper entry on a tie.
+        if delta_mhz <= best_delta_mhz {
             best_delta_mhz = delta_mhz;
             best = candidate_coefficients;
         }
@@ -957,6 +992,36 @@ fn model_term(
 #[cfg(test)]
 mod tests {
     use casa_imaging_model::ProductNormalization;
+
+    #[test]
+    fn evla_coefficient_midpoints_choose_the_upper_frequency_like_casa() {
+        for table in [
+            super::EVLA_L_BAND_COEFFICIENTS,
+            super::EVLA_S_BAND_COEFFICIENTS,
+            super::EVLA_C_BAND_COEFFICIENTS,
+        ] {
+            for &(frequency, coefficients) in table {
+                assert_eq!(
+                    super::nearest_evla_common_coefficients(frequency),
+                    Some(coefficients)
+                );
+            }
+            for pair in table.windows(2) {
+                let midpoint = (pair[0].0 + pair[1].0) / 2.0;
+                for (frequency, expected) in [
+                    (midpoint - 0.001, pair[0].1),
+                    (midpoint, pair[1].1),
+                    (midpoint + 0.001, pair[1].1),
+                ] {
+                    assert_eq!(
+                        super::nearest_evla_common_coefficients(frequency),
+                        Some(expected),
+                        "frequency {frequency} MHz"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn vla_pb_channel_455_edge_matches_casa_support() {
@@ -1136,12 +1201,28 @@ mod tests {
         let inverse_increment = 9_999.0_f64 / 58.0;
         let sampled_radius_arcmin_ghz = sample_index / inverse_increment;
         let radius_arcmin_ghz = sampled_radius_arcmin_ghz + 0.75 / inverse_increment;
-        let radius_rad = (radius_arcmin_ghz / 60.0 / (frequency_hz / 1.0e9_f64)).to_radians();
         let x2 = sampled_radius_arcmin_ghz * sampled_radius_arcmin_ghz;
         let expected_power = 1.0 - 1.429e-3 * x2 + 7.52e-7 * x2.powi(2) - 1.47e-10 * x2.powi(3);
-        let actual = super::evla_common_power_pattern(radius_rad, frequency_hz, coefficients);
+        let actual = super::evla_common_power_pattern(radius_arcmin_ghz, coefficients);
         assert!((actual - expected_power as f32).abs() < 1.0e-7);
         assert!(super::nearest_evla_common_coefficients(850.0).is_none());
+    }
+
+    #[test]
+    fn evla_radial_bin_edges_use_casa_float_rounding_and_voltage_squared() {
+        let coefficients = super::nearest_evla_common_coefficients(6000.0).unwrap();
+        let cell = (0.05_f64 / 3600.0).to_radians();
+        // Measured CASA PBMath1D pixels (8,693), (8,890), (29,59) on the
+        // 4096-square 6-GHz pilot. Double-radius lookup picks adjacent bins.
+        for (offset, expected) in [
+            ([2040.0, 1355.0], 0.800_096_45_f32),
+            ([2040.0, 1158.0], 0.815_362_93_f32),
+            ([2019.0, 1989.0], 0.739_581_9_f32),
+        ] {
+            let actual =
+                super::evla_common_power_plane([1, 1], offset, [-cell, cell], 6.0e9, coefficients);
+            assert_eq!(actual, [expected]);
+        }
     }
 
     #[test]

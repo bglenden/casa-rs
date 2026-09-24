@@ -21,8 +21,8 @@ use crate::ProductStoragePlan;
 use crate::beam::{RestoringBeam, fit_restoring_beam};
 use crate::error::ProductsError;
 use crate::restore::{
-    MosaicSensitivity, fft_convolve, gaussian_beam_image, normalize_plane,
-    rescale_residual_to_beam, restore_model_plane,
+    MosaicSensitivity, fft_convolve, gaussian_beam_image, normalize_plane, normalized_psf_value,
+    psf_peak, rescale_residual_to_beam, restore_model_plane,
 };
 use crate::source::ContinuumProductInputs;
 use crate::storage::{ProductMemberWriter, ProductOutput};
@@ -32,7 +32,7 @@ use crate::taylor::{
 };
 
 /// Version of the native continuum product-algorithm catalog.
-pub const CONTINUUM_ALGORITHM_CATALOG_VERSION: u32 = 9;
+pub const CONTINUUM_ALGORITHM_CATALOG_VERSION: u32 = 10;
 
 /// Default main-lobe cutoff fraction for restoring-beam fitting.
 pub const DEFAULT_PSF_CUTOFF: f32 = casa_imaging_reconstruction::DEFAULT_PSF_FIT_CUTOFF;
@@ -893,6 +893,11 @@ fn produce_joint_members(
     if !normalization_weight.is_finite() || normalization_weight <= 0.0 {
         return Err(ProductsError::SourceLineageMismatch);
     }
+    let principal_psf_peak = psf_peak(
+        h00.normal_approximation()
+            .iter()
+            .map(|value| value.re as f32),
+    )?;
     let requires_beam = planned
         .members
         .iter()
@@ -927,7 +932,7 @@ fn produce_joint_members(
             shape,
             channels,
             continuum_terms,
-            normalization_weight,
+            principal_psf_peak,
             fitted_beam,
             restoring_beam,
         )?;
@@ -963,7 +968,7 @@ fn produce_joint_member(
     shape: [usize; 2],
     channels: usize,
     continuum_terms: usize,
-    normalization_weight: f64,
+    principal_psf_peak: f32,
     fitted_beam: Option<RestoringBeam>,
     restoring_beam: Option<RestoringBeam>,
 ) -> Result<(Vec<f32>, Vec<bool>), ProductsError> {
@@ -976,17 +981,11 @@ fn produce_joint_member(
             let block = normal
                 .normal_block(row, column)
                 .ok_or(ProductsError::SourceLineageMismatch)?;
-            payload = normalize_plane(
-                &block
-                    .normal_approximation()
-                    .iter()
-                    .map(|value| value.re as f32)
-                    .collect::<Vec<_>>(),
-                member
-                    .normalization
-                    .unwrap_or(ProductNormalization::UnitResponse),
-                normalization_weight,
-            )?;
+            payload = block
+                .normal_approximation()
+                .iter()
+                .map(|value| normalized_psf_value(value.re as f32, principal_psf_peak))
+                .collect();
         }
         ProductRole::SumWeights(ProductTerm::JointNormal { row, column }) => {
             let block = normal
@@ -1235,13 +1234,12 @@ fn produce_plane_member(
         ProductRole::Psf(casa_imaging_model::ProductTerm::Single)
         | ProductRole::Psf(casa_imaging_model::ProductTerm::Taylor(0)) => {
             if valid {
-                normalize_domain_plane(
-                    &psf_real_plane(plane)?,
-                    member
-                        .normalization
-                        .unwrap_or(ProductNormalization::UnitResponse),
-                    plane,
-                )
+                let mut values = psf_real_plane(plane)?;
+                let peak = psf_peak(values.iter().copied())?;
+                for value in &mut values {
+                    *value = normalized_psf_value(*value, peak);
+                }
+                Ok(values)
             } else {
                 Ok(vec![0.0; cells])
             }

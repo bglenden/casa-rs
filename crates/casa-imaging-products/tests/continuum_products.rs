@@ -1106,16 +1106,19 @@ fn direct_generation_writes_the_exact_member_set_once() {
         .expect("psf member")
         .payload();
     let sensitivity = round.join.normal_state().sum_weight();
-    let expected_psf = round
+    let raw_psf = round
         .join
         .normal_state()
         .read_window(0..1)
         .expect("single-plane continuum fixture window")
         .normal_approximation()
         .iter()
-        .map(|value| value.re as f32 / sensitivity as f32)
+        .map(|value| value.re as f32)
         .collect::<Vec<_>>();
+    let peak = raw_psf.iter().copied().fold(0.0_f32, f32::max);
+    let expected_psf = raw_psf.iter().map(|value| value / peak).collect::<Vec<_>>();
     assert_eq!(psf_payload, expected_psf);
+    assert_eq!(psf_payload.iter().copied().fold(0.0_f32, f32::max), 1.0);
 
     let sumwt_index = collected
         .members()
@@ -1295,11 +1298,16 @@ fn two_domain_members_consume_their_matching_normal_and_model_chart() {
             })
             .expect("domain PSF member");
         let sum_weight = domain.sum_weights()[0] as f32;
+        let peak = domain
+            .normal_approximation()
+            .iter()
+            .map(|value| value.re as f32)
+            .fold(0.0_f32, f32::max);
         let expected_psf = if sum_weight.is_finite() && sum_weight > 0.0 {
             domain
                 .normal_approximation()
                 .iter()
-                .map(|value| value.re as f32 / sum_weight)
+                .map(|value| value.re as f32 / peak)
                 .collect::<Vec<_>>()
         } else {
             vec![0.0; expected_shape[0] * expected_shape[1]]

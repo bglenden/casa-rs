@@ -1,7 +1,7 @@
 # Agent Operating Contract
 
 Truth class: normative
-Last reality check: 2026-09-07
+Last reality check: 2026-09-24
 Verification: just docs-check
 
 ## Purpose
@@ -44,6 +44,25 @@ set `CARGO_INCREMENTAL=0`.
 
 ## Engineering Direction
 
+- **Performance and numerical agreement (owner direction, 2026-09-24):**
+  Minimize runtime and peak memory rather than paying for optional bookkeeping,
+  bitwise reproducibility, or slightly closer numerical agreement beyond the
+  scientific acceptance requirement. Do not retain exact/order-independent
+  accumulators, compensation buffers, extra passes or copies solely to make
+  different worker counts, reduction orders or compiler optimizations produce
+  identical floating-point bits. Such differences are normal. Extra precision
+  or compensation must have a demonstrated accuracy need, not a nicety.
+  This supersedes older bitwise floating-output requirements; replace affected
+  tests with scientific tolerance checks, not weaker or missing coverage.
+  Preserve the standard scientific algorithm and semantics (normally CASA)
+  and approximately 1e-3 normalized agreement, using the established comparison
+  metric and retaining any stricter existing scientific checks. This is the
+  conservative interpretation of the owner's "10E-3", not permission for 1%.
+  Discuss actual scientific algorithm changes or relaxation of that agreement
+  with the user before proceeding. Equivalent implementations and ordinary
+  rounding changes within acceptance do not require such discussion. Required
+  shape, mask, metadata, ownership, bounded-memory, I/O and persistence checks
+  remain; this does not authorize removing correctness guarantees.
 - ADR-0014 forbids production product-content hashing or full-array rereads
   solely to authorize publication from trusted in-process generation. Use
   bounded ownership transfer to the CASA-compatible writer, preserving shape,

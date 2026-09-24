@@ -835,6 +835,38 @@ fn t46_joint_products_publish_one_lineage_without_component_residuals() {
     let window = normal
         .read_window(normal.slab().core_range())
         .expect("coupled joint fixture window");
+    let principal_peak = window
+        .normal_block(0, 0)
+        .unwrap()
+        .normal_approximation()
+        .iter()
+        .map(|value| value.re as f32)
+        .fold(0.0_f32, f32::max);
+    for row in 0..2 {
+        for column in 0..2 {
+            let psf = member(&generated, &format!(".psf.joint{row}_{column}"));
+            let expected = window
+                .normal_block(row, column)
+                .unwrap()
+                .normal_approximation()
+                .iter()
+                .map(|value| value.re as f32 / principal_peak)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                psf.payload(),
+                expected,
+                "shared principal joint PSF normalization"
+            );
+        }
+    }
+    assert_eq!(
+        member(&generated, ".psf.joint0_0")
+            .payload()
+            .iter()
+            .copied()
+            .fold(0.0_f32, f32::max),
+        1.0
+    );
     let mut expected_residual = (0..2)
         .flat_map(|channel| {
             let weight = join.normal_state().channel_sum_weights()[channel];
@@ -974,6 +1006,13 @@ fn t44_taylor_families_preserve_raw_state_and_share_one_restoring_beam() {
         .read_window(normal.slab().core_range())
         .expect("coupled Taylor fixture window");
     let principal_weight = window.normal_moment(0).expect("moment zero").sum_weight();
+    let principal_peak = window
+        .normal_moment(0)
+        .unwrap()
+        .normal_approximation()
+        .iter()
+        .map(|value| value.re as f32 / principal_weight as f32)
+        .fold(0.0_f32, f32::max);
     for term in 0..3 {
         let psf = member(&generated, &format!(".psf.tt{term}"));
         let sumwt = member(&generated, &format!(".sumwt.tt{term}"));
@@ -982,9 +1021,21 @@ fn t44_taylor_families_preserve_raw_state_and_share_one_restoring_beam() {
         let moment = window.normal_moment(term).expect("normal moment");
         assert_eq!(sumwt.payload(), &[moment.sum_weight() as f32]);
         for (actual, raw) in psf.payload().iter().zip(moment.normal_approximation()) {
-            assert_close(*actual, (raw.re / principal_weight) as f32, "Taylor PSF");
+            assert_eq!(
+                *actual,
+                (raw.re as f32 / principal_weight as f32) / principal_peak,
+                "shared principal Taylor PSF normalization"
+            );
         }
     }
+    assert_eq!(
+        member(&generated, ".psf.tt0")
+            .payload()
+            .iter()
+            .copied()
+            .fold(0.0_f32, f32::max),
+        1.0
+    );
     for term in 0..TERMS {
         let raw = window
             .coefficient_term(term)

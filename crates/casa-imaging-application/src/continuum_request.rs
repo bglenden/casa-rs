@@ -1544,27 +1544,28 @@ fn prepare(
         increment_hz: prepared_spectral.increment_hz,
         rest_frequency_hz: prepared_spectral.image_rest_frequency_hz,
     };
-    let observation_id = if selected_observation_ids.len() == 1 {
-        usize::try_from(
-            *selected_observation_ids
-                .first()
-                .expect("one selected observation identifier"),
-        )
-        .map_err(|_| boxed("selected OBSERVATION_ID is negative"))?
-    } else {
-        return Err(boxed(format!(
-            "image observation metadata requires one selected OBSERVATION_ID; found {selected_observation_ids:?}"
-        )));
-    };
     let observation = ms.observation()?;
-    let (telescope_name, observer) = if observation_id < observation.row_count() {
-        (
-            observation.string(observation_id, "TELESCOPE_NAME")?,
-            observation.string(observation_id, "OBSERVER")?,
-        )
-    } else {
-        (String::new(), String::new())
-    };
+    let mut observation_labels = BTreeSet::new();
+    for id in &selected_observation_ids {
+        let id = usize::try_from(*id).map_err(|_| boxed("selected OBSERVATION_ID is negative"))?;
+        let labels = if id < observation.row_count() {
+            (
+                observation.string(id, "TELESCOPE_NAME")?,
+                observation.string(id, "OBSERVER")?,
+            )
+        } else {
+            (String::new(), String::new())
+        };
+        observation_labels.insert(labels);
+    }
+    if observation_labels.len() != 1 {
+        return Err(boxed(format!(
+            "image observation metadata requires consistent telescope and observer labels for selected OBSERVATION_IDs {selected_observation_ids:?}; found {observation_labels:?}"
+        )));
+    }
+    let (telescope_name, observer) = observation_labels
+        .pop_first()
+        .expect("one consistent selected observation label pair");
     // ObsInfo::toRecord uses MVDirection::get, preserving the signed atan2
     // endpoint rather than mapping an exactly positive pi to negative pi.
     let [pointing_x, pointing_y, _] = image_centre.cosines();
@@ -3545,6 +3546,7 @@ fn boxed(message: impl Into<String>) -> crate::ApplicationError {
 
 #[cfg(test)]
 mod tests {
+    mod mfs_memory_probe;
     #[cfg(unix)]
     mod source_bind_probe;
 

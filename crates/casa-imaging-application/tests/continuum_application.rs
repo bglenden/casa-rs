@@ -93,6 +93,9 @@ mod t55_real_cube;
 #[path = "continuum_application/t55_c_array_turnaround.rs"]
 mod t55_c_array_turnaround;
 
+#[path = "continuum_application/t55_mfs_pilot.rs"]
+mod t55_mfs_pilot;
+
 #[test]
 fn unsupported_primary_beam_frequency_rejects_before_execution_receipts() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
@@ -152,6 +155,60 @@ fn image_pointing_center_preserves_casa_positive_pi_longitude() {
     );
 }
 
+#[test]
+fn image_observation_metadata_accepts_matching_labels_across_observations() {
+    let _execution_guard = EXECUTION_LOCK.lock().unwrap();
+    set_production_io_environment();
+    for (second_telescope, second_observer, accepted) in [
+        ("EVLA", "casa-rs-test", true),
+        ("VLA", "casa-rs-test", false),
+        ("EVLA", "another-observer", false),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let path = four_spw_vla_measurement_set(root.path());
+        let mut ms = MeasurementSet::open(&path).unwrap();
+        ms.subtable_mut(SubtableId::Observation)
+            .unwrap()
+            .add_row(required_row(
+                schema::observation::REQUIRED_COLUMNS,
+                &[
+                    ("TELESCOPE_NAME", string(second_telescope)),
+                    ("OBSERVER", string(second_observer)),
+                ],
+            ))
+            .unwrap();
+        // Selected DDID 0 rows include both observations, with distinct times.
+        for row in 12..ms.row_count() {
+            ms.main_table_mut()
+                .row_accessor_mut()
+                .set_cell(row, "OBSERVATION_ID", int(1))
+                .unwrap();
+        }
+        ms.save().unwrap();
+        drop(ms);
+        let prefix = root.path().join("joint-observation");
+        let result = execute_continuum(request(path, prefix.clone(), ContinuumAlgorithm::Dirty));
+        if accepted {
+            let result = result.unwrap_or_else(|error| panic!("joint observation: {error}"));
+            assert_dirty_products(&prefix, &result.product_names);
+            let image =
+                PagedImage::<f32>::open(root.path().join("joint-observation.image")).unwrap();
+            assert_eq!(image.coordinates().obs_info().telescope, "EVLA");
+            assert_eq!(image.coordinates().obs_info().observer, "casa-rs-test");
+        } else {
+            let error = result
+                .err()
+                .expect("conflicting image metadata must reject");
+            assert!(
+                error
+                    .to_string()
+                    .contains("consistent telescope and observer")
+            );
+            assert!(!root.path().join("joint-observation.image").exists());
+        }
+    }
+}
+
 fn assert_standard_products(image_name: &Path, product_names: &[String]) {
     assert_products(image_name, product_names, &PRODUCT_SUFFIXES);
 }
@@ -173,6 +230,30 @@ fn assert_products(image_name: &Path, product_names: &[String], suffixes: &[&str
             "missing CASA product directory {}",
             path.display()
         );
+        if matches!(*suffix, ".psf" | ".psf.tt0") {
+            assert_unit_psf_planes(&path);
+        }
+    }
+}
+
+fn assert_unit_psf_planes(path: &Path) {
+    let product = PagedImage::<f32>::open(path).expect("open principal PSF");
+    let shape = product.shape();
+    for channel in 0..shape[3] {
+        for polarization in 0..shape[2] {
+            let plane = product
+                .get_slice(&[0, 0, polarization, channel], &[shape[0], shape[1], 1, 1])
+                .expect("read PSF plane");
+            assert!(plane.iter().all(|value| value.is_finite()));
+            if plane.iter().any(|value| *value != 0.0) {
+                assert_eq!(
+                    plane.iter().copied().fold(f32::NEG_INFINITY, f32::max),
+                    1.0,
+                    "{} polarization {polarization} channel {channel}",
+                    path.display()
+                );
+            }
+        }
     }
 }
 
@@ -816,6 +897,7 @@ fn t51_zero_iteration_mtmfs_executes_dirty_taylor_basis_and_publishes_products()
     imaging.task_requirements = vec![TaskRequirement::AwProjection];
 
     let result = execute_continuum(imaging).expect("native zero-iteration MT-MFS execution");
+    assert_unit_psf_planes(&PathBuf::from(format!("{}.psf.tt0", image_name.display())));
     assert_eq!(result.minor_iterations, 0);
     assert_eq!(result.actual_minor_iterations, 0);
     assert!(result.minor_cycles.is_empty());
@@ -1832,6 +1914,7 @@ fn mtmfs_via_cube_executes_one_bounded_sixteen_channel_axis_from_four_spectral_w
     };
 
     let result = execute_continuum(imaging).expect("bounded multi-SPW MVC execution");
+    assert_unit_psf_planes(&PathBuf::from(format!("{}.psf.tt0", image_name.display())));
     assert_eq!(
         result.product_names,
         [
@@ -1916,6 +1999,13 @@ fn cube_common_beam_products_preserve_blank_pixels_and_casa_metadata_without_pb(
         assert_eq!(product.shape(), &[16, 16, 1, 4]);
     }
     assert_eq!(psf.units(), "");
+    for channel in 0..4 {
+        let plane = psf.get_slice(&[0, 0, 0, channel], &[16, 16, 1, 1]).unwrap();
+        assert_eq!(
+            plane.iter().copied().fold(0.0_f32, f32::max),
+            if channel == 0 { 0.0 } else { 1.0 }
+        );
+    }
     assert_eq!(residual.units(), "");
     assert_eq!(restored.units(), "Jy/beam");
 

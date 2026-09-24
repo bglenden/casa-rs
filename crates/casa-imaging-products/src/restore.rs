@@ -19,6 +19,21 @@ pub use casa_imaging_reconstruction::MosaicSensitivity;
 
 const FWHM_TO_SIGMA: f64 = 1.0 / 2.354_820_045_030_949_3;
 
+/// Publication uses the principal PSF's measured peak, not its sum weight.
+/// Coupled Taylor/joint terms must all use this same divisor.
+pub(crate) fn psf_peak(mut values: impl Iterator<Item = f32>) -> Result<f32, ProductsError> {
+    values.try_fold(0.0_f32, |peak, value| {
+        value
+            .is_finite()
+            .then_some(peak.max(value))
+            .ok_or(ProductsError::GeneratedNonfinite)
+    })
+}
+
+pub(crate) fn normalized_psf_value(value: f32, peak: f32) -> f32 {
+    if peak > 0.0 { value / peak } else { 0.0 }
+}
+
 /// Normalize one unnormalized plane to its compiled product normalization.
 ///
 /// `UnitResponse` and the currently supported scalar-response `FlatNoise`
@@ -303,6 +318,29 @@ fn shift_even(data: &mut Array2<Complex64>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn psf_normalization_is_exact_and_preserves_coupled_signed_terms() {
+        for amplitude in [f32::MIN_POSITIVE, 1.000_000_7, 12345.67] {
+            let principal = [-0.25 * amplitude, amplitude, 0.5 * amplitude];
+            let peak = psf_peak(principal.into_iter()).unwrap();
+            assert_eq!(peak, amplitude);
+            assert_eq!(
+                principal.map(|value| normalized_psf_value(value, peak)),
+                [-0.25, 1.0, 0.5]
+            );
+            let coupled = [-0.5 * amplitude, 0.25 * amplitude];
+            assert_eq!(
+                coupled.map(|value| normalized_psf_value(value, peak)),
+                [-0.5, 0.25]
+            );
+        }
+        let peak = psf_peak([0.0; 3].into_iter()).unwrap();
+        assert_eq!(normalized_psf_value(0.0, peak), 0.0);
+        for nonfinite in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert!(psf_peak([1.0, nonfinite].into_iter()).is_err());
+        }
+    }
 
     #[test]
     fn model_restoration_matches_fft_for_empty_sparse_and_dense_planes() {
