@@ -10800,6 +10800,7 @@ impl TiledFileIO {
                             }
                         }
                     }
+                    f.flush()?;
                 }
                 flat.data.clear();
                 flat.data.shrink_to_fit();

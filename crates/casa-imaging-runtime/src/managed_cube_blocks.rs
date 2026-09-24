@@ -35,7 +35,8 @@ struct Entry {
     backend: BackendId,
     bytes: usize,
     resident: bool,
-    pins: usize,
+    read_pins: usize,
+    write_pin: bool,
     next_use: u64,
     last_use: u64,
 }
@@ -92,14 +93,38 @@ impl CubeResidency {
         requests: &[BlockRequest],
         scratch_bytes: usize,
     ) -> io::Result<PinnedSet> {
+        self.admit_until(requests, scratch_bytes, || false)
+    }
+
+    /// A waiting operation observes the owning run's cancellation without
+    /// retaining partial pins or relying on another admission to wake it.
+    pub(crate) fn admit_until(
+        self: &Arc<Self>,
+        requests: &[BlockRequest],
+        scratch_bytes: usize,
+        cancelled: impl Fn() -> bool,
+    ) -> io::Result<PinnedSet> {
         loop {
+            if cancelled() {
+                return Err(io::Error::new(io::ErrorKind::Interrupted, "cube run cancelled"));
+            }
             let version = self.state.lock().map_err(poison)?.version;
             match self.try_admit(requests, scratch_bytes) {
                 Ok(pins) => return Ok(pins),
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                     let mut state = self.state.lock().map_err(poison)?;
                     while state.version == version {
-                        state = self.wake.wait(state).map_err(poison)?;
+                        if cancelled() {
+                            return Err(io::Error::new(
+                                io::ErrorKind::Interrupted,
+                                "cube run cancelled",
+                            ));
+                        }
+                        state = self
+                            .wake
+                            .wait_timeout(state, std::time::Duration::from_millis(50))
+                            .map_err(poison)?
+                            .0;
                     }
                 }
                 Err(error) => return Err(error),
@@ -158,7 +183,8 @@ impl CubeResidency {
                 backend,
                 bytes,
                 resident: false,
-                pins: 0,
+                read_pins: 0,
+                write_pin: false,
                 next_use: u64::MAX,
                 last_use: 0,
             },
@@ -190,7 +216,7 @@ impl CubeResidency {
             .entries
             .get(&id)
             .ok_or_else(|| invalid("unknown cube block"))?;
-        if entry.pins != 0 {
+        if entry.read_pins != 0 || entry.write_pin {
             return Err(busy("cannot evict a pinned cube block"));
         }
         if !entry.resident {
@@ -237,6 +263,9 @@ impl CubeResidency {
                 .entries
                 .get(&request.id)
                 .ok_or_else(|| invalid("unknown cube block"))?;
+            if entry.write_pin || request.write && entry.read_pins != 0 {
+                return Err(busy("conflicting cube operation is pinned"));
+            }
             minimum = minimum
                 .checked_add(entry.bytes)
                 .ok_or_else(|| invalid("operation byte count overflow"))?;
@@ -281,7 +310,9 @@ impl CubeResidency {
             let victim = state
                 .entries
                 .iter()
-                .filter(|(id, entry)| entry.resident && entry.pins == 0 && !ids.contains(id))
+                .filter(|(id, entry)| {
+                    entry.resident && entry.read_pins == 0 && !entry.write_pin && !ids.contains(id)
+                })
                 .max_by_key(|(id, entry)| {
                     (
                         entry.next_use,
@@ -357,11 +388,12 @@ impl CubeResidency {
             })
             .collect();
         for request in requests {
-            state
-                .entries
-                .get_mut(&request.id)
-                .expect("checked block")
-                .pins += 1;
+            let entry = state.entries.get_mut(&request.id).expect("checked block");
+            if request.write {
+                entry.write_pin = true;
+            } else {
+                entry.read_pins += 1;
+            }
         }
         for (id, _) in &to_open {
             let backend = state.backends.get_mut(id).expect("checked backend");
@@ -411,8 +443,13 @@ impl CubeResidency {
         state.version += 1;
         self.wake.notify_all();
         if let Err(error) = result {
-            for id in ids {
-                state.entries.get_mut(&id).expect("registered block").pins -= 1;
+            for request in requests {
+                let entry = state.entries.get_mut(&request.id).expect("registered block");
+                if request.write {
+                    entry.write_pin = false;
+                } else {
+                    entry.read_pins -= 1;
+                }
             }
             state.used -= scratch_bytes;
             return Err(error);
@@ -439,7 +476,10 @@ impl CubeResidency {
                     && state
                         .entries
                         .values()
-                        .all(|entry| entry.backend != **id || !entry.resident && entry.pins == 0)
+                        .all(|entry| {
+                            entry.backend != **id
+                                || !entry.resident && entry.read_pins == 0 && !entry.write_pin
+                        })
             })
             .map(|(id, backend)| (*id, backend.backend.clone(), backend.staging_bytes))
             .collect();
@@ -499,7 +539,11 @@ impl Drop for PinnedSet {
                 .entries
                 .get_mut(&request.id)
                 .expect("registered block");
-            entry.pins -= 1;
+            if request.write {
+                entry.write_pin = false;
+            } else {
+                entry.read_pins -= 1;
+            }
             entry.last_use = now;
         }
         state.version += 1;
@@ -539,7 +583,62 @@ struct PlaneState<T> {
     values: Option<Vec<T>>,
     dirty: bool,
     backed: bool,
-    initialized: Vec<Range<usize>>,
+    initialized: Coverage,
+}
+
+/// Fixed-capacity validity map: cancelled writes cannot grow bookkeeping or
+/// turn uninitialized cells back into default-filled cells on reload.
+struct Coverage {
+    words: Vec<u64>,
+}
+
+impl Coverage {
+    fn bytes(cells: usize) -> io::Result<usize> {
+        cells
+            .checked_add(63)
+            .map(|n| n / 64)
+            .and_then(|n| n.checked_mul(std::mem::size_of::<u64>()))
+            .ok_or_else(|| invalid("plane coverage size overflow"))
+    }
+
+    fn new(cells: usize, initialized: bool) -> io::Result<Self> {
+        let words = Self::bytes(cells)? / std::mem::size_of::<u64>();
+        Ok(Self {
+            words: vec![if initialized { u64::MAX } else { 0 }; words],
+        })
+    }
+
+    fn update(&mut self, range: &Range<usize>, valid: bool) {
+        if range.is_empty() {
+            return;
+        }
+        let first = range.start / 64;
+        let last = (range.end - 1) / 64;
+        for index in first..=last {
+            let low = if index == first { range.start % 64 } else { 0 };
+            let high = if index == last { (range.end - 1) % 64 + 1 } else { 64 };
+            let mask = (u64::MAX << low) & (u64::MAX >> (64 - high));
+            if valid {
+                self.words[index] |= mask;
+            } else {
+                self.words[index] &= !mask;
+            }
+        }
+    }
+
+    fn covers(&self, range: &Range<usize>) -> bool {
+        if range.is_empty() {
+            return true;
+        }
+        let first = range.start / 64;
+        let last = (range.end - 1) / 64;
+        (first..=last).all(|index| {
+            let low = if index == first { range.start % 64 } else { 0 };
+            let high = if index == last { (range.end - 1) % 64 + 1 } else { 64 };
+            let mask = (u64::MAX << low) & (u64::MAX >> (64 - high));
+            self.words[index] & mask == mask
+        })
+    }
 }
 
 struct PlaneBlock<T: LatticeElement + TilePixel> {
@@ -571,9 +670,6 @@ impl<T: LatticeElement + TilePixel> BlockIo for PlaneBlock<T> {
                     &mut values,
                 )
                 .map_err(other)?;
-        }
-        if self.fill.is_some() && state.initialized.is_empty() {
-            state.initialized.push(0..self.cells);
         }
         state.values = Some(values);
         Ok(())
@@ -665,7 +761,7 @@ impl<T: LatticeElement + TilePixel> ManagedPlaneArray<T> {
                         values: None,
                         dirty: false,
                         backed: false,
-                        initialized: Vec::new(),
+                        initialized: Coverage::new(cells, fill.is_some())?,
                     }),
                 });
                 let id = manager.register_block(block.clone(), backend_id, bytes)?;
@@ -683,45 +779,64 @@ impl<T: LatticeElement + TilePixel> ManagedPlaneArray<T> {
     /// Release a dead scientific owner without spilling its no-longer-needed
     /// resident values. A live pin or backend close failure remains visible.
     pub(crate) fn retire_dead(self) -> io::Result<()> {
-        let mut state = self.manager.state.lock().map_err(poison)?;
+        self.retire_dead_after_release(|| {})
+    }
+
+    fn retire_dead_after_release(self, after_release: impl FnOnce()) -> io::Result<()> {
+        let Self {
+            manager,
+            blocks,
+            backend_id,
+            _backend,
+        } = self;
+        let mut state = manager.state.lock().map_err(poison)?;
         if state.admitting
-            || self
-                .blocks
+            || blocks
                 .iter()
-                .any(|(id, _)| state.entries[id].pins != 0)
+                .any(|(id, _)| {
+                    let entry = &state.entries[id];
+                    entry.read_pins != 0 || entry.write_pin
+                })
         {
             return Err(busy("cannot retire an active cube array"));
         }
         state.admitting = true;
-        let backend = state.backends[&self.backend_id].backend.clone();
-        let open = state.backends[&self.backend_id].open;
+        let backend = state.backends[&backend_id].backend.clone();
+        let open = state.backends[&backend_id].open;
         drop(state);
         if open {
             if let Err(error) = backend.close() {
-                let mut state = self.manager.state.lock().map_err(poison)?;
+                let mut state = manager.state.lock().map_err(poison)?;
                 state.admitting = false;
                 state.version += 1;
-                self.manager.wake.notify_all();
+                manager.wake.notify_all();
                 return Err(error);
             }
         }
-        let mut state = self.manager.state.lock().map_err(poison)?;
-        for (id, _) in &self.blocks {
-            let entry = state.entries.remove(id).expect("registered cube block");
-            if entry.resident {
-                state.used -= entry.bytes;
-            }
-        }
-        let retired = state
-            .backends
-            .remove(&self.backend_id)
-            .expect("registered cube backend");
-        if retired.open {
-            state.used -= retired.staging_bytes;
-        }
+        let mut state = manager.state.lock().map_err(poison)?;
+        let retired_blocks: Vec<_> = blocks
+            .iter()
+            .map(|(id, _)| state.entries.remove(id).expect("registered cube block"))
+            .collect();
+        let retired = state.backends.remove(&backend_id).expect("registered cube backend");
+        let released = retired_blocks
+            .iter()
+            .filter(|entry| entry.resident)
+            .map(|entry| entry.bytes)
+            .sum::<usize>()
+            + if retired.open { retired.staging_bytes } else { 0 };
+        drop(state);
+        drop(retired_blocks);
+        drop(blocks);
+        drop(retired);
+        drop(backend);
+        drop(_backend);
+        after_release();
+        let mut state = manager.state.lock().map_err(poison)?;
+        state.used -= released;
         state.admitting = false;
         state.version += 1;
-        self.manager.wake.notify_all();
+        manager.wake.notify_all();
         Ok(())
     }
 
@@ -759,7 +874,7 @@ impl<T: LatticeElement + TilePixel> ManagedPlaneArray<T> {
             return Err(invalid("read is outside the pinned plane"));
         }
         let state = block.state.read().map_err(poison)?;
-        if !covers(&state.initialized, &range) {
+        if !state.initialized.covers(&range) {
             return Err(invalid("plane range read before generation"));
         }
         Ok(PlaneRead { state, range })
@@ -784,7 +899,7 @@ impl<T: LatticeElement + TilePixel> ManagedPlaneArray<T> {
         }
         let mut state = block.state.write().map_err(poison)?;
         state.dirty = true;
-        remove_range(&mut state.initialized, &range);
+        state.initialized.update(&range, false);
         Ok(PlaneWrite { state, range })
     }
 }
@@ -810,7 +925,7 @@ impl<T> PlaneWrite<'_, T> {
     /// Make this window readable after the owning kernel completed its write.
     /// Cancellation simply drops the guard, leaving the range uninitialized.
     pub(crate) fn finish(mut self) {
-        add_range(&mut self.state.initialized, self.range.clone());
+        self.state.initialized.update(&self.range, true);
     }
 }
 
@@ -825,45 +940,6 @@ impl<T> DerefMut for PlaneWrite<'_, T> {
     fn deref_mut(&mut self) -> &mut [T] {
         &mut self.state.values.as_mut().expect("pinned plane")[self.range.clone()]
     }
-}
-
-fn covers(ranges: &[Range<usize>], requested: &Range<usize>) -> bool {
-    requested.is_empty()
-        || ranges
-            .iter()
-            .any(|range| range.start <= requested.start && range.end >= requested.end)
-}
-
-fn add_range(ranges: &mut Vec<Range<usize>>, mut added: Range<usize>) {
-    let mut index = 0;
-    while index < ranges.len() {
-        if ranges[index].end < added.start || ranges[index].start > added.end {
-            index += 1;
-        } else {
-            added.start = added.start.min(ranges[index].start);
-            added.end = added.end.max(ranges[index].end);
-            ranges.remove(index);
-        }
-    }
-    ranges.push(added);
-    ranges.sort_by_key(|range| range.start);
-}
-
-fn remove_range(ranges: &mut Vec<Range<usize>>, removed: &Range<usize>) {
-    let mut retained = Vec::with_capacity(ranges.len() + 1);
-    for range in ranges.drain(..) {
-        if range.end <= removed.start || range.start >= removed.end {
-            retained.push(range);
-        } else {
-            if range.start < removed.start {
-                retained.push(range.start..removed.start);
-            }
-            if range.end > removed.end {
-                retained.push(removed.end..range.end);
-            }
-        }
-    }
-    *ranges = retained;
 }
 
 fn invalid(message: &str) -> io::Error {
@@ -1023,6 +1099,73 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_ranges_stay_uninitialized_after_spill_and_reload() {
+        let root = tempfile::tempdir().unwrap();
+        for fill in [Some(0.0), None] {
+            let manager = CubeResidency::new(32).unwrap();
+            let array =
+                ManagedPlaneArray::<f32>::create(manager.clone(), root.path(), 2, 2, 2, fill)
+                    .unwrap();
+            let pins = manager.try_admit(&[array.request(0, true).unwrap()], 0).unwrap();
+            let mut first = array.write(&pins, 0, 0..2).unwrap();
+            first.copy_from_slice(&[1.0, 2.0]);
+            first.finish();
+            let mut cancelled = array.write(&pins, 0, 2..4).unwrap();
+            cancelled[0] = 9.0;
+            drop(cancelled);
+            assert_eq!(&*array.read(&pins, 0, 0..2).unwrap(), &[1.0, 2.0]);
+            assert!(array.read(&pins, 0, 2..4).is_err());
+            drop(pins);
+            let pins = manager.try_admit(&[array.request(1, true).unwrap()], 0).unwrap();
+            drop(pins);
+            let pins = manager.try_admit(&[array.request(0, false).unwrap()], 0).unwrap();
+            assert_eq!(&*array.read(&pins, 0, 0..2).unwrap(), &[1.0, 2.0]);
+            assert!(array.read(&pins, 0, 2..4).is_err());
+            drop(pins);
+
+            let pins = manager.try_admit(&[array.request(0, true).unwrap()], 0).unwrap();
+            let whole = array.write(&pins, 0, 0..4).unwrap();
+            drop(whole);
+            drop(pins);
+            let pins = manager.try_admit(&[array.request(1, true).unwrap()], 0).unwrap();
+            drop(pins);
+            let pins = manager.try_admit(&[array.request(0, false).unwrap()], 0).unwrap();
+            assert!(array.read(&pins, 0, 0..4).is_err());
+        }
+    }
+
+    #[test]
+    fn opposite_order_write_sets_are_excluded_before_exposing_any_lock() {
+        let root = tempfile::tempdir().unwrap();
+        let manager = CubeResidency::new(48).unwrap();
+        let array = ManagedPlaneArray::<f32>::create(
+            manager.clone(), root.path(), 2, 2, 2, Some(0.0),
+        ).unwrap();
+        let first = manager.try_admit(&[
+            array.request(0, true).unwrap(), array.request(1, true).unwrap(),
+        ], 0).unwrap();
+        assert_eq!(manager.try_admit(&[
+            array.request(1, true).unwrap(), array.request(0, true).unwrap(),
+        ], 0).err().unwrap().kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(manager.try_admit(&[array.request(0, false).unwrap()], 0)
+            .err().unwrap().kind(), io::ErrorKind::WouldBlock);
+        drop(first);
+        let second = manager.try_admit(&[
+            array.request(1, true).unwrap(), array.request(0, true).unwrap(),
+        ], 0).unwrap();
+        drop(second);
+        let shared1 = manager.try_admit(&[array.request(0, false).unwrap()], 0).unwrap();
+        let shared2 = manager.try_admit(&[array.request(0, false).unwrap()], 0).unwrap();
+        drop(shared1);
+        drop(shared2);
+        let cancelled = std::sync::atomic::AtomicBool::new(true);
+        assert_eq!(manager.admit_until(&[array.request(0, true).unwrap()], 0,
+            || cancelled.load(std::sync::atomic::Ordering::Relaxed))
+            .err().unwrap().kind(), io::ErrorKind::Interrupted);
+        assert!(manager.try_admit(&[array.request(0, true).unwrap()], 0).is_ok());
+    }
+
+    #[test]
     fn operation_is_admitted_atomically_and_pins_block_eviction() {
         let root = tempfile::tempdir().unwrap();
         let manager = CubeResidency::new(32).unwrap();
@@ -1124,6 +1267,26 @@ mod tests {
             .admit(&[replacement.request(0, false).unwrap()], 0)
             .unwrap();
         assert_eq!(&*replacement.read(&pins, 0, 0..4).unwrap(), &[0.0; 4]);
+    }
+
+    #[test]
+    fn retirement_drops_last_owners_before_returning_their_credit() {
+        let root = tempfile::tempdir().unwrap();
+        let manager = CubeResidency::new(32).unwrap();
+        let array = ManagedPlaneArray::<f32>::create(
+            manager.clone(), root.path(), 2, 2, 1, Some(0.0),
+        ).unwrap();
+        let pin = manager.try_admit(&[array.request(0, false).unwrap()], 0).unwrap();
+        drop(pin);
+        let weak_block = Arc::downgrade(&array.blocks[0].1);
+        let weak_backend = Arc::downgrade(&array._backend);
+        array.retire_dead_after_release(|| {
+            assert!(weak_block.upgrade().is_none());
+            assert!(weak_backend.upgrade().is_none());
+            assert_eq!(manager.used_bytes(), 32);
+            assert!(manager.state.lock().unwrap().admitting);
+        }).unwrap();
+        assert_eq!(manager.used_bytes(), 0);
     }
 
     #[test]
