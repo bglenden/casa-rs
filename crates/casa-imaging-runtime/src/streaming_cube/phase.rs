@@ -29,7 +29,10 @@ use casa_imaging_reconstruction::{
     runtime_adapter::{BandPlan, BandResult, ReconstructionPlaneWorkspace, SpectralOperatorPass},
 };
 use casa_ms::DeferredSelectedObservationAccess;
-use std::{io, sync::Mutex};
+use std::{
+    io,
+    sync::{Arc, Mutex},
+};
 
 struct State {
     selected: Option<DeferredSelectedObservationAccess>,
@@ -82,6 +85,7 @@ pub struct InitialCube {
 pub struct NativeReplay {
     native: PreparedNative,
     replay: WeightingReplayCompletion,
+    managed: Arc<crate::cube_state_plan::ManagedCubeRun>,
 }
 
 #[cfg(test)]
@@ -374,26 +378,7 @@ impl InitialCube {
             .as_ref()
             .map_or(&reconcile, |(node, _, _)| node)
             .clone();
-        let cube_state = CubeStatePlan::streaming_cube(
-            &problem,
-            &storage,
-            1,
-            prepare.clone(),
-            state_terminal.clone(),
-            false,
-            imported,
-        )?;
         let before_cube_state = physical;
-        let physical = cube_state
-            .compose(
-                registry,
-                policy.implementation.clone(),
-                &storage,
-                before_cube_state.clone(),
-                &read,
-                &reconcile,
-            )
-            .map_err(io::Error::other)?;
         let spectral = problem.geometry().spectral();
         let output_hz = (0..spectral.output_channels())
             .map(|i| {
@@ -429,6 +414,9 @@ impl InitialCube {
                     input.evidence().normal_state().retained_resident_bytes()
                 })
                 .map_err(io::Error::other)?,
+            retained.as_ref().map_or(0, |replay| {
+                u64::try_from(replay.managed.residency.used_bytes()).unwrap_or(u64::MAX)
+            }),
         )?);
         let shared_bytes = enclosing_owner_bytes
             .checked_add(Self::shared_bytes(&problem, output_hz.capacity())?)
@@ -461,17 +449,60 @@ impl InitialCube {
                 )
             }
         };
-        let paged_native = plan_native(&physical);
-        let resident = CubeStatePlan::streaming_cube(
+        let run = retained.as_ref().map(|retained| retained.managed.clone());
+        let cache_bytes = if run.is_some() {
+            0
+        } else {
+            let (minimum, full) = CubeStatePlan::managed_cache_limits(&problem, &storage, workers)?;
+            let native_preflight = plan_native(&before_cube_state)?;
+            let minimum_state = CubeStatePlan::managed_streaming_cube(
+                &problem,
+                &storage,
+                1,
+                prepare.clone(),
+                state_terminal.clone(),
+                None,
+                minimum,
+            )?;
+            let minimum_physical = minimum_state
+                .compose(
+                    registry,
+                    policy.implementation.clone(),
+                    &storage,
+                    before_cube_state.clone(),
+                    &read,
+                    &reconcile,
+                )
+                .map_err(io::Error::other)?;
+            let remaining = policy
+                .authority
+                .remaining_planning_memory_bytes(
+                    &policy.resource_policy,
+                    minimum_physical.execution_dag().resource_alternative(),
+                )
+                .map_err(io::Error::other)?;
+            let extra = remaining
+                .saturating_sub(native_preflight.workspace_bytes)
+                .min(
+                    u64::try_from(full - minimum)
+                        .map_err(|_| io::Error::other("cache size overflow"))?,
+                );
+            minimum
+                .checked_add(
+                    usize::try_from(extra).map_err(|_| io::Error::other("cache size overflow"))?,
+                )
+                .ok_or_else(|| io::Error::other("cache size overflow"))?
+        };
+        let cube_state = CubeStatePlan::managed_streaming_cube(
             &problem,
             &storage,
             1,
             prepare.clone(),
             state_terminal,
-            true,
-            imported,
+            run,
+            cache_bytes,
         )?;
-        let resident_physical = resident
+        let physical = cube_state
             .compose(
                 registry,
                 policy.implementation.clone(),
@@ -481,37 +512,22 @@ impl InitialCube {
                 &reconcile,
             )
             .map_err(io::Error::other)?;
-        // Compare the complete storage reservation before allocating payloads.
-        // Residency must leave a full worker wave, not just a runnable band.
-        let resident_available = match policy.authority.remaining_planning_memory_bytes(
-            &policy.resource_policy,
-            resident_physical.execution_dag().resource_alternative(),
-        ) {
-            Ok(bytes) => bytes,
-            Err(crate::ResourceError::Infeasible { resource, .. })
-                if resource.starts_with("memory-domain:") =>
-            {
-                0
-            }
-            Err(error) => return Err(io::Error::other(error)),
-        };
-        let resident_native = plan_native(&resident_physical);
-        let (physical, native_plan, cube_state) = if resident_native
-            .as_ref()
-            .is_ok_and(|plan| resident_available >= plan.worker_wave_bytes)
-        {
-            eprintln!(
-                "streaming_cube_normal_storage ordinal={ordinal} backing=resident retained_bytes={}",
-                resident.retained_memory_bytes()
-            );
-            (resident_physical, resident_native?, resident)
-        } else {
-            eprintln!(
-                "streaming_cube_normal_storage ordinal={ordinal} backing=paged retained_bytes={}",
-                cube_state.retained_memory_bytes()
-            );
-            (physical, paged_native?, cube_state)
-        };
+        let native_plan = plan_native(&physical)?;
+        if native_plan.workspace_bytes < native_plan.worker_wave_bytes {
+            return Err(io::Error::other(format!(
+                "managed cube cache would strand the admitted worker wave: cache={cache_bytes} workspace={} wave={}",
+                native_plan.workspace_bytes, native_plan.worker_wave_bytes,
+            )));
+        }
+        eprintln!(
+            "streaming_cube_managed_cache ordinal={ordinal} bytes={} retained_bytes={}",
+            cube_state
+                .managed_run()
+                .expect("managed cube plan")
+                .residency
+                .limit_bytes(),
+            cube_state.retained_memory_bytes(),
+        );
         let physical = native_plan.compose(physical, &storage)?;
         let (native, replay) = retained.map_or((None, None), |mut retained| {
             retained.native.bands = bands.iter().map(BandPlan::residual_refresh).collect();
@@ -566,6 +582,7 @@ impl InitialCube {
         Some(NativeReplay {
             native: state.native.take()?,
             replay: state.replay.take()?,
+            managed: self.cube_state.managed_run()?,
         })
     }
 
@@ -870,7 +887,9 @@ impl WorkImplementation for InitialCube {
                     .complete(replay)
             }
             .map_err(io::Error::other)?;
-            state.prior = None;
+            if let Some(prior) = state.prior.take() {
+                prior.retire_obsolete().map_err(io::Error::other)?;
+            }
             state.native = Some(PreparedNative {
                 store,
                 bands: retained_bands,

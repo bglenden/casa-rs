@@ -11,7 +11,7 @@ use std::{
 };
 
 use casa_lattices::{LatticeElement, PagedArray, TiledShape};
-use casa_tables::TilePixel;
+use casa_tables::{TilePixel, TiledArrayStorageLayout};
 use tempfile::TempDir;
 
 type BlockId = usize;
@@ -136,8 +136,16 @@ pub(crate) struct CubeResidency {
 }
 
 impl CubeResidency {
+    pub(crate) const fn fixed_owner_bytes() -> usize {
+        size_of::<Self>() + 2 * size_of::<usize>()
+    }
+
+    pub(crate) fn operation_overhead(requests: usize) -> io::Result<usize> {
+        operation_metadata_bytes(requests)
+    }
+
     pub(crate) fn new(admitted_bytes: usize) -> io::Result<Arc<Self>> {
-        let owner_bytes = size_of::<Self>() + 2 * size_of::<usize>();
+        let owner_bytes = Self::fixed_owner_bytes();
         if admitted_bytes < owner_bytes {
             return Err(invalid("resident capacity cannot hold the coordinator"));
         }
@@ -209,6 +217,10 @@ impl CubeResidency {
 
     pub(crate) fn used_bytes(&self) -> usize {
         self.state.lock().expect("residency lock poisoned").used
+    }
+
+    pub(crate) fn limit_bytes(&self) -> usize {
+        self.state.lock().expect("residency lock poisoned").limit
     }
 
     pub(crate) fn set_next_use(&self, id: BlockId, phase: u64) -> io::Result<()> {
@@ -800,7 +812,102 @@ pub(crate) struct ManagedPlaneArray<T: LatticeElement + TilePixel> {
     _backend: Arc<ArrayBackend<T>>,
 }
 
+const CUBE_DIRECTORY_PREFIX: &str = ".casa-rs-managed-cube-";
+const CUBE_DIRECTORY_RANDOM_BYTES: usize = 12;
+
+pub(crate) struct ManagedArrayFootprint {
+    pub(crate) owner_bytes: usize,
+    pub(crate) staging_bytes: usize,
+    pub(crate) block_bytes: usize,
+    pub(crate) registry_bytes: usize,
+    pub(crate) creation_bytes: usize,
+    pub(crate) storage_bytes: usize,
+}
+
+fn planned_array<T: LatticeElement + TilePixel>(
+    directory: &Path,
+    axis0: usize,
+    axis1: usize,
+    planes: usize,
+) -> io::Result<(TiledArrayStorageLayout, ManagedArrayFootprint)> {
+    let cells = axis0
+        .checked_mul(axis1)
+        .ok_or_else(|| invalid("plane size overflow"))?;
+    let bytes = cells
+        .checked_mul(size_of::<T>())
+        .ok_or_else(|| invalid("plane byte overflow"))?;
+    if planes == 0 || bytes == 0 {
+        return Err(invalid("cube planes must be positive"));
+    }
+    let shape = TiledShape::with_tile_shape(vec![axis0, axis1, planes], vec![axis0, axis1, 1])
+        .map_err(other)?;
+    let layout = PagedArray::<T>::storage_layout(shape, bytes).map_err(other)?;
+    let path = directory.join("values");
+    let closed_heap = checked_sum(&[6 * size_of::<usize>(), path.as_os_str().len()])?;
+    let open_heap =
+        PagedArray::<T>::planned_persistent_heap_bytes(&layout, &path).map_err(other)?;
+    let staging_bytes = checked_sum(&[
+        open_heap - closed_heap,
+        layout
+            .slice_scratch_bytes()
+            .map_err(other)?
+            .max(layout.flush_scratch_bytes().map_err(other)?),
+    ])?;
+    let block_bytes = checked_sum(&[bytes, Coverage::bytes(cells)?])?;
+    let owner_bytes = checked_sum(&[
+        size_of::<ManagedPlaneArray<T>>(),
+        size_of::<ArrayBackend<T>>(),
+        2 * size_of::<usize>(),
+        closed_heap,
+        directory.as_os_str().len(),
+        checked_product(
+            planes,
+            checked_sum(&[
+                size_of::<PlaneBlock<T>>(),
+                2 * size_of::<usize>(),
+                size_of::<(BlockId, Arc<PlaneBlock<T>>)>(),
+            ])?,
+        )?,
+    ])?;
+    let registry_bytes = checked_sum(&[
+        checked_product(planes, size_of::<(usize, Entry)>())?,
+        size_of::<(usize, BackendEntry)>(),
+    ])?;
+    let creation_bytes = checked_sum(&[
+        owner_bytes,
+        staging_bytes,
+        registry_bytes,
+        layout.owned_heap_bytes().map_err(other)?,
+    ])?;
+    let storage_bytes = layout.storage_bytes().map_err(other)?;
+    Ok((
+        layout,
+        ManagedArrayFootprint {
+            owner_bytes,
+            staging_bytes,
+            block_bytes,
+            registry_bytes,
+            creation_bytes,
+            storage_bytes,
+        },
+    ))
+}
+
 impl<T: LatticeElement + TilePixel> ManagedPlaneArray<T> {
+    pub(crate) fn footprint(
+        parent: &Path,
+        axis0: usize,
+        axis1: usize,
+        planes: usize,
+    ) -> io::Result<ManagedArrayFootprint> {
+        let planned_directory = parent.join(format!(
+            "{}{}",
+            CUBE_DIRECTORY_PREFIX,
+            "x".repeat(CUBE_DIRECTORY_RANDOM_BYTES)
+        ));
+        planned_array::<T>(&planned_directory, axis0, axis1, planes).map(|(_, footprint)| footprint)
+    }
+
     pub(crate) fn create(
         manager: Arc<CubeResidency>,
         parent: &Path,
@@ -810,48 +917,13 @@ impl<T: LatticeElement + TilePixel> ManagedPlaneArray<T> {
         fill: Option<T>,
     ) -> io::Result<Self> {
         let creation_lock = manager.creation.lock().map_err(poison)?;
-        let cells = axis0
-            .checked_mul(axis1)
-            .ok_or_else(|| invalid("plane size overflow"))?;
-        let bytes = cells
-            .checked_mul(std::mem::size_of::<T>())
-            .ok_or_else(|| invalid("plane byte overflow"))?;
-        if planes == 0 || bytes == 0 {
-            return Err(invalid("cube planes must be positive"));
-        }
         let directory = tempfile::Builder::new()
-            .prefix(".casa-rs-managed-cube-")
+            .prefix(CUBE_DIRECTORY_PREFIX)
+            .rand_bytes(CUBE_DIRECTORY_RANDOM_BYTES)
             .tempdir_in(parent)?;
-        let shape = TiledShape::with_tile_shape(vec![axis0, axis1, planes], vec![axis0, axis1, 1])
-            .map_err(other)?;
-        let layout = PagedArray::<T>::storage_layout(shape, bytes).map_err(other)?;
+        let (layout, footprint) = planned_array::<T>(directory.path(), axis0, axis1, planes)?;
+        let cells = axis0 * axis1;
         let path = directory.path().join("values");
-        let closed_heap = checked_sum(&[6 * size_of::<usize>(), path.as_os_str().len()])?;
-        let open_heap =
-            PagedArray::<T>::planned_persistent_heap_bytes(&layout, &path).map_err(other)?;
-        let staging_bytes = checked_sum(&[
-            open_heap - closed_heap,
-            layout
-                .slice_scratch_bytes()
-                .map_err(other)?
-                .max(layout.flush_scratch_bytes().map_err(other)?),
-        ])?;
-        let block_bytes = checked_sum(&[bytes, Coverage::bytes(cells)?])?;
-        let owner_bytes = checked_sum(&[
-            size_of::<Self>(),
-            size_of::<ArrayBackend<T>>(),
-            2 * size_of::<usize>(),
-            closed_heap,
-            directory.path().as_os_str().len(),
-            checked_product(
-                planes,
-                checked_sum(&[
-                    size_of::<PlaneBlock<T>>(),
-                    2 * size_of::<usize>(),
-                    size_of::<(BlockId, Arc<PlaneBlock<T>>)>(),
-                ])?,
-            )?,
-        ])?;
         // Replacement Vec allocation can overlap its previous registry capacity.
         // Reserve that construction peak, then transfer the retained portion of
         // the same permit into the registered owners, without a release gap.
@@ -879,8 +951,8 @@ impl<T: LatticeElement + TilePixel> ManagedPlaneArray<T> {
             ])?
         };
         let creation_bytes = checked_sum(&[
-            owner_bytes,
-            staging_bytes,
+            footprint.owner_bytes,
+            footprint.staging_bytes,
             registry_growth,
             layout.owned_heap_bytes().map_err(other)?,
         ])?;
@@ -921,7 +993,7 @@ impl<T: LatticeElement + TilePixel> ManagedPlaneArray<T> {
         state.entries.reserve(planes);
         state.backends.reserve(1);
         let retained = checked_sum(&[
-            owner_bytes,
+            footprint.owner_bytes,
             state.entries.heap_bytes() + state.backends.heap_bytes() - old_registry,
         ])?;
         // All fallible preparation finished before registration. On an earlier
@@ -938,7 +1010,7 @@ impl<T: LatticeElement + TilePixel> ManagedPlaneArray<T> {
                 Entry {
                     block: block.clone(),
                     backend: backend_id,
-                    bytes: block_bytes,
+                    bytes: footprint.block_bytes,
                     cold_bytes: 0,
                     resident: false,
                     read_pins: 0,
@@ -953,8 +1025,8 @@ impl<T: LatticeElement + TilePixel> ManagedPlaneArray<T> {
             backend_id,
             BackendEntry {
                 backend: backend.clone(),
-                staging_bytes,
-                owner_bytes,
+                staging_bytes: footprint.staging_bytes,
+                owner_bytes: footprint.owner_bytes,
                 open: false,
             },
         );

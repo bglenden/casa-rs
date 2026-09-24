@@ -60,8 +60,22 @@ pub trait NormalArrayStorage: fmt::Debug + Send + Sync {
     /// Owned windows used as complex pairs must also have an even capacity so
     /// their allocation can transfer without repacking; invalid layouts fail.
     fn read(&self, start: usize, len: usize) -> Result<Cow<'_, [f64]>, SpectralOperatorError>;
+    /// Read one image-plane complex window directly into the consuming shape.
+    /// Compact real backings can widen here without a second scalar buffer.
+    fn read_complex(
+        &self,
+        start: usize,
+        values: usize,
+    ) -> Result<Cow<'_, [Complex64]>, SpectralOperatorError> {
+        scalar_complex(self.read(start, values * 2)?)
+    }
     /// Replace a bounded scalar window without resizing the array.
     fn write(&mut self, start: usize, values: &[f64]) -> Result<(), SpectralOperatorError>;
+
+    /// Release a superseded epoch after its replacement is complete.
+    fn retire(self: Box<Self>) -> Result<(), SpectralOperatorError> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -1084,6 +1098,14 @@ pub(crate) struct NormalDomainMetadata<'a> {
 }
 
 impl NormalStatePrimitives {
+    pub(crate) fn retire_obsolete(self) -> Result<(), SpectralOperatorError> {
+        if let Self::ChannelLocal(domains) = self {
+            for domain in domains {
+                domain.storage.retire()?;
+            }
+        }
+        Ok(())
+    }
     pub(crate) fn retained_resident_bytes(&self) -> Result<u64, SpectralOperatorError> {
         match self {
             Self::ChannelLocal(domains) => domains.iter().try_fold(0u64, |bytes, domain| {
@@ -1909,8 +1931,18 @@ impl StoredChannelNormalDomain {
         values: usize,
     ) -> Result<Cow<'_, [Complex64]>, SpectralOperatorError> {
         let start = field.start + offset * 2;
-        let scalars = self.read_scalars(start..start + values * 2)?;
-        scalar_complex(scalars)
+        let result = if start >= self.fields.epoch_scalars {
+            self.invariants
+                .read_complex(start - self.fields.epoch_scalars, values)
+        } else {
+            self.storage.read_complex(start, values)
+        }?;
+        if result.len() != values {
+            return Err(SpectralOperatorError::NormalStorage(
+                "normal backing returned an incorrect complex window length".into(),
+            ));
+        }
+        Ok(result)
     }
 
     pub(crate) fn read_window(

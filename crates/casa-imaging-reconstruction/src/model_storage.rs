@@ -29,6 +29,12 @@ pub trait ModelSampleStorage: fmt::Debug + Send + Sync {
 
     /// Replace one canonical range without changing the logical shape.
     fn write(&mut self, start: usize, samples: &[ModelSample]) -> Result<(), ModelLifecycleError>;
+
+    /// Release a superseded generation after its replacement is complete.
+    /// Managed backings retire physical blocks before returning capacity.
+    fn retire(self: Box<Self>) -> Result<(), ModelLifecycleError> {
+        Ok(())
+    }
 }
 
 /// Physical allocation capability supplied by execution composition.
@@ -97,6 +103,9 @@ pub(crate) struct ModelSamples {
 }
 
 impl ModelSamples {
+    pub(crate) fn retire(self) -> Result<(), ModelLifecycleError> {
+        self.storage.retire()
+    }
     pub(crate) fn maximum_magnitude(&self) -> f64 {
         self.maximum_magnitude
     }

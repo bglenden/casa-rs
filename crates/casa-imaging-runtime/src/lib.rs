@@ -17,6 +17,8 @@ mod major_cycle;
     reason = "review-1 foundation is connected to cube callers in milestone B"
 )]
 mod managed_cube_blocks;
+mod managed_model;
+mod managed_normal;
 #[allow(dead_code)]
 mod managed_spill;
 mod metal_runtime;

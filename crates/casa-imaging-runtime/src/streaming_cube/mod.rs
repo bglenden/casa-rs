@@ -11,24 +11,31 @@ mod prepare;
 
 pub use phase::{InitialCube as CubePhase, NativeReplay};
 
-/// Charge enclosing process data in addition to the phase's explicit allocations.
-/// Subtract only live normal payload backed by authority-owned retention permits.
-fn enclosing_memory_bytes(retained_resident_bytes: u64) -> std::io::Result<u64> {
+/// Charge process data not already covered by an authority-owned retention
+/// permit. The managed cache's live bytes are included in malloc's census on
+/// macOS and are also covered by its retained capacity permit. Its physical
+/// census contribution can be smaller than the logical block charge, so clamp
+/// only that credit rather than rejecting an otherwise valid refresh.
+fn enclosing_memory_bytes(
+    retained_resident_bytes: u64,
+    managed_used_bytes: u64,
+) -> std::io::Result<u64> {
     let observed = process_data_bytes()?;
-    let enclosing = unreserved_data_bytes(observed, retained_resident_bytes)?;
+    let enclosing = unreserved_data_bytes(observed, retained_resident_bytes, managed_used_bytes)?;
     eprintln!(
-        "streaming_cube_enclosing_process_data_bytes={observed} retained_normal_payload_bytes={retained_resident_bytes} unreserved_bytes={enclosing}"
+        "streaming_cube_enclosing_process_data_bytes={observed} retained_normal_payload_bytes={retained_resident_bytes} managed_cache_used_bytes={managed_used_bytes} unreserved_bytes={enclosing}"
     );
     Ok(enclosing)
 }
 
-fn unreserved_data_bytes(observed: u64, retained: u64) -> std::io::Result<u64> {
+fn unreserved_data_bytes(observed: u64, retained: u64, managed: u64) -> std::io::Result<u64> {
     if observed == 0 {
         return Err(std::io::Error::other("process memory census unavailable"));
     }
-    observed
-        .checked_sub(retained)
-        .ok_or_else(|| std::io::Error::other("retained normal payload exceeds process data census"))
+    let without_legacy = observed.checked_sub(retained).ok_or_else(|| {
+        std::io::Error::other("retained normal payload exceeds process data census")
+    })?;
+    Ok(without_legacy.saturating_sub(managed))
 }
 
 #[cfg(target_os = "macos")]
@@ -90,12 +97,13 @@ mod memory_tests {
     use super::*;
 
     #[test]
-    fn enclosing_data_subtracts_only_retained_payload() {
-        assert_eq!(unreserved_data_bytes(4096, 1024).unwrap(), 3072);
-        assert_eq!(unreserved_data_bytes(4096, 4096).unwrap(), 0);
-        assert!(unreserved_data_bytes(0, 0).is_err());
-        assert!(unreserved_data_bytes(4096, 4097).is_err());
-        assert!(enclosing_memory_bytes(0).unwrap() > 0);
+    fn enclosing_data_subtracts_retained_payload_and_managed_cache() {
+        assert_eq!(unreserved_data_bytes(4096, 1024, 512).unwrap(), 2560);
+        assert_eq!(unreserved_data_bytes(4096, 0, 4096).unwrap(), 0);
+        assert_eq!(unreserved_data_bytes(4096, 0, 5000).unwrap(), 0);
+        assert!(unreserved_data_bytes(0, 0, 0).is_err());
+        assert!(unreserved_data_bytes(4096, 4097, 0).is_err());
+        assert!(enclosing_memory_bytes(0, 0).unwrap() > 0);
     }
 
     #[test]

@@ -124,6 +124,12 @@ pub struct FinalNormalState {
 }
 
 impl FinalNormalState {
+    /// Release a superseded channel-local residual epoch after its successor
+    /// has completed. Shared invariant fields remain with that successor.
+    #[doc(hidden)]
+    pub fn retire_obsolete(self) -> Result<(), SpectralOperatorError> {
+        self.primitives.retire_obsolete()
+    }
     /// Live scalar payload already charged by its retained runtime allocation.
     /// This is metadata-only; it does not load or verify any array contents.
     #[doc(hidden)]

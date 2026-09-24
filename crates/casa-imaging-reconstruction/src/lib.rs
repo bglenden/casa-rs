@@ -1420,13 +1420,15 @@ impl ModelLifecycle {
             }
             candidate.write(start, &window)?;
         }
-        self.mint_stored_generation(
+        let next = self.mint_stored_generation(
             candidate,
             ModelGenerationOrigin::Delta {
                 base: base.generation_id,
                 delta: delta.delta_id,
             },
-        )
+        )?;
+        base.samples.retire()?;
+        Ok(next)
     }
 
     fn adopt_generation(

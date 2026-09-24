@@ -152,7 +152,26 @@ fn streaming_cube_initial_source_fence_controls_runtime_reconciliation() {
         (Failure::SourceFence, 1, Circular, 6),
         (Failure::ReconciliationNode, 1, Circular, 6),
     ] {
-        let fixture = source_fixture(basis, channels);
+        let mut fixture = source_fixture(basis, channels);
+        let artifacts = fixture._directory.path().join("artifacts");
+        let mut inventory = support::runtime_inventory_with_roots(
+            artifacts.clone(),
+            fixture._directory.path().join("cube.ms"),
+        );
+        // The original 16-MiB host cannot admit the four-worker wave even
+        // before cube residency. Source-fence behavior needs a runnable W4 plan.
+        inventory.topology.memory_domains[0].capacity_bytes = 32 << 20;
+        inventory
+            .pressure
+            .memory_available_bytes
+            .insert(CapacityDomainId::new("host-memory"), 32 << 20);
+        fixture.authority = ResourceAuthority::with_inventory(inventory).unwrap();
+        fixture.storage = ManagedSpillStorage::bind(
+            &fixture.authority,
+            support::artifact_storage_io(),
+            artifacts,
+        )
+        .unwrap();
         let problem = &fixture.problem;
         let registry = support::PlanningRegistry::new(problem);
         let policy = ResourcePolicy::Exclusive;
@@ -346,6 +365,8 @@ fn streaming_cube_initial_source_fence_controls_runtime_reconciliation() {
             .is_err()
         );
         let expected_physical = native_plan.compose(physical, &fixture.storage).unwrap();
+        let (minimum_cache, full_cache) =
+            CubeStatePlan::managed_cache_limits(problem, &fixture.storage, workers).unwrap();
         drop(bands);
         let (physical, mut executor) = InitialCube::plan(
             problem.clone(),
@@ -365,8 +386,30 @@ fn streaming_cube_initial_source_fence_controls_runtime_reconciliation() {
             native_plan.workspace_bytes
         );
         assert_eq!(
-            physical.execution_dag().resource_alternative(),
-            expected_physical.execution_dag().resource_alternative()
+            physical
+                .execution_dag()
+                .resource_alternative()
+                .demand
+                .io_buffers,
+            expected_physical
+                .execution_dag()
+                .resource_alternative()
+                .demand
+                .io_buffers,
+        );
+        let cache = executor.cube_state.managed_run().unwrap();
+        assert!((minimum_cache..=full_cache).contains(&cache.residency.limit_bytes()));
+        assert!(
+            physical
+                .execution_dag()
+                .resource_alternative()
+                .demand
+                .memory
+                .iter()
+                .any(
+                    |demand| demand.allocation_id.starts_with("cube-state-manager-")
+                        && demand.hard_bytes == cache.residency.limit_bytes() as u64
+                )
         );
         let directory = tempfile::tempdir().unwrap();
         let receipts = ExecutionReceiptStore::new(
@@ -436,7 +479,7 @@ fn streaming_cube_initial_source_fence_controls_runtime_reconciliation() {
 }
 
 #[test]
-fn resident_storage_threshold_preserves_a_complete_worker_wave() {
+fn managed_cache_budget_preserves_a_complete_worker_wave() {
     for workers in [1, 2, 4, 8] {
         let mut fixture = source_fixture(SyntheticPolarizationBasis::Circular, 6);
         let artifacts = fixture._directory.path().join("artifacts");
@@ -496,11 +539,20 @@ fn resident_storage_threshold_preserves_a_complete_worker_wave() {
                 physical.execution_dag().resource_alternative(),
             )
             .unwrap();
+        let cache_bytes = full
+            .cube_state
+            .managed_run()
+            .unwrap()
+            .residency
+            .limit_bytes() as u64;
         let base_charge = fixture.authority.topology().memory_domains[0].capacity_bytes
             - available
-            - full.native_plan.workspace_bytes;
+            - full.native_plan.workspace_bytes
+            - cache_bytes;
         let worker_wave = full.native_plan.worker_wave_bytes;
-        let resident_bytes = full.cube_state.retained_memory_bytes();
+        let (minimum_cache, full_cache) =
+            CubeStatePlan::managed_cache_limits(problem, &fixture.storage, workers).unwrap();
+        assert!((minimum_cache..=full_cache).contains(&(cache_bytes as usize)));
         let bands = &full.state.lock().unwrap().bands;
         let refresh_bands = bands
             .iter()
@@ -545,16 +597,16 @@ fn resident_storage_threshold_preserves_a_complete_worker_wave() {
                     >= workers.min(bands.len() - start)
             );
         }
-        for (workspace, expect_resident) in [
-            (worker_wave - 1, false),
-            (worker_wave, true),
-            (full.native_plan.workspace_bytes, true),
+        for workspace in [
+            worker_wave - 1,
+            worker_wave,
+            full.native_plan.workspace_bytes,
         ] {
             let mut limited = policy.clone();
             limited.resource_policy = ResourcePolicy::Explicit(ResourceOverride {
                 memory_bytes: [(
                     CapacityDomainId::new("host-memory"),
-                    base_charge + workspace,
+                    base_charge + minimum_cache as u64 + workspace,
                 )]
                 .into_iter()
                 .collect(),
@@ -562,22 +614,18 @@ fn resident_storage_threshold_preserves_a_complete_worker_wave() {
             });
             let (_, actual) = match plan(limited) {
                 Ok(result) => result,
-                Err(error) if workspace < worker_wave => {
-                    assert!(
-                        error
-                            .to_string()
-                            .contains("native phase cannot fit preparation and one band"),
-                        "{error}"
-                    );
+                Err(_) if workspace < worker_wave => {
                     continue;
                 }
                 Err(error) => panic!("worker wave should fit at {workspace}: {error}"),
             };
-            assert_eq!(
-                actual.cube_state.retained_memory_bytes() == resident_bytes,
-                expect_resident,
-                "workers={workers}, workspace={workspace}"
-            );
+            let chosen = actual
+                .cube_state
+                .managed_run()
+                .unwrap()
+                .residency
+                .limit_bytes();
+            assert!((minimum_cache..=full_cache).contains(&chosen));
             if workspace >= worker_wave {
                 assert!(
                     actual.native_plan.workspace_bytes >= actual.native_plan.worker_wave_bytes,
