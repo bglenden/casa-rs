@@ -518,6 +518,42 @@ fn t55_artifact_memory_and_storage_survive_finalization_and_release_independentl
 }
 
 #[test]
+fn retained_memory_narrowing_returns_only_the_reclaimed_capacity() {
+    let (authority, demand) = t55_artifact_fixture();
+    let lease = authority
+        .acquire(
+            ResourcePolicy::Exclusive,
+            single_alternative(demand.clone()),
+        )
+        .unwrap();
+    let lease_id = lease.lease_id;
+    let resource = LeaseResource::Memory {
+        allocation_id: "artifact-metadata".to_string(),
+    };
+    let mut retained = lease
+        .prepare_artifact_retention(lease.permit(resource.clone(), 600).unwrap())
+        .unwrap();
+    lease
+        .release_retaining_artifact_resources(&BTreeSet::from([resource]))
+        .unwrap();
+    retained.narrow_memory_to(300).unwrap();
+    assert_eq!(retained.amount(), 300);
+    assert_eq!(
+        authority.inner.state.lock().unwrap().leases[&lease_id]
+            .reserved
+            .memory_bytes(&CapacityDomainId::new("unified-memory")),
+        300
+    );
+    let mut competitor = demand;
+    competitor.memory[0].hard_bytes = 700;
+    competitor.memory[0].preferred_bytes = 700;
+    authority
+        .acquire(ResourcePolicy::Exclusive, single_alternative(competitor))
+        .expect("the returned capacity admits a larger mandatory later wave");
+    drop(retained);
+}
+
+#[test]
 fn t55_artifact_retention_rejects_unauthorized_or_nonexact_memory() {
     for (exported, amount) in [(false, 600), (true, 599)] {
         let (authority, demand) = t55_artifact_fixture();

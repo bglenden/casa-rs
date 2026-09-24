@@ -241,7 +241,8 @@ impl NativePhasePlan {
             );
         }
         if minimum > workspace_bytes {
-            return Err(io::Error::other(
+            return Err(io::Error::new(
+                io::ErrorKind::OutOfMemory,
                 "native phase cannot fit preparation and one band",
             ));
         }

@@ -71,9 +71,9 @@ impl NormalStorageFactory for ManagedNormalFactory {
         )
         .map_err(storage_error)?;
         Ok(Box::new(ManagedNormal {
+            array,
             residency: self.residency.clone(),
             _retention: self.retention.clone(),
-            array,
             cells,
             scalars,
         }))
@@ -81,9 +81,9 @@ impl NormalStorageFactory for ManagedNormalFactory {
 }
 
 struct ManagedNormal {
+    array: ManagedPlaneArray<f32>,
     residency: Arc<CubeResidency>,
     _retention: Arc<dyn fmt::Debug + Send + Sync>,
-    array: ManagedPlaneArray<f32>,
     cells: usize,
     scalars: usize,
 }
@@ -230,6 +230,72 @@ fn storage_error(error: impl std::fmt::Display) -> SpectralOperatorError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{
+        Weak,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    #[derive(Debug)]
+    struct PermitReleaseCheck {
+        residency: Weak<CubeResidency>,
+        released_after_payload: Arc<AtomicBool>,
+    }
+
+    impl Drop for PermitReleaseCheck {
+        fn drop(&mut self) {
+            self.released_after_payload
+                .store(self.residency.upgrade().is_none(), Ordering::SeqCst);
+        }
+    }
+
+    struct RetainedRun {
+        _residency: Arc<CubeResidency>,
+        _check: PermitReleaseCheck,
+    }
+
+    impl fmt::Debug for RetainedRun {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("RetainedRun")
+        }
+    }
+
+    #[test]
+    fn final_normal_owner_drops_payload_before_capacity_on_success_and_error() {
+        for error_unwind in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let manager = CubeResidency::new(1 << 20).unwrap();
+            let released_after_payload = Arc::new(AtomicBool::new(false));
+            let retention: Arc<dyn fmt::Debug + Send + Sync> = Arc::new(RetainedRun {
+                _residency: manager.clone(),
+                _check: PermitReleaseCheck {
+                    residency: Arc::downgrade(&manager),
+                    released_after_payload: released_after_payload.clone(),
+                },
+            });
+            let factory = ManagedNormalFactory::new(
+                manager.clone(),
+                retention.clone(),
+                directory.path(),
+                [2, 3],
+            )
+            .unwrap();
+            let mut normal = factory.create(0, 12).unwrap();
+            normal.write(0, &[1.0, 0.0]).unwrap();
+            drop(manager);
+            drop(factory);
+            drop(retention);
+            if error_unwind {
+                let fail = || -> Result<(), SpectralOperatorError> {
+                    let _owned = normal;
+                    Err(storage_error("injected caller failure"))
+                };
+                assert!(fail().is_err());
+            } else {
+                drop(normal);
+            }
+            assert!(released_after_payload.load(Ordering::SeqCst));
+        }
+    }
 
     #[test]
     fn real_planes_round_once_and_release_at_retirement() {

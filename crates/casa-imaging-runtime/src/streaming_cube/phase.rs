@@ -415,7 +415,7 @@ impl InitialCube {
                 })
                 .map_err(io::Error::other)?,
             retained.as_ref().map_or(0, |replay| {
-                u64::try_from(replay.managed.residency.used_bytes()).unwrap_or(u64::MAX)
+                u64::try_from(replay.managed.residency.live_payload_bytes()).unwrap_or(u64::MAX)
             }),
         )?);
         let shared_bytes = enclosing_owner_bytes
@@ -481,6 +481,12 @@ impl InitialCube {
                     minimum_physical.execution_dag().resource_alternative(),
                 )
                 .map_err(io::Error::other)?;
+            if std::env::var_os("CASA_RS_TRACE_IMAGING_STAGE_TIMING").is_some() {
+                eprintln!(
+                    "streaming_cube_cache_plan minimum_bytes={minimum} full_bytes={full} remaining_after_minimum_bytes={remaining} initial_workspace_bytes={}",
+                    native_preflight.workspace_bytes
+                );
+            }
             let extra = remaining
                 .saturating_sub(native_preflight.workspace_bytes)
                 .min(
@@ -499,7 +505,7 @@ impl InitialCube {
             1,
             prepare.clone(),
             state_terminal,
-            run,
+            run.clone(),
             cache_bytes,
         )?;
         let physical = cube_state
@@ -512,7 +518,42 @@ impl InitialCube {
                 &reconcile,
             )
             .map_err(io::Error::other)?;
-        let native_plan = plan_native(&physical)?;
+        let mut native_plan = match plan_native(&physical) {
+            Ok(plan) => plan,
+            Err(error) if run.is_some() && error.kind() == io::ErrorKind::OutOfMemory => {
+                let run = run.as_ref().expect("retained run was checked");
+                let (minimum, _) =
+                    CubeStatePlan::managed_cache_limits(&problem, &storage, workers)?;
+                let current = run.residency.limit_bytes();
+                run.shrink_cache_to(minimum)?;
+                eprintln!(
+                    "streaming_cube_cache_reclaimed ordinal={ordinal} previous_bytes={current} retained_bytes={minimum} returned_bytes={} reason=one_band_floor",
+                    current - minimum
+                );
+                plan_native(&physical)?
+            }
+            Err(error) => return Err(error),
+        };
+        if native_plan.workspace_bytes < native_plan.worker_wave_bytes {
+            if let Some(run) = &run {
+                let current = run.residency.limit_bytes();
+                let (minimum, _) =
+                    CubeStatePlan::managed_cache_limits(&problem, &storage, workers)?;
+                let target = cache_target_for_worker_wave(
+                    current,
+                    minimum,
+                    native_plan.workspace_bytes,
+                    native_plan.worker_wave_bytes,
+                )?
+                .expect("worker wave is short of workspace");
+                let returned = current - target;
+                run.shrink_cache_to(target)?;
+                eprintln!(
+                    "streaming_cube_cache_reclaimed ordinal={ordinal} previous_bytes={current} retained_bytes={target} returned_bytes={returned}"
+                );
+                native_plan = plan_native(&physical)?;
+            }
+        }
         if native_plan.workspace_bytes < native_plan.worker_wave_bytes {
             return Err(io::Error::other(format!(
                 "managed cube cache would strand the admitted worker wave: cache={cache_bytes} workspace={} wave={}",
@@ -634,6 +675,51 @@ impl InitialCube {
             None,
         )
         .with_native_preparation(self.preparation.expect("initial native source plan"))
+    }
+}
+
+fn cache_target_for_worker_wave(
+    current: usize,
+    minimum: usize,
+    available_workspace: u64,
+    required_worker_wave: u64,
+) -> io::Result<Option<usize>> {
+    let Some(deficit) = required_worker_wave.checked_sub(available_workspace) else {
+        return Ok(None);
+    };
+    if deficit == 0 {
+        return Ok(None);
+    }
+    let deficit = usize::try_from(deficit)
+        .map_err(|_| io::Error::other("worker-wave cache reclaim overflow"))?;
+    let target = current
+        .checked_sub(deficit)
+        .filter(|target| *target >= minimum)
+        .ok_or_else(|| io::Error::other("mandatory worker wave exceeds minimum managed cache"))?;
+    Ok(Some(target))
+}
+
+#[cfg(test)]
+mod cache_reclaim_tests {
+    use super::*;
+
+    #[test]
+    fn later_four_worker_wave_reclaims_only_its_deficit() {
+        let current = 1_610_049_685;
+        let minimum = 22_072_120;
+        let initial_workspace = 226_069_785;
+        let later_wave = 299_707_509;
+        assert_eq!(
+            cache_target_for_worker_wave(current, minimum, initial_workspace, later_wave).unwrap(),
+            Some(current - (later_wave - initial_workspace) as usize)
+        );
+        assert_eq!(
+            cache_target_for_worker_wave(current, minimum, later_wave, later_wave).unwrap(),
+            None
+        );
+        assert!(
+            cache_target_for_worker_wave(minimum, minimum, initial_workspace, later_wave).is_err()
+        );
     }
 }
 

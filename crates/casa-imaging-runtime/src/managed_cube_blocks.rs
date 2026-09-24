@@ -18,8 +18,10 @@ type BlockId = usize;
 type BackendId = usize;
 
 trait BlockIo: Send + Sync {
-    fn prepare(&self, write: bool) -> io::Result<()>;
-    fn evict(&self) -> io::Result<()>;
+    /// Return whether an existing backing was read into the live plane.
+    fn prepare(&self, write: bool) -> io::Result<bool>;
+    /// Return whether dirty payload was written before release.
+    fn evict(&self) -> io::Result<bool>;
     fn resident(&self) -> bool;
     fn cold_bytes(&self) -> usize;
 }
@@ -34,6 +36,7 @@ struct Entry {
     block: Arc<dyn BlockIo>,
     backend: BackendId,
     bytes: usize,
+    payload_bytes: usize,
     cold_bytes: usize,
     resident: bool,
     read_pins: usize,
@@ -60,6 +63,16 @@ struct ResidencyState {
     next_backend_id: BackendId,
     entries: Registry<Entry>,
     backends: Registry<BackendEntry>,
+    metrics: ResidencyMetrics,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct ResidencyMetrics {
+    pub(crate) peak_used_bytes: usize,
+    pub(crate) dirty_write_operations: u64,
+    pub(crate) dirty_write_bytes: u64,
+    pub(crate) reload_read_operations: u64,
+    pub(crate) reload_read_bytes: u64,
 }
 
 impl ResidencyState {
@@ -161,6 +174,10 @@ impl CubeResidency {
                 next_backend_id: 0,
                 entries: Registry::new(),
                 backends: Registry::new(),
+                metrics: ResidencyMetrics {
+                    peak_used_bytes: owner_bytes,
+                    ..ResidencyMetrics::default()
+                },
             }),
             wake: Condvar::new(),
             creation: Mutex::new(()),
@@ -219,8 +236,51 @@ impl CubeResidency {
         self.state.lock().expect("residency lock poisoned").used
     }
 
+    /// Proven live plane payload already counted by the process malloc census.
+    /// Admission's `used` also includes possible coverage, codec staging and
+    /// metadata, none of which is safe to credit against unrelated allocations.
+    pub(crate) fn live_payload_bytes(&self) -> usize {
+        self.state
+            .lock()
+            .expect("residency lock poisoned")
+            .entries
+            .values()
+            .filter(|entry| entry.resident && entry.block.resident())
+            .map(|entry| entry.payload_bytes)
+            .sum()
+    }
+
     pub(crate) fn limit_bytes(&self) -> usize {
         self.state.lock().expect("residency lock poisoned").limit
+    }
+
+    pub(crate) fn metrics(&self) -> ResidencyMetrics {
+        self.state.lock().expect("residency lock poisoned").metrics
+    }
+
+    /// Evict optional planes before returning the corresponding cache capacity
+    /// to the owning lease. The old ceiling is restored if live pins prevent
+    /// reclamation; any completed evictions remain valid.
+    pub(crate) fn shrink_to(self: &Arc<Self>, target: usize) -> io::Result<()> {
+        let old = {
+            let mut state = self.state.lock().map_err(poison)?;
+            if target == 0 || target > state.limit || state.admitting {
+                return Err(invalid("invalid managed cache shrink request"));
+            }
+            let old = state.limit;
+            state.limit = target;
+            old
+        };
+        match self.try_admit(&[], 0) {
+            Ok(pins) => {
+                drop(pins);
+                Ok(())
+            }
+            Err(error) => {
+                self.state.lock().map_err(poison)?.limit = old;
+                Err(error)
+            }
+        }
     }
 
     pub(crate) fn set_next_use(&self, id: BlockId, phase: u64) -> io::Result<()> {
@@ -259,11 +319,16 @@ impl CubeResidency {
         state.admitting = false;
         state.version += 1;
         self.wake.notify_all();
-        result?;
+        let wrote = result?;
         let entry = state.entries.get_mut(&id).expect("registered block");
         entry.resident = false;
         entry.cold_bytes = cold_bytes;
+        let payload_bytes = entry.payload_bytes;
         state.used -= bytes - cold_bytes;
+        if wrote {
+            state.metrics.dirty_write_operations += 1;
+            state.metrics.dirty_write_bytes += payload_bytes as u64;
+        }
         Ok(())
     }
 
@@ -357,16 +422,24 @@ impl CubeResidency {
                 let result = block.evict();
                 let cold_bytes = block.cold_bytes();
                 state = self.state.lock().map_err(poison)?;
-                if let Err(error) = result {
-                    state.admitting = false;
-                    state.version += 1;
-                    self.wake.notify_all();
-                    return Err(error);
-                }
+                let wrote = match result {
+                    Ok(wrote) => wrote,
+                    Err(error) => {
+                        state.admitting = false;
+                        state.version += 1;
+                        self.wake.notify_all();
+                        return Err(error);
+                    }
+                };
                 let entry = state.entries.get_mut(&id).expect("registered block");
                 entry.resident = false;
                 entry.cold_bytes = cold_bytes;
+                let payload_bytes = entry.payload_bytes;
                 state.used -= bytes - cold_bytes;
+                if wrote {
+                    state.metrics.dirty_write_operations += 1;
+                    state.metrics.dirty_write_bytes += payload_bytes as u64;
+                }
                 continue;
             }
             let idle = state
@@ -447,15 +520,21 @@ impl CubeResidency {
         }
         state.used += scratch_bytes;
         state.scratch += scratch_bytes;
+        state.metrics.peak_used_bytes = state.metrics.peak_used_bytes.max(state.used);
         drop(state);
 
+        let mut reloaded = Vec::new();
         let result = to_open
             .iter()
             .try_for_each(|(_, backend)| backend.reopen())
             .and_then(|_| {
-                to_load
-                    .iter()
-                    .try_for_each(|(_, block, write)| block.prepare(*write))
+                to_load.iter().try_for_each(|(id, block, write)| {
+                    let read = block.prepare(*write)?;
+                    if read {
+                        reloaded.push(*id);
+                    }
+                    Ok(())
+                })
             });
         let open_results: Vec<_> = to_open
             .iter()
@@ -466,6 +545,10 @@ impl CubeResidency {
             .map(|(id, block, _)| (*id, block.resident()))
             .collect();
         let mut state = self.state.lock().map_err(poison)?;
+        for id in reloaded {
+            state.metrics.reload_read_operations += 1;
+            state.metrics.reload_read_bytes += state.entries[&id].payload_bytes as u64;
+        }
         for (id, open) in open_results {
             if !open {
                 let backend = state.backends.get_mut(&id).expect("registered backend");
@@ -553,7 +636,7 @@ impl CubeResidency {
 
 #[derive(Clone)]
 pub(crate) struct BlockRequest {
-    id: BlockId,
+    pub(crate) id: BlockId,
     write: bool,
 }
 
@@ -739,16 +822,17 @@ struct PlaneBlock<T: LatticeElement + TilePixel> {
 }
 
 impl<T: LatticeElement + TilePixel> BlockIo for PlaneBlock<T> {
-    fn prepare(&self, write: bool) -> io::Result<()> {
+    fn prepare(&self, write: bool) -> io::Result<bool> {
         let mut state = self.state.write().map_err(poison)?;
         if state.values.is_some() {
-            return Ok(());
+            return Ok(false);
         }
         if !write && !state.backed && self.fill.is_none() {
             return Err(invalid("generated plane read before initialization"));
         }
         let mut values = vec![self.fill.unwrap_or_default(); self.cells];
-        if state.backed {
+        let reloaded = state.backed;
+        if reloaded {
             self.backend
                 .array
                 .lock()
@@ -761,12 +845,13 @@ impl<T: LatticeElement + TilePixel> BlockIo for PlaneBlock<T> {
                 .map_err(other)?;
         }
         state.values = Some(values);
-        Ok(())
+        Ok(reloaded)
     }
 
-    fn evict(&self) -> io::Result<()> {
+    fn evict(&self) -> io::Result<bool> {
         let mut state = self.state.write().map_err(poison)?;
-        if state.dirty {
+        let wrote = state.dirty;
+        if wrote {
             let values = state
                 .values
                 .as_ref()
@@ -784,7 +869,7 @@ impl<T: LatticeElement + TilePixel> BlockIo for PlaneBlock<T> {
             state.dirty = false;
         }
         state.values = None;
-        Ok(())
+        Ok(wrote)
     }
 
     fn resident(&self) -> bool {
@@ -1011,6 +1096,7 @@ impl<T: LatticeElement + TilePixel> ManagedPlaneArray<T> {
                     block: block.clone(),
                     backend: backend_id,
                     bytes: footprint.block_bytes,
+                    payload_bytes: cells * size_of::<T>(),
                     cold_bytes: 0,
                     resident: false,
                     read_pins: 0,
@@ -1416,6 +1502,35 @@ mod tests {
         exercise([1.0_f64, 2.0, 3.0, 4.0]);
         exercise([Complex32::new(2.0, -1.0); 4]);
         exercise([false, true, false, true]);
+    }
+
+    #[test]
+    fn shrinking_cache_spills_before_returning_capacity_and_reloads() {
+        let root = tempfile::tempdir().unwrap();
+        let manager = CubeResidency::new(1 << 20).unwrap();
+        let array =
+            ManagedPlaneArray::create(manager.clone(), root.path(), 64, 64, 3, Some(0.0_f32))
+                .unwrap();
+        for plane in 0..2 {
+            let pins = manager
+                .admit(&[array.request(plane, true).unwrap()], 0)
+                .unwrap();
+            let mut values = array.write(&pins, plane, 0..4096).unwrap();
+            values.fill((plane + 1) as f32);
+            values.finish();
+        }
+        let one_block = manager.state.lock().unwrap().entries[&array.blocks[0].0].bytes;
+        let target = manager.used_bytes() - one_block / 2;
+        manager.shrink_to(target).unwrap();
+        assert_eq!(manager.limit_bytes(), target);
+        assert!(manager.used_bytes() <= manager.limit_bytes());
+        assert!(manager.metrics().dirty_write_operations >= 1);
+        let pins = manager
+            .admit(&[array.request(0, false).unwrap()], 0)
+            .unwrap();
+        assert_eq!(&*array.read(&pins, 0, 0..4096).unwrap(), &[1.0; 4096]);
+        assert!(manager.metrics().reload_read_operations >= 1);
+        assert!(manager.metrics().reload_read_bytes >= 4096 * size_of::<f32>() as u64);
     }
 
     #[test]

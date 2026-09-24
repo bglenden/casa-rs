@@ -387,6 +387,17 @@ impl RetainedArtifactPermit {
         Ok(self)
     }
 
+    /// Narrow the single retained cache permit after its owner has physically
+    /// reclaimed the returned portion. The export remains owned by this run.
+    pub(crate) fn narrow_memory_to(&mut self, amount: u64) -> Result<(), ResourceError> {
+        let [permit] = &mut *self.permits else {
+            return Err(ResourceError::Invalid(
+                "cache retention requires one memory permit".to_string(),
+            ));
+        };
+        permit.narrow_memory_to(amount)
+    }
+
     /// Return whether this permit contains exactly one matching resource claim.
     pub(crate) fn covers_exact_temporary_storage(&self, amount: u64) -> bool {
         let mut storage = self.permits.iter().filter(|permit| {

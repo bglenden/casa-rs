@@ -35,7 +35,7 @@ struct CubeStateRetention {
 /// resident normals and remains conservative for paged file/storage resources.
 #[derive(Debug)]
 struct CubeBackingRetention {
-    heap: OnceLock<RetainedArtifactPermit>,
+    heap: OnceLock<std::sync::Mutex<RetainedArtifactPermit>>,
     _shared: Arc<CubeStateRetention>,
 }
 
@@ -43,6 +43,21 @@ struct CubeBackingRetention {
 pub(crate) struct ManagedCubeRun {
     pub(crate) residency: Arc<CubeResidency>,
     retention: Arc<CubeBackingRetention>,
+}
+
+impl ManagedCubeRun {
+    /// Physical eviction must precede returning any part of the retained lease.
+    pub(crate) fn shrink_cache_to(&self, target: usize) -> io::Result<()> {
+        self.residency.shrink_to(target)?;
+        self.retention
+            .heap
+            .get()
+            .ok_or_else(|| io::Error::other("managed cache permit is not retained"))?
+            .lock()
+            .map_err(|_| io::Error::other("managed cache permit lock poisoned"))?
+            .narrow_memory_to(target as u64)
+            .map_err(io::Error::other)
+    }
 }
 
 impl std::fmt::Debug for ManagedCubeRun {
@@ -96,10 +111,18 @@ impl CubeStatePlan {
             return Err(overflow());
         }
         let planes = shape.sample_count() / cells;
-        let value =
-            ManagedPlaneArray::<f32>::footprint(storage.directory(), height, width, planes)?;
-        let support =
-            ManagedPlaneArray::<bool>::footprint(storage.directory(), height, width, planes)?;
+        Self::managed_cache_limits_for_shape(storage.directory(), height, width, planes, workers)
+    }
+
+    fn managed_cache_limits_for_shape(
+        directory: &std::path::Path,
+        height: usize,
+        width: usize,
+        planes: usize,
+        workers: usize,
+    ) -> io::Result<(usize, usize)> {
+        let value = ManagedPlaneArray::<f32>::footprint(directory, height, width, planes)?;
+        let support = ManagedPlaneArray::<bool>::footprint(directory, height, width, planes)?;
         let owner = add(
             value.owner_bytes.checked_mul(5).ok_or_else(overflow)?,
             support.owner_bytes.checked_mul(2).ok_or_else(overflow)?,
@@ -699,11 +722,18 @@ impl CubeStatePlan {
     pub(crate) fn log_measurements(&self, node: &WorkNodeId) {
         if std::env::var_os("CASA_RS_TRACE_IMAGING_STAGE_TIMING").is_some() {
             if let Some(run) = &self.managed {
+                let metrics = run.residency.metrics();
                 eprintln!(
-                    "imaging_cube_managed node={} used_bytes={} limit_bytes={}",
+                    "imaging_cube_managed node={} used_bytes={} live_payload_bytes={} limit_bytes={} peak_used_bytes={} dirty_write_operations={} dirty_write_bytes={} reload_read_operations={} reload_read_bytes={}",
                     node.as_str(),
                     run.residency.used_bytes(),
+                    run.residency.live_payload_bytes(),
                     run.residency.limit_bytes(),
+                    metrics.peak_used_bytes,
+                    metrics.dirty_write_operations,
+                    metrics.dirty_write_bytes,
+                    metrics.reload_read_operations,
+                    metrics.reload_read_bytes,
                 );
             }
             eprintln!(
@@ -756,7 +786,7 @@ impl CubeStatePlan {
             for ((_, retention), permit) in self.backings.iter().zip(partitions) {
                 retention
                     .heap
-                    .set(permit)
+                    .set(std::sync::Mutex::new(permit))
                     .map_err(|_| io::Error::other("cube backing allocation was retained twice"))?;
             }
             Ok(())
@@ -1029,4 +1059,24 @@ fn add(left: usize, right: usize) -> io::Result<usize> {
 }
 fn as_u64(value: usize) -> io::Result<u64> {
     u64::try_from(value).map_err(|_| overflow())
+}
+
+#[cfg(test)]
+mod managed_cache_tests {
+    use super::*;
+
+    #[test]
+    fn full_cube_cache_ceiling_exceeds_active_four_worker_floor() {
+        let (minimum, full) = CubeStatePlan::managed_cache_limits_for_shape(
+            std::path::Path::new("cube"),
+            512,
+            512,
+            512,
+            4,
+        )
+        .unwrap();
+        eprintln!("review2_cache_formula minimum_bytes={minimum} full_bytes={full}");
+        assert!(minimum < full);
+        assert!(minimum < 16 << 30);
+    }
 }

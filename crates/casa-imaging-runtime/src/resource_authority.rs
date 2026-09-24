@@ -2959,6 +2959,35 @@ impl ResourcePermit {
         Ok(())
     }
 
+    /// Return unused retained host-memory capacity after its physical owner
+    /// has first reclaimed all allocations above the new limit.
+    pub(crate) fn narrow_memory_to(&mut self, amount: u64) -> Result<(), ResourceError> {
+        if !matches!(self.resource, LeaseResource::Memory { .. }) {
+            return Err(ResourceError::Invalid(
+                "only memory permits may be narrowed here".to_string(),
+            ));
+        }
+        if amount == 0 || amount > self.amount {
+            return Err(ResourceError::Invalid(
+                "narrowed memory must retain a positive owned amount".to_string(),
+            ));
+        }
+        if amount == self.amount {
+            return Ok(());
+        }
+        let returned = self.amount - amount;
+        release_permit(
+            &self.inner,
+            self.lease_id,
+            &self.resource,
+            &self.accounting_resource,
+            returned,
+            self.artifact_capacity.as_ref(),
+        )?;
+        self.amount = amount;
+        Ok(())
+    }
+
     /// Releases this consumption and any now-quiescent pending lease.
     pub fn release(mut self) -> Result<LeaseRelease, ResourceError> {
         let released = release_permit(
