@@ -11573,10 +11573,42 @@ impl TiledFileIO {
         start: &[usize],
         shape: &[usize],
     ) -> Result<ArrayD<T>, StorageError> {
+        let nelem = shape
+            .iter()
+            .try_fold(1usize, |n, &dim| n.checked_mul(dim))
+            .ok_or_else(|| StorageError::FormatMismatch("slice size overflow".into()))?;
+        let mut result = vec![T::default(); nelem];
+        self.get_slice_into(start, shape, &mut result)?;
+        ArrayD::from_shape_vec(IxDyn(shape).f(), result)
+            .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))
+    }
+
+    /// Read a rectangular slice into caller-owned Fortran-order storage.
+    /// The only tile-sized staging belongs to this storage handle's cache.
+    pub fn get_slice_into<T: TilePixel>(
+        &mut self,
+        start: &[usize],
+        shape: &[usize],
+        result: &mut [T],
+    ) -> Result<(), StorageError> {
         let ndim = self.cube_shape.len();
         assert!(ndim <= MAX_NDIM, "ndim exceeds MAX_NDIM");
-        let nelem: usize = shape.iter().product();
-        let mut result = vec![T::default(); nelem];
+        if start.len() != ndim
+            || shape.len() != ndim
+            || shape.contains(&0)
+            || start
+                .iter()
+                .zip(shape)
+                .zip(&self.cube_shape)
+                .any(|((&offset, &len), &extent)| {
+                    offset.checked_add(len).is_none_or(|end| end > extent)
+                })
+            || shape.iter().try_fold(1usize, |n, &dim| n.checked_mul(dim)) != Some(result.len())
+        {
+            return Err(StorageError::FormatMismatch(
+                "invalid tiled slice bounds or destination".into(),
+            ));
+        }
         let result_strides = fortran_order_strides(shape);
 
         let inner_axis = {
@@ -11702,8 +11734,7 @@ impl TiledFileIO {
             }
         }
 
-        ArrayD::from_shape_vec(IxDyn(shape).f(), result)
-            .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))
+        Ok(())
     }
 
     /// Reads the full cube as a Fortran-order `ArrayD<T>`.
@@ -12404,6 +12435,16 @@ impl TiledArrayStorage {
     ) -> Result<ArrayD<T>, StorageError> {
         self.ensure_pixel_type::<T>()?;
         self.inner.get_slice(start, shape)
+    }
+
+    pub fn get_slice_into<T: TilePixel>(
+        &mut self,
+        start: &[usize],
+        shape: &[usize],
+        destination: &mut [T],
+    ) -> Result<(), StorageError> {
+        self.ensure_pixel_type::<T>()?;
+        self.inner.get_slice_into(start, shape, destination)
     }
 
     pub fn get_all<T: TilePixel>(&mut self) -> Result<ArrayD<T>, StorageError> {

@@ -762,6 +762,7 @@ pub struct ChannelNormalStorageRequirement {
     allocation_ordinal: usize,
     scalar_capacity: usize,
     complex_plane_scalars: usize,
+    image_axes: [usize; 2],
     maximum_window_scalars: usize,
     retained_metadata_bytes: usize,
 }
@@ -844,6 +845,13 @@ impl ChannelNormalStorageRequirement {
                     allocation_ordinal: ordinal * 2,
                     scalar_capacity: fields.epoch_scalars,
                     complex_plane_scalars,
+                    image_axes: [
+                        domain.image_shape()[1],
+                        domain.image_shape()[0]
+                            .checked_mul(polarizations)
+                            .and_then(|n| n.checked_mul(2))
+                            .ok_or(SpectralOperatorError::ResidencyOverflow)?,
+                    ],
                     maximum_window_scalars: complex_plane_scalars
                         .checked_mul(window_channels)
                         .ok_or(SpectralOperatorError::ResidencyOverflow)?,
@@ -881,6 +889,12 @@ impl ChannelNormalStorageRequirement {
     #[must_use]
     pub const fn complex_plane_scalars(self) -> usize {
         self.complex_plane_scalars
+    }
+
+    /// Storage axes for native y-contiguous complex scalar planes.
+    #[must_use]
+    pub const fn image_axes(self) -> [usize; 2] {
+        self.image_axes
     }
 
     /// Largest single read/write request issued to the physical capability.

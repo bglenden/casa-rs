@@ -990,7 +990,7 @@ fn observation_resolution() -> SelectedObservationResolutionRequest {
         WeightColumn::Weight,
         Vec::new(),
         ModelStateIdentity::Empty,
-        SelectedObservationContentBudget::new(160 * 1024, 1, 4),
+        SelectedObservationContentBudget::new(256 * 1024, 1, 4),
         casa_test_support::deterministic_measures_provider_for_identity([90; 32]),
     )
 }

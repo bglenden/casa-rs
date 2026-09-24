@@ -138,12 +138,25 @@ impl CubeStatePlan {
             _shared: retention.clone(),
         });
         let metrics = Arc::new(CubeBackingMetrics::default());
-        let model_layout = CubeArrayLayout::new(
-            shape.sample_count(),
-            model_window_samples,
-            model_window_samples,
-            1,
-        )
+        let model_layout = if let [domain] = shape.domains() {
+            let [width, height] = domain.pixels();
+            CubeArrayLayout::new_spatial(
+                shape.sample_count(),
+                height,
+                width
+                    .checked_mul(shape.polarizations())
+                    .ok_or_else(overflow)?,
+                model_window_samples,
+                1,
+            )
+        } else {
+            CubeArrayLayout::new(
+                shape.sample_count(),
+                model_window_samples,
+                model_window_samples,
+                1,
+            )
+        }
         .map_err(io::Error::other)?;
         let model = Arc::new(
             PagedModelStorageFactory::new(
@@ -158,9 +171,10 @@ impl CubeStatePlan {
         let layouts = requirements
             .iter()
             .map(|requirement| {
-                CubeArrayLayout::new(
+                CubeArrayLayout::new_spatial(
                     requirement.scalar_capacity(),
-                    requirement.complex_plane_scalars(),
+                    requirement.image_axes()[0],
+                    requirement.image_axes()[1],
                     requirement.maximum_window_scalars(),
                     1,
                 )

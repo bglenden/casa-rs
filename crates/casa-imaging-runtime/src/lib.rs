@@ -12,6 +12,11 @@ mod cube_state_plan;
 mod execution;
 mod execution_bindings;
 mod major_cycle;
+#[allow(
+    dead_code,
+    reason = "review-1 foundation is connected to cube callers in milestone B"
+)]
+mod managed_cube_blocks;
 #[allow(dead_code)]
 mod managed_spill;
 mod metal_runtime;
