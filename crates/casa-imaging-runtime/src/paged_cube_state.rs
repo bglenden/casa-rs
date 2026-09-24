@@ -348,6 +348,7 @@ pub(crate) struct PagedNormalStorageFactory {
     layouts: Box<[(usize, CubeArrayLayout)]>,
     retentions: Box<[(usize, Arc<dyn std::fmt::Debug + Send + Sync>)]>,
     metrics: Arc<CubeBackingMetrics>,
+    scalar_sensitivity: bool,
 }
 
 impl PagedNormalStorageFactory {
@@ -356,12 +357,14 @@ impl PagedNormalStorageFactory {
         layouts: Box<[(usize, CubeArrayLayout)]>,
         retentions: Box<[(usize, Arc<dyn std::fmt::Debug + Send + Sync>)]>,
         metrics: Arc<CubeBackingMetrics>,
+        scalar_sensitivity: bool,
     ) -> Self {
         Self {
             parent: parent.into(),
             layouts,
             retentions,
             metrics,
+            scalar_sensitivity,
         }
     }
 
@@ -386,6 +389,9 @@ impl PagedNormalStorageFactory {
 }
 
 impl NormalStorageFactory for PagedNormalStorageFactory {
+    fn scalar_sensitivity(&self) -> bool {
+        self.scalar_sensitivity
+    }
     fn create(
         &self,
         allocation_ordinal: usize,
@@ -1130,6 +1136,7 @@ mod tests {
             ]
             .into(),
             metrics.clone(),
+            false,
         );
         let mut epoch = initial.create(0, 16).unwrap();
         let mut invariants = initial.create(1, 24).unwrap();
@@ -1149,6 +1156,7 @@ mod tests {
                 vec![(0, CubeArrayLayout::new(16, 4, 4, 1).unwrap())].into(),
                 vec![(0, Arc::new(()) as Arc<dyn std::fmt::Debug + Send + Sync>)].into(),
                 metrics.clone(),
+                false,
             );
             assert!(
                 factory.create(1, 24).is_err(),
@@ -1213,6 +1221,7 @@ mod tests {
             vec![(0, layout)].into_boxed_slice(),
             vec![(0, Arc::new(()) as Arc<dyn std::fmt::Debug + Send + Sync>)].into(),
             metrics.clone(),
+            false,
         );
         let mut storage = factory.create(0, 9).unwrap();
         assert!(factory.create(1, 9).is_err());
@@ -1256,6 +1265,7 @@ mod tests {
             vec![(0, layout)].into_boxed_slice(),
             vec![(0, Arc::new(()) as Arc<dyn std::fmt::Debug + Send + Sync>)].into(),
             Arc::default(),
+            false,
         );
         let error = factory.create(0, 9).unwrap_err();
         assert!(

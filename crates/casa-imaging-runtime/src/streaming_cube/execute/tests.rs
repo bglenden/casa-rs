@@ -188,23 +188,11 @@ fn native_preparation_and_real_bands_feed_the_existing_fold_and_controller() {
             .unwrap();
     let expected_model = preparation.final_model_generation();
     let mut measurements = None;
-    let result = execute(
-        &mut store,
-        initial_jobs(&bands),
-        preparation.final_model(),
-        &layout,
-        &OUTPUT,
-        &polarization(),
-        4,
-        2,
-        4096,
-        4 << 30,
-        0,
-        &mut measurements,
-    )
-    .unwrap();
     let mut fold: Option<CompleteDataOwnerSlabFold> = None;
-    for (normal, specification) in result.bands.into_iter().zip(&specifications) {
+    let mut next = 0;
+    let mut append = |normal| -> io::Result<()> {
+        let specification = &specifications[next];
+        next += 1;
         let BandResult::Initial(normal) = normal else {
             panic!("initial normal required")
         };
@@ -233,14 +221,33 @@ fn native_preparation_and_real_bands_feed_the_existing_fold_and_controller() {
         assert_eq!(band.completion().sample_count(), 60);
         assert_eq!(band.completion().coverage_proof_bytes(), 0);
         assert_eq!(band.completion().coverage_proof_hash_calls(), 0);
-        fold = Some(match fold {
+        fold = Some(match fold.take() {
             None => {
                 CompleteDataOwnerSlabFold::begin(band, &NormalStoragePlan::resident(1).unwrap())
                     .unwrap()
             }
             Some(prefix) => prefix.extend(band).unwrap(),
         });
-    }
+        Ok(())
+    };
+    let result = execute(
+        &mut store,
+        initial_jobs(&bands),
+        preparation.final_model(),
+        &layout,
+        &OUTPUT,
+        &polarization(),
+        4,
+        2,
+        4096,
+        4 << 30,
+        0,
+        &mut measurements,
+        &mut append,
+    )
+    .unwrap();
+    assert_eq!(result.bands_consumed, 4);
+    assert_eq!(next, 4);
     let normal = fold.unwrap().finish().unwrap();
     assert_eq!(normal.completion().selected_generation(), selected);
     for channel in 0..4 {
@@ -482,14 +489,24 @@ fn initial_jobs(plans: &[BandPlan]) -> Vec<BandPlan> {
     plans.to_vec()
 }
 
+struct CollectedWave {
+    bands: Vec<BandResult>,
+    source: StoreIo,
+}
+
 fn run(
     store: &mut NativeStore,
     jobs: Vec<BandPlan>,
     model: &ModelGeneration,
     workers: usize,
     slots: usize,
-) -> (WaveResult, BoundedStreamMeasurements) {
+) -> (CollectedWave, BoundedStreamMeasurements) {
     let mut measured = None;
+    let mut bands = Vec::new();
+    let mut append = |band| {
+        bands.push(band);
+        Ok(())
+    };
     let result = execute(
         store,
         jobs,
@@ -503,9 +520,18 @@ fn run(
         4 << 30,
         0,
         &mut measured,
+        &mut append,
     )
     .unwrap();
-    (result, measured.unwrap())
+    assert_eq!(result.bands_consumed, bands.len());
+    assert!(result.peak_completed <= workers);
+    (
+        CollectedWave {
+            bands,
+            source: result.source,
+        },
+        measured.unwrap(),
+    )
 }
 
 fn assert_same(expected: &BandResult, bands: &[BandResult]) {
@@ -622,6 +648,7 @@ fn native_read_failure_joins_complete_band_jobs_without_returning_products() {
         4 << 30,
         0,
         &mut measured,
+        &mut |_| Ok(()),
     )
     .err()
     .unwrap();
@@ -630,7 +657,7 @@ fn native_read_failure_joins_complete_band_jobs_without_returning_products() {
 }
 
 #[test]
-fn wave_admission_counts_retained_results_and_only_active_workspaces() {
+fn wave_admission_counts_only_the_bounded_completed_wave() {
     let (_dir, store, bands, _) = input(1, false);
     let jobs = initial_jobs(&bands);
     for workers in [1, 2, 4] {
@@ -641,30 +668,24 @@ fn wave_admission_counts_retained_results_and_only_active_workspaces() {
                 WavePlan::new(&store, &jobs, workers, slots, 4096, plan.peak_bytes - 1).is_err()
             );
             assert_eq!(plan.job_bytes.len(), 4);
-            let mut dormant = 0;
-            let mut excesses = Vec::new();
+            let mut active = Vec::new();
             for job in &jobs {
                 let memory = job.memory().unwrap();
-                let retained = memory
-                    .retained_bytes
-                    .max(job.preparation_metadata_bytes().unwrap())
-                    as u64;
-                dormant += retained;
                 let input = NativeSource::memory(store.plan, job.native_range())
                     .unwrap()
                     .1;
-                excesses.push((memory.peak_bytes() as u64 + input).saturating_sub(retained));
+                active.push(memory.peak_bytes() as u64 + input);
             }
-            excesses.sort_unstable_by(|a, b| b.cmp(a));
-            let dynamic = dormant + excesses[..workers].iter().sum::<u64>();
+            active.sort_unstable_by(|a, b| b.cmp(a));
+            let dynamic = active[..workers].iter().sum::<u64>();
             let expected =
-                BoundedKernelPlan::new::<usize, ()>(workers, jobs.len(), dynamic).unwrap();
+                BoundedKernelPlan::new::<usize, usize>(workers, jobs.len(), dynamic).unwrap();
             assert_eq!(plan.kernel.capacity_bytes(), expected.capacity_bytes());
             if workers < jobs.len() {
                 assert!(dynamic < plan.job_bytes.iter().sum());
             }
-            // Every assignment of pending/completed and up to W active jobs
-            // fits, including non-prefix completion and heterogeneous support.
+            // Only the current worker wave can own pixel payloads; descriptors
+            // for other pending or committed jobs remain separately counted.
             for mask in 0_u32..1 << jobs.len() {
                 if mask.count_ones() as usize > workers {
                     continue;
@@ -672,15 +693,11 @@ fn wave_admission_counts_retained_results_and_only_active_workspaces() {
                 let live: u64 = jobs
                     .iter()
                     .enumerate()
-                    .map(|(index, job)| {
+                    .map(|(index, _job)| {
                         if mask & (1 << index) != 0 {
                             plan.job_bytes[index]
                         } else {
-                            let memory = job.memory().unwrap();
-                            memory
-                                .retained_bytes
-                                .max(job.preparation_metadata_bytes().unwrap())
-                                as u64
+                            0
                         }
                     })
                     .sum();
@@ -733,6 +750,7 @@ fn initial_wave_selection_uses_shape_budget_and_drains_before_next_wave() {
                     let depth =
                         WavePlan::prefix(store.plan, &bands[start..], workers, slots, 4096, budget)
                             .unwrap();
+                    let mut actual = Vec::new();
                     let wave = execute(
                         &mut store,
                         initial_jobs(&bands[start..start + depth]),
@@ -746,9 +764,15 @@ fn initial_wave_selection_uses_shape_budget_and_drains_before_next_wave() {
                         budget,
                         0,
                         &mut None,
+                        &mut |band| {
+                            actual.push(band);
+                            Ok(())
+                        },
                     )
                     .unwrap();
-                    for (actual, reference) in wave.bands.iter().zip(&expected.bands[start..]) {
+                    assert_eq!(wave.bands_consumed, actual.len());
+                    assert!(wave.peak_completed <= workers);
+                    for (actual, reference) in actual.iter().zip(&expected.bands[start..]) {
                         let (BandResult::Initial(actual), BandResult::Initial(reference)) =
                             (actual, reference)
                         else {
@@ -819,6 +843,7 @@ fn model_read_failure_joins_the_wave_without_completion() {
         4 << 30,
         1,
         &mut measurements,
+        &mut |_| Ok(()),
     )
     .err()
     .unwrap();

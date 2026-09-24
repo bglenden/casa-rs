@@ -17,6 +17,7 @@ pub(crate) struct ResidentNormalFactory {
     requirements: Box<[ChannelNormalStorageRequirement]>,
     retentions: Box<[(usize, Arc<dyn fmt::Debug + Send + Sync>)]>,
     metrics: Arc<CubeBackingMetrics>,
+    scalar_sensitivity: bool,
 }
 
 impl ResidentNormalFactory {
@@ -24,11 +25,13 @@ impl ResidentNormalFactory {
         requirements: Box<[ChannelNormalStorageRequirement]>,
         retentions: Box<[(usize, Arc<dyn fmt::Debug + Send + Sync>)]>,
         metrics: Arc<CubeBackingMetrics>,
+        scalar_sensitivity: bool,
     ) -> Self {
         Self {
             requirements,
             retentions,
             metrics,
+            scalar_sensitivity,
         }
     }
 
@@ -60,6 +63,9 @@ impl ResidentNormalFactory {
 }
 
 impl NormalStorageFactory for ResidentNormalFactory {
+    fn scalar_sensitivity(&self) -> bool {
+        self.scalar_sensitivity
+    }
     fn create(
         &self,
         allocation_ordinal: usize,
@@ -156,7 +162,7 @@ mod tests {
             ChannelNormalStorageRequirement::for_streaming_cube(&specification, 1).unwrap();
         let legacy = ChannelNormalStorageRequirement::for_specification(&specification, 1).unwrap();
         assert_eq!(requirements[0].scalar_capacity(), 4 * 64 * 2);
-        assert_eq!(requirements[1].scalar_capacity(), 4 * 64 * 3);
+        assert_eq!(requirements[1].scalar_capacity(), 4 * 64 * 2);
         assert_eq!(legacy[0].scalar_capacity(), 4 * 64 * 4);
         assert_eq!(legacy[1].scalar_capacity(), 4 * 64 * 5);
         let refresh =
@@ -169,7 +175,7 @@ mod tests {
             .map(|r| r.scalar_capacity())
             .sum::<usize>();
         let refresh_scalars = refresh.iter().map(|r| r.scalar_capacity()).sum::<usize>();
-        assert_eq!(initial_scalars + refresh_scalars, 4 * 64 * 7);
+        assert_eq!(initial_scalars + refresh_scalars, 4 * 64 * 6);
         let requirement = requirements[0];
         let admitted = ResidentNormalFactory::ledger(requirement).unwrap();
         let metrics = Arc::new(CubeBackingMetrics::default());
@@ -178,6 +184,7 @@ mod tests {
             requirements,
             vec![(0, owner.clone() as Arc<dyn fmt::Debug + Send + Sync>)].into(),
             metrics.clone(),
+            true,
         );
         assert!(factory.create(2, 1).is_err());
         assert!(factory.create(0, 0).is_err());

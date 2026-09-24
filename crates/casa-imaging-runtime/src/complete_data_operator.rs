@@ -72,7 +72,7 @@ const GRIDDED_NORMAL_SOURCE_SLOTS: u64 = 2;
 
 #[path = "streaming_cube/completion.rs"]
 mod streaming_completion;
-pub(crate) use streaming_completion::PendingCubeRefresh;
+pub(crate) use streaming_completion::{PendingCubeRefresh, PendingStreamingCubeFold};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum GriddedNormalReplayPlanningCapacity {
@@ -4974,7 +4974,7 @@ pub struct SpectralOperatorState {
     binding: CompleteDataExecutionBinding,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct CompleteDataExecutionBinding {
     problem: CompiledProblemId,
     attempt: ExecutionAttemptId,

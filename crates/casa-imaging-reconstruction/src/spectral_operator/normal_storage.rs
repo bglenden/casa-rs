@@ -181,6 +181,7 @@ mod tests {
     struct ObservedFactory {
         maximum_access: Arc<AtomicUsize>,
         allowed: usize,
+        scalar_sensitivity: bool,
     }
 
     #[derive(Debug)]
@@ -191,6 +192,10 @@ mod tests {
     }
 
     impl NormalStorageFactory for ObservedFactory {
+        fn scalar_sensitivity(&self) -> bool {
+            self.scalar_sensitivity
+        }
+
         fn create(
             &self,
             _domain: usize,
@@ -684,6 +689,7 @@ mod tests {
                     Arc::new(ObservedFactory {
                         maximum_access: maximum_access.clone(),
                         allowed,
+                        scalar_sensitivity: false,
                     }),
                     width,
                 )
@@ -740,11 +746,52 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn natural_cube_scalar_sensitivity_reconstructs_each_plane_without_a_dense_backing() {
+        let scalar_domain = |range: Range<usize>| {
+            let mut domain = domain(range, false);
+            domain.primitives.sensitivity = domain
+                .primitives
+                .sum_weights
+                .iter()
+                .flat_map(|&weight| std::iter::repeat_n(weight, CELLS))
+                .collect();
+            domain
+        };
+        let expected = scalar_domain(0..CHANNELS)
+            .primitives
+            .normal_state_content_identity();
+        let plan = NormalStoragePlan::new(
+            Arc::new(ObservedFactory {
+                maximum_access: Arc::new(AtomicUsize::new(0)),
+                allowed: 2 * CELLS * POLARIZATIONS,
+                scalar_sensitivity: true,
+            }),
+            1,
+        )
+        .unwrap();
+        let mut stored = StoredChannelNormalDomain::begin(scalar_domain(0..1), &plan).unwrap();
+        assert!(stored.fields.scalar_sensitivity);
+        assert!(stored.fields.sensitivity.is_empty());
+        for channel in 1..CHANNELS {
+            stored.append(scalar_domain(channel..channel + 1)).unwrap();
+        }
+        assert_eq!(stored.content_identity().unwrap(), expected);
+        let state = NormalStatePrimitives::ChannelLocal(vec![stored].into());
+        let reader = state.read_plane(0, 3, 1).unwrap();
+        assert_eq!(reader.read_sensitivity().unwrap().as_ref(), &[8.0; CELLS]);
+    }
 }
 
 /// Runtime allocation capability for an exact logical Normal State array.
 #[doc(hidden)]
 pub trait NormalStorageFactory: fmt::Debug + Send + Sync {
+    /// The natural-weight cube's sensitivity is one scalar per channel; no
+    /// image-sized backing is needed for that repeated value.
+    fn scalar_sensitivity(&self) -> bool {
+        false
+    }
     /// Allocate storage whose complete logical contents will be owner-written.
     /// Slots are `2 * domain` for epoch arrays and `2 * domain + 1` for invariants.
     fn create(
@@ -775,7 +822,7 @@ impl ChannelNormalStorageRequirement {
         specification: &SpectralOperatorSpecification,
         window_channels: usize,
     ) -> Result<Box<[Self]>, SpectralOperatorError> {
-        Self::for_fields(specification, window_channels, true, true, false)
+        Self::for_fields(specification, window_channels, true, true, false, false)
     }
 
     /// Native initial-empty imaging followed by residual refresh retains only
@@ -787,7 +834,7 @@ impl ChannelNormalStorageRequirement {
         specification: &SpectralOperatorSpecification,
         window_channels: usize,
     ) -> Result<Box<[Self]>, SpectralOperatorError> {
-        Self::for_fields(specification, window_channels, false, false, false)
+        Self::for_fields(specification, window_channels, false, false, false, true)
     }
 
     /// Allocate only the new complex residual; imported invariants retain their
@@ -796,7 +843,7 @@ impl ChannelNormalStorageRequirement {
         specification: &SpectralOperatorSpecification,
         window_channels: usize,
     ) -> Result<Box<[Self]>, SpectralOperatorError> {
-        Self::for_fields(specification, window_channels, false, false, true)
+        Self::for_fields(specification, window_channels, false, false, true, true)
     }
 
     fn for_fields(
@@ -805,6 +852,7 @@ impl ChannelNormalStorageRequirement {
         invariant: bool,
         residual: bool,
         residual_only: bool,
+        scalar_sensitivity: bool,
     ) -> Result<Box<[Self]>, SpectralOperatorError> {
         let channels = specification.slab.total_channels();
         if specification.basis != SpectralBasisPlan::ChannelLocal
@@ -828,7 +876,8 @@ impl ChannelNormalStorageRequirement {
                 let values = plane_values
                     .checked_mul(channels)
                     .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-                let fields = ChannelNormalFields::new(values, invariant, residual)?;
+                let fields =
+                    ChannelNormalFields::new(values, invariant, residual, scalar_sensitivity)?;
                 let metadata_values = channels
                     .checked_mul(polarizations)
                     .ok_or(SpectralOperatorError::ResidencyOverflow)?;
@@ -1401,13 +1450,19 @@ struct ChannelNormalFields {
     invariant_dirty: Option<Range<usize>>,
     psf: Range<usize>,
     sensitivity: Range<usize>,
+    scalar_sensitivity: bool,
     major_cycle_residual: Option<Range<usize>>,
     scalars: usize,
     epoch_scalars: usize,
 }
 
 impl ChannelNormalFields {
-    fn new(values: usize, invariant: bool, residual: bool) -> Result<Self, SpectralOperatorError> {
+    fn new(
+        values: usize,
+        invariant: bool,
+        residual: bool,
+        scalar_sensitivity: bool,
+    ) -> Result<Self, SpectralOperatorError> {
         let complex = values
             .checked_mul(2)
             .ok_or(SpectralOperatorError::ResidencyOverflow)?;
@@ -1424,12 +1479,13 @@ impl ChannelNormalFields {
         let epoch_scalars = major_cycle_residual.as_ref().unwrap_or(&dirty).end;
         let invariant_dirty = invariant.then(|| field(complex)).transpose()?;
         let psf = field(complex)?;
-        let sensitivity = field(values)?;
+        let sensitivity = field(if scalar_sensitivity { 0 } else { values })?;
         Ok(Self {
             dirty,
             invariant_dirty,
             psf,
             sensitivity,
+            scalar_sensitivity,
             major_cycle_residual,
             scalars: end,
             epoch_scalars,
@@ -1546,8 +1602,12 @@ impl<'a> FinalNormalPlaneReader<'a> {
         let offset = self.plane * self.cells;
         match self.backing {
             NormalPlaneBacking::Stored(d) => {
-                let start = d.fields.sensitivity.start + offset;
-                d.read_scalars(start..start + self.cells)
+                if d.fields.scalar_sensitivity {
+                    Ok(Cow::Owned(vec![d.sum_weights[self.plane]; self.cells]))
+                } else {
+                    let start = d.fields.sensitivity.start + offset;
+                    d.read_scalars(start..start + self.cells)
+                }
             }
             NormalPlaneBacking::Resident(d) => {
                 Ok(Cow::Borrowed(&d.sensitivity()[offset..offset + self.cells]))
@@ -1672,6 +1732,7 @@ impl StoredChannelNormalDomain {
             values,
             p.invariant_dirty.is_some(),
             p.major_cycle_residual.is_some(),
+            plan.factory.scalar_sensitivity(),
         )?;
         let storage = plan
             .factory
@@ -1785,12 +1846,14 @@ impl StoredChannelNormalDomain {
                 }
             }
         }
-        Arc::get_mut(&mut self.invariants)
-            .ok_or(SpectralOperatorError::IncompleteCoverage)?
-            .write(
-                self.fields.sensitivity.start - self.fields.epoch_scalars + offset,
-                &p.sensitivity,
-            )?;
+        if !self.fields.scalar_sensitivity {
+            Arc::get_mut(&mut self.invariants)
+                .ok_or(SpectralOperatorError::IncompleteCoverage)?
+                .write(
+                    self.fields.sensitivity.start - self.fields.epoch_scalars + offset,
+                    &p.sensitivity,
+                )?;
+        }
         self.sum_weights[plane_offset..plane_offset + planes].copy_from_slice(&p.sum_weights);
         self.published_sum_weights[plane_offset..plane_offset + planes]
             .copy_from_slice(&p.published_sum_weights);
@@ -1903,13 +1966,19 @@ impl StoredChannelNormalDomain {
                     .read_complex(&self.fields.psf, offset, values)?
                     .into_owned()
                     .into_boxed_slice(),
-                sensitivity: self
-                    .read_scalars(
+                sensitivity: if self.fields.scalar_sensitivity {
+                    self.sum_weights[plane_range.clone()]
+                        .iter()
+                        .flat_map(|&weight| std::iter::repeat_n(weight, cells))
+                        .collect()
+                } else {
+                    self.read_scalars(
                         self.fields.sensitivity.start + offset
                             ..self.fields.sensitivity.start + offset + values,
                     )?
                     .into_owned()
-                    .into_boxed_slice(),
+                    .into_boxed_slice()
+                },
                 primary_beam_weighted_sum: None,
                 sum_weights: self.sum_weights[plane_range.clone()].into(),
                 published_sum_weights: self.published_sum_weights[plane_range.clone()].into(),
@@ -1950,28 +2019,34 @@ impl StoredChannelNormalDomain {
             .checked_mul(self.polarizations)
             .and_then(|n| n.checked_mul(self.window_channels.min(self.total_channels)))
             .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-        for (field, complex) in [
-            (&self.fields.dirty, true),
-            (&self.fields.psf, true),
-            (&self.fields.sensitivity, false),
-        ] {
-            let width = if complex {
-                window_values
-                    .checked_mul(2)
-                    .ok_or(SpectralOperatorError::ResidencyOverflow)?
-            } else {
-                window_values
-            };
+        for field in [&self.fields.dirty, &self.fields.psf] {
+            let width = window_values
+                .checked_mul(2)
+                .ok_or(SpectralOperatorError::ResidencyOverflow)?;
             for start in (field.start..field.end).step_by(width) {
                 for &value in self
                     .read_scalars(start..start.saturating_add(width).min(field.end))?
                     .iter()
                 {
-                    encoder.u64(if complex {
-                        value.to_bits()
-                    } else {
-                        canonical_f64_bits(value)
-                    });
+                    encoder.u64(value.to_bits());
+                }
+            }
+        }
+        if self.fields.scalar_sensitivity {
+            let cells = checked_cells(self.shape)?;
+            for &weight in &self.sum_weights {
+                for _ in 0..cells {
+                    encoder.u64(canonical_f64_bits(weight));
+                }
+            }
+        } else {
+            let field = &self.fields.sensitivity;
+            for start in (field.start..field.end).step_by(window_values) {
+                for &value in self
+                    .read_scalars(start..start.saturating_add(window_values).min(field.end))?
+                    .iter()
+                {
+                    encoder.u64(canonical_f64_bits(value));
                 }
             }
         }

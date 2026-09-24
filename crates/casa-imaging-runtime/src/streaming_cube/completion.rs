@@ -3,9 +3,9 @@
 //! Native-band transfer into the existing runtime-bound normal-state fold.
 
 use super::*;
-use casa_imaging_reconstruction::SpectralOperatorPrimitives;
 use casa_imaging_reconstruction::runtime_adapter::{CubeNormalRefresh, CubeResidual};
 use casa_imaging_reconstruction::{FinalNormalState, ModelGenerationId};
+use casa_imaging_reconstruction::{SpectralOperatorPrimitives, WeightingReplaySummary};
 
 pub(crate) struct PendingCubeRefresh {
     evidence: CubeNormalRefresh,
@@ -80,15 +80,23 @@ impl PendingCubeRefresh {
     }
 }
 
-impl CompleteDataSlabResult {
-    /// Adopt an initial band only after the selected-source I/O fence settled.
-    /// The reconciliation node comes from the composed phase plan, not the band.
-    pub(crate) fn from_streaming_cube(
+pub(crate) struct PendingStreamingCubeFold {
+    binding: CompleteDataExecutionBinding,
+    replay: WeightingReplaySummary,
+    selected_generation: SelectedObservationGenerationId,
+    continuum_transform_generation: Option<ContinuumTransformGenerationId>,
+    storage: NormalStoragePlan,
+    fold: Option<PendingCompleteDataSlabFold>,
+}
+
+impl PendingStreamingCubeFold {
+    /// Validate the caller-bound source and execution once, before any worker
+    /// enters the pool. Completed bands carry only owned, context-free data.
+    pub(crate) fn new(
         context: WorkExecutionContext<'_>,
         reconciliation_node: &WorkNodeId,
-        specification: &SpectralOperatorSpecification,
-        primitives: SpectralOperatorPrimitives,
         replay: &WeightingReplayCompletion,
+        storage: NormalStoragePlan,
     ) -> Result<Self, CompleteDataOperatorError> {
         let predecessor = context
             .predecessor_observation_completion(replay.owner_node())
@@ -114,20 +122,7 @@ impl CompleteDataSlabResult {
         {
             return Err(CompleteDataOperatorError::ExecutionBinding);
         }
-        let evidence = CompleteDataOwnerResult::from_streaming_cube(
-            specification,
-            primitives,
-            replay.reconstruction_summary(),
-            replay.selected_generation(),
-            replay
-                .continuum_transform()
-                .map(|value| value.generation_id()),
-        )?;
-        if evidence.completion().problem_id() != replay.problem_id() {
-            return Err(CompleteDataOperatorError::ExecutionBinding);
-        }
         Ok(Self {
-            evidence,
             binding: CompleteDataExecutionBinding {
                 problem: replay.problem_id(),
                 attempt: replay.attempt_id(),
@@ -136,6 +131,48 @@ impl CompleteDataSlabResult {
                 lease_epoch: replay.lease_epoch(),
                 observation_predecessor_required: true,
             },
+            replay: replay.reconstruction_summary().clone(),
+            selected_generation: replay.selected_generation(),
+            continuum_transform_generation: replay
+                .continuum_transform()
+                .map(|value| value.generation_id()),
+            storage,
+            fold: None,
         })
+    }
+
+    pub(crate) fn append(
+        &mut self,
+        specification: &SpectralOperatorSpecification,
+        primitives: SpectralOperatorPrimitives,
+    ) -> Result<(), CompleteDataOperatorError> {
+        let evidence = CompleteDataOwnerResult::from_streaming_cube(
+            specification,
+            primitives,
+            &self.replay,
+            self.selected_generation,
+            self.continuum_transform_generation,
+        )?;
+        if evidence.completion().problem_id() != self.binding.problem {
+            return Err(CompleteDataOperatorError::ExecutionBinding);
+        }
+        let next = CompleteDataSlabResult {
+            evidence,
+            binding: self.binding.clone(),
+        };
+        self.fold = Some(match self.fold.take() {
+            None => next.begin_fold(&self.storage)?,
+            Some(prefix) => prefix.fold(next)?,
+        });
+        Ok(())
+    }
+
+    pub(crate) fn complete(
+        self,
+        replay: &WeightingReplayCompletion,
+    ) -> Result<CompleteDataOperatorResult, CompleteDataOperatorError> {
+        self.fold
+            .ok_or(CompleteDataOperatorError::ExecutionBinding)?
+            .complete(replay)
     }
 }

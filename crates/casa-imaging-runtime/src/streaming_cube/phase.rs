@@ -16,9 +16,7 @@ use crate::{
     SpectralCycleExecutionPolicy, SpectralPassIdentity, SpectralPassPhase, WeightingExecutionState,
     WeightingPlanFragment, WeightingReplayCompletion, WeightingStreamingMode, WorkExecutionContext,
     WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements, WorkNodeId,
-    complete_data_operator::{
-        CompleteDataSlabResult, PendingCompleteDataSlabFold, PendingCubeRefresh,
-    },
+    complete_data_operator::{PendingCubeRefresh, PendingStreamingCubeFold},
     cube_state_plan::CubeStatePlan,
 };
 use casa_imaging_model::{
@@ -376,7 +374,7 @@ impl InitialCube {
             .as_ref()
             .map_or(&reconcile, |(node, _, _)| node)
             .clone();
-        let mut cube_state = CubeStatePlan::streaming_cube(
+        let cube_state = CubeStatePlan::streaming_cube(
             &problem,
             &storage,
             1,
@@ -386,7 +384,7 @@ impl InitialCube {
             imported,
         )?;
         let before_cube_state = physical;
-        let mut physical = cube_state
+        let physical = cube_state
             .compose(
                 registry,
                 policy.implementation.clone(),
@@ -463,7 +461,7 @@ impl InitialCube {
                 )
             }
         };
-        let mut native_plan = plan_native(&physical)?;
+        let paged_native = plan_native(&physical);
         let resident = CubeStatePlan::streaming_cube(
             &problem,
             &storage,
@@ -497,20 +495,23 @@ impl InitialCube {
             }
             Err(error) => return Err(io::Error::other(error)),
         };
-        if resident_available >= native_plan.worker_wave_bytes {
-            physical = resident_physical;
-            native_plan = plan_native(&physical)?;
-            cube_state = resident;
+        let resident_native = plan_native(&resident_physical);
+        let (physical, native_plan, cube_state) = if resident_native
+            .as_ref()
+            .is_ok_and(|plan| resident_available >= plan.worker_wave_bytes)
+        {
             eprintln!(
                 "streaming_cube_normal_storage ordinal={ordinal} backing=resident retained_bytes={}",
-                cube_state.retained_memory_bytes()
+                resident.retained_memory_bytes()
             );
+            (resident_physical, resident_native?, resident)
         } else {
             eprintln!(
                 "streaming_cube_normal_storage ordinal={ordinal} backing=paged retained_bytes={}",
                 cube_state.retained_memory_bytes()
             );
-        }
+            (physical, paged_native?, cube_state)
+        };
         let physical = native_plan.compose(physical, &storage)?;
         let (native, replay) = retained.map_or((None, None), |mut retained| {
             retained.native.bands = bands.iter().map(BandPlan::residual_refresh).collect();
@@ -757,7 +758,6 @@ impl WorkImplementation for InitialCube {
                 .or_else(|| state.weighting.replay_completion())
                 .ok_or_else(|| io::Error::other("native source fence is incomplete"))?;
             let retained_bands = bands.iter().map(BandPlan::residual_refresh).collect();
-            let mut fold: Option<PendingCompleteDataSlabFold> = None;
             let reconciliation = &self.reconcile;
             #[cfg(test)]
             let reconciliation = if self.failure == Failure::ReconciliationNode {
@@ -765,6 +765,7 @@ impl WorkImplementation for InitialCube {
             } else {
                 reconciliation
             };
+            let normal_storage = self.cube_state.normal_storage()?;
             let mut refresh = if self.imported {
                 Some(
                     PendingCubeRefresh::new(
@@ -779,12 +780,20 @@ impl WorkImplementation for InitialCube {
                             .ok_or_else(|| io::Error::other("native refresh lacks prior normal"))?,
                         model.final_model().generation_id(),
                         replay,
-                        &self.cube_state.normal_storage()?,
+                        &normal_storage,
                     )
                     .map_err(io::Error::other)?,
                 )
             } else {
                 None
+            };
+            let mut fold = if self.imported {
+                None
+            } else {
+                Some(
+                    PendingStreamingCubeFold::new(context, reconciliation, replay, normal_storage)
+                        .map_err(io::Error::other)?,
+                )
             };
             let mut pending = bands.into_iter();
             while !pending.as_slice().is_empty() {
@@ -798,6 +807,33 @@ impl WorkImplementation for InitialCube {
                 )?;
                 let jobs = pending.by_ref().take(count).collect::<Vec<_>>();
                 let mut measurements = None;
+                let mut append = |result| -> io::Result<()> {
+                    match result {
+                        BandResult::Residual(residual) => refresh
+                            .as_mut()
+                            .ok_or_else(|| {
+                                io::Error::other("initial phase returned residual-only output")
+                            })?
+                            .append(residual)
+                            .map_err(io::Error::other),
+                        BandResult::Initial(normal) if !self.imported => {
+                            let core = normal.slab().core_range();
+                            let spec = SpectralOperatorSpecification::for_slab(
+                                &self.problem,
+                                core.start,
+                                core.len(),
+                            )
+                            .map_err(io::Error::other)?;
+                            fold.as_mut()
+                                .ok_or_else(|| io::Error::other("initial cube fold is absent"))?
+                                .append(&spec, normal)
+                                .map_err(io::Error::other)
+                        }
+                        BandResult::Initial(_) => {
+                            Err(io::Error::other("refresh returned initial normal fields"))
+                        }
+                    }
+                };
                 let wave = execute::execute(
                     &mut store,
                     jobs,
@@ -811,56 +847,21 @@ impl WorkImplementation for InitialCube {
                     self.native_plan.workspace_bytes,
                     self.pass.ordinal(),
                     &mut measurements,
+                    &mut append,
                 )?;
                 if let Some(measurements) = measurements {
                     eprintln!(
                         "streaming_cube_wave ordinal={} bands={} workers={} measured={measurements:?} io={:?}",
                         self.pass.ordinal(),
-                        wave.bands.len(),
+                        wave.bands_consumed,
                         self.native_plan.workers,
                         wave.source
                     );
                 }
-                for normal in wave.bands {
-                    let normal = match normal {
-                        BandResult::Residual(residual) => {
-                            refresh
-                                .as_mut()
-                                .ok_or_else(|| {
-                                    io::Error::other("initial phase returned residual-only output")
-                                })?
-                                .append(residual)
-                                .map_err(io::Error::other)?;
-                            continue;
-                        }
-                        BandResult::Initial(normal) if !self.imported => normal,
-                        BandResult::Initial(_) => {
-                            return Err(io::Error::other("refresh returned initial normal fields"));
-                        }
-                    };
-                    let core = normal.slab().core_range();
-                    let spec = SpectralOperatorSpecification::for_slab(
-                        &self.problem,
-                        core.start,
-                        core.len(),
-                    )
-                    .map_err(io::Error::other)?;
-                    let band = CompleteDataSlabResult::from_streaming_cube(
-                        context,
-                        reconciliation,
-                        &spec,
-                        normal,
-                        replay,
-                    )
-                    .map_err(io::Error::other)?;
-                    fold = Some(
-                        match fold {
-                            None => band.begin_fold(&self.cube_state.normal_storage()?),
-                            Some(prefix) => prefix.fold(band),
-                        }
-                        .map_err(io::Error::other)?,
-                    );
-                }
+                eprintln!(
+                    "streaming_cube_completed_queue peak={} admitted_workers={}",
+                    wave.peak_completed, self.native_plan.workers
+                );
             }
             let complete = if let Some(refresh) = refresh {
                 refresh.complete()

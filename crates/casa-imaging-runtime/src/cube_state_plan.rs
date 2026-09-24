@@ -79,6 +79,7 @@ impl CubeStatePlan {
             terminal,
             requirements,
             false,
+            false,
         )
     }
 
@@ -110,6 +111,7 @@ impl CubeStatePlan {
             terminal,
             requirements,
             resident,
+            true,
         )
     }
 
@@ -122,6 +124,7 @@ impl CubeStatePlan {
         terminal: WorkNodeId,
         requirements: Box<[ChannelNormalStorageRequirement]>,
         resident: bool,
+        scalar_sensitivity: bool,
     ) -> io::Result<Self> {
         let shape = problem.model_lifecycle().target();
         let model_window_samples = shape.domains().iter().try_fold(0usize, |largest, domain| {
@@ -256,6 +259,7 @@ impl CubeStatePlan {
                 requirements,
                 normal_retentions.into_boxed_slice(),
                 metrics.clone(),
+                scalar_sensitivity,
             );
             let metadata = factory.metadata_bytes();
             (Arc::new(factory), metadata)
@@ -265,6 +269,7 @@ impl CubeStatePlan {
                 layouts,
                 normal_retentions.into_boxed_slice(),
                 metrics.clone(),
+                scalar_sensitivity,
             );
             let metadata = factory.owned_metadata_bytes().map_err(io::Error::other)?;
             (Arc::new(factory), metadata)

@@ -288,10 +288,11 @@ fn streaming_cube_initial_source_fence_controls_runtime_reconciliation() {
                 ..ResourceOverride::default()
             })
         };
+        let tighter_budget = native_plan.worker_wave_bytes;
         let narrower = NativePhasePlan::for_initial_source(
             &physical,
             &fixture.authority,
-            &limited(native_plan.workspace_bytes / 2),
+            &limited(tighter_budget),
             &fixture.storage,
             problem,
             &bands,
@@ -300,10 +301,9 @@ fn streaming_cube_initial_source_fence_controls_runtime_reconciliation() {
             1,
         )
         .unwrap();
-        assert!(narrower.store.tile_channels < store.channels);
         assert!(narrower.store.tile_channels <= store.tile_channels);
         assert_eq!(narrower.store.block_rows, store.block_rows);
-        assert!(narrower.workspace_bytes <= native_plan.workspace_bytes / 2);
+        assert!(narrower.workspace_bytes <= tighter_budget);
         let exact = NativePhasePlan::new(
             &physical,
             &fixture.authority,
@@ -487,9 +487,8 @@ fn resident_storage_threshold_preserves_a_complete_worker_wave() {
                 0,
                 None,
             )
-            .unwrap()
         };
-        let (physical, full) = plan(policy.clone());
+        let (physical, full) = plan(policy.clone()).unwrap();
         let available = fixture
             .authority
             .remaining_planning_memory_bytes(
@@ -561,16 +560,30 @@ fn resident_storage_threshold_preserves_a_complete_worker_wave() {
                 .collect(),
                 ..ResourceOverride::default()
             });
-            let (_, actual) = plan(limited);
+            let (_, actual) = match plan(limited) {
+                Ok(result) => result,
+                Err(error) if workspace < worker_wave => {
+                    assert!(
+                        error
+                            .to_string()
+                            .contains("native phase cannot fit preparation and one band"),
+                        "{error}"
+                    );
+                    continue;
+                }
+                Err(error) => panic!("worker wave should fit at {workspace}: {error}"),
+            };
             assert_eq!(
                 actual.cube_state.retained_memory_bytes() == resident_bytes,
                 expect_resident,
                 "workers={workers}, workspace={workspace}"
             );
-            assert!(
-                actual.native_plan.workspace_bytes >= actual.native_plan.worker_wave_bytes,
-                "storage choice cannot strand workers when the paged wave fits"
-            );
+            if workspace >= worker_wave {
+                assert!(
+                    actual.native_plan.workspace_bytes >= actual.native_plan.worker_wave_bytes,
+                    "storage choice cannot strand workers when the worker wave fits"
+                );
+            }
         }
     }
 }

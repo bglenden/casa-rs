@@ -3008,7 +3008,7 @@ impl WeightingReplayWindowSummary {
 }
 
 /// Reconstruction result for a replay callback phase, not T17 completion evidence.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct WeightingReplaySummary {
     replay_id: WeightingReplayId,
     generation: WeightingGenerationId,
