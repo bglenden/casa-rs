@@ -187,6 +187,30 @@ impl NormalArrayStorage for ManagedNormal {
         Ok(Cow::Owned(result))
     }
 
+    fn read_real(
+        &self,
+        start: usize,
+        values: usize,
+    ) -> Result<Option<Cow<'_, [f32]>>, SpectralOperatorError> {
+        let mut result = vec![0.0_f32; values];
+        self.for_each_window(start, values, |plane, in_plane, output| {
+            let pins = self
+                .residency
+                .admit(
+                    &[self.array.request(plane, false).map_err(storage_error)?],
+                    0,
+                )
+                .map_err(storage_error)?;
+            let source = self
+                .array
+                .read(&pins, plane, in_plane)
+                .map_err(storage_error)?;
+            result[output].copy_from_slice(&source);
+            Ok(())
+        })?;
+        Ok(Some(Cow::Owned(result)))
+    }
+
     fn write(&mut self, start: usize, values: &[f64]) -> Result<(), SpectralOperatorError> {
         if values.len() % 2 != 0 {
             return Err(SpectralOperatorError::InvalidSlab);
@@ -345,6 +369,15 @@ mod tests {
             normal.read_complex(16, 2).unwrap().as_ref(),
             &[Complex64::new(2.5, 0.0), Complex64::new(-1.0, 0.0),]
         );
+        assert_eq!(
+            normal.read_real(10, 3).unwrap().unwrap().as_ref(),
+            &[1.25, -0.125, 0.5]
+        );
+        assert_eq!(
+            normal.read_real(16, 2).unwrap().unwrap().as_ref(),
+            &[2.5, -1.0]
+        );
+        assert!(normal.read_real(23, 1).is_err());
         let live = manager.used_bytes();
         normal.retire().unwrap();
         assert!(manager.used_bytes() < live);

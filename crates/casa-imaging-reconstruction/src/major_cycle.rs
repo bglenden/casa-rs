@@ -533,6 +533,8 @@ impl FinalNormalState {
         polarization: usize,
     ) -> Result<FinalNormalStatePlane<'_>, SpectralOperatorError> {
         let plane = self.read_plane(domain_ordinal, absolute_channel, polarization)?;
+        let residual_real = plane.read_residual_real()?;
+        let psf_real = plane.read_psf_real()?;
         Ok(FinalNormalStatePlane {
             owner: self,
             domain_ordinal,
@@ -541,8 +543,20 @@ impl FinalNormalState {
             shape: plane.shape(),
             validity: plane.validity(),
             sum_weight: plane.sum_weight(),
-            residual: plane.read_residual()?,
-            psf: plane.read_psf()?,
+            residual: if residual_real.is_some() {
+                None
+            } else {
+                Some(plane.read_residual()?)
+            },
+            residual_real,
+            residual_widened: std::cell::OnceCell::new(),
+            psf: if psf_real.is_some() {
+                None
+            } else {
+                Some(plane.read_psf()?)
+            },
+            psf_real,
+            psf_widened: std::cell::OnceCell::new(),
         })
     }
 }
@@ -773,8 +787,12 @@ impl FinalNormalStateWindow<'_> {
             shape: self.shape(),
             validity: *self.primitives.channel_validity().get(plane)?,
             sum_weight: *self.primitives.sum_weights().get(plane)?,
-            residual: Cow::Borrowed(self.primitives.dirty().get(start..end)?),
-            psf: Cow::Borrowed(self.primitives.psf().get(start..end)?),
+            residual: Some(Cow::Borrowed(self.primitives.dirty().get(start..end)?)),
+            residual_real: None,
+            residual_widened: std::cell::OnceCell::new(),
+            psf: Some(Cow::Borrowed(self.primitives.psf().get(start..end)?)),
+            psf_real: None,
+            psf_widened: std::cell::OnceCell::new(),
         })
     }
 }
@@ -813,19 +831,19 @@ impl<'a> FinalNormalDomainState<'a> {
 
     /// Return this chart's model-dependent residual planes.
     #[must_use]
-    pub const fn residual(self) -> &'a [num_complex::Complex64] {
+    pub fn residual(self) -> &'a [num_complex::Complex64] {
         self.domain.primitives().dirty()
     }
 
     /// Return this chart's normal approximation/PSF planes.
     #[must_use]
-    pub const fn normal_approximation(self) -> &'a [num_complex::Complex64] {
+    pub fn normal_approximation(self) -> &'a [num_complex::Complex64] {
         self.domain.primitives().psf()
     }
 
     /// Return this chart's sensitivity planes.
     #[must_use]
-    pub const fn sensitivity(self) -> &'a [f64] {
+    pub fn sensitivity(self) -> &'a [f64] {
         self.domain.primitives().sensitivity()
     }
 
@@ -889,8 +907,12 @@ impl<'a> FinalNormalDomainState<'a> {
             shape: primitives.shape(),
             validity: *primitives.channel_validity().get(plane)?,
             sum_weight: *primitives.sum_weights().get(plane)?,
-            residual: Cow::Borrowed(primitives.dirty().get(start..end)?),
-            psf: Cow::Borrowed(primitives.psf().get(start..end)?),
+            residual: Some(Cow::Borrowed(primitives.dirty().get(start..end)?)),
+            residual_real: None,
+            residual_widened: std::cell::OnceCell::new(),
+            psf: Some(Cow::Borrowed(primitives.psf().get(start..end)?)),
+            psf_real: None,
+            psf_widened: std::cell::OnceCell::new(),
         })
     }
 }
@@ -976,13 +998,29 @@ pub struct FinalNormalStatePlane<'a> {
     shape: [usize; 2],
     validity: crate::SpectralChannelValidity,
     sum_weight: f64,
-    residual: Cow<'a, [num_complex::Complex64]>,
-    psf: Cow<'a, [num_complex::Complex64]>,
+    residual: Option<Cow<'a, [num_complex::Complex64]>>,
+    residual_real: Option<Cow<'a, [f32]>>,
+    residual_widened: std::cell::OnceCell<Box<[num_complex::Complex64]>>,
+    psf: Option<Cow<'a, [num_complex::Complex64]>>,
+    psf_real: Option<Cow<'a, [f32]>>,
+    psf_widened: std::cell::OnceCell<Box<[num_complex::Complex64]>>,
 }
 
 impl<'a> FinalNormalStatePlane<'a> {
     pub(crate) fn into_normal_approximation(self) -> Cow<'a, [num_complex::Complex64]> {
-        self.psf
+        if let Some(psf) = self.psf {
+            psf
+        } else if let Some(widened) = self.psf_widened.into_inner() {
+            Cow::Owned(widened.into_vec())
+        } else {
+            Cow::Owned(
+                self.psf_real
+                    .expect("a normal plane has one PSF representation")
+                    .iter()
+                    .map(|&value| num_complex::Complex64::new(f64::from(value), 0.0))
+                    .collect(),
+            )
+        }
     }
 
     /// Return the slab owner this view borrows.
@@ -1012,13 +1050,43 @@ impl<'a> FinalNormalStatePlane<'a> {
     /// Return this plane's model-dependent unnormalized residual.
     #[must_use]
     pub fn residual(&self) -> &[num_complex::Complex64] {
-        &self.residual
+        if let Some(residual) = &self.residual {
+            residual
+        } else {
+            self.residual_widened.get_or_init(|| {
+                self.residual_real
+                    .as_ref()
+                    .expect("a normal plane has one residual representation")
+                    .iter()
+                    .map(|&value| num_complex::Complex64::new(f64::from(value), 0.0))
+                    .collect()
+            })
+        }
+    }
+
+    pub(crate) fn residual_real(&self) -> Option<&[f32]> {
+        self.residual_real.as_deref()
     }
 
     /// Return this plane's unnormalized PSF approximation.
     #[must_use]
     pub fn normal_approximation(&self) -> &[num_complex::Complex64] {
-        &self.psf
+        if let Some(psf) = &self.psf {
+            psf
+        } else {
+            self.psf_widened.get_or_init(|| {
+                self.psf_real
+                    .as_ref()
+                    .expect("a normal plane has one PSF representation")
+                    .iter()
+                    .map(|&value| num_complex::Complex64::new(f64::from(value), 0.0))
+                    .collect()
+            })
+        }
+    }
+
+    pub(crate) fn normal_real(&self) -> Option<&[f32]> {
+        self.psf_real.as_deref()
     }
 
     /// Return this plane's accumulated sum weight.

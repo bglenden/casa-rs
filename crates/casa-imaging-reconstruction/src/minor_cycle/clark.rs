@@ -3,7 +3,7 @@
 //! Clark's compact active pixels and linear residual refreshes.
 
 use ndarray::Array2;
-use num_complex::{Complex32, Complex64};
+use num_complex::Complex32;
 
 use super::{ClarkApproximation, MinorCycleError};
 use crate::spectral_operator::{PreparedFft, fft_resident_complex_values_for_shape};
@@ -22,19 +22,36 @@ struct LinearRefresh {
 }
 
 impl LinearRefresh {
-    fn new(
-        psf: &[Complex64],
+    fn new(psf: &[f32], shape: [usize; 2], center: [usize; 2]) -> Result<Self, MinorCycleError> {
+        let padded_axis = |axis: usize| {
+            let extent = shape[axis];
+            let origin = center[axis];
+            if origin >= extent {
+                return Err(MinorCycleError::ModelShapeMismatch);
+            }
+            // For the requested output interval [0, extent), neither the
+            // negative PSF tail nor the positive convolution tail may wrap
+            // into it. This is the smallest alias-free circular extent for
+            // the PSF origin, including off-centre peaks.
+            let positive_tail = extent
+                .checked_mul(2)
+                .and_then(|twice| twice.checked_sub(1 + origin))
+                .ok_or(MinorCycleError::ModelShapeMismatch)?;
+            let negative_tail = extent
+                .checked_add(origin)
+                .ok_or(MinorCycleError::ModelShapeMismatch)?;
+            Ok::<_, MinorCycleError>(positive_tail.max(negative_tail))
+        };
+        let padded = [padded_axis(0)?, padded_axis(1)?];
+        Self::with_padded(psf, shape, center, padded)
+    }
+
+    fn with_padded(
+        psf: &[f32],
         shape: [usize; 2],
         center: [usize; 2],
+        padded: [usize; 2],
     ) -> Result<Self, MinorCycleError> {
-        let padded = [
-            shape[0]
-                .checked_mul(2)
-                .ok_or(MinorCycleError::ModelShapeMismatch)?,
-            shape[1]
-                .checked_mul(2)
-                .ok_or(MinorCycleError::ModelShapeMismatch)?,
-        ];
         let mut fft = PreparedFft::new(padded, fft_resident_complex_values_for_shape(padded)?)?;
         let mut psf_spectrum = Array2::from_elem((padded[0], padded[1]), Complex32::default());
         for x in 0..shape[0] {
@@ -43,9 +60,7 @@ impl LinearRefresh {
                     (x + padded[0] - center[0]) % padded[0],
                     (y + padded[1] - center[1]) % padded[1],
                 ];
-                let value = psf[x * shape[1] + y];
-                psf_spectrum[(offset[0], offset[1])] =
-                    Complex32::new(value.re as f32, value.im as f32);
+                psf_spectrum[(offset[0], offset[1])] = Complex32::new(psf[x * shape[1] + y], 0.0);
             }
         }
         fft.transform_unshifted(&mut psf_spectrum, false);
@@ -109,7 +124,7 @@ impl ClarkWorkState {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         residual: &[f64],
-        psf: &[Complex64],
+        psf: &[f32],
         shape: [usize; 2],
         psf_peak: [usize; 2],
         normalization: f64,
@@ -227,7 +242,7 @@ impl ClarkWorkState {
         index: usize,
         flux: f64,
         global_iterations: usize,
-        psf: &[Complex64],
+        psf_real_at: impl Fn(usize) -> f64,
     ) -> Result<(), MinorCycleError> {
         self.convolution.add(index, flux);
         let peak = [index / self.shape[1], index % self.shape[1]];
@@ -257,7 +272,8 @@ impl ClarkWorkState {
             {
                 continue;
             }
-            pixel.value -= flux * psf[source[0] as usize * self.shape[1] + source[1] as usize].re;
+            pixel.value -=
+                flux * psf_real_at(source[0] as usize * self.shape[1] + source[1] as usize);
             if !pixel.value.is_finite() {
                 return Err(MinorCycleError::GeneratedNonfinite);
             }
@@ -304,6 +320,7 @@ impl ClarkWorkState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
     #[test]
     fn compact_refresh_matches_linear_asymmetric_psf_at_edges_and_off_center() {
@@ -317,10 +334,16 @@ mod tests {
                 .map(|index| {
                     let x = index / shape[1];
                     let y = index % shape[1];
-                    Complex64::new((x as f64 * 0.17 + y as f64 * 0.11).sin(), 0.0)
+                    (x as f64 * 0.17 + y as f64 * 0.11).sin() as f32
                 })
                 .collect::<Vec<_>>();
             let mut refresh = LinearRefresh::new(&psf, shape, center).unwrap();
+            for axis in 0..2 {
+                assert_eq!(
+                    refresh.padded[axis],
+                    (2 * shape[axis] - 1 - center[axis]).max(shape[axis] + center[axis])
+                );
+            }
             let components = [
                 (0, 0, 0.75),
                 (shape[0] - 1, shape[1] - 1, -0.375),
@@ -339,7 +362,7 @@ mod tests {
                             && psf_y < shape[1] as isize
                         {
                             expected[x * shape[1] + y] -=
-                                flux * psf[psf_x as usize * shape[1] + psf_y as usize].re;
+                                flux * f64::from(psf[psf_x as usize * shape[1] + psf_y as usize]);
                         }
                     }
                 }
@@ -353,5 +376,88 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn cropped_linear_refresh_has_no_edge_alias_for_every_peak_origin() {
+        for shape in [[3, 4], [4, 3], [5, 7], [6, 6]] {
+            let psf = (0..shape[0] * shape[1])
+                .map(|index| (index as f64 * 0.37).cos() as f32)
+                .collect::<Vec<_>>();
+            for center_x in 0..shape[0] {
+                for center_y in 0..shape[1] {
+                    let center = [center_x, center_y];
+                    for source_x in [0, shape[0] - 1] {
+                        for source_y in [0, shape[1] - 1] {
+                            let mut refresh = LinearRefresh::new(&psf, shape, center).unwrap();
+                            refresh.add(source_x * shape[1] + source_y, 0.625);
+                            let mut actual = vec![0.0; psf.len()];
+                            refresh.refresh(&mut actual).unwrap();
+                            for x in 0..shape[0] {
+                                for y in 0..shape[1] {
+                                    let kernel_x =
+                                        center_x as isize + x as isize - source_x as isize;
+                                    let kernel_y =
+                                        center_y as isize + y as isize - source_y as isize;
+                                    let expected = if (0..shape[0] as isize).contains(&kernel_x)
+                                        && (0..shape[1] as isize).contains(&kernel_y)
+                                    {
+                                        -0.625
+                                            * f64::from(
+                                                psf[kernel_x as usize * shape[1]
+                                                    + kernel_y as usize],
+                                            )
+                                    } else {
+                                        0.0
+                                    };
+                                    assert!(
+                                        (actual[x * shape[1] + y] - expected).abs() < 1e-5,
+                                        "shape={shape:?}, center={center:?}, source=({source_x},{source_y}), output=({x},{y})"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "bounded manual cost comparison; run with --release --ignored --nocapture"]
+    fn compare_cropped_and_full_clark_transform_cost() {
+        let shape = [512, 512];
+        let center = [256, 256];
+        let psf = (0..shape[0] * shape[1])
+            .map(|index| {
+                let x = index / shape[1];
+                let y = index % shape[1];
+                (-(x as f64 - 256.0).hypot(y as f64 - 256.0) / 19.0).exp() as f32
+            })
+            .collect::<Vec<_>>();
+        let run = |padded| {
+            let start = Instant::now();
+            let mut refresh = LinearRefresh::with_padded(&psf, shape, center, padded).unwrap();
+            let setup = start.elapsed();
+            for index in [0, shape[1] - 1, psf.len() / 2, psf.len() - 1] {
+                refresh.add(index, 0.25);
+            }
+            let mut residual = vec![1.0; psf.len()];
+            let start = Instant::now();
+            refresh.refresh(&mut residual).unwrap();
+            let execution = start.elapsed();
+            (setup, execution, residual)
+        };
+        let (full_setup, full_execution, full) = run([1024, 1024]);
+        let (crop_setup, crop_execution, crop) = run([768, 768]);
+        let max_error = full
+            .iter()
+            .zip(crop)
+            .map(|(left, right)| (left - right).abs())
+            .fold(0.0_f64, f64::max);
+        println!(
+            "full setup={full_setup:?} refresh={full_execution:?}; crop setup={crop_setup:?} refresh={crop_execution:?}; max_error={max_error}"
+        );
+        assert!(max_error < 1e-5);
     }
 }

@@ -44,13 +44,33 @@ impl SpectralOperatorPrimitives {
     ) -> Result<usize, SpectralOperatorError> {
         let fields = [
             if include_residual {
-                size_of_val(self.dirty.as_ref())
+                self.cube_real
+                    .as_ref()
+                    .map_or(size_of_val(self.dirty.as_ref()), |real| {
+                        size_of_val(real.dirty.as_ref())
+                    })
             } else {
                 0
             },
-            self.invariant_dirty.as_deref().map_or(0, size_of_val),
-            size_of_val(self.psf.as_ref()),
+            self.cube_real.as_ref().map_or_else(
+                || self.invariant_dirty.as_deref().map_or(0, size_of_val),
+                |real| real.invariant_dirty.as_deref().map_or(0, size_of_val),
+            ),
+            self.cube_real
+                .as_ref()
+                .map_or(size_of_val(self.psf.as_ref()), |real| {
+                    size_of_val(real.psf.as_ref())
+                }),
             size_of_val(self.sensitivity.as_ref()),
+            self.cube_dirty_wide
+                .get()
+                .map_or(0, |values| size_of_val(values.as_ref())),
+            self.cube_psf_wide
+                .get()
+                .map_or(0, |values| size_of_val(values.as_ref())),
+            self.cube_sensitivity_wide
+                .get()
+                .map_or(0, |values| size_of_val(values.as_ref())),
             size_of_val(self.sum_weights.as_ref()),
             size_of_val(self.published_sum_weights.as_ref()),
             size_of_val(self.validity.as_ref()),
@@ -82,16 +102,21 @@ impl SpectralOperatorPrimitives {
             || self.polarizations != 1
             || !self.major_cycle_residual_promoted
             || self.residual_model.is_none()
-            || self.dirty.len() != values
-            || self.psf.len() != values
-            || self.sensitivity.len() != values
+            || self.cube_real.as_ref().is_none_or(|real| {
+                real.dirty.len() != values
+                    || real.psf.len() != values
+                    || real
+                        .invariant_dirty
+                        .as_ref()
+                        .is_some_and(|v| v.len() != values)
+            })
+            || !self.dirty.is_empty()
+            || !self.psf.is_empty()
+            || !self.sensitivity.is_empty()
             || self.sum_weights.len() != core.len()
             || self.published_sum_weights.len() != core.len()
             || self.validity.len() != core.len()
-            || self
-                .invariant_dirty
-                .as_ref()
-                .is_some_and(|v| v.len() != values)
+            || self.invariant_dirty.is_some()
             || self.major_cycle_residual.is_some()
             || self.primary_beam_weighted_sum.is_some()
             || self.common_residual.is_some()
@@ -141,11 +166,6 @@ impl SpectralOperatorPrimitives {
         {
             return Err(SpectralOperatorError::GeneratedNonfinite);
         }
-        let mut sensitivity = Vec::with_capacity(values);
-        for &weight in &sum_weight {
-            sensitivity.extend(std::iter::repeat_n(weight, cells));
-        }
-        let sensitivity = sensitivity.into_boxed_slice();
         let validity = mapped
             .iter()
             .zip(&sum_weight)
@@ -172,12 +192,20 @@ impl SpectralOperatorPrimitives {
             joint_line_term_by_channel: vec![None; total_channels].into(),
             // The controller consumes the exact residual. Retain the data-side
             // dirty image by moving it, avoiding the old clone-then-promotion copy.
-            dirty,
-            invariant_dirty,
+            dirty: Box::new([]),
+            cube_real: Some(CubeRealFields {
+                dirty,
+                invariant_dirty,
+                psf: psf.into_boxed_slice(),
+            }),
+            cube_dirty_wide: std::sync::OnceLock::new(),
+            cube_psf_wide: std::sync::OnceLock::new(),
+            cube_sensitivity_wide: std::sync::OnceLock::new(),
+            invariant_dirty: None,
             common_residual: None,
             invariant_common_dirty: None,
-            psf: psf.into_boxed_slice(),
-            sensitivity,
+            psf: Box::new([]),
+            sensitivity: Box::new([]),
             primary_beam_weighted_sum: None,
             published_sum_weights: sum_weight.clone().into_boxed_slice(),
             sum_weights: sum_weight.into_boxed_slice(),
@@ -265,34 +293,51 @@ fn cube_phase_handoff_moves_initial_dirty_and_preserves_explicit_invariants() {
         phase,
         shape: [2, 1],
         core: 0..1,
-        dirty: vec![Complex64::new(3.0, 0.0); 2],
+        dirty: vec![3.0; 2],
         residual: if phase == BandPhase::Full {
-            vec![Complex64::new(1.0, 0.0); 2]
+            vec![1.0; 2]
         } else {
             Vec::new()
         },
-        psf: vec![Complex64::new(2.0, 0.0); 2],
+        psf: vec![2.0; 2],
         sum_weight: vec![2.0],
         mapped: vec![3],
     };
     let images = make(BandPhase::InitialZero);
     let pointer = images.dirty.as_ptr();
     let initial = SpectralOperatorPrimitives::from_cube_band(images, 1, model).unwrap();
-    assert_eq!(initial.dirty.as_ptr(), pointer);
+    assert_eq!(initial.cube_real.as_ref().unwrap().dirty.as_ptr(), pointer);
+    assert_eq!(initial.dirty(), &[Complex64::new(3.0, 0.0); 2]);
+    assert_eq!(initial.psf(), &[Complex64::new(2.0, 0.0); 2]);
+    assert_eq!(initial.sensitivity(), &[2.0; 2]);
     assert!(initial.invariant_dirty.is_none());
     assert!(initial.major_cycle_residual.is_none());
     let images = make(BandPhase::Full);
     let dirty_pointer = images.dirty.as_ptr();
     let residual_pointer = images.residual.as_ptr();
     let full = SpectralOperatorPrimitives::from_cube_band(images, 1, model).unwrap();
-    assert_eq!(full.dirty.as_ptr(), residual_pointer);
     assert_eq!(
-        full.invariant_dirty.as_ref().unwrap().as_ptr(),
+        full.cube_real.as_ref().unwrap().dirty.as_ptr(),
+        residual_pointer
+    );
+    assert_eq!(
+        full.cube_real
+            .as_ref()
+            .unwrap()
+            .invariant_dirty
+            .as_ref()
+            .unwrap()
+            .as_ptr(),
         dirty_pointer
     );
     assert_eq!(
-        full.invariant_dirty.as_deref().unwrap(),
-        &[Complex64::new(3.0, 0.0); 2]
+        full.cube_real
+            .as_ref()
+            .unwrap()
+            .invariant_dirty
+            .as_deref()
+            .unwrap(),
+        &[3.0; 2]
     );
     assert!(full.validate_cube_layout([2, 1], 0..1, 2).is_err());
 }

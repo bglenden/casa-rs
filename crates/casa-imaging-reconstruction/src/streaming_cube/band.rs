@@ -454,9 +454,9 @@ pub(crate) struct BandImages {
     pub(crate) phase: BandPhase,
     pub(crate) shape: [usize; 2],
     pub(crate) core: Range<usize>,
-    pub(crate) dirty: Vec<Complex64>,
-    pub(crate) residual: Vec<Complex64>,
-    pub(crate) psf: Vec<Complex64>,
+    pub(crate) dirty: Vec<f32>,
+    pub(crate) residual: Vec<f32>,
+    pub(crate) psf: Vec<f32>,
     pub(crate) sum_weight: Vec<f64>,
     pub(crate) mapped: Vec<u64>,
 }
@@ -814,7 +814,11 @@ impl BandWorkspace {
                         if !corrected.re.is_finite() || !corrected.im.is_finite() {
                             return Err(SpectralOperatorError::GeneratedNonfinite);
                         }
-                        values.push(corrected);
+                        let real = corrected.re as f32;
+                        if !real.is_finite() {
+                            return Err(SpectralOperatorError::GeneratedNonfinite);
+                        }
+                        values.push(real);
                     }
                 }
             }
@@ -844,8 +848,12 @@ impl BandWorkspace {
             convolution,
             mut fft,
             mut residual,
+            forward,
+            forward_nonzero,
+            model_channels,
             ..
         } = self;
+        drop((forward, forward_nonzero, model_channels));
         let mut values = Vec::with_capacity(
             residual.len_of(Axis(0)) * geometry.image_shape[0] * geometry.image_shape[1],
         );

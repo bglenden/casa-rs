@@ -2527,9 +2527,30 @@ pub(crate) fn run_minor_cycle_plane(
 
     // The PSF peak normalization follows the reference cleaner: peaks are
     // reported in model units regardless of the accumulated weight scale.
-    let psf_peak_index = find_peak_abs(plane.normal_approximation(), shape, |v| v.re, |_| true)
-        .ok_or(MinorCycleError::InvalidPsfPeak)?;
-    let psf_peak = plane.normal_approximation()[psf_peak_index].re;
+    let clark_psf = matches!(controls.algorithm(), ReconstructionAlgorithm::Clark).then(|| {
+        plane.normal_real().map_or_else(
+            || {
+                Cow::Owned(
+                    plane
+                        .normal_approximation()
+                        .iter()
+                        .map(|value| value.re as f32)
+                        .collect(),
+                )
+            },
+            Cow::Borrowed,
+        )
+    });
+    let psf_peak_index = if let Some(psf) = plane.normal_real() {
+        find_peak_abs(psf, shape, |v| f64::from(*v), |_| true)
+    } else {
+        find_peak_abs(plane.normal_approximation(), shape, |v| v.re, |_| true)
+    }
+    .ok_or(MinorCycleError::InvalidPsfPeak)?;
+    let psf_peak = plane.normal_real().map_or_else(
+        || plane.normal_approximation()[psf_peak_index].re,
+        |psf| f64::from(psf[psf_peak_index]),
+    );
     if !psf_peak.is_finite() || psf_peak <= 0.0 {
         return Err(MinorCycleError::InvalidPsfPeak);
     }
@@ -2537,11 +2558,18 @@ pub(crate) fn run_minor_cycle_plane(
 
     let clark = match controls.algorithm() {
         ReconstructionAlgorithm::Hogbom => None,
-        ReconstructionAlgorithm::Clark => Some(derive_clark_approximation(
-            plane.normal_approximation(),
-            shape,
-            psf_peak_pixel,
-        )?),
+        ReconstructionAlgorithm::Clark => {
+            let psf = clark_psf.as_deref().expect("Clark has a real PSF");
+            Some(if plane.normal_real().is_some() {
+                derive_clark_approximation(psf, shape, psf_peak_pixel, |index| {
+                    f64::from(psf[index])
+                })?
+            } else {
+                derive_clark_approximation(psf, shape, psf_peak_pixel, |index| {
+                    plane.normal_approximation()[index].re
+                })?
+            })
+        }
         ReconstructionAlgorithm::Multiscale { .. } => None,
         ReconstructionAlgorithm::Mtmfs { .. } => {
             return Err(MinorCycleError::InvalidNormalStateCatalog);
@@ -2551,12 +2579,21 @@ pub(crate) fn run_minor_cycle_plane(
 
     // Private working copy: authoritative state is never mutated.
     let mut residual = Vec::with_capacity(cells);
-    for value in plane.residual() {
-        let real = value.re;
-        if !real.is_finite() {
-            return Err(MinorCycleError::GeneratedNonfinite);
+    if let Some(real) = plane.residual_real() {
+        for &value in real {
+            if !value.is_finite() {
+                return Err(MinorCycleError::GeneratedNonfinite);
+            }
+            residual.push(f64::from(value));
         }
-        residual.push(real);
+    } else {
+        for value in plane.residual() {
+            let real = value.re;
+            if !real.is_finite() {
+                return Err(MinorCycleError::GeneratedNonfinite);
+            }
+            residual.push(real);
+        }
     }
     let noise_rms = controls
         .noise_sigma()
@@ -2579,11 +2616,18 @@ pub(crate) fn run_minor_cycle_plane(
     let cycle_threshold = if controls.fixed_cycle_threshold.is_some() {
         controls.fixed_cycle_threshold
     } else if let Some(cycle) = controls.cycle_threshold {
-        let psf = plane
-            .normal_approximation()
-            .iter()
-            .map(|value| value.re as f32)
-            .collect::<Vec<_>>();
+        let psf = clark_psf.as_ref().map_or_else(
+            || {
+                Cow::Owned(
+                    plane
+                        .normal_approximation()
+                        .iter()
+                        .map(|value| value.re as f32)
+                        .collect(),
+                )
+            },
+            |psf| Cow::Borrowed(psf.as_ref()),
+        );
         let maximum_sidelobe = crate::fitted_psf_sidelobe_fraction(&psf, shape)?;
         Some(
             initial_peak
@@ -2600,7 +2644,7 @@ pub(crate) fn run_minor_cycle_plane(
         .map(|approximation| {
             clark::ClarkWorkState::new(
                 &residual,
-                plane.normal_approximation(),
+                clark_psf.as_deref().expect("Clark has a real PSF"),
                 shape,
                 psf_peak_pixel,
                 psf_peak,
@@ -2721,12 +2765,15 @@ pub(crate) fn run_minor_cycle_plane(
             )?,
             None => {
                 if let Some(state) = clark_state.as_mut() {
-                    state.accept(
-                        peak_index,
-                        flux,
-                        controller.iterations() + 1,
-                        plane.normal_approximation(),
-                    )?;
+                    if let Some(psf) = plane.normal_real() {
+                        state.accept(peak_index, flux, controller.iterations() + 1, |index| {
+                            f64::from(psf[index])
+                        })?;
+                    } else {
+                        state.accept(peak_index, flux, controller.iterations() + 1, |index| {
+                            plane.normal_approximation()[index].re
+                        })?;
+                    }
                 } else {
                     subtract_psf(
                         &mut residual,
@@ -4031,13 +4078,12 @@ fn subtract_scaled_psf(
 /// uses unit pixel coordinates here, so the shared CASA-style beam fitter can
 /// supply that same width without crossing the reconstruction-owner boundary.
 fn derive_clark_approximation(
-    psf: &[num_complex::Complex64],
+    psf: &[f32],
     shape: [usize; 2],
     peak: [usize; 2],
+    real_at: impl Fn(usize) -> f64,
 ) -> Result<ClarkApproximation, crate::PsfBeamFitError> {
-    let real_psf = psf.iter().map(|value| value.re as f32).collect::<Vec<_>>();
-    let beam =
-        crate::fit_restoring_beam(&real_psf, shape, [1.0, 1.0], crate::DEFAULT_PSF_FIT_CUTOFF)?;
+    let beam = crate::fit_restoring_beam(psf, shape, [1.0, 1.0], crate::DEFAULT_PSF_FIT_CUTOFF)?;
     let central_width = 4_usize
         .max(beam.major_fwhm_rad().ceil() as usize)
         .max(beam.minor_fwhm_rad().ceil() as usize);
@@ -4051,7 +4097,9 @@ fn derive_clark_approximation(
             let pixel = plane_pixel(*index, shape);
             pixel[0].abs_diff(peak[0]) > radius[0] || pixel[1].abs_diff(peak[1]) > radius[1]
         })
-        .fold(0.0_f64, |maximum, (_, value)| maximum.max(value.re.abs()));
+        .fold(0.0_f64, |maximum, (index, _)| {
+            maximum.max(real_at(index).abs())
+        });
     Ok(ClarkApproximation {
         radius,
         patch_size,

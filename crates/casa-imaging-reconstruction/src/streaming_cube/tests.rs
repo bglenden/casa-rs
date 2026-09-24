@@ -913,6 +913,26 @@ fn band_memory_accounts_for_actual_phase_buffers_and_completed_ownership() {
                 panic!("residual-only result required")
             };
             assert_eq!(updated.values.len() * size_of::<f32>(), residual_image);
+            let residual_grid = depth
+                * geometry().grid_shape[0]
+                * geometry().grid_shape[1]
+                * size_of::<Complex32>();
+            let completion_with_grid = size_of::<BandPlan>()
+                + size_of::<EpochBand<'_>>()
+                + fft
+                + convolution
+                + residual_grid
+                + residual_image;
+            let completion_with_result = residual_image
+                + size_of::<(BandResult, PreparedFft<f32>)>()
+                + fft
+                + size_of::<BandPlan>()
+                + size_of::<EpochBand<'_>>();
+            assert_eq!(
+                memory.completion_bytes,
+                completion_with_grid.max(completion_with_result),
+                "residual completion must exclude prediction/support owners"
+            );
             assert_eq!(
                 memory.retained_bytes,
                 residual_image + size_of::<(BandResult, PreparedFft<f32>)>() + fft
@@ -1128,19 +1148,39 @@ fn completed_epoch_images_preserve_partitioned_fields_and_model_binding() {
         result
     };
     let expected = complete(0..4, false);
-    assert!(expected.dirty().iter().any(|value| value.norm() > 0.0));
+    assert!(
+        expected
+            .cube_real
+            .as_ref()
+            .unwrap()
+            .dirty
+            .iter()
+            .any(|value| *value != 0.0)
+    );
     for depth in [1, 2] {
         for start in (0..4).step_by(depth) {
             let core = start..start + depth;
             let pixels = start * 64..(start + depth) * 64;
             let actual = complete(core.clone(), true);
+            let actual_real = actual.cube_real.as_ref().unwrap();
+            let expected_real = expected.cube_real.as_ref().unwrap();
             assert_close(
-                actual.dirty().iter().copied(),
-                expected.dirty()[pixels.clone()].iter().copied(),
+                actual_real
+                    .dirty
+                    .iter()
+                    .map(|&value| Complex64::new(f64::from(value), 0.0)),
+                expected_real.dirty[pixels.clone()]
+                    .iter()
+                    .map(|&value| Complex64::new(f64::from(value), 0.0)),
             );
             assert_close(
-                actual.psf().iter().copied(),
-                expected.psf()[pixels.clone()].iter().copied(),
+                actual_real
+                    .psf
+                    .iter()
+                    .map(|&value| Complex64::new(f64::from(value), 0.0)),
+                expected_real.psf[pixels.clone()]
+                    .iter()
+                    .map(|&value| Complex64::new(f64::from(value), 0.0)),
             );
             assert_eq!(actual.sensitivity(), &expected.sensitivity()[pixels]);
             assert_eq!(actual.sum_weights(), &expected.sum_weights()[core.clone()]);
@@ -1164,9 +1204,9 @@ fn completed_epoch_images_preserve_partitioned_fields_and_model_binding() {
 #[test]
 fn channel_completion_moves_buffers_and_keeps_blank_unmapped_and_shape_checks() {
     let model = crate::ModelGenerationId(LogicalIdentity::from_sha256([37; 32]));
-    let dirty = vec![Complex64::new(2.0, 0.0); 3];
-    let residual = vec![Complex64::new(1.0, 0.0); 3];
-    let psf = vec![Complex64::new(3.0, 0.0); 3];
+    let dirty = vec![2.0; 3];
+    let residual = vec![1.0; 3];
+    let psf = vec![3.0; 3];
     let residual_pointer = residual.as_ptr();
     let psf_pointer = psf.as_ptr();
     let images = BandImages {
@@ -1180,8 +1220,14 @@ fn channel_completion_moves_buffers_and_keeps_blank_unmapped_and_shape_checks() 
         mapped: vec![2, 1, 0],
     };
     let completed = SpectralOperatorPrimitives::from_cube_band(images, 4, model).unwrap();
-    assert_eq!(completed.dirty().as_ptr(), residual_pointer);
-    assert_eq!(completed.psf().as_ptr(), psf_pointer);
+    assert_eq!(
+        completed.cube_real.as_ref().unwrap().dirty.as_ptr(),
+        residual_pointer
+    );
+    assert_eq!(
+        completed.cube_real.as_ref().unwrap().psf.as_ptr(),
+        psf_pointer
+    );
     assert_eq!(
         completed.channel_validity(),
         [

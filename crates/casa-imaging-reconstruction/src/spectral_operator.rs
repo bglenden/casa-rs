@@ -2900,6 +2900,32 @@ pub fn reprepare_spectral_operator(
     })
 }
 
+/// Compact real outputs from the supported channel-local cube imager.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct CubeRealFields {
+    pub(crate) dirty: Box<[f32]>,
+    pub(crate) invariant_dirty: Option<Box<[f32]>>,
+    pub(crate) psf: Box<[f32]>,
+}
+
+impl CubeRealFields {
+    /// Model-dependent residual or initial dirty plane values.
+    pub fn dirty(&self) -> &[f32] {
+        &self.dirty
+    }
+
+    /// Initial dirty values retained across model-dependent refreshes.
+    pub fn invariant_dirty(&self) -> Option<&[f32]> {
+        self.invariant_dirty.as_deref()
+    }
+
+    /// Unnormalized point-spread-function values.
+    pub fn psf(&self) -> &[f32] {
+        &self.psf
+    }
+}
+
 /// Unnormalized spectral primitives; these are not Product Graph artifacts.
 #[derive(Debug)]
 pub struct SpectralOperatorPrimitives {
@@ -2909,6 +2935,10 @@ pub struct SpectralOperatorPrimitives {
     polarizations: usize,
     joint_line_term_by_channel: Box<[Option<usize>]>,
     dirty: Box<[Complex64]>,
+    pub(crate) cube_real: Option<CubeRealFields>,
+    cube_dirty_wide: std::sync::OnceLock<Box<[Complex64]>>,
+    cube_psf_wide: std::sync::OnceLock<Box<[Complex64]>>,
+    cube_sensitivity_wide: std::sync::OnceLock<Box<[f64]>>,
     invariant_dirty: Option<Box<[Complex64]>>,
     common_residual: Option<Box<[Complex64]>>,
     invariant_common_dirty: Option<Box<[Complex64]>>,
@@ -2953,6 +2983,10 @@ impl SpectralOperatorPrimitives {
             polarizations: 1,
             joint_line_term_by_channel: Box::new([]),
             dirty,
+            cube_real: None,
+            cube_dirty_wide: std::sync::OnceLock::new(),
+            cube_psf_wide: std::sync::OnceLock::new(),
+            cube_sensitivity_wide: std::sync::OnceLock::new(),
             invariant_dirty: None,
             common_residual: None,
             invariant_common_dirty: None,
@@ -3033,8 +3067,15 @@ impl SpectralOperatorPrimitives {
 
     /// Return the unnormalized dirty normal-state plane.
     #[must_use]
-    pub const fn dirty(&self) -> &[Complex64] {
-        &self.dirty
+    pub fn dirty(&self) -> &[Complex64] {
+        self.cube_real.as_ref().map_or(&self.dirty, |real| {
+            self.cube_dirty_wide.get_or_init(|| {
+                real.dirty
+                    .iter()
+                    .map(|&value| Complex64::new(f64::from(value), 0.0))
+                    .collect()
+            })
+        })
     }
 
     /// Return the channel-local common residual of a joint model.
@@ -3045,14 +3086,35 @@ impl SpectralOperatorPrimitives {
 
     /// Return the unnormalized point-spread-function plane.
     #[must_use]
-    pub const fn psf(&self) -> &[Complex64] {
-        &self.psf
+    pub fn psf(&self) -> &[Complex64] {
+        self.cube_real.as_ref().map_or(&self.psf, |real| {
+            self.cube_psf_wide.get_or_init(|| {
+                real.psf
+                    .iter()
+                    .map(|&value| Complex64::new(f64::from(value), 0.0))
+                    .collect()
+            })
+        })
+    }
+
+    /// Borrow compact real fields before the channel-local normal fold consumes them.
+    #[doc(hidden)]
+    pub fn cube_real_fields(&self) -> Option<&CubeRealFields> {
+        self.cube_real.as_ref()
     }
 
     /// Return scalar-response sensitivity in normal-state units.
     #[must_use]
-    pub const fn sensitivity(&self) -> &[f64] {
-        &self.sensitivity
+    pub fn sensitivity(&self) -> &[f64] {
+        self.cube_real.as_ref().map_or(&self.sensitivity, |_| {
+            self.cube_sensitivity_wide.get_or_init(|| {
+                let cells = self.shape[0] * self.shape[1];
+                self.sum_weights
+                    .iter()
+                    .flat_map(|&weight| std::iter::repeat_n(weight, cells))
+                    .collect()
+            })
+        })
     }
 
     /// Return `sum(W B)` in polarization-major image-plane order when a
@@ -3726,6 +3788,10 @@ fn combine_initial_chart_primitives(
                 joint_line_term_by_channel,
                 invariant_dirty: Some(dirty.clone()),
                 dirty,
+                cube_real: None,
+                cube_dirty_wide: std::sync::OnceLock::new(),
+                cube_psf_wide: std::sync::OnceLock::new(),
+                cube_sensitivity_wide: std::sync::OnceLock::new(),
                 common_residual: common.clone(),
                 invariant_common_dirty: common,
                 psf: psf.into_boxed_slice(),
@@ -3864,6 +3930,10 @@ pub(crate) fn combine_chart_updates(
                 polarizations: polarization_count,
                 joint_line_term_by_channel,
                 dirty: residual.into_boxed_slice(),
+                cube_real: None,
+                cube_dirty_wide: std::sync::OnceLock::new(),
+                cube_psf_wide: std::sync::OnceLock::new(),
+                cube_sensitivity_wide: std::sync::OnceLock::new(),
                 invariant_dirty: Some(invariant_dirty),
                 common_residual: common.map(Vec::into_boxed_slice),
                 invariant_common_dirty,
@@ -10683,6 +10753,10 @@ impl SpectralSlabOperator {
                 polarizations: self.polarization_count,
                 joint_line_term_by_channel: self.joint_line_term_by_channel,
                 dirty: residual.into_boxed_slice(),
+                cube_real: None,
+                cube_dirty_wide: std::sync::OnceLock::new(),
+                cube_psf_wide: std::sync::OnceLock::new(),
+                cube_sensitivity_wide: std::sync::OnceLock::new(),
                 invariant_dirty: reused.invariant_dirty,
                 common_residual: common_residual.map(Vec::into_boxed_slice),
                 invariant_common_dirty: reused.invariant_common_dirty,
@@ -10874,6 +10948,10 @@ impl SpectralSlabOperator {
             joint_line_term_by_channel: self.joint_line_term_by_channel,
             invariant_dirty,
             dirty,
+            cube_real: None,
+            cube_dirty_wide: std::sync::OnceLock::new(),
+            cube_psf_wide: std::sync::OnceLock::new(),
+            cube_sensitivity_wide: std::sync::OnceLock::new(),
             common_residual,
             invariant_common_dirty,
             psf: psf.into_boxed_slice(),
@@ -13519,6 +13597,10 @@ mod tests {
             polarizations: 1,
             joint_line_term_by_channel: vec![None].into_boxed_slice(),
             dirty: [Complex64::new(2.0, -0.5), Complex64::new(-0.25, 0.125)].into(),
+            cube_real: None,
+            cube_dirty_wide: std::sync::OnceLock::new(),
+            cube_psf_wide: std::sync::OnceLock::new(),
+            cube_sensitivity_wide: std::sync::OnceLock::new(),
             invariant_dirty: None,
             common_residual: None,
             invariant_common_dirty: None,

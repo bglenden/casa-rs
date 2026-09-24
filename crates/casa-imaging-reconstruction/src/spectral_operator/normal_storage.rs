@@ -69,6 +69,15 @@ pub trait NormalArrayStorage: fmt::Debug + Send + Sync {
     ) -> Result<Cow<'_, [Complex64]>, SpectralOperatorError> {
         scalar_complex(self.read(start, values * 2)?)
     }
+    /// Borrow or load a real Float image directly when the backing stores one.
+    /// Other normal families keep their existing complex access path.
+    fn read_real(
+        &self,
+        _start: usize,
+        _values: usize,
+    ) -> Result<Option<Cow<'_, [f32]>>, SpectralOperatorError> {
+        Ok(None)
+    }
     /// Replace a bounded scalar window without resizing the array.
     fn write(&mut self, start: usize, values: &[f64]) -> Result<(), SpectralOperatorError>;
     /// Write a real Float image window at complex-scalar offsets. Other normal
@@ -184,6 +193,10 @@ mod tests {
                 polarizations: POLARIZATIONS,
                 joint_line_term_by_channel: vec![None; CHANNELS].into(),
                 dirty: complex(0.25),
+                cube_real: None,
+                cube_dirty_wide: std::sync::OnceLock::new(),
+                cube_psf_wide: std::sync::OnceLock::new(),
+                cube_sensitivity_wide: std::sync::OnceLock::new(),
                 invariant_dirty: Some(complex(0.5)),
                 common_residual: None,
                 invariant_common_dirty: None,
@@ -1601,6 +1614,16 @@ impl<'a> FinalNormalPlaneReader<'a> {
         }
     }
 
+    pub(crate) fn read_residual_real(
+        &self,
+    ) -> Result<Option<Cow<'a, [f32]>>, SpectralOperatorError> {
+        let offset = self.plane * self.cells;
+        match self.backing {
+            NormalPlaneBacking::Stored(d) => d.read_real(&d.fields.dirty, offset, self.cells),
+            NormalPlaneBacking::Resident(_) => Ok(None),
+        }
+    }
+
     /// Load only the selected unnormalized point-spread-function plane.
     pub fn read_psf(&self) -> Result<Cow<'a, [Complex64]>, SpectralOperatorError> {
         let offset = self.plane * self.cells;
@@ -1609,6 +1632,14 @@ impl<'a> FinalNormalPlaneReader<'a> {
             NormalPlaneBacking::Resident(d) => {
                 Ok(Cow::Borrowed(&d.psf()[offset..offset + self.cells]))
             }
+        }
+    }
+
+    pub(crate) fn read_psf_real(&self) -> Result<Option<Cow<'a, [f32]>>, SpectralOperatorError> {
+        let offset = self.plane * self.cells;
+        match self.backing {
+            NormalPlaneBacking::Stored(d) => d.read_real(&d.fields.psf, offset, self.cells),
+            NormalPlaneBacking::Resident(_) => Ok(None),
         }
     }
 
@@ -1744,7 +1775,10 @@ impl StoredChannelNormalDomain {
             .ok_or(SpectralOperatorError::ResidencyOverflow)?;
         let fields = ChannelNormalFields::new(
             values,
-            p.invariant_dirty.is_some(),
+            p.invariant_dirty.is_some()
+                || p.cube_real
+                    .as_ref()
+                    .is_some_and(|real| real.invariant_dirty.is_some()),
             p.major_cycle_residual.is_some(),
             plan.factory.scalar_sensitivity(),
         )?;
@@ -1788,6 +1822,7 @@ impl StoredChannelNormalDomain {
         domain: SpectralDomainPrimitives,
     ) -> Result<(), SpectralOperatorError> {
         let p = domain.primitives();
+        let compact = p.cube_real.as_ref();
         let range = p.slab.core_range();
         if range.start != self.next_channel || range.end > self.total_channels {
             return Err(SpectralOperatorError::IncompleteCoverage);
@@ -1805,7 +1840,9 @@ impl StoredChannelNormalDomain {
             || p.basis != SpectralBasisPlan::ChannelLocal
             || p.residual_model != self.residual_model
             || p.major_cycle_residual_promoted != self.major_cycle_residual_promoted
-            || p.invariant_dirty.is_some() != self.fields.invariant_dirty.is_some()
+            || (p.invariant_dirty.is_some()
+                || compact.is_some_and(|real| real.invariant_dirty.is_some()))
+                != self.fields.invariant_dirty.is_some()
             || p.major_cycle_residual.is_some() != self.fields.major_cycle_residual.is_some()
             || p.common_residual.is_some()
             || p.invariant_common_dirty.is_some()
@@ -1820,11 +1857,22 @@ impl StoredChannelNormalDomain {
         let plane_offset = range.start * self.polarizations;
         let planes = range.len() * self.polarizations;
         let values = planes * cells;
-        if p.dirty.len() != values
-            || p.psf.len() != values
-            || p.sensitivity.len() != values
+        if compact.map_or_else(
+            || p.dirty.len() != values || p.psf.len() != values,
+            |real| {
+                !p.dirty.is_empty()
+                    || !p.psf.is_empty()
+                    || real.dirty.len() != values
+                    || real.psf.len() != values
+            },
+        ) || (!self.fields.scalar_sensitivity
+            && compact.is_none()
+            && p.sensitivity.len() != values)
             || p.invariant_dirty
                 .as_ref()
+                .is_some_and(|v| v.len() != values)
+            || compact
+                .and_then(|real| real.invariant_dirty.as_ref())
                 .is_some_and(|v| v.len() != values)
             || p.major_cycle_residual
                 .as_ref()
@@ -1836,6 +1884,23 @@ impl StoredChannelNormalDomain {
             return Err(SpectralOperatorError::ProblemMismatch);
         }
         let offset = plane_offset * cells;
+        if let Some(real) = compact {
+            self.storage
+                .write_real(self.fields.dirty.start + 2 * offset, &real.dirty)?;
+            if let (Some(field), Some(source)) =
+                (&self.fields.invariant_dirty, &real.invariant_dirty)
+            {
+                Arc::get_mut(&mut self.invariants)
+                    .ok_or(SpectralOperatorError::IncompleteCoverage)?
+                    .write_real(field.start - self.fields.epoch_scalars + 2 * offset, source)?;
+            }
+            Arc::get_mut(&mut self.invariants)
+                .ok_or(SpectralOperatorError::IncompleteCoverage)?
+                .write_real(
+                    self.fields.psf.start - self.fields.epoch_scalars + 2 * offset,
+                    &real.psf,
+                )?;
+        }
         for (field, source) in [
             (Some(&self.fields.dirty), Some(p.dirty.as_ref())),
             (
@@ -1848,7 +1913,9 @@ impl StoredChannelNormalDomain {
                 p.major_cycle_residual.as_deref(),
             ),
         ] {
-            if let (Some(field), Some(source)) = (field, source) {
+            if let (Some(field), Some(source)) = (field, source)
+                && !source.is_empty()
+            {
                 let scalars = complex_scalars(source)?;
                 let start = field.start + 2 * offset;
                 if field.start >= self.fields.epoch_scalars {
@@ -1861,12 +1928,23 @@ impl StoredChannelNormalDomain {
             }
         }
         if !self.fields.scalar_sensitivity {
-            Arc::get_mut(&mut self.invariants)
-                .ok_or(SpectralOperatorError::IncompleteCoverage)?
-                .write(
-                    self.fields.sensitivity.start - self.fields.epoch_scalars + offset,
-                    &p.sensitivity,
-                )?;
+            let invariant = Arc::get_mut(&mut self.invariants)
+                .ok_or(SpectralOperatorError::IncompleteCoverage)?;
+            let start = self.fields.sensitivity.start - self.fields.epoch_scalars + offset;
+            if compact.is_some() {
+                let mut window = [0.0; 512];
+                for (plane, &weight) in p.sum_weights.iter().enumerate() {
+                    window.fill(weight);
+                    for chunk in (0..cells).step_by(window.len()) {
+                        invariant.write(
+                            start + plane * cells + chunk,
+                            &window[..window.len().min(cells - chunk)],
+                        )?;
+                    }
+                }
+            } else {
+                invariant.write(start, &p.sensitivity)?;
+            }
         }
         self.sum_weights[plane_offset..plane_offset + planes].copy_from_slice(&p.sum_weights);
         self.published_sum_weights[plane_offset..plane_offset + planes]
@@ -1937,6 +2015,27 @@ impl StoredChannelNormalDomain {
         Ok(result)
     }
 
+    fn read_real(
+        &self,
+        field: &Range<usize>,
+        offset: usize,
+        values: usize,
+    ) -> Result<Option<Cow<'_, [f32]>>, SpectralOperatorError> {
+        let start = field.start + 2 * offset;
+        let result = if field.start >= self.fields.epoch_scalars {
+            self.invariants
+                .read_real(start - self.fields.epoch_scalars, values)
+        } else {
+            self.storage.read_real(start, values)
+        }?;
+        if result.as_ref().is_some_and(|window| window.len() != values) {
+            return Err(SpectralOperatorError::NormalStorage(
+                "normal backing returned an incorrect real window length".into(),
+            ));
+        }
+        Ok(result)
+    }
+
     pub(crate) fn read_window(
         &self,
         range: Range<usize>,
@@ -1975,6 +2074,10 @@ impl StoredChannelNormalDomain {
                     .read_complex(&self.fields.dirty, offset, values)?
                     .into_owned()
                     .into_boxed_slice(),
+                cube_real: None,
+                cube_dirty_wide: std::sync::OnceLock::new(),
+                cube_psf_wide: std::sync::OnceLock::new(),
+                cube_sensitivity_wide: std::sync::OnceLock::new(),
                 invariant_dirty: self
                     .fields
                     .invariant_dirty

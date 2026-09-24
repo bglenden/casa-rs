@@ -196,10 +196,11 @@ fn native_preparation_and_real_bands_feed_the_existing_fold_and_controller() {
         let BandResult::Initial(normal) = normal else {
             panic!("initial normal required")
         };
+        let real = normal.cube_real_fields().unwrap();
         let pointers = (
-            normal.dirty().as_ptr(),
-            normal.psf().as_ptr(),
-            normal.sensitivity().as_ptr(),
+            real.dirty().as_ptr(),
+            real.invariant_dirty().map(|values| values.as_ptr()),
+            real.psf().as_ptr(),
         );
         let band = CompleteDataOwnerResult::from_streaming_cube(
             specification,
@@ -209,12 +210,13 @@ fn native_preparation_and_real_bands_feed_the_existing_fold_and_controller() {
             None,
         )
         .unwrap();
+        let real = band.primitives().cube_real_fields().unwrap();
         assert_eq!(
             pointers,
             (
-                band.primitives().dirty().as_ptr(),
-                band.primitives().psf().as_ptr(),
-                band.primitives().sensitivity().as_ptr()
+                real.dirty().as_ptr(),
+                real.invariant_dirty().map(|values| values.as_ptr()),
+                real.psf().as_ptr()
             )
         );
         assert_eq!(band.completion().coverage(), replay.coverage());
@@ -552,9 +554,16 @@ fn assert_same(expected: &BandResult, bands: &[BandResult]) {
         };
         let core = band.slab().core_range();
         let pixels = core.start * 64..core.end * 64;
-        assert_eq!(band.dirty(), &expected.dirty()[pixels.clone()]);
-        assert_eq!(band.psf(), &expected.psf()[pixels.clone()]);
-        assert_eq!(band.sensitivity(), &expected.sensitivity()[pixels]);
+        let band_real = band.cube_real_fields().unwrap();
+        let expected_real = expected.cube_real_fields().unwrap();
+        assert_eq!(band_real.dirty(), &expected_real.dirty()[pixels.clone()]);
+        assert_eq!(band_real.psf(), &expected_real.psf()[pixels.clone()]);
+        assert_eq!(
+            band_real.invariant_dirty(),
+            expected_real
+                .invariant_dirty()
+                .map(|values| &values[pixels.clone()])
+        );
         assert_eq!(band.sum_weights(), &expected.sum_weights()[core.clone()]);
         assert_eq!(
             band.published_sum_weights(),

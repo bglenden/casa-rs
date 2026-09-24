@@ -56,14 +56,7 @@ impl BandPlan {
         let grid_cells = mul(self.geometry.grid_shape[0], self.geometry.grid_shape[1])?;
         let image_cells = mul(self.geometry.image_shape[0], self.geometry.image_shape[1])?;
         let grid = mul(mul(depth, grid_cells)?, size_of::<Complex32>())?;
-        let image = mul(
-            mul(depth, image_cells)?,
-            if self.phase == BandPhase::Residual {
-                size_of::<f32>()
-            } else {
-                size_of::<Complex64>()
-            },
-        )?;
+        let image = mul(mul(depth, image_cells)?, size_of::<f32>())?;
         let fft = mul(
             fft_resident_complex_values_for_shape(self.geometry.grid_shape)?,
             size_of::<Complex32>(),
@@ -140,7 +133,6 @@ impl BandPlan {
         }
         let normal_metadata = if normal {
             add(&[
-                mul(mul(depth, image_cells)?, size_of::<f64>())?,
                 mul(
                     depth,
                     2 * size_of::<f64>() + size_of::<crate::SpectralChannelValidity>(),
