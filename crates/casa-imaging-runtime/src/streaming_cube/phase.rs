@@ -518,48 +518,14 @@ impl InitialCube {
                 &reconcile,
             )
             .map_err(io::Error::other)?;
-        let mut native_plan = match plan_native(&physical) {
-            Ok(plan) => plan,
-            Err(error) if run.is_some() && error.kind() == io::ErrorKind::OutOfMemory => {
-                let run = run.as_ref().expect("retained run was checked");
-                let (minimum, _) =
-                    CubeStatePlan::managed_cache_limits(&problem, &storage, workers)?;
-                let current = run.residency.limit_bytes();
-                run.shrink_cache_to(minimum)?;
-                eprintln!(
-                    "streaming_cube_cache_reclaimed ordinal={ordinal} previous_bytes={current} retained_bytes={minimum} returned_bytes={} reason=one_band_floor",
-                    current - minimum
-                );
-                plan_native(&physical)?
-            }
-            Err(error) => return Err(error),
+        let minimum_cache = if run.is_some() {
+            CubeStatePlan::managed_cache_limits(&problem, &storage, workers)?.0
+        } else {
+            cache_bytes
         };
-        if native_plan.workspace_bytes < native_plan.worker_wave_bytes {
-            if let Some(run) = &run {
-                let current = run.residency.limit_bytes();
-                let (minimum, _) =
-                    CubeStatePlan::managed_cache_limits(&problem, &storage, workers)?;
-                let target = cache_target_for_worker_wave(
-                    current,
-                    minimum,
-                    native_plan.workspace_bytes,
-                    native_plan.worker_wave_bytes,
-                )?
-                .expect("worker wave is short of workspace");
-                let returned = current - target;
-                run.shrink_cache_to(target)?;
-                eprintln!(
-                    "streaming_cube_cache_reclaimed ordinal={ordinal} previous_bytes={current} retained_bytes={target} returned_bytes={returned}"
-                );
-                native_plan = plan_native(&physical)?;
-            }
-        }
-        if native_plan.workspace_bytes < native_plan.worker_wave_bytes {
-            return Err(io::Error::other(format!(
-                "managed cube cache would strand the admitted worker wave: cache={cache_bytes} workspace={} wave={}",
-                native_plan.workspace_bytes, native_plan.worker_wave_bytes,
-            )));
-        }
+        let native_plan = plan_with_cache_reclaim(run.as_deref(), minimum_cache, ordinal, || {
+            plan_native(&physical)
+        })?;
         eprintln!(
             "streaming_cube_managed_cache ordinal={ordinal} bytes={} retained_bytes={}",
             cube_state
@@ -676,6 +642,53 @@ impl InitialCube {
         )
         .with_native_preparation(self.preparation.expect("initial native source plan"))
     }
+}
+
+fn plan_with_cache_reclaim(
+    run: Option<&crate::cube_state_plan::ManagedCubeRun>,
+    minimum: usize,
+    ordinal: u32,
+    plan_native: impl Fn() -> io::Result<NativePhasePlan>,
+) -> io::Result<NativePhasePlan> {
+    let mut plan = match plan_native() {
+        Ok(plan) => plan,
+        Err(error) if run.is_some() && error.kind() == io::ErrorKind::OutOfMemory => {
+            let run = run.expect("retained run was checked");
+            let current = run.residency.limit_bytes();
+            run.shrink_cache_to(minimum)?;
+            eprintln!(
+                "streaming_cube_cache_reclaimed ordinal={ordinal} previous_bytes={current} retained_bytes={minimum} returned_bytes={} reason=one_band_floor",
+                current - minimum
+            );
+            plan_native()?
+        }
+        Err(error) => return Err(error),
+    };
+    if plan.workspace_bytes < plan.worker_wave_bytes {
+        if let Some(run) = run {
+            let current = run.residency.limit_bytes();
+            let target = cache_target_for_worker_wave(
+                current,
+                minimum,
+                plan.workspace_bytes,
+                plan.worker_wave_bytes,
+            )?
+            .expect("worker wave is short of workspace");
+            run.shrink_cache_to(target)?;
+            eprintln!(
+                "streaming_cube_cache_reclaimed ordinal={ordinal} previous_bytes={current} retained_bytes={target} returned_bytes={}",
+                current - target
+            );
+            plan = plan_native()?;
+        }
+    }
+    if plan.workspace_bytes < plan.worker_wave_bytes {
+        return Err(io::Error::other(format!(
+            "managed cube cache would strand the admitted worker wave: workspace={} wave={}",
+            plan.workspace_bytes, plan.worker_wave_bytes,
+        )));
+    }
+    Ok(plan)
 }
 
 fn cache_target_for_worker_wave(

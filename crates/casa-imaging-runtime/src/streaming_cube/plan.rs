@@ -232,7 +232,14 @@ impl NativePhasePlan {
         }
         let available = authority
             .remaining_planning_memory_bytes(policy, base.execution_dag().resource_alternative())
-            .map_err(io::Error::other)?;
+            .map_err(|error| match &error {
+                ResourceError::Infeasible { resource, .. }
+                    if resource.starts_with("memory-domain:") =>
+                {
+                    io::Error::new(io::ErrorKind::OutOfMemory, error)
+                }
+                _ => io::Error::other(error),
+            })?;
         let workspace_bytes = preparation.max(all).min(available);
         if std::env::var_os("CASA_RS_TRACE_IMAGING_STAGE_TIMING").is_some() {
             eprintln!(

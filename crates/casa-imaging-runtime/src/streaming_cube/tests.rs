@@ -372,7 +372,7 @@ fn streaming_cube_initial_source_fence_controls_runtime_reconciliation() {
             problem.clone(),
             &registry,
             execution_policy,
-            fixture.storage,
+            fixture.storage.clone(),
             fixture.access,
             workers,
             1,
@@ -474,6 +474,60 @@ fn streaming_cube_initial_source_fence_controls_runtime_reconciliation() {
                 3 * u64::from(channels) * 2,
                 "every selected sample uses the admitted preparation team"
             );
+            drop(state);
+            if workers == 1 {
+                // Reuse the actual scheduler-retained cache and source, then
+                // leave the next phase one byte short of its mandatory wave.
+                let replay = registry.implementation().take_native_replay().unwrap();
+                let cache = replay.managed.clone();
+                let previous_limit = cache.residency.limit_bytes();
+                assert!(previous_limit > minimum_cache);
+                let refresh_bands = replay
+                    .native
+                    .bands
+                    .iter()
+                    .map(BandPlan::residual_refresh)
+                    .collect::<Vec<_>>();
+                let plan_refresh = |policy: &ResourcePolicy| {
+                    NativePhasePlan::new_for_pass(
+                        &base,
+                        &fixture.authority,
+                        policy,
+                        &fixture.storage,
+                        replay.native.store.plan,
+                        &refresh_bands,
+                        0,
+                        workers,
+                        1,
+                        true,
+                    )
+                };
+                let refresh = plan_refresh(&policy).unwrap();
+                let unused = fixture
+                    .authority
+                    .remaining_planning_memory_bytes(
+                        &policy,
+                        base.execution_dag().resource_alternative(),
+                    )
+                    .unwrap();
+                let budget = fixture.authority.topology().memory_domains[0].capacity_bytes - unused
+                    + refresh.worker_wave_bytes
+                    - 1;
+                let limited = ResourcePolicy::Explicit(ResourceOverride {
+                    memory_bytes: [(CapacityDomainId::new("host-memory"), budget)]
+                        .into_iter()
+                        .collect(),
+                    ..ResourceOverride::default()
+                });
+                let replanned = plan_with_cache_reclaim(Some(&cache), minimum_cache, 1, || {
+                    plan_refresh(&limited)
+                })
+                .expect("the phase must reclaim optional cache before rejecting its worker wave");
+                assert!(cache.residency.limit_bytes() < previous_limit);
+                assert!(cache.residency.used_bytes() <= cache.residency.limit_bytes());
+                assert!(replanned.workspace_bytes >= replanned.worker_wave_bytes);
+                assert_eq!(replanned.workers, workers);
+            }
         }
     }
 }
@@ -550,6 +604,13 @@ fn managed_cache_budget_preserves_a_complete_worker_wave() {
             - full.native_plan.workspace_bytes
             - cache_bytes;
         let worker_wave = full.native_plan.worker_wave_bytes;
+        let base_demand = fixture.authority.topology().memory_domains[0].capacity_bytes - available;
+        let memory_short = ResourcePolicy::Explicit(ResourceOverride {
+            memory_bytes: [(CapacityDomainId::new("host-memory"), base_demand - 1)]
+                .into_iter()
+                .collect(),
+            ..ResourceOverride::default()
+        });
         let (minimum_cache, full_cache) =
             CubeStatePlan::managed_cache_limits(problem, &fixture.storage, workers).unwrap();
         assert!((minimum_cache..=full_cache).contains(&(cache_bytes as usize)));
@@ -558,6 +619,25 @@ fn managed_cache_budget_preserves_a_complete_worker_wave() {
             .iter()
             .map(BandPlan::residual_refresh)
             .collect::<Vec<_>>();
+        let error = NativePhasePlan::new_for_pass(
+            &physical,
+            &fixture.authority,
+            &memory_short,
+            &fixture.storage,
+            full.native_plan.store,
+            &refresh_bands,
+            0,
+            workers,
+            1,
+            true,
+        )
+        .err()
+        .expect("the base demand alone exceeds this budget");
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::OutOfMemory,
+            "base-memory rejection must enter the phase's cache-reclaim branch: {error}"
+        );
         let refresh = NativePhasePlan::new_for_pass(
             &physical,
             &fixture.authority,
