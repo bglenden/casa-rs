@@ -4,7 +4,6 @@
 //! which planes an operation needs; this layer only moves their numeric storage.
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
     io,
     ops::{Deref, DerefMut, Range},
     path::Path,
@@ -22,6 +21,7 @@ trait BlockIo: Send + Sync {
     fn prepare(&self, write: bool) -> io::Result<()>;
     fn evict(&self) -> io::Result<()>;
     fn resident(&self) -> bool;
+    fn cold_bytes(&self) -> usize;
 }
 
 trait BackendIo: Send + Sync {
@@ -34,6 +34,7 @@ struct Entry {
     block: Arc<dyn BlockIo>,
     backend: BackendId,
     bytes: usize,
+    cold_bytes: usize,
     resident: bool,
     read_pins: usize,
     write_pin: bool,
@@ -44,19 +45,86 @@ struct Entry {
 struct BackendEntry {
     backend: Arc<dyn BackendIo>,
     staging_bytes: usize,
+    owner_bytes: usize,
     open: bool,
 }
 
 struct ResidencyState {
     limit: usize,
     used: usize,
+    scratch: usize,
     clock: u64,
     version: u64,
     admitting: bool,
     next_block_id: BlockId,
     next_backend_id: BackendId,
-    entries: BTreeMap<BlockId, Entry>,
-    backends: BTreeMap<BackendId, BackendEntry>,
+    entries: Registry<Entry>,
+    backends: Registry<BackendEntry>,
+}
+
+impl ResidencyState {
+    fn fixed_bytes(&self) -> usize {
+        size_of::<CubeResidency>()
+            + 2 * size_of::<usize>()
+            + self.entries.heap_bytes()
+            + self.backends.heap_bytes()
+            + self
+                .backends
+                .values()
+                .map(|entry| entry.owner_bytes)
+                .sum::<usize>()
+    }
+}
+
+// Sorted numeric identities with explicit Vec capacity. Retired slots are
+// removed; the run reuses the capacity for subsequent residual generations.
+struct Registry<T>(Vec<(usize, T)>);
+
+impl<T> Registry<T> {
+    fn new() -> Self {
+        Self(Vec::new())
+    }
+    fn heap_bytes(&self) -> usize {
+        self.0.capacity() * size_of::<(usize, T)>()
+    }
+    fn reserve(&mut self, additional: usize) {
+        self.0.reserve_exact(additional);
+    }
+    fn iter(&self) -> impl Iterator<Item = (&usize, &T)> {
+        self.0.iter().map(|(id, entry)| (id, entry))
+    }
+    fn values(&self) -> impl Iterator<Item = &T> {
+        self.0.iter().map(|(_, entry)| entry)
+    }
+    fn get(&self, id: &usize) -> Option<&T> {
+        self.0
+            .binary_search_by_key(id, |(key, _)| *key)
+            .ok()
+            .map(|i| &self.0[i].1)
+    }
+    fn get_mut(&mut self, id: &usize) -> Option<&mut T> {
+        self.0
+            .binary_search_by_key(id, |(key, _)| *key)
+            .ok()
+            .map(|i| &mut self.0[i].1)
+    }
+    fn insert(&mut self, id: usize, entry: T) {
+        assert!(self.0.len() < self.0.capacity());
+        self.0.push((id, entry));
+    }
+    fn remove(&mut self, id: &usize) -> Option<T> {
+        self.0
+            .binary_search_by_key(id, |(key, _)| *key)
+            .ok()
+            .map(|i| self.0.remove(i).1)
+    }
+}
+
+impl<T> std::ops::Index<&usize> for Registry<T> {
+    type Output = T;
+    fn index(&self, id: &usize) -> &T {
+        self.get(id).expect("registered identity")
+    }
 }
 
 /// The run's physical-owner coordinator. Its limit is the capacity granted by
@@ -64,26 +132,30 @@ struct ResidencyState {
 pub(crate) struct CubeResidency {
     state: Mutex<ResidencyState>,
     wake: Condvar,
+    creation: Mutex<()>,
 }
 
 impl CubeResidency {
     pub(crate) fn new(admitted_bytes: usize) -> io::Result<Arc<Self>> {
-        if admitted_bytes == 0 {
-            return Err(invalid("resident capacity must be positive"));
+        let owner_bytes = size_of::<Self>() + 2 * size_of::<usize>();
+        if admitted_bytes < owner_bytes {
+            return Err(invalid("resident capacity cannot hold the coordinator"));
         }
         Ok(Arc::new(Self {
             state: Mutex::new(ResidencyState {
                 limit: admitted_bytes,
-                used: 0,
+                used: owner_bytes,
+                scratch: 0,
                 clock: 0,
                 version: 0,
                 admitting: false,
                 next_block_id: 0,
                 next_backend_id: 0,
-                entries: BTreeMap::new(),
-                backends: BTreeMap::new(),
+                entries: Registry::new(),
+                backends: Registry::new(),
             }),
             wake: Condvar::new(),
+            creation: Mutex::new(()),
         }))
     }
 
@@ -106,7 +178,10 @@ impl CubeResidency {
     ) -> io::Result<PinnedSet> {
         loop {
             if cancelled() {
-                return Err(io::Error::new(io::ErrorKind::Interrupted, "cube run cancelled"));
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "cube run cancelled",
+                ));
             }
             let version = self.state.lock().map_err(poison)?.version;
             match self.try_admit(requests, scratch_bytes) {
@@ -130,66 +205,6 @@ impl CubeResidency {
                 Err(error) => return Err(error),
             }
         }
-    }
-
-    fn register_backend(
-        &self,
-        backend: Arc<dyn BackendIo>,
-        staging_bytes: usize,
-    ) -> io::Result<BackendId> {
-        let mut state = self.state.lock().map_err(poison)?;
-        if staging_bytes > state.limit {
-            return Err(invalid("one codec tile exceeds admitted resident capacity"));
-        }
-        let id = state.next_backend_id;
-        state.next_backend_id = id
-            .checked_add(1)
-            .ok_or_else(|| invalid("backend identity overflow"))?;
-        state.backends.insert(
-            id,
-            BackendEntry {
-                backend,
-                staging_bytes,
-                open: false,
-            },
-        );
-        Ok(id)
-    }
-
-    fn register_block(
-        &self,
-        block: Arc<dyn BlockIo>,
-        backend: BackendId,
-        bytes: usize,
-    ) -> io::Result<BlockId> {
-        let mut state = self.state.lock().map_err(poison)?;
-        if bytes == 0
-            || bytes
-                .checked_add(state.backends[&backend].staging_bytes)
-                .is_none_or(|n| n > state.limit)
-        {
-            return Err(invalid(
-                "one pinned plane and its codec tile exceed admitted capacity",
-            ));
-        }
-        let id = state.next_block_id;
-        state.next_block_id = id
-            .checked_add(1)
-            .ok_or_else(|| invalid("block identity overflow"))?;
-        state.entries.insert(
-            id,
-            Entry {
-                block,
-                backend,
-                bytes,
-                resident: false,
-                read_pins: 0,
-                write_pin: false,
-                next_use: u64::MAX,
-                last_use: 0,
-            },
-        );
-        Ok(id)
     }
 
     pub(crate) fn used_bytes(&self) -> usize {
@@ -227,17 +242,16 @@ impl CubeResidency {
         state.admitting = true;
         drop(state);
         let result = block.evict();
+        let cold_bytes = block.cold_bytes();
         let mut state = self.state.lock().map_err(poison)?;
         state.admitting = false;
         state.version += 1;
         self.wake.notify_all();
         result?;
-        state
-            .entries
-            .get_mut(&id)
-            .expect("registered block")
-            .resident = false;
-        state.used -= bytes;
+        let entry = state.entries.get_mut(&id).expect("registered block");
+        entry.resident = false;
+        entry.cold_bytes = cold_bytes;
+        state.used -= bytes - cold_bytes;
         Ok(())
     }
 
@@ -248,16 +262,19 @@ impl CubeResidency {
         requests: &[BlockRequest],
         scratch_bytes: usize,
     ) -> io::Result<PinnedSet> {
-        let ids: BTreeSet<_> = requests.iter().map(|request| request.id).collect();
-        if ids.len() != requests.len() {
+        let scratch_bytes =
+            checked_sum(&[scratch_bytes, operation_metadata_bytes(requests.len())?])?;
+        let mut ids: Vec<_> = requests.iter().map(|request| request.id).collect();
+        ids.sort_unstable();
+        if ids.windows(2).any(|pair| pair[0] == pair[1]) {
             return Err(invalid("duplicate block in one operation"));
         }
         let mut state = self.state.lock().map_err(poison)?;
         if state.admitting {
             return Err(busy("another cube admission is in progress"));
         }
-        let mut minimum = scratch_bytes;
-        let mut requested_backends = BTreeSet::new();
+        let mut minimum = checked_sum(&[scratch_bytes, state.fixed_bytes()])?;
+        let mut requested_backends = Vec::with_capacity(requests.len());
         for request in requests {
             let entry = state
                 .entries
@@ -269,7 +286,9 @@ impl CubeResidency {
             minimum = minimum
                 .checked_add(entry.bytes)
                 .ok_or_else(|| invalid("operation byte count overflow"))?;
-            requested_backends.insert(entry.backend);
+            if !requested_backends.contains(&entry.backend) {
+                requested_backends.push(entry.backend);
+            }
         }
         for backend in &requested_backends {
             minimum = minimum
@@ -288,7 +307,7 @@ impl CubeResidency {
                 .iter()
                 .filter_map(|id| {
                     let entry = &state.entries[id];
-                    (!entry.resident).then_some(entry.bytes)
+                    (!entry.resident).then_some(entry.bytes - entry.cold_bytes)
                 })
                 .sum::<usize>();
             let staging = requested_backends
@@ -324,6 +343,7 @@ impl CubeResidency {
             if let Some((id, block, bytes)) = victim {
                 drop(state);
                 let result = block.evict();
+                let cold_bytes = block.cold_bytes();
                 state = self.state.lock().map_err(poison)?;
                 if let Err(error) = result {
                     state.admitting = false;
@@ -331,12 +351,10 @@ impl CubeResidency {
                     self.wake.notify_all();
                     return Err(error);
                 }
-                state
-                    .entries
-                    .get_mut(&id)
-                    .expect("registered block")
-                    .resident = false;
-                state.used -= bytes;
+                let entry = state.entries.get_mut(&id).expect("registered block");
+                entry.resident = false;
+                entry.cold_bytes = cold_bytes;
+                state.used -= bytes - cold_bytes;
                 continue;
             }
             let idle = state
@@ -370,23 +388,33 @@ impl CubeResidency {
                 continue;
             }
             state.admitting = false;
+            if state.scratch == 0
+                && state
+                    .entries
+                    .values()
+                    .all(|entry| entry.read_pins == 0 && !entry.write_pin)
+            {
+                return Err(invalid(
+                    "partial-plane coverage and live owners leave insufficient capacity",
+                ));
+            }
             return Err(busy("other pinned operations occupy the required capacity"));
         }
 
-        let to_open: Vec<_> = requested_backends
-            .iter()
-            .filter_map(|id| {
-                let backend = &state.backends[id];
-                (!backend.open).then_some((*id, backend.backend.clone()))
-            })
-            .collect();
-        let to_load: Vec<_> = requests
-            .iter()
-            .filter_map(|request| {
-                let entry = &state.entries[&request.id];
-                (!entry.resident).then_some((request.id, entry.block.clone(), request.write))
-            })
-            .collect();
+        let mut to_open = Vec::with_capacity(requests.len());
+        for id in &requested_backends {
+            let backend = &state.backends[id];
+            if !backend.open {
+                to_open.push((*id, backend.backend.clone()));
+            }
+        }
+        let mut to_load = Vec::with_capacity(requests.len());
+        for request in requests {
+            let entry = &state.entries[&request.id];
+            if !entry.resident {
+                to_load.push((request.id, entry.block.clone(), request.write));
+            }
+        }
         for request in requests {
             let entry = state.entries.get_mut(&request.id).expect("checked block");
             if request.write {
@@ -403,9 +431,10 @@ impl CubeResidency {
         for (id, _, _) in &to_load {
             let entry = state.entries.get_mut(id).expect("checked block");
             entry.resident = true;
-            state.used += entry.bytes;
+            state.used += entry.bytes - entry.cold_bytes;
         }
         state.used += scratch_bytes;
+        state.scratch += scratch_bytes;
         drop(state);
 
         let result = to_open
@@ -436,7 +465,7 @@ impl CubeResidency {
             if !resident {
                 let entry = state.entries.get_mut(&id).expect("registered block");
                 entry.resident = false;
-                state.used -= entry.bytes;
+                state.used -= entry.bytes - entry.cold_bytes;
             }
         }
         state.admitting = false;
@@ -444,7 +473,10 @@ impl CubeResidency {
         self.wake.notify_all();
         if let Err(error) = result {
             for request in requests {
-                let entry = state.entries.get_mut(&request.id).expect("registered block");
+                let entry = state
+                    .entries
+                    .get_mut(&request.id)
+                    .expect("registered block");
                 if request.write {
                     entry.write_pin = false;
                 } else {
@@ -452,6 +484,7 @@ impl CubeResidency {
                 }
             }
             state.used -= scratch_bytes;
+            state.scratch -= scratch_bytes;
             return Err(error);
         }
         Ok(PinnedSet {
@@ -468,31 +501,30 @@ impl CubeResidency {
             return Err(busy("cube admission is in progress"));
         }
         state.admitting = true;
-        let idle: Vec<_> = state
-            .backends
-            .iter()
-            .filter(|(id, backend)| {
-                backend.open
-                    && state
-                        .entries
-                        .values()
-                        .all(|entry| {
+        loop {
+            let idle = state
+                .backends
+                .iter()
+                .find(|(id, backend)| {
+                    backend.open
+                        && state.entries.values().all(|entry| {
                             entry.backend != **id
                                 || !entry.resident && entry.read_pins == 0 && !entry.write_pin
                         })
-            })
-            .map(|(id, backend)| (*id, backend.backend.clone(), backend.staging_bytes))
-            .collect();
-        drop(state);
-        for (id, backend, bytes) in idle {
-            if let Err(error) = backend.close() {
-                let mut state = self.state.lock().map_err(poison)?;
+                })
+                .map(|(id, backend)| (*id, backend.backend.clone(), backend.staging_bytes));
+            let Some((id, backend, bytes)) = idle else {
+                break;
+            };
+            drop(state);
+            let result = backend.close();
+            state = self.state.lock().map_err(poison)?;
+            if let Err(error) = result {
                 state.admitting = false;
                 state.version += 1;
                 self.wake.notify_all();
                 return Err(error);
             }
-            let mut state = self.state.lock().map_err(poison)?;
             state
                 .backends
                 .get_mut(&id)
@@ -500,7 +532,6 @@ impl CubeResidency {
                 .open = false;
             state.used -= bytes;
         }
-        let mut state = self.state.lock().map_err(poison)?;
         state.admitting = false;
         state.version += 1;
         self.wake.notify_all();
@@ -531,10 +562,9 @@ impl PinnedSet {
 impl Drop for PinnedSet {
     fn drop(&mut self) {
         let mut state = self.manager.state.lock().expect("residency lock poisoned");
-        state.used -= self.scratch_bytes;
         state.clock += 1;
         let now = state.clock;
-        for request in &self.requests {
+        for request in std::mem::take(&mut self.requests) {
             let entry = state
                 .entries
                 .get_mut(&request.id)
@@ -546,6 +576,8 @@ impl Drop for PinnedSet {
             }
             entry.last_use = now;
         }
+        state.used -= self.scratch_bytes;
+        state.scratch -= self.scratch_bytes;
         state.version += 1;
         self.manager.wake.notify_all();
     }
@@ -586,10 +618,12 @@ struct PlaneState<T> {
     initialized: Coverage,
 }
 
-/// Fixed-capacity validity map: cancelled writes cannot grow bookkeeping or
-/// turn uninitialized cells back into default-filled cells on reload.
+/// Uniform planes need one flag, not a cube-sized validity allocation. Only
+/// partial writes materialize a bounded bitmap, charged to the active plane.
 struct Coverage {
-    words: Vec<u64>,
+    words: Option<Vec<u64>>,
+    cells: usize,
+    valid_cells: usize,
 }
 
 impl Coverage {
@@ -602,9 +636,11 @@ impl Coverage {
     }
 
     fn new(cells: usize, initialized: bool) -> io::Result<Self> {
-        let words = Self::bytes(cells)? / std::mem::size_of::<u64>();
+        Self::bytes(cells)?;
         Ok(Self {
-            words: vec![if initialized { u64::MAX } else { 0 }; words],
+            words: None,
+            cells,
+            valid_cells: if initialized { cells } else { 0 },
         })
     }
 
@@ -612,17 +648,45 @@ impl Coverage {
         if range.is_empty() {
             return;
         }
+        if range.start == 0 && range.end == self.cells {
+            self.words = None;
+            self.valid_cells = if valid { self.cells } else { 0 };
+            return;
+        }
+        if self.words.is_none() && (self.valid_cells == self.cells) == valid {
+            return;
+        }
+        let words = self.words.get_or_insert_with(|| {
+            vec![
+                if self.valid_cells == self.cells {
+                    u64::MAX
+                } else {
+                    0
+                };
+                self.cells.div_ceil(64)
+            ]
+        });
         let first = range.start / 64;
         let last = (range.end - 1) / 64;
-        for index in first..=last {
+        for (index, word) in words.iter_mut().enumerate().take(last + 1).skip(first) {
             let low = if index == first { range.start % 64 } else { 0 };
-            let high = if index == last { (range.end - 1) % 64 + 1 } else { 64 };
-            let mask = (u64::MAX << low) & (u64::MAX >> (64 - high));
-            if valid {
-                self.words[index] |= mask;
+            let high = if index == last {
+                (range.end - 1) % 64 + 1
             } else {
-                self.words[index] &= !mask;
+                64
+            };
+            let mask = (u64::MAX << low) & (u64::MAX >> (64 - high));
+            let before = (*word & mask).count_ones() as usize;
+            if valid {
+                *word |= mask;
+                self.valid_cells += mask.count_ones() as usize - before;
+            } else {
+                *word &= !mask;
+                self.valid_cells -= before;
             }
+        }
+        if self.valid_cells == 0 || self.valid_cells == self.cells {
+            self.words = None;
         }
     }
 
@@ -630,14 +694,27 @@ impl Coverage {
         if range.is_empty() {
             return true;
         }
+        let Some(words) = &self.words else {
+            return self.valid_cells == self.cells;
+        };
         let first = range.start / 64;
         let last = (range.end - 1) / 64;
         (first..=last).all(|index| {
             let low = if index == first { range.start % 64 } else { 0 };
-            let high = if index == last { (range.end - 1) % 64 + 1 } else { 64 };
+            let high = if index == last {
+                (range.end - 1) % 64 + 1
+            } else {
+                64
+            };
             let mask = (u64::MAX << low) & (u64::MAX >> (64 - high));
-            self.words[index] & mask == mask
+            words[index] & mask == mask
         })
+    }
+
+    fn heap_bytes(&self) -> usize {
+        self.words
+            .as_ref()
+            .map_or(0, |words| words.capacity() * size_of::<u64>())
     }
 }
 
@@ -705,6 +782,14 @@ impl<T: LatticeElement + TilePixel> BlockIo for PlaneBlock<T> {
             .values
             .is_some()
     }
+
+    fn cold_bytes(&self) -> usize {
+        self.state
+            .read()
+            .expect("cube block lock poisoned")
+            .initialized
+            .heap_bytes()
+    }
 }
 
 /// One typed array of plane-aligned blocks sharing the run coordinator.
@@ -724,6 +809,7 @@ impl<T: LatticeElement + TilePixel> ManagedPlaneArray<T> {
         planes: usize,
         fill: Option<T>,
     ) -> io::Result<Self> {
+        let creation_lock = manager.creation.lock().map_err(poison)?;
         let cells = axis0
             .checked_mul(axis1)
             .ok_or_else(|| invalid("plane size overflow"))?;
@@ -733,41 +819,148 @@ impl<T: LatticeElement + TilePixel> ManagedPlaneArray<T> {
         if planes == 0 || bytes == 0 {
             return Err(invalid("cube planes must be positive"));
         }
-        let staging = manager.try_admit(&[], bytes)?;
         let directory = tempfile::Builder::new()
             .prefix(".casa-rs-managed-cube-")
             .tempdir_in(parent)?;
         let shape = TiledShape::with_tile_shape(vec![axis0, axis1, planes], vec![axis0, axis1, 1])
             .map_err(other)?;
         let layout = PagedArray::<T>::storage_layout(shape, bytes).map_err(other)?;
-        let mut array = PagedArray::<T>::create_planned(&layout, directory.path().join("values"))
-            .map_err(other)?;
+        let path = directory.path().join("values");
+        let closed_heap = checked_sum(&[6 * size_of::<usize>(), path.as_os_str().len()])?;
+        let open_heap =
+            PagedArray::<T>::planned_persistent_heap_bytes(&layout, &path).map_err(other)?;
+        let staging_bytes = checked_sum(&[
+            open_heap - closed_heap,
+            layout
+                .slice_scratch_bytes()
+                .map_err(other)?
+                .max(layout.flush_scratch_bytes().map_err(other)?),
+        ])?;
+        let block_bytes = checked_sum(&[bytes, Coverage::bytes(cells)?])?;
+        let owner_bytes = checked_sum(&[
+            size_of::<Self>(),
+            size_of::<ArrayBackend<T>>(),
+            2 * size_of::<usize>(),
+            closed_heap,
+            directory.path().as_os_str().len(),
+            checked_product(
+                planes,
+                checked_sum(&[
+                    size_of::<PlaneBlock<T>>(),
+                    2 * size_of::<usize>(),
+                    size_of::<(BlockId, Arc<PlaneBlock<T>>)>(),
+                ])?,
+            )?,
+        ])?;
+        // Replacement Vec allocation can overlap its previous registry capacity.
+        // Reserve that construction peak, then transfer the retained portion of
+        // the same permit into the registered owners, without a release gap.
+        let registry_growth = {
+            let state = manager.state.lock().map_err(poison)?;
+            checked_sum(&[
+                checked_product(
+                    state
+                        .entries
+                        .0
+                        .len()
+                        .checked_add(planes)
+                        .ok_or_else(|| invalid("block count overflow"))?,
+                    size_of::<(usize, Entry)>(),
+                )?,
+                checked_product(
+                    state
+                        .backends
+                        .0
+                        .len()
+                        .checked_add(1)
+                        .ok_or_else(|| invalid("backend count overflow"))?,
+                    size_of::<(usize, BackendEntry)>(),
+                )?,
+            ])?
+        };
+        let creation_bytes = checked_sum(&[
+            owner_bytes,
+            staging_bytes,
+            registry_growth,
+            layout.owned_heap_bytes().map_err(other)?,
+        ])?;
+        let mut creation = manager.try_admit(&[], creation_bytes)?;
+        let mut array = PagedArray::<T>::create_planned(&layout, &path).map_err(other)?;
         array.temp_close().map_err(other)?;
-        drop(staging);
         let backend = Arc::new(ArrayBackend {
             array: Mutex::new(array),
             axes: [axis0, axis1],
             _directory: directory,
         });
-        let backend_id = manager.register_backend(backend.clone(), bytes)?;
-        let blocks = (0..planes)
-            .map(|index| {
-                let block = Arc::new(PlaneBlock {
-                    backend: backend.clone(),
-                    index,
-                    cells,
-                    fill,
-                    state: RwLock::new(PlaneState {
-                        values: None,
-                        dirty: false,
-                        backed: false,
-                        initialized: Coverage::new(cells, fill.is_some())?,
-                    }),
-                });
-                let id = manager.register_block(block.clone(), backend_id, bytes)?;
-                Ok((id, block))
-            })
-            .collect::<io::Result<Vec<_>>>()?;
+        let mut blocks = Vec::with_capacity(planes);
+        for index in 0..planes {
+            let block = Arc::new(PlaneBlock {
+                backend: backend.clone(),
+                index,
+                cells,
+                fill,
+                state: RwLock::new(PlaneState {
+                    values: None,
+                    dirty: false,
+                    backed: false,
+                    initialized: Coverage::new(cells, fill.is_some())?,
+                }),
+            });
+            blocks.push((0, block));
+        }
+        let mut state = manager.state.lock().map_err(poison)?;
+        let backend_id = state.next_backend_id;
+        let next_backend_id = backend_id
+            .checked_add(1)
+            .ok_or_else(|| invalid("backend identity overflow"))?;
+        let next_block_id = state
+            .next_block_id
+            .checked_add(planes)
+            .ok_or_else(|| invalid("block identity overflow"))?;
+        let old_registry = state.entries.heap_bytes() + state.backends.heap_bytes();
+        state.entries.reserve(planes);
+        state.backends.reserve(1);
+        let retained = checked_sum(&[
+            owner_bytes,
+            state.entries.heap_bytes() + state.backends.heap_bytes() - old_registry,
+        ])?;
+        // All fallible preparation finished before registration. On an earlier
+        // error, local owners and the creation permit unwind without stale IDs.
+        assert!(retained <= creation.scratch_bytes);
+        creation.scratch_bytes -= retained;
+        state.scratch -= retained;
+        state.next_backend_id = next_backend_id;
+        for (id, block) in &mut blocks {
+            *id = state.next_block_id;
+            state.next_block_id += 1;
+            state.entries.insert(
+                *id,
+                Entry {
+                    block: block.clone(),
+                    backend: backend_id,
+                    bytes: block_bytes,
+                    cold_bytes: 0,
+                    resident: false,
+                    read_pins: 0,
+                    write_pin: false,
+                    next_use: u64::MAX,
+                    last_use: 0,
+                },
+            );
+        }
+        debug_assert_eq!(state.next_block_id, next_block_id);
+        state.backends.insert(
+            backend_id,
+            BackendEntry {
+                backend: backend.clone(),
+                staging_bytes,
+                owner_bytes,
+                open: false,
+            },
+        );
+        drop(state);
+        drop(creation);
+        drop(creation_lock);
         Ok(Self {
             manager,
             blocks,
@@ -791,12 +984,10 @@ impl<T: LatticeElement + TilePixel> ManagedPlaneArray<T> {
         } = self;
         let mut state = manager.state.lock().map_err(poison)?;
         if state.admitting
-            || blocks
-                .iter()
-                .any(|(id, _)| {
-                    let entry = &state.entries[id];
-                    entry.read_pins != 0 || entry.write_pin
-                })
+            || blocks.iter().any(|(id, _)| {
+                let entry = &state.entries[id];
+                entry.read_pins != 0 || entry.write_pin
+            })
         {
             return Err(busy("cannot retire an active cube array"));
         }
@@ -814,19 +1005,26 @@ impl<T: LatticeElement + TilePixel> ManagedPlaneArray<T> {
             }
         }
         let mut state = manager.state.lock().map_err(poison)?;
-        let retired_blocks: Vec<_> = blocks
-            .iter()
-            .map(|(id, _)| state.entries.remove(id).expect("registered cube block"))
-            .collect();
-        let retired = state.backends.remove(&backend_id).expect("registered cube backend");
-        let released = retired_blocks
-            .iter()
-            .filter(|entry| entry.resident)
-            .map(|entry| entry.bytes)
-            .sum::<usize>()
-            + if retired.open { retired.staging_bytes } else { 0 };
+        let mut released = 0;
+        for (id, _) in &blocks {
+            let entry = state.entries.remove(id).expect("registered cube block");
+            released += if entry.resident {
+                entry.bytes
+            } else {
+                entry.cold_bytes
+            };
+        }
+        let retired = state
+            .backends
+            .remove(&backend_id)
+            .expect("registered cube backend");
+        released += retired.owner_bytes
+            + if retired.open {
+                retired.staging_bytes
+            } else {
+                0
+            };
         drop(state);
-        drop(retired_blocks);
         drop(blocks);
         drop(retired);
         drop(backend);
@@ -945,6 +1143,32 @@ impl<T> DerefMut for PlaneWrite<'_, T> {
 fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, message)
 }
+
+fn checked_sum(values: &[usize]) -> io::Result<usize> {
+    values
+        .iter()
+        .try_fold(0usize, |sum, value| sum.checked_add(*value))
+        .ok_or_else(|| invalid("cube memory size overflow"))
+}
+
+fn checked_product(count: usize, bytes: usize) -> io::Result<usize> {
+    count
+        .checked_mul(bytes)
+        .ok_or_else(|| invalid("cube memory size overflow"))
+}
+
+fn operation_metadata_bytes(blocks: usize) -> io::Result<usize> {
+    checked_product(
+        blocks,
+        checked_sum(&[
+            size_of::<BlockRequest>(),
+            2 * size_of::<usize>(),
+            size_of::<(BackendId, Arc<dyn BackendIo>)>(),
+            size_of::<(BlockId, Arc<dyn BlockIo>, bool)>(),
+            2 * size_of::<(usize, bool)>(),
+        ])?,
+    )
+}
 fn busy(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::WouldBlock, message)
 }
@@ -1007,7 +1231,26 @@ mod tests {
     use casa_lattices::TiledFileIoStats;
     use num_complex::Complex32;
 
-    fn pixel_write_bytes(stats: TiledFileIoStats) -> usize {
+    fn fixture<T: LatticeElement + TilePixel>(
+        planes: usize,
+        slots: usize,
+        fill: Option<T>,
+    ) -> (TempDir, Arc<CubeResidency>, ManagedPlaneArray<T>) {
+        let root = tempfile::tempdir().unwrap();
+        let manager = CubeResidency::new(1 << 24).unwrap();
+        let array =
+            ManagedPlaneArray::create(manager.clone(), root.path(), 2, 2, planes, fill).unwrap();
+        {
+            let mut state = manager.state.lock().unwrap();
+            state.limit = state.fixed_bytes()
+                + state.backends[&array.backend_id].staging_bytes
+                + slots * state.entries[&array.blocks[0].0].bytes
+                + operation_metadata_bytes(slots).unwrap();
+        }
+        (root, manager, array)
+    }
+
+    fn write_bytes(stats: TiledFileIoStats) -> usize {
         stats.flat_flush_write_bytes
             + stats.lru_flush_write_bytes
             + stats.lru_batch_flush_bytes
@@ -1015,372 +1258,396 @@ mod tests {
     }
 
     #[test]
-    fn one_shared_budget_spills_dirty_planes_and_discards_clean_planes_without_writes() {
-        let root = tempfile::tempdir().unwrap();
-        let manager = CubeResidency::new(32).unwrap();
-        let array =
-            ManagedPlaneArray::<f32>::create(manager.clone(), root.path(), 2, 2, 3, Some(0.0))
+    fn real_typed_spill_reload_and_clean_eviction_reconcile_physical_owners() {
+        fn exercise<T: LatticeElement + TilePixel + PartialEq + std::fmt::Debug>(values: [T; 4]) {
+            let (_root, manager, array) = fixture(3, 1, Some(T::default()));
+            let pins = manager
+                .admit(&[array.request(0, true).unwrap()], 0)
                 .unwrap();
-        let pinned = manager
-            .try_admit(&[array.request(0, true).unwrap()], 0)
-            .unwrap();
-        let mut window = array.write(&pinned, 0, 0..4).unwrap();
-        window.copy_from_slice(&[1.0, 2.0, 3.0, 4.0]);
-        window.finish();
-        assert_eq!(manager.used_bytes(), 32); // one plane plus one codec tile
-        assert_eq!(
-            array.blocks[0]
-                .1
-                .state
-                .read()
-                .unwrap()
-                .values
-                .as_ref()
-                .unwrap()
-                .capacity(),
-            4
-        );
-        drop(pinned);
-
-        let pinned = manager
-            .try_admit(&[array.request(1, false).unwrap()], 0)
-            .unwrap();
-        assert_eq!(&*array.read(&pinned, 1, 0..4).unwrap(), &[0.0; 4]);
-        assert_eq!(manager.used_bytes(), 32);
-        assert!(array.blocks[0].1.state.read().unwrap().values.is_none());
-        drop(pinned);
-        let written = array._backend.array.lock().unwrap().io_stats();
-        assert!(pixel_write_bytes(written) >= 16);
-
-        let pinned = manager
-            .try_admit(&[array.request(2, false).unwrap()], 0)
-            .unwrap();
-        assert_eq!(&*array.read(&pinned, 2, 0..4).unwrap(), &[0.0; 4]);
-        drop(pinned);
-        let after_clean_evict = array._backend.array.lock().unwrap().io_stats();
-        assert_eq!(
-            pixel_write_bytes(after_clean_evict),
-            pixel_write_bytes(written)
-        );
-
-        let pinned = manager
-            .try_admit(&[array.request(0, false).unwrap()], 0)
-            .unwrap();
-        assert_eq!(
-            &*array.read(&pinned, 0, 0..4).unwrap(),
-            &[1.0, 2.0, 3.0, 4.0]
-        );
-        drop(pinned);
-        assert_eq!(manager.used_bytes(), 32);
-        let other =
-            ManagedPlaneArray::<f32>::create(manager.clone(), root.path(), 2, 2, 1, Some(0.0))
+            let mut view = array.write(&pins, 0, 0..4).unwrap();
+            view.copy_from_slice(&values);
+            view.finish();
+            assert_eq!(
+                array.blocks[0]
+                    .1
+                    .state
+                    .read()
+                    .unwrap()
+                    .initialized
+                    .heap_bytes(),
+                0
+            );
+            drop(pins);
+            drop(
+                manager
+                    .admit(&[array.request(1, false).unwrap()], 0)
+                    .unwrap(),
+            );
+            assert!(!array.blocks[0].1.resident());
+            let written = write_bytes(array._backend.array.lock().unwrap().io_stats());
+            assert!(written > 0);
+            drop(
+                manager
+                    .admit(&[array.request(2, false).unwrap()], 0)
+                    .unwrap(),
+            );
+            assert_eq!(
+                write_bytes(array._backend.array.lock().unwrap().io_stats()),
+                written
+            );
+            let pins = manager
+                .admit(&[array.request(0, false).unwrap()], 0)
                 .unwrap();
-        let before_close = array
-            ._backend
-            .array
-            .lock()
-            .unwrap()
-            .owned_persistent_heap_bytes()
-            .unwrap();
-        let pins = manager
-            .try_admit(&[other.request(0, false).unwrap()], 0)
-            .unwrap();
-        drop(pins);
-        assert!(array._backend.array.lock().unwrap().is_temp_closed());
-        let after_close = array
-            ._backend
-            .array
-            .lock()
-            .unwrap()
-            .owned_persistent_heap_bytes()
-            .unwrap();
-        assert!(after_close < before_close);
-        assert_eq!(manager.used_bytes(), 32);
+            assert_eq!(&*array.read(&pins, 0, 0..4).unwrap(), &values);
+            {
+                let state = manager.state.lock().unwrap();
+                let owned = array
+                    ._backend
+                    .array
+                    .lock()
+                    .unwrap()
+                    .owned_persistent_heap_bytes()
+                    .unwrap();
+                let backend = &state.backends[&array.backend_id];
+                assert!(owned <= backend.owner_bytes + backend.staging_bytes);
+                assert!(state.used <= state.limit);
+                let block = array.blocks[0].1.state.read().unwrap();
+                let actual = block.values.as_ref().unwrap().capacity() * size_of::<T>()
+                    + block.initialized.heap_bytes();
+                assert!(actual <= state.entries[&array.blocks[0].0].bytes);
+            }
+            drop(pins);
+            manager.evict_unpinned(array.blocks[0].0).unwrap();
+            let before = array
+                ._backend
+                .array
+                .lock()
+                .unwrap()
+                .owned_persistent_heap_bytes()
+                .unwrap();
+            manager.reclaim_idle_staging().unwrap();
+            let after = array
+                ._backend
+                .array
+                .lock()
+                .unwrap()
+                .owned_persistent_heap_bytes()
+                .unwrap();
+            assert!(after < before);
+            assert!(array._backend.array.lock().unwrap().is_temp_closed());
+            assert_eq!(
+                manager.used_bytes(),
+                manager.state.lock().unwrap().fixed_bytes()
+            );
+        }
+        exercise([1.0_f32, 2.0, 3.0, 4.0]);
+        exercise([1.0_f64, 2.0, 3.0, 4.0]);
+        exercise([Complex32::new(2.0, -1.0); 4]);
+        exercise([false, true, false, true]);
     }
 
     #[test]
-    fn cancelled_ranges_stay_uninitialized_after_spill_and_reload() {
-        let root = tempfile::tempdir().unwrap();
-        for fill in [Some(0.0), None] {
-            let manager = CubeResidency::new(32).unwrap();
-            let array =
-                ManagedPlaneArray::<f32>::create(manager.clone(), root.path(), 2, 2, 2, fill)
-                    .unwrap();
-            let pins = manager.try_admit(&[array.request(0, true).unwrap()], 0).unwrap();
+    fn cancelled_ranges_stay_invalid_after_spill_and_reload() {
+        for fill in [Some(0.0_f32), None] {
+            let (_root, manager, array) = fixture(2, 1, fill);
+            // One unfinished plane's bitmap may remain while another is active.
+            manager.state.lock().unwrap().limit += Coverage::bytes(4).unwrap();
+            let pins = manager
+                .admit(&[array.request(0, true).unwrap()], 0)
+                .unwrap();
             let mut first = array.write(&pins, 0, 0..2).unwrap();
             first.copy_from_slice(&[1.0, 2.0]);
             first.finish();
             let mut cancelled = array.write(&pins, 0, 2..4).unwrap();
             cancelled[0] = 9.0;
             drop(cancelled);
+            assert!(array.read(&pins, 0, 2..4).is_err());
+            drop(pins);
+            drop(
+                manager
+                    .admit(&[array.request(1, true).unwrap()], 0)
+                    .unwrap(),
+            );
+            assert_eq!(
+                manager.state.lock().unwrap().entries[&array.blocks[0].0].cold_bytes,
+                8
+            );
+            let pins = manager
+                .admit(&[array.request(0, false).unwrap()], 0)
+                .unwrap();
             assert_eq!(&*array.read(&pins, 0, 0..2).unwrap(), &[1.0, 2.0]);
             assert!(array.read(&pins, 0, 2..4).is_err());
             drop(pins);
-            let pins = manager.try_admit(&[array.request(1, true).unwrap()], 0).unwrap();
+            let pins = manager
+                .admit(&[array.request(0, true).unwrap()], 0)
+                .unwrap();
+            drop(array.write(&pins, 0, 0..4).unwrap());
             drop(pins);
-            let pins = manager.try_admit(&[array.request(0, false).unwrap()], 0).unwrap();
-            assert_eq!(&*array.read(&pins, 0, 0..2).unwrap(), &[1.0, 2.0]);
-            assert!(array.read(&pins, 0, 2..4).is_err());
-            drop(pins);
-
-            let pins = manager.try_admit(&[array.request(0, true).unwrap()], 0).unwrap();
-            let whole = array.write(&pins, 0, 0..4).unwrap();
-            drop(whole);
-            drop(pins);
-            let pins = manager.try_admit(&[array.request(1, true).unwrap()], 0).unwrap();
-            drop(pins);
-            let pins = manager.try_admit(&[array.request(0, false).unwrap()], 0).unwrap();
+            drop(
+                manager
+                    .admit(&[array.request(1, true).unwrap()], 0)
+                    .unwrap(),
+            );
+            let pins = manager
+                .admit(&[array.request(0, false).unwrap()], 0)
+                .unwrap();
             assert!(array.read(&pins, 0, 0..4).is_err());
         }
     }
 
     #[test]
-    fn opposite_order_write_sets_are_excluded_before_exposing_any_lock() {
+    fn heterogeneous_arrays_share_one_complete_operation_budget() {
         let root = tempfile::tempdir().unwrap();
-        let manager = CubeResidency::new(48).unwrap();
-        let array = ManagedPlaneArray::<f32>::create(
-            manager.clone(), root.path(), 2, 2, 2, Some(0.0),
-        ).unwrap();
-        let first = manager.try_admit(&[
-            array.request(0, true).unwrap(), array.request(1, true).unwrap(),
-        ], 0).unwrap();
-        assert_eq!(manager.try_admit(&[
-            array.request(1, true).unwrap(), array.request(0, true).unwrap(),
-        ], 0).err().unwrap().kind(), io::ErrorKind::WouldBlock);
-        assert_eq!(manager.try_admit(&[array.request(0, false).unwrap()], 0)
-            .err().unwrap().kind(), io::ErrorKind::WouldBlock);
-        drop(first);
-        let second = manager.try_admit(&[
-            array.request(1, true).unwrap(), array.request(0, true).unwrap(),
-        ], 0).unwrap();
-        drop(second);
-        let shared1 = manager.try_admit(&[array.request(0, false).unwrap()], 0).unwrap();
-        let shared2 = manager.try_admit(&[array.request(0, false).unwrap()], 0).unwrap();
-        drop(shared1);
-        drop(shared2);
-        let cancelled = std::sync::atomic::AtomicBool::new(true);
-        assert_eq!(manager.admit_until(&[array.request(0, true).unwrap()], 0,
-            || cancelled.load(std::sync::atomic::Ordering::Relaxed))
-            .err().unwrap().kind(), io::ErrorKind::Interrupted);
-        assert!(manager.try_admit(&[array.request(0, true).unwrap()], 0).is_ok());
-    }
-
-    #[test]
-    fn operation_is_admitted_atomically_and_pins_block_eviction() {
-        let root = tempfile::tempdir().unwrap();
-        let manager = CubeResidency::new(32).unwrap();
-        let array =
-            ManagedPlaneArray::<f32>::create(manager.clone(), root.path(), 2, 2, 4, Some(0.0))
-                .unwrap();
-        let pins = manager
-            .try_admit(&[array.request(0, false).unwrap()], 0)
-            .unwrap();
-        assert_eq!(
-            manager
-                .try_admit(&[array.request(1, false).unwrap()], 0)
-                .err()
-                .unwrap()
-                .kind(),
-            io::ErrorKind::WouldBlock
-        );
-        assert_eq!(manager.used_bytes(), 32);
-        assert_eq!(
-            manager
-                .try_admit(
-                    &[
-                        array.request(0, false).unwrap(),
-                        array.request(1, false).unwrap()
-                    ],
-                    0
-                )
-                .err()
-                .unwrap()
-                .kind(),
-            io::ErrorKind::InvalidInput
-        );
-        drop(pins);
-        let pins = manager
-            .try_admit(&[array.request(1, false).unwrap()], 0)
-            .unwrap();
-        let view = array.read(&pins, 1, 0..4).unwrap();
-        assert_eq!(view.len(), 4);
-        assert!(array.blocks[1].1.state.try_write().is_err());
-        assert!(array.write(&pins, 1, 0..4).is_err());
-        drop(view);
-        assert!(array.blocks[1].1.state.try_write().is_ok());
-        drop(pins);
-        assert_eq!(manager.used_bytes(), 32);
-    }
-
-    #[test]
-    fn waiting_admission_progresses_after_complete_pin_release() {
-        let root = tempfile::tempdir().unwrap();
-        let manager = CubeResidency::new(32).unwrap();
-        let array =
-            ManagedPlaneArray::<f32>::create(manager.clone(), root.path(), 2, 2, 2, Some(0.0))
-                .unwrap();
-        let first = manager
-            .admit(&[array.request(0, false).unwrap()], 0)
-            .unwrap();
-        std::thread::scope(|scope| {
-            let worker = scope.spawn(|| {
-                let pins = manager
-                    .admit(&[array.request(1, false).unwrap()], 0)
-                    .unwrap();
-                assert_eq!(&*array.read(&pins, 1, 0..4).unwrap(), &[0.0; 4]);
-            });
-            assert_eq!(
-                manager
-                    .try_admit(&[array.request(1, false).unwrap()], 0)
-                    .err()
-                    .unwrap()
-                    .kind(),
-                io::ErrorKind::WouldBlock
-            );
-            drop(first);
-            worker.join().unwrap();
-        });
-    }
-
-    #[test]
-    fn dead_owner_retires_payload_backend_and_registry_capacity() {
-        let root = tempfile::tempdir().unwrap();
-        let manager = CubeResidency::new(32).unwrap();
-        let array =
-            ManagedPlaneArray::<f32>::create(manager.clone(), root.path(), 2, 2, 1, Some(0.0))
-                .unwrap();
-        let pins = manager
-            .admit(&[array.request(0, true).unwrap()], 0)
-            .unwrap();
-        let mut window = array.write(&pins, 0, 0..4).unwrap();
-        window.copy_from_slice(&[1.0, 2.0, 3.0, 4.0]);
-        window.finish();
-        drop(pins);
-        assert_eq!(manager.used_bytes(), 32);
-        array.retire_dead().unwrap();
-        assert_eq!(manager.used_bytes(), 0);
-        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
-        let replacement =
-            ManagedPlaneArray::<f32>::create(manager.clone(), root.path(), 2, 2, 1, Some(0.0))
-                .unwrap();
-        let pins = manager
-            .admit(&[replacement.request(0, false).unwrap()], 0)
-            .unwrap();
-        assert_eq!(&*replacement.read(&pins, 0, 0..4).unwrap(), &[0.0; 4]);
-    }
-
-    #[test]
-    fn retirement_drops_last_owners_before_returning_their_credit() {
-        let root = tempfile::tempdir().unwrap();
-        let manager = CubeResidency::new(32).unwrap();
-        let array = ManagedPlaneArray::<f32>::create(
-            manager.clone(), root.path(), 2, 2, 1, Some(0.0),
-        ).unwrap();
-        let pin = manager.try_admit(&[array.request(0, false).unwrap()], 0).unwrap();
-        drop(pin);
-        let weak_block = Arc::downgrade(&array.blocks[0].1);
-        let weak_backend = Arc::downgrade(&array._backend);
-        array.retire_dead_after_release(|| {
-            assert!(weak_block.upgrade().is_none());
-            assert!(weak_backend.upgrade().is_none());
-            assert_eq!(manager.used_bytes(), 32);
-            assert!(manager.state.lock().unwrap().admitting);
-        }).unwrap();
-        assert_eq!(manager.used_bytes(), 0);
-    }
-
-    #[test]
-    fn phase_next_use_precedes_lru_when_selecting_a_victim() {
-        let root = tempfile::tempdir().unwrap();
-        let manager = CubeResidency::new(48).unwrap();
-        let array =
+        let manager = CubeResidency::new(1 << 20).unwrap();
+        let real =
             ManagedPlaneArray::<f32>::create(manager.clone(), root.path(), 2, 2, 3, Some(0.0))
                 .unwrap();
-        let pins = manager
-            .try_admit(
-                &[
-                    array.request(0, false).unwrap(),
-                    array.request(1, false).unwrap(),
-                ],
-                0,
-            )
-            .unwrap();
-        drop(pins);
-        array.set_next_use(0, 1).unwrap();
-        array.set_next_use(1, 100).unwrap();
-        let pins = manager
-            .try_admit(&[array.request(2, false).unwrap()], 0)
-            .unwrap();
-        drop(pins);
-        assert!(array.blocks[0].1.resident());
-        assert!(!array.blocks[1].1.resident());
-        assert!(array.blocks[2].1.resident());
-    }
-
-    #[test]
-    fn typed_arrays_share_policy_and_failed_generation_releases_pins() {
-        let root = tempfile::tempdir().unwrap();
-        let manager = CubeResidency::new(64).unwrap();
-        let real =
-            ManagedPlaneArray::<f32>::create(manager.clone(), root.path(), 2, 2, 2, None).unwrap();
         let complex = ManagedPlaneArray::<Complex32>::create(
             manager.clone(),
             root.path(),
             2,
             2,
             2,
-            Some(Complex32::new(0.0, 0.0)),
+            Some(Complex32::default()),
         )
         .unwrap();
-        assert!(
-            manager
-                .try_admit(&[real.request(0, false).unwrap()], 0)
-                .is_err()
-        );
+        {
+            let mut state = manager.state.lock().unwrap();
+            state.limit = state.fixed_bytes()
+                + state
+                    .backends
+                    .values()
+                    .map(|backend| backend.staging_bytes)
+                    .sum::<usize>()
+                + state.entries[&real.blocks[0].0].bytes
+                + state.entries[&complex.blocks[0].0].bytes
+                + operation_metadata_bytes(2).unwrap();
+        }
         let pins = manager
-            .try_admit(&[real.request(0, true).unwrap()], 0)
+            .admit(
+                &[
+                    real.request(0, true).unwrap(),
+                    complex.request(0, true).unwrap(),
+                ],
+                0,
+            )
             .unwrap();
-        let mut cancelled = real.write(&pins, 0, 0..2).unwrap();
-        cancelled.copy_from_slice(&[9.0, 9.0]);
-        drop(cancelled);
-        assert!(real.read(&pins, 0, 0..2).is_err());
-        let mut window = real.write(&pins, 0, 0..2).unwrap();
-        window.copy_from_slice(&[3.0, 4.0]);
-        window.finish();
-        assert_eq!(&*real.read(&pins, 0, 0..2).unwrap(), &[3.0, 4.0]);
-        assert!(real.read(&pins, 0, 2..4).is_err());
-        drop(pins);
-        let pins = manager
-            .try_admit(&[complex.request(0, true).unwrap()], 0)
-            .unwrap();
-        let mut window = complex.write(&pins, 0, 0..4).unwrap();
-        window[1] = Complex32::new(2.0, -1.0);
-        window.finish();
+        assert_eq!(manager.used_bytes(), manager.state.lock().unwrap().limit);
+        let mut real_view = real.write(&pins, 0, 0..4).unwrap();
+        let mut complex_view = complex.write(&pins, 0, 0..4).unwrap();
+        real_view.fill(7.0);
+        complex_view.fill(Complex32::new(2.0, -3.0));
+        real_view.finish();
+        complex_view.finish();
         assert_eq!(
-            complex.read(&pins, 0, 1..2).unwrap()[0],
-            Complex32::new(2.0, -1.0)
+            manager
+                .try_admit(&[real.request(1, false).unwrap()], 0)
+                .err()
+                .unwrap()
+                .kind(),
+            io::ErrorKind::WouldBlock
         );
         drop(pins);
-        assert!(manager.used_bytes() <= 64);
+        manager.evict_unpinned(real.blocks[0].0).unwrap();
+        manager.evict_unpinned(complex.blocks[0].0).unwrap();
+        manager.reclaim_idle_staging().unwrap();
+        let pins = manager
+            .admit(
+                &[
+                    real.request(0, false).unwrap(),
+                    complex.request(0, false).unwrap(),
+                ],
+                0,
+            )
+            .unwrap();
+        assert_eq!(real.read(&pins, 0, 0..4).unwrap()[0], 7.0);
+        assert_eq!(
+            complex.read(&pins, 0, 0..4).unwrap()[0],
+            Complex32::new(2.0, -3.0)
+        );
     }
 
     #[test]
-    fn backing_read_failure_is_returned_and_does_not_strand_admission() {
-        let root = tempfile::tempdir().unwrap();
-        let manager = CubeResidency::new(32).unwrap();
-        let array =
-            ManagedPlaneArray::<f32>::create(manager.clone(), root.path(), 2, 2, 1, None).unwrap();
-        let pins = manager
-            .try_admit(&[array.request(0, true).unwrap()], 0)
+    fn complete_access_sets_exclude_reverse_writes_and_allow_shared_reads() {
+        let (_root, manager, array) = fixture(2, 2, Some(0.0_f32));
+        let first = manager
+            .admit(
+                &[
+                    array.request(0, true).unwrap(),
+                    array.request(1, true).unwrap(),
+                ],
+                0,
+            )
             .unwrap();
-        let mut window = array.write(&pins, 0, 0..4).unwrap();
-        window.copy_from_slice(&[1.0, 2.0, 3.0, 4.0]);
-        window.finish();
+        assert_eq!(
+            manager
+                .try_admit(
+                    &[
+                        array.request(1, true).unwrap(),
+                        array.request(0, true).unwrap()
+                    ],
+                    0
+                )
+                .err()
+                .unwrap()
+                .kind(),
+            io::ErrorKind::WouldBlock
+        );
+        assert!(
+            manager
+                .try_admit(&[array.request(0, false).unwrap()], 0)
+                .is_err()
+        );
+        drop(first);
+        let second = manager
+            .admit(
+                &[
+                    array.request(1, true).unwrap(),
+                    array.request(0, true).unwrap(),
+                ],
+                0,
+            )
+            .unwrap();
+        drop(second);
+        let first_read = manager
+            .admit(&[array.request(0, false).unwrap()], 0)
+            .unwrap();
+        let second_read = manager
+            .admit(&[array.request(0, false).unwrap()], 0)
+            .unwrap();
+        let view = array.read(&first_read, 0, 0..4).unwrap();
+        assert!(array.blocks[0].1.state.try_write().is_err());
+        assert!(array.write(&second_read, 0, 0..4).is_err());
+        drop(view);
+        drop(first_read);
+        drop(second_read);
+    }
+
+    #[test]
+    fn waiting_admission_observes_cancellation_and_later_progresses() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let (_root, manager, array) = fixture(2, 1, Some(0.0_f32));
+        let first = manager
+            .admit(&[array.request(0, true).unwrap()], 0)
+            .unwrap();
+        let cancelled = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            let (ready, started) = std::sync::mpsc::channel();
+            let manager = &manager;
+            let array = &array;
+            let cancelled = &cancelled;
+            let worker = scope.spawn(move || {
+                manager
+                    .admit_until(&[array.request(1, false).unwrap()], 0, || {
+                        let _ = ready.send(());
+                        cancelled.load(Ordering::Relaxed)
+                    })
+                    .err()
+                    .unwrap()
+                    .kind()
+            });
+            started
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .unwrap();
+            cancelled.store(true, Ordering::Relaxed);
+            assert_eq!(worker.join().unwrap(), io::ErrorKind::Interrupted);
+        });
+        drop(first);
+        let pins = manager
+            .admit(&[array.request(1, false).unwrap()], 0)
+            .unwrap();
+        drop(pins);
+        let pins = manager
+            .admit(&[array.request(0, false).unwrap()], 0)
+            .unwrap();
+        std::thread::scope(|scope| {
+            let worker = scope.spawn(|| {
+                manager
+                    .admit(&[array.request(1, false).unwrap()], 0)
+                    .unwrap()
+            });
+            drop(pins);
+            drop(worker.join().unwrap());
+        });
+    }
+
+    #[test]
+    fn retirement_releases_real_owners_before_credit_and_reuses_registry_capacity() {
+        let (root, manager, array) = fixture(1, 1, Some(0.0_f32));
+        drop(
+            manager
+                .admit(&[array.request(0, true).unwrap()], 0)
+                .unwrap(),
+        );
+        let before = manager.used_bytes();
+        let weak_block = Arc::downgrade(&array.blocks[0].1);
+        let weak_backend = Arc::downgrade(&array._backend);
+        array
+            .retire_dead_after_release(|| {
+                assert!(weak_block.upgrade().is_none());
+                assert!(weak_backend.upgrade().is_none());
+                assert_eq!(manager.used_bytes(), before);
+                assert!(manager.state.lock().unwrap().admitting);
+            })
+            .unwrap();
+        let retained_registry = manager.used_bytes();
+        assert_eq!(
+            retained_registry,
+            manager.state.lock().unwrap().fixed_bytes()
+        );
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+        manager.state.lock().unwrap().limit = 1 << 24;
+        let replacement =
+            ManagedPlaneArray::<f32>::create(manager.clone(), root.path(), 2, 2, 1, None).unwrap();
+        replacement.retire_dead().unwrap();
+        assert_eq!(manager.used_bytes(), retained_registry);
+    }
+
+    #[test]
+    fn phase_hint_precedes_lru() {
+        let (_root, manager, array) = fixture(3, 2, Some(0.0_f32));
+        drop(
+            manager
+                .admit(
+                    &[
+                        array.request(0, false).unwrap(),
+                        array.request(1, false).unwrap(),
+                    ],
+                    0,
+                )
+                .unwrap(),
+        );
+        array.set_next_use(0, 1).unwrap();
+        array.set_next_use(1, 100).unwrap();
+        // Keep operation metadata identical to the initial two-plane request.
+        let scratch = operation_metadata_bytes(2).unwrap() - operation_metadata_bytes(1).unwrap();
+        drop(
+            manager
+                .admit(&[array.request(2, false).unwrap()], scratch)
+                .unwrap(),
+        );
+        assert!(array.blocks[0].1.resident());
+        assert!(!array.blocks[1].1.resident());
+        assert!(array.blocks[2].1.resident());
+    }
+
+    #[test]
+    fn backing_failure_and_impossible_construction_leave_no_stranded_permit() {
+        let (_root, manager, array) = fixture(1, 1, None::<f32>);
+        assert!(
+            manager
+                .try_admit(&[array.request(0, false).unwrap()], 0)
+                .is_err()
+        );
+        let pins = manager
+            .admit(&[array.request(0, true).unwrap()], 0)
+            .unwrap();
+        let mut view = array.write(&pins, 0, 0..4).unwrap();
+        view.fill(3.0);
+        view.finish();
         drop(pins);
         manager.evict_unpinned(array.blocks[0].0).unwrap();
-        assert_eq!(manager.used_bytes(), 16);
         manager.reclaim_idle_staging().unwrap();
-        assert_eq!(manager.used_bytes(), 0);
         std::fs::remove_file(
             array
                 ._backend
@@ -1394,67 +1661,97 @@ mod tests {
                 .try_admit(&[array.request(0, false).unwrap()], 0)
                 .is_err()
         );
-        assert_eq!(manager.used_bytes(), 16); // reopened codec tile remains reclaimable
+        assert!(!manager.state.lock().unwrap().admitting);
         manager.reclaim_idle_staging().unwrap();
-        assert_eq!(manager.used_bytes(), 0);
-        assert!(
-            manager
-                .try_admit(&[array.request(0, false).unwrap()], 0)
-                .is_err()
+        assert_eq!(
+            manager.used_bytes(),
+            manager.state.lock().unwrap().fixed_bytes()
         );
+        let root = tempfile::tempdir().unwrap();
+        let minimum = size_of::<CubeResidency>() + 2 * size_of::<usize>();
+        let tiny = CubeResidency::new(minimum).unwrap();
+        assert!(
+            ManagedPlaneArray::<f32>::create(tiny.clone(), root.path(), 2, 2, 1, None).is_err()
+        );
+        assert_eq!(tiny.used_bytes(), minimum);
+        assert!(tiny.state.lock().unwrap().entries.0.is_empty());
+        assert!(tiny.state.lock().unwrap().backends.0.is_empty());
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
     }
 
     #[test]
-    fn f64_and_packed_support_persist_through_real_backend() {
-        let root = tempfile::tempdir().unwrap();
-        let manager = CubeResidency::new(72).unwrap();
-        let values =
-            ManagedPlaneArray::<f64>::create(manager.clone(), root.path(), 2, 2, 2, Some(0.0))
-                .unwrap();
-        let support =
-            ManagedPlaneArray::<bool>::create(manager.clone(), root.path(), 2, 2, 2, Some(false))
-                .unwrap();
-        let pins = manager
-            .try_admit(
-                &[
-                    values.request(0, true).unwrap(),
-                    support.request(0, true).unwrap(),
-                ],
-                0,
+    fn codec_scratch_and_exact_operation_bound_are_admitted() {
+        for planes in [1, 3] {
+            let (_root, manager, array) = fixture(planes, 1, Some(false));
+            let layout = PagedArray::<bool>::storage_layout(
+                TiledShape::with_tile_shape(vec![2, 2, planes], vec![2, 2, 1]).unwrap(),
+                4,
             )
             .unwrap();
-        let mut value_window = values.write(&pins, 0, 0..4).unwrap();
-        value_window.copy_from_slice(&[1.0, 2.0, 3.0, 4.0]);
-        value_window.finish();
-        let mut support_window = support.write(&pins, 0, 0..4).unwrap();
-        support_window.copy_from_slice(&[false, true, false, true]);
-        support_window.finish();
-        drop(pins);
-        // An explicit writeback is required; no destructor performs fallible I/O.
-        manager.evict_unpinned(values.blocks[0].0).unwrap();
-        manager.evict_unpinned(support.blocks[0].0).unwrap();
-        assert_eq!(manager.used_bytes(), 36); // only two codec tiles remain
-        manager.reclaim_idle_staging().unwrap();
-        assert_eq!(manager.used_bytes(), 0);
-        assert!(values._backend.array.lock().unwrap().is_temp_closed());
-        assert!(support._backend.array.lock().unwrap().is_temp_closed());
-        let pins = manager
-            .try_admit(
-                &[
-                    values.request(0, false).unwrap(),
-                    support.request(0, false).unwrap(),
-                ],
-                0,
-            )
-            .unwrap();
+            let state = manager.state.lock().unwrap();
+            let stage = state.backends[&array.backend_id].staging_bytes;
+            assert!(stage > layout.cache_payload_bytes().unwrap());
+            assert!(
+                stage
+                    >= layout.cache_payload_bytes().unwrap()
+                        + layout.flush_scratch_bytes().unwrap()
+            );
+            drop(state);
+            manager.state.lock().unwrap().limit -= 1;
+            assert_eq!(
+                manager
+                    .try_admit(&[array.request(0, false).unwrap()], 0)
+                    .err()
+                    .unwrap()
+                    .kind(),
+                io::ErrorKind::InvalidInput
+            );
+            manager.state.lock().unwrap().limit += 1;
+            let pins = manager
+                .admit(&[array.request(0, false).unwrap()], 0)
+                .unwrap();
+            assert_eq!(manager.used_bytes(), manager.state.lock().unwrap().limit);
+            drop(pins);
+        }
+    }
+
+    #[test]
+    fn uniform_large_cube_coverage_has_no_per_pixel_resident_bitmap() {
+        let maps: Vec<_> = (0..2048)
+            .map(|_| Coverage::new(2048 * 2048, true).unwrap())
+            .collect();
+        assert_eq!(maps.iter().map(Coverage::heap_bytes).sum::<usize>(), 0);
+        let mut map = Coverage::new(130, false).unwrap();
+        map.update(&(2..129), true);
+        assert!(map.covers(&(2..129)));
+        assert!(!map.covers(&(1..130)));
+        assert_eq!(map.heap_bytes(), Coverage::bytes(130).unwrap());
+        map.update(&(0..2), true);
+        map.update(&(129..130), true);
+        assert!(map.covers(&(0..130)));
+        assert_eq!(map.heap_bytes(), 0);
+        map.update(&(0..130), false);
+        assert_eq!(map.heap_bytes(), 0);
+        assert!(!map.covers(&(0..130)));
+        assert!(Coverage::bytes(usize::MAX).is_err());
+    }
+
+    #[test]
+    fn scratch_only_workspaces_wait_without_partial_pins() {
+        let manager = CubeResidency::new(4096).unwrap();
+        let available = {
+            let state = manager.state.lock().unwrap();
+            state.limit - state.used
+        };
+        let first = manager.admit(&[], available).unwrap();
         assert_eq!(
-            &*values.read(&pins, 0, 0..4).unwrap(),
-            &[1.0, 2.0, 3.0, 4.0]
+            manager.try_admit(&[], 1).err().unwrap().kind(),
+            io::ErrorKind::WouldBlock
         );
-        assert_eq!(
-            &*support.read(&pins, 0, 0..4).unwrap(),
-            &[false, true, false, true]
-        );
+        drop(first);
+        let next = manager.admit(&[], available).unwrap();
+        drop(next);
+        assert_eq!(manager.state.lock().unwrap().scratch, 0);
     }
 
     #[test]

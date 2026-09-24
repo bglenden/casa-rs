@@ -10729,6 +10729,13 @@ impl TiledFileIO {
 
     /// Flushes all dirty tiles to disk and clears the cache.
     pub fn flush(&mut self) -> Result<(), StorageError> {
+        self.flush_with_flat_file(|path| OpenOptions::new().write(true).open(path))
+    }
+
+    fn flush_with_flat_file(
+        &mut self,
+        open: impl FnOnce(&Path) -> std::io::Result<File>,
+    ) -> Result<(), StorageError> {
         match &mut self.cache {
             TileCache::Flat(flat) => {
                 if !flat.allocated {
@@ -10737,9 +10744,7 @@ impl TiledFileIO {
                 self.stats.flat_flush_calls = self.stats.flat_flush_calls.saturating_add(1);
                 let has_dirty = flat.dirty.iter().any(|&d| d);
                 if has_dirty {
-                    let mut f = std::io::BufWriter::new(
-                        OpenOptions::new().write(true).open(&self.tsm_path)?,
-                    );
+                    let mut f = std::io::BufWriter::new(open(&self.tsm_path)?);
 
                     if self.file_tile_bytes != self.tile_bytes || self.needs_swap {
                         let tile_bytes = self.tile_bytes;
@@ -13700,6 +13705,47 @@ mod tests {
         let all = io.get_all::<bool>().unwrap();
         let expected: Vec<bool> = first_tile.into_iter().chain(second_tile).collect();
         assert_eq!(all.iter().copied().collect::<Vec<_>>(), expected);
+    }
+
+    #[test]
+    fn flat_flush_returns_final_buffered_write_failure_and_retains_dirty_data() {
+        let dir = tempdir().unwrap();
+        let mut storage = TiledArrayStorage::create_planned_table(
+            &dir.path().join("failed_flush"),
+            &TiledArrayStorageLayout::new(
+                &[2, 2, 1],
+                &[2, 2, 1],
+                PrimitiveType::Float32,
+                cfg!(target_endian = "big"),
+                0,
+                "values",
+                16,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let values = [1.0_f32, 2.0, 3.0, 4.0];
+        storage
+            .put_slice_fortran(&values, &[0, 0, 0], &[2, 2, 1])
+            .unwrap();
+        // Seek succeeds on a read-only descriptor. The 16-byte write fits in
+        // BufWriter and only fails when its final buffered bytes are flushed.
+        assert!(
+            storage
+                .inner
+                .flush_with_flat_file(|path| File::open(path))
+                .is_err()
+        );
+        let TileCache::Flat(cache) = &storage.inner.cache else {
+            panic!("expected flat cache")
+        };
+        assert!(cache.allocated && cache.dirty.iter().any(|dirty| *dirty));
+        storage.flush().unwrap();
+        let mut actual = [0.0; 4];
+        storage
+            .get_slice_into(&[0, 0, 0], &[2, 2, 1], &mut actual)
+            .unwrap();
+        assert_eq!(actual, values);
     }
 
     #[test]
