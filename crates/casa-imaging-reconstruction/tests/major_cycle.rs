@@ -638,11 +638,15 @@ fn t38_casacore_minor_cycle_and_paired_final_residual_are_split_oracles() {
             .expect("channel normal plane");
         let psf = plane
             .normal_approximation()
+            .complex()
+            .unwrap()
             .iter()
             .map(|value| value.re as f32)
             .collect::<Vec<_>>();
         let residual = plane
             .residual()
+            .complex()
+            .unwrap()
             .iter()
             .map(|value| value.re as f32)
             .collect::<Vec<_>>();
@@ -737,9 +741,13 @@ fn t38_casacore_minor_cycle_and_paired_final_residual_are_split_oracles() {
     .expect("final paired A/A* reconciliation");
     assert!(final_join.model_completion().delta().is_some());
     let (paired_normal, continuation) = final_join.into_continuation();
-    let paired_final_residual = paired_normal.residual().to_vec();
-    let paired_psf = paired_normal.normal_approximation().to_vec();
-    let paired_sensitivity = paired_normal.sensitivity().to_vec();
+    let paired_final_residual = paired_normal.residual().complex().unwrap().to_vec();
+    let paired_psf = paired_normal
+        .normal_approximation()
+        .complex()
+        .unwrap()
+        .to_vec();
+    let paired_sensitivity = paired_normal.sensitivity().dense().unwrap().to_vec();
     let paired_sum_weights = paired_normal.sum_weights().to_vec();
     let paired_validity = paired_normal.channel_validity().to_vec();
 
@@ -771,16 +779,20 @@ fn t38_casacore_minor_cycle_and_paired_final_residual_are_split_oracles() {
     .reconcile(&mut replay_lifecycle)
     .expect("fresh paired A/A* replay");
     assert_eq!(
-        replayed_join.normal_state().residual(),
+        replayed_join.normal_state().residual().complex().unwrap(),
         paired_final_residual,
         "invariant reuse is bit-exact under a full paired A/A* replay of the same model"
     );
     assert_eq!(
-        replayed_join.normal_state().normal_approximation(),
+        replayed_join
+            .normal_state()
+            .normal_approximation()
+            .complex()
+            .unwrap(),
         paired_psf
     );
     assert_eq!(
-        replayed_join.normal_state().sensitivity(),
+        replayed_join.normal_state().sensitivity().dense().unwrap(),
         paired_sensitivity
     );
     assert_eq!(
@@ -1697,15 +1709,21 @@ fn check_linear_cube_replay(
             let mut validity = Vec::new();
             for start in (0..output_channels).step_by(depth) {
                 let slab = run_initial_slab(start, depth.min(output_channels - start));
-                dirty.extend_from_slice(slab.primitives().dirty());
-                psf.extend_from_slice(slab.primitives().psf());
-                sensitivity.extend_from_slice(slab.primitives().sensitivity());
+                dirty.extend_from_slice(slab.primitives().dirty().complex().unwrap());
+                psf.extend_from_slice(slab.primitives().psf().complex().unwrap());
+                sensitivity.extend_from_slice(slab.primitives().sensitivity().dense().unwrap());
                 sum_weights.extend_from_slice(slab.primitives().sum_weights());
                 validity.extend_from_slice(slab.primitives().channel_validity());
             }
-            assert_eq!(dirty, initial_complete.primitives().dirty());
-            assert_eq!(psf, initial_complete.primitives().psf());
-            assert_eq!(sensitivity, initial_complete.primitives().sensitivity());
+            assert_eq!(
+                dirty,
+                initial_complete.primitives().dirty().complex().unwrap()
+            );
+            assert_eq!(psf, initial_complete.primitives().psf().complex().unwrap());
+            assert_eq!(
+                sensitivity,
+                initial_complete.primitives().sensitivity().dense().unwrap()
+            );
             assert_eq!(sum_weights, initial_complete.primitives().sum_weights());
             assert_eq!(validity, initial_complete.primitives().channel_validity());
         }
@@ -1999,6 +2017,8 @@ fn check_linear_cube_replay(
                 .read_window(channel..channel + 1)
                 .expect("one-channel fixture window")
                 .residual()
+                .complex()
+                .unwrap()
                 .to_vec()
         })
         .collect::<Vec<_>>();
@@ -2090,6 +2110,8 @@ fn check_linear_cube_replay(
         .expect("complete diagnostic fixture window");
     let differences = direct_window
         .residual()
+        .complex()
+        .unwrap()
         .iter()
         .zip(&gridded_residual)
         .map(|(direct, gridded)| (*direct - *gridded).norm())
@@ -2107,7 +2129,7 @@ fn check_linear_cube_replay(
     assert!(
         *maximum < 1.0e-7,
         "row-local CASA linear residual differs from sealed replay: native=[1.0,1.1,1.2]GHz output=[1.05,1.15]GHz minimum_nonzero={minimum_nonzero:e} maximum={maximum:e} index={maximum_index} direct={:?} gridded={:?}",
-        direct_window.residual()[maximum_index],
+        direct_window.residual().complex().unwrap()[maximum_index],
         gridded_residual[maximum_index],
     );
     LinearReplayResult {
@@ -2122,7 +2144,7 @@ fn check_linear_cube_replay(
         frames_per_source,
         source_records_per_source,
         gridded_residual,
-        direct_residual: direct_window.residual().to_vec(),
+        direct_residual: direct_window.residual().complex().unwrap().to_vec(),
     }
 }
 
@@ -2482,11 +2504,15 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
                     }
                     let psf_peak = plane
                         .normal_approximation()
+                        .complex()
+                        .unwrap()
                         .iter()
                         .map(|value| value.re.abs())
                         .fold(0.0_f64, f64::max);
                     let peak = plane
                         .residual()
+                        .complex()
+                        .unwrap()
                         .iter()
                         .map(|value| value.re.abs() / psf_peak)
                         .fold(0.0_f64, f64::max);
@@ -2556,6 +2582,8 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
             }
             let psf = plane
                 .normal_approximation()
+                .complex()
+                .unwrap()
                 .iter()
                 .map(|v| v.re as f32)
                 .collect::<Vec<_>>();
@@ -2566,6 +2594,8 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
             peak = peak.max(
                 plane
                     .residual()
+                    .complex()
+                    .unwrap()
                     .iter()
                     .map(|v| v.re.abs() / psf_peak)
                     .fold(0.0_f64, f64::max),
@@ -2592,10 +2622,15 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
             }
             let normalization = plane
                 .normal_approximation()
+                .complex()
+                .unwrap()
                 .iter()
                 .map(|value| f64::from((value.re as f32).abs()))
                 .fold(0.0_f64, f64::max);
-            for (peak, value) in pixel_peaks.iter_mut().zip(plane.residual()) {
+            for (peak, value) in pixel_peaks
+                .iter_mut()
+                .zip(plane.residual().complex().unwrap())
+            {
                 *peak = peak.max(value.re.abs() / normalization);
             }
         }
@@ -3483,7 +3518,7 @@ fn reconciliation_without_a_pending_delta_confirms_the_named_generation_final() 
     let named = lifecycle.initial_empty().expect("empty named generation");
     let input_id = named.generation_id();
     let (evidence, preparation) = prepare_reconciliation(&problem, &lifecycle, named, None);
-    let data_side_dirty = evidence.primitives().dirty().to_vec();
+    let data_side_dirty = evidence.primitives().dirty().complex().unwrap().to_vec();
 
     let owner = MajorCycleOwner::from_complete_data(
         {
@@ -3520,9 +3555,12 @@ fn reconciliation_without_a_pending_delta_confirms_the_named_generation_final() 
         .normal_state()
         .read_window(0..1)
         .expect("single-plane fixture window");
-    assert_eq!(window.residual(), data_side_dirty);
-    assert_eq!(window.normal_approximation().len(), 8 * 8);
-    assert_eq!(window.sensitivity().len(), 8 * 8);
+    assert_eq!(window.residual().complex().unwrap(), data_side_dirty);
+    assert_eq!(
+        window.normal_approximation().complex().unwrap().len(),
+        8 * 8
+    );
+    assert_eq!(window.sensitivity().dense().unwrap().len(), 8 * 8);
     assert!(joined.normal_state().sum_weight() > 0.0);
 }
 
@@ -3634,16 +3672,20 @@ fn all_zero_ingested_model_uses_the_general_operator_and_matches_empty_science()
     let empty_evidence = run_t19_complete_data(&empty_problem, Some(&empty_preparation));
 
     assert_eq!(
-        ingested_evidence.primitives().dirty(),
-        empty_evidence.primitives().dirty()
+        ingested_evidence.primitives().dirty().complex().unwrap(),
+        empty_evidence.primitives().dirty().complex().unwrap()
     );
     assert_eq!(
-        ingested_evidence.primitives().psf(),
-        empty_evidence.primitives().psf()
+        ingested_evidence.primitives().psf().complex().unwrap(),
+        empty_evidence.primitives().psf().complex().unwrap()
     );
     assert_eq!(
-        ingested_evidence.primitives().sensitivity(),
-        empty_evidence.primitives().sensitivity()
+        ingested_evidence
+            .primitives()
+            .sensitivity()
+            .dense()
+            .unwrap(),
+        empty_evidence.primitives().sensitivity().dense().unwrap()
     );
     assert_eq!(
         ingested_evidence.primitives().sum_weights(),
@@ -3961,12 +4003,16 @@ fn residual_content_depends_on_the_exact_final_model() {
             .normal_state()
             .read_window(0..1)
             .expect("single-plane fixture window")
-            .residual(),
+            .residual()
+            .complex()
+            .unwrap(),
         delta_join
             .normal_state()
             .read_window(0..1)
             .expect("single-plane fixture window")
-            .residual(),
+            .residual()
+            .complex()
+            .unwrap(),
         "the retained authoritative residual must depend on the final model"
     );
     assert_ne!(empty_join.completion_id(), delta_join.completion_id());

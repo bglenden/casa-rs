@@ -828,7 +828,7 @@ fn wholly_unmapped_wave_uses_no_source_or_fabricated_rows() {
             normal
                 .dirty()
                 .iter()
-                .all(|&value| value == Complex64::default())
+                .all(|value| value == Complex64::default())
         );
     }
 }

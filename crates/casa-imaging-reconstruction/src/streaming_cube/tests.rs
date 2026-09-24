@@ -1182,7 +1182,15 @@ fn completed_epoch_images_preserve_partitioned_fields_and_model_binding() {
                     .iter()
                     .map(|&value| Complex64::new(f64::from(value), 0.0)),
             );
-            assert_eq!(actual.sensitivity(), &expected.sensitivity()[pixels]);
+            assert_eq!(
+                actual.sensitivity().iter().collect::<Vec<_>>(),
+                expected
+                    .sensitivity()
+                    .iter()
+                    .skip(pixels.start)
+                    .take(pixels.len())
+                    .collect::<Vec<_>>()
+            );
             assert_eq!(actual.sum_weights(), &expected.sum_weights()[core.clone()]);
             assert_eq!(
                 actual.published_sum_weights(),

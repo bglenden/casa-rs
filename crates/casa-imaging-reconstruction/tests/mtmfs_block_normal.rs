@@ -1775,7 +1775,7 @@ fn execute_compact_taylor(
         .finish_with_routing_measurements()
         .expect("finish compact Taylor apply");
     CompactTaylorResult {
-        residual: complete.primitives().dirty().to_vec(),
+        residual: complete.primitives().dirty().complex().unwrap().to_vec(),
         common_residual: complete.primitives().common_residual().map(<[_]>::to_vec),
         routing,
         grid_residency,
@@ -1911,11 +1911,17 @@ fn t41_channel_major_ordered_slab_fold_matches_one_window() {
             full.primitives().channel_validity()
         );
         assert!(
-            complex_nrms(bounded.primitives().dirty(), full.primitives().dirty()) <= 1.0e-13,
+            complex_nrms(
+                bounded.primitives().dirty().complex().unwrap(),
+                full.primitives().dirty().complex().unwrap()
+            ) <= 1.0e-13,
             "bounded MVC dirty fold changed the complete Taylor result"
         );
         assert!(
-            complex_nrms(bounded.primitives().psf(), full.primitives().psf()) <= 1.0e-13,
+            complex_nrms(
+                bounded.primitives().psf().complex().unwrap(),
+                full.primitives().psf().complex().unwrap()
+            ) <= 1.0e-13,
             "bounded MVC PSF fold changed the complete Taylor result"
         );
         assert_eq!(
@@ -1991,12 +1997,16 @@ fn t41_channel_major_supported_slab_then_zero_weight_gap_retains_completion() {
     assert!(
         gap.primitives()
             .dirty()
+            .complex()
+            .unwrap()
             .iter()
             .all(|value| *value == num_complex::Complex64::new(0.0, 0.0))
     );
     assert!(
         gap.primitives()
             .psf()
+            .complex()
+            .unwrap()
             .iter()
             .all(|value| *value == num_complex::Complex64::new(0.0, 0.0))
     );
@@ -2103,11 +2113,17 @@ fn t607_channel_local_ordered_slab_fold_matches_one_window() {
         .expect("four-channel fixture window");
 
     assert_eq!(folded.primitives().slab().core_range(), 0..4);
-    assert_eq!(folded.primitives().dirty(), full.primitives().dirty());
-    assert_eq!(folded.primitives().psf(), full.primitives().psf());
     assert_eq!(
-        folded.primitives().sensitivity(),
-        full.primitives().sensitivity()
+        folded.primitives().dirty().complex().unwrap(),
+        full.primitives().dirty().complex().unwrap()
+    );
+    assert_eq!(
+        folded.primitives().psf().complex().unwrap(),
+        full.primitives().psf().complex().unwrap()
+    );
+    assert_eq!(
+        folded.primitives().sensitivity().dense().unwrap(),
+        full.primitives().sensitivity().dense().unwrap()
     );
     assert_eq!(
         folded.primitives().sum_weights(),
@@ -2216,7 +2232,7 @@ fn t41_channel_major_two_cycle_feedback_and_gridded_replay_stay_dual_space() {
         SpectralOperatorPass::ResidualRefresh,
         Some(initial_normal_from_frozen(&problem, &frozen)),
     );
-    let direct_residual = direct.primitives().dirty().to_vec();
+    let direct_residual = direct.primitives().dirty().complex().unwrap().to_vec();
     assert_ne!(
         direct_residual, initial_residual,
         "the second major cycle must evaluate the Taylor model into channel predictions"
@@ -2281,14 +2297,17 @@ fn t41_primary_beam_channel_major_replays_one_model_update_with_bounded_state() 
     let scalar_window = scalar_initial
         .read_window(scalar_initial.slab().core_range())
         .expect("coupled Taylor fixture window");
-    let residual_nrms = complex_nrms(initial_window.residual(), scalar_window.residual());
+    let residual_nrms = complex_nrms(
+        initial_window.residual().complex().unwrap(),
+        scalar_window.residual().complex().unwrap(),
+    );
     assert!(
         residual_nrms <= 1.0e-15,
         "CASA MVC removes the frequency-dependent PB before folding the residual family: NRMS={residual_nrms:e}",
     );
     let psf_nrms = complex_nrms(
-        initial_window.normal_approximation(),
-        scalar_window.normal_approximation(),
+        initial_window.normal_approximation().complex().unwrap(),
+        scalar_window.normal_approximation().complex().unwrap(),
     );
     assert!(
         psf_nrms > 1.0e-8,
@@ -2306,12 +2325,14 @@ fn t41_primary_beam_channel_major_replays_one_model_update_with_bounded_state() 
     assert!(
         primitives
             .dirty()
+            .complex()
+            .unwrap()
             .iter()
             .all(|value| value.re.is_finite() && value.im.is_finite())
     );
     assert_eq!(primitives.slab().core_range(), 0..4);
 
-    let direct_residual = primitives.dirty().to_vec();
+    let direct_residual = primitives.dirty().complex().unwrap().to_vec();
     let (program, blocks) = compile_compact_program(&problem, &frozen);
     let serial = execute_compact_taylor(
         &problem,
@@ -2377,12 +2398,12 @@ fn t42_multi_spw_block_normal_is_global_signed_and_partition_deterministic() {
         );
 
         let cells = IMAGE_WIDTH * IMAGE_WIDTH;
-        assert_eq!(primitives.dirty().len(), 2 * cells);
-        assert_eq!(primitives.psf().len(), 3 * cells);
-        assert_eq!(primitives.sensitivity().len(), 3 * cells);
+        assert_eq!(primitives.dirty().complex().unwrap().len(), 2 * cells);
+        assert_eq!(primitives.psf().complex().unwrap().len(), 3 * cells);
+        assert_eq!(primitives.sensitivity().dense().unwrap().len(), 3 * cells);
         for (moment, sum_weight) in expected.into_iter().enumerate() {
             assert!(
-                primitives.sensitivity()[moment * cells..(moment + 1) * cells]
+                primitives.sensitivity().dense().unwrap()[moment * cells..(moment + 1) * cells]
                     .iter()
                     .all(|value| value.to_bits() == sum_weight.to_bits()),
                 "sensitivity moment {moment} must retain its exact signed sum weight"
@@ -2392,9 +2413,18 @@ fn t42_multi_spw_block_normal_is_global_signed_and_partition_deterministic() {
 
     let left = single_sample_blocks.primitives();
     let right = single_full_block.primitives();
-    assert_eq!(left.dirty(), right.dirty());
-    assert_eq!(left.psf(), right.psf());
-    assert_eq!(left.sensitivity(), right.sensitivity());
+    assert_eq!(
+        left.dirty().complex().unwrap(),
+        right.dirty().complex().unwrap()
+    );
+    assert_eq!(
+        left.psf().complex().unwrap(),
+        right.psf().complex().unwrap()
+    );
+    assert_eq!(
+        left.sensitivity().dense().unwrap(),
+        right.sensitivity().dense().unwrap()
+    );
     assert_eq!(left.sum_weights(), right.sum_weights());
     assert_eq!(left.channel_validity(), right.channel_validity());
 
@@ -2434,7 +2464,7 @@ fn t47_mosaic_mtmfs_executes_signed_normal_moments() {
     );
     let cells = 128 * 128;
     assert!(
-        primitives.sensitivity()[cells..2 * cells]
+        primitives.sensitivity().dense().unwrap()[cells..2 * cells]
             .iter()
             .any(|value| *value < 0.0),
         "mosaic sensitivity must retain the signed Taylor cross moment"
@@ -2460,6 +2490,8 @@ fn t47_mosaic_mtmfs_executes_signed_normal_moments() {
         refreshed
             .primitives()
             .dirty()
+            .complex()
+            .unwrap()
             .iter()
             .all(|value| value.re.is_finite() && value.im.is_finite()),
         "mosaic MT-MFS residual refresh must retain a finite paired-operator result"
@@ -2566,14 +2598,14 @@ fn t46_joint_block_accumulates_cross_terms_once_and_is_partition_deterministic()
         assert_eq!(primitives.normal_moment_index(1, 1), Some(3));
 
         let cells = IMAGE_WIDTH * IMAGE_WIDTH;
-        let cross = &primitives.psf()[cells..2 * cells];
+        let cross = &primitives.psf().complex().unwrap()[cells..2 * cells];
         assert!(
             cross.iter().any(|value| value.norm() > 0.0),
             "the line-bearing visibility must contribute the continuum-line cross block"
         );
         assert_eq!(
-            &primitives.psf()[cells..2 * cells],
-            &primitives.psf()[2 * cells..3 * cells],
+            &primitives.psf().complex().unwrap()[cells..2 * cells],
+            &primitives.psf().complex().unwrap()[2 * cells..3 * cells],
             "the two explicitly retained cross blocks must be Hermitian-equal for real weights"
         );
     }
@@ -2762,7 +2794,7 @@ fn t42_compact_replay_matches_direct_residual_and_is_worker_bitwise_stable() {
     );
     assert_eq!(direct.primitives().coefficient_term_count(), 2);
     assert_eq!(direct.primitives().normal_moment_count(), 3);
-    let direct_residual = direct.primitives().dirty().to_vec();
+    let direct_residual = direct.primitives().dirty().complex().unwrap().to_vec();
 
     let serial_prior = initial_normal_from_frozen(&problem, &frozen);
     assert_eq!(
@@ -2886,7 +2918,7 @@ fn t46_joint_compact_replay_matches_direct_residual_and_is_worker_bitwise_stable
         direct.completion().primitive_catalog(),
         SpectralPrimitiveCatalog::UnnormalizedJointBlockV1
     );
-    let expected = direct.primitives().dirty();
+    let expected = direct.primitives().dirty().complex().unwrap();
     let expected_common = direct
         .primitives()
         .common_residual()

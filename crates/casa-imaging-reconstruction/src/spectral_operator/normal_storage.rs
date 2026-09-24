@@ -194,9 +194,6 @@ mod tests {
                 joint_line_term_by_channel: vec![None; CHANNELS].into(),
                 dirty: complex(0.25),
                 cube_real: None,
-                cube_dirty_wide: std::sync::OnceLock::new(),
-                cube_psf_wide: std::sync::OnceLock::new(),
-                cube_sensitivity_wide: std::sync::OnceLock::new(),
                 invariant_dirty: Some(complex(0.5)),
                 common_residual: None,
                 invariant_common_dirty: None,
@@ -384,11 +381,17 @@ mod tests {
 
             let full = primitives.read_window(3..4).unwrap();
             let expected = full.get(1).unwrap().primitives();
-            assert_eq!(psf.as_ref(), &expected.psf()[CELLS..2 * CELLS]);
-            assert_eq!(residual.as_ref(), &expected.dirty()[CELLS..2 * CELLS]);
+            assert_eq!(
+                psf.as_ref(),
+                &expected.psf().complex().unwrap()[CELLS..2 * CELLS]
+            );
+            assert_eq!(
+                residual.as_ref(),
+                &expected.dirty().complex().unwrap()[CELLS..2 * CELLS]
+            );
             assert_eq!(
                 sensitivity.as_ref(),
-                &expected.sensitivity()[CELLS..2 * CELLS]
+                &expected.sensitivity().dense().unwrap()[CELLS..2 * CELLS]
             );
         }
     }
@@ -469,11 +472,17 @@ mod tests {
             assert!(matches!(sensitivity, Cow::Borrowed(_)));
             assert!(std::ptr::eq(
                 residual.as_ptr(),
-                expected.dirty()[CELLS..].as_ptr()
+                expected.dirty().complex().unwrap()[CELLS..].as_ptr()
             ));
-            assert_eq!(residual.as_ref(), &expected.dirty()[CELLS..]);
-            assert_eq!(psf.as_ref(), &expected.psf()[CELLS..]);
-            assert_eq!(sensitivity.as_ref(), &expected.sensitivity()[CELLS..]);
+            assert_eq!(
+                residual.as_ref(),
+                &expected.dirty().complex().unwrap()[CELLS..]
+            );
+            assert_eq!(psf.as_ref(), &expected.psf().complex().unwrap()[CELLS..]);
+            assert_eq!(
+                sensitivity.as_ref(),
+                &expected.sensitivity().dense().unwrap()[CELLS..]
+            );
             assert_eq!(
                 residual[0].re,
                 CELLS as f64 + if promoted { 0.75 } else { 0.25 }
@@ -1609,7 +1618,11 @@ impl<'a> FinalNormalPlaneReader<'a> {
         match self.backing {
             NormalPlaneBacking::Stored(d) => d.read_complex(&d.fields.dirty, offset, self.cells),
             NormalPlaneBacking::Resident(d) => {
-                Ok(Cow::Borrowed(&d.dirty()[offset..offset + self.cells]))
+                let values = d
+                    .dirty()
+                    .complex()
+                    .ok_or(SpectralOperatorError::ProblemMismatch)?;
+                Ok(Cow::Borrowed(&values[offset..offset + self.cells]))
             }
         }
     }
@@ -1630,7 +1643,11 @@ impl<'a> FinalNormalPlaneReader<'a> {
         match self.backing {
             NormalPlaneBacking::Stored(d) => d.read_complex(&d.fields.psf, offset, self.cells),
             NormalPlaneBacking::Resident(d) => {
-                Ok(Cow::Borrowed(&d.psf()[offset..offset + self.cells]))
+                let values = d
+                    .psf()
+                    .complex()
+                    .ok_or(SpectralOperatorError::ProblemMismatch)?;
+                Ok(Cow::Borrowed(&values[offset..offset + self.cells]))
             }
         }
     }
@@ -1656,7 +1673,11 @@ impl<'a> FinalNormalPlaneReader<'a> {
                 }
             }
             NormalPlaneBacking::Resident(d) => {
-                Ok(Cow::Borrowed(&d.sensitivity()[offset..offset + self.cells]))
+                let values = d
+                    .sensitivity()
+                    .dense()
+                    .ok_or(SpectralOperatorError::ProblemMismatch)?;
+                Ok(Cow::Borrowed(&values[offset..offset + self.cells]))
             }
         }
     }
@@ -2075,9 +2096,6 @@ impl StoredChannelNormalDomain {
                     .into_owned()
                     .into_boxed_slice(),
                 cube_real: None,
-                cube_dirty_wide: std::sync::OnceLock::new(),
-                cube_psf_wide: std::sync::OnceLock::new(),
-                cube_sensitivity_wide: std::sync::OnceLock::new(),
                 invariant_dirty: self
                     .fields
                     .invariant_dirty

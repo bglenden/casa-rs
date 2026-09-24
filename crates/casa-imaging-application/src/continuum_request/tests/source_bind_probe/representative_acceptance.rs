@@ -317,7 +317,7 @@ fn run_full_products(require_cold_dirty: bool) {
     for value in normal_window
         .sensitivity()
         .iter()
-        .chain(normal.sum_weights())
+        .chain(normal.sum_weights().iter().copied())
     {
         assert!(value.is_finite());
         normal_digest.update(value.to_bits().to_le_bytes());

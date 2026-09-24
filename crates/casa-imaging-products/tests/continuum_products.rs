@@ -1975,7 +1975,7 @@ fn weight_products_plan_and_produce_the_exact_normal_state_sensitivity_plane() {
         .expect("single-plane continuum fixture window")
         .sensitivity()
         .iter()
-        .map(|value| *value as f32)
+        .map(|value| value as f32)
         .collect();
     assert_eq!(weight.payload(), expected);
 }

@@ -811,7 +811,9 @@ fn first_confirm_round_scaled(
             .normal_state()
             .read_window(0..1)
             .expect("single-plane fixture window")
-            .residual(),
+            .residual()
+            .complex()
+            .unwrap(),
     );
     let (normal_state, model_completion, final_model) = joined.into_parts();
     // The completed lifecycle cannot reopen or finalize its model again.
@@ -931,6 +933,8 @@ fn minor_cycle_delta_composes_with_the_next_major_cycle_reconciliation() {
         .read_window(0..1)
         .expect("single-plane fixture window")
         .residual()
+        .complex()
+        .unwrap()
         .to_vec();
     let model_before = round
         .final_model
@@ -980,7 +984,9 @@ fn minor_cycle_delta_composes_with_the_next_major_cycle_reconciliation() {
             .normal_state
             .read_window(0..1)
             .expect("single-plane fixture window")
-            .residual(),
+            .residual()
+            .complex()
+            .unwrap(),
         residual_before
     );
     let model_after = round
@@ -1038,17 +1044,20 @@ fn minor_cycle_delta_composes_with_the_next_major_cycle_reconciliation() {
         .expect("single-plane fixture window");
     let psf_peak = window
         .normal_approximation()
+        .complex()
+        .unwrap()
         .iter()
         .map(|value| value.re.abs())
         .fold(0.0_f64, f64::max);
-    let residual_peak_pixel = maximal_pixel(window.residual());
+    let residual_peak_pixel = maximal_pixel(window.residual().complex().unwrap());
     assert_eq!(
         recorded[0].cell().pixel(),
         residual_peak_pixel,
         "the first component sits on the residual peak inside the window"
     );
-    let expected_first_flux =
-        controls().gain() * window.residual()[plane_index(residual_peak_pixel)].re / psf_peak;
+    let expected_first_flux = controls().gain()
+        * window.residual().complex().unwrap()[plane_index(residual_peak_pixel)].re
+        / psf_peak;
     assert!((recorded[0].flux() - expected_first_flux).abs() <= 1.0e-12);
     assert!(
         (evidence.total_flux() - recorded.iter().map(|c| c.flux().abs()).sum::<f64>()).abs()
@@ -1103,7 +1112,9 @@ fn minor_cycle_delta_composes_with_the_next_major_cycle_reconciliation() {
             .normal_state()
             .read_window(0..1)
             .expect("single-plane fixture window")
-            .residual(),
+            .residual()
+            .complex()
+            .unwrap(),
     );
     assert!(
         peak2 < round.residual_peak,
@@ -1387,7 +1398,9 @@ fn returned_deltas_never_exceed_the_accepted_view_envelope() {
             .normal_state
             .read_window(0..1)
             .expect("single-plane fixture window")
-            .residual(),
+            .residual()
+            .complex()
+            .unwrap(),
     ) * 0.75;
     let bounded = HogbomControls::new_bounded(0.5, 0.0, 64, envelope)
         .expect("valid controls")
@@ -1448,10 +1461,12 @@ fn threshold_boundary_follows_the_casa_hogbom_convention() {
         .expect("single-plane fixture window");
     let psf_peak = window
         .normal_approximation()
+        .complex()
+        .unwrap()
         .iter()
         .map(|value| value.re.abs())
         .fold(0.0_f64, f64::max);
-    let strength = residual_peak(window.residual()) / psf_peak;
+    let strength = residual_peak(window.residual().complex().unwrap()) / psf_peak;
 
     let solve = |threshold: f64| {
         hogbom_minor_cycle(
@@ -1528,10 +1543,12 @@ fn clark_uses_a_derived_bounded_patch_and_stops_at_or_below_threshold() {
         .expect("single-plane fixture window");
     let psf_peak = window
         .normal_approximation()
+        .complex()
+        .unwrap()
         .iter()
         .map(|value| value.re.abs())
         .fold(0.0_f64, f64::max);
-    let strength = residual_peak(window.residual()) / psf_peak;
+    let strength = residual_peak(window.residual().complex().unwrap()) / psf_peak;
     for threshold in [strength, strength * 2.0] {
         let program = casa_imaging_reconstruction::MinorCycleProgram::for_algorithm(
             ReconstructionAlgorithm::Clark,

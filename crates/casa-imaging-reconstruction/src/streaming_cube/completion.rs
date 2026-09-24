@@ -62,15 +62,6 @@ impl SpectralOperatorPrimitives {
                     size_of_val(real.psf.as_ref())
                 }),
             size_of_val(self.sensitivity.as_ref()),
-            self.cube_dirty_wide
-                .get()
-                .map_or(0, |values| size_of_val(values.as_ref())),
-            self.cube_psf_wide
-                .get()
-                .map_or(0, |values| size_of_val(values.as_ref())),
-            self.cube_sensitivity_wide
-                .get()
-                .map_or(0, |values| size_of_val(values.as_ref())),
             size_of_val(self.sum_weights.as_ref()),
             size_of_val(self.published_sum_weights.as_ref()),
             size_of_val(self.validity.as_ref()),
@@ -198,9 +189,6 @@ impl SpectralOperatorPrimitives {
                 invariant_dirty,
                 psf: psf.into_boxed_slice(),
             }),
-            cube_dirty_wide: std::sync::OnceLock::new(),
-            cube_psf_wide: std::sync::OnceLock::new(),
-            cube_sensitivity_wide: std::sync::OnceLock::new(),
             invariant_dirty: None,
             common_residual: None,
             invariant_common_dirty: None,
@@ -307,9 +295,9 @@ fn cube_phase_handoff_moves_initial_dirty_and_preserves_explicit_invariants() {
     let pointer = images.dirty.as_ptr();
     let initial = SpectralOperatorPrimitives::from_cube_band(images, 1, model).unwrap();
     assert_eq!(initial.cube_real.as_ref().unwrap().dirty.as_ptr(), pointer);
-    assert_eq!(initial.dirty(), &[Complex64::new(3.0, 0.0); 2]);
-    assert_eq!(initial.psf(), &[Complex64::new(2.0, 0.0); 2]);
-    assert_eq!(initial.sensitivity(), &[2.0; 2]);
+    assert_eq!(initial.dirty().real(), Some(&[3.0; 2][..]));
+    assert_eq!(initial.psf().real(), Some(&[2.0; 2][..]));
+    assert_eq!(initial.sensitivity().iter().collect::<Vec<_>>(), [2.0; 2]);
     assert!(initial.invariant_dirty.is_none());
     assert!(initial.major_cycle_residual.is_none());
     let images = make(BandPhase::Full);
@@ -340,4 +328,82 @@ fn cube_phase_handoff_moves_initial_dirty_and_preserves_explicit_invariants() {
         &[3.0; 2]
     );
     assert!(full.validate_cube_layout([2, 1], 0..1, 2).is_err());
+}
+
+#[test]
+fn compact_reads_and_diagnostic_cover_pixels_without_retaining_widened_buffers() {
+    let model = ModelGenerationId(LogicalIdentity::from_sha256([47; 32]));
+    let make = |dirty, psf| {
+        SpectralOperatorPrimitives::from_cube_band(
+            BandImages {
+                phase: BandPhase::InitialZero,
+                shape: [2, 1],
+                core: 0..1,
+                dirty,
+                residual: Vec::new(),
+                psf,
+                sum_weight: vec![2.0],
+                mapped: vec![3],
+            },
+            1,
+            model,
+        )
+        .unwrap()
+    };
+    let original = make(vec![3.0, 4.0], vec![2.0, 1.0]);
+    let changed_dirty = make(vec![3.0, 5.0], vec![2.0, 1.0]);
+    let changed_psf = make(vec![3.0, 4.0], vec![2.0, 1.5]);
+    let fingerprint = original.normal_state_content_identity();
+    assert_ne!(fingerprint, changed_dirty.normal_state_content_identity());
+    assert_ne!(fingerprint, changed_psf.normal_state_content_identity());
+    // The existing diagnostic format denotes numerical values, not storage width.
+    let mut wide = make(vec![3.0, 4.0], vec![2.0, 1.0]);
+    let real = wide.cube_real.take().unwrap();
+    wide.dirty = real
+        .dirty
+        .iter()
+        .map(|&v| Complex64::new(f64::from(v), 0.0))
+        .collect();
+    wide.psf = real
+        .psf
+        .iter()
+        .map(|&v| Complex64::new(f64::from(v), 0.0))
+        .collect();
+    wide.sensitivity = vec![2.0; 2].into();
+    assert_eq!(fingerprint, wide.normal_state_content_identity());
+
+    let dirty_pointer = original.dirty().real().unwrap().as_ptr();
+    let psf_pointer = original.psf().real().unwrap().as_ptr();
+    let compact_bytes = original.cube_owned_bytes(true).unwrap();
+    let domains = SpectralPrimitiveDomains::new(
+        vec![SpectralDomainPrimitives::new(
+            0,
+            ImageDomainRole::Main,
+            original,
+        )]
+        .into(),
+    )
+    .unwrap();
+    let expected = size_of::<SpectralDomainPrimitives>()
+        + 4 * size_of::<f32>()
+        + 2 * size_of::<f64>()
+        + size_of::<SpectralChannelValidity>()
+        + size_of::<Option<usize>>();
+    for _ in 0..3 {
+        assert_eq!(domains.owned_bytes(), expected);
+        let p = domains.primary();
+        assert_eq!(p.dirty().real().unwrap().as_ptr(), dirty_pointer);
+        assert_eq!(p.psf().real().unwrap().as_ptr(), psf_pointer);
+        assert_eq!(
+            p.dirty().iter().collect::<Vec<_>>(),
+            [Complex64::new(3.0, 0.0), Complex64::new(4.0, 0.0)]
+        );
+        assert_eq!(p.sensitivity().iter().collect::<Vec<_>>(), [2.0; 2]);
+        assert!(p.dirty().complex().is_none());
+        assert!(p.psf().complex().is_none());
+        assert!(p.sensitivity().dense().is_none());
+        assert_eq!(p.normal_state_content_identity(), fingerprint);
+        assert_eq!(p.cube_owned_bytes(true).unwrap(), compact_bytes);
+        assert_eq!(domains.owned_bytes(), expected);
+    }
 }

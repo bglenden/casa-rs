@@ -41,6 +41,8 @@ mod continuum_transform;
 mod gridded_normal_operator;
 mod image_response;
 mod major_cycle;
+mod normal_values;
+pub use normal_values::{NormalValues, SensitivityValues};
 mod mask;
 mod minor_cycle;
 mod model_storage;

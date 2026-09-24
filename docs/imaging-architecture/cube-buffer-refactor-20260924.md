@@ -78,6 +78,12 @@ These representation targets are conditional on unchanged scientific acceptance.
 
 Remove intermediate widening/narrowing copies at their callers, not merely the
 final buffer types. Keep block operations and ordinary contiguous kernel slices.
+Normal-image getters borrow the actual real or complex representation; they
+must not initialize conversion caches. A loaded CLEAN plane owns exactly one
+representation, and byte-accounting queries inspect owned storage without
+materializing it. Explicit diagnostic fingerprints may iterate those views in
+tests/probes, but are not called by imaging, CLEAN, or publication. They are not
+an authorization or completion requirement.
 No bitwise reproducibility surcharge. Replace calculated-output bit-equality
 tests with existing scientific tolerance checks; exact storage round trips and
 shape/mask/metadata checks remain exact. A failed precision comparison justifies

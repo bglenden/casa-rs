@@ -662,11 +662,11 @@ fn real_clark_worker_cases(
                     fixture_model_samples(science.final_model()),
                     windows
                         .iter()
-                        .flat_map(|window| window.residual().iter().copied())
+                        .flat_map(|window| window.residual().iter())
                         .collect::<Vec<_>>(),
                     windows
                         .iter()
-                        .flat_map(|window| window.normal_approximation().iter().copied())
+                        .flat_map(|window| window.normal_approximation().iter())
                         .collect::<Vec<_>>(),
                     normal.sum_weights().to_vec(),
                     normal.published_sum_weights().to_vec(),

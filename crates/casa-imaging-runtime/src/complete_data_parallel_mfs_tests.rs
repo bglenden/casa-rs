@@ -823,8 +823,8 @@ fn execute_complete_data_mfs_with_policy(
             .read_window(normal.slab().core_range())
             .expect("coupled MFS fixture window");
         (
-            window.residual().to_vec(),
-            window.normal_approximation().to_vec(),
+            window.residual().iter().collect::<Vec<_>>(),
+            window.normal_approximation().iter().collect::<Vec<_>>(),
         )
     };
 
@@ -949,7 +949,8 @@ fn execute_complete_data_mfs_with_policy(
             .read_window(completion.normal_state().slab().core_range())
             .expect("coupled MFS fixture window")
             .residual()
-            .to_vec(),
+            .iter()
+            .collect::<Vec<_>>(),
         sum_weights: completion.normal_state().sum_weights().to_vec(),
         initial_stream,
         final_stream,

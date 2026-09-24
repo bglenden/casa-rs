@@ -2936,9 +2936,6 @@ pub struct SpectralOperatorPrimitives {
     joint_line_term_by_channel: Box<[Option<usize>]>,
     dirty: Box<[Complex64]>,
     pub(crate) cube_real: Option<CubeRealFields>,
-    cube_dirty_wide: std::sync::OnceLock<Box<[Complex64]>>,
-    cube_psf_wide: std::sync::OnceLock<Box<[Complex64]>>,
-    cube_sensitivity_wide: std::sync::OnceLock<Box<[f64]>>,
     invariant_dirty: Option<Box<[Complex64]>>,
     common_residual: Option<Box<[Complex64]>>,
     invariant_common_dirty: Option<Box<[Complex64]>>,
@@ -2984,9 +2981,6 @@ impl SpectralOperatorPrimitives {
             joint_line_term_by_channel: Box::new([]),
             dirty,
             cube_real: None,
-            cube_dirty_wide: std::sync::OnceLock::new(),
-            cube_psf_wide: std::sync::OnceLock::new(),
-            cube_sensitivity_wide: std::sync::OnceLock::new(),
             invariant_dirty: None,
             common_residual: None,
             invariant_common_dirty: None,
@@ -3067,15 +3061,12 @@ impl SpectralOperatorPrimitives {
 
     /// Return the unnormalized dirty normal-state plane.
     #[must_use]
-    pub fn dirty(&self) -> &[Complex64] {
-        self.cube_real.as_ref().map_or(&self.dirty, |real| {
-            self.cube_dirty_wide.get_or_init(|| {
-                real.dirty
-                    .iter()
-                    .map(|&value| Complex64::new(f64::from(value), 0.0))
-                    .collect()
+    pub fn dirty(&self) -> crate::NormalValues<'_> {
+        self.cube_real
+            .as_ref()
+            .map_or(crate::NormalValues::Complex(&self.dirty), |real| {
+                crate::NormalValues::Real(&real.dirty)
             })
-        })
     }
 
     /// Return the channel-local common residual of a joint model.
@@ -3086,15 +3077,12 @@ impl SpectralOperatorPrimitives {
 
     /// Return the unnormalized point-spread-function plane.
     #[must_use]
-    pub fn psf(&self) -> &[Complex64] {
-        self.cube_real.as_ref().map_or(&self.psf, |real| {
-            self.cube_psf_wide.get_or_init(|| {
-                real.psf
-                    .iter()
-                    .map(|&value| Complex64::new(f64::from(value), 0.0))
-                    .collect()
+    pub fn psf(&self) -> crate::NormalValues<'_> {
+        self.cube_real
+            .as_ref()
+            .map_or(crate::NormalValues::Complex(&self.psf), |real| {
+                crate::NormalValues::Real(&real.psf)
             })
-        })
     }
 
     /// Borrow compact real fields before the channel-local normal fold consumes them.
@@ -3105,16 +3093,15 @@ impl SpectralOperatorPrimitives {
 
     /// Return scalar-response sensitivity in normal-state units.
     #[must_use]
-    pub fn sensitivity(&self) -> &[f64] {
-        self.cube_real.as_ref().map_or(&self.sensitivity, |_| {
-            self.cube_sensitivity_wide.get_or_init(|| {
-                let cells = self.shape[0] * self.shape[1];
-                self.sum_weights
-                    .iter()
-                    .flat_map(|&weight| std::iter::repeat_n(weight, cells))
-                    .collect()
-            })
-        })
+    pub fn sensitivity(&self) -> crate::SensitivityValues<'_> {
+        if self.cube_real.is_some() {
+            crate::SensitivityValues::PerPlane {
+                weights: &self.sum_weights,
+                cells: self.shape[0] * self.shape[1],
+            }
+        } else {
+            crate::SensitivityValues::Dense(&self.sensitivity)
+        }
     }
 
     /// Return `sum(W B)` in polarization-major image-plane order when a
@@ -3234,7 +3221,7 @@ impl SpectralOperatorPrimitives {
                 encoder.usize(line.unwrap_or(usize::MAX));
             }
         }
-        for value in &self.dirty {
+        for value in self.dirty().iter() {
             encoder.u64(value.re.to_bits());
             encoder.u64(value.im.to_bits());
         }
@@ -3244,12 +3231,12 @@ impl SpectralOperatorPrimitives {
                 encoder.u64(value.im.to_bits());
             }
         }
-        for value in &self.psf {
+        for value in self.psf().iter() {
             encoder.u64(value.re.to_bits());
             encoder.u64(value.im.to_bits());
         }
-        for value in &self.sensitivity {
-            encoder.u64(canonical_f64_bits(*value));
+        for value in self.sensitivity().iter() {
+            encoder.u64(canonical_f64_bits(value));
         }
         if let Some(values) = &self.primary_beam_weighted_sum {
             for value in values {
@@ -3321,7 +3308,12 @@ impl ReusableNormalState {
         selected_generation: SelectedObservationGenerationId,
         continuum_transform_generation: Option<ContinuumTransformGenerationId>,
         primitives: SpectralOperatorPrimitives,
-    ) -> Self {
+    ) -> Result<Self, SpectralOperatorError> {
+        // Compact cube refresh uses its shared invariant backing instead. Never
+        // silently discard its active fields into this complex replay owner.
+        if primitives.cube_real.is_some() {
+            return Err(SpectralOperatorError::ReusableNormalStateMismatch);
+        }
         let SpectralOperatorPrimitives {
             shape,
             slab,
@@ -3339,7 +3331,7 @@ impl ReusableNormalState {
             validity,
             ..
         } = primitives;
-        Self {
+        Ok(Self {
             domain_ordinal,
             problem,
             geometry,
@@ -3362,7 +3354,7 @@ impl ReusableNormalState {
             published_sum_weights,
             channel_sum_weights,
             validity,
-        }
+        })
     }
 
     fn matches(
@@ -3789,9 +3781,6 @@ fn combine_initial_chart_primitives(
                 invariant_dirty: Some(dirty.clone()),
                 dirty,
                 cube_real: None,
-                cube_dirty_wide: std::sync::OnceLock::new(),
-                cube_psf_wide: std::sync::OnceLock::new(),
-                cube_sensitivity_wide: std::sync::OnceLock::new(),
                 common_residual: common.clone(),
                 invariant_common_dirty: common,
                 psf: psf.into_boxed_slice(),
@@ -3931,9 +3920,6 @@ pub(crate) fn combine_chart_updates(
                 joint_line_term_by_channel,
                 dirty: residual.into_boxed_slice(),
                 cube_real: None,
-                cube_dirty_wide: std::sync::OnceLock::new(),
-                cube_psf_wide: std::sync::OnceLock::new(),
-                cube_sensitivity_wide: std::sync::OnceLock::new(),
                 invariant_dirty: Some(invariant_dirty),
                 common_residual: common.map(Vec::into_boxed_slice),
                 invariant_common_dirty,
@@ -3964,7 +3950,15 @@ impl SpectralPrimitiveDomains {
             .map(|domain| {
                 let p = domain.primitives();
                 size_of::<SpectralDomainPrimitives>()
-                    + std::mem::size_of_val(p.dirty())
+                    + std::mem::size_of_val(p.dirty.as_ref())
+                    + p.cube_real.as_ref().map_or(0, |real| {
+                        std::mem::size_of_val(real.dirty.as_ref())
+                            + std::mem::size_of_val(real.psf.as_ref())
+                            + real
+                                .invariant_dirty
+                                .as_deref()
+                                .map_or(0, std::mem::size_of_val)
+                    })
                     + p.invariant_dirty
                         .as_deref()
                         .map_or(0, std::mem::size_of_val)
@@ -3974,8 +3968,8 @@ impl SpectralPrimitiveDomains {
                     + p.invariant_common_dirty
                         .as_deref()
                         .map_or(0, std::mem::size_of_val)
-                    + std::mem::size_of_val(p.psf())
-                    + std::mem::size_of_val(p.sensitivity())
+                    + std::mem::size_of_val(p.psf.as_ref())
+                    + std::mem::size_of_val(p.sensitivity.as_ref())
                     + p.primary_beam_weighted_sum
                         .as_deref()
                         .map_or(0, std::mem::size_of_val)
@@ -10754,9 +10748,6 @@ impl SpectralSlabOperator {
                 joint_line_term_by_channel: self.joint_line_term_by_channel,
                 dirty: residual.into_boxed_slice(),
                 cube_real: None,
-                cube_dirty_wide: std::sync::OnceLock::new(),
-                cube_psf_wide: std::sync::OnceLock::new(),
-                cube_sensitivity_wide: std::sync::OnceLock::new(),
                 invariant_dirty: reused.invariant_dirty,
                 common_residual: common_residual.map(Vec::into_boxed_slice),
                 invariant_common_dirty: reused.invariant_common_dirty,
@@ -10949,9 +10940,6 @@ impl SpectralSlabOperator {
             invariant_dirty,
             dirty,
             cube_real: None,
-            cube_dirty_wide: std::sync::OnceLock::new(),
-            cube_psf_wide: std::sync::OnceLock::new(),
-            cube_sensitivity_wide: std::sync::OnceLock::new(),
             common_residual,
             invariant_common_dirty,
             psf: psf.into_boxed_slice(),
@@ -13364,15 +13352,15 @@ mod tests {
         encoder.usize(primitives.slab().total_channels());
         encoder.usize(primitives.slab().core_range().start);
         encoder.usize(primitives.slab().core_range().end);
-        for value in primitives.dirty() {
+        for value in primitives.dirty().complex().unwrap() {
             encoder.u64(value.re.to_bits());
             encoder.u64(value.im.to_bits());
         }
-        for value in primitives.psf() {
+        for value in primitives.psf().complex().unwrap() {
             encoder.u64(value.re.to_bits());
             encoder.u64(value.im.to_bits());
         }
-        for value in primitives.sensitivity() {
+        for value in primitives.sensitivity().dense().unwrap() {
             encoder.u64(crate::canonical_f64_bits(*value));
         }
         for value in primitives.sum_weights() {
@@ -13403,15 +13391,15 @@ mod tests {
         encoder.u64(crate::canonical_f64_bits(reference_frequency_hz));
         encoder.usize(coefficient_terms);
         encoder.usize(normal_moments);
-        for value in primitives.dirty() {
+        for value in primitives.dirty().complex().unwrap() {
             encoder.u64(value.re.to_bits());
             encoder.u64(value.im.to_bits());
         }
-        for value in primitives.psf() {
+        for value in primitives.psf().complex().unwrap() {
             encoder.u64(value.re.to_bits());
             encoder.u64(value.im.to_bits());
         }
-        for value in primitives.sensitivity() {
+        for value in primitives.sensitivity().dense().unwrap() {
             encoder.u64(crate::canonical_f64_bits(*value));
         }
         for value in primitives.sum_weights() {
@@ -13562,7 +13550,7 @@ mod tests {
         }
         let dirty = adjoint.finish().expect("finite primitives");
         let left = inner(&prediction, &weighted_visibility);
-        let right = inner(&model, dirty.dirty());
+        let right = inner(&model, dirty.dirty().complex().unwrap());
         assert!((left - right).norm() <= 1.0e-9 * left.norm().max(right.norm()).max(1.0));
         assert_eq!(visibility.len(), prediction.len());
     }
@@ -13598,9 +13586,6 @@ mod tests {
             joint_line_term_by_channel: vec![None].into_boxed_slice(),
             dirty: [Complex64::new(2.0, -0.5), Complex64::new(-0.25, 0.125)].into(),
             cube_real: None,
-            cube_dirty_wide: std::sync::OnceLock::new(),
-            cube_psf_wide: std::sync::OnceLock::new(),
-            cube_sensitivity_wide: std::sync::OnceLock::new(),
             invariant_dirty: None,
             common_residual: None,
             invariant_common_dirty: None,
@@ -13867,7 +13852,7 @@ mod tests {
                 prediction.conj() * stencil[0].visibility * stencil[0].imaging_weight
             })
             .sum::<Complex64>();
-        let right = inner(&model, dirty.dirty());
+        let right = inner(&model, dirty.dirty().complex().unwrap());
         assert!(
             (left - right).norm() <= 1.0e-9 * left.norm().max(right.norm()).max(1.0),
             "paired channel-local A/A* mismatch: left={left:?} right={right:?}"
@@ -13885,9 +13870,9 @@ mod tests {
             let mut validity = Vec::new();
             for start in (0..4).step_by(depth) {
                 let slab = cube_primitives(start, depth.min(4 - start));
-                dirty.extend_from_slice(slab.dirty());
-                psf.extend_from_slice(slab.psf());
-                sensitivity.extend_from_slice(slab.sensitivity());
+                dirty.extend_from_slice(slab.dirty().complex().unwrap());
+                psf.extend_from_slice(slab.psf().complex().unwrap());
+                sensitivity.extend_from_slice(slab.sensitivity().dense().unwrap());
                 sum_weights.extend_from_slice(slab.sum_weights());
                 validity.extend_from_slice(slab.channel_validity());
             }
@@ -13895,11 +13880,19 @@ mod tests {
         };
         for depth in [1, 2] {
             let (dirty, psf, sensitivity, sum_weights, validity) = run_partition(depth);
-            assert_eq!(dirty, full.dirty(), "dirty changed at slab depth {depth}");
-            assert_eq!(psf, full.psf(), "PSF changed at slab depth {depth}");
+            assert_eq!(
+                dirty,
+                full.dirty().complex().unwrap(),
+                "dirty changed at slab depth {depth}"
+            );
+            assert_eq!(
+                psf,
+                full.psf().complex().unwrap(),
+                "PSF changed at slab depth {depth}"
+            );
             assert_eq!(
                 sensitivity,
-                full.sensitivity(),
+                full.sensitivity().dense().unwrap(),
                 "sensitivity changed at slab depth {depth}"
             );
             assert_eq!(
@@ -14131,7 +14124,7 @@ mod tests {
             let rust_sum_weight = primitives.sum_weights()[channel];
             assert_eq!(*casa_sum_weight, rust_sum_weight);
             assert!(
-                primitives.sensitivity()[channel * CELLS..(channel + 1) * CELLS]
+                primitives.sensitivity().dense().unwrap()[channel * CELLS..(channel + 1) * CELLS]
                     .iter()
                     .all(|sensitivity| *sensitivity == rust_sum_weight)
             );
@@ -14148,9 +14141,12 @@ mod tests {
                         .all(|value| *value == Complex64::new(0.0, 0.0))
                 );
                 assert!(
-                    primitives.dirty()[channel * CELLS..(channel + 1) * CELLS]
+                    primitives.dirty().complex().unwrap()[channel * CELLS..(channel + 1) * CELLS]
                         .iter()
-                        .chain(&primitives.psf()[channel * CELLS..(channel + 1) * CELLS])
+                        .chain(
+                            &primitives.psf().complex().unwrap()
+                                [channel * CELLS..(channel + 1) * CELLS]
+                        )
                         .all(|value| *value == Complex64::new(0.0, 0.0))
                 );
                 continue;
@@ -14226,8 +14222,8 @@ mod tests {
                     let pixel = x * image_shape[1] + y;
                     let casa_dirty = casa_dirty[(grid_x, grid_y)] * inverse_correction;
                     let casa_psf = casa_psf[(grid_x, grid_y)] * inverse_correction;
-                    let rust_dirty = primitives.dirty()[channel * CELLS + pixel];
-                    let rust_psf = primitives.psf()[channel * CELLS + pixel];
+                    let rust_dirty = primitives.dirty().complex().unwrap()[channel * CELLS + pixel];
+                    let rust_psf = primitives.psf().complex().unwrap()[channel * CELLS + pixel];
                     dirty_difference_energy += (rust_dirty - casa_dirty).norm_sqr();
                     dirty_casa_energy += casa_dirty.norm_sqr();
                     psf_difference_energy += (rust_psf - casa_psf).norm_sqr();
@@ -14283,7 +14279,7 @@ mod tests {
             adjoint.push(sample).expect("adjoint sample");
             let dirty = adjoint.finish().expect("finite primitives");
             let left = prediction.conj() * weighted_visibility;
-            let right = inner(&model, dirty.dirty());
+            let right = inner(&model, dirty.dirty().complex().unwrap());
             assert!(
                 (left - right).norm() <= 1.0e-9 * left.norm().max(right.norm()).max(1.0),
                 "A and A* must use the same owner-evaluated frequency"
@@ -14436,9 +14432,15 @@ mod tests {
         };
         let one = run(&[&sample_values]);
         let split = run(&[&sample_values[..1], &sample_values[1..]]);
-        assert_eq!(one.dirty(), split.dirty());
-        assert_eq!(one.psf(), split.psf());
-        assert_eq!(one.sensitivity(), split.sensitivity());
+        assert_eq!(
+            one.dirty().complex().unwrap(),
+            split.dirty().complex().unwrap()
+        );
+        assert_eq!(one.psf().complex().unwrap(), split.psf().complex().unwrap());
+        assert_eq!(
+            one.sensitivity().dense().unwrap(),
+            split.sensitivity().dense().unwrap()
+        );
         assert_eq!(one.sum_weight(), split.sum_weight());
     }
 
@@ -14703,13 +14705,16 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert_eq!(
-            complex_bits(unobserved.dirty()),
-            complex_bits(observed.dirty())
+            complex_bits(unobserved.dirty().complex().unwrap()),
+            complex_bits(observed.dirty().complex().unwrap())
         );
-        assert_eq!(complex_bits(unobserved.psf()), complex_bits(observed.psf()));
         assert_eq!(
-            real_bits(unobserved.sensitivity()),
-            real_bits(observed.sensitivity())
+            complex_bits(unobserved.psf().complex().unwrap()),
+            complex_bits(observed.psf().complex().unwrap())
+        );
+        assert_eq!(
+            real_bits(unobserved.sensitivity().dense().unwrap()),
+            real_bits(observed.sensitivity().dense().unwrap())
         );
         assert_eq!(
             real_bits(unobserved.sum_weights()),
@@ -14845,12 +14850,16 @@ mod tests {
         assert!(
             primitives
                 .dirty()
+                .complex()
+                .unwrap()
                 .iter()
                 .all(|value| *value == Complex64::new(0.0, 0.0))
         );
         assert!(
             primitives
                 .psf()
+                .complex()
+                .unwrap()
                 .iter()
                 .all(|value| *value == Complex64::new(0.0, 0.0))
         );
@@ -14919,7 +14928,7 @@ mod tests {
         let primitives = state.finish_bound(None).expect("primitives");
         assert_eq!(
             primitives.major_cycle_residual.as_deref(),
-            Some(primitives.dirty()),
+            Some(primitives.dirty().complex().unwrap()),
             "an empty model must reproduce the data-side adjoint bit exactly"
         );
     }
@@ -14993,9 +15002,18 @@ mod tests {
         let optimized = optimized
             .promote_major_cycle_residual(model)
             .expect("empty residual is already the dirty plane");
-        assert_eq!(optimized.dirty(), explicit.dirty());
-        assert_eq!(optimized.psf(), explicit.psf());
-        assert_eq!(optimized.sensitivity(), explicit.sensitivity());
+        assert_eq!(
+            optimized.dirty().complex().unwrap(),
+            explicit.dirty().complex().unwrap()
+        );
+        assert_eq!(
+            optimized.psf().complex().unwrap(),
+            explicit.psf().complex().unwrap()
+        );
+        assert_eq!(
+            optimized.sensitivity().dense().unwrap(),
+            explicit.sensitivity().dense().unwrap()
+        );
         assert_eq!(optimized.sum_weights(), explicit.sum_weights());
         assert_eq!(optimized.channel_validity(), explicit.channel_validity());
         assert_eq!(
@@ -15076,7 +15094,7 @@ mod tests {
         let actual = fused.finish_bound(None).expect("fused normal residual");
         assert_eq!(
             actual.major_cycle_residual.as_deref(),
-            Some(expected.dirty()),
+            Some(expected.dirty().complex().unwrap()),
             "T20 must equal the declared paired A*W(d-Ax) evaluation"
         );
     }

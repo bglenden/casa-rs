@@ -492,7 +492,8 @@ fn compare_clark_cube_cases(
                             .read_window(channel..channel + 1)
                             .unwrap()
                             .residual()
-                            .to_vec()
+                            .iter()
+                            .collect::<Vec<_>>()
                     })
                     .collect::<Vec<_>>(),
                 science.normal_state().sum_weights().to_vec(),

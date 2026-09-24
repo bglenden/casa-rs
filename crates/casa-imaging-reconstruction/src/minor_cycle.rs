@@ -1372,7 +1372,7 @@ pub fn run_minor_cycle(
 struct ImageDomainHogbomWork<'a> {
     domain_ordinal: usize,
     shape: [usize; 2],
-    psf: Cow<'a, [num_complex::Complex64]>,
+    psf: crate::normal_values::NormalPlane<'a>,
     model_plane: MinorCycleModelPlane,
     psf_peak: f64,
     psf_peak_pixel: [usize; 2],
@@ -1461,7 +1461,7 @@ pub(crate) fn run_image_domain_minor_cycle(
             |_| true,
         )
         .ok_or(MinorCycleError::InvalidPsfPeak)?;
-        let psf_peak = plane.normal_approximation()[psf_peak_index].re;
+        let psf_peak = plane.normal_approximation().value(psf_peak_index).re;
         if !psf_peak.is_finite() || psf_peak <= 0.0 {
             return Err(MinorCycleError::InvalidPsfPeak);
         }
@@ -1675,7 +1675,7 @@ fn run_image_domain_hogbom_controllers(
             let peak_pixel = plane_pixel(peak_index, domain.shape);
             subtract_psf(
                 &mut domain.residual,
-                &domain.psf,
+                domain.psf.values(),
                 domain.shape,
                 peak_pixel,
                 domain.psf_peak_pixel,
@@ -2548,7 +2548,7 @@ pub(crate) fn run_minor_cycle_plane(
     }
     .ok_or(MinorCycleError::InvalidPsfPeak)?;
     let psf_peak = plane.normal_real().map_or_else(
-        || plane.normal_approximation()[psf_peak_index].re,
+        || plane.normal_approximation().value(psf_peak_index).re,
         |psf| f64::from(psf[psf_peak_index]),
     );
     if !psf_peak.is_finite() || psf_peak <= 0.0 {
@@ -2566,7 +2566,7 @@ pub(crate) fn run_minor_cycle_plane(
                 })?
             } else {
                 derive_clark_approximation(psf, shape, psf_peak_pixel, |index| {
-                    plane.normal_approximation()[index].re
+                    plane.normal_approximation().value(index).re
                 })?
             })
         }
@@ -2771,7 +2771,7 @@ pub(crate) fn run_minor_cycle_plane(
                         })?;
                     } else {
                         state.accept(peak_index, flux, controller.iterations() + 1, |index| {
-                            plane.normal_approximation()[index].re
+                            plane.normal_approximation().value(index).re
                         })?;
                     }
                 } else {
@@ -2957,14 +2957,14 @@ fn valid_support(
 
 /// Find the maximum-abs real plane value passing `accept`, scanning in
 /// canonical storage order so ties deterministically keep the first peak.
-fn find_peak_abs<T>(
-    plane: &[T],
+fn find_peak_abs<I: IntoIterator>(
+    plane: I,
     shape: [usize; 2],
-    magnitude: impl Fn(&T) -> f64,
+    magnitude: impl Fn(I::Item) -> f64,
     accept: impl Fn([usize; 2]) -> bool,
 ) -> Option<usize> {
     let mut best: Option<(f64, usize)> = None;
-    for (index, value) in plane.iter().enumerate() {
+    for (index, value) in plane.into_iter().enumerate() {
         let magnitude = magnitude(value).abs();
         if best.is_some_and(|(best_magnitude, _)| magnitude <= best_magnitude) {
             continue;
@@ -2986,14 +2986,15 @@ thread_local! {
 }
 
 /// Subtract `flux * psf` centered on `peak` from the working residual.
-fn subtract_psf(
+fn subtract_psf<'a>(
     residual: &mut [f64],
-    psf: &[num_complex::Complex64],
+    psf: impl Into<crate::NormalValues<'a>>,
     shape: [usize; 2],
     peak: [usize; 2],
     psf_peak: [usize; 2],
     flux: f64,
 ) -> Result<(), MinorCycleError> {
+    let psf = psf.into();
     // psf_shifted(x, y) = psf(x - peak + psf_peak, y - peak + psf_peak),
     // clipped to the plane exactly like the reference cleaner's subregion.
     let x_range = overlap(peak[0], psf_peak[0], shape[0]);
@@ -3011,7 +3012,7 @@ fn subtract_psf(
             let source = [x + psf_peak[0] - peak[0], y + psf_peak[1] - peak[1]];
             let index = source[0] * shape[1] + source[1];
             let target = x * shape[1] + y;
-            let updated = residual[target] - flux * psf[index].re;
+            let updated = residual[target] - flux * psf.value(index).re;
             if !updated.is_finite() {
                 return Err(MinorCycleError::GeneratedNonfinite);
             }
@@ -3022,21 +3023,22 @@ fn subtract_psf(
 }
 
 /// Subtract one PSF component using the full-image circular FFT convention.
-fn subtract_psf_circular(
+fn subtract_psf_circular<'a>(
     residual: &mut [f64],
-    psf: &[num_complex::Complex64],
+    psf: impl Into<crate::NormalValues<'a>>,
     shape: [usize; 2],
     peak: [usize; 2],
     psf_peak: [usize; 2],
     flux: f64,
 ) -> Result<(), MinorCycleError> {
+    let psf = psf.into();
     for source_x in 0..shape[0] {
         let target_x = (source_x + peak[0] + shape[0] - psf_peak[0]) % shape[0];
         for source_y in 0..shape[1] {
             let target_y = (source_y + peak[1] + shape[1] - psf_peak[1]) % shape[1];
             let source = source_x * shape[1] + source_y;
             let target = target_x * shape[1] + target_y;
-            let updated = residual[target] - flux * psf[source].re;
+            let updated = residual[target] - flux * psf.value(source).re;
             if !updated.is_finite() {
                 return Err(MinorCycleError::GeneratedNonfinite);
             }
@@ -3046,16 +3048,17 @@ fn subtract_psf_circular(
     Ok(())
 }
 
-fn refresh_circular_residual(
+fn refresh_circular_residual<'a>(
     residual: &mut [f64],
-    original: &[num_complex::Complex64],
-    psf: &[num_complex::Complex64],
+    original: impl Into<crate::NormalValues<'a>>,
+    psf: impl Into<crate::NormalValues<'a>>,
     shape: [usize; 2],
     psf_peak: [usize; 2],
     base: &ModelGeneration,
     terms: &BTreeMap<usize, f64>,
 ) -> Result<(), MinorCycleError> {
-    for (target, source) in residual.iter_mut().zip(original) {
+    let psf = psf.into();
+    for (target, source) in residual.iter_mut().zip(original.into()) {
         *target = source.re;
     }
     for (flat, flux) in terms {
@@ -3914,9 +3917,9 @@ fn multiscale_spheroidal(nu: f64) -> f64 {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn select_multiscale_candidate(
+fn select_multiscale_candidate<'a>(
     residual: &[f64],
-    psf: &[num_complex::Complex64],
+    psf: impl Into<crate::NormalValues<'a>>,
     shape: [usize; 2],
     psf_peak: [usize; 2],
     base: &ModelGenerationWindow<'_>,
@@ -3924,6 +3927,7 @@ fn select_multiscale_candidate(
     mask: &ReconstructionMask,
     kernels: &[ScaleKernel],
 ) -> Option<MultiscaleCandidate> {
+    let psf = psf.into();
     let mut best = None;
     for (scale_index, kernel) in kernels.iter().enumerate() {
         let normalization = multiscale_normalization(psf, shape, psf_peak, kernel);
@@ -3969,12 +3973,13 @@ fn multiscale_diverged(initial: f64, current: f64, iterations: usize) -> bool {
     iterations > 0 && current.abs() > initial.abs() * 1.5
 }
 
-fn multiscale_normalization(
-    psf: &[num_complex::Complex64],
+fn multiscale_normalization<'a>(
+    psf: impl Into<crate::NormalValues<'a>>,
     shape: [usize; 2],
     peak: [usize; 2],
     kernel: &ScaleKernel,
 ) -> f64 {
+    let psf = psf.into();
     kernel
         .samples
         .iter()
@@ -3988,7 +3993,7 @@ fn multiscale_normalization(
                         left_offset[1] - right_offset[1],
                     ];
                     offset_pixel(peak, offset, shape).map(|pixel| {
-                        left_weight * right_weight * psf[pixel[0] * shape[1] + pixel[1]].re
+                        left_weight * right_weight * psf.value(pixel[0] * shape[1] + pixel[1]).re
                     })
                 })
         })
@@ -4053,15 +4058,16 @@ fn add_scaled_terms(
     }
 }
 
-fn subtract_scaled_psf(
+fn subtract_scaled_psf<'a>(
     residual: &mut [f64],
-    psf: &[num_complex::Complex64],
+    psf: impl Into<crate::NormalValues<'a>>,
     shape: [usize; 2],
     centre: [usize; 2],
     psf_peak: [usize; 2],
     kernel: &ScaleKernel,
     flux: f64,
 ) -> Result<(), MinorCycleError> {
+    let psf = psf.into();
     for (offset, weight) in &kernel.samples {
         let pixel =
             offset_pixel(centre, *offset, shape).expect("selected scale fits model support");
@@ -4829,7 +4835,7 @@ mod tests {
         ImageDomainHogbomWork {
             domain_ordinal,
             shape: [1, 1],
-            psf: std::borrow::Cow::Borrowed(psf),
+            psf: crate::normal_values::NormalPlane::Complex(std::borrow::Cow::Borrowed(psf)),
             model_plane: MinorCycleModelPlane::new(domain_ordinal, 0, 0),
             psf_peak: 1.0,
             psf_peak_pixel: [0, 0],

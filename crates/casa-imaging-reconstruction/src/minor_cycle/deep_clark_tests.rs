@@ -188,7 +188,9 @@ fn deep_clark_batches_patch_updates_and_refreshes_the_linear_residual() {
             normal
                 .read_reconstruction_plane(0, 0, 0)
                 .unwrap()
-                .residual(),
+                .residual()
+                .iter()
+                .collect::<Vec<_>>(),
             dirty
                 .iter()
                 .map(|&v| Complex64::new(v, 0.0))
