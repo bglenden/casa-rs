@@ -161,6 +161,21 @@ development libraries, their threaded/static archives, and `pkg-config`
 on Debian/Ubuntu). The release bundles link FFTW into their imaging binaries;
 installing from a bundle does not require a local FFTW development package.
 
+For performance work and release builds, use the pinned SIMD-enabled build:
+
+```sh
+bash scripts/build-fftw.sh /absolute/durable/fftw-3.3.11
+export PKG_CONFIG_PATH=/absolute/durable/fftw-3.3.11/lib/pkgconfig
+```
+
+This builds static, position-independent single/double precision and pthread
+libraries with ARM NEON or runtime-dispatched x86 SSE2/AVX/AVX2 kernels, using
+two build jobs. It retains the exact upstream source and build recipe. Choose
+a new prefix rather than overwriting an existing installation. In particular,
+the Homebrew ARM FFTW 3.3.11 bottle does not enable NEON; its presence alone
+does not establish an optimized FFTW build. Official releases build from this
+recipe and include the corresponding FFTW source beside their binary assets.
+
 ### Install a stable release
 
 Choose the version you want and run the installer published with that release:

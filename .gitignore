@@ -1,6 +1,7 @@
 target/
 target-clippy/
 dist/
+.native/
 site/
 .DS_Store
 .obsidian/

@@ -15,8 +15,7 @@ fn main() {
     for library in ["fftw3f_threads", "fftw3_threads", "fftw3f", "fftw3"] {
         println!("cargo:rustc-link-lib=static={library}");
     }
-    #[cfg(target_os = "linux")]
-    {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
         println!("cargo:rustc-link-lib=m");
         println!("cargo:rustc-link-lib=pthread");
     }

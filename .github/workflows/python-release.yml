@@ -42,15 +42,19 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install host FFTW development libraries
+      - name: Build SIMD FFTW from pinned source
         shell: bash
         run: |
+          set -euo pipefail
           if [[ "${{ runner.os }}" == "macOS" ]]; then
-            brew install fftw pkg-config
+            brew install pkg-config
           else
             sudo apt-get update
-            sudo apt-get install -y libfftw3-dev pkg-config
+            sudo apt-get install -y build-essential curl pkg-config
           fi
+          prefix="$GITHUB_WORKSPACE/.native/fftw-host"
+          bash scripts/build-fftw.sh "$prefix"
+          echo "PKG_CONFIG_PATH=$prefix/lib/pkgconfig" >> "$GITHUB_ENV"
 
       - name: Build wheels
         uses: PyO3/maturin-action@v1
@@ -60,11 +64,8 @@ jobs:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
           before-script-linux: |
-            if command -v dnf >/dev/null 2>&1; then
-              dnf install -y fftw-devel fftw-static pkgconf-pkg-config
-            else
-              yum install -y fftw-devel fftw-static pkgconfig
-            fi
+            bash scripts/build-fftw.sh "$(pwd)/.native/fftw-manylinux"
+            export PKG_CONFIG_PATH="$(pwd)/.native/fftw-manylinux/lib/pkgconfig"
           args: --release --manifest-path crates/casars-python/Cargo.toml --interpreter 3.10 3.11 3.12 --out dist
 
       - name: Build suite binaries
@@ -114,6 +115,12 @@ jobs:
             --bin-dir target/release \
             --wheel-dir dist \
             --out-dir dist
+
+      - name: Include corresponding FFTW source and build recipe
+        shell: bash
+        run: |
+          cp .native/fftw-host/source/fftw-3.3.11.tar.gz dist/
+          cp scripts/build-fftw.sh dist/build-fftw.sh
 
       - name: Upload release assets
         uses: actions/upload-artifact@v4
