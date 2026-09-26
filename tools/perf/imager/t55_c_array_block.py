@@ -22,6 +22,13 @@ PIXELS = 1024
 CELL_ARCSEC = 0.06
 
 
+def expected_rows(args):
+    rows = args.expected_rows
+    if rows not in (168_480, 4_094_064):
+        raise ValueError("expected rows must name the turnaround or full C-array input")
+    return rows
+
+
 def selection(args):
     first, count = args.first_channel, args.channels
     assert first >= 0 and count > 0 and first + count <= 512
@@ -120,6 +127,7 @@ def mask(args):
 
 def native(args):
     first, count, _, niter = selection(args)
+    rows = expected_rows(args)
     assert args.workers in (1, 4) and args.binary.is_file()
     name = native_name(args)
     output = args.outputs / name
@@ -127,6 +135,7 @@ def native(args):
     environment = dict(
         os.environ,
         CASA_RS_C_ARRAY_MS=str(args.native_input),
+        CASA_RS_C_ARRAY_EXPECTED_ROWS=str(rows),
         CASA_RS_C_ARRAY_OUTPUT=str(output),
         CASA_RS_C_ARRAY_CHANNEL=str(first),
         CASA_RS_C_ARRAY_OUTPUT_CHANNELS=str(count),
@@ -148,6 +157,7 @@ def native(args):
                        check=True)
     summary = json.loads((output / "summary.json").read_text())
     assert summary["workers"] == args.workers
+    assert summary["rows"] == rows
     assert summary["output_channels"] == count
     assert summary["execution_route"] == "native-streaming-cube"
     save(args.records / f"app-{name}-result.json", summary)
@@ -195,6 +205,8 @@ def main():
     parser.add_argument("--first-channel", type=int, default=240)
     parser.add_argument("--channels", type=int, default=32)
     parser.add_argument("--run-id", default="")
+    parser.add_argument("--expected-rows", type=int, default=168_480,
+                        choices=(168_480, 4_094_064))
     args = parser.parse_args()
     if args.run_id and not re.fullmatch(r"[a-z0-9][a-z0-9-]*", args.run_id):
         raise ValueError("run ID must be a simple durable label")

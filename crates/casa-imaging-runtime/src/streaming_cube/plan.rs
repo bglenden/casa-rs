@@ -197,19 +197,33 @@ impl NativePhasePlan {
         let preparation = shared_bytes
             .checked_add(store.writer_residency()?)
             .ok_or_else(overflow)?;
-        // Full-channel decoded slots conservatively bound any row-dependent
-        // window. No band support needs to be guessed before source traversal.
-        let (source, slot) = NativeSource::memory(store, 0..store.channels)?;
-        let wave_shared = (source_slots as u64)
-            .checked_mul(slot)
-            .and_then(|bytes| bytes.checked_add(source))
-            .and_then(|bytes| bytes.checked_add(shared_bytes))
+        // Initial support is unknown until traversal. Project the executor's
+        // reader cache and one decoded block per active worker directly; the
+        // old source-slot charge did not bound both of these live owners.
+        let imported_source = if imported {
+            let (source, slot) = NativeSource::memory(store, 0..store.channels)?;
+            (source_slots as u64)
+                .checked_mul(slot)
+                .and_then(|bytes| bytes.checked_add(source))
+                .ok_or_else(overflow)?
+        } else {
+            0
+        };
+        let wave_shared = shared_bytes
+            .checked_add(imported_source)
             // WavePlan also charges the selected plans' owned support. Include
             // its eventual growth before the source pass discovers that support.
             .and_then(|bytes| bytes.checked_add(metadata))
             .ok_or_else(overflow)?;
-        let all =
-            WavePlan::project(store, bands.iter(), workers, source_slots, wave_shared)?.peak_bytes;
+        let all = WavePlan::project(
+            store,
+            bands.iter(),
+            workers,
+            source_slots,
+            wave_shared,
+            imported,
+        )?
+        .peak_bytes;
         let mut minimum = preparation;
         for band in bands {
             minimum = minimum.max(
@@ -219,6 +233,7 @@ impl NativePhasePlan {
                     workers,
                     source_slots,
                     wave_shared,
+                    imported,
                 )?
                 .peak_bytes,
             );
@@ -226,8 +241,15 @@ impl NativePhasePlan {
         let mut worker_wave_bytes = minimum;
         for wave in bands.windows(workers.min(bands.len())) {
             worker_wave_bytes = worker_wave_bytes.max(
-                WavePlan::project(store, wave.iter(), workers, source_slots, wave_shared)?
-                    .peak_bytes,
+                WavePlan::project(
+                    store,
+                    wave.iter(),
+                    workers,
+                    source_slots,
+                    wave_shared,
+                    imported,
+                )?
+                .peak_bytes,
             );
         }
         let available = authority

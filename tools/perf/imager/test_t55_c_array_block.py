@@ -5,7 +5,18 @@ from types import SimpleNamespace
 
 import pytest
 
-from t55_c_array_block import selection
+from t55_c_array_block import expected_rows, selection
+
+
+@pytest.mark.parametrize("rows", [168_480, 4_094_064])
+def test_expected_rows_preserves_exact_input_extent(rows):
+    assert expected_rows(SimpleNamespace(expected_rows=rows)) == rows
+
+
+@pytest.mark.parametrize("rows", [0, 42_120, 4_094_063])
+def test_unrecognized_input_extent_is_rejected(rows):
+    with pytest.raises(ValueError):
+        expected_rows(SimpleNamespace(expected_rows=rows))
 
 
 def test_middle_block_keeps_one_input_halo_channel():

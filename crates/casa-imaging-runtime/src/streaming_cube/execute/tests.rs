@@ -668,6 +668,45 @@ fn native_read_failure_joins_complete_band_jobs_without_returning_products() {
 }
 
 #[test]
+fn initial_admission_bounds_cache_cliff_after_source_support_discovery() {
+    let (_directory, _store, observed, problem) = input(1, false);
+    let unknown: Vec<_> = (0..4)
+        .map(|channel| {
+            BandPlan::new(
+                &SpectralOperatorSpecification::for_slab(&problem, channel, 1).unwrap(),
+                SpectralOperatorPass::InitialMajor,
+            )
+            .unwrap()
+        })
+        .collect();
+    // Project a large row extent without creating a large fixture on disk.
+    // Its per-band working set exceeds the preparation-sized reader cache.
+    let store = StorePlan::for_source_buffer(4_094_064, 6, 2, 1, 64 << 20).unwrap();
+    let metadata: u64 = unknown
+        .iter()
+        .map(|band| band.preparation_metadata_bytes().unwrap() as u64)
+        .sum();
+    for workers in [1, 2, 4] {
+        let before = WavePlan::project(store, unknown.iter(), workers, 1, metadata, false).unwrap();
+        let after = WavePlan::project(store, observed.iter(), workers, 1, 0, true).unwrap();
+        assert!(before.peak_bytes >= after.peak_bytes);
+        assert!(before.cache_slots >= after.cache_slots);
+        assert_eq!(
+            WavePlan::prefix(store, &observed, workers, 1, 0, before.peak_bytes).unwrap(),
+            observed.len()
+        );
+    }
+    let (source, slot) = NativeSource::memory(store, 0..store.channels).unwrap();
+    let old =
+        WavePlan::project(store, unknown.iter(), 1, 1, metadata + source + slot, true).unwrap();
+    let needed = WavePlan::project(store, observed[..1].iter(), 1, 1, 0, true).unwrap();
+    assert!(
+        old.peak_bytes < needed.peak_bytes,
+        "fixture must expose the previous under-admission"
+    );
+}
+
+#[test]
 fn wave_admission_counts_only_the_bounded_completed_wave() {
     let (_dir, store, bands, _) = input(1, false);
     let jobs = initial_jobs(&bands);
@@ -732,10 +771,16 @@ fn initial_wave_selection_uses_shape_budget_and_drains_before_next_wave() {
     for workers in [1, 2, 4] {
         for slots in [1, 2] {
             for count in 1..=bands.len() {
-                let budget =
-                    WavePlan::project(store.plan, bands[..count].iter(), workers, slots, 4096)
-                        .unwrap()
-                        .peak_bytes;
+                let budget = WavePlan::project(
+                    store.plan,
+                    bands[..count].iter(),
+                    workers,
+                    slots,
+                    4096,
+                    true,
+                )
+                .unwrap()
+                .peak_bytes;
                 assert_eq!(
                     WavePlan::prefix(store.plan, &bands, workers, slots, 4096, budget,).unwrap(),
                     count
@@ -751,9 +796,16 @@ fn initial_wave_selection_uses_shape_budget_and_drains_before_next_wave() {
                 // spare capacity can shrink. Every later band must also fit.
                 let budget = bands.iter().fold(budget, |budget, band| {
                     budget.max(
-                        WavePlan::project(store.plan, std::iter::once(band), workers, slots, 4096)
-                            .unwrap()
-                            .peak_bytes,
+                        WavePlan::project(
+                            store.plan,
+                            std::iter::once(band),
+                            workers,
+                            slots,
+                            4096,
+                            true,
+                        )
+                        .unwrap()
+                        .peak_bytes,
                     )
                 });
                 let mut start = 0;

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Opt-in, matched CASA natural/Clark C-array streaming-cube diagnostic.
+//! Opt-in, matched CASA natural/Clark C-array streaming-cube validation.
 //! The caller supplies an isolated owner-initialized MS, existing CASA user mask,
 //! fresh durable product directory, and the sampled aggregate 16-GiB RSS guard.
 
@@ -25,6 +25,16 @@ fn contiguous_spectral_block() {
 fn run_c_array(block: bool) {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let input = PathBuf::from(std::env::var_os("CASA_RS_C_ARRAY_MS").expect("isolated MS"));
+    let expected_rows: usize = std::env::var("CASA_RS_C_ARRAY_EXPECTED_ROWS")
+        .map(|value| value.parse().expect("explicit C-array row count"))
+        .unwrap_or(168_480);
+    assert!([168_480, 4_094_064].contains(&expected_rows));
+    if expected_rows == 4_094_064 {
+        assert!(
+            block,
+            "full input requires the channel-block application path"
+        );
+    }
     let root = PathBuf::from(std::env::var_os("CASA_RS_C_ARRAY_OUTPUT").expect("fresh output"));
     let mask = PathBuf::from(std::env::var_os("CASA_RS_C_ARRAY_MASK").expect("CASA user mask"));
     let channel: i32 = std::env::var("CASA_RS_C_ARRAY_CHANNEL")
@@ -48,6 +58,11 @@ fn run_c_array(block: bool) {
         1
     };
     let dirty_only = std::env::var_os("CASA_RS_C_ARRAY_DIRTY_ONLY").is_some();
+    let image_size = std::env::var("CASA_RS_C_ARRAY_IMAGE_SIZE")
+        .map(|value| value.parse::<usize>().expect("image size"))
+        .unwrap_or(1024);
+    assert!([1024, 2048].contains(&image_size));
+    assert!(block || image_size == 1024);
     let iterations = std::env::var("CASA_RS_C_ARRAY_NITER")
         .map(|value| value.parse::<usize>().expect("iteration limit"))
         .unwrap_or(20_000 * output_channels);
@@ -56,12 +71,20 @@ fn run_c_array(block: bool) {
     if !block {
         assert!([0, 256, 511].contains(&channel));
     }
+    let maximum_major_cycles = std::env::var("CASA_RS_C_ARRAY_MAX_MAJOR_CYCLES")
+        .ok()
+        .map(|value| value.parse::<usize>().expect("major-cycle limit"));
+    assert!(maximum_major_cycles != Some(0));
     let input_start = channel.min(510);
     let input_end = (channel + i32::try_from(output_channels).unwrap()).min(511);
     let input_channels = usize::try_from(input_end - input_start + 1).unwrap();
     let frequency_hz = 44e9 + f64::from(channel) * 2e6;
     let ms = MeasurementSet::open(&input).expect("C-array turnaround MS");
-    assert_eq!(ms.row_count(), 168_480);
+    assert_eq!(
+        ms.row_count(),
+        expected_rows,
+        "all selected input rows required"
+    );
     let spectral = ms.spectral_window().expect("spectral metadata");
     assert_eq!(spectral.num_chan(0).unwrap(), 512);
     assert_eq!(
@@ -76,7 +99,7 @@ fn run_c_array(block: bool) {
     fs::create_dir(&root).expect("fresh retained output directory");
     let prefix = root.join("image");
     let mut imaging = request(input, prefix.clone(), ContinuumAlgorithm::Clark);
-    imaging.image_size = 1024;
+    imaging.image_size = image_size;
     imaging.cell_arcsec = 0.06;
     imaging.data_description = None;
     imaging.spectral_window = Some(format!("0:{input_start}~{input_end}"));
@@ -101,7 +124,7 @@ fn run_c_array(block: bool) {
     imaging.weighting = ContinuumWeighting::Natural;
     imaging.iterations = if dirty_only { 0 } else { iterations };
     imaging.cycle_iterations = 1000;
-    imaging.maximum_major_cycles = None;
+    imaging.maximum_major_cycles = maximum_major_cycles;
     imaging.gain = 0.1;
     imaging.threshold_jy = 0.0005;
     imaging.psf_cutoff = 0.35;
@@ -227,18 +250,19 @@ fn run_c_array(block: bool) {
         PagedImage::<f32>::open(root.join("image.image"))
             .unwrap()
             .shape(),
-        &[1024, 1024, 1, output_channels]
+        &[image_size, image_size, 1, output_channels]
     );
     let summary = serde_json::json!({
-        "channel": channel, "frequency_hz": frequency_hz, "rows": 168_480,
+        "channel": channel, "frequency_hz": frequency_hz, "rows": expected_rows,
         "seconds": seconds, "execution_route": route, "workers": workers,
         "input_start": input_start, "input_channels": input_channels,
         "output_channels": output_channels, "display_plane": 0,
         "weighting": "natural", "deconvolver": "clark", "interpolation": "linear",
         "worker_evidence": worker_evidence,
-        "native_memory_bytes": 16_u64 << 30, "image_size": 1024, "cell_arcsec": 0.06,
+        "native_memory_bytes": 16_u64 << 30, "image_size": image_size, "cell_arcsec": 0.06,
         "iterations": result.actual_minor_iterations, "reported_iterations": result.minor_iterations,
         "dirty_only": dirty_only,
+        "maximum_major_cycles": maximum_major_cycles,
         "majors": output.major_cycle_count, "stop_reason": format!("{:?}", result.minor_stop_reason),
         "prefix": prefix, "products": result.product_names,
         "timing_boundary": "execute_continuum from selected input preparation through publication; excludes input copy and comparison"

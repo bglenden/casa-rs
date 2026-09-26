@@ -83,7 +83,14 @@ impl WavePlan {
         shared_bytes: u64,
         budget: u64,
     ) -> io::Result<Self> {
-        let plan = Self::project(store.plan, jobs.iter(), workers, source_slots, shared_bytes)?;
+        let plan = Self::project(
+            store.plan,
+            jobs.iter(),
+            workers,
+            source_slots,
+            shared_bytes,
+            true,
+        )?;
         if plan.peak_bytes > budget {
             return Err(io::Error::other("cube band wave exceeds its memory budget"));
         }
@@ -112,6 +119,7 @@ impl WavePlan {
                 workers,
                 source_slots,
                 shared_bytes,
+                true,
             )?;
             if plan.peak_bytes <= budget {
                 low = count;
@@ -131,6 +139,7 @@ impl WavePlan {
         workers: usize,
         source_slots: usize,
         shared_bytes: u64,
+        source_support_known: bool,
     ) -> io::Result<Self> {
         let count = jobs.len();
         if count == 0 || workers == 0 || !(1..=2).contains(&source_slots) {
@@ -147,7 +156,14 @@ impl WavePlan {
                 return Err(io::Error::other("nonadjacent cube band wave"));
             }
             previous_end = Some(band.core().end);
-            let native = band.native_range();
+            // Before discovery, an empty range means unknown, not no input.
+            // Bound both the reader cache and each active worker's decoded
+            // block using the full selected window, without allocating it.
+            let native = if source_support_known {
+                band.native_range()
+            } else {
+                0..store.channels
+            };
             has_source |= !native.is_empty();
             let input = if native.is_empty() {
                 0
@@ -239,6 +255,12 @@ pub(super) fn execute(
     sink: &mut (dyn FnMut(BandResult) -> io::Result<()> + Send),
 ) -> io::Result<WaveResult> {
     let plan = WavePlan::new(store, &jobs, workers, source_slots, shared_bytes, budget)?;
+    if std::env::var_os("CASA_RS_PROFILE_CUBE").is_some() {
+        eprintln!(
+            "cube_profile_store {:?} cache_slots={} wave_peak_bytes={} budget={}",
+            store.plan, plan.cache_slots, plan.peak_bytes, budget,
+        );
+    }
     let kernel = BandKernel {
         jobs: jobs
             .into_iter()
