@@ -827,13 +827,6 @@ struct CasarsMacApp: App {
                 value: readAheadBlocks
             )
         }
-        if let fftBackend = argumentValue(after: "--imaging-fft-backend", in: arguments) {
-            store.setGenericTaskValue(
-                taskID: "imager",
-                argumentID: "imaging_fft_backend",
-                value: fftBackend
-            )
-        }
         if let interpolation = argumentValue(after: "--interpolation", in: arguments)
             ?? argumentValue(after: "--cube-interp", in: arguments) {
             store.setGenericTaskValue(taskID: "imager", argumentID: "interpolation", value: interpolation)

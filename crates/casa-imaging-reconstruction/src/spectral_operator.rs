@@ -15,6 +15,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use casa_fft::{Fft2, FftScalar};
 use casa_imaging_model::{
     CompiledGeometryId, CompiledProblem, CompiledProblemId, ContinuumTransformGenerationId,
     CorrelationType, FacetWindow, FiniteValuePolicy, ImageDomainRole, InstrumentModel,
@@ -25,9 +26,8 @@ use casa_imaging_model::{
     SelectedVisibilitySample, SpectralKernel, SpectralWcs, SpectralWindowCoordinateCatalog,
     UvwCoordinateLaw, WProjectionContract, WeightingCommitmentId,
 };
-use ndarray::{Array2, ArrayBase, ArrayView2, Axis, Data, DataMut, Ix2};
+use ndarray::{Array2, ArrayBase, ArrayView2, Data, DataMut, Ix2};
 use num_complex::{Complex, Complex32, Complex64};
-use rustfft::{Fft, FftNum, FftPlanner};
 use sha2::{Digest, Sha256};
 use smallvec::SmallVec;
 use thiserror::Error;
@@ -210,15 +210,10 @@ fn log_imaging_stage_timing(
         );
     }
 }
-// The pinned RustFFT mixed-radix planner stores at most one length-sized table
-// per decomposition level. There are fewer than usize::BITS levels, two
-// directions, and small node headers. Charging four complex values per level
-// gives a hard, architecture-independent upper bound while the library keeps
-// its plan internals opaque.
-const FFT_PLAN_COMPLEX_BOUND_PER_AXIS: usize = 4 * usize::BITS as usize;
-// One recipe plus both direction-specific cache entries per decomposition
-// point, including hash-table control storage and Arc metadata.
-pub(crate) const FFT_PLANNING_WORD_BOUND_PER_POINT: usize = 16;
+// FFTW's native plan internals are opaque. Admission charges a full-grid
+// planning buffer and a full-grid native plan allowance; sampled aggregate RSS
+// remains the guard for native allocations.
+const FFTW_PLANNING_SLACK_VALUES: usize = 64;
 
 /// One already-weighted spectral contribution accepted by the T19 algorithm.
 ///
@@ -2330,22 +2325,9 @@ pub fn spectral_operator_workload(
                     .checked_add(total)
                     .ok_or(SpectralOperatorError::ResidencyOverflow)
             })?;
-    let fft_planning_words = specification
-        .charts
-        .iter()
-        .try_fold(0_usize, |total, chart| {
-            chart
-                .geometry
-                .grid_shape
-                .into_iter()
-                .try_fold(0_usize, |domain_total, length| {
-                    length
-                        .checked_mul(FFT_PLANNING_WORD_BOUND_PER_POINT)
-                        .and_then(|values| domain_total.checked_add(values))
-                })
-                .and_then(|values| total.checked_add(values))
-                .ok_or(SpectralOperatorError::ResidencyOverflow)
-        })?;
+    // The disposable FFTW planning plane and native plan allowance are already
+    // charged in fft_resident_complex_values; no second RustFFT planner charge.
+    let fft_planning_words = 0;
     let forward_complex_values = specification
         .charts
         .iter()
@@ -2730,31 +2712,18 @@ fn project_initial_phase_residency(
 }
 
 pub(crate) fn fft_planning_words_for_shape(
-    shape: [usize; 2],
+    _shape: [usize; 2],
 ) -> Result<usize, SpectralOperatorError> {
-    shape.into_iter().try_fold(0_usize, |total, length| {
-        length
-            .checked_mul(FFT_PLANNING_WORD_BOUND_PER_POINT)
-            .and_then(|values| total.checked_add(values))
-            .ok_or(SpectralOperatorError::ResidencyOverflow)
-    })
+    Ok(0)
 }
 
 pub(crate) fn fft_resident_complex_values_for_shape(
     shape: [usize; 2],
 ) -> Result<usize, SpectralOperatorError> {
-    let max_axis = shape.into_iter().max().unwrap_or(0);
-    let opaque_plans = shape
-        .into_iter()
-        .try_fold(0_usize, |total, length| {
-            length
-                .checked_mul(FFT_PLAN_COMPLEX_BOUND_PER_AXIS)
-                .and_then(|values| total.checked_add(values))
-        })
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    max_axis
-        .checked_mul(FFT_PLAN_COMPLEX_BOUND_PER_AXIS + 1)
-        .and_then(|workspace| opaque_plans.checked_add(workspace))
+    shape[0]
+        .checked_mul(shape[1])
+        .and_then(|values| values.checked_mul(2))
+        .and_then(|values| values.checked_add(FFTW_PLANNING_SLACK_VALUES))
         .ok_or(SpectralOperatorError::ResidencyOverflow)
 }
 
@@ -11940,58 +11909,27 @@ fn convolution_sinc(index: usize, size: usize, oversampling: usize) -> f64 {
 }
 
 #[doc(hidden)]
-pub struct PreparedFft<T: FftNum = f64> {
-    forward: [Arc<dyn Fft<T>>; 2],
-    inverse: [Arc<dyn Fft<T>>; 2],
-    lane: Vec<Complex<T>>,
-    scratch: Vec<Complex<T>>,
+pub struct PreparedFft<T: FftScalar = f64> {
+    fft: Fft2<T>,
+    column_major_fft: Option<Fft2<T>>,
 }
 
-impl<T: FftNum> PreparedFft<T> {
+impl<T: FftScalar> PreparedFft<T> {
     pub(crate) fn shape(&self) -> [usize; 2] {
-        [self.forward[0].len(), self.forward[1].len()]
+        self.fft.shape()
     }
 
     pub(crate) fn new(
         shape: [usize; 2],
         reserved_complex_values: usize,
     ) -> Result<Self, SpectralOperatorError> {
-        let mut planner = FftPlanner::<T>::new();
-        let forward = [
-            planner.plan_fft_forward(shape[0]),
-            planner.plan_fft_forward(shape[1]),
-        ];
-        let inverse = [
-            planner.plan_fft_inverse(shape[0]),
-            planner.plan_fft_inverse(shape[1]),
-        ];
-        let lane_values = shape.into_iter().max().unwrap_or(0);
-        let scratch_values = forward
-            .iter()
-            .chain(&inverse)
-            .map(|fft| fft.get_inplace_scratch_len())
-            .max()
-            .unwrap_or(0);
-        let opaque_plan_values = shape
-            .into_iter()
-            .try_fold(0_usize, |total, length| {
-                length
-                    .checked_mul(FFT_PLAN_COMPLEX_BOUND_PER_AXIS)
-                    .and_then(|values| total.checked_add(values))
-            })
-            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-        let required = lane_values
-            .checked_add(scratch_values)
-            .and_then(|values| values.checked_add(opaque_plan_values))
-            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+        let required = fft_resident_complex_values_for_shape(shape)?;
         if required > reserved_complex_values {
             return Err(SpectralOperatorError::ResidencyOverflow);
         }
         Ok(Self {
-            forward,
-            inverse,
-            lane: vec![Complex::new(T::zero(), T::zero()); lane_values],
-            scratch: vec![Complex::new(T::zero(), T::zero()); scratch_values],
+            fft: Fft2::new(shape).map_err(|_| SpectralOperatorError::ResidencyOverflow)?,
+            column_major_fft: None,
         })
     }
 
@@ -12010,41 +11948,28 @@ impl<T: FftNum> PreparedFft<T> {
         data: &mut ArrayBase<S, Ix2>,
         inverse: bool,
     ) {
-        for axis in 0..2 {
-            let fft = if inverse {
-                &self.inverse[axis]
-            } else {
-                &self.forward[axis]
-            };
-            transform_axis(data, Axis(axis), fft, &mut self.lane, &mut self.scratch);
-        }
+        let shape = [data.shape()[0], data.shape()[1]];
+        assert_eq!(shape, self.fft.shape(), "FFTW plane shape mismatch");
+        let column_major = data.strides() == [1, shape[0] as isize];
+        let fft = if column_major && shape[0] != shape[1] {
+            self.column_major_fft.get_or_insert_with(|| {
+                Fft2::new([shape[1], shape[0]]).expect("valid column-major FFT shape")
+            })
+        } else {
+            &mut self.fft
+        };
+        fft.transform(
+            data.as_slice_memory_order_mut()
+                .expect("FFTW plane must be contiguous"),
+            inverse,
+        )
+        .expect("FFTW plan and plane must match");
     }
 }
 
-impl<T: FftNum> fmt::Debug for PreparedFft<T> {
+impl<T: FftScalar> fmt::Debug for PreparedFft<T> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("PreparedFft")
-    }
-}
-
-fn transform_axis<T: FftNum, S: DataMut<Elem = Complex<T>>>(
-    data: &mut ArrayBase<S, Ix2>,
-    axis: Axis,
-    fft: &Arc<dyn Fft<T>>,
-    lane_workspace: &mut [Complex<T>],
-    scratch_workspace: &mut [Complex<T>],
-) {
-    let length = data.len_of(axis);
-    let values = &mut lane_workspace[..length];
-    let scratch = &mut scratch_workspace[..fft.get_inplace_scratch_len()];
-    for mut lane in data.lanes_mut(axis) {
-        for (target, value) in values.iter_mut().zip(lane.iter()) {
-            *target = *value;
-        }
-        fft.process_with_scratch(values, scratch);
-        for (target, value) in lane.iter_mut().zip(values.iter()) {
-            *target = *value;
-        }
     }
 }
 
@@ -12620,6 +12545,33 @@ mod tests {
     }
 
     #[test]
+    fn rectangular_fft_agrees_for_row_and_column_major_planes() {
+        use ndarray::ShapeBuilder;
+
+        let values = |(row, column): (usize, usize)| {
+            Complex64::new(
+                (row * 7 + column) as f64 / 11.0,
+                (row + column) as f64 / 5.0,
+            )
+        };
+        let mut row_major = Array2::from_shape_fn((3, 5), values);
+        let mut column_major = Array2::from_shape_fn((3, 5).f(), values);
+        let reserved = super::fft_resident_complex_values_for_shape([3, 5]).unwrap();
+        let mut row_fft = PreparedFft::new([3, 5], reserved).unwrap();
+        let mut column_fft = PreparedFft::new([3, 5], reserved).unwrap();
+        row_fft.transform_unshifted(&mut row_major, false);
+        column_fft.transform_unshifted(&mut column_major, false);
+        for (row, column) in row_major.iter().zip(column_major.iter()) {
+            assert!((*row - *column).norm() < 1e-11);
+        }
+        row_fft.transform_unshifted(&mut row_major, true);
+        column_fft.transform_unshifted(&mut column_major, true);
+        for (row, column) in row_major.iter().zip(column_major.iter()) {
+            assert!((*row - *column).norm() < 1e-10);
+        }
+    }
+
+    #[test]
     fn direction_dependent_geometry_uses_the_unpadded_image_grid() {
         let direction = geometry().direction;
         let standard =
@@ -13042,7 +12994,7 @@ mod tests {
             grid_complex_values: grid_cells * (4 * coefficient_terms + 2 * normal_moments),
             convolution_f64_values: 727,
             fft_resident_complex_values: 7_690,
-            fft_planning_words: 320,
+            fft_planning_words: 0,
             forward_complex_values: grid_cells * resident_model_terms + 3,
             primitive_complex_values: image_cells * (3 * coefficient_terms + normal_moments),
             primitive_f64_values: image_cells * normal_moments + 2 * normal_moments,
@@ -13441,7 +13393,7 @@ mod tests {
             grid_complex_values: cells * (4 * coefficient_terms + 2 * normal_moments),
             convolution_f64_values: 727,
             fft_resident_complex_values: 7_690,
-            fft_planning_words: 320,
+            fft_planning_words: 0,
             forward_complex_values: cells * resident_model_terms + 4,
             primitive_complex_values: image_cells * (3 * coefficient_terms + normal_moments),
             primitive_f64_values: image_cells * normal_moments + 2 * normal_moments,
@@ -14872,7 +14824,7 @@ mod tests {
         assert_eq!(workload.grid_complex_values(), 6 * 10 * 10);
         assert_eq!(workload.convolution_f64_values(), 101 * 7 + 20);
         assert!(workload.fft_resident_complex_values() >= 4 * 10);
-        assert_eq!(workload.fft_planning_words(), 16 * 20);
+        assert_eq!(workload.fft_planning_words(), 0);
         assert_eq!(workload.forward_complex_values(), 10 * 10 + 3);
         assert_eq!(workload.primitive_complex_values(), 4 * 8 * 8);
         assert_eq!(workload.primitive_f64_values(), 8 * 8 + 2);

@@ -621,9 +621,6 @@ def build_plan(
         "IMAGER_BENCH_IMAGING_FFT_PRECISION": str_value(
             imaging, "imaging_fft_precision", "auto"
         ),
-        "IMAGER_BENCH_IMAGING_FFT_BACKEND": str_value(
-            imaging, "imaging_fft_backend", "auto"
-        ),
         "IMAGER_BENCH_HOGBOM_ITERATION_MODE": hogbom_iteration_mode,
         "IMAGER_BENCH_NTERMS": str(int_value(imaging, "nterms", 1)),
         "IMAGER_BENCH_SCALES": scales_value(imaging),
@@ -786,7 +783,6 @@ def build_plan(
             "imaging_fft_precision": str_value(
                 imaging, "imaging_fft_precision", "auto"
             ),
-            "imaging_fft_backend": str_value(imaging, "imaging_fft_backend", "auto"),
             "imaging_read_ahead_blocks": (
                 int_value(imaging, "imaging_read_ahead_blocks", 0)
                 if imaging.get("imaging_read_ahead_blocks") is not None

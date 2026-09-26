@@ -386,8 +386,8 @@ mod tests {
     use crate::{
         AutoMultiThresholdConfig, AwProjectControls, AwProjectNormalization, CleanMaskMode,
         CleanStopReason, CliConfig, CubeAxisConfig, Deconvolver, HogbomIterationMode,
-        ImagingFftBackendPolicy, ImagingFftPrecisionPolicy, RestoringBeamMode, RunSummary,
-        SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy, WTermMode, WeightingMode,
+        ImagingFftPrecisionPolicy, RestoringBeamMode, RunSummary, SaveModelMode, SpectralMode,
+        StandardMfsAccelerationPolicy, WTermMode, WeightingMode,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -474,7 +474,6 @@ mod tests {
             imaging_prepare_workers: None,
             imaging_read_ahead_blocks: None,
             imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
-            imaging_fft_backend: ImagingFftBackendPolicy::Auto,
             write_preview_pngs: true,
         }
     }
@@ -674,7 +673,6 @@ mod tests {
                 imaging_prepare_workers: None,
                 imaging_read_ahead_blocks: None,
                 imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
-                imaging_fft_backend: ImagingFftBackendPolicy::Auto,
                 write_preview_pngs: false,
                 progress: None,
             },

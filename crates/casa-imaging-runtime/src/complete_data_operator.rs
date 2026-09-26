@@ -2548,13 +2548,13 @@ impl CompleteDataResidency {
         self.convolution_cache_bytes
     }
 
-    /// Bytes retained by reusable FFT plans, lane, and library scratch.
+    /// Bytes reserved for FFTW plans and disposable planning scratch.
     #[must_use]
     pub const fn fft_resident_bytes(self) -> usize {
         self.fft_resident_bytes
     }
 
-    /// Transient bytes for RustFFT planner recipes and cache metadata.
+    /// Additional planner bytes beyond the FFTW reservation (normally zero).
     #[must_use]
     pub const fn fft_planning_bytes(self) -> usize {
         self.fft_planning_bytes
@@ -3427,7 +3427,7 @@ impl CompleteDataPlanFragment {
     ) -> Result<(), CompleteDataPlanError> {
         let amount = u64::try_from(self.residency.fft_planning_bytes())
             .map_err(|_| CompleteDataPlanError::ResidencyOverflow)?;
-        if context
+        let matching_fft_claims = context
             .resources()
             .iter()
             .filter(|capability| {
@@ -3436,9 +3436,8 @@ impl CompleteDataPlanFragment {
                     && capability.amount() == amount
                     && capability.lifetime() == &ClaimLifetime::Work
             })
-            .count()
-            != 1
-        {
+            .count();
+        if matching_fft_claims != usize::from(amount != 0) {
             return Err(CompleteDataPlanError::MissingFftCapability);
         }
         let suffix = operator_allocation_suffix(self.workload, self.execution_role);
@@ -3582,6 +3581,18 @@ impl CompleteDataPlanFragment {
         let replay_fence = ClaimLifetime::through_fence(FenceKind::Io);
         let fft_planning_bytes = u64::try_from(self.residency.fft_planning_bytes())
             .map_err(|_| CompleteDataPlanError::ResidencyOverflow)?;
+        let mut preparation_claims = vec![ResourceClaim {
+            resource: LeaseResource::Workers,
+            amount: 1,
+            lifetime: ClaimLifetime::Work,
+        }];
+        if fft_planning_bytes != 0 {
+            preparation_claims.push(ResourceClaim {
+                resource: LeaseResource::RuntimeOverhead(crate::RuntimeOverheadKind::FftWorkspace),
+                amount: fft_planning_bytes,
+                lifetime: ClaimLifetime::Work,
+            });
+        }
         let mut nodes = base
             .execution_dag()
             .nodes()
@@ -3630,20 +3641,7 @@ impl CompleteDataPlanFragment {
             domain: WorkDomain::Cpu,
             implementation: replay.implementation.clone(),
             dependencies: replay.dependencies.clone(),
-            claims: vec![
-                ResourceClaim {
-                    resource: LeaseResource::Workers,
-                    amount: 1,
-                    lifetime: ClaimLifetime::Work,
-                },
-                ResourceClaim {
-                    resource: LeaseResource::RuntimeOverhead(
-                        crate::RuntimeOverheadKind::FftWorkspace,
-                    ),
-                    amount: fft_planning_bytes,
-                    lifetime: ClaimLifetime::Work,
-                },
-            ],
+            claims: preparation_claims,
             allocations: operator_specs
                 .iter()
                 .filter(|spec| spec.acquire_at == self.preparation_node)
@@ -4076,7 +4074,7 @@ impl CompleteDataPlanFragment {
             CompleteDataAllocation::new(
                 format!("spectral-operator-fft-state-{suffix}"),
                 residency.fft_resident_bytes(),
-                "spectral-operator-rustfft-plans-lane-and-scratch",
+                "spectral-operator-fftw-plans-and-planning-scratch",
                 InitializationPolicy::OverwriteBeforeRead,
                 self.preparation_node.clone(),
                 replay_done.clone(),

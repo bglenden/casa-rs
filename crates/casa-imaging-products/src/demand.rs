@@ -10,7 +10,6 @@ use casa_imaging_model::{
 };
 use casa_imaging_reconstruction::NormalStateCatalog;
 use num_complex::Complex64;
-use rustfft::FftPlanner;
 
 use crate::{
     ContinuumProductInputs, PlannedContinuumGeneration, ProductStoragePlan, ProductsError,
@@ -434,7 +433,7 @@ fn generic_scratch_bytes(
         scratch = scratch.max(checked_mul(plane, 2, "generic converted plane pair")?);
         if requires_restoration {
             // Restoration retains its restored result and normalized residual while
-            // a Gaussian kernel and one exact rustfft convolution workspace live.
+            // a Gaussian kernel and one FFTW convolution workspace live.
             scratch = scratch.max(checked_add(
                 checked_mul(plane, 3, "generic restoration planes")?,
                 fft_convolution_workspace_bytes(shape)?,
@@ -551,23 +550,15 @@ fn fft_convolution_workspace_bytes(shape: [usize; 2]) -> Result<u64, ProductsErr
         "FFT complex planes",
     )?;
     let output = bytes_for::<f32>(cells, "FFT output plane")?;
-    let mut planner = FftPlanner::<f64>::new();
-    let mut lane_values = 0usize;
-    for length in shape {
-        for plan in [
-            planner.plan_fft_forward(length),
-            planner.plan_fft_inverse(length),
-        ] {
-            lane_values = lane_values.max(
-                length
-                    .checked_add(plan.get_inplace_scratch_len())
-                    .ok_or(ProductsError::ResourceDemandOverflow("FFT lane scratch"))?,
-            );
-        }
-    }
+    let planning = cells
+        .checked_add(64)
+        .and_then(|values| values.checked_mul(size_of::<Complex64>()))
+        .and_then(|bytes| bytes.checked_add(cells.checked_mul(size_of::<usize>())?))
+        .ok_or(ProductsError::ResourceDemandOverflow("FFTW planning"))?;
     checked_add(
         checked_add(complex_planes, output, "FFT planes and output")?,
-        bytes_for::<Complex64>(lane_values, "FFT lane and scratch")?,
+        u64::try_from(planning)
+            .map_err(|_| ProductsError::ResourceDemandOverflow("FFTW planning"))?,
         "FFT convolution workspace",
     )
 }

@@ -7,7 +7,8 @@ Verification: just docs-check
 ![casa-rs observatory assistant header](branding/headers/casa-rs-header.png)
 
 `casa-rs` is an experiment/hobby project by Brian Glendenning (<i>brian@glendenning.net</i>), NRAO retiree. I
-am happy for people to experiment with it or use it under the LGPL license, but
+am happy for people to experiment with it or use the independently authored
+source under the LGPL license (the FFTW-linked distributions are GPLv3+), but
 there is no institutional support. I am also happy to answer questions about it.
 
 This is a from-scratch Rust experimental re-implementation of pieces of CASA
@@ -154,6 +155,11 @@ python3 --version
 ```
 
 The Python package currently supports Python 3.10 through 3.12.
+Source builds additionally require FFTW's single- and double-precision
+development libraries, their threaded/static archives, and `pkg-config`
+(`brew install fftw pkg-config` on macOS; `apt install libfftw3-dev pkg-config`
+on Debian/Ubuntu). The release bundles link FFTW into their imaging binaries;
+installing from a bundle does not require a local FFTW development package.
 
 ### Install a stable release
 
@@ -544,5 +550,8 @@ CI still runs the full-repo SPDX check as a backstop.
 
 ## License
 
-Licensed under the [GNU Lesser General Public License v3.0 or later](COPYING.LESSER)
-(SPDX: `LGPL-3.0-or-later`).
+Independently authored source is licensed under the [GNU Lesser General Public
+License v3.0 or later](COPYING.LESSER) (SPDX: `LGPL-3.0-or-later`). Imaging
+applications and Python extensions linked with FFTW are distributed as
+combined works under [GNU GPL v3.0 or later](COPYING). See
+[third-party notices](THIRD_PARTY_NOTICES.md) for FFTW's copyright and license.

@@ -162,14 +162,12 @@ mod tests {
         assert_eq!(default_for("chanchunks"), "none");
         assert_eq!(default_for("parallel"), "none");
         assert_eq!(default_for("imaging_read_ahead_blocks"), "none");
-        assert_eq!(default_for("imaging_fft_backend"), "rustfft");
         assert_eq!(default_for("imaging_memory_target_mb"), "none");
         assert_eq!(default_for("imaging_memory_pressure_policy"), "auto");
         for id in [
             "chanchunks",
             "parallel",
             "imaging_read_ahead_blocks",
-            "imaging_fft_backend",
             "imaging_memory_target_mb",
             "imaging_memory_pressure_policy",
         ] {
@@ -203,6 +201,13 @@ mod tests {
                 .iter()
                 .all(|argument| argument.id != "progress_detail"),
             "runtime telemetry controls must not enter parameter profiles"
+        );
+        assert!(
+            schema
+                .arguments
+                .iter()
+                .all(|argument| argument.id != "imaging_fft_backend"),
+            "FFTW is the only FFT implementation, not a task parameter"
         );
     }
 }

@@ -68,7 +68,6 @@
     "pblimit": 0.0001,
     "normtype": "flatnoise",
     "imaging_fft_precision": "auto",
-    "imaging_fft_backend": "rustfft",
     "write_pb": true,
     "pbcor": false,
     "restoration": true,

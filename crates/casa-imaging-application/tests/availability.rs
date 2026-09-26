@@ -49,11 +49,8 @@ fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
 #[test]
 fn installed_spectral_cycle_accepts_its_compiled_contract() {
     let problem = compile(standard_dirty_request()).expect("compile spectral cycle request");
-    require_installed_implementation(
-        &problem,
-        [TaskRequirement::SerialCpu, TaskRequirement::RustFft],
-    )
-    .expect("installed spectral cycle contract");
+    require_installed_implementation(&problem, [TaskRequirement::SerialCpu])
+        .expect("installed spectral cycle contract");
 }
 
 #[test]
@@ -61,11 +58,7 @@ fn installed_spectral_cycle_accepts_planned_multi_cpu_execution() {
     let problem = compile(standard_dirty_request()).expect("compile spectral cycle request");
     require_installed_implementation(
         &problem,
-        [
-            TaskRequirement::SerialCpu,
-            TaskRequirement::FixedTileCpu,
-            TaskRequirement::RustFft,
-        ],
+        [TaskRequirement::SerialCpu, TaskRequirement::FixedTileCpu],
     )
     .expect("installed spectral cycle supports planned multi-CPU execution");
 }
@@ -107,17 +100,11 @@ fn coupled_taylor_basis_rejects_non_stokes_i_polarization() {
 #[test]
 fn unavailable_task_requirements_are_exact_and_typed() {
     let problem = compile(standard_dirty_request()).expect("compile spectral cycle request");
-    let error = require_installed_implementation(
-        &problem,
-        [TaskRequirement::ExecutionAuto, TaskRequirement::FftAuto],
-    )
-    .expect_err("automatic backends have no installed implementation");
+    let error = require_installed_implementation(&problem, [TaskRequirement::ExecutionAuto])
+        .expect_err("automatic backends have no installed implementation");
     assert_eq!(
         error.unsupported(),
-        [
-            UnsupportedRequirement::Task(TaskRequirement::ExecutionAuto),
-            UnsupportedRequirement::Task(TaskRequirement::FftAuto),
-        ]
+        [UnsupportedRequirement::Task(TaskRequirement::ExecutionAuto),]
     );
 }
 

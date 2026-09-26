@@ -46,16 +46,6 @@ pub enum TaskRequirement {
     MetalRowRunGridder,
     /// Grouped Metal row-run gridding override.
     MetalRowRunGroupedGridder,
-    /// Automatic FFT selection.
-    FftAuto,
-    /// RustFFT override.
-    RustFft,
-    /// Accelerate FFT override.
-    Accelerate,
-    /// FFTW override.
-    Fftw,
-    /// Metal MPSGraph FFT override.
-    MetalMpsGraph,
     /// Non-Stokes-I or raw-correlation selection.
     PolarizationSelection,
     /// UV tapering.
@@ -103,7 +93,7 @@ pub enum TaskRequirement {
 impl TaskRequirement {
     /// Complete stable task-only capability catalog for the current application
     /// contract.
-    pub const ALL: [Self; 43] = [
+    pub const ALL: [Self; 38] = [
         Self::SpectralCube,
         Self::SpectralCubedata,
         Self::SpectralCubeSource,
@@ -121,11 +111,6 @@ impl TaskRequirement {
         Self::MetalGridder,
         Self::MetalRowRunGridder,
         Self::MetalRowRunGroupedGridder,
-        Self::FftAuto,
-        Self::RustFft,
-        Self::Accelerate,
-        Self::Fftw,
-        Self::MetalMpsGraph,
         Self::PolarizationSelection,
         Self::UvTaper,
         Self::FullSummary,
@@ -170,11 +155,6 @@ impl TaskRequirement {
             Self::MetalGridder => "metal_gridder",
             Self::MetalRowRunGridder => "metal_row_run_gridder",
             Self::MetalRowRunGroupedGridder => "metal_row_run_grouped_gridder",
-            Self::FftAuto => "fft_auto",
-            Self::RustFft => "rust_fft",
-            Self::Accelerate => "accelerate_fft",
-            Self::Fftw => "fftw",
-            Self::MetalMpsGraph => "metal_mps_graph",
             Self::PolarizationSelection => "polarization_selection",
             Self::UvTaper => "uv_taper",
             Self::FullSummary => "full_summary",
@@ -513,7 +493,6 @@ const fn supports_task(requirement: TaskRequirement) -> bool {
             | TaskRequirement::PerChannelWeightDensity
             | TaskRequirement::SerialCpu
             | TaskRequirement::FixedTileCpu
-            | TaskRequirement::RustFft
             | TaskRequirement::PreviewPng
     )
 }

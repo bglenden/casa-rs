@@ -11,11 +11,11 @@ publish = false
 workspace = true
 
 [dependencies]
+casa-fft = { path = "../casa-fft" }
 casa-imaging-model = { path = "../casa-imaging-model" }
 casa-imaging-reconstruction = { path = "../casa-imaging-reconstruction" }
 casa-numerics = { path = "../casa-numerics" }
 ndarray.workspace = true
 num-complex.workspace = true
-rustfft.workspace = true
 sha2 = "0.10"
 thiserror.workspace = true

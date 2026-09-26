@@ -193,33 +193,6 @@ pub enum ImagingFftPrecisionPolicy {
     F32,
 }
 
-/// Dirty/residual FFT backend request.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Default,
-    PartialEq,
-    Eq,
-    serde::Serialize,
-    serde::Deserialize,
-    schemars::JsonSchema,
-)]
-#[serde(rename_all = "kebab-case")]
-pub enum ImagingFftBackendPolicy {
-    /// Request automatic backend selection.
-    Auto,
-    /// Use RustFFT, the native portable default.
-    #[default]
-    RustFft,
-    /// Use Apple Accelerate.
-    Accelerate,
-    /// Use Metal MPSGraph.
-    MetalMpsGraph,
-    /// Use FFTW.
-    Fftw,
-}
-
 /// Explicit standard-MFS acceleration request.
 #[derive(
     Debug,
@@ -404,8 +377,6 @@ pub struct CliConfig {
     pub imaging_read_ahead_blocks: Option<usize>,
     /// FFT precision request.
     pub imaging_fft_precision: ImagingFftPrecisionPolicy,
-    /// FFT backend request.
-    pub imaging_fft_backend: ImagingFftBackendPolicy,
     /// Preview PNG toggle.
     pub write_preview_pngs: bool,
 }
@@ -700,9 +671,6 @@ impl CliConfig {
                     config.standard_mfs_grid_threads =
                         (threads != "auto").then(|| threads.to_string());
                 }
-                "--imaging-fft-backend" => {
-                    config.imaging_fft_backend = parse_fft_backend(value(1)?)?;
-                }
                 other => return Err(format!("unknown casars-imager option {other:?}")),
             }
             index += consumed;
@@ -811,7 +779,6 @@ impl CliConfig {
             imaging_prepare_workers: None,
             imaging_read_ahead_blocks: None,
             imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
-            imaging_fft_backend: ImagingFftBackendPolicy::RustFft,
             write_preview_pngs: false,
         }
     }
@@ -966,7 +933,6 @@ impl CliConfig {
         config.parallel = optional_bool(values, "parallel")?;
         validate_parallel_acceleration(config.parallel, config.standard_mfs_acceleration)?;
         config.imaging_read_ahead_blocks = optional_usize(values, "imaging_read_ahead_blocks")?;
-        config.imaging_fft_backend = parse_fft_backend(&text("imaging_fft_backend")?)?;
         config.uvrange = optional_text("uvrange")?;
         config.intent = optional_text("intent")?;
         if config.aw_project.is_some() {
@@ -1598,17 +1564,6 @@ fn parse_acceleration(value: &str) -> Result<StandardMfsAccelerationPolicy, Stri
         "multi-cpu" => Ok(StandardMfsAccelerationPolicy::MultiCpu),
         "metal" => Ok(StandardMfsAccelerationPolicy::Metal),
         _ => Err(format!("unsupported acceleration {value:?}")),
-    }
-}
-
-fn parse_fft_backend(value: &str) -> Result<ImagingFftBackendPolicy, String> {
-    match value {
-        "auto" => Ok(ImagingFftBackendPolicy::Auto),
-        "rustfft" | "rust-fft" => Ok(ImagingFftBackendPolicy::RustFft),
-        "accelerate" => Ok(ImagingFftBackendPolicy::Accelerate),
-        "metal-mpsgraph" => Ok(ImagingFftBackendPolicy::MetalMpsGraph),
-        "fftw" => Ok(ImagingFftBackendPolicy::Fftw),
-        _ => Err(format!("unsupported FFT backend {value:?}")),
     }
 }
 

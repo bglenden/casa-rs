@@ -267,10 +267,10 @@ Observed conclusions:
   once a kernel shape is credible.
   Citations: <https://developer.apple.com/documentation/xcode/capturing-a-metal-workload-in-xcode>,
   <https://developer.apple.com/documentation/xcode/metal-developer-workflows>
-- FFT options remain unsettled. CPU FFT can stay in `rustfft` or use Accelerate
-  vDSP through FFI for Apple-only experiments. GPU FFT should be evaluated
-  separately through MPSGraph FFT or a custom Metal FFT, because gridding
-  acceleration alone does not prove end-to-end imaging speedup.
+- Historical research note (superseded by the FFTW-only production migration):
+  CPU FFT options then included RustFFT and Accelerate vDSP. GPU FFT would need
+  separate MPSGraph/custom Metal evaluation; gridding acceleration alone does
+  not prove end-to-end imaging speedup. No alternate FFT backend is retained.
   Citations: <https://developer.apple.com/documentation/accelerate>,
   <https://developer.apple.com/documentation/metalperformanceshadersgraph/mpsgraphfftdescriptor>
 - Rust integration should prefer the current `objc2-metal` ecosystem. The

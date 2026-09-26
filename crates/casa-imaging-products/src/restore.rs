@@ -6,9 +6,9 @@
 //! and the image cell scale share one unit system, so a multi-pixel beam
 //! stays a multi-pixel kernel at any cell size.
 
-use ndarray::{Array2, Axis};
+use casa_fft::Fft2;
+use ndarray::Array2;
 use num_complex::Complex64;
-use rustfft::FftPlanner;
 
 use casa_imaging_model::ProductNormalization;
 
@@ -234,7 +234,7 @@ pub fn rescale_residual_to_beam(
 #[must_use]
 pub fn fft_convolve(plane: &[f32], kernel: &[f32], shape: [usize; 2]) -> Vec<f32> {
     let cells = shape[0] * shape[1];
-    let mut planner = FftPlanner::<f64>::new();
+    let mut fft = Fft2::<f64>::new(shape).expect("valid restoration FFT shape");
     let mut signal = Array2::<Complex64>::from_shape_vec(
         (shape[0], shape[1]),
         plane
@@ -254,46 +254,22 @@ pub fn fft_convolve(plane: &[f32], kernel: &[f32], shape: [usize; 2]) -> Vec<f32
 
     for data in [&mut signal, &mut response] {
         shift_even(data);
-        for axis in 0..2 {
-            let plan = planner.plan_fft_forward(data.len_of(Axis(axis)));
-            let scratch_len = plan.get_inplace_scratch_len();
-            let length = data.len_of(Axis(axis));
-            let mut lane = vec![Complex64::default(); length];
-            let mut scratch = vec![Complex64::default(); scratch_len];
-            for mut view in data.lanes_mut(Axis(axis)) {
-                lane.iter_mut()
-                    .zip(view.iter())
-                    .for_each(|(target, source)| {
-                        *target = *source;
-                    });
-                plan.process_with_scratch(&mut lane, &mut scratch);
-                lane.iter()
-                    .zip(view.iter_mut())
-                    .for_each(|(source, target)| *target = *source);
-            }
-        }
+        fft.transform(
+            data.as_slice_mut().expect("contiguous restoration plane"),
+            false,
+        )
+        .expect("valid restoration FFT plan");
         shift_even(data);
     }
     for (signal, response) in signal.iter_mut().zip(response.iter()) {
         *signal *= *response;
     }
     shift_even(&mut signal);
-    for axis in 0..2 {
-        let plan = planner.plan_fft_inverse(signal.len_of(Axis(axis)));
-        let scratch_len = plan.get_inplace_scratch_len();
-        let length = signal.len_of(Axis(axis));
-        let mut lane = vec![Complex64::default(); length];
-        let mut scratch = vec![Complex64::default(); scratch_len];
-        for mut view in signal.lanes_mut(Axis(axis)) {
-            lane.iter_mut()
-                .zip(view.iter())
-                .for_each(|(target, source)| *target = *source);
-            plan.process_with_scratch(&mut lane, &mut scratch);
-            lane.iter()
-                .zip(view.iter_mut())
-                .for_each(|(source, target)| *target = *source);
-        }
-    }
+    fft.transform(
+        signal.as_slice_mut().expect("contiguous restoration plane"),
+        true,
+    )
+    .expect("valid restoration FFT plan");
     shift_even(&mut signal);
 
     let scale = 1.0 / cells as f64;

@@ -7936,7 +7936,7 @@
     {
       "kind": "task",
       "id": "imager",
-      "contract_version": 16,
+      "contract_version": 17,
       "display_name": "Imager",
       "category": "Imaging",
       "summary": "Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet",
@@ -11340,56 +11340,6 @@
             },
             "presentation": {
               "label": "Read-Ahead Blocks",
-              "group": "Stages",
-              "advanced": true,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "imaging_fft_backend",
-          "concept": {
-            "id": "parameter.imaging_fft_backend",
-            "semantic_revision": 1
-          },
-          "order": 65,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "rustfft"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--imaging-fft-backend"
-              ],
-              "false_flags": [],
-              "metavar": "BACKEND"
-            },
-            "provider": {
-              "field": "imaging_fft_backend",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "imaging_fft_backend",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Product FFT Backend",
               "group": "Stages",
               "advanced": true,
               "hidden": false

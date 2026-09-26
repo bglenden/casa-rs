@@ -4160,34 +4160,6 @@
       "persistence_class": "profile"
     },
     {
-      "id": "parameter.imaging_fft_backend",
-      "semantic_revision": 1,
-      "casa_name": "imaging_fft_backend",
-      "value_domain": {
-        "kind": "choice",
-        "values": [
-          "accelerate",
-          "auto",
-          "metal-mpsgraph",
-          "rustfft"
-        ]
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "Backend policy for dirty and residual product FFT transforms",
-        "details": null,
-        "examples": [
-          "auto"
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
       "id": "parameter.imaging_mode",
       "semantic_revision": 1,
       "casa_name": "imaging_mode",

@@ -732,15 +732,15 @@ remain independent of mosaic projection coordinates. Start-model, outlier,
 multi-MS, and higher-term combinations outside those admitted slices still
 reject during planning.
 
-Imager task protocol v3 carries the local execution controls (`parallel`,
+Imager task protocol v9 carries the local execution controls (`parallel`,
 `chanchunks`, shared source memory/row-block/worker/read-ahead settings, and
-dirty-product FFT precision/backend policy). Diagnostic progress events expose
+dirty-product FFT precision). Diagnostic progress events expose
 planned and measured memory, source bytes and read bandwidth, read/prepare
 overlap, producer/consumer blocking, live-block high water, worker/queue state,
 stage timings, and backend selection or fallback reasons. The task protocol is
-v3, the newline-delimited progress event schema is v1, and the embedded
+v9, the newline-delimited progress event schema is v1, and the embedded
 observability snapshot schema is v2. `parallel=false` selects the serial CPU
-comparison surface, including one live source block and RustFFT product
+comparison surface, including one live source block and FFTW product
 transforms.
 
 `chanchunks` supplies a minimum spectral-slab residency shape, not an exact
@@ -758,11 +758,10 @@ planner-charged shape holds all output planes. A requested CLEAN that would
 require multiple slabs fails during planning instead of accumulating uncharged
 plane state across slabs.
 
-Metal gridding and Metal MPSGraph FFT are not installed at the application
-boundary. Their task controls remain part of the transported surface until the
-later backend tickets transfer them, but requests for those implementations
-fail availability validation. Runtime Metal resource and receipt types define a
-future execution contract; they do not constitute a production imaging route.
+Metal gridding is not installed at the application boundary. Runtime Metal
+resource and receipt types define a future execution contract; they do not
+constitute a production imaging route. All production FFTs use FFTW; there is
+no application-level FFT backend selector or fallback.
 
 W-projection is installed as an explicit paired measurement transform. The
 model binds the selected projected-|W| envelope and optional plane count;
@@ -822,7 +821,7 @@ backend selection available.
 ## Approved dependency classes
 
 - N-dimensional arrays and numeric containers: `ndarray`
-- FFT and spectral transforms: `rustfft`
+- FFT and spectral transforms: direct, in-place FFTW 3 through `casa-fft`
 - error types: `thiserror`
 - terminal rendering and TUI support: `ratatui`, `ratatui-graphics`, `plotters`
 - Adding a second library in the same category requires review.

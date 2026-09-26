@@ -64,6 +64,7 @@
   "casa-aipsio": "support",
   "casa-calibration": "support",
   "casa-coordinates": "support",
+  "casa-fft": "support",
   "casa-images": "support",
   "casa-imaging-application": "native",
   "casa-imaging-model": "native",
@@ -106,10 +107,12 @@
   ],
   "casa-imaging-model": [],
   "casa-imaging-reconstruction": [
+   "casa-fft",
    "casa-imaging-model",
    "casa-numerics"
   ],
   "casa-imaging-products": [
+   "casa-fft",
    "casa-imaging-model",
    "casa-imaging-reconstruction",
    "casa-numerics"
@@ -119,9 +122,11 @@
    "casa-imaging-products",
    "casa-imaging-reconstruction",
    "casa-lattices",
-   "casa-ms"
+   "casa-ms",
+   "casa-tables"
   ],
   "casa-simulation-synthesis": [
+   "casa-fft",
    "casa-numerics"
   ]
  },

@@ -30,8 +30,7 @@
     "savemodel": "none",
     "casa_pblimit": -0.2,
     "standard_mfs_acceleration": "cpu",
-    "parallel": true,
-    "imaging_fft_backend": "rustfft"
+    "parallel": true
   },
   "run": {
     "repeats": 1,

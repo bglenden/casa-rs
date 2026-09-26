@@ -3696,6 +3696,7 @@ fn validate_kind(node: &WorkNode) -> Result<(), ExecutionError> {
             },
             "resident or persistent cache reservation",
         ),
+        WorkKind::FftPlanning if !node.allocations.is_empty() => Ok(()),
         WorkKind::FftPlanning => require_claim(
             node,
             |resource| {
@@ -3704,7 +3705,7 @@ fn validate_kind(node: &WorkNode) -> Result<(), ExecutionError> {
                     LeaseResource::RuntimeOverhead(RuntimeOverheadKind::FftWorkspace)
                 )
             },
-            "FFT workspace",
+            "FFT workspace or owned allocation",
         ),
         WorkKind::Jit => require_claim(
             node,

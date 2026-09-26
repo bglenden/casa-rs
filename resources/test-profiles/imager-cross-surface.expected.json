@@ -33,7 +33,6 @@
       "hogbom_iteration_mode": "strict",
       "image_name": "products/vlass-aw-mtmfs",
       "image_size": 12150,
-      "imaging_fft_backend": "rust-fft",
       "imaging_fft_precision": "f32",
       "imaging_memory_pressure_policy": "conservative-no-swap",
       "imaging_memory_target_mb": 32768,

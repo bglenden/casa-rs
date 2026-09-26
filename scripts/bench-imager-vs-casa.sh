@@ -111,7 +111,6 @@ standard_mfs_acceleration="${IMAGER_BENCH_STANDARD_MFS_ACCELERATION:-auto}"
 standard_mfs_grid_threads="${IMAGER_BENCH_STANDARD_MFS_GRID_THREADS:-}"
 standard_mfs_metal_minor_cycle_chunk="${IMAGER_BENCH_STANDARD_MFS_METAL_MINOR_CYCLE_CHUNK:-}"
 imaging_fft_precision="${IMAGER_BENCH_IMAGING_FFT_PRECISION:-auto}"
-imaging_fft_backend="${IMAGER_BENCH_IMAGING_FFT_BACKEND:-auto}"
 hogbom_iteration_mode="${IMAGER_BENCH_HOGBOM_ITERATION_MODE:-strict}"
 nterms="${IMAGER_BENCH_NTERMS:-1}"
 scales="${IMAGER_BENCH_SCALES:-}"
@@ -214,10 +213,6 @@ if [[ "$standard_mfs_metal_minor_cycle_chunk" == "0" || "$standard_mfs_metal_min
 fi
 if [[ "$imaging_fft_precision" != "auto" && "$imaging_fft_precision" != "f64" && "$imaging_fft_precision" != "f32" && "$imaging_fft_precision" != "fast-f32" && "$imaging_fft_precision" != "auto-f32" ]]; then
   echo "error: IMAGER_BENCH_IMAGING_FFT_PRECISION must be auto, f64, or f32" >&2
-  exit 2
-fi
-if [[ "$imaging_fft_backend" != "auto" && "$imaging_fft_backend" != "rustfft" && "$imaging_fft_backend" != "accelerate" && "$imaging_fft_backend" != "metal-mpsgraph" ]]; then
-  echo "error: IMAGER_BENCH_IMAGING_FFT_BACKEND must be auto, rustfft, accelerate, or metal-mpsgraph" >&2
   exit 2
 fi
 if [[ -n "$imaging_memory_target_mb" && ! "$imaging_memory_target_mb" =~ ^[0-9]+$ ]]; then
@@ -486,7 +481,7 @@ emit_rust_backend_diagnostics() {
 
 echo "ms_path=$ms_path"
 echo "CASA_RS_CASA_PYTHON=${CASA_RS_CASA_PYTHON:-}"
-echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder facets=$facets field=$field stokes=$stokes usepointing=$usepointing_enabled phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count cube_start=$cube_start cube_width=$cube_width interpolation=$interpolation weighting=$weighting robust=$robust perchanweightdensity=$perchanweightdensity_enabled deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration imaging_fft_precision=$imaging_fft_precision imaging_fft_backend=$imaging_fft_backend parallel=$parallel chanchunks=$chanchunks hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm wprojplanes=$wprojplanes casa_wprojplanes=$casa_wprojplanes imaging_memory_target_mb=$imaging_memory_target_mb imaging_prepare_buffer_mb=$imaging_prepare_buffer_mb imaging_row_block_rows=$imaging_row_block_rows imaging_prepare_workers=$imaging_prepare_workers imaging_read_ahead_blocks=$imaging_read_ahead_blocks imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_repeats=$profile_repeats profile_warmups=$profile_warmups niter=$niter nmajor=$nmajor nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled skip_casa=$skip_casa skip_rust=$skip_rust_enabled skip_profile=$skip_profile_enabled reuse_rust_prefix=$reuse_rust_prefix reuse_casa_prefix=$reuse_casa_prefix"
+echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder facets=$facets field=$field stokes=$stokes usepointing=$usepointing_enabled phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count cube_start=$cube_start cube_width=$cube_width interpolation=$interpolation weighting=$weighting robust=$robust perchanweightdensity=$perchanweightdensity_enabled deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration imaging_fft_precision=$imaging_fft_precision fft_library=fftw parallel=$parallel chanchunks=$chanchunks hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm wprojplanes=$wprojplanes casa_wprojplanes=$casa_wprojplanes imaging_memory_target_mb=$imaging_memory_target_mb imaging_prepare_buffer_mb=$imaging_prepare_buffer_mb imaging_row_block_rows=$imaging_row_block_rows imaging_prepare_workers=$imaging_prepare_workers imaging_read_ahead_blocks=$imaging_read_ahead_blocks imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_repeats=$profile_repeats profile_warmups=$profile_warmups niter=$niter nmajor=$nmajor nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled skip_casa=$skip_casa skip_rust=$skip_rust_enabled skip_profile=$skip_profile_enabled reuse_rust_prefix=$reuse_rust_prefix reuse_casa_prefix=$reuse_casa_prefix"
 echo
 
 if [[ "$skip_rust_enabled" == "0" ]]; then
@@ -664,7 +659,6 @@ build_rust_cli_args() {
   rust_cli_args+=(
     --standard-mfs-acceleration "$standard_mfs_acceleration"
     --imaging-fft-precision "$imaging_fft_precision"
-    --imaging-fft-backend "$imaging_fft_backend"
   )
   rust_cli_args+=(${rust_parallel_flags[@]+"${rust_parallel_flags[@]}"})
   rust_cli_args+=(${rust_thread_flags[@]+"${rust_thread_flags[@]}"})
@@ -794,7 +788,6 @@ elif [[ -n "$scales" ]]; then
     --deconvolver "$deconvolver" \
     --standard-mfs-acceleration "$standard_mfs_acceleration" \
       --imaging-fft-precision "$imaging_fft_precision" \
-      --imaging-fft-backend "$imaging_fft_backend" \
     ${rust_parallel_flags[@]+"${rust_parallel_flags[@]}"} \
     ${rust_thread_flags[@]+"${rust_thread_flags[@]}"} \
     ${rust_source_stream_flags[@]+"${rust_source_stream_flags[@]}"} \
@@ -840,7 +833,6 @@ else
     --deconvolver "$deconvolver" \
     --standard-mfs-acceleration "$standard_mfs_acceleration" \
       --imaging-fft-precision "$imaging_fft_precision" \
-      --imaging-fft-backend "$imaging_fft_backend" \
     ${rust_parallel_flags[@]+"${rust_parallel_flags[@]}"} \
     ${rust_thread_flags[@]+"${rust_thread_flags[@]}"} \
     ${rust_source_stream_flags[@]+"${rust_source_stream_flags[@]}"} \

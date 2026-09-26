@@ -15,9 +15,8 @@ use casa_imaging_application::{
 
 use super::{
     AwProjectNormalization, CleanMaskMode, CleanStopReason, CliConfig, CubeAxisValue, Deconvolver,
-    ImagingFftBackendPolicy, ImagingFftPrecisionPolicy, ImagingMemoryPressurePolicy,
-    RestoringBeamMode, RunSummary, SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy,
-    WTermMode, WeightingMode,
+    ImagingFftPrecisionPolicy, ImagingMemoryPressurePolicy, RestoringBeamMode, RunSummary,
+    SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy, WTermMode, WeightingMode,
 };
 
 fn hex(bytes: [u8; 32]) -> String {
@@ -369,13 +368,6 @@ fn backend_requirements(config: &CliConfig) -> Vec<TaskRequirement> {
             _ => TaskRequirement::UnknownBackend,
         });
     }
-    match config.imaging_fft_backend {
-        ImagingFftBackendPolicy::RustFft => {}
-        ImagingFftBackendPolicy::Auto => requirements.push(TaskRequirement::FftAuto),
-        ImagingFftBackendPolicy::Accelerate => requirements.push(TaskRequirement::Accelerate),
-        ImagingFftBackendPolicy::MetalMpsGraph => requirements.push(TaskRequirement::MetalMpsGraph),
-        ImagingFftBackendPolicy::Fftw => requirements.push(TaskRequirement::Fftw),
-    }
     requirements
 }
 
@@ -494,13 +486,8 @@ mod tests {
     #[test]
     fn automatic_backend_choices_remain_explicit_task_requirements() {
         assert_eq!(
-            backend_requirements(&config(&[
-                "--standard-mfs-acceleration",
-                "auto",
-                "--imaging-fft-backend",
-                "auto",
-            ])),
-            vec![TaskRequirement::ExecutionAuto, TaskRequirement::FftAuto,]
+            backend_requirements(&config(&["--standard-mfs-acceleration", "auto",])),
+            vec![TaskRequirement::ExecutionAuto]
         );
     }
 
@@ -690,8 +677,6 @@ mod tests {
             "--dirty-only",
             "--standard-mfs-acceleration",
             "cpu",
-            "--imaging-fft-backend",
-            "rustfft",
             "--no-preview-pngs",
             "--gridder",
             "standard",
@@ -737,8 +722,6 @@ mod tests {
             "1",
             "--standard-mfs-acceleration",
             "cpu",
-            "--imaging-fft-backend",
-            "rustfft",
             "--imaging-fft-precision",
             "auto",
             "--no-parallel",

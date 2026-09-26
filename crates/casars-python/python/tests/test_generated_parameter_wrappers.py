@@ -110,7 +110,6 @@ def test_generated_imager_wrapper_preserves_vlass_awproject_controls(monkeypatch
         imaging_memory_pressure_policy="conservative-no-swap",
         imaging_prepare_workers=4,
         standard_mfs_grid_threads="auto",
-        imaging_fft_backend="metal-mpsgraph",
         imaging_fft_precision="f32",
     )
 
@@ -125,7 +124,6 @@ def test_generated_imager_wrapper_preserves_vlass_awproject_controls(monkeypatch
     assert overrides["imaging_memory_target_mb"] == 16384
     assert overrides["imaging_memory_pressure_policy"] == "conservative-no-swap"
     assert overrides["standard_mfs_grid_threads"] == "auto"
-    assert overrides["imaging_fft_backend"] == "metal-mpsgraph"
     assert overrides["imaging_fft_precision"] == "f32"
 
 

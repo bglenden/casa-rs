@@ -648,8 +648,6 @@ def common_imager_command(
         "metal-row-run-grouped",
         "--imaging-fft-precision",
         "f64",
-        "--imaging-fft-backend",
-        "fftw",
         "--parallel",
         "--standard-mfs-grid-threads",
         "7",

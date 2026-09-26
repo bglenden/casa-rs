@@ -11,8 +11,8 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+casa-fft = { path = "../casa-fft" }
 casa-numerics = { path = "../casa-numerics" }
 ndarray.workspace = true
 num-complex.workspace = true
-rustfft.workspace = true
 thiserror.workspace = true

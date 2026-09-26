@@ -265,7 +265,6 @@ def imager(
     standard_mfs_acceleration: Literal['auto', 'cpu', 'metal', 'multi-cpu'] = ...,
     parallel: bool | Literal['none'] = ...,
     imaging_read_ahead_blocks: int | Literal['none'] = ...,
-    imaging_fft_backend: Literal['accelerate', 'auto', 'metal-mpsgraph', 'rustfft'] = ...,
     chanchunks: int | Literal['none'] = ...,
     uvrange: str = ...,
     intent: str = ...,

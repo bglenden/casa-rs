@@ -69,8 +69,7 @@
     "calcpsf": true,
     "parallel": false,
     "standard_mfs_acceleration": "cpu",
-    "imaging_fft_precision": "auto",
-    "imaging_fft_backend": "rustfft"
+    "imaging_fft_precision": "auto"
   },
   "run": {
     "repeats": 1,

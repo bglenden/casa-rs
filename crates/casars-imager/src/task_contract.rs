@@ -24,16 +24,16 @@ use serde::{Deserialize, Serialize};
 use crate::{
     AutoMultiThresholdConfig, AwProjectControls, AwProjectNormalization, CleanMaskMode,
     CleanStopReason, CliConfig, Deconvolver, GaussianUvTaper, HogbomIterationMode,
-    ImagerAwCfSource, ImagingFftBackendPolicy, ImagingFftPrecisionPolicy,
-    ImagingMemoryPressurePolicy, RestoringBeamMode, RunSummary, SaveModelMode, SpectralMode,
-    StandardMfsAccelerationPolicy, UvTaperSize, WTermMode, WeightingMode,
-    apply_parallel_runtime_control, run_from_request, validate_parallel_acceleration,
+    ImagerAwCfSource, ImagingFftPrecisionPolicy, ImagingMemoryPressurePolicy, RestoringBeamMode,
+    RunSummary, SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy, UvTaperSize, WTermMode,
+    WeightingMode, apply_parallel_runtime_control, run_from_request,
+    validate_parallel_acceleration,
 };
 
 /// Stable protocol name advertised by `casars-imager --protocol-info`.
 pub const IMAGER_TASK_PROTOCOL_NAME: &str = "casa_imager_task";
 /// Stable protocol version advertised by `casars-imager --protocol-info`.
-pub const IMAGER_TASK_PROTOCOL_VERSION: u32 = 8;
+pub const IMAGER_TASK_PROTOCOL_VERSION: u32 = 9;
 /// Version of the newline-delimited imager progress-event payload.
 pub const IMAGER_PROGRESS_EVENT_SCHEMA_VERSION: u32 = 1;
 /// Version of the authoritative observability snapshot embedded in progress events.
@@ -301,7 +301,6 @@ const IMAGER_PROJECTED_PARAMETERS: &[&str] = &[
     "standard_mfs_acceleration",
     "parallel",
     "imaging_read_ahead_blocks",
-    "imaging_fft_backend",
     "uvrange",
     "intent",
     "cfcache",
@@ -2348,9 +2347,6 @@ pub struct ImagerRunTaskRequest {
     /// Imaging-wide FFT precision policy for dirty/residual product transforms.
     #[serde(default)]
     pub imaging_fft_precision: ImagingFftPrecisionPolicy,
-    /// Imaging-wide FFT backend policy for dirty/residual product transforms.
-    #[serde(default)]
-    pub imaging_fft_backend: ImagingFftBackendPolicy,
     /// Write PNG preview sidecars for the CASA image products.
     #[serde(default = "default_write_preview_pngs")]
     pub write_preview_pngs: bool,
@@ -2466,7 +2462,6 @@ impl ImagerRunTaskRequest {
             imaging_prepare_workers: config.imaging_prepare_workers,
             imaging_read_ahead_blocks: config.imaging_read_ahead_blocks,
             imaging_fft_precision: config.imaging_fft_precision,
-            imaging_fft_backend: config.imaging_fft_backend,
             write_preview_pngs: config.write_preview_pngs,
             progress: None,
         }
@@ -2661,7 +2656,6 @@ impl ImagerRunTaskRequest {
             imaging_prepare_workers: self.imaging_prepare_workers,
             imaging_read_ahead_blocks: self.imaging_read_ahead_blocks,
             imaging_fft_precision: self.imaging_fft_precision,
-            imaging_fft_backend: self.imaging_fft_backend,
             write_preview_pngs: self.write_preview_pngs,
         };
         apply_parallel_runtime_control(self.parallel, &mut config)?;
@@ -3324,9 +3318,8 @@ mod tests {
     };
     use crate::{
         AwProjectNormalization, CleanStopReason, CliConfig, Deconvolver, GaussianUvTaper,
-        ImagingFftBackendPolicy, ImagingFftPrecisionPolicy, ImagingMemoryPressurePolicy,
-        RestoringBeamMode, SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy, UvTaperSize,
-        WTermMode, WeightingMode,
+        ImagingFftPrecisionPolicy, ImagingMemoryPressurePolicy, RestoringBeamMode, SaveModelMode,
+        SpectralMode, StandardMfsAccelerationPolicy, UvTaperSize, WTermMode, WeightingMode,
     };
 
     #[test]
@@ -3500,8 +3493,6 @@ mod tests {
             OsString::from("8"),
             OsString::from("--imaging-fft-precision"),
             OsString::from("f32"),
-            OsString::from("--imaging-fft-backend"),
-            OsString::from("metal-mpsgraph"),
             OsString::from("--imaging-memory-pressure-policy"),
             OsString::from("aggressive"),
             OsString::from("--dirty-only"),
@@ -3548,10 +3539,6 @@ mod tests {
         assert_eq!(
             restored.imaging_fft_precision,
             ImagingFftPrecisionPolicy::F32
-        );
-        assert_eq!(
-            restored.imaging_fft_backend,
-            ImagingFftBackendPolicy::MetalMpsGraph
         );
         assert_eq!(
             restored.imaging_memory_pressure_policy,
@@ -3876,7 +3863,6 @@ mod tests {
             imaging_prepare_workers: None,
             imaging_read_ahead_blocks: None,
             imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
-            imaging_fft_backend: ImagingFftBackendPolicy::RustFft,
             write_preview_pngs: false,
             progress: None,
         };
@@ -3991,7 +3977,6 @@ mod tests {
             imaging_prepare_workers: None,
             imaging_read_ahead_blocks: None,
             imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
-            imaging_fft_backend: ImagingFftBackendPolicy::Auto,
             write_preview_pngs: true,
             progress: None,
         };
@@ -4266,7 +4251,6 @@ mod tests {
             imaging_prepare_workers: None,
             imaging_read_ahead_blocks: None,
             imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
-            imaging_fft_backend: ImagingFftBackendPolicy::Auto,
             write_preview_pngs: true,
             progress: None,
         };
@@ -4433,7 +4417,6 @@ mod tests {
             imaging_prepare_workers: None,
             imaging_read_ahead_blocks: None,
             imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
-            imaging_fft_backend: ImagingFftBackendPolicy::Auto,
             write_preview_pngs: true,
             progress: None,
         };
@@ -5013,7 +4996,6 @@ mod tests {
             imaging_prepare_workers: None,
             imaging_read_ahead_blocks: None,
             imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
-            imaging_fft_backend: ImagingFftBackendPolicy::Auto,
             write_preview_pngs: true,
             progress: None,
         };

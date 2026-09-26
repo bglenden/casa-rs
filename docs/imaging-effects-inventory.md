@@ -63,10 +63,10 @@ Capabilities not yet transferred to that composition are
 
 ## Historical Runtime Effects
 
-- Imager task protocol v3 carries `parallel`, `chanchunks`, shared source
-  memory/prepare/row-block/read-ahead controls, and dirty-product FFT precision
-  and backend policy. `parallel=false` forces one source block, one prepare/grid
-  worker, CPU acceleration, and RustFFT for a reproducible serial comparison.
+- Imager task protocol v9 carries `parallel`, `chanchunks`, shared source
+  memory/prepare/row-block/read-ahead controls, and dirty-product FFT precision.
+  `parallel=false` forces one source block, one prepare/grid worker, and CPU
+  acceleration for a reproducible serial comparison. FFTW is the sole FFT.
 - Diagnostic progress reports planned/tracked/high-water memory, source bytes,
   effective read bandwidth, producer/consumer blocked time and overlap, queue
   and worker state, stage timings, GPU eligibility/selection, device/host bytes,
