@@ -756,7 +756,36 @@ impl<'a> VisibilityRow<'a> {
 struct RowStencil {
     offsets: Vec<usize>,
     points: Vec<CasaLinearSample>,
-    prediction_terms: Vec<SmallVec<[SelectedSpectralContribution; 4]>>,
+    prediction_terms: Vec<SmallVec<[PreparedPredictionTerm; 4]>>,
+}
+
+#[derive(Clone, Copy)]
+struct PreparedPredictionTerm {
+    plane: usize,
+    frequency_hz: f64,
+    wavelength_scale: f64,
+    factor: f64,
+}
+
+fn prepare_prediction_terms(
+    terms: impl IntoIterator<Item = SelectedSpectralContribution>,
+    model_channels: &[usize],
+) -> Result<SmallVec<[PreparedPredictionTerm; 4]>, SpectralOperatorError> {
+    terms
+        .into_iter()
+        .map(|term| {
+            let plane = model_channels
+                .binary_search(&(term.output_channel() as usize))
+                .map_err(|_| SpectralOperatorError::IncompleteSpectralHalo)?;
+            let frequency_hz = term.evaluation_frequency_hz();
+            Ok(PreparedPredictionTerm {
+                plane,
+                frequency_hz,
+                wavelength_scale: frequency_hz / SPEED_OF_LIGHT_M_PER_S,
+                factor: term.factor(),
+            })
+        })
+        .collect()
 }
 
 impl RowStencil {
@@ -764,6 +793,8 @@ impl RowStencil {
         row: &VisibilityRow<'_>,
         output_hz: &[f64],
         core: Range<usize>,
+        model_channels: &[usize],
+        phase: BandPhase,
     ) -> Result<Self, SpectralOperatorError> {
         row.validate(row.correlations)?;
         if row.channels.len() < 2 {
@@ -777,14 +808,17 @@ impl RowStencil {
         let mut prediction_terms = Vec::with_capacity(row.channels.len());
         offsets.push(0);
         for channel in 0..row.channels.len() {
-            prediction_terms.push(
-                casa_linear_prediction_terms(
-                    output_hz,
-                    row.frequencies_hz[channel],
-                    row.original_pair_hz,
-                )
-                .map_err(|_| SpectralOperatorError::InvalidSample)?,
-            );
+            let terms = casa_linear_prediction_terms(
+                output_hz,
+                row.frequencies_hz[channel],
+                row.original_pair_hz,
+            )
+            .map_err(|_| SpectralOperatorError::InvalidSample)?;
+            prediction_terms.push(if phase == BandPhase::InitialZero {
+                SmallVec::new()
+            } else {
+                prepare_prediction_terms(terms, model_channels)?
+            });
             let mut address = row.address;
             address.channel_index = row.channels[channel];
             if let Some(pair) = cursor
@@ -1048,13 +1082,14 @@ impl BandWorkspace {
             casa_linear_prediction_terms(output_hz, frequency_hz, row.original_pair_hz)
                 .map_err(|_| SpectralOperatorError::InvalidSample)?
         };
-        self.predict_native_terms(row, &terms, polarization)
+        let prepared = prepare_prediction_terms(terms, &self.model_channels)?;
+        self.predict_native_terms(row, &prepared, polarization)
     }
 
     fn predict_native_terms(
         &self,
         row: &VisibilityRow<'_>,
-        terms: &[SelectedSpectralContribution],
+        terms: &[PreparedPredictionTerm],
         polarization: &PolarizationOperator,
     ) -> Result<SmallVec<[Complex64; 4]>, SpectralOperatorError> {
         if self.phase == BandPhase::InitialZero {
@@ -1066,24 +1101,19 @@ impl BandWorkspace {
         }
         let mut predicted = Complex64::default();
         for term in terms {
-            let plane = self
-                .model_channels
-                .binary_search(&(term.output_channel() as usize))
-                .map_err(|_| SpectralOperatorError::IncompleteSpectralHalo)?;
+            let plane = term.plane;
             if !self.forward_nonzero[plane] {
                 continue;
             }
-            let frequency = term.evaluation_frequency_hz();
-            let wavelength_scale = frequency / SPEED_OF_LIGHT_M_PER_S;
             if let Some(taps) = self.convolution.taps([
-                row.uvw_m[0] * wavelength_scale,
-                row.uvw_m[1] * wavelength_scale,
+                row.uvw_m[0] * term.wavelength_scale,
+                row.uvw_m[1] * term.wavelength_scale,
             ]) {
                 predicted += widen(
                     self.convolution
                         .degrid_float(&self.forward.index_axis(Axis(0), plane), taps),
-                ) * phase(row.phase_shift_m, frequency).conj()
-                    * term.factor();
+                ) * phase(row.phase_shift_m, term.frequency_hz).conj()
+                    * term.factor;
             }
         }
         polarization
@@ -1097,7 +1127,13 @@ impl BandWorkspace {
         output_hz: &'a [f64],
         polarization: &'a PolarizationOperator,
     ) -> Result<RowAccumulator<'a>, SpectralOperatorError> {
-        let stencil = RowStencil::compile(&row, output_hz, self.core.clone())?;
+        let stencil = RowStencil::compile(
+            &row,
+            output_hz,
+            self.core.clone(),
+            &self.model_channels,
+            self.phase,
+        )?;
         self.begin_row_with_stencil(row, polarization, Cow::Owned(stencil))
     }
 
@@ -1236,7 +1272,13 @@ impl BandWorkspace {
             let row = row.window(native.clone())?;
             if !reuse {
                 row.validate(polarization.correlations().len())?;
-                let stencil = RowStencil::compile(&row, output_hz, self.core.clone())?;
+                let stencil = RowStencil::compile(
+                    &row,
+                    output_hz,
+                    self.core.clone(),
+                    &self.model_channels,
+                    self.phase,
+                )?;
                 previous_support = Some((row_index, row.original_pair_hz, native, Some(stencil)));
             }
             let stencil = previous_support.as_ref().unwrap().3.as_ref().unwrap();
