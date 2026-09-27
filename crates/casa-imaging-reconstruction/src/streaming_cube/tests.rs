@@ -1421,7 +1421,7 @@ fn empty_initial_and_residual_refresh_omit_dead_grids_and_do_not_load_prior_arra
 fn shared_wide_window_narrows_row_dependent_support_without_copies() {
     use super::super::input::RowMetadata;
     let output = [1e9, 1.002e9, 1.004e9, 1.006e9];
-    let inputs: Vec<_> = [-0.6e6, 0.1e6, 0.6e6]
+    let inputs: Vec<_> = [-0.6e6, -0.6e6, 0.1e6, 0.6e6, 0.6e6]
         .into_iter()
         .map(|shift| {
             Input::new(
@@ -1440,7 +1440,7 @@ fn shared_wide_window_narrows_row_dependent_support_without_copies() {
         ],
     )
     .unwrap();
-    let mut block = NativeBlock::new(3, 12, 2).unwrap();
+    let mut block = NativeBlock::new(inputs.len(), 12, 2).unwrap();
     for (r, input) in inputs.iter().enumerate() {
         let row = input.row(0..12);
         block.metadata[r] = RowMetadata {

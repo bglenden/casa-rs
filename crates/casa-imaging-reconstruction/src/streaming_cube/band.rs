@@ -7,7 +7,7 @@
 //! Plane views neither allocate nor copy. The coarse epoch job loads bounded model planes before
 //! numerical work; payload elements carry no workflow or publication state.
 
-use std::ops::Range;
+use std::{borrow::Cow, ops::Range};
 
 use casa_imaging_model::{
     ModelSupport, PolarizationCoordinate, ReconstructionBasis, SelectedSampleAddress,
@@ -24,7 +24,7 @@ use crate::spectral_operator::{
     StandardConvolution, fft_resident_complex_values_for_shape,
 };
 use crate::spectral_sampling::{
-    CasaLinearGrid, CasaLinearOutputGrid, CasaLinearRowCursor, CasaSingleChannel,
+    CasaLinearGrid, CasaLinearOutputGrid, CasaLinearRowCursor, CasaLinearSample, CasaSingleChannel,
     NativeRowSpectralGeometry, casa_linear_prediction_terms, interpolate_complex_pair,
 };
 use crate::{
@@ -749,6 +749,52 @@ impl<'a> VisibilityRow<'a> {
     }
 }
 
+/// Exact fine-grid interpolation points for one native row geometry and band.
+/// Offsets allow all output points to live in one bounded contiguous allocation.
+#[derive(Clone)]
+struct RowStencil {
+    offsets: Vec<usize>,
+    points: Vec<CasaLinearSample>,
+}
+
+impl RowStencil {
+    fn compile(
+        row: &VisibilityRow<'_>,
+        output_hz: &[f64],
+        core: Range<usize>,
+    ) -> Result<Self, SpectralOperatorError> {
+        row.validate(row.correlations)?;
+        if row.channels.len() < 2 {
+            return Err(SpectralOperatorError::InvalidSample);
+        }
+        let output = CasaLinearOutputGrid::compile(output_hz)
+            .ok_or(SpectralOperatorError::MissingRowSpectralGeometry)?;
+        let mut cursor = CasaLinearRowCursor::new();
+        let mut offsets = Vec::with_capacity(row.channels.len() + 1);
+        let mut points = Vec::with_capacity(core.len());
+        offsets.push(0);
+        for channel in 0..row.channels.len() {
+            let mut address = row.address;
+            address.channel_index = row.channels[channel];
+            if let Some(pair) = cursor
+                .push(address, row.geometry(), row.frequencies_hz[channel], output)
+                .map_err(|_| SpectralOperatorError::IncompleteCoverage)?
+            {
+                points.extend(pair.filter(|fine| core.contains(&fine.output_channel())));
+            }
+            offsets.push(points.len());
+        }
+        cursor
+            .finish()
+            .map_err(|_| SpectralOperatorError::IncompleteCoverage)?;
+        Ok(Self { offsets, points })
+    }
+
+    fn samples(&self, channel: usize) -> &[CasaLinearSample] {
+        &self.points[self.offsets[channel]..self.offsets[channel + 1]]
+    }
+}
+
 /// Exclusive output band and reusable FFT workspace; the read-only model
 /// support may extend beyond the output band. Admission supplies both ranges.
 struct BandWorkspace {
@@ -1024,6 +1070,27 @@ impl BandWorkspace {
         output_hz: &'a [f64],
         polarization: &'a PolarizationOperator,
     ) -> Result<RowAccumulator<'a>, SpectralOperatorError> {
+        let stencil = RowStencil::compile(&row, output_hz, self.core.clone())?;
+        self.begin_row_with_stencil(row, output_hz, polarization, Cow::Owned(stencil))
+    }
+
+    fn begin_row_cached<'a>(
+        &'a mut self,
+        row: VisibilityRow<'a>,
+        output_hz: &'a [f64],
+        polarization: &'a PolarizationOperator,
+        stencil: &'a RowStencil,
+    ) -> Result<RowAccumulator<'a>, SpectralOperatorError> {
+        self.begin_row_with_stencil(row, output_hz, polarization, Cow::Borrowed(stencil))
+    }
+
+    fn begin_row_with_stencil<'a>(
+        &'a mut self,
+        row: VisibilityRow<'a>,
+        output_hz: &'a [f64],
+        polarization: &'a PolarizationOperator,
+        stencil: Cow<'a, RowStencil>,
+    ) -> Result<RowAccumulator<'a>, SpectralOperatorError> {
         row.validate(polarization.correlations().len())?;
         if row.channels.len() < 2 {
             return Err(SpectralOperatorError::InvalidSample);
@@ -1031,16 +1098,13 @@ impl BandWorkspace {
         if polarization.model_coordinates() != [PolarizationCoordinate::StokesI] {
             return Err(SpectralOperatorError::InvalidSample);
         }
-        let output = CasaLinearOutputGrid::compile(output_hz)
-            .ok_or(SpectralOperatorError::MissingRowSpectralGeometry)?;
         Ok(RowAccumulator {
             band: self,
             row,
             output_hz,
-            output,
             polarization,
             reduction: PolarizedSampleReducer::new(polarization)?,
-            cursor: CasaLinearRowCursor::new(),
+            stencil,
             next: 0,
             previous_prediction: SmallVec::new(),
         })
@@ -1111,7 +1175,8 @@ impl BandWorkspace {
             return Err(SpectralOperatorError::IncompleteSpectralHalo);
         }
         let local = native_range.start - window.start..native_range.end - window.start;
-        let mut previous_support: Option<(usize, [f64; 2], Range<usize>)> = None;
+        let mut previous_support: Option<(usize, [f64; 2], Range<usize>, Option<RowStencil>)> =
+            None;
         for row_index in 0..block.metadata.len() {
             let row = block
                 .row(layout, row_index, window.clone())?
@@ -1120,21 +1185,17 @@ impl BandWorkspace {
                 self.consume_single_row(row, single, output_hz, polarization)?;
                 continue;
             }
-            let native = if let Some((previous_row, pair, support)) = &previous_support {
-                let previous_hz = &block.frequencies_hz
-                    [previous_row * block.channels..(previous_row + 1) * block.channels];
-                let current_hz = &block.frequencies_hz
-                    [row_index * block.channels..(row_index + 1) * block.channels];
-                if *pair == row.original_pair_hz && previous_hz == current_hz {
-                    support.clone()
-                } else {
-                    BandSupport::native_window(
-                        output_hz,
-                        self.core.clone(),
-                        row.frequencies_hz,
-                        row.original_pair_hz,
-                    )?
-                }
+            let reuse = previous_support
+                .as_ref()
+                .is_some_and(|(previous_row, pair, _, _)| {
+                    let previous_hz = &block.frequencies_hz
+                        [previous_row * block.channels..(previous_row + 1) * block.channels];
+                    let current_hz = &block.frequencies_hz
+                        [row_index * block.channels..(row_index + 1) * block.channels];
+                    *pair == row.original_pair_hz && previous_hz == current_hz
+                });
+            let native = if reuse {
+                previous_support.as_ref().unwrap().2.clone()
             } else {
                 BandSupport::native_window(
                     output_hz,
@@ -1143,12 +1204,19 @@ impl BandWorkspace {
                     row.original_pair_hz,
                 )?
             };
-            previous_support = Some((row_index, row.original_pair_hz, native.clone()));
             if native.is_empty() {
+                previous_support = Some((row_index, row.original_pair_hz, native, None));
                 continue;
             }
             let channels = native.len();
-            let mut accumulator = self.begin_row(row.window(native)?, output_hz, polarization)?;
+            let row = row.window(native.clone())?;
+            if !reuse {
+                row.validate(polarization.correlations().len())?;
+                let stencil = RowStencil::compile(&row, output_hz, self.core.clone())?;
+                previous_support = Some((row_index, row.original_pair_hz, native, Some(stencil)));
+            }
+            let stencil = previous_support.as_ref().unwrap().3.as_ref().unwrap();
+            let mut accumulator = self.begin_row_cached(row, output_hz, polarization, stencil)?;
             accumulator.push(0..channels)?;
             accumulator.finish()?;
         }
@@ -1349,10 +1417,9 @@ struct RowAccumulator<'a> {
     band: &'a mut BandWorkspace,
     row: VisibilityRow<'a>,
     output_hz: &'a [f64],
-    output: CasaLinearOutputGrid,
     polarization: &'a PolarizationOperator,
     reduction: PolarizedSampleReducer<'a>,
-    cursor: CasaLinearRowCursor,
+    stencil: Cow<'a, RowStencil>,
     next: usize,
     previous_prediction: SmallVec<[Complex64; 4]>,
 }
@@ -1363,68 +1430,52 @@ impl RowAccumulator<'_> {
             return Err(SpectralOperatorError::IncompleteCoverage);
         }
         for channel in channels {
-            let mut address = self.row.address;
-            address.channel_index = self.row.channels[channel];
             let prediction = self.band.predict_native(
                 &self.row,
                 self.row.frequencies_hz[channel],
                 self.output_hz,
                 self.polarization,
             )?;
-            let fine_points = self
-                .cursor
-                .push(
-                    address,
-                    self.row.geometry(),
-                    self.row.frequencies_hz[channel],
-                    self.output,
-                )
-                .map_err(|_| SpectralOperatorError::IncompleteCoverage)?;
-            if let Some(fine_points) = fine_points {
-                for fine in fine_points {
-                    if !self.band.core.contains(&fine.output_channel()) {
-                        continue;
-                    }
-                    let nearest = if fine.nearest_is_right() {
-                        channel
-                    } else {
-                        channel - 1
-                    };
-                    let left = (channel - 1) * self.row.correlations;
-                    let right = channel * self.row.correlations;
-                    let nearest = nearest * self.row.correlations;
-                    // Interpolate before the paired adjoints, retaining CASA's
-                    // flag and nearest-weight order without four packed vectors.
-                    let (observed, predicted, weight) = self.reduction.reduce(|correlation| {
-                        let observed = interpolate_complex_pair(
-                            widen(self.row.values[left + correlation]),
-                            widen(self.row.values[right + correlation]),
-                            fine.factors(),
-                        );
-                        let predicted = interpolate_complex_pair(
-                            self.previous_prediction[correlation],
-                            prediction[correlation],
-                            fine.factors(),
-                        );
-                        (
-                            observed,
-                            predicted,
-                            f64::from(self.row.weights[nearest + correlation]),
-                            fine.linear_flag(
-                                self.row.flags[left + correlation],
-                                self.row.flags[right + correlation],
-                            ) || self.row.weight_flags[nearest + correlation],
-                        )
-                    })?;
-                    self.band.grid_sample(
-                        fine.output_channel(),
-                        fine.frequency_hz(),
-                        &self.row,
+            for &fine in self.stencil.samples(channel) {
+                let nearest = if fine.nearest_is_right() {
+                    channel
+                } else {
+                    channel - 1
+                };
+                let left = (channel - 1) * self.row.correlations;
+                let right = channel * self.row.correlations;
+                let nearest = nearest * self.row.correlations;
+                // Interpolate before the paired adjoints, retaining CASA's
+                // flag and nearest-weight order without four packed vectors.
+                let (observed, predicted, weight) = self.reduction.reduce(|correlation| {
+                    let observed = interpolate_complex_pair(
+                        widen(self.row.values[left + correlation]),
+                        widen(self.row.values[right + correlation]),
+                        fine.factors(),
+                    );
+                    let predicted = interpolate_complex_pair(
+                        self.previous_prediction[correlation],
+                        prediction[correlation],
+                        fine.factors(),
+                    );
+                    (
                         observed,
                         predicted,
-                        weight,
-                    )?;
-                }
+                        f64::from(self.row.weights[nearest + correlation]),
+                        fine.linear_flag(
+                            self.row.flags[left + correlation],
+                            self.row.flags[right + correlation],
+                        ) || self.row.weight_flags[nearest + correlation],
+                    )
+                })?;
+                self.band.grid_sample(
+                    fine.output_channel(),
+                    fine.frequency_hz(),
+                    &self.row,
+                    observed,
+                    predicted,
+                    weight,
+                )?;
             }
             self.previous_prediction = prediction;
             self.next += 1;
@@ -1432,13 +1483,11 @@ impl RowAccumulator<'_> {
         Ok(())
     }
 
-    fn finish(mut self) -> Result<(), SpectralOperatorError> {
+    fn finish(self) -> Result<(), SpectralOperatorError> {
         if self.next != self.row.channels.len() {
             return Err(SpectralOperatorError::IncompleteCoverage);
         }
-        self.cursor
-            .finish()
-            .map_err(|_| SpectralOperatorError::IncompleteCoverage)
+        Ok(())
     }
 }
 
