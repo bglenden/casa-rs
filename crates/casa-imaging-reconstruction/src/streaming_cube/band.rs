@@ -992,6 +992,11 @@ impl BandWorkspace {
             casa_linear_prediction_terms(output_hz, frequency_hz, row.original_pair_hz)
                 .map_err(|_| SpectralOperatorError::InvalidSample)?
         };
+        let plane_cells = self.geometry.grid_shape[0] * self.geometry.grid_shape[1];
+        let forward = self
+            .forward
+            .as_slice()
+            .expect("spectral model grids use standard contiguous layout");
         for term in terms {
             let plane = self
                 .model_channels
@@ -1006,10 +1011,10 @@ impl BandWorkspace {
                 row.uvw_m[0] * wavelength_scale,
                 row.uvw_m[1] * wavelength_scale,
             ]) {
-                predicted += widen(
-                    self.convolution
-                        .degrid_float(&self.forward.index_axis(Axis(0), plane), taps),
-                ) * phase(row.phase_shift_m, frequency).conj()
+                predicted += widen(self.convolution.degrid_float(
+                    &forward[plane * plane_cells..(plane + 1) * plane_cells],
+                    taps,
+                )) * phase(row.phase_shift_m, frequency).conj()
                     * term.factor();
             }
         }
