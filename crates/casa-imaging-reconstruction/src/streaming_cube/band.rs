@@ -24,8 +24,9 @@ use crate::spectral_operator::{
     StandardConvolution, fft_resident_complex_values_for_shape,
 };
 use crate::spectral_sampling::{
-    CasaLinearGrid, CasaLinearOutputGrid, CasaLinearRowCursor, CasaSingleChannel,
-    NativeRowSpectralGeometry, casa_linear_prediction_terms, interpolate_complex_pair,
+    CasaLinearGrid, CasaLinearOutputGrid, CasaLinearPredictionGrid, CasaLinearRowCursor,
+    CasaSingleChannel, NativeRowSpectralGeometry, casa_linear_prediction_terms,
+    interpolate_complex_pair,
 };
 use crate::{
     ModelGeneration, ModelGenerationId, PolarizationOperator, SpectralOperatorError,
@@ -969,6 +970,7 @@ impl BandWorkspace {
         row: &VisibilityRow<'_>,
         frequency_hz: f64,
         output_hz: &[f64],
+        prediction_grid: Option<CasaLinearPredictionGrid>,
         polarization: &PolarizationOperator,
     ) -> Result<SmallVec<[Complex64; 4]>, SpectralOperatorError> {
         if self.phase == BandPhase::InitialZero {
@@ -989,7 +991,9 @@ impl BandWorkspace {
             }
             terms
         } else {
-            casa_linear_prediction_terms(output_hz, frequency_hz, row.original_pair_hz)
+            prediction_grid
+                .ok_or(SpectralOperatorError::MissingRowSpectralGeometry)?
+                .terms(output_hz, frequency_hz)
                 .map_err(|_| SpectralOperatorError::InvalidSample)?
         };
         for term in terms {
@@ -1033,11 +1037,18 @@ impl BandWorkspace {
         }
         let output = CasaLinearOutputGrid::compile(output_hz)
             .ok_or(SpectralOperatorError::MissingRowSpectralGeometry)?;
+        let prediction_grid = (self.phase != BandPhase::InitialZero)
+            .then(|| {
+                CasaLinearPredictionGrid::compile_for_output(output, row.original_pair_hz)
+                    .ok_or(SpectralOperatorError::MissingRowSpectralGeometry)
+            })
+            .transpose()?;
         Ok(RowAccumulator {
             band: self,
             row,
             output_hz,
             output,
+            prediction_grid,
             polarization,
             reduction: PolarizedSampleReducer::new(polarization)?,
             cursor: CasaLinearRowCursor::new(),
@@ -1166,7 +1177,7 @@ impl BandWorkspace {
         let reduction = PolarizedSampleReducer::new(polarization)?;
         for channel in single.native_window(row.frequencies_hz) {
             let frequency = row.frequencies_hz[channel];
-            let predicted = self.predict_native(&row, frequency, output_hz, polarization)?;
+            let predicted = self.predict_native(&row, frequency, output_hz, None, polarization)?;
             let first = channel * row.correlations;
             let (observed, predicted, weight) = reduction.reduce(|correlation| {
                 let index = first + correlation;
@@ -1350,6 +1361,7 @@ struct RowAccumulator<'a> {
     row: VisibilityRow<'a>,
     output_hz: &'a [f64],
     output: CasaLinearOutputGrid,
+    prediction_grid: Option<CasaLinearPredictionGrid>,
     polarization: &'a PolarizationOperator,
     reduction: PolarizedSampleReducer<'a>,
     cursor: CasaLinearRowCursor,
@@ -1369,6 +1381,7 @@ impl RowAccumulator<'_> {
                 &self.row,
                 self.row.frequencies_hz[channel],
                 self.output_hz,
+                self.prediction_grid,
                 self.polarization,
             )?;
             let fine_points = self
