@@ -11850,17 +11850,18 @@ impl StandardConvolution {
         }
     }
 
-    pub(crate) fn degrid_float(&self, grid: &[Complex32], taps: SampleTaps) -> Complex32 {
-        debug_assert_eq!(grid.len(), self.grid_shape[0] * self.grid_shape[1]);
-        let row_stride = self.grid_shape[1];
+    pub(crate) fn degrid_float<S: Data<Elem = Complex32>>(
+        &self,
+        grid: &ArrayBase<S, Ix2>,
+        taps: SampleTaps,
+    ) -> Complex32 {
         let x_weights = self.weights[taps.x.weight_index].map(|weight| weight as f32);
         let y_weights = self.weights[taps.y.weight_index].map(|weight| weight as f32);
         let mut value = Complex32::default();
         for (x, x_weight) in x_weights.into_iter().enumerate() {
             let mut row_values = [Complex32::default(); 2];
-            let start = (taps.x.start + x) * row_stride + taps.y.start;
             for (y, y_weight) in y_weights.into_iter().enumerate() {
-                row_values[y % 2] += grid[start + y] * y_weight;
+                row_values[y % 2] += grid[(taps.x.start + x, taps.y.start + y)] * y_weight;
             }
             value += (row_values[0] + row_values[1]) * x_weight;
         }
@@ -12320,48 +12321,6 @@ mod tests {
                         assert!((actual.re - expected.re).abs() <= bound);
                         assert!((actual.im - expected.im).abs() <= bound);
                     }
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn flat_float_degrid_matches_indexed_taps() {
-        let mut geometry = geometry();
-        geometry.grid_shape = [17, 23];
-        let gridder = StandardConvolution::new(&geometry);
-        let grid = Array2::from_shape_fn((17, 23), |(x, y)| {
-            Complex32::new(x as f32 * 0.03125 - y as f32, y as f32 * 0.0625 + x as f32)
-        });
-        for x_start in [0, 5, 17 - super::TAP_COUNT] {
-            for y_start in [0, 8, 23 - super::TAP_COUNT] {
-                for fraction in 0..gridder.weights.len() {
-                    let taps = SampleTaps {
-                        x: TapSpan {
-                            start: x_start,
-                            weight_index: fraction,
-                        },
-                        y: TapSpan {
-                            start: y_start,
-                            weight_index: gridder.weights.len() - 1 - fraction,
-                        },
-                    };
-                    let x_weights =
-                        gridder.weights[taps.x.weight_index].map(|weight| weight as f32);
-                    let y_weights =
-                        gridder.weights[taps.y.weight_index].map(|weight| weight as f32);
-                    let mut expected = Complex32::default();
-                    for (x, x_weight) in x_weights.into_iter().enumerate() {
-                        let mut row_values = [Complex32::default(); 2];
-                        for (y, y_weight) in y_weights.into_iter().enumerate() {
-                            row_values[y % 2] += grid[(x_start + x, y_start + y)] * y_weight;
-                        }
-                        expected += (row_values[0] + row_values[1]) * x_weight;
-                    }
-                    assert_eq!(
-                        gridder.degrid_float(grid.as_slice().unwrap(), taps),
-                        expected
-                    );
                 }
             }
         }

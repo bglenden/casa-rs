@@ -231,10 +231,9 @@ fn single_output_uses_native_frequencies_and_ignores_neighbour_flags() {
                         row.uvw_m[1] * frequency / SPEED_OF_LIGHT_M_PER_S,
                     ])
                     .unwrap();
-                let predicted = expected.convolution.degrid_float(
-                    expected.forward.index_axis(Axis(0), 0).as_slice().unwrap(),
-                    taps,
-                );
+                let predicted = expected
+                    .convolution
+                    .degrid_float(&expected.forward.index_axis(Axis(0), 0), taps);
                 let predicted = widen(predicted) * phase(row.phase_shift_m, frequency).conj();
                 let observed =
                     (widen(input.values[(channel, 0)]) + widen(input.values[(channel, 1)])) / 2.0;
