@@ -2,6 +2,7 @@
 
 //! Serial CPU basis-neutral spectral measurement operator and normal-state primitives.
 
+mod bulk_mfs;
 mod initial_planes;
 pub(crate) mod normal_storage;
 use initial_planes::InitialPlaneBatch;

@@ -2,6 +2,7 @@
 
 //! Frozen global weighting generations and bounded weighted replay.
 
+pub(crate) mod bulk_natural;
 #[path = "streaming_cube/coverage.rs"]
 mod coverage;
 #[path = "streaming_cube/preparation.rs"]

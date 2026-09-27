@@ -114,6 +114,7 @@ pub mod runtime_adapter {
     pub use crate::streaming_cube::input::{
         NativeBlock, NativeBlockView, NativeLayout, RowMetadata,
     };
+    pub use crate::weighting::bulk_natural::{BulkNaturalWeighting, NaturalRowPreparation};
     pub use crate::weighting::native_preparation::{
         NativePreparationWorker, NativeWeightingPreparation,
     };

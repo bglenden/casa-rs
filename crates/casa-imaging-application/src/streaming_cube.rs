@@ -46,15 +46,18 @@ impl MajorCyclePhase for CubePhase {
         ordinal: u32,
         replay: Self::Replay,
         aw: Option<PreparedAwPlanBinding>,
+        observation: &SelectedObservationResolutionRequest,
     ) -> Result<(ExecutionPlan, Self), ApplicationError> {
         if aw.is_some() {
             return Err(boxed("native cube phase received an AW binding"));
         }
+        let (_, access) = resolve_selected_observation(observation.clone())?.into_parts();
         let (physical, executor) = Self::refresh(
             context.problem.clone(),
             context.registry,
             context.policy,
             context.runtime.gridded_normal_storage.clone(),
+            access.into_deferred(),
             replay,
             input,
             ordinal,

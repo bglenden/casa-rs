@@ -163,7 +163,6 @@ impl FinalNormalState {
             || self.numerics != completion.numerics_id()
             || self.weighting_commitment != completion.weighting_commitment_id()
             || self.weighting_generation != completion.weighting_generation()
-            || self.replay != completion.replay_id()
             || self.coverage != completion.coverage()
             || self.selected_generation != selected
             || self.continuum_transform_generation != transform

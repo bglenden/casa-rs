@@ -47,6 +47,23 @@ threads or Goals. Sol keeps its configured model; no silent model substitution.
 | R2 | Complete cube AND MFS path, focused scientific/error/resource/call-count evidence and bounded end-to-end W1/W4 results | Review the integrated result and dispatch B/C; not satisfied by isolated component tests |
 | R3 | B/C all-mode migration, production deletions, all affected required evidence, docs and anti-slop pass | Verify architectural completion separately from full-size performance/science acceptance |
 
+Owner sequencing correction, 2026-09-27: R2 does not delay a cube decision until
+MFS is complete. Checkpoint unfinished MFS work and first measure the complete
+cube candidate on an existing representative turnaround and CASA reference,
+including multiple refills, realistic images/deep CLEAN, constrained-memory
+multiple output batches, actual I/O, W1 then W4, and unchanged comparisons/panels.
+Resolve demonstrated cube defects before extending this mechanism to MFS. The
+MFS/all-mode migration/deletion scope and final R2/R3 acceptance remain unchanged.
+
+Later owner correction, 2026-09-27: the turnaround result does NOT establish
+that the full-size cube slowdown is solved. Stop MFS implementation until the
+new path succeeds on the full-sized cube. Preserve MFS WIP, return to cube-only
+execution, use a bounded all-row/full-image subset to avoid another opaque failed
+full run, then validate the full cube with unchanged science. Do not extend the
+mechanism to other modes based only on the small-case result. The unattended
+checkpoint and memory limits still apply; MFS and final all-mode deletion remain
+required after this performance/acceptance decision.
+
 At each review, Astra sends one consolidated findings packet. Sol gets **one**
 fix round for that checkpoint. If the return leaves findings unresolved or fixes
 them incorrectly, Astra takes over those repairs rather than sending Sol another
@@ -84,6 +101,46 @@ First assignment is R1 only; its review is performed by Astra, not another user
 approval request unless a genuinely new external contract/authority is needed.
 Existing evidence is the starting point: no new broad inventory or resurrection
 of retired cache/FFTW-alert investigations.
+
+### R1 decision — 2026-09-27
+
+Sol preserved the unaccepted pre-refactor source in local non-main checkpoint
+`f422a6b64c8f07415eef6f8e71a36fea2cf8564f` and delivered
+`r1-contract-review.md` in the durable directory. Astra's source-backed decision
+is `r1-astra-review.md` there. The checkpoint/patch, source-owned row-major
+numeric view, fresh owner rebind and existing CLEAN/writer are approved for
+integrated Slice A; no accepted ADR is changed.
+
+Keep selected-generation v9 for Slice A, encoding it at source ingress without
+the displaced rich-sample inspection/projection chain. This is temporary, not
+a permanent byte-compatibility requirement: the compact source-identity version
+and consumer/test cutover must be resolved before R3, with any concrete external
+contract blocker reported to Astra. Do not infer such a blocker merely from a
+public Rust `as_bytes()` accessor.
+
+The new bulk route must replace the old weighting-coverage per-sample transcript
+and nonzero-hash-work admission condition with exact structural coverage plus
+frozen owner associations. Source-owner block/range identity, ordered complete
+consumption and disjoint successful worker completion are necessary; totals
+alone are insufficient. Bind model epoch and output/pass ownership at numerical
+completion, preserve input freshness and all scientific checks, and update
+structural tests rather than pretending the old digest bytes are unchanged.
+Legacy coverage encoders may survive only on not-yet-migrated modes and are
+deleted with their routes before R3. No optional encoder/fallback is approved.
+
+Slice A uses direct tiled-MS input, not a new private replay schema. It must
+complete both ordinary cube and MFS with real CLEAN/residual refresh and existing
+publication before R2. R1 fix rounds used: 0/1; this is the scheduled architect's
+decision, not another optimization trial or a scientific acceptance result.
+
+The route check distinguishes compiled capabilities from installed application
+support: current nonempty start-model, multi-MS, full-Mueller, UV-taper, joint
+continuum-line, nonconstant facets and W-plus-mosaic refusals stay fail-closed;
+their lower-layer science is not deleted. Existing automasking, user masks,
+supported deconvolvers, common-beam and normalization/product variants travel
+through the shared controller/product owners and remain in B/C acceptance.
+This makes existing supported scope explicit, not an authorization to add the
+unavailable combinations or defer an admitted mode.
 
 ## Why another statement of "use blocks" is insufficient
 

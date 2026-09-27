@@ -663,6 +663,7 @@ where
                     ordinal,
                     replay,
                     final_aw,
+                    &input.observation,
                 )?;
                 let registry = SpectralCycleRegistry::new(
                     runtime.registry,

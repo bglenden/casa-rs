@@ -616,7 +616,7 @@ impl BoundObservationSource {
         replay: &mut SelectedRowReplay,
         block: &mut SelectedObservationBlock,
         measurements: &mut SelectedObservationTraversalMeasurementsBuilder,
-        frequency_bounds_hz: Option<[f64; 2]>,
+        window: Option<&super::bound_observation::SelectedSourceWindow>,
     ) -> Result<bool, BoundObservationSourceError> {
         self.geometry_engine
             .verify_selected_observation_measures()?;
@@ -631,14 +631,14 @@ impl BoundObservationSource {
                 return Ok(false);
             };
             let coordinates = &self.coordinates[coordinate_index];
-            let (channel_range, admitted_channels) = match frequency_bounds_hz {
-                Some(bounds) => {
+            let (channel_range, admitted_channels) = match window {
+                Some(super::bound_observation::SelectedSourceWindow::Frequency(bounds)) => {
                     let Some(window) = selected_channel_window(
                         self,
                         problem,
                         coordinates,
                         &block.row_contexts,
-                        bounds,
+                        *bounds,
                     )?
                     else {
                         // The row manifest was still consumed and will be checked at terminal
@@ -646,6 +646,17 @@ impl BoundObservationSource {
                         continue;
                     };
                     (window.0, Some(window.1))
+                }
+                Some(super::bound_observation::SelectedSourceWindow::Channels(channels)) => {
+                    if channels.is_empty() || channels.end > coordinates.channels.len() {
+                        return Err(BoundObservationSourceError::StoredSampleShapeMismatch);
+                    }
+                    let first = coordinates.channels[channels.start].channel_index as usize;
+                    let last = coordinates.channels[channels.end - 1].channel_index as usize;
+                    (
+                        VisibilityChannelReadRange::new(first, last - first + 1),
+                        Some(channels.clone()),
+                    )
                 }
                 None => (
                     VisibilityChannelReadRange::new(
@@ -1686,7 +1697,239 @@ impl SelectedObservationBlockIdentity {
     }
 }
 
+/// Reusable row-scope geometry beside borrowed source payloads. Construction is
+/// sized from the source's admitted row/channel bounds; no visibility is copied.
+pub struct SelectedObservationNumericGeometry {
+    binding: Option<(u64, u64, u64)>,
+    rows: Vec<SelectedObservationRunRow>,
+    channels: Vec<SelectedObservationRunChannel>,
+    frequencies_hz: Vec<f64>,
+    boundaries_hz: Vec<[f64; 2]>,
+    original_pairs_hz: Vec<[f64; 2]>,
+    maximum_rows: usize,
+    maximum_channels: usize,
+}
+
+impl SelectedObservationNumericGeometry {
+    /// Allocate bounded, reusable row and frequency storage after admission.
+    pub fn new(
+        maximum_rows: usize,
+        maximum_channels: usize,
+    ) -> Result<Self, BoundObservationSourceError> {
+        Self::required_bytes(maximum_rows, maximum_channels)?;
+        Ok(Self {
+            binding: None,
+            rows: Vec::with_capacity(maximum_rows),
+            channels: Vec::with_capacity(maximum_channels),
+            frequencies_hz: Vec::with_capacity(maximum_rows * maximum_channels),
+            boundaries_hz: Vec::with_capacity(maximum_rows * maximum_channels),
+            original_pairs_hz: Vec::with_capacity(maximum_rows),
+            maximum_rows,
+            maximum_channels,
+        })
+    }
+
+    /// Inline row geometry is sufficient for the ordinary single-domain route.
+    /// Domain projection payloads, if any, remain part of source admission.
+    pub fn required_bytes(
+        rows: usize,
+        channels: usize,
+    ) -> Result<usize, BoundObservationSourceError> {
+        if rows == 0 || channels == 0 {
+            return Err(BoundObservationSourceError::StoredSampleShapeMismatch);
+        }
+        rows.checked_mul(channels)
+            .and_then(|n| n.checked_mul(3 * size_of::<f64>()))
+            .and_then(|n| {
+                rows.checked_mul(size_of::<SelectedObservationRunRow>() + size_of::<[f64; 2]>())
+                    .and_then(|r| n.checked_add(r))
+            })
+            .and_then(|n| {
+                channels
+                    .checked_mul(size_of::<SelectedObservationRunChannel>())
+                    .and_then(|c| n.checked_add(c))
+            })
+            .and_then(|n| n.checked_add(size_of::<Self>()))
+            .filter(|n| *n <= isize::MAX as usize)
+            .ok_or(BoundObservationSourceError::MeasurementOverflow)
+    }
+
+    /// Shared selected native channel descriptors.
+    pub fn channels(&self) -> &[SelectedObservationRunChannel] {
+        &self.channels
+    }
+    /// Row/channel centres in the compiled output frame.
+    pub fn frequencies_hz(&self) -> &[f64] {
+        &self.frequencies_hz
+    }
+    /// Converted native channel boundaries for the shared spectral stencil.
+    pub fn boundaries_hz(&self) -> &[[f64; 2]] {
+        &self.boundaries_hz
+    }
+    /// Original selected frequency pair per row, including windowed reads.
+    pub fn original_pairs_hz(&self) -> &[[f64; 2]] {
+        &self.original_pairs_hz
+    }
+    /// Geometry evaluated at row scope, never per correlation.
+    pub fn rows(&self) -> &[SelectedObservationRunRow] {
+        &self.rows
+    }
+}
+
 impl SelectedObservationBlock {
+    /// Evaluate row geometry and frequency conversion once per row. Numeric
+    /// columns stay with this block, and are not turned into sample records.
+    pub fn project_numeric_geometry(
+        &self,
+        problem: &CompiledProblem,
+        geometry: &mut SelectedObservationNumericGeometry,
+    ) -> Result<(), BoundObservationSourceError> {
+        geometry.binding = None;
+        geometry.rows.clear();
+        geometry.channels.clear();
+        geometry.frequencies_hz.clear();
+        geometry.boundaries_hz.clear();
+        geometry.original_pairs_hz.clear();
+        let coordinates = self
+            .coordinates
+            .as_ref()
+            .and_then(|v| v.get(self.coordinate_index))
+            .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)?;
+        let logical = self
+            .logical_source
+            .as_ref()
+            .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)?;
+        let engine = self
+            .geometry_engine
+            .as_deref()
+            .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)?;
+        let window = self
+            .admitted_channel_ordinals
+            .clone()
+            .unwrap_or(0..coordinates.channels.len());
+        if self.buffer.row_count() > geometry.maximum_rows
+            || window.len() > geometry.maximum_channels
+        {
+            return Err(BoundObservationSourceError::StoredSampleShapeMismatch);
+        }
+        geometry.channels.extend(
+            coordinates.channels[window]
+                .iter()
+                .copied()
+                .map(project_run_channel),
+        );
+        let first = coordinates
+            .channels
+            .first()
+            .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)?;
+        let second = coordinates.channels.get(1).unwrap_or(first);
+        let mut previous_conversion = None;
+        for row in 0..self.buffer.row_count() {
+            let stored = self
+                .buffer
+                .sample(0, row, 0)
+                .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)?;
+            let projected = project_stored_run_row(
+                logical,
+                problem,
+                engine,
+                coordinates,
+                stored,
+                &self.row_geometry[row],
+            )?;
+            let key = (stored.field_id(), stored.time_mjd_seconds().to_bits());
+            if previous_conversion
+                .as_ref()
+                .is_none_or(|(previous, _)| *previous != key)
+            {
+                previous_conversion = Some((
+                    key,
+                    prepare_row_frequency_conversion(
+                        engine,
+                        stored.field_id(),
+                        stored.time_mjd_seconds(),
+                        first.frame,
+                        problem.geometry().spectral().output_frame(),
+                    )?,
+                ));
+            }
+            let conversion = &previous_conversion.as_ref().expect("conversion prepared").1;
+            geometry.frequencies_hz.extend(
+                geometry
+                    .channels
+                    .iter()
+                    .map(|channel| conversion.convert_hz(channel.frequency_centre_hz)),
+            );
+            geometry
+                .boundaries_hz
+                .extend(geometry.channels.iter().map(|channel| {
+                    [
+                        conversion.convert_hz(channel.frequency_lower_hz),
+                        conversion.convert_hz(channel.frequency_upper_hz),
+                    ]
+                }));
+            geometry.original_pairs_hz.push([
+                conversion.convert_hz(first.centre_hz),
+                conversion.convert_hz(second.centre_hz),
+            ]);
+            geometry.rows.push(projected);
+        }
+        geometry.binding = self.index_binding;
+        Ok(())
+    }
+
+    /// Borrow one whole row with source-issued axes and projected metadata.
+    pub fn numeric_row<'a>(
+        &'a self,
+        geometry: &'a SelectedObservationNumericGeometry,
+        row: usize,
+    ) -> Result<casa_imaging_model::SelectedNumericRow<'a>, BoundObservationSourceError> {
+        if self.index_binding.is_none() || geometry.binding != self.index_binding {
+            return Err(BoundObservationSourceError::StoredSampleShapeMismatch);
+        }
+        let columns = self.numeric_block()?.columns();
+        let coordinates = self
+            .coordinates
+            .as_ref()
+            .and_then(|v| v.get(self.coordinate_index))
+            .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)?;
+        let projected = geometry
+            .rows
+            .get(row)
+            .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)?;
+        let channels = columns.channel_range.count;
+        let width = channels * columns.correlation_count;
+        let start = row * width;
+        let visibility = match columns.visibility {
+            crate::SelectedNumericVisibility::Float32(values) => {
+                crate::SelectedNumericVisibility::Float32(&values[start..start + width])
+            }
+            crate::SelectedNumericVisibility::Complex32(values) => {
+                crate::SelectedNumericVisibility::Complex32(&values[start..start + width])
+            }
+        };
+        let weights = match columns.weights {
+            crate::SelectedNumericWeights::PerRow(values) => crate::SelectedNumericWeights::PerRow(
+                &values[row * columns.correlation_count..(row + 1) * columns.correlation_count],
+            ),
+            crate::SelectedNumericWeights::PerChannel(values) => {
+                crate::SelectedNumericWeights::PerChannel(&values[start..start + width])
+            }
+        };
+        Ok(casa_imaging_model::SelectedNumericRow {
+            row: projected,
+            channels: &geometry.channels,
+            correlations: &coordinates.products,
+            first_stored_channel: u32::try_from(columns.channel_range.start)
+                .map_err(|_| BoundObservationSourceError::StoredSampleShapeMismatch)?,
+            stored_channels: channels,
+            stored_correlations: columns.correlation_count,
+            visibility,
+            flags: &columns.flags[start..start + width],
+            weights,
+        })
+    }
+
     /// Borrow one identified flat source block without allocating sample records.
     /// The block cannot be refilled through its mutable owner while this borrow lives.
     pub fn numeric_block(

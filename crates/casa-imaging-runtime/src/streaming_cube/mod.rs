@@ -2,13 +2,16 @@
 
 //! Bounded native storage and execution for the production cube path.
 
+mod bulk_mfs;
+mod bulk_phase;
+mod bulk_wave;
 mod execute;
 mod input;
 mod phase;
 mod plan;
 mod prepare;
 
-pub use phase::{InitialCube as CubePhase, NativeReplay};
+pub use bulk_phase::{BulkCubePhase as CubePhase, BulkCubeReplay as NativeReplay};
 
 /// Charge process data not already covered by an authority-owned retention
 /// permit. Only resident plane payload is a proved physical contribution to

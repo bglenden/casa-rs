@@ -14,7 +14,7 @@ use casa_imaging_model::{
 };
 #[cfg(test)]
 use ndarray::ArrayView3;
-use ndarray::{Array3, ArrayView2, Axis, s};
+use ndarray::{Array3, Axis};
 use num_complex::{Complex32, Complex64};
 use smallvec::SmallVec;
 
@@ -98,6 +98,22 @@ impl BandPlan {
         block: &NativeBlock,
         output_hz: &[f64],
     ) -> Result<u64, SpectralOperatorError> {
+        Self::observe_borrowed(
+            bands,
+            block
+                .view()
+                .map_err(|_| SpectralOperatorError::InvalidSample)?,
+            output_hz,
+        )
+    }
+
+    /// Discover all dependencies from the same source-borrowed block used by
+    /// the first imaging wave. No separate numerical payload pass is needed.
+    pub fn observe_borrowed(
+        bands: &mut [Self],
+        block: NativeBlockView<'_>,
+        output_hz: &[f64],
+    ) -> Result<u64, SpectralOperatorError> {
         if bands.is_empty()
             || bands
                 .iter()
@@ -108,9 +124,6 @@ impl BandPlan {
         {
             return Err(SpectralOperatorError::ProblemMismatch);
         }
-        block
-            .validate_shape(block.metadata.len(), block.channels, block.correlations)
-            .map_err(|_| SpectralOperatorError::InvalidSample)?;
         if block.channels < 2 {
             return Err(SpectralOperatorError::InvalidSample);
         }
@@ -217,6 +230,16 @@ impl BandPlan {
     /// Selected native ordinals required across all observed rows.
     pub fn native_range(&self) -> Range<usize> {
         self.support.native.clone()
+    }
+
+    /// An initial empty-model wave can consume the entire selected native axis
+    /// while simultaneously discovering narrower support for subsequent waves.
+    pub fn initial_source_axis(mut self, channels: usize) -> Result<Self, SpectralOperatorError> {
+        if self.phase != BandPhase::InitialZero || channels < 2 {
+            return Err(SpectralOperatorError::ProblemMismatch);
+        }
+        self.support.native = 0..channels;
+        Ok(self)
     }
 
     /// Exclusive output channels.
@@ -434,6 +457,39 @@ impl<'a> EpochBand<'a> {
         )
     }
 
+    /// Consume a source-owned selected-channel window while retaining the
+    /// complete-axis dependency discovered by the first pass.
+    pub fn consume_source_window(
+        &mut self,
+        block: NativeBlockView<'_>,
+        layout: &NativeLayout,
+        selected: Range<usize>,
+        output_hz: &[f64],
+        polarization: &PolarizationOperator,
+    ) -> Result<(), SpectralOperatorError> {
+        if output_hz.len() != self.generation.shape().coefficients()
+            || selected.len() != layout.channels.len()
+        {
+            return Err(SpectralOperatorError::ProblemMismatch);
+        }
+        let native = if self.native_range.is_empty() {
+            0..0
+        } else {
+            if self.native_range.start < selected.start || self.native_range.end > selected.end {
+                return Err(SpectralOperatorError::IncompleteSpectralHalo);
+            }
+            self.native_range.start - selected.start..self.native_range.end - selected.start
+        };
+        self.workspace.consume_block(
+            block,
+            layout,
+            0..selected.len(),
+            native,
+            output_hz,
+            polarization,
+        )
+    }
+
     /// Join into owned normal fields for the same model and return reusable FFT
     /// state. Complete source coverage is the runtime owner's separate duty.
     pub fn complete(
@@ -587,10 +643,11 @@ struct VisibilityRow<'a> {
     original_pair_hz: [f64; 2],
     channels: &'a [u32],
     frequencies_hz: &'a [f64],
-    values: ArrayView2<'a, Complex32>,
-    weights: ArrayView2<'a, f32>,
-    flags: ArrayView2<'a, bool>,
-    weight_flags: ArrayView2<'a, bool>,
+    correlations: usize,
+    values: &'a [Complex32],
+    weights: &'a [f32],
+    flags: &'a [bool],
+    weight_flags: &'a [bool],
 }
 
 impl NativeBlockView<'_> {
@@ -615,7 +672,6 @@ impl NativeBlockView<'_> {
         let metadata = self.metadata[row];
         let cells = row * self.channels..(row + 1) * self.channels;
         let samples = cells.start * self.correlations..cells.end * self.correlations;
-        let shape = (self.channels, self.correlations);
         Ok(VisibilityRow {
             address: SelectedSampleAddress {
                 physical_row: metadata.physical_row,
@@ -626,10 +682,11 @@ impl NativeBlockView<'_> {
             original_pair_hz: metadata.original_pair_hz,
             channels: &layout.channels[channels],
             frequencies_hz: &self.frequencies_hz[cells],
-            values: ArrayView2::from_shape(shape, &self.values[samples.clone()]).unwrap(),
-            weights: ArrayView2::from_shape(shape, &self.weights[samples.clone()]).unwrap(),
-            flags: ArrayView2::from_shape(shape, &self.flags[samples.clone()]).unwrap(),
-            weight_flags: ArrayView2::from_shape(shape, &self.weight_flags[samples]).unwrap(),
+            correlations: self.correlations,
+            values: &self.values[samples.clone()],
+            weights: &self.weights[samples.clone()],
+            flags: &self.flags[samples.clone()],
+            weight_flags: &self.weight_flags[samples],
         })
     }
 }
@@ -653,31 +710,29 @@ impl<'a> VisibilityRow<'a> {
         if channels.is_empty() || channels.end > self.channels.len() {
             return Err(SpectralOperatorError::InvalidSample);
         }
+        let samples = channels.start * self.correlations..channels.end * self.correlations;
         Ok(Self {
             channels: &self.channels[channels.clone()],
             frequencies_hz: &self.frequencies_hz[channels.clone()],
-            values: self.values.slice_move(s![channels.clone(), ..]),
-            weights: self.weights.slice_move(s![channels.clone(), ..]),
-            flags: self.flags.slice_move(s![channels.clone(), ..]),
-            weight_flags: self.weight_flags.slice_move(s![channels, ..]),
+            values: &self.values[samples.clone()],
+            weights: &self.weights[samples.clone()],
+            flags: &self.flags[samples.clone()],
+            weight_flags: &self.weight_flags[samples],
             ..self
         })
     }
 
     fn validate(&self, correlations: usize) -> Result<(), SpectralOperatorError> {
-        let shape = (self.channels.len(), correlations);
+        let samples = self.channels.len().checked_mul(correlations);
         if self.channels.is_empty()
-            || self.frequencies_hz.len() != shape.0
+            || self.frequencies_hz.len() != self.channels.len()
             || correlations == 0
             || correlations > 4
-            || self.values.dim() != shape
-            || self.weights.dim() != shape
-            || self.flags.dim() != shape
-            || self.weight_flags.dim() != shape
-            || !self.values.is_standard_layout()
-            || !self.weights.is_standard_layout()
-            || !self.flags.is_standard_layout()
-            || !self.weight_flags.is_standard_layout()
+            || self.correlations != correlations
+            || samples != Some(self.values.len())
+            || samples != Some(self.weights.len())
+            || samples != Some(self.flags.len())
+            || samples != Some(self.weight_flags.len())
         {
             return Err(SpectralOperatorError::InvalidSample);
         }
@@ -1091,24 +1146,19 @@ impl BandWorkspace {
         for channel in single.native_window(row.frequencies_hz) {
             let frequency = row.frequencies_hz[channel];
             let predicted = self.predict_native(&row, frequency, output_hz, polarization)?;
-            let values = row
-                .values
-                .row(channel)
+            let samples = channel * row.correlations..(channel + 1) * row.correlations;
+            let values = row.values[samples.clone()]
                 .iter()
                 .copied()
                 .map(widen)
                 .collect::<SmallVec<[Complex64; 4]>>();
-            let weights = row
-                .weights
-                .row(channel)
+            let weights = row.weights[samples.clone()]
                 .iter()
                 .map(|&weight| f64::from(weight))
                 .collect::<SmallVec<[f64; 4]>>();
-            let flags = row
-                .flags
-                .row(channel)
+            let flags = row.flags[samples.clone()]
                 .iter()
-                .zip(row.weight_flags.row(channel))
+                .zip(&row.weight_flags[samples])
                 .map(|(&flag, &weight_flag)| flag || weight_flag)
                 .collect::<SmallVec<[bool; 4]>>();
             let (observed, predicted, weight) =
@@ -1216,10 +1266,13 @@ impl RowAccumulator<'_> {
                     let mut predicted = SmallVec::<[Complex64; 4]>::new();
                     let mut weights = SmallVec::<[f64; 4]>::new();
                     let mut flags = SmallVec::<[bool; 4]>::new();
+                    let left = (channel - 1) * self.row.correlations;
+                    let right = channel * self.row.correlations;
+                    let nearest = nearest * self.row.correlations;
                     for correlation in 0..prediction.len() {
                         observed.push(interpolate_complex_pair(
-                            widen(self.row.values[(channel - 1, correlation)]),
-                            widen(self.row.values[(channel, correlation)]),
+                            widen(self.row.values[left + correlation]),
+                            widen(self.row.values[right + correlation]),
                             fine.factors(),
                         ));
                         predicted.push(interpolate_complex_pair(
@@ -1227,12 +1280,12 @@ impl RowAccumulator<'_> {
                             prediction[correlation],
                             fine.factors(),
                         ));
-                        weights.push(f64::from(self.row.weights[(nearest, correlation)]));
+                        weights.push(f64::from(self.row.weights[nearest + correlation]));
                         flags.push(
                             fine.linear_flag(
-                                self.row.flags[(channel - 1, correlation)],
-                                self.row.flags[(channel, correlation)],
-                            ) || self.row.weight_flags[(nearest, correlation)],
+                                self.row.flags[left + correlation],
+                                self.row.flags[right + correlation],
+                            ) || self.row.weight_flags[nearest + correlation],
                         );
                     }
                     // Interpolate observed and predicted separately, then apply

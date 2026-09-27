@@ -92,7 +92,7 @@ def main():
             "cutout_xy": [x0, x1, y0, y1],
             "review_triggers": row.get("review_triggers", row.get("failed", [])),
         })
-    fig.suptitle("T55 C-array CLEAN numerical review — casa-rs W4 minus CASA, shared scales")
+    fig.suptitle("T55 C-array CLEAN numerical review — casa-rs minus CASA, shared scales")
     fig.savefig(args.panel, dpi=125)
     plt.close(fig)
     args.metrics.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")

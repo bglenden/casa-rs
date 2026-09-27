@@ -5070,6 +5070,16 @@ impl PendingCompleteDataSlabFold {
 }
 
 impl SpectralOperatorState {
+    pub(crate) fn consume_bulk_mfs(
+        &mut self,
+        block: casa_imaging_reconstruction::runtime_adapter::NativeBlockView<'_>,
+        layout: &casa_imaging_reconstruction::runtime_adapter::NativeLayout,
+    ) -> Result<(), CompleteDataOperatorError> {
+        self.state
+            .consume_bulk_mfs(block, layout)
+            .map_err(CompleteDataOperatorError::Owner)
+    }
+
     pub(crate) fn authorize_derived_coverage(
         &mut self,
         proof: casa_imaging_reconstruction::FrozenWeightingCoverageProof,

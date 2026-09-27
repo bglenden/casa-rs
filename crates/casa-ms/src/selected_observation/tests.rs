@@ -3014,6 +3014,70 @@ fn selected_observation_residency_is_cardinality_independent_and_schedule_invari
 }
 
 #[test]
+fn numeric_block_consumption_preserves_v9_and_rejects_repeat_and_failed_work() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("numeric-stream.ms");
+    generate_fixture_with_rows(&path, 4);
+    let problem = compiled_problem(&path, 4);
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let binding = ObservationSourceBinding::new(
+        source_state(source),
+        bound_content_budget_for_rows(&problem, source, 1, 1),
+    );
+    let open = || {
+        BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding.clone()])
+            .unwrap()
+    };
+    let expected = open()
+        .traverse(&problem, |_| Ok::<_, Infallible>(()))
+        .unwrap();
+    let (mut source, mut consumer) = open().into_block_stream(&problem).unwrap();
+    let mut storage = source.create_storage(0);
+    let mut geometry = super::SelectedObservationNumericGeometry::new(1, 2).unwrap();
+    let mut callbacks = 0;
+    while source.fill_next(&mut storage).unwrap().is_some() {
+        storage
+            .project_numeric_geometry(&problem, &mut geometry)
+            .unwrap();
+        consumer
+            .consume_numeric(&storage, &geometry, || {
+                callbacks += 1;
+                Ok::<_, Infallible>(())
+            })
+            .unwrap();
+    }
+    let (_, actual) = consumer.complete(source.complete().unwrap()).unwrap();
+    assert_eq!(callbacks, 4);
+    assert_eq!(actual.generation_id(), expected.generation_id());
+    assert_eq!(actual.sample_count(), expected.sample_count());
+    assert_eq!(actual.measurements().selected_sample_handoff_bytes(), 0);
+
+    for failed_work in [false, true] {
+        let (mut source, mut consumer) = open().into_block_stream(&problem).unwrap();
+        let mut storage = source.create_storage(0);
+        source.fill_next(&mut storage).unwrap().unwrap();
+        storage
+            .project_numeric_geometry(&problem, &mut geometry)
+            .unwrap();
+        let first = consumer.consume_numeric(&storage, &geometry, || {
+            if failed_work {
+                Err(std::io::Error::other("numerical worker failed"))
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(first.is_err(), failed_work);
+        assert!(
+            consumer
+                .consume_numeric(&storage, &geometry, || Ok::<_, Infallible>(()))
+                .is_err()
+        );
+        while source.fill_next(&mut storage).unwrap().is_some() {}
+        assert!(consumer.complete(source.complete().unwrap()).is_err());
+    }
+}
+
+#[test]
 fn refillable_block_stream_matches_scalar_traversal_and_returns_the_owner() {
     let directory = tempfile::tempdir().expect("temporary block-stream fixture");
     let path = directory.path().join("block-stream.ms");
@@ -3176,6 +3240,52 @@ fn windowed_block_stream_exhausts_rows_without_reading_disjoint_payload() {
         .complete(initial_terminal)
         .expect("mint initial replay proof");
     assert_eq!(initial_completion.sample_count(), 16);
+
+    let (mut channel_source, mut channel_consumer) = retained
+        .into_channel_window_block_stream(&problem, 1..2)
+        .unwrap();
+    let mut channel_storage = channel_source.create_storage(0);
+    let mut geometry =
+        super::SelectedObservationNumericGeometry::new(channel_source.maximum_rows_per_block(), 2)
+            .unwrap();
+    while channel_source
+        .fill_next(&mut channel_storage)
+        .unwrap()
+        .is_some()
+    {
+        let columns = channel_storage.numeric_block().unwrap().columns();
+        assert_eq!(
+            columns.channel_range.start, 2,
+            "selected ordinal 1 is physical channel 2"
+        );
+        assert_eq!(columns.channel_range.count, 1);
+        channel_storage
+            .project_numeric_geometry(&problem, &mut geometry)
+            .unwrap();
+        channel_consumer
+            .consume_numeric(&channel_storage, &geometry, || Ok::<_, Infallible>(()))
+            .unwrap();
+    }
+    let (retained, channel_completion) = channel_consumer
+        .complete_window(channel_source.complete().unwrap())
+        .unwrap();
+    assert_eq!(
+        channel_completion.generation_id(),
+        initial_completion.generation_id()
+    );
+    assert_eq!(channel_completion.channel_ordinals(), Some(1..2));
+    assert_eq!(channel_completion.frequency_bounds_hz(), None);
+    assert_eq!(channel_completion.sample_count(), 8);
+    assert_eq!(
+        channel_completion
+            .measurements()
+            .selected_sample_handoff_bytes(),
+        0
+    );
+    assert!(
+        channel_completion.measurements().logical_output_bytes()
+            < initial_completion.measurements().logical_output_bytes()
+    );
 
     let (mut window_source, mut window_consumer) = retained
         .into_windowed_block_stream(&problem, [1.5e9, 1.6e9])

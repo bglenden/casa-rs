@@ -22,7 +22,7 @@ pub(crate) use access::{
 };
 pub use access::{
     BoundObservationSourceError, SelectedObservationBlock, SelectedObservationBlockIdentity,
-    SelectedObservationNumericBlock,
+    SelectedObservationNumericBlock, SelectedObservationNumericGeometry,
 };
 pub use bound_observation::{
     BoundSelectedObservation, BoundSelectedObservationError, DeferredSelectedObservationAccess,

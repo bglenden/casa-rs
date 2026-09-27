@@ -113,23 +113,7 @@ enum SelectedStoredWeights {
     PerChannel(Vec<f32>),
 }
 
-/// Borrowed, source-owned visibility values in `[row][channel][correlation]` order.
-#[derive(Clone, Copy)]
-pub enum SelectedNumericVisibility<'a> {
-    /// Selected `FLOAT_DATA` values.
-    Float32(&'a [f32]),
-    /// Selected `DATA` or `CORRECTED_DATA` values.
-    Complex32(&'a [casa_types::Complex32]),
-}
-
-/// Borrowed input weights without expanding row-constant weights over channels.
-#[derive(Clone, Copy)]
-pub enum SelectedNumericWeights<'a> {
-    /// `[row][correlation]` values from `WEIGHT`.
-    PerRow(&'a [f32]),
-    /// `[row][channel][correlation]` values from `WEIGHT_SPECTRUM`.
-    PerChannel(&'a [f32]),
-}
+pub use casa_imaging_model::{SelectedNumericVisibility, SelectedNumericWeights};
 
 /// Bounded numeric columns of one selected source block. All channelized slices
 /// use `[row][channel][correlation]`; the owner cannot refill while borrowed.

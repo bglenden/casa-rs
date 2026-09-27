@@ -78,6 +78,7 @@ impl Input {
 
     fn row(&self, native: Range<usize>) -> VisibilityRow<'_> {
         let frequency = self.frequencies[0];
+        let samples = native.start * 2..native.end * 2;
         VisibilityRow {
             address: SelectedSampleAddress {
                 measurement_set: MeasurementSetIdentity::new(LogicalIdentity::from_sha256([1; 32])),
@@ -99,10 +100,11 @@ impl Input {
             original_pair_hz: [self.frequencies[0], self.frequencies[1]],
             channels: &self.channels[native.clone()],
             frequencies_hz: &self.frequencies[native.clone()],
-            values: self.values.slice(s![native.clone(), ..]),
-            weights: self.weights.slice(s![native.clone(), ..]),
-            flags: self.flags.slice(s![native.clone(), ..]),
-            weight_flags: self.weight_flags.slice(s![native, ..]),
+            correlations: 2,
+            values: &self.values.as_slice().unwrap()[samples.clone()],
+            weights: &self.weights.as_slice().unwrap()[samples.clone()],
+            flags: &self.flags.as_slice().unwrap()[samples.clone()],
+            weight_flags: &self.weight_flags.as_slice().unwrap()[samples],
         }
     }
 }
@@ -612,6 +614,16 @@ fn compact_views_are_zero_copy_and_reject_bad_shape_or_partial_rows() {
     );
     row.validate(2).unwrap();
     assert!(row.validate(1).is_err());
+    for field in 0..4 {
+        let mut malformed = input.row(1..3);
+        match field {
+            0 => malformed.values = &malformed.values[..3],
+            1 => malformed.weights = &malformed.weights[..3],
+            2 => malformed.flags = &malformed.flags[..3],
+            _ => malformed.weight_flags = &malformed.weight_flags[..3],
+        }
+        assert!(malformed.validate(2).is_err());
+    }
     let mut band = workspace(0..4, vec![0, 1, 2, 3], &model());
     let allocation = band.forward.as_ptr();
     band.prepare_model(model().view()).unwrap();
@@ -646,6 +658,38 @@ fn compact_views_are_zero_copy_and_reject_bad_shape_or_partial_rows() {
             .iter()
             .all(|v| v.re == 2.0)
     );
+}
+
+#[test]
+fn flat_row_windows_borrow_all_payloads_at_each_correlation_width() {
+    let input = Input::new(vec![1e9, 1.001e9, 1.002e9, 1.003e9]);
+    for correlations in 1..=4 {
+        let layout = NativeLayout::new(
+            input.row(0..4).address,
+            input.channels.clone(),
+            (0..correlations)
+                .map(|index| (index as u32, CorrelationType::CircularRr))
+                .collect(),
+        )
+        .unwrap();
+        let mut block = NativeBlock::new(2, 4, correlations).unwrap();
+        for (index, value) in block.values.iter_mut().enumerate() {
+            *value = Complex32::new(index as f32, -(index as f32));
+        }
+        let row = block.row(&layout, 1, 0..4).unwrap().window(1..4).unwrap();
+        let nested = row.window(1..2).unwrap();
+        nested.validate(correlations).unwrap();
+        let start = 6 * correlations;
+        assert_eq!(nested.values, &block.values[start..start + correlations]);
+        assert_eq!(nested.values.as_ptr(), block.values[start..].as_ptr());
+        assert_eq!(nested.weights.as_ptr(), block.weights[start..].as_ptr());
+        assert_eq!(nested.flags.as_ptr(), block.flags[start..].as_ptr());
+        assert_eq!(
+            nested.weight_flags.as_ptr(),
+            block.weight_flags[start..].as_ptr()
+        );
+        assert_eq!(nested.channels, &layout.channels[2..3]);
+    }
 }
 
 #[test]

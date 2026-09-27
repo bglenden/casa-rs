@@ -923,7 +923,7 @@ fn nearest_terms(
     one_term(index, 1.0, frequency_hz).unwrap_or_default()
 }
 
-fn linear_terms(
+pub(crate) fn linear_terms(
     centres: &[f64],
     boundaries: &[f64],
     source_boundaries_hz: [f64; 2],

@@ -1309,6 +1309,7 @@ impl SelectedObservationGenerationId {
 
 pub(crate) struct SelectedObservationGenerationEncoder {
     encoder: CanonicalEncoder,
+    numeric_bytes: Vec<u8>,
     row_run: Option<GenerationRowContent>,
     channel_run: Option<GenerationChannelContent>,
     row_run_count: u64,
@@ -1443,6 +1444,7 @@ impl SelectedObservationGenerationEncoder {
         encoder.u32(SELECTED_OBSERVATION_GENERATION_VERSION);
         Self {
             encoder,
+            numeric_bytes: Vec::new(),
             row_run: None,
             channel_run: None,
             row_run_count: 0,
@@ -1558,6 +1560,78 @@ impl SelectedObservationGenerationEncoder {
 
     pub(crate) const fn proof_bytes(&self) -> u64 {
         self.encoder.proof_bytes()
+    }
+
+    pub(crate) fn push_numeric_row(&mut self, numeric: crate::SelectedNumericRow<'_>) {
+        self.finish_row_run();
+        let row_content = GenerationRowContent::from_run(numeric.row);
+        self.encoder.u8(GENERATION_ROW_RUN_MARKER);
+        encode_generation_row_content(&mut self.encoder, &row_content);
+        self.row_run = Some(row_content);
+        self.row_run_count += 1;
+        // One reusable scratch buffer batches v9 correlation encoding.
+        // Each correlation is at most 21 bytes including its marker.
+        let required = numeric.correlations.len() * 21;
+        self.numeric_bytes.clear();
+        if self.numeric_bytes.capacity() < required {
+            self.numeric_bytes.reserve_exact(required);
+        }
+        for channel in numeric.channels {
+            self.finish_channel_run();
+            let content = GenerationChannelContent::from_run(channel);
+            self.encoder.u8(GENERATION_CHANNEL_RUN_MARKER);
+            encode_generation_channel_content(&mut self.encoder, &content);
+            self.channel_run = Some(content);
+            self.channel_run_count += 1;
+            let base = (channel.channel_index - numeric.first_stored_channel) as usize
+                * numeric.stored_correlations;
+            let parallel_flag = numeric.correlations.iter().any(|product| {
+                product.correlation_type().contributes_to_stokes_i()
+                    && numeric.flags[base + product.correlation_index() as usize]
+            });
+            let bytes = &mut self.numeric_bytes;
+            bytes.clear();
+            for product in numeric.correlations {
+                let correlation = product.correlation_index() as usize;
+                let index = base + correlation;
+                bytes.push(GENERATION_CORRELATION_MARKER);
+                bytes.extend_from_slice(&product.correlation_index().to_le_bytes());
+                bytes.push(correlation_type_tag(product.correlation_type()));
+                let encode_float = |bytes: &mut Vec<u8>, value: f32| {
+                    bytes.extend_from_slice(
+                        &(if value == 0.0 { 0 } else { value.to_bits() }).to_le_bytes(),
+                    );
+                };
+                match numeric.visibility {
+                    crate::SelectedNumericVisibility::Float32(values) => {
+                        bytes.push(0);
+                        encode_float(bytes, values[index]);
+                    }
+                    crate::SelectedNumericVisibility::Complex32(values) => {
+                        bytes.push(1);
+                        encode_float(bytes, values[index].re);
+                        encode_float(bytes, values[index].im);
+                    }
+                }
+                bytes.push(u8::from(numeric.flags[index]));
+                bytes.push(u8::from(
+                    if product.correlation_type().contributes_to_stokes_i() {
+                        parallel_flag
+                    } else {
+                        numeric.flags[index]
+                    },
+                ));
+                let weight = match numeric.weights {
+                    crate::SelectedNumericWeights::PerRow(values) => values[correlation],
+                    crate::SelectedNumericWeights::PerChannel(values) => values[index],
+                };
+                encode_float(bytes, weight);
+            }
+            self.encoder.raw(bytes);
+            self.channel_run_sample_count = numeric.correlations.len() as u64;
+            self.row_run_sample_count += numeric.correlations.len() as u64;
+            self.sample_count += numeric.correlations.len() as u64;
+        }
     }
 
     pub(crate) const fn proof_hash_calls(&self) -> u64 {

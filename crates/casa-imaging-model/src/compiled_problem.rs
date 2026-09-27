@@ -3680,6 +3680,11 @@ impl CanonicalEncoder {
         self.update(value);
     }
 
+    /// Append already canonical bytes without an additional length prefix.
+    pub(crate) fn raw(&mut self, value: &[u8]) {
+        self.update(value);
+    }
+
     pub(crate) fn identity(&mut self, identity: LogicalIdentity) {
         self.update(identity.0);
     }

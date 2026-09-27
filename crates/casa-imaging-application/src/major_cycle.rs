@@ -36,6 +36,7 @@ pub(super) trait MajorCyclePhase: WorkImplementation + Sized {
         ordinal: u32,
         replay: Self::Replay,
         aw: Option<PreparedAwPlanBinding>,
+        observation: &SelectedObservationResolutionRequest,
     ) -> Result<(ExecutionPlan, Self), ApplicationError>;
 
     fn take_replay(&self) -> Result<Self::Replay, ApplicationError>;
@@ -149,6 +150,7 @@ impl MajorCyclePhase for SpectralCycleExecutor {
         ordinal: u32,
         (frozen_weighting, gridded_replay): Self::Replay,
         aw: Option<PreparedAwPlanBinding>,
+        _: &SelectedObservationResolutionRequest,
     ) -> Result<(ExecutionPlan, Self), ApplicationError> {
         let problem = context.problem;
         let runtime = context.runtime;

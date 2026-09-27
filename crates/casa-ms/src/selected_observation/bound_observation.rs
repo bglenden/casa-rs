@@ -22,6 +22,12 @@ use std::{
 };
 use thiserror::Error;
 
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum SelectedSourceWindow {
+    Frequency([f64; 2]),
+    Channels(std::ops::Range<usize>),
+}
+
 use crate::selected_observation_buffer::SelectedObservationBufferFillReport;
 use crate::selected_pointing::SelectedPointingQueryDomain;
 
@@ -1056,7 +1062,7 @@ impl BoundSelectedObservation {
         ),
         BoundSelectedObservationError,
     > {
-        self.into_block_stream_with_frequency_bounds(problem, None)
+        self.into_block_stream_with_window(problem, None)
     }
 
     /// Split one retained traversal into a source stream restricted to an output-frame
@@ -1072,13 +1078,42 @@ impl BoundSelectedObservation {
         ),
         BoundSelectedObservationError,
     > {
-        self.into_block_stream_with_frequency_bounds(problem, Some(frequency_bounds_hz))
+        self.into_block_stream_with_window(
+            problem,
+            Some(SelectedSourceWindow::Frequency(frequency_bounds_hz)),
+        )
     }
 
-    fn into_block_stream_with_frequency_bounds<'a>(
+    /// Replay a selected-channel ordinal range discovered from a complete source
+    /// pass. Each row retains its original spectral coordinates and interpolation
+    /// phase, while tiled payload reads cover only the physical channel span.
+    pub fn into_channel_window_block_stream<'a>(
         self,
         problem: &'a CompiledProblem,
-        frequency_bounds_hz: Option<[f64; 2]>,
+        channels: std::ops::Range<usize>,
+    ) -> Result<
+        (
+            SelectedObservationBlockSource<'a>,
+            SelectedObservationBlockConsumer<'a>,
+        ),
+        BoundSelectedObservationError,
+    > {
+        let [source] = problem.selected_observation().read_set().sources() else {
+            return Err(BoundSelectedObservationError::ProblemMismatch);
+        };
+        let [spw] = source.selection().spectral_windows() else {
+            return Err(BoundSelectedObservationError::ProblemMismatch);
+        };
+        if channels.is_empty() || channels.end > spw.channel_indices().len() {
+            return Err(BoundSelectedObservationError::ProblemMismatch);
+        }
+        self.into_block_stream_with_window(problem, Some(SelectedSourceWindow::Channels(channels)))
+    }
+
+    fn into_block_stream_with_window<'a>(
+        self,
+        problem: &'a CompiledProblem,
+        window: Option<SelectedSourceWindow>,
     ) -> Result<
         (
             SelectedObservationBlockSource<'a>,
@@ -1131,7 +1166,7 @@ impl BoundSelectedObservation {
                 traversal,
                 next_traversal,
                 replay_mode,
-                frequency_bounds_hz,
+                window: window.clone(),
                 emitted_sample_count: 0,
             },
             SelectedObservationBlockConsumer {
@@ -1145,7 +1180,11 @@ impl BoundSelectedObservation {
                 correlations: Vec::with_capacity(maximum_correlations),
                 evaluations: Vec::with_capacity(maximum_correlations),
                 peak_scratch_current_bytes: 0,
-                frequency_bounds_hz,
+                window,
+                bulk_binding: (access_binding, traversal),
+                bulk_next_block: 1,
+                bulk_started: false,
+                bulk_failed: false,
             },
         ))
     }
@@ -1169,11 +1208,17 @@ pub struct SelectedObservationBlockSource<'a> {
     traversal: u64,
     next_traversal: u64,
     replay_mode: SelectedObservationReplayMode,
-    frequency_bounds_hz: Option<[f64; 2]>,
+    window: Option<SelectedSourceWindow>,
     emitted_sample_count: u64,
 }
 
 impl SelectedObservationBlockSource<'_> {
+    /// Exact row ceiling from the freshly opened source's physical content plan.
+    /// Consumers may reduce an already admitted scratch bound to this size.
+    pub const fn maximum_rows_per_block(&self) -> usize {
+        self.maximum_rows
+    }
+
     /// Create one empty source-owned storage slot.
     #[must_use]
     pub fn create_storage(&self, slot: usize) -> SelectedObservationBlock {
@@ -1216,7 +1261,7 @@ impl SelectedObservationBlockSource<'_> {
                     .expect("selected-row replay initialized for current source"),
                 block,
                 &mut self.measurements,
-                self.frequency_bounds_hz,
+                self.window.as_ref(),
             )? {
                 self.emitted_sample_count = self
                     .emitted_sample_count
@@ -1253,8 +1298,9 @@ impl SelectedObservationBlockSource<'_> {
             next_traversal: self.next_traversal,
             measurements: self.measurements,
             replay_mode: self.replay_mode,
-            frequency_bounds_hz: self.frequency_bounds_hz,
+            window: self.window,
             emitted_sample_count: self.emitted_sample_count,
+            emitted_block_count: self.block_ordinal,
         })
     }
 }
@@ -1269,10 +1315,91 @@ pub struct SelectedObservationBlockConsumer<'a> {
     correlations: Vec<SelectedObservationRunCorrelation>,
     evaluations: Vec<SelectedSpectralEvaluation>,
     peak_scratch_current_bytes: usize,
-    frequency_bounds_hz: Option<[f64; 2]>,
+    window: Option<SelectedSourceWindow>,
+    bulk_binding: (u64, u64),
+    bulk_next_block: u64,
+    bulk_started: bool,
+    bulk_failed: bool,
 }
 
 impl SelectedObservationBlockConsumer<'_> {
+    /// Consume an exact next whole source block. The callback must join every
+    /// admitted numerical partition before returning; failure poisons this pass.
+    /// Cursor advancement occurs only after successful work, not after a read.
+    pub fn consume_numeric<E: Error + 'static>(
+        &mut self,
+        block: &SelectedObservationBlock,
+        geometry: &super::SelectedObservationNumericGeometry,
+        consume: impl FnOnce() -> Result<(), E>,
+    ) -> Result<(), SelectedObservationTraversalError<E>> {
+        let identity = block
+            .numeric_block()
+            .map_err(SelectedObservationTraversalError::Source)?
+            .identity();
+        if self.bulk_failed
+            || (identity.access_binding(), identity.traversal()) != self.bulk_binding
+            || identity.ordinal() != self.bulk_next_block
+        {
+            self.bulk_failed = true;
+            return Err(SelectedObservationTraversalError::Binding(
+                BoundSelectedObservationError::ReplayProofMismatch,
+            ));
+        }
+        self.bulk_started = true;
+        self.bulk_failed = true;
+        let mut samples = 0_u64;
+        for row in 0..geometry.rows().len() {
+            let numeric = block
+                .numeric_row(geometry, row)
+                .map_err(SelectedObservationTraversalError::Source)?;
+            if let Some(inspection) = &mut self.inspection {
+                inspection
+                    .push_numeric_row(numeric)
+                    .map_err(SelectedObservationTraversalError::Inspection)?;
+            }
+            samples = samples
+                .checked_add((numeric.channels.len() * numeric.correlations.len()) as u64)
+                .ok_or(SelectedObservationTraversalError::MeasurementOverflow)?;
+        }
+        if samples
+            != block
+                .selected_sample_count()
+                .map_err(SelectedObservationTraversalError::Source)?
+        {
+            return Err(SelectedObservationTraversalError::Binding(
+                BoundSelectedObservationError::ReplayProofMismatch,
+            ));
+        }
+        consume().map_err(SelectedObservationTraversalError::Consumer)?;
+        if self.inspection.is_none() {
+            self.rebound_sample_count = self
+                .rebound_sample_count
+                .checked_add(samples)
+                .ok_or(SelectedObservationTraversalError::MeasurementOverflow)?;
+        }
+        self.bulk_next_block = self
+            .bulk_next_block
+            .checked_add(1)
+            .ok_or(SelectedObservationTraversalError::MeasurementOverflow)?;
+        self.bulk_failed = false;
+        Ok(())
+    }
+
+    fn validate_numeric_terminal(
+        &self,
+        terminal: &SelectedObservationTerminal,
+    ) -> Result<(), SelectedObservationTraversalError<std::convert::Infallible>> {
+        if self.bulk_failed
+            || self.bulk_started
+                && ((terminal.access_binding, terminal.traversal) != self.bulk_binding
+                    || terminal.emitted_block_count.checked_add(1) != Some(self.bulk_next_block))
+        {
+            return Err(SelectedObservationTraversalError::Binding(
+                BoundSelectedObservationError::ReplayProofMismatch,
+            ));
+        }
+        Ok(())
+    }
     /// Inspect exactly one contiguous native-run window and retain its compact
     /// index. Call windows in canonical order and cover every block exactly once.
     /// Projection can then run over disjoint index ranges with worker-local scratch.
@@ -1460,7 +1587,8 @@ impl SelectedObservationBlockConsumer<'_> {
         (BoundSelectedObservation, SelectedObservationCompletion),
         SelectedObservationTraversalError<std::convert::Infallible>,
     > {
-        if self.frequency_bounds_hz.is_some() || terminal.frequency_bounds_hz.is_some() {
+        self.validate_numeric_terminal(&terminal)?;
+        if self.window.is_some() || terminal.window.is_some() {
             return Err(SelectedObservationTraversalError::Binding(
                 BoundSelectedObservationError::ReplayProofMismatch,
             ));
@@ -1501,9 +1629,12 @@ impl SelectedObservationBlockConsumer<'_> {
         measurements
             .record_consumer_scratch(peak_scratch_current_bytes, scratch_capacity_bytes)
             .map_err(SelectedObservationTraversalError::Source)?;
-        let measurements = measurements
+        let mut measurements = measurements
             .finish(sample_count)
             .ok_or(SelectedObservationTraversalError::MeasurementOverflow)?;
+        if self.bulk_started {
+            measurements.selected_sample_handoff_bytes = 0;
+        }
         let (replay_proof, rebound) = match &terminal.replay_mode {
             SelectedObservationReplayMode::Unproven => (None, false),
             SelectedObservationReplayMode::Proving => (
@@ -1562,7 +1693,7 @@ impl SelectedObservationBlockConsumer<'_> {
         Ok((selected, completion))
     }
 
-    /// Finish a bounded frequency-window traversal without claiming exhaustive coverage.
+    /// Finish a bounded frequency or channel window without claiming exhaustive coverage.
     pub fn complete_window(
         self,
         terminal: SelectedObservationTerminal,
@@ -1573,12 +1704,13 @@ impl SelectedObservationBlockConsumer<'_> {
         ),
         SelectedObservationTraversalError<std::convert::Infallible>,
     > {
-        let frequency_bounds_hz =
-            self.frequency_bounds_hz
-                .ok_or(SelectedObservationTraversalError::Binding(
-                    BoundSelectedObservationError::ReplayProofMismatch,
-                ))?;
-        if terminal.frequency_bounds_hz != Some(frequency_bounds_hz) {
+        self.validate_numeric_terminal(&terminal)?;
+        let window = self
+            .window
+            .ok_or(SelectedObservationTraversalError::Binding(
+                BoundSelectedObservationError::ReplayProofMismatch,
+            ))?;
+        if terminal.window.as_ref() != Some(&window) {
             return Err(SelectedObservationTraversalError::Binding(
                 BoundSelectedObservationError::ReplayProofMismatch,
             ));
@@ -1628,14 +1760,17 @@ impl SelectedObservationBlockConsumer<'_> {
         measurements
             .record_consumer_scratch(self.peak_scratch_current_bytes, scratch_capacity_bytes)
             .map_err(SelectedObservationTraversalError::Source)?;
-        let measurements = measurements
+        let mut measurements = measurements
             .finish(sample_count)
             .ok_or(SelectedObservationTraversalError::MeasurementOverflow)?;
+        if self.bulk_started {
+            measurements.selected_sample_handoff_bytes = 0;
+        }
         let generation_id = terminal_proof.generation_id();
         let completion = SelectedObservationWindowCompletion {
             generation_id,
             sample_count,
-            frequency_bounds_hz,
+            window,
             measurements,
         };
         let selected = BoundSelectedObservation {
@@ -1662,8 +1797,9 @@ pub struct SelectedObservationTerminal {
     next_traversal: u64,
     measurements: SelectedObservationTraversalMeasurementsBuilder,
     replay_mode: SelectedObservationReplayMode,
-    frequency_bounds_hz: Option<[f64; 2]>,
+    window: Option<SelectedSourceWindow>,
     emitted_sample_count: u64,
+    emitted_block_count: u64,
 }
 
 impl SelectedObservationTerminal {
@@ -2157,7 +2293,7 @@ pub struct SelectedObservationCompletion {
 pub struct SelectedObservationWindowCompletion {
     generation_id: SelectedObservationGenerationId,
     sample_count: u64,
-    frequency_bounds_hz: [f64; 2],
+    window: SelectedSourceWindow,
     measurements: SelectedObservationTraversalMeasurements,
 }
 
@@ -2176,8 +2312,19 @@ impl SelectedObservationWindowCompletion {
 
     /// Return the output-frame frequency envelope requested for this window.
     #[must_use]
-    pub const fn frequency_bounds_hz(&self) -> [f64; 2] {
-        self.frequency_bounds_hz
+    pub const fn frequency_bounds_hz(&self) -> Option<[f64; 2]> {
+        match self.window {
+            SelectedSourceWindow::Frequency(bounds) => Some(bounds),
+            _ => None,
+        }
+    }
+
+    /// Exact selected-channel ordinal range for a channel-window traversal.
+    pub fn channel_ordinals(&self) -> Option<std::ops::Range<usize>> {
+        match &self.window {
+            SelectedSourceWindow::Channels(channels) => Some(channels.clone()),
+            _ => None,
+        }
     }
 
     /// Return physical measurements for this bounded window traversal.

@@ -58,6 +58,21 @@ fn streaming_cube_complete_application_handoff() {
 
     let result = execute_continuum(imaging.clone()).expect("complete native cube application");
     assert_cube_execution_route(&result, true);
+    let projection = result
+        .outcome
+        .output
+        .initial_receipt
+        .selected_alternative_projection();
+    let cache = projection
+        .demand
+        .memory
+        .iter()
+        .find(|allocation| allocation.allocation_id.starts_with("cube-state-manager-"))
+        .expect("shared managed image/model cache");
+    assert!(
+        cache.hard_bytes >= 64 * 64 * 4 * (5 * 4 + 2),
+        "spare memory must retain all five Float and two support plane arrays"
+    );
     assert_standard_products(&image_name, &result.product_names);
     assert_eq!(result.outcome.output.major_cycle_count, 3);
     assert_eq!(result.outcome.output.minor_cycles.len(), 2);
@@ -101,13 +116,20 @@ pub(super) fn assert_cube_execution_route(
         .demand
         .memory;
     assert_eq!(
-        memory.iter().any(
-            |allocation| allocation.allocation_id.starts_with("native-cube-")
-                && allocation.allocation_id.ends_with("-workspace")
-        ),
+        memory
+            .iter()
+            .any(|allocation| allocation.allocation_id.starts_with("bulk-workspace-")),
         native,
-        "execution must select the capability's storage owner"
+        "execution must select the direct bulk-source owner"
     );
+    if native {
+        assert!(
+            !memory
+                .iter()
+                .any(|allocation| allocation.allocation_id.starts_with("native-cube-")),
+            "direct imaging must not reserve the removed native replay store"
+        );
+    }
     assert_eq!(
         memory.iter().any(|allocation| allocation
             .allocation_id
@@ -407,7 +429,7 @@ fn compare_clark_cube_cases(
             let actual_workers = receipt
                 .actual_resource_peak(
                     &casa_imaging_runtime::WorkNodeId::new(if native {
-                        "native-cube-minor-0"
+                        "bulk-cube-minor-0"
                     } else {
                         "spectral-cycle-minor-cycle"
                     }),

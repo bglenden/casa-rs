@@ -14,6 +14,66 @@ pub(crate) struct PendingCubeRefresh {
 
 impl PendingCubeRefresh {
     #[allow(clippy::too_many_arguments)]
+    pub(crate) fn during_read(
+        context: WorkExecutionContext<'_>,
+        reconciliation_node: &WorkNodeId,
+        specification: &SpectralOperatorSpecification,
+        previous: &FinalNormalState,
+        model: ModelGenerationId,
+        replay: &WeightingReplaySummary,
+        selected: SelectedObservationGenerationId,
+        storage: &NormalStoragePlan,
+    ) -> Result<Self, CompleteDataOperatorError> {
+        if context.node().kind != WorkKind::ObservationRead {
+            return Err(CompleteDataOperatorError::ExecutionBinding);
+        }
+        Ok(Self {
+            evidence: previous.begin_streaming_cube_refresh(
+                specification,
+                replay,
+                selected,
+                None,
+                model,
+                storage,
+            )?,
+            binding: CompleteDataExecutionBinding {
+                problem: context.compiled().problem_id(),
+                attempt: context.attempt_id(),
+                replay_node: context.node().id.clone(),
+                reconciliation_node: reconciliation_node.clone(),
+                lease_epoch: context.lease_epoch(),
+                observation_predecessor_required: true,
+            },
+        })
+    }
+
+    pub(crate) fn complete_rebound(
+        self,
+        replay: &WeightingReplayCompletion,
+    ) -> Result<CompleteDataOperatorResult, CompleteDataOperatorError> {
+        if self.binding.problem != replay.problem_id()
+            || self.binding.attempt != replay.attempt_id()
+            || self.binding.replay_node != *replay.owner_node()
+            || self.binding.lease_epoch != replay.lease_epoch()
+        {
+            return Err(CompleteDataOperatorError::ExecutionBinding);
+        }
+        let evidence = self.evidence.finish()?;
+        if evidence.completion().replay_id() != replay.reconstruction_summary().replay_id()
+            || evidence.completion().coverage() != replay.reconstruction_summary().coverage()
+        {
+            return Err(CompleteDataOperatorError::ExecutionBinding);
+        }
+        Ok(CompleteDataOperatorResult {
+            evidence,
+            attempt: self.binding.attempt,
+            replay_node: self.binding.replay_node,
+            reconciliation_node: self.binding.reconciliation_node,
+            lease_epoch: self.binding.lease_epoch,
+            observation_predecessor_required: true,
+        })
+    }
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         context: WorkExecutionContext<'_>,
         reconciliation_node: &WorkNodeId,
@@ -90,6 +150,35 @@ pub(crate) struct PendingStreamingCubeFold {
 }
 
 impl PendingStreamingCubeFold {
+    /// Numerical output can be folded while the locked source traversal is
+    /// pending. Its attempt-bound result cannot be reconciled until the real
+    /// source I/O fence provides the matching replay completion.
+    pub(crate) fn during_read(
+        context: WorkExecutionContext<'_>,
+        reconciliation_node: &WorkNodeId,
+        replay: &WeightingReplaySummary,
+        selected_generation: SelectedObservationGenerationId,
+        storage: NormalStoragePlan,
+    ) -> Result<Self, CompleteDataOperatorError> {
+        if context.node().kind != WorkKind::ObservationRead {
+            return Err(CompleteDataOperatorError::ExecutionBinding);
+        }
+        Ok(Self {
+            binding: CompleteDataExecutionBinding {
+                problem: context.compiled().problem_id(),
+                attempt: context.attempt_id(),
+                replay_node: context.node().id.clone(),
+                reconciliation_node: reconciliation_node.clone(),
+                lease_epoch: context.lease_epoch(),
+                observation_predecessor_required: true,
+            },
+            replay: replay.clone(),
+            selected_generation,
+            continuum_transform_generation: None,
+            storage,
+            fold: None,
+        })
+    }
     /// Validate the caller-bound source and execution once, before any worker
     /// enters the pool. Completed bands carry only owned, context-free data.
     pub(crate) fn new(

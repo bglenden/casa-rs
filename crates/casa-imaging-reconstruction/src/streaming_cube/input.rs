@@ -52,7 +52,7 @@ impl NativeLayout {
         channels: Vec<u32>,
         correlations: SmallVec<[(u32, CorrelationType); 4]>,
     ) -> io::Result<Self> {
-        if channels.len() < 2
+        if channels.is_empty()
             || channels.windows(2).any(|pair| pair[0] >= pair[1])
             || !(1..=4).contains(&correlations.len())
             || correlations.windows(2).any(|pair| pair[0].0 >= pair[1].0)

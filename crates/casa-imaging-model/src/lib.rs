@@ -98,6 +98,9 @@ pub use selected_observation::{
     SelectedObservationInspectionError, SelectedObservationPassError, SelectedSampleEvaluation,
 };
 
+mod selected_numeric;
+pub use selected_numeric::{SelectedNumericRow, SelectedNumericVisibility, SelectedNumericWeights};
+
 pub use selected_observation_sample::{
     AntennaResponseClass, SelectedAntennaResponses, SelectedImageDomainProjection,
     SelectedImageDomainProjections, SelectedInputWeightGroup, SelectedObservationGenerationId,

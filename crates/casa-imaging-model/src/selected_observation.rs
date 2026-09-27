@@ -158,6 +158,7 @@ impl SelectedObservationCommitment {
             .unwrap_or(0);
         size_of::<SelectedObservationInspection<'static>>()
             .checked_add(maximum_correlations.checked_mul(size_of::<Option<f32>>())?)
+            .and_then(|bytes| bytes.checked_add(maximum_correlations.checked_mul(21)?))
     }
 }
 
@@ -347,6 +348,70 @@ impl<'a> SelectedObservationInspection<'a> {
         self.advance_to_source(row.measurement_set, row.physical_row)?;
         self.source.push_run(row, channel, correlations)?;
         self.generation.push_run(row, channel, correlations);
+        Ok(())
+    }
+
+    /// Inspect a whole numeric row without constructing scalar sample/run
+    /// members. Exact selected axes and broadcast layout are checked once;
+    /// the v9 encoder still includes every selected source value.
+    pub fn push_numeric_row(
+        &mut self,
+        numeric: crate::SelectedNumericRow<'_>,
+    ) -> Result<(), SelectedObservationInspectionError> {
+        let row = InspectionRow::from_run(numeric.row);
+        self.advance_to_source(row.measurement_set, row.physical_row)?;
+        self.source
+            .validate_prediction_target(row, numeric.row.prediction_target)?;
+        self.source.begin_row(row)?;
+        let inspection = self.source.row.as_mut().expect("row just opened");
+        inspection.validate_row(row)?;
+        if !numeric.has_exact_shape()
+            || inspection.next_ordinal != 0
+            || !numeric
+                .channels
+                .iter()
+                .map(|channel| channel.channel_index)
+                .eq(inspection.spectral_window.channel_indices().iter().copied())
+            || numeric.correlations != inspection.correlation.products()
+            || !matches!(
+                (inspection.weight_column, numeric.weights),
+                (
+                    WeightColumn::Weight,
+                    crate::SelectedNumericWeights::PerRow(_)
+                ) | (
+                    WeightColumn::WeightSpectrum,
+                    crate::SelectedNumericWeights::PerChannel(_)
+                )
+            )
+        {
+            return Err(SelectedObservationInspectionError::UnexpectedSample {
+                measurement_set: row.measurement_set,
+                physical_row: row.physical_row,
+            });
+        }
+        let visibility_matches = matches!(
+            (
+                self.source.expected.selected_columns().visibility(),
+                numeric.visibility
+            ),
+            (
+                VisibilityColumn::FloatData,
+                crate::SelectedNumericVisibility::Float32(_)
+            ) | (
+                VisibilityColumn::Data | VisibilityColumn::CorrectedData,
+                crate::SelectedNumericVisibility::Complex32(_)
+            )
+        );
+        if !visibility_matches {
+            return Err(
+                SelectedObservationInspectionError::VisibilityStorageMismatch {
+                    measurement_set: row.measurement_set,
+                    physical_row: row.physical_row,
+                },
+            );
+        }
+        inspection.next_ordinal = numeric.channels.len() * numeric.correlations.len();
+        self.generation.push_numeric_row(numeric);
         Ok(())
     }
 

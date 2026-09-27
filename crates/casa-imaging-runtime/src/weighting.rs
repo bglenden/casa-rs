@@ -66,6 +66,7 @@ use crate::{
     ContinuumTransformedSample, plan_continuum_transform_row,
 };
 
+pub(crate) mod bulk_source;
 mod native_preparation;
 mod replay_preparation;
 pub(crate) use native_preparation::NativePreparationPlan;
@@ -76,6 +77,7 @@ pub(crate) use replay_preparation::ReplayPreparationPlan;
 enum PreparationPlan {
     Replay(ReplayPreparationPlan),
     Native(NativePreparationPlan),
+    Bulk { workers: usize, heap_bytes: u64 },
 }
 
 impl PreparationPlan {
@@ -83,6 +85,7 @@ impl PreparationPlan {
         match self {
             Self::Replay(plan) => plan.workers(),
             Self::Native(plan) => plan.workers,
+            Self::Bulk { workers, .. } => workers,
         }
     }
 
@@ -90,6 +93,7 @@ impl PreparationPlan {
         match self {
             Self::Replay(plan) => plan.admitted_heap_bytes(),
             Self::Native(plan) => Ok(plan.heap_bytes),
+            Self::Bulk { heap_bytes, .. } => Ok(heap_bytes),
         }
     }
 }
@@ -1307,13 +1311,29 @@ impl<'a> WeightingPlanFragment<'a> {
         self
     }
 
+    pub(crate) fn with_bulk_workspace(mut self, workers: usize, heap_bytes: u64) -> Self {
+        self.replay_preparation = Some(PreparationPlan::Bulk {
+            workers,
+            heap_bytes,
+        });
+        self
+    }
+
+    fn preparation_allocation(&self, node: &WorkNodeId) -> AllocationId {
+        if matches!(self.replay_preparation, Some(PreparationPlan::Bulk { .. })) {
+            AllocationId::new(format!("bulk-workspace-{}", node.as_str()))
+        } else {
+            replay_preparation_allocation(node)
+        }
+    }
+
     fn indexed_preparation<E>(
         &self,
     ) -> Result<Option<ReplayPreparationPlan>, WeightingReplayError<E>> {
         match self.replay_preparation {
             None => Ok(None),
             Some(PreparationPlan::Replay(plan)) => Ok(Some(plan)),
-            Some(PreparationPlan::Native(_)) => {
+            Some(PreparationPlan::Native(_) | PreparationPlan::Bulk { .. }) => {
                 Err(WeightingReplayError::Evidence(WeightingEvidenceError))
             }
         }
@@ -1748,7 +1768,10 @@ impl<'a> WeightingPlanFragment<'a> {
             .values()
             .cloned()
             .collect();
-        if matches!(self.replay_preparation, Some(PreparationPlan::Native(_))) {
+        if matches!(
+            self.replay_preparation,
+            Some(PreparationPlan::Native(_) | PreparationPlan::Bulk { .. })
+        ) {
             let obsolete = BTreeSet::from([
                 self.ids.partial_allocation.clone(),
                 self.ids.reduction_allocation.clone(),
@@ -1769,7 +1792,7 @@ impl<'a> WeightingPlanFragment<'a> {
             });
         }
         if let Some(preparation) = self.replay_preparation {
-            let id = replay_preparation_allocation(&terminal);
+            let id = self.preparation_allocation(&terminal);
             let allocation = AllocationSpec::new(
                 id.clone(),
                 PhysicalSlotId::new(format!("{}-slot", id.as_str())),
@@ -2062,7 +2085,10 @@ impl<'a> WeightingPlanFragment<'a> {
             .allocation_specs()
             .map_err(|_| WeightingEvidenceError)?;
         let mut expected = vec![&specs[0]];
-        if !matches!(self.replay_preparation, Some(PreparationPlan::Native(_))) {
+        if !matches!(
+            self.replay_preparation,
+            Some(PreparationPlan::Native(_) | PreparationPlan::Bulk { .. })
+        ) {
             expected.push(&specs[4]);
         }
         if self.initial_working_set.is_some() {
@@ -2095,7 +2121,7 @@ impl<'a> WeightingPlanFragment<'a> {
             return Err(WeightingEvidenceError);
         }
         if let Some(preparation) = self.replay_preparation {
-            let allocation = replay_preparation_allocation(&context.node().id);
+            let allocation = self.preparation_allocation(&context.node().id);
             let heap_bytes = preparation
                 .admitted_heap_bytes()
                 .map_err(|_| WeightingEvidenceError)?;
@@ -2809,6 +2835,23 @@ impl WeightingExecutionState {
             (WeightingAlgorithmState, WeightingReplaySummary),
         >,
     ) -> Result<(), WeightingReplayError<E>> {
+        self.accept_initial_stream_with_coverage(
+            context, fragment, problem, binding, completed, None,
+        )
+    }
+
+    fn accept_initial_stream_with_coverage<E>(
+        &mut self,
+        context: WorkExecutionContext<'_>,
+        fragment: &WeightingPlanFragment<'_>,
+        problem: &CompiledProblem,
+        binding: Option<WeightingGenerationBinding>,
+        completed: CompletedWeightingBlockStream<
+            '_,
+            (WeightingAlgorithmState, WeightingReplaySummary),
+        >,
+        coverage: Option<FrozenWeightingCoverageProof>,
+    ) -> Result<(), WeightingReplayError<E>> {
         let CompletedWeightingBlockStream {
             selected,
             owner_completion,
@@ -2847,15 +2890,28 @@ impl WeightingExecutionState {
         let selected_replay_proof_bytes = selected_replay_proof
             .retained_heap_bytes(problem)
             .ok_or(WeightingReplayError::Evidence(WeightingEvidenceError))?;
-        let coverage_proof = FrozenWeightingCoverageProof::seal(
-            problem,
-            &state,
-            &summary,
-            owner_completion.generation_id(),
-            owner_completion.sample_count(),
-            continuum_completion.map(ContinuumTransformCompletion::generation_id),
-        )
-        .map_err(WeightingReplayError::Owner)?;
+        let coverage_proof = match coverage {
+            Some(proof) => {
+                proof
+                    .validate_derived_replay(
+                        owner_completion.generation_id(),
+                        owner_completion.sample_count(),
+                        continuum_completion.map(ContinuumTransformCompletion::generation_id),
+                        &summary,
+                    )
+                    .map_err(WeightingReplayError::Owner)?;
+                proof
+            }
+            None => FrozenWeightingCoverageProof::seal(
+                problem,
+                &state,
+                &summary,
+                owner_completion.generation_id(),
+                owner_completion.sample_count(),
+                continuum_completion.map(ContinuumTransformCompletion::generation_id),
+            )
+            .map_err(WeightingReplayError::Owner)?,
+        };
         let artifact = FrozenWeightingArtifact {
             state: Arc::new(state),
             source_generation: owner_completion.generation_id(),
@@ -2985,7 +3041,9 @@ impl WeightingExecutionState {
                 .validate_source_completion(
                     owner_completion.generation_id(),
                     owner_completion.sample_count(),
-                    owner_completion.frequency_bounds_hz(),
+                    owner_completion
+                        .frequency_bounds_hz()
+                        .ok_or(WeightingReplayError::Evidence(WeightingEvidenceError))?,
                 )
                 .map_err(WeightingReplayError::Owner)?;
             if owner_completion.generation_id() != pending.owner_completion.generation_id()

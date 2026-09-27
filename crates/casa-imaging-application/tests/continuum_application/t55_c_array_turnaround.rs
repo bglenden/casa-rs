@@ -144,9 +144,13 @@ fn run_c_array(block: bool) {
     if !block {
         imaging.task_requirements.push(TaskRequirement::SerialCpu);
     }
+    let memory_bytes = std::env::var("CASA_RS_C_ARRAY_MEMORY_BYTES")
+        .map(|value| value.parse::<u64>().expect("explicit native memory budget"))
+        .unwrap_or(16 << 30);
+    assert!(memory_bytes > 0 && memory_bytes <= 16 << 30);
     imaging.resource_policy = ResourcePolicy::Explicit(ResourceOverride {
         workers: Some(workers),
-        memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 16 << 30)]),
+        memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), memory_bytes)]),
         ..ResourceOverride::default()
     });
     fs::write(root.join("request.txt"), format!("{imaging:#?}\n")).unwrap();
@@ -188,12 +192,12 @@ fn run_c_array(block: bool) {
         .memory;
     let native_cube = memory
         .iter()
-        .any(|item| item.allocation_id.starts_with("native-cube-"));
+        .any(|item| item.allocation_id.starts_with("bulk-workspace-"));
     assert!(
         native_cube,
-        "this diagnostic must execute the new streaming-cube path"
+        "this diagnostic must execute the direct bulk-source path"
     );
-    let route = "native-streaming-cube";
+    let route = "direct-bulk-source-cube";
     super::t55_cube_pipeline::assert_cube_execution_route(&result, true);
     let worker_evidence = std::iter::once(("initial-major", &output.initial_receipt))
         .chain(
@@ -268,7 +272,7 @@ fn run_c_array(block: bool) {
         "output_channels": output_channels, "display_plane": 0,
         "weighting": "natural", "deconvolver": "clark", "interpolation": "linear",
         "worker_evidence": worker_evidence,
-        "native_memory_bytes": 16_u64 << 30, "image_size": image_size, "cell_arcsec": 0.06,
+        "native_memory_bytes": memory_bytes, "image_size": image_size, "cell_arcsec": 0.06,
         "iterations": result.actual_minor_iterations, "reported_iterations": result.minor_iterations,
         "dirty_only": dirty_only,
         "maximum_major_cycles": maximum_major_cycles,
