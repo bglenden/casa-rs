@@ -11,6 +11,7 @@ use std::{borrow::Cow, ops::Range};
 
 use casa_imaging_model::{
     ModelSupport, PolarizationCoordinate, ReconstructionBasis, SelectedSampleAddress,
+    SelectedSpectralContribution,
 };
 #[cfg(test)]
 use ndarray::ArrayView3;
@@ -755,6 +756,7 @@ impl<'a> VisibilityRow<'a> {
 struct RowStencil {
     offsets: Vec<usize>,
     points: Vec<CasaLinearSample>,
+    prediction_terms: Vec<SmallVec<[SelectedSpectralContribution; 4]>>,
 }
 
 impl RowStencil {
@@ -772,8 +774,17 @@ impl RowStencil {
         let mut cursor = CasaLinearRowCursor::new();
         let mut offsets = Vec::with_capacity(row.channels.len() + 1);
         let mut points = Vec::with_capacity(core.len());
+        let mut prediction_terms = Vec::with_capacity(row.channels.len());
         offsets.push(0);
         for channel in 0..row.channels.len() {
+            prediction_terms.push(
+                casa_linear_prediction_terms(
+                    output_hz,
+                    row.frequencies_hz[channel],
+                    row.original_pair_hz,
+                )
+                .map_err(|_| SpectralOperatorError::InvalidSample)?,
+            );
             let mut address = row.address;
             address.channel_index = row.channels[channel];
             if let Some(pair) = cursor
@@ -787,7 +798,11 @@ impl RowStencil {
         cursor
             .finish()
             .map_err(|_| SpectralOperatorError::IncompleteCoverage)?;
-        Ok(Self { offsets, points })
+        Ok(Self {
+            offsets,
+            points,
+            prediction_terms,
+        })
     }
 
     fn samples(&self, channel: usize) -> &[CasaLinearSample] {
@@ -1018,13 +1033,8 @@ impl BandWorkspace {
         polarization: &PolarizationOperator,
     ) -> Result<SmallVec<[Complex64; 4]>, SpectralOperatorError> {
         if self.phase == BandPhase::InitialZero {
-            return Ok(std::iter::repeat_n(
-                Complex64::default(),
-                polarization.correlations().len(),
-            )
-            .collect());
+            return self.predict_native_terms(row, &[], polarization);
         }
-        let mut predicted = Complex64::default();
         let terms = if let Some(single) = self.single_channel {
             let mut terms = SmallVec::new();
             if single.contains(frequency_hz) {
@@ -1038,6 +1048,23 @@ impl BandWorkspace {
             casa_linear_prediction_terms(output_hz, frequency_hz, row.original_pair_hz)
                 .map_err(|_| SpectralOperatorError::InvalidSample)?
         };
+        self.predict_native_terms(row, &terms, polarization)
+    }
+
+    fn predict_native_terms(
+        &self,
+        row: &VisibilityRow<'_>,
+        terms: &[SelectedSpectralContribution],
+        polarization: &PolarizationOperator,
+    ) -> Result<SmallVec<[Complex64; 4]>, SpectralOperatorError> {
+        if self.phase == BandPhase::InitialZero {
+            return Ok(std::iter::repeat_n(
+                Complex64::default(),
+                polarization.correlations().len(),
+            )
+            .collect());
+        }
+        let mut predicted = Complex64::default();
         for term in terms {
             let plane = self
                 .model_channels
@@ -1071,23 +1098,21 @@ impl BandWorkspace {
         polarization: &'a PolarizationOperator,
     ) -> Result<RowAccumulator<'a>, SpectralOperatorError> {
         let stencil = RowStencil::compile(&row, output_hz, self.core.clone())?;
-        self.begin_row_with_stencil(row, output_hz, polarization, Cow::Owned(stencil))
+        self.begin_row_with_stencil(row, polarization, Cow::Owned(stencil))
     }
 
     fn begin_row_cached<'a>(
         &'a mut self,
         row: VisibilityRow<'a>,
-        output_hz: &'a [f64],
         polarization: &'a PolarizationOperator,
         stencil: &'a RowStencil,
     ) -> Result<RowAccumulator<'a>, SpectralOperatorError> {
-        self.begin_row_with_stencil(row, output_hz, polarization, Cow::Borrowed(stencil))
+        self.begin_row_with_stencil(row, polarization, Cow::Borrowed(stencil))
     }
 
     fn begin_row_with_stencil<'a>(
         &'a mut self,
         row: VisibilityRow<'a>,
-        output_hz: &'a [f64],
         polarization: &'a PolarizationOperator,
         stencil: Cow<'a, RowStencil>,
     ) -> Result<RowAccumulator<'a>, SpectralOperatorError> {
@@ -1101,7 +1126,6 @@ impl BandWorkspace {
         Ok(RowAccumulator {
             band: self,
             row,
-            output_hz,
             polarization,
             reduction: PolarizedSampleReducer::new(polarization)?,
             stencil,
@@ -1216,7 +1240,7 @@ impl BandWorkspace {
                 previous_support = Some((row_index, row.original_pair_hz, native, Some(stencil)));
             }
             let stencil = previous_support.as_ref().unwrap().3.as_ref().unwrap();
-            let mut accumulator = self.begin_row_cached(row, output_hz, polarization, stencil)?;
+            let mut accumulator = self.begin_row_cached(row, polarization, stencil)?;
             accumulator.push(0..channels)?;
             accumulator.finish()?;
         }
@@ -1416,7 +1440,6 @@ fn widen(value: Complex32) -> Complex64 {
 struct RowAccumulator<'a> {
     band: &'a mut BandWorkspace,
     row: VisibilityRow<'a>,
-    output_hz: &'a [f64],
     polarization: &'a PolarizationOperator,
     reduction: PolarizedSampleReducer<'a>,
     stencil: Cow<'a, RowStencil>,
@@ -1430,10 +1453,9 @@ impl RowAccumulator<'_> {
             return Err(SpectralOperatorError::IncompleteCoverage);
         }
         for channel in channels {
-            let prediction = self.band.predict_native(
+            let prediction = self.band.predict_native_terms(
                 &self.row,
-                self.row.frequencies_hz[channel],
-                self.output_hz,
+                &self.stencil.prediction_terms[channel],
                 self.polarization,
             )?;
             for &fine in self.stencil.samples(channel) {
