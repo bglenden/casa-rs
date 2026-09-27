@@ -1016,85 +1016,6 @@ fn casa_wide_channel_linear_terms(
 /// CASA's forward interpolation is unflagged: it extrapolates an edge pair
 /// for native channels admitted by `FTMachine::matchChannel`. Spatial
 /// prediction is evaluated on the coarse image planes before interpolation.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct CasaLinearPredictionGrid {
-    output: CasaLinearOutputGrid,
-    grid: CasaLinearGrid,
-    first_native_pair_hz: [f64; 2],
-}
-
-impl CasaLinearPredictionGrid {
-    pub(crate) fn compile_for_output(
-        output: CasaLinearOutputGrid,
-        first_native_pair_hz: [f64; 2],
-    ) -> Option<Self> {
-        Some(Self {
-            output,
-            grid: CasaLinearGrid::compile_for_output(
-                output,
-                first_native_pair_hz[0],
-                first_native_pair_hz[1],
-            )?,
-            first_native_pair_hz,
-        })
-    }
-
-    pub(crate) fn terms(
-        self,
-        centres: &[f64],
-        native_frequency_hz: f64,
-    ) -> Result<SmallVec<[SelectedSpectralContribution; 4]>, SpectralStencilError> {
-        let output = self.output;
-        let grid = self.grid;
-        let first_native_pair_hz = self.first_native_pair_hz;
-        let output_increment = output.second_hz - output.first_hz;
-        let pixel = ((native_frequency_hz - output.first_hz) / output_increment + 0.5).floor();
-        let beyond_last = output.first_hz + output.channels as f64 * output_increment;
-        let minimum = output.first_hz.min(beyond_last);
-        let maximum = output.first_hz.max(beyond_last);
-        let width = (first_native_pair_hz[1] - first_native_pair_hz[0]).abs();
-        let mapped = (0.0..output.channels as f64).contains(&pixel)
-            || (native_frequency_hz < maximum + 2.0 * width
-                && native_frequency_hz > maximum - 0.5 * width)
-            || (native_frequency_hz < minimum + 0.5 * width
-                && native_frequency_hz > minimum - 2.0 * width);
-        if !mapped {
-            return Ok(SmallVec::new());
-        }
-        let fine_pixel = (native_frequency_hz - grid.fine_start_hz) / grid.fine_increment_hz;
-        let left = fine_pixel
-            .floor()
-            .clamp(0.0, (grid.fine_channel_count() - 2) as f64) as usize;
-        let right_factor =
-            (native_frequency_hz - grid.fine_frequency_hz(left)) / grid.fine_increment_hz;
-        let mut terms = SmallVec::<[SelectedSpectralContribution; 4]>::new();
-        for (fine_channel, factor) in [(left, 1.0 - right_factor), (left + 1, right_factor)] {
-            if factor == 0.0 {
-                continue;
-            }
-            let channel = grid.output_channel(fine_channel);
-            if let Some(existing) = terms
-                .iter_mut()
-                .find(|term| term.output_channel() as usize == channel)
-            {
-                *existing = SelectedSpectralContribution::new(
-                    channel as u32,
-                    existing.factor() + factor,
-                    centres[channel],
-                )
-                .ok_or(SpectralStencilError::InvalidCoefficients)?;
-            } else {
-                terms.push(
-                    SelectedSpectralContribution::new(channel as u32, factor, centres[channel])
-                        .ok_or(SpectralStencilError::InvalidCoefficients)?,
-                );
-            }
-        }
-        terms.retain(|term| term.factor() != 0.0);
-        Ok(terms)
-    }
-}
-
 pub(crate) fn casa_linear_prediction_terms(
     centres: &[f64],
     native_frequency_hz: f64,
@@ -1102,9 +1023,57 @@ pub(crate) fn casa_linear_prediction_terms(
 ) -> Result<SmallVec<[SelectedSpectralContribution; 4]>, SpectralStencilError> {
     let output = CasaLinearOutputGrid::compile(centres)
         .ok_or(SpectralStencilError::InvalidOutputGeometry)?;
-    CasaLinearPredictionGrid::compile_for_output(output, first_native_pair_hz)
-        .ok_or(SpectralStencilError::InvalidOutputGeometry)?
-        .terms(centres, native_frequency_hz)
+    let grid = CasaLinearGrid::compile_for_output(
+        output,
+        first_native_pair_hz[0],
+        first_native_pair_hz[1],
+    )
+    .ok_or(SpectralStencilError::InvalidOutputGeometry)?;
+    let output_increment = output.second_hz - output.first_hz;
+    let pixel = ((native_frequency_hz - output.first_hz) / output_increment + 0.5).floor();
+    let beyond_last = output.first_hz + output.channels as f64 * output_increment;
+    let minimum = output.first_hz.min(beyond_last);
+    let maximum = output.first_hz.max(beyond_last);
+    let width = (first_native_pair_hz[1] - first_native_pair_hz[0]).abs();
+    let mapped = (0.0..output.channels as f64).contains(&pixel)
+        || (native_frequency_hz < maximum + 2.0 * width
+            && native_frequency_hz > maximum - 0.5 * width)
+        || (native_frequency_hz < minimum + 0.5 * width
+            && native_frequency_hz > minimum - 2.0 * width);
+    if !mapped {
+        return Ok(SmallVec::new());
+    }
+    let fine_pixel = (native_frequency_hz - grid.fine_start_hz) / grid.fine_increment_hz;
+    let left = fine_pixel
+        .floor()
+        .clamp(0.0, (grid.fine_channel_count() - 2) as f64) as usize;
+    let right_factor =
+        (native_frequency_hz - grid.fine_frequency_hz(left)) / grid.fine_increment_hz;
+    let mut terms = SmallVec::<[SelectedSpectralContribution; 4]>::new();
+    for (fine_channel, factor) in [(left, 1.0 - right_factor), (left + 1, right_factor)] {
+        if factor == 0.0 {
+            continue;
+        }
+        let channel = grid.output_channel(fine_channel);
+        if let Some(existing) = terms
+            .iter_mut()
+            .find(|term| term.output_channel() as usize == channel)
+        {
+            *existing = SelectedSpectralContribution::new(
+                channel as u32,
+                existing.factor() + factor,
+                centres[channel],
+            )
+            .ok_or(SpectralStencilError::InvalidCoefficients)?;
+        } else {
+            terms.push(
+                SelectedSpectralContribution::new(channel as u32, factor, centres[channel])
+                    .ok_or(SpectralStencilError::InvalidCoefficients)?,
+            );
+        }
+    }
+    terms.retain(|term| term.factor() != 0.0);
+    Ok(terms)
 }
 
 fn cubic_terms(centres: &[f64], frequency_hz: f64) -> SmallVec<[SelectedSpectralContribution; 4]> {
@@ -1976,23 +1945,6 @@ mod tests {
             vec![0, 1]
         );
         assert!(cubic_terms(&[10.0, 20.0, 30.0], 15.0).is_empty());
-    }
-
-    #[test]
-    fn compiled_prediction_grid_preserves_ascending_and_descending_terms() {
-        for centres in [[10.0, 20.0, 30.0], [30.0, 20.0, 10.0]] {
-            for native_pair in [[10.0, 20.0], [20.0, 10.0]] {
-                let output = CasaLinearOutputGrid::compile(&centres).unwrap();
-                let compiled =
-                    CasaLinearPredictionGrid::compile_for_output(output, native_pair).unwrap();
-                for frequency in [9.9999, 10.0, 15.0, 25.0, 30.0001] {
-                    assert_eq!(
-                        compiled.terms(&centres, frequency),
-                        casa_linear_prediction_terms(&centres, frequency, native_pair),
-                    );
-                }
-            }
-        }
     }
 
     #[cfg(feature = "cpp-interop-tests")]

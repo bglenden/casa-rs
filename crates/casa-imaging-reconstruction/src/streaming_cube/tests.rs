@@ -46,14 +46,6 @@ fn polarization() -> PolarizationOperator {
     .unwrap()
 }
 
-fn prediction_grid(output: &[f64], row: &VisibilityRow<'_>) -> CasaLinearPredictionGrid {
-    CasaLinearPredictionGrid::compile_for_output(
-        CasaLinearOutputGrid::compile(output).unwrap(),
-        row.original_pair_hz,
-    )
-    .unwrap()
-}
-
 struct Input {
     frequencies: Vec<f64>,
     channels: Vec<u32>,
@@ -429,44 +421,20 @@ fn exact_zero_model_planes_skip_forward_work_without_losing_halo_terms() {
     unskipped.forward_nonzero.fill(true);
     for &frequency in &input.frequencies {
         assert_close(
-            band.predict_native(
-                &row,
-                frequency,
-                &output,
-                Some(prediction_grid(&output, &row)),
-                &polarization,
-            )
-            .unwrap(),
+            band.predict_native(&row, frequency, &output, &polarization)
+                .unwrap(),
             unskipped
-                .predict_native(
-                    &row,
-                    frequency,
-                    &output,
-                    Some(prediction_grid(&output, &row)),
-                    &polarization,
-                )
+                .predict_native(&row, frequency, &output, &polarization)
                 .unwrap(),
         );
     }
     for &frequency in &output[..2] {
         let predicted = band
-            .predict_native(
-                &row,
-                frequency,
-                &output,
-                Some(prediction_grid(&output, &row)),
-                &polarization,
-            )
+            .predict_native(&row, frequency, &output, &polarization)
             .unwrap();
         assert_close(
-            halo.predict_native(
-                &row,
-                frequency,
-                &output,
-                Some(prediction_grid(&output, &row)),
-                &polarization,
-            )
-            .unwrap(),
+            halo.predict_native(&row, frequency, &output, &polarization)
+                .unwrap(),
             predicted.iter().copied(),
         );
         if frequency == output[0] {
@@ -500,13 +468,7 @@ fn exact_zero_model_planes_skip_forward_work_without_losing_halo_terms() {
     ));
     let missing = workspace(0..4, vec![1], &sparse);
     assert!(matches!(
-        missing.predict_native(
-            &row,
-            output[0],
-            &output,
-            Some(prediction_grid(&output, &row)),
-            &polarization
-        ),
+        missing.predict_native(&row, output[0], &output, &polarization),
         Err(SpectralOperatorError::IncompleteSpectralHalo)
     ));
 }
@@ -548,23 +510,11 @@ fn nonzero_native_prediction_and_band_grids_are_partition_and_chunk_invariant() 
                         let input_row = input.row(support.native.clone());
                         for &frequency in input_row.frequencies_hz {
                             let predicted = band
-                                .predict_native(
-                                    &input_row,
-                                    frequency,
-                                    &output,
-                                    Some(prediction_grid(&output, &input_row)),
-                                    &polarization,
-                                )
+                                .predict_native(&input_row, frequency, &output, &polarization)
                                 .unwrap();
                             assert!(!predicted.spilled());
                             let expected = reference
-                                .predict_native(
-                                    &input_row,
-                                    frequency,
-                                    &output,
-                                    Some(prediction_grid(&output, &input_row)),
-                                    &polarization,
-                                )
+                                .predict_native(&input_row, frequency, &output, &polarization)
                                 .unwrap();
                             assert_close(predicted, expected);
                         }
