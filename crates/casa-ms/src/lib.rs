@@ -148,12 +148,13 @@ pub use schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
 pub use selected_observation::{
     BoundObservationSourceError, BoundSelectedObservation, BoundSelectedObservationError,
     DeferredSelectedObservationAccess, ObservationSourceBinding, SelectedObservationBlock,
-    SelectedObservationBlockConsumer, SelectedObservationBlockIndex,
-    SelectedObservationBlockIndexPlan, SelectedObservationBlockSource,
-    SelectedObservationCompletion, SelectedObservationContentBudget,
-    SelectedObservationContentPlan, SelectedObservationContentPlanError,
-    SelectedObservationContentRequirements, SelectedObservationIndexedBlock,
-    SelectedObservationMeasures, SelectedObservationMeasuresError, SelectedObservationProjector,
+    SelectedObservationBlockConsumer, SelectedObservationBlockIdentity,
+    SelectedObservationBlockIndex, SelectedObservationBlockIndexPlan,
+    SelectedObservationBlockSource, SelectedObservationCompletion,
+    SelectedObservationContentBudget, SelectedObservationContentPlan,
+    SelectedObservationContentPlanError, SelectedObservationContentRequirements,
+    SelectedObservationIndexedBlock, SelectedObservationMeasures, SelectedObservationMeasuresError,
+    SelectedObservationNumericBlock, SelectedObservationProjector,
     SelectedObservationReferenceDataBudget, SelectedObservationReplayAuthorization,
     SelectedObservationReplayProof, SelectedObservationResidencyCertificate,
     SelectedObservationRow, SelectedObservationRowSelection, SelectedObservationSpectralEnvelope,
@@ -162,6 +163,9 @@ pub use selected_observation::{
     SelectedObservationTerminal, SelectedObservationTraversalError,
     SelectedObservationTraversalMeasurements, SelectedObservationTraversalRun,
     SelectedObservationTraversalSample, SelectedObservationWindowCompletion,
+};
+pub use selected_observation_buffer::{
+    SelectedNumericVisibility, SelectedNumericWeights, SelectedObservationNumericColumns,
 };
 pub(crate) use selected_observation_buffer::{
     SelectedObservationBuffer, SelectedObservationBufferRequest, SelectedStoredSample,

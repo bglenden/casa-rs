@@ -3511,6 +3511,7 @@ fn load_tiled_column_rows_shape_variant_2d_channel_range_typed(
         corr_count,
         channel_start,
         channel_count,
+        row_major: false,
     };
 
     match dt {
@@ -3529,6 +3530,7 @@ fn load_tiled_column_rows_shape_variant_2d_channel_range_typed(
                 corr_count,
                 channel_start,
                 channel_count,
+                false,
                 &mut session,
                 &mut values,
                 |bytes, _big_endian| bytes[0] != 0,
@@ -3672,9 +3674,18 @@ fn fill_tiled_column_rows_shape_variant_2d_channel_range_typed(
         corr_count,
         channel_start,
         channel_count,
+        row_major: matches!(
+            &destination,
+            SelectedArray2DCellsMut::RowChannelBool(_)
+                | SelectedArray2DCellsMut::RowChannelFloat32(_)
+                | SelectedArray2DCellsMut::RowChannelComplex32(_)
+        ),
     };
     match (dt, destination) {
-        (CasacoreDataType::TpBool, SelectedArray2DCellsMut::Bool(values)) => {
+        (
+            CasacoreDataType::TpBool,
+            SelectedArray2DCellsMut::Bool(values) | SelectedArray2DCellsMut::RowChannelBool(values),
+        ) => {
             values.resize(sample_count, false);
             fill_typed_selected_2d_rows(
                 table_path,
@@ -3689,12 +3700,17 @@ fn fill_tiled_column_rows_shape_variant_2d_channel_range_typed(
                 corr_count,
                 channel_start,
                 channel_count,
+                fill_plan.row_major,
                 &mut session,
                 values,
                 |bytes, _| bytes[0] != 0,
             )?;
         }
-        (CasacoreDataType::TpFloat, SelectedArray2DCellsMut::Float32(values)) => {
+        (
+            CasacoreDataType::TpFloat,
+            SelectedArray2DCellsMut::Float32(values)
+            | SelectedArray2DCellsMut::RowChannelFloat32(values),
+        ) => {
             values.resize(sample_count, 0.0);
             fill_typed_selected_2d_rows_by_copy(fill_plan, &mut session, values)?;
         }
@@ -3702,7 +3718,11 @@ fn fill_tiled_column_rows_shape_variant_2d_channel_range_typed(
             values.resize(sample_count, 0.0);
             fill_typed_selected_2d_rows_by_copy(fill_plan, &mut session, values)?;
         }
-        (CasacoreDataType::TpComplex, SelectedArray2DCellsMut::Complex32(values)) => {
+        (
+            CasacoreDataType::TpComplex,
+            SelectedArray2DCellsMut::Complex32(values)
+            | SelectedArray2DCellsMut::RowChannelComplex32(values),
+        ) => {
             values.resize(sample_count, Complex32::new(0.0, 0.0));
             fill_typed_selected_2d_rows_by_copy(fill_plan, &mut session, values)?;
         }
@@ -3746,6 +3766,7 @@ struct TypedSelected2DFillPlan<'a> {
     corr_count: usize,
     channel_start: usize,
     channel_count: usize,
+    row_major: bool,
 }
 
 fn typed_2d_cube_shape(
@@ -3803,6 +3824,7 @@ fn fill_typed_selected_2d_rows<T: Copy>(
     corr_count: usize,
     channel_start: usize,
     channel_count: usize,
+    row_major: bool,
     session: &mut TileReadSession,
     values: &mut [T],
     decode: fn(&[u8], bool) -> T,
@@ -3918,11 +3940,12 @@ fn fill_typed_selected_2d_rows<T: Copy>(
                         let dst_channel = channel - channel_start;
                         for corr in 0..corr_count {
                             let src_elem = corr + src_channel * shape.tile_corr_count;
-                            let dst_elem = dst_channel
-                                .saturating_mul(row_count)
-                                .saturating_mul(corr_count)
-                                .saturating_add(selected.out_idx.saturating_mul(corr_count))
-                                .saturating_add(corr);
+                            let dst_elem = if row_major {
+                                selected.out_idx * channel_count + dst_channel
+                            } else {
+                                dst_channel * row_count + selected.out_idx
+                            } * corr_count
+                                + corr;
                             let src_byte = src_elem * elem_size;
                             values[dst_elem] = decode(
                                 &tile_row[src_byte..src_byte + elem_size],
@@ -4069,17 +4092,32 @@ fn fill_typed_selected_2d_rows_by_copy<T: TilePixel>(
                     let src_start = row_in_tile * row_tile_nelem * plan.elem_size;
                     let src_end = src_start + row_tile_nelem * plan.elem_size;
                     let tile_row = &tile[src_start..src_end];
+                    if plan.row_major && shape.tile_corr_count == plan.corr_count {
+                        let source_channel = overlap_start - tile_channel_start;
+                        let destination_channel = overlap_start - plan.channel_start;
+                        let copy_bytes =
+                            (overlap_end - overlap_start) * plan.corr_count * plan.elem_size;
+                        let src_byte = source_channel * plan.corr_count * plan.elem_size;
+                        let dst_byte = (selected.out_idx * plan.channel_count
+                            + destination_channel)
+                            * plan.corr_count
+                            * plan.elem_size;
+                        values_bytes[dst_byte..dst_byte + copy_bytes]
+                            .copy_from_slice(&tile_row[src_byte..src_byte + copy_bytes]);
+                        continue;
+                    }
                     for channel in overlap_start..overlap_end {
                         let src_channel = channel - tile_channel_start;
                         let dst_channel = channel - plan.channel_start;
                         let src_byte = src_channel
                             .saturating_mul(shape.tile_corr_count)
                             .saturating_mul(plan.elem_size);
-                        let dst_byte = dst_channel
-                            .saturating_mul(plan.row_count)
-                            .saturating_mul(plan.corr_count)
-                            .saturating_add(selected.out_idx.saturating_mul(plan.corr_count))
-                            .saturating_mul(plan.elem_size);
+                        let dst_sample = if plan.row_major {
+                            selected.out_idx * plan.channel_count + dst_channel
+                        } else {
+                            dst_channel * plan.row_count + selected.out_idx
+                        };
+                        let dst_byte = dst_sample * plan.corr_count * plan.elem_size;
                         let copy_bytes = plan.corr_count.saturating_mul(plan.elem_size);
                         values_bytes[dst_byte..dst_byte + copy_bytes]
                             .copy_from_slice(&tile_row[src_byte..src_byte + copy_bytes]);
@@ -13467,7 +13505,11 @@ mod tests {
             crate::EndianFormat::BigEndian,
             crate::EndianFormat::LittleEndian,
         ] {
-            for primitive in [PrimitiveType::Complex32, PrimitiveType::Bool] {
+            for primitive in [
+                PrimitiveType::Complex32,
+                PrimitiveType::Float32,
+                PrimitiveType::Bool,
+            ] {
                 let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
                     "DATA",
                     primitive,
@@ -13486,6 +13528,13 @@ mod tests {
                                 values
                                     .map(|value| Complex32::new(value as f32, -(value as f32)))
                                     .collect(),
+                            )
+                            .unwrap(),
+                        ),
+                        PrimitiveType::Float32 => ArrayValue::Float32(
+                            ArrayD::from_shape_vec(
+                                ndarray::IxDyn(&[2, 12]).f(),
+                                values.map(|value| value as f32).collect(),
                             )
                             .unwrap(),
                         ),
@@ -13521,12 +13570,36 @@ mod tests {
                 // path. Duplicate and reversed rows must not duplicate reads.
                 let mut rows: Vec<_> = (0..56).step_by(4).rev().collect();
                 rows.push(0);
-                for (start, count) in [(2, 2), (1, 2), (11, 1), (0, 12)] {
+                for (start, count, row_major) in [
+                    (2, 2, false),
+                    (1, 2, false),
+                    (11, 1, false),
+                    (0, 12, false),
+                    (2, 2, true),
+                    (1, 2, true),
+                    (11, 1, true),
+                    (0, 12, true),
+                ] {
                     let mut data = Vec::new();
+                    let mut floats = Vec::new();
                     let mut flags = Vec::new();
-                    let destination = match primitive {
-                        PrimitiveType::Complex32 => SelectedArray2DCellsMut::Complex32(&mut data),
-                        PrimitiveType::Bool => SelectedArray2DCellsMut::Bool(&mut flags),
+                    let destination = match (primitive, row_major) {
+                        (PrimitiveType::Complex32, false) => {
+                            SelectedArray2DCellsMut::Complex32(&mut data)
+                        }
+                        (PrimitiveType::Complex32, true) => {
+                            SelectedArray2DCellsMut::RowChannelComplex32(&mut data)
+                        }
+                        (PrimitiveType::Float32, false) => {
+                            SelectedArray2DCellsMut::Float32(&mut floats)
+                        }
+                        (PrimitiveType::Float32, true) => {
+                            SelectedArray2DCellsMut::RowChannelFloat32(&mut floats)
+                        }
+                        (PrimitiveType::Bool, false) => SelectedArray2DCellsMut::Bool(&mut flags),
+                        (PrimitiveType::Bool, true) => {
+                            SelectedArray2DCellsMut::RowChannelBool(&mut flags)
+                        }
                         _ => unreachable!(),
                     };
                     STREAMED_READ_COUNTS.with(|counts| counts.set((0, 0)));
@@ -13542,10 +13615,11 @@ mod tests {
                         .expect("defined cells");
                     let (calls, bytes) = STREAMED_READ_COUNTS.with(|counts| counts.get());
                     let channel_tiles = (start + count - 1) / 2 - start / 2 + 1;
-                    let tile_bytes = if primitive == PrimitiveType::Bool {
-                        1
-                    } else {
-                        64
+                    let tile_bytes = match primitive {
+                        PrimitiveType::Bool => 1,
+                        PrimitiveType::Float32 => 32,
+                        PrimitiveType::Complex32 => 64,
+                        _ => unreachable!(),
                     };
                     assert_eq!(
                         bytes,
@@ -13557,12 +13631,19 @@ mod tests {
                         for (index, row) in rows.iter().enumerate() {
                             for corr in 0..2 {
                                 let value = row * 100 + channel * 10 + corr;
-                                let output = ((channel - start) * rows.len() + index) * 2 + corr;
+                                let output = if row_major {
+                                    (index * count + channel - start) * 2 + corr
+                                } else {
+                                    ((channel - start) * rows.len() + index) * 2 + corr
+                                };
                                 match primitive {
                                     PrimitiveType::Complex32 => assert_eq!(
                                         data[output],
                                         Complex32::new(value as f32, -(value as f32))
                                     ),
+                                    PrimitiveType::Float32 => {
+                                        assert_eq!(floats[output], value as f32)
+                                    }
                                     PrimitiveType::Bool => {
                                         assert_eq!(flags[output], value % 3 == 0)
                                     }

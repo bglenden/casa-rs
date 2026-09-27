@@ -476,16 +476,22 @@ pub enum SelectedArray2DCellsMut<'a> {
     Complex32(&'a mut Vec<Complex32>),
     /// 64-bit complex destination, packed as `[channel][row][axis0]`.
     Complex64(&'a mut Vec<Complex64>),
+    /// Boolean destination, packed as `[row][channel][axis0]`.
+    RowChannelBool(&'a mut Vec<bool>),
+    /// 32-bit float destination, packed as `[row][channel][axis0]`.
+    RowChannelFloat32(&'a mut Vec<f32>),
+    /// 32-bit complex destination, packed as `[row][channel][axis0]`.
+    RowChannelComplex32(&'a mut Vec<Complex32>),
 }
 
 impl SelectedArray2DCellsMut<'_> {
     /// Primitive type accepted by this destination.
     pub fn primitive_type(&self) -> PrimitiveType {
         match self {
-            Self::Bool(_) => PrimitiveType::Bool,
-            Self::Float32(_) => PrimitiveType::Float32,
+            Self::Bool(_) | Self::RowChannelBool(_) => PrimitiveType::Bool,
+            Self::Float32(_) | Self::RowChannelFloat32(_) => PrimitiveType::Float32,
             Self::Float64(_) => PrimitiveType::Float64,
-            Self::Complex32(_) => PrimitiveType::Complex32,
+            Self::Complex32(_) | Self::RowChannelComplex32(_) => PrimitiveType::Complex32,
             Self::Complex64(_) => PrimitiveType::Complex64,
         }
     }

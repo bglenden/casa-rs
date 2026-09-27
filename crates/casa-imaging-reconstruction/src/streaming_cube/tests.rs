@@ -709,11 +709,42 @@ fn stored_native_buffer_is_borrowed_directly_by_the_band_kernel() {
     assert_eq!(row.values.as_ptr(), block.values.as_ptr());
     assert_eq!(row.weights.as_ptr(), block.weights.as_ptr());
     assert_eq!(row.frequencies_hz.as_ptr(), block.frequencies_hz.as_ptr());
+    let borrowed = NativeBlockView::new(
+        &block.metadata,
+        &block.frequencies_hz,
+        input.values.as_slice().unwrap(),
+        &block.weights,
+        &block.flags,
+        &block.weight_flags,
+        6,
+        2,
+    )
+    .unwrap();
+    let source_row = borrowed.row(&layout, 0, 0..6).unwrap();
+    assert_eq!(source_row.values.as_ptr(), input.values.as_ptr());
+    assert!(
+        NativeBlockView::new(
+            &block.metadata,
+            &block.frequencies_hz,
+            input.values.as_slice().unwrap(),
+            &block.weights[..block.weights.len() - 1],
+            &block.flags,
+            &block.weight_flags,
+            6,
+            2,
+        )
+        .is_err()
+    );
     let model = model();
     let mut expected = workspace(0..4, (0..4).collect(), &model);
     let mut actual = workspace(0..4, (0..4).collect(), &model);
+    let mut source_borrowed = workspace(0..4, (0..4).collect(), &model);
     let polarization = polarization();
-    for (workspace, row) in [(&mut expected, original), (&mut actual, row)] {
+    for (workspace, row) in [
+        (&mut expected, original),
+        (&mut actual, row),
+        (&mut source_borrowed, source_row),
+    ] {
         let mut accumulator = workspace.begin_row(row, &output, &polarization).unwrap();
         accumulator.push(0..6).unwrap();
         accumulator.finish().unwrap();
@@ -723,6 +754,9 @@ fn stored_native_buffer_is_borrowed_directly_by_the_band_kernel() {
     assert_eq!(actual.psf, expected.psf);
     assert_eq!(actual.sum_weight, expected.sum_weight);
     assert_eq!(actual.mapped, expected.mapped);
+    assert_eq!(source_borrowed.dirty, expected.dirty);
+    assert_eq!(source_borrowed.residual, expected.residual);
+    assert_eq!(source_borrowed.psf, expected.psf);
     assert!(block.row(&layout, 1, 0..6).is_err());
     assert!(block.row(&layout, 0, 1..6).is_err());
 }
@@ -1421,7 +1455,7 @@ fn shared_wide_window_narrows_row_dependent_support_without_copies() {
             let mut actual = workspace(core.clone(), support.model.clone(), &raw);
             actual
                 .consume_block(
-                    &block,
+                    block.view().unwrap(),
                     &layout,
                     0..12,
                     support.native.clone(),

@@ -1640,7 +1640,74 @@ pub struct SelectedObservationBlock {
     source_read_operations: u64,
 }
 
+/// Source-issued identity of one filled block. The access and traversal fields
+/// change when the retained owner is rebound; the ordinal advances on each fill.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SelectedObservationBlockIdentity {
+    access_binding: u64,
+    traversal: u64,
+    ordinal: u64,
+}
+
+/// One source-issued block identity together with its borrowed numeric payload.
+/// The owner cannot refill the block until this view and its worker borrows end.
+#[derive(Clone, Copy)]
+pub struct SelectedObservationNumericBlock<'a> {
+    identity: SelectedObservationBlockIdentity,
+    columns: crate::SelectedObservationNumericColumns<'a>,
+}
+
+impl<'a> SelectedObservationNumericBlock<'a> {
+    /// Identify the access, traversal, and ordinal that supplied these columns.
+    pub const fn identity(self) -> SelectedObservationBlockIdentity {
+        self.identity
+    }
+
+    /// Borrow the exact columns associated with this identity.
+    pub const fn columns(self) -> crate::SelectedObservationNumericColumns<'a> {
+        self.columns
+    }
+}
+
+impl SelectedObservationBlockIdentity {
+    /// Identifier of the retained access binding that issued this block.
+    pub const fn access_binding(self) -> u64 {
+        self.access_binding
+    }
+
+    /// Canonical source traversal of that access binding.
+    pub const fn traversal(self) -> u64 {
+        self.traversal
+    }
+
+    /// One-based block ordinal within the traversal.
+    pub const fn ordinal(self) -> u64 {
+        self.ordinal
+    }
+}
+
 impl SelectedObservationBlock {
+    /// Borrow one identified flat source block without allocating sample records.
+    /// The block cannot be refilled through its mutable owner while this borrow lives.
+    pub fn numeric_block(
+        &self,
+    ) -> Result<SelectedObservationNumericBlock<'_>, BoundObservationSourceError> {
+        let (access_binding, traversal, ordinal) = self
+            .index_binding
+            .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)?;
+        let columns = self
+            .buffer
+            .numeric_columns()
+            .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)?;
+        Ok(SelectedObservationNumericBlock {
+            identity: SelectedObservationBlockIdentity {
+                access_binding,
+                traversal,
+                ordinal,
+            },
+            columns,
+        })
+    }
     pub(super) fn new(slot: usize, rows_per_block: usize) -> Self {
         Self {
             index_binding: None,

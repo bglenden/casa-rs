@@ -111,7 +111,9 @@ pub mod runtime_adapter {
     pub use crate::streaming_cube::band::{
         BandMemory, BandPlan, BandResult, CubeResidual, EpochBand,
     };
-    pub use crate::streaming_cube::input::{NativeBlock, NativeLayout, RowMetadata};
+    pub use crate::streaming_cube::input::{
+        NativeBlock, NativeBlockView, NativeLayout, RowMetadata,
+    };
     pub use crate::weighting::native_preparation::{
         NativePreparationWorker, NativeWeightingPreparation,
     };

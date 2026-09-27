@@ -3046,11 +3046,46 @@ fn refillable_block_stream_matches_scalar_traversal_and_returns_the_owner() {
     let mut block_samples = Vec::new();
     let mut peak_current = 0_u64;
     let mut peak_capacity = 0_u64;
+    let mut previous_block_identity: Option<super::SelectedObservationBlockIdentity> = None;
     while source
         .fill_next(&mut storage)
         .expect("fill canonical block")
         .is_some()
     {
+        let numeric_block = storage.numeric_block().expect("filled numeric block");
+        let identity = numeric_block.identity();
+        if let Some(previous) = previous_block_identity {
+            assert_eq!(identity.access_binding(), previous.access_binding());
+            assert_eq!(identity.traversal(), previous.traversal());
+            assert_eq!(identity.ordinal(), previous.ordinal() + 1);
+        } else {
+            assert_eq!(identity.ordinal(), 1);
+        }
+        previous_block_identity = Some(identity);
+        let numeric = numeric_block.columns();
+        let samples =
+            numeric.physical_rows.len() * numeric.channel_range.count * numeric.correlation_count;
+        assert_eq!(numeric.flags.len(), samples);
+        assert_eq!(numeric.row_flags.len(), numeric.physical_rows.len());
+        match numeric.visibility {
+            crate::SelectedNumericVisibility::Float32(values) => {
+                assert_eq!(values.len(), samples);
+            }
+            crate::SelectedNumericVisibility::Complex32(values) => {
+                assert_eq!(values.len(), samples);
+            }
+        }
+        match numeric.weights {
+            crate::SelectedNumericWeights::PerRow(values) => {
+                assert_eq!(
+                    values.len(),
+                    numeric.physical_rows.len() * numeric.correlation_count
+                );
+            }
+            crate::SelectedNumericWeights::PerChannel(values) => {
+                assert_eq!(values.len(), samples);
+            }
+        }
         peak_current = peak_current.max(
             storage
                 .resident_current_bytes()

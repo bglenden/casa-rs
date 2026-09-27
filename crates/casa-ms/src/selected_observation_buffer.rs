@@ -113,6 +113,44 @@ enum SelectedStoredWeights {
     PerChannel(Vec<f32>),
 }
 
+/// Borrowed, source-owned visibility values in `[row][channel][correlation]` order.
+#[derive(Clone, Copy)]
+pub enum SelectedNumericVisibility<'a> {
+    /// Selected `FLOAT_DATA` values.
+    Float32(&'a [f32]),
+    /// Selected `DATA` or `CORRECTED_DATA` values.
+    Complex32(&'a [casa_types::Complex32]),
+}
+
+/// Borrowed input weights without expanding row-constant weights over channels.
+#[derive(Clone, Copy)]
+pub enum SelectedNumericWeights<'a> {
+    /// `[row][correlation]` values from `WEIGHT`.
+    PerRow(&'a [f32]),
+    /// `[row][channel][correlation]` values from `WEIGHT_SPECTRUM`.
+    PerChannel(&'a [f32]),
+}
+
+/// Bounded numeric columns of one selected source block. All channelized slices
+/// use `[row][channel][correlation]`; the owner cannot refill while borrowed.
+#[derive(Clone, Copy)]
+pub struct SelectedObservationNumericColumns<'a> {
+    /// Selected physical MAIN rows in canonical output order.
+    pub physical_rows: &'a [usize],
+    /// First physical source channel and number of contiguous stored channels.
+    pub channel_range: VisibilityChannelReadRange,
+    /// Number of stored correlations per selected row/channel.
+    pub correlation_count: usize,
+    /// Visibility payload in its stored precision.
+    pub visibility: SelectedNumericVisibility<'a>,
+    /// Per-sample channel flags in row-major order.
+    pub flags: &'a [bool],
+    /// Input weights in their original broadcast or per-channel shape.
+    pub weights: SelectedNumericWeights<'a>,
+    /// Per-row `FLAG_ROW` values.
+    pub row_flags: &'a [bool],
+}
+
 enum StoredVisibilitySlice<'a> {
     Float32(&'a [f32]),
     Complex32(&'a [casa_types::Complex32]),
@@ -366,6 +404,29 @@ impl Default for SelectedObservationBuffer {
 }
 
 impl SelectedObservationBuffer {
+    pub(crate) fn numeric_columns(&self) -> Option<SelectedObservationNumericColumns<'_>> {
+        let visibility = match self.visibility.as_ref()? {
+            SelectedStoredVisibilities::Float32(values) => {
+                SelectedNumericVisibility::Float32(values)
+            }
+            SelectedStoredVisibilities::Complex32(values) => {
+                SelectedNumericVisibility::Complex32(values)
+            }
+        };
+        let weights = match self.weights.as_ref()? {
+            SelectedStoredWeights::PerRow(values) => SelectedNumericWeights::PerRow(values),
+            SelectedStoredWeights::PerChannel(values) => SelectedNumericWeights::PerChannel(values),
+        };
+        Some(SelectedObservationNumericColumns {
+            physical_rows: &self.row_indices,
+            channel_range: self.channel_range,
+            correlation_count: self.correlation_count,
+            visibility,
+            flags: &self.flags,
+            weights,
+            row_flags: &self.row_flag,
+        })
+    }
     /// Number of selected MAIN rows in this block.
     #[must_use]
     pub(crate) fn row_count(&self) -> usize {
@@ -438,7 +499,13 @@ impl SelectedObservationBuffer {
         if channel >= self.channel_range.count || row >= self.row_count() {
             return None;
         }
-        let start = packed_sample_index(channel, row, 0, self.row_count(), self.correlation_count);
+        let start = packed_sample_index(
+            channel,
+            row,
+            0,
+            self.channel_range.count,
+            self.correlation_count,
+        );
         let end = start + self.correlation_count;
         let visibility = match self.visibility.as_ref()? {
             SelectedStoredVisibilities::Float32(values) => {
@@ -480,7 +547,7 @@ impl SelectedObservationBuffer {
             channel_offset,
             row_offset,
             correlation_offset,
-            self.row_count(),
+            self.channel_range.count,
             self.correlation_count,
         );
         let row_weight_index = row_offset * self.correlation_count + correlation_offset;
@@ -670,7 +737,7 @@ impl MeasurementSet {
                         request.row_indices,
                         request.channel_range.start,
                         request.channel_range.count,
-                        SelectedArray2DCellsMut::Float32(values),
+                        SelectedArray2DCellsMut::RowChannelFloat32(values),
                     )?
                     .ok_or_else(|| {
                         invalid(format!(
@@ -701,7 +768,7 @@ impl MeasurementSet {
                         request.row_indices,
                         request.channel_range.start,
                         request.channel_range.count,
-                        SelectedArray2DCellsMut::Complex32(values),
+                        SelectedArray2DCellsMut::RowChannelComplex32(values),
                     )?
                     .ok_or_else(|| {
                         invalid(format!(
@@ -734,7 +801,7 @@ impl MeasurementSet {
                 request.row_indices,
                 request.channel_range.start,
                 request.channel_range.count,
-                SelectedArray2DCellsMut::Bool(&mut buffer.flags),
+                SelectedArray2DCellsMut::RowChannelBool(&mut buffer.flags),
             )?
             .ok_or_else(|| invalid("required MAIN FLAG cells are undefined"))?;
         allocation.observe(flag_probe, &buffer.flags);
@@ -791,7 +858,7 @@ impl MeasurementSet {
                         request.row_indices,
                         request.channel_range.start,
                         request.channel_range.count,
-                        SelectedArray2DCellsMut::Float32(values),
+                        SelectedArray2DCellsMut::RowChannelFloat32(values),
                     )?
                     .ok_or_else(|| invalid("required MAIN WEIGHT_SPECTRUM cells are undefined"))?;
                 allocation.observe(probe, values);
@@ -1125,10 +1192,10 @@ const fn packed_sample_index(
     channel: usize,
     row: usize,
     correlation: usize,
-    row_count: usize,
+    channel_count: usize,
     correlation_count: usize,
 ) -> usize {
-    (channel * row_count + row) * correlation_count + correlation
+    (row * channel_count + channel) * correlation_count + correlation
 }
 
 #[cfg(test)]
@@ -1182,6 +1249,27 @@ mod tests {
         assert!(report.retained_capacity_bytes >= report.retained_current_bytes);
         assert_eq!(buffer.channel_range, VisibilityChannelReadRange::new(1, 2));
         assert_eq!(buffer.correlation_count, 2);
+        let expected = [110.0, 111.0, 120.0, 121.0, 10.0, 11.0, 20.0, 21.0];
+        let super::SelectedStoredVisibilities::Complex32(values) =
+            buffer.visibility.as_ref().unwrap()
+        else {
+            panic!("selected DATA must remain Complex32");
+        };
+        assert_eq!(
+            values.as_slice(),
+            expected
+                .map(|value| Complex32::new(value, -value))
+                .as_slice(),
+            "selected numeric payload must be [row][channel][correlation]"
+        );
+        let super::SelectedStoredWeights::PerChannel(weights) = buffer.weights.as_ref().unwrap()
+        else {
+            panic!("selected WEIGHT_SPECTRUM must remain per-channel");
+        };
+        assert_eq!(
+            weights.as_slice(),
+            expected.map(|value| value + 0.5).as_slice()
+        );
         let sample = buffer.sample(0, 0, 1).unwrap();
         assert_eq!(sample.physical_row(), 1);
         assert_eq!(sample.data_description_id(), 13);

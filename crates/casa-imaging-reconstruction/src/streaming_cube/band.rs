@@ -2,10 +2,9 @@
 
 //! Direct standard-gridder, natural-weight, Stokes-I cube band kernels.
 //!
-//! The input is borrowed channel-major/correlation-minor numeric arrays, with
+//! The input is borrowed `[row][channel][correlation]` numeric arrays, with
 //! geometry once per row. Grids are contiguous [channel, x, y] Complex32 arrays.
-//! Plane views neither
-//! allocate nor copy. The coarse epoch job loads bounded model planes before
+//! Plane views neither allocate nor copy. The coarse epoch job loads bounded model planes before
 //! numerical work; payload elements carry no workflow or publication state.
 
 use std::ops::Range;
@@ -19,7 +18,7 @@ use ndarray::{Array3, ArrayView2, Axis, s};
 use num_complex::{Complex32, Complex64};
 use smallvec::SmallVec;
 
-use super::input::{NativeBlock, NativeLayout};
+use super::input::{NativeBlock, NativeBlockView, NativeLayout};
 use crate::spectral_operator::{
     PreparedFft, SPEED_OF_LIGHT_M_PER_S, SpectralOperatorGeometry, SpectralOperatorPass,
     StandardConvolution, fft_resident_complex_values_for_shape, polarization_diagonal,
@@ -388,6 +387,27 @@ impl<'a> EpochBand<'a> {
         output_hz: &[f64],
         polarization: &PolarizationOperator,
     ) -> Result<(), SpectralOperatorError> {
+        self.consume_borrowed(
+            block
+                .view()
+                .map_err(|_| SpectralOperatorError::InvalidSample)?,
+            layout,
+            window,
+            output_hz,
+            polarization,
+        )
+    }
+
+    /// Evaluate source-owned values and separately owned derived row arrays
+    /// through the same numerical kernel, without a visibility copy.
+    pub fn consume_borrowed(
+        &mut self,
+        block: NativeBlockView<'_>,
+        layout: &NativeLayout,
+        window: Range<usize>,
+        output_hz: &[f64],
+        polarization: &PolarizationOperator,
+    ) -> Result<(), SpectralOperatorError> {
         if output_hz.len() != self.generation.shape().coefficients() {
             return Err(SpectralOperatorError::ProblemMismatch);
         }
@@ -573,15 +593,18 @@ struct VisibilityRow<'a> {
     weight_flags: ArrayView2<'a, bool>,
 }
 
-impl NativeBlock {
+impl NativeBlockView<'_> {
     /// Borrow a decoded native window directly; no intermediate sample objects.
     /// `channels` identifies the store window within the shared selected layout.
     fn row<'a>(
-        &'a self,
+        self,
         layout: &'a NativeLayout,
         row: usize,
         channels: Range<usize>,
-    ) -> Result<VisibilityRow<'a>, SpectralOperatorError> {
+    ) -> Result<VisibilityRow<'a>, SpectralOperatorError>
+    where
+        Self: 'a,
+    {
         if row >= self.metadata.len()
             || channels.len() != self.channels
             || channels.end > layout.channels.len()
@@ -589,8 +612,6 @@ impl NativeBlock {
         {
             return Err(SpectralOperatorError::InvalidSample);
         }
-        self.validate_shape(self.metadata.len(), self.channels, self.correlations)
-            .map_err(|_| SpectralOperatorError::InvalidSample)?;
         let metadata = self.metadata[row];
         let cells = row * self.channels..(row + 1) * self.channels;
         let samples = cells.start * self.correlations..cells.end * self.correlations;
@@ -610,6 +631,20 @@ impl NativeBlock {
             flags: ArrayView2::from_shape(shape, &self.flags[samples.clone()]).unwrap(),
             weight_flags: ArrayView2::from_shape(shape, &self.weight_flags[samples]).unwrap(),
         })
+    }
+}
+
+#[cfg(test)]
+impl NativeBlock {
+    fn row<'a>(
+        &'a self,
+        layout: &'a NativeLayout,
+        row: usize,
+        channels: Range<usize>,
+    ) -> Result<VisibilityRow<'a>, SpectralOperatorError> {
+        self.view()
+            .map_err(|_| SpectralOperatorError::InvalidSample)?
+            .row(layout, row, channels)
     }
 }
 
@@ -1006,7 +1041,7 @@ impl BandWorkspace {
 
     fn consume_block(
         &mut self,
-        block: &NativeBlock,
+        block: NativeBlockView<'_>,
         layout: &NativeLayout,
         window: Range<usize>,
         native_range: Range<usize>,

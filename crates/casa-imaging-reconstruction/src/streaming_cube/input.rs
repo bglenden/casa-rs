@@ -102,7 +102,83 @@ pub struct NativeBlock {
     maximum_channels: usize,
 }
 
+/// Borrowed numerical block. Metadata and transformed weights may be owned by
+/// worker scratch while the visibility values remain in the selected source.
+/// All channelized arrays are `[row][channel][correlation]`.
+#[derive(Clone, Copy)]
+pub struct NativeBlockView<'a> {
+    pub(crate) metadata: &'a [RowMetadata],
+    pub(crate) frequencies_hz: &'a [f64],
+    pub(crate) values: &'a [Complex32],
+    pub(crate) weights: &'a [f32],
+    pub(crate) flags: &'a [bool],
+    pub(crate) weight_flags: &'a [bool],
+    pub(crate) channels: usize,
+    pub(crate) correlations: usize,
+}
+
+impl<'a> NativeBlockView<'a> {
+    /// Bind a source-owned payload and worker-owned derived arrays without
+    /// copying either. The caller retains every owner until its workers join.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        metadata: &'a [RowMetadata],
+        frequencies_hz: &'a [f64],
+        values: &'a [Complex32],
+        weights: &'a [f32],
+        flags: &'a [bool],
+        weight_flags: &'a [bool],
+        channels: usize,
+        correlations: usize,
+    ) -> io::Result<Self> {
+        let cells = metadata
+            .len()
+            .checked_mul(channels)
+            .ok_or_else(|| invalid("native borrowed block shape overflow"))?;
+        let samples = cells
+            .checked_mul(correlations)
+            .ok_or_else(|| invalid("native borrowed block shape overflow"))?;
+        if metadata.is_empty()
+            || channels == 0
+            || !(1..=4).contains(&correlations)
+            || frequencies_hz.len() != cells
+            || values.len() != samples
+            || weights.len() != samples
+            || flags.len() != samples
+            || weight_flags.len() != samples
+        {
+            return Err(invalid(
+                "native borrowed block arrays differ from selected shape",
+            ));
+        }
+        Ok(Self {
+            metadata,
+            frequencies_hz,
+            values,
+            weights,
+            flags,
+            weight_flags,
+            channels,
+            correlations,
+        })
+    }
+}
+
 impl NativeBlock {
+    /// Borrow the same numerical arrays accepted by the source-owned kernel.
+    pub fn view(&self) -> io::Result<NativeBlockView<'_>> {
+        NativeBlockView::new(
+            &self.metadata,
+            &self.frequencies_hz,
+            &self.values,
+            &self.weights,
+            &self.flags,
+            &self.weight_flags,
+            self.channels,
+            self.correlations,
+        )
+    }
+
     /// Required heap allocation plus owner headers for an admitted shape.
     pub fn required_bytes(
         maximum_rows: usize,
