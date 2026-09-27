@@ -688,9 +688,12 @@ fn initial_admission_bounds_cache_cliff_after_source_support_discovery() {
         .sum();
     for workers in [1, 2, 4] {
         let before = WavePlan::project(store, unknown.iter(), workers, 1, metadata, false).unwrap();
-        let after = WavePlan::project(store, observed.iter(), workers, 1, 0, true).unwrap();
+        let after = WavePlan::project(store, observed.iter(), workers, 1, 0, true)
+            .unwrap()
+            .limit_cache(store, before.peak_bytes)
+            .unwrap();
         assert!(before.peak_bytes >= after.peak_bytes);
-        assert!(before.cache_slots >= after.cache_slots);
+        assert!(after.cache_slots >= 1);
         assert_eq!(
             WavePlan::prefix(store, &observed, workers, 1, 0, before.peak_bytes).unwrap(),
             observed.len()
@@ -714,8 +717,18 @@ fn wave_admission_counts_only_the_bounded_completed_wave() {
         for slots in [1, 2] {
             let plan = WavePlan::new(&store, &jobs, workers, slots, 4096, u64::MAX).unwrap();
             assert!(WavePlan::new(&store, &jobs, workers, slots, 4096, plan.peak_bytes).is_ok());
+            let limited = WavePlan::new(&store, &jobs, workers, slots, 4096, plan.peak_bytes - 1)
+                .expect("optional cache must shrink before rejecting the wave");
+            assert!(limited.peak_bytes < plan.peak_bytes);
+            assert!(limited.cache_slots < plan.cache_slots);
+            let minimum = WavePlan::project(store.plan, jobs.iter(), workers, slots, 4096, true)
+                .unwrap()
+                .limit_cache(store.plan, 0)
+                .unwrap();
+            assert_eq!(minimum.cache_slots, 1);
+            assert!(WavePlan::new(&store, &jobs, workers, slots, 4096, minimum.peak_bytes).is_ok());
             assert!(
-                WavePlan::new(&store, &jobs, workers, slots, 4096, plan.peak_bytes - 1).is_err()
+                WavePlan::new(&store, &jobs, workers, slots, 4096, minimum.peak_bytes - 1).is_err()
             );
             assert_eq!(plan.job_bytes.len(), 4);
             let mut active = Vec::new();
@@ -780,6 +793,8 @@ fn initial_wave_selection_uses_shape_budget_and_drains_before_next_wave() {
                     true,
                 )
                 .unwrap()
+                .limit_cache(store.plan, 0)
+                .unwrap()
                 .peak_bytes;
                 assert_eq!(
                     WavePlan::prefix(store.plan, &bands, workers, slots, 4096, budget,).unwrap(),
@@ -804,6 +819,8 @@ fn initial_wave_selection_uses_shape_budget_and_drains_before_next_wave() {
                             4096,
                             true,
                         )
+                        .unwrap()
+                        .limit_cache(store.plan, 0)
                         .unwrap()
                         .peak_bytes,
                     )

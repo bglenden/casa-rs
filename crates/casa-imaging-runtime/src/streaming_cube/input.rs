@@ -203,9 +203,9 @@ impl StorePlan {
             .ok_or_else(overflow)
     }
 
-    fn maximum_cache_slots(self) -> usize {
-        // Reuse at most the preparation arena's byte envelope, regardless of
-        // dataset size. Its source rows are no longer live during band replay.
+    pub(super) fn preparation_cache_slots(self) -> usize {
+        // Before native support is discovered, reserve only the preparation
+        // arena for optional reuse. Decoded input has a separate shape bound.
         (self.preparation_bytes / (self.frame_bytes + size_of::<CachedFrame>())).max(1)
     }
 
@@ -226,13 +226,13 @@ impl StorePlan {
             .blocks()
             .checked_mul(tiles as u64 + 1)
             .ok_or_else(overflow)?;
-        Ok(desired.min(self.maximum_cache_slots() as u64) as usize)
+        usize::try_from(desired).map_err(|_| overflow())
     }
 
     pub(super) fn reader_capacity_bytes(self, slots: usize) -> io::Result<u64> {
-        if slots == 0 || slots > self.maximum_cache_slots() {
+        if slots == 0 || slots as u64 > self.blocks() * (self.tiles as u64 + 1) {
             return Err(invalid_input(
-                "native frame cache exceeds its byte envelope",
+                "native frame cache exceeds the store's frame count",
             ));
         }
         let payload = slots
@@ -242,6 +242,15 @@ impl StorePlan {
             .checked_add(size_of::<NativeStoreReader>() as u64)
             .and_then(|bytes| bytes.checked_add(self.page_cache_bytes))
             .ok_or_else(overflow)
+    }
+
+    pub(super) fn cache_slots_within(self, desired: usize, budget: u64) -> usize {
+        let fixed = size_of::<NativeStoreReader>() as u64 + self.page_cache_bytes;
+        let per_slot = (self.frame_bytes + size_of::<CachedFrame>()) as u64;
+        // Even a cacheless traversal needs one checked frame. The caller rejects
+        // the wave if that mandatory buffer cannot fit.
+        let affordable = (budget.saturating_sub(fixed) / per_slot).max(1);
+        desired.min(usize::try_from(affordable).unwrap_or(usize::MAX))
     }
 
     pub(super) fn rows_in(self, block: u64) -> io::Result<usize> {

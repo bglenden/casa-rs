@@ -90,7 +90,8 @@ impl WavePlan {
             source_slots,
             shared_bytes,
             true,
-        )?;
+        )?
+        .limit_cache(store.plan, budget)?;
         if plan.peak_bytes > budget {
             return Err(io::Error::other("cube band wave exceeds its memory budget"));
         }
@@ -120,7 +121,8 @@ impl WavePlan {
                 source_slots,
                 shared_bytes,
                 true,
-            )?;
+            )?
+            .limit_cache(store, budget)?;
             if plan.peak_bytes <= budget {
                 low = count;
             } else {
@@ -157,8 +159,8 @@ impl WavePlan {
             }
             previous_end = Some(band.core().end);
             // Before discovery, an empty range means unknown, not no input.
-            // Bound both the reader cache and each active worker's decoded
-            // block using the full selected window, without allocating it.
+            // Bound each active worker's decoded block using the full selected
+            // window. Optional cache reuse is planned separately below.
             let native = if source_support_known {
                 band.native_range()
             } else {
@@ -205,7 +207,12 @@ impl WavePlan {
         let kernel = BoundedKernelPlan::new::<usize, usize>(workers, count, dynamic)
             .map_err(|error| io::Error::other(format!("invalid cube kernel plan: {error:?}")))?;
         let cache_slots = if has_source {
-            store.reader_cache_slots(workers, native_tiles)?
+            let desired = store.reader_cache_slots(workers, native_tiles)?;
+            if source_support_known {
+                desired
+            } else {
+                desired.min(store.preparation_cache_slots())
+            }
         } else {
             0
         };
@@ -226,6 +233,18 @@ impl WavePlan {
             job_bytes,
             peak_bytes,
         })
+    }
+
+    pub(super) fn limit_cache(mut self, store: StorePlan, budget: u64) -> io::Result<Self> {
+        if self.has_source {
+            let mandatory = self.peak_bytes - store.reader_capacity_bytes(self.cache_slots)?;
+            self.cache_slots =
+                store.cache_slots_within(self.cache_slots, budget.saturating_sub(mandatory));
+            self.peak_bytes = mandatory
+                .checked_add(store.reader_capacity_bytes(self.cache_slots)?)
+                .ok_or_else(overflow)?;
+        }
+        Ok(self)
     }
 }
 

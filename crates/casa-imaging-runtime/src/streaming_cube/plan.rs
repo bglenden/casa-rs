@@ -24,6 +24,9 @@ pub(super) struct NativePhasePlan {
     pub(super) source_slots: usize,
     /// Preparation and any consecutive wave with one band per useful worker.
     pub(super) worker_wave_bytes: u64,
+    /// Preferred workspace covering the replay's reusable frame working set.
+    /// Optional: a larger dataset must still execute with a bounded frame cache.
+    pub(super) reuse_workspace_bytes: u64,
     read: WorkNodeId,
     reconcile: WorkNodeId,
     storage_id: String,
@@ -235,6 +238,7 @@ impl NativePhasePlan {
                     wave_shared,
                     imported,
                 )?
+                .limit_cache(store, 0)?
                 .peak_bytes,
             );
         }
@@ -249,6 +253,7 @@ impl NativePhasePlan {
                     wave_shared,
                     imported,
                 )?
+                .limit_cache(store, 0)?
                 .peak_bytes,
             );
         }
@@ -282,6 +287,7 @@ impl NativePhasePlan {
             workers,
             source_slots,
             worker_wave_bytes,
+            reuse_workspace_bytes: preparation.max(all),
             read,
             reconcile,
             storage_id,

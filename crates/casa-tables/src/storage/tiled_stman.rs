@@ -47,6 +47,13 @@ const STREAMING_TILED_READ_AHEAD_BYTES: usize = 16 * 1024 * 1024;
 const STREAMED_TILED_TRACE_ENV: &str = "CASA_RS_STREAMED_TILED_TRACE";
 const TYPED_2D_READ_PROFILE_ENV: &str = "CASA_RS_TYPED_2D_READ_PROFILE";
 
+#[cfg(test)]
+thread_local! {
+    static STREAMED_READ_COUNTS: std::cell::Cell<(usize, usize)> = const {
+        std::cell::Cell::new((0, 0))
+    };
+}
+
 #[derive(Clone, Debug, Default)]
 struct CountingWriteStats {
     write_calls: usize,
@@ -3873,6 +3880,7 @@ fn fill_typed_selected_2d_rows<T: Copy>(
                         col_offsets[target_col_idx],
                         dt,
                         tile_index,
+                        last_channel_tile - channel_tile + 1,
                         session,
                         &mut streamed_tile,
                     )?;
@@ -4028,6 +4036,7 @@ fn fill_typed_selected_2d_rows_by_copy<T: TilePixel>(
                         col_offsets[plan.target_col_idx],
                         plan.dt,
                         tile_index,
+                        last_channel_tile - channel_tile + 1,
                         session,
                         &mut streamed_tile,
                     )?;
@@ -9352,6 +9361,7 @@ impl TileReadSession {
         file_pos: u64,
         dst: &mut [u8],
         file_tile_bytes: usize,
+        useful_read_ahead_bytes: usize,
         dt: CasacoreDataType,
         tile_nelem: usize,
         needs_swap: bool,
@@ -9368,7 +9378,11 @@ impl TileReadSession {
             if session_file.file_position != file_pos {
                 session_file.file.seek(SeekFrom::Start(file_pos))?;
             }
-            let read_ahead_bytes = STREAMING_TILED_READ_AHEAD_BYTES.max(file_tile_bytes);
+            // Prefetch only the contiguous selected tile run. The next row
+            // tile may start at a different channel or may not be selected.
+            let read_ahead_bytes = STREAMING_TILED_READ_AHEAD_BYTES
+                .min(useful_read_ahead_bytes)
+                .max(file_tile_bytes);
             session_file.read_ahead.resize(read_ahead_bytes, 0);
             let mut bytes_read = 0usize;
             while bytes_read < read_ahead_bytes {
@@ -9378,6 +9392,11 @@ impl TileReadSession {
                 if read == 0 {
                     break;
                 }
+                #[cfg(test)]
+                STREAMED_READ_COUNTS.with(|counts| {
+                    let (calls, bytes) = counts.get();
+                    counts.set((calls + 1, bytes + read));
+                });
                 bytes_read += read;
             }
             session_file.read_ahead.truncate(bytes_read);
@@ -9440,12 +9459,18 @@ fn load_streamed_column_tile(
     col_offset_in_tile: usize,
     dt: CasacoreDataType,
     tile_index: usize,
+    contiguous_tiles: usize,
     session: &mut TileReadSession,
     tile: &mut Vec<u8>,
 ) -> Result<(), StorageError> {
     let tile_nelem: usize = cube.tile_shape.iter().product();
     let tile_bytes = tile_nelem * tile_element_size(dt);
     let file_tile_bytes = tile_storage_bytes(dt, tile_nelem);
+    let useful_read_ahead_bytes = contiguous_tiles
+        .checked_sub(1)
+        .and_then(|remaining| remaining.checked_mul(bucket_size))
+        .and_then(|bytes| bytes.checked_add(file_tile_bytes))
+        .ok_or_else(|| StorageError::FormatMismatch("selected tile run size overflow".into()))?;
     let swap_size = match dt {
         CasacoreDataType::TpComplex => 4,
         CasacoreDataType::TpDComplex => 8,
@@ -9462,6 +9487,7 @@ fn load_streamed_column_tile(
         file_pos,
         tile,
         file_tile_bytes,
+        useful_read_ahead_bytes,
         dt,
         tile_nelem,
         needs_swap,
@@ -13428,6 +13454,127 @@ mod tests {
             "full 8-channel row should touch all four channel tiles for this shape"
         );
 
+        reset_table_cache_budget_for_tests();
+    }
+
+    #[test]
+    fn streamed_selected_channels_bound_physical_read_ahead() {
+        let _guard = shared_table_cache_test_guard();
+        reset_table_cache_budget_for_tests();
+        set_table_cache_budget_bytes(1024 * 1024);
+
+        for endian in [
+            crate::EndianFormat::BigEndian,
+            crate::EndianFormat::LittleEndian,
+        ] {
+            for primitive in [PrimitiveType::Complex32, PrimitiveType::Bool] {
+                let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+                    "DATA",
+                    primitive,
+                    vec![2, 12],
+                )])
+                .unwrap();
+                let mut table = Table::with_schema(schema);
+                for row in 0..56 {
+                    let values = (0..12).flat_map(|channel| {
+                        (0..2).map(move |corr| row * 100 + channel * 10 + corr)
+                    });
+                    let array = match primitive {
+                        PrimitiveType::Complex32 => ArrayValue::Complex32(
+                            ArrayD::from_shape_vec(
+                                ndarray::IxDyn(&[2, 12]).f(),
+                                values
+                                    .map(|value| Complex32::new(value as f32, -(value as f32)))
+                                    .collect(),
+                            )
+                            .unwrap(),
+                        ),
+                        PrimitiveType::Bool => ArrayValue::Bool(
+                            ArrayD::from_shape_vec(
+                                ndarray::IxDyn(&[2, 12]).f(),
+                                values.map(|value| value % 3 == 0).collect(),
+                            )
+                            .unwrap(),
+                        ),
+                        _ => unreachable!(),
+                    };
+                    table
+                        .add_row(RecordValue::new(vec![RecordField::new(
+                            "DATA",
+                            Value::Array(array),
+                        )]))
+                        .unwrap();
+                }
+                let dir = tempdir().unwrap();
+                let root = dir.path().join("selected_read_ahead.table");
+                std::fs::create_dir_all(&root).unwrap();
+                table
+                    .save(
+                        TableOptions::new(&root)
+                            .with_data_manager(DataManagerKind::TiledShapeStMan)
+                            .with_tile_shape(vec![2, 2, 2])
+                            .with_endian_format(endian),
+                    )
+                    .unwrap();
+                let reopened = Table::open(TableOptions::new(&root)).unwrap();
+                // Fourteen nonadjacent row tiles force the production streaming
+                // path. Duplicate and reversed rows must not duplicate reads.
+                let mut rows: Vec<_> = (0..56).step_by(4).rev().collect();
+                rows.push(0);
+                for (start, count) in [(2, 2), (1, 2), (11, 1), (0, 12)] {
+                    let mut data = Vec::new();
+                    let mut flags = Vec::new();
+                    let destination = match primitive {
+                        PrimitiveType::Complex32 => SelectedArray2DCellsMut::Complex32(&mut data),
+                        PrimitiveType::Bool => SelectedArray2DCellsMut::Bool(&mut flags),
+                        _ => unreachable!(),
+                    };
+                    STREAMED_READ_COUNTS.with(|counts| counts.set((0, 0)));
+                    reopened
+                        .fill_array_cells_2d_channel_range_typed_uncached(
+                            "DATA",
+                            &rows,
+                            start,
+                            count,
+                            destination,
+                        )
+                        .unwrap()
+                        .expect("defined cells");
+                    let (calls, bytes) = STREAMED_READ_COUNTS.with(|counts| counts.get());
+                    let channel_tiles = (start + count - 1) / 2 - start / 2 + 1;
+                    let tile_bytes = if primitive == PrimitiveType::Bool {
+                        1
+                    } else {
+                        64
+                    };
+                    assert_eq!(
+                        bytes,
+                        14 * channel_tiles * tile_bytes,
+                        "read only selected tile runs: {primitive:?} {endian:?} {start} {count}"
+                    );
+                    assert_eq!(calls, 14, "read each selected run as a block");
+                    for channel in start..start + count {
+                        for (index, row) in rows.iter().enumerate() {
+                            for corr in 0..2 {
+                                let value = row * 100 + channel * 10 + corr;
+                                let output = ((channel - start) * rows.len() + index) * 2 + corr;
+                                match primitive {
+                                    PrimitiveType::Complex32 => assert_eq!(
+                                        data[output],
+                                        Complex32::new(value as f32, -(value as f32))
+                                    ),
+                                    PrimitiveType::Bool => {
+                                        assert_eq!(flags[output], value % 3 == 0)
+                                    }
+                                    _ => unreachable!(),
+                                }
+                            }
+                        }
+                    }
+                }
+                assert_eq!(shared_tile_cache_entry_count_for_table(&root), 0);
+            }
+        }
         reset_table_cache_budget_for_tests();
     }
 

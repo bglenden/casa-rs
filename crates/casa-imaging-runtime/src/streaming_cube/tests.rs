@@ -465,6 +465,31 @@ fn streaming_cube_initial_source_fence_controls_runtime_reconciliation() {
                         base.execution_dag().resource_alternative(),
                     )
                     .unwrap();
+                assert!(refresh.reuse_workspace_bytes > refresh.worker_wave_bytes);
+                let reuse_budget = fixture.authority.topology().memory_domains[0].capacity_bytes
+                    - unused
+                    + refresh.reuse_workspace_bytes
+                    - 1;
+                let reuse_limited = ResourcePolicy::Explicit(ResourceOverride {
+                    memory_bytes: [(CapacityDomainId::new("host-memory"), reuse_budget)]
+                        .into_iter()
+                        .collect(),
+                    ..ResourceOverride::default()
+                });
+                let with_reuse = plan_with_cache_reclaim(Some(&cache), minimum_cache, 1, || {
+                    plan_refresh(&reuse_limited)
+                })
+                .expect("optional image cache can supply the useful replay working set");
+                assert_eq!(cache.residency.limit_bytes(), previous_limit - 1);
+                assert!(with_reuse.workspace_bytes >= with_reuse.reuse_workspace_bytes);
+                let previous_limit = cache.residency.limit_bytes();
+                let unused = fixture
+                    .authority
+                    .remaining_planning_memory_bytes(
+                        &policy,
+                        base.execution_dag().resource_alternative(),
+                    )
+                    .unwrap();
                 let budget = fixture.authority.topology().memory_domains[0].capacity_bytes - unused
                     + refresh.worker_wave_bytes
                     - 1;
@@ -481,6 +506,11 @@ fn streaming_cube_initial_source_fence_controls_runtime_reconciliation() {
                 assert!(cache.residency.limit_bytes() < previous_limit);
                 assert!(cache.residency.used_bytes() <= cache.residency.limit_bytes());
                 assert!(replanned.workspace_bytes >= replanned.worker_wave_bytes);
+                assert_eq!(cache.residency.limit_bytes(), minimum_cache);
+                assert!(
+                    replanned.workspace_bytes < replanned.reuse_workspace_bytes,
+                    "a cache working set that cannot fit must not reject the mandatory wave"
+                );
                 assert_eq!(replanned.workers, workers);
             }
         }

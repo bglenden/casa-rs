@@ -227,7 +227,11 @@ fn overlapping_band_windows_reuse_checked_frames_with_bounded_storage() {
     let slots = plan.reader_cache_slots(4, 2).unwrap();
     assert_eq!(slots, plan.blocks() as usize * 9);
     assert!(store.reader(0).is_err());
-    assert!(store.reader(plan.maximum_cache_slots() + 1).is_err());
+    assert!(
+        store
+            .reader(plan.blocks() as usize * (plan.tiles + 1) + 1)
+            .is_err()
+    );
     let mut reader = store.reader(slots).unwrap();
     let allocated = size_of::<NativeStoreReader>()
         + reader.encoded.capacity()
@@ -235,10 +239,6 @@ fn overlapping_band_windows_reuse_checked_frames_with_bounded_storage() {
     assert_eq!(
         allocated as u64 + plan.page_cache_bytes,
         plan.reader_capacity_bytes(slots).unwrap()
-    );
-    assert!(
-        reader.encoded.len() + reader.frames.len() * size_of::<CachedFrame>()
-            <= plan.preparation_bytes
     );
     let pointer = reader.encoded.as_ptr();
     let mut output = NativeBlock::new(plan.block_rows, 2, 2).unwrap();
@@ -275,7 +275,55 @@ fn overlapping_band_windows_reuse_checked_frames_with_bounded_storage() {
     );
     assert_eq!(reader.encoded.as_ptr(), pointer);
     let large = StorePlan::new(1_000_000, 64, 2, 1, plan.preparation_bytes, u64::MAX).unwrap();
-    assert!(large.reader_cache_slots(4, 2).unwrap() <= plan.maximum_cache_slots());
+    let desired = large.reader_cache_slots(4, 2).unwrap();
+    assert!(desired > large.preparation_cache_slots());
+    let budget = large
+        .reader_capacity_bytes(large.preparation_cache_slots())
+        .unwrap();
+    assert_eq!(
+        large.cache_slots_within(desired, budget),
+        large.preparation_cache_slots()
+    );
+    assert_eq!(large.cache_slots_within(desired, 0), 1);
+}
+
+#[test]
+fn replay_cache_reuses_a_working_set_larger_than_the_preparation_arena() {
+    let plan = plan(128, 64, 2, 1, 1);
+    let desired = plan.reader_cache_slots(1, 2).unwrap();
+    assert_eq!(desired, 3 * plan.blocks() as usize);
+    assert!(desired > plan.preparation_cache_slots());
+    let (_directory, mut store) = store(plan);
+    for slots in [plan.preparation_cache_slots(), desired] {
+        let budget = plan.reader_capacity_bytes(slots).unwrap();
+        assert_eq!(plan.cache_slots_within(desired, budget), slots);
+        let mut reader = store.reader(slots).unwrap();
+        let mut output = NativeBlock::new(plan.block_rows, 2, 2).unwrap();
+        let mut original = NativeBlock::new(plan.block_rows, plan.channels, 2).unwrap();
+        for start in 0..3 {
+            for block in 0..plan.blocks() {
+                reader
+                    .read_block(block, start..start + 2, &mut output)
+                    .unwrap();
+                fill(&mut original, block);
+                assert_window(&output, &original, start..start + 2);
+            }
+        }
+        if slots == desired {
+            assert_eq!(reader.io.operations, 5 * plan.blocks());
+            assert_eq!(reader.io.cache_hits, 4 * plan.blocks());
+        } else {
+            assert_eq!(reader.io.operations, 9 * plan.blocks());
+            assert_eq!(reader.io.cache_hits, 0);
+        }
+        assert_eq!(
+            reader.encoded.capacity() as u64
+                + (reader.frames.capacity() * size_of::<CachedFrame>()) as u64
+                + size_of::<NativeStoreReader>() as u64
+                + plan.page_cache_bytes,
+            budget
+        );
+    }
 }
 
 #[test]

@@ -688,6 +688,23 @@ fn plan_with_cache_reclaim(
             plan.workspace_bytes, plan.worker_wave_bytes,
         )));
     }
+    if let Some(run) = run {
+        // A partial cache below a band traversal's reuse distance can have zero
+        // hits. Reclaim optional image cache only when the complete useful frame
+        // working set fits; do not displace images for another thrashing cache.
+        let deficit = plan
+            .reuse_workspace_bytes
+            .saturating_sub(plan.workspace_bytes);
+        let current = run.residency.limit_bytes();
+        if deficit > 0 && deficit <= current.saturating_sub(minimum) as u64 {
+            let target = current - deficit as usize;
+            run.shrink_cache_to(target)?;
+            eprintln!(
+                "streaming_cube_cache_reclaimed ordinal={ordinal} previous_bytes={current} retained_bytes={target} returned_bytes={deficit} reason=native_replay_reuse"
+            );
+            plan = plan_native()?;
+        }
+    }
     Ok(plan)
 }
 

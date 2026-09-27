@@ -75,8 +75,16 @@ fn run_c_array(block: bool) {
         .ok()
         .map(|value| value.parse::<usize>().expect("major-cycle limit"));
     assert!(maximum_major_cycles != Some(0));
-    let input_start = channel.min(510);
-    let input_end = (channel + i32::try_from(output_channels).unwrap()).min(511);
+    // Keep the full prepared-store geometry while imaging a bounded output
+    // window when diagnosing wide-cube replay locality.
+    let full_input = std::env::var_os("CASA_RS_C_ARRAY_FULL_INPUT").is_some();
+    assert!(!full_input || block);
+    let input_start = if full_input { 0 } else { channel.min(510) };
+    let input_end = if full_input {
+        511
+    } else {
+        (channel + i32::try_from(output_channels).unwrap()).min(511)
+    };
     let input_channels = usize::try_from(input_end - input_start + 1).unwrap();
     let frequency_hz = 44e9 + f64::from(channel) * 2e6;
     let ms = MeasurementSet::open(&input).expect("C-array turnaround MS");
@@ -256,6 +264,7 @@ fn run_c_array(block: bool) {
         "channel": channel, "frequency_hz": frequency_hz, "rows": expected_rows,
         "seconds": seconds, "execution_route": route, "workers": workers,
         "input_start": input_start, "input_channels": input_channels,
+        "full_input_replay_diagnostic": full_input,
         "output_channels": output_channels, "display_plane": 0,
         "weighting": "natural", "deconvolver": "clark", "interpolation": "linear",
         "worker_evidence": worker_evidence,
