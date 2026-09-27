@@ -1111,20 +1111,39 @@ impl BandWorkspace {
             return Err(SpectralOperatorError::IncompleteSpectralHalo);
         }
         let local = native_range.start - window.start..native_range.end - window.start;
-        for row in 0..block.metadata.len() {
+        let mut previous_support: Option<(usize, [f64; 2], Range<usize>)> = None;
+        for row_index in 0..block.metadata.len() {
             let row = block
-                .row(layout, row, window.clone())?
+                .row(layout, row_index, window.clone())?
                 .window(local.clone())?;
             if let Some(single) = self.single_channel {
                 self.consume_single_row(row, single, output_hz, polarization)?;
                 continue;
             }
-            let native = BandSupport::native_window(
-                output_hz,
-                self.core.clone(),
-                row.frequencies_hz,
-                row.original_pair_hz,
-            )?;
+            let native = if let Some((previous_row, pair, support)) = &previous_support {
+                let previous_hz = &block.frequencies_hz
+                    [previous_row * block.channels..(previous_row + 1) * block.channels];
+                let current_hz = &block.frequencies_hz
+                    [row_index * block.channels..(row_index + 1) * block.channels];
+                if *pair == row.original_pair_hz && previous_hz == current_hz {
+                    support.clone()
+                } else {
+                    BandSupport::native_window(
+                        output_hz,
+                        self.core.clone(),
+                        row.frequencies_hz,
+                        row.original_pair_hz,
+                    )?
+                }
+            } else {
+                BandSupport::native_window(
+                    output_hz,
+                    self.core.clone(),
+                    row.frequencies_hz,
+                    row.original_pair_hz,
+                )?
+            };
+            previous_support = Some((row_index, row.original_pair_hz, native.clone()));
             if native.is_empty() {
                 continue;
             }
