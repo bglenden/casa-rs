@@ -1248,11 +1248,9 @@ impl BandWorkspace {
             let reuse = previous_support
                 .as_ref()
                 .is_some_and(|(previous_row, pair, _, _)| {
-                    let previous_hz = &block.frequencies_hz
-                        [previous_row * block.channels..(previous_row + 1) * block.channels];
-                    let current_hz = &block.frequencies_hz
-                        [row_index * block.channels..(row_index + 1) * block.channels];
-                    *pair == row.original_pair_hz && previous_hz == current_hz
+                    let start = previous_row * block.channels + local.start;
+                    let previous_hz = &block.frequencies_hz[start..start + local.len()];
+                    *pair == row.original_pair_hz && previous_hz == row.frequencies_hz
                 });
             let native = if reuse {
                 previous_support.as_ref().unwrap().2.clone()
