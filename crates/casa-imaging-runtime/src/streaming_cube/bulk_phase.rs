@@ -220,7 +220,6 @@ impl BulkCubePhase {
                 .and_then(|n| n.checked_mul(5))
                 .ok_or_else(|| io::Error::other("bulk row size overflow"))?)
         .min(selected_source.selection().rows().selected_row_count() as usize);
-        let bulk_input = BulkInputPlan::new(&problem, rows)?;
         let output_hz = (0..problem.geometry().spectral().output_channels())
             .map(|i| {
                 problem
@@ -252,6 +251,20 @@ impl BulkCubePhase {
                 })
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(io::Error::other)?
+        };
+        // Initial weighting discovery must inspect the entire selected axis.
+        // A replay's frozen weighting and observed band support permit a
+        // smaller source claim; each wave allocates only its own window.
+        let bulk_input = if retained.is_some() && !is_mfs {
+            let native = bands
+                .iter()
+                .map(BandPlan::native_range)
+                .filter(|range| !range.is_empty())
+                .reduce(|a, b| a.start.min(b.start)..a.end.max(b.end))
+                .unwrap_or(0..0);
+            BulkInputPlan::for_window(&problem, rows, native)?
+        } else {
+            BulkInputPlan::new(&problem, rows)?
         };
         let frozen_reservation = if retained.is_none() {
             Some(Arc::new(
@@ -393,7 +406,7 @@ impl BulkCubePhase {
             Err(error) => return Err(io::Error::other(error)),
         };
         if let Some(run) = &run {
-            let floor = BulkWave::bytes(&bands[..workers.min(bands.len())])?;
+            let floor = BulkWave::bytes(&bands[..workers.min(bands.len())], workers)?;
             let deficit = floor.saturating_sub(remaining);
             let current = run.residency.limit_bytes();
             let reclaim = deficit.min(current.saturating_sub(minimum_cache) as u64);
@@ -405,9 +418,9 @@ impl BulkCubePhase {
         let count = if is_mfs {
             0
         } else {
-            BulkWave::prefix(&bands, remaining)?
+            BulkWave::prefix(&bands, remaining, workers)?
         };
-        let wave_bytes = BulkWave::bytes(&bands[..count])?;
+        let wave_bytes = BulkWave::bytes(&bands[..count], workers)?;
         if !is_mfs && run.is_none() {
             let extra = remaining
                 .saturating_sub(wave_bytes)
@@ -467,7 +480,8 @@ impl BulkCubePhase {
                 WeightingExecutionState::with_frozen_artifact(w.clone())
             });
         eprintln!(
-            "bulk_cube_plan ordinal={ordinal} workers={workers} wave_bands={count} wave_bytes={wave_bytes} input_rows_bound={rows} input_bytes={} cache_bytes={}",
+            "bulk_cube_plan ordinal={ordinal} workers={workers} wave_bands={count} wave_bytes={wave_bytes} input_rows_bound={rows} input_channels={} input_bytes={} cache_bytes={}",
+            bulk_input.channels,
             bulk_input.bytes,
             cube_state
                 .as_ref()
@@ -608,7 +622,7 @@ impl BulkCubePhase {
         let mut selected = Some(selected);
         let mut start = 0;
         while start < state.bands.len() {
-            let count = BulkWave::prefix(&state.bands[start..], self.wave_bytes)?;
+            let count = BulkWave::prefix(&state.bands[start..], self.wave_bytes, self.workers)?;
             let jobs = state.bands[start..start + count]
                 .iter()
                 .cloned()

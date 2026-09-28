@@ -9,6 +9,53 @@ use casa_imaging_reconstruction::runtime_adapter::{
 use casa_imaging_reconstruction::{ModelGeneration, PolarizationOperator};
 use std::io;
 
+#[derive(Clone)]
+struct WaveCharge {
+    resident: u64,
+    transitions: Vec<u64>,
+    workers: usize,
+}
+
+impl WaveCharge {
+    fn new(workers: usize) -> io::Result<Self> {
+        if workers == 0 {
+            return Err(io::Error::other("bulk wave requires a worker"));
+        }
+        Ok(Self {
+            resident: 0,
+            transitions: Vec::with_capacity(workers),
+            workers,
+        })
+    }
+
+    fn include(&mut self, resident: usize, transition: usize) -> io::Result<u64> {
+        let resident =
+            u64::try_from(resident).map_err(|_| io::Error::other("bulk resident size overflow"))?;
+        let transition = u64::try_from(transition)
+            .map_err(|_| io::Error::other("bulk transition size overflow"))?;
+        self.resident = self
+            .resident
+            .checked_add(resident)
+            .and_then(|bytes| {
+                bytes.checked_add((size_of::<Job<'_>>() + size_of::<BandResult>()) as u64)
+            })
+            .ok_or_else(|| io::Error::other("bulk resident size overflow"))?;
+        let index = self
+            .transitions
+            .partition_point(|&bytes| bytes >= transition);
+        if index < self.workers {
+            self.transitions.insert(index, transition);
+            self.transitions.truncate(self.workers);
+        }
+        self.transitions
+            .iter()
+            .try_fold(self.resident, |sum, bytes| {
+                sum.checked_add(*bytes)
+                    .ok_or_else(|| io::Error::other("bulk wave size overflow"))
+            })
+    }
+}
+
 enum Job<'a> {
     Pending(BandPlan),
     Active(EpochBand<'a>),
@@ -41,16 +88,15 @@ impl<'a> BulkWave<'a> {
         }
     }
 
-    /// Every band is live during a source traversal, independent of the number
-    /// of threads scheduling those bands. Include output/FFT overlap per band.
-    pub(super) fn prefix(bands: &[BandPlan], budget: u64) -> io::Result<usize> {
-        let mut total = 0_u64;
+    /// Every band retains its stable capacity. Model loading and conversion are
+    /// joined synchronous leaf jobs, so at most `workers` transition deltas
+    /// coexist even when the wave contains more bands.
+    pub(super) fn prefix(bands: &[BandPlan], budget: u64, workers: usize) -> io::Result<usize> {
+        let mut charge = WaveCharge::new(workers)?;
         let mut count = 0;
         for band in bands {
-            total = total
-                .checked_add(Self::bytes(std::slice::from_ref(band))?)
-                .ok_or_else(|| io::Error::other("bulk wave size overflow"))?;
-            if total > budget {
+            let memory = band.memory().map_err(io::Error::other)?;
+            if charge.include(memory.resident_bytes(), memory.transition_bytes())? > budget {
                 break;
             }
             count += 1;
@@ -64,14 +110,14 @@ impl<'a> BulkWave<'a> {
         Ok(count)
     }
 
-    pub(super) fn bytes(bands: &[BandPlan]) -> io::Result<u64> {
-        bands.iter().try_fold(0_u64, |sum, band| {
-            sum.checked_add(band.memory().map_err(io::Error::other)?.peak_bytes() as u64)
-                .and_then(|n| {
-                    n.checked_add((size_of::<Job<'_>>() + size_of::<BandResult>()) as u64)
-                })
-                .ok_or_else(|| io::Error::other("bulk band size overflow"))
-        })
+    pub(super) fn bytes(bands: &[BandPlan], workers: usize) -> io::Result<u64> {
+        let mut charge = WaveCharge::new(workers)?;
+        let mut bytes = 0;
+        for band in bands {
+            let memory = band.memory().map_err(io::Error::other)?;
+            bytes = charge.include(memory.resident_bytes(), memory.transition_bytes())?;
+        }
+        Ok(bytes)
     }
 }
 
@@ -131,5 +177,34 @@ impl BulkConsumer for BulkWave<'_> {
                 _ => Err(io::Error::other("bulk band did not complete")),
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WaveCharge;
+    use std::mem::size_of;
+
+    #[test]
+    fn wave_charge_retains_every_band_but_only_the_largest_worker_transitions() {
+        for workers in [1, 2, 3, 4] {
+            let mut charge = WaveCharge::new(workers).unwrap();
+            let mut observed = Vec::new();
+            let mut residents = 0_u64;
+            for (resident, transient) in [(100, 50), (200, 80), (300, 20), (400, 70), (500, 90)] {
+                residents += resident as u64;
+                let actual = charge.include(resident, transient).unwrap();
+                observed.push(transient as u64);
+                observed.sort_unstable_by(|a, b| b.cmp(a));
+                let headers = (size_of::<super::Job<'_>>()
+                    + size_of::<casa_imaging_reconstruction::runtime_adapter::BandResult>())
+                    as u64;
+                let expected = residents
+                    + observed.iter().take(workers).sum::<u64>()
+                    + observed.len() as u64 * headers;
+                assert_eq!(actual, expected);
+            }
+        }
+        assert!(WaveCharge::new(0).is_err());
     }
 }

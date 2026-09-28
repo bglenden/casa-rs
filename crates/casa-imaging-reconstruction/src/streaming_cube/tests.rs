@@ -939,6 +939,12 @@ fn band_memory_accounts_for_actual_phase_buffers_and_completed_ownership() {
                 },
             };
             let memory = plan.memory().unwrap();
+            assert_eq!(
+                memory.resident_bytes() + memory.transition_bytes(),
+                memory.peak_bytes()
+            );
+            assert!(memory.resident_bytes() >= memory.accumulation_bytes);
+            assert!(memory.resident_bytes() >= memory.retained_bytes);
             let generation = if phase == BandPhase::InitialZero {
                 &empty
             } else {

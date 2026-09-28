@@ -27,6 +27,20 @@ impl BulkInputPlan {
         let [source] = problem.selected_observation().read_set().sources() else {
             return Err(io::Error::other("bulk input requires one source"));
         };
+        let [spw] = source.selection().spectral_windows() else {
+            return Err(io::Error::other("bulk input requires one channel layout"));
+        };
+        Self::for_window(problem, rows, 0..spw.channel_indices().len())
+    }
+
+    pub(crate) fn for_window(
+        problem: &CompiledProblem,
+        rows: usize,
+        window: std::ops::Range<usize>,
+    ) -> io::Result<Self> {
+        let [source] = problem.selected_observation().read_set().sources() else {
+            return Err(io::Error::other("bulk input requires one source"));
+        };
         let ([spw], [pol]) = (
             source.selection().spectral_windows(),
             source.selection().correlations(),
@@ -35,7 +49,15 @@ impl BulkInputPlan {
                 "bulk input requires one channel/correlation layout",
             ));
         };
-        let channels = spw.channel_indices().len();
+        let total_channels = spw.channel_indices().len();
+        if window.start > window.end || window.end > total_channels {
+            return Err(io::Error::other(
+                "bulk input window exceeds selected channels",
+            ));
+        }
+        // An empty halo owns no samples; the numeric geometry still needs its
+        // one-channel construction minimum and will never consume a block.
+        let channels = window.len().max(1);
         let correlations = pol.products().len();
         let projection =
             casa_imaging_model::SelectedImageDomainProjections::retained_heap_bytes_for_len(1)
@@ -305,8 +327,10 @@ where
     }
     fn complete(self, execution: BoundedExecution<'_>) -> io::Result<Self::Completion> {
         eprintln!(
-            "bulk_input blocks={} copied_samples={} preparation_nanos={} inspection_and_kernel_nanos={}",
+            "bulk_input blocks={} channels={} capacity_bytes={} copied_samples={} preparation_nanos={} inspection_and_kernel_nanos={}",
             self.blocks,
+            self.plan.channels,
+            self.plan.bytes,
             self.copied_samples,
             self.preparation_nanos,
             self.inspection_and_kernel_nanos
@@ -338,7 +362,16 @@ where
     }
     .map_err(io::Error::other)?;
     let rows = source.maximum_rows_per_block().min(input.rows);
-    let input = BulkInputPlan::new(problem, rows)?;
+    let admitted_bytes = input.bytes;
+    let input = match &channels {
+        Some(window) => BulkInputPlan::for_window(problem, rows, window.clone())?,
+        None => BulkInputPlan::new(problem, rows)?,
+    };
+    if input.bytes > admitted_bytes {
+        return Err(io::Error::other(
+            "bulk source window exceeds admitted input capacity",
+        ));
+    }
     let outcome = execute_bounded(
         stream,
         0,

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Checked byte projection of the actual band allocations. Runtime sums these
-//! peaks across concurrently live jobs and adds its input, queue and stack owners.
+//! Checked byte projection of band allocations. Runtime retains each band's
+//! stable capacity and bounds overlapping transition peaks by worker count,
+//! then adds its input, queue and stack owners.
 
 use super::*;
 use crate::spectral_operator::fft_planning_words_for_shape;
@@ -29,6 +30,19 @@ impl BandMemory {
             .max(self.accumulation_bytes)
             .max(self.completion_bytes)
             .max(self.retained_bytes)
+    }
+
+    /// Capacity held while a band is waiting, accumulating, or retained as a
+    /// completed result. A wave owns this amount for every admitted band.
+    pub fn resident_bytes(self) -> usize {
+        self.accumulation_bytes.max(self.retained_bytes)
+    }
+
+    /// Extra capacity during synchronous model loading or grid conversion.
+    /// The runtime may charge only its largest W deltas after joining each
+    /// worker operation before it schedules another band.
+    pub fn transition_bytes(self) -> usize {
+        self.peak_bytes() - self.resident_bytes()
     }
 }
 

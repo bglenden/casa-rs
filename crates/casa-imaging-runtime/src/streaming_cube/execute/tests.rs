@@ -493,6 +493,47 @@ fn initial_jobs(plans: &[BandPlan]) -> Vec<BandPlan> {
     plans.to_vec()
 }
 
+#[test]
+fn bulk_wave_admission_uses_a_mixed_state_worker_bound() {
+    use crate::streaming_cube::bulk_wave::BulkWave;
+
+    let (_dir, _store, bands, _problem) = input(1, false);
+    let one_worker = BulkWave::bytes(&bands, 1).unwrap();
+    let three_workers = BulkWave::bytes(&bands, 3).unwrap();
+    let four_workers = BulkWave::bytes(&bands, 4).unwrap();
+    assert!(one_worker <= three_workers);
+    assert!(three_workers <= four_workers);
+    assert_eq!(
+        BulkWave::prefix(&bands, one_worker, 1).unwrap(),
+        bands.len()
+    );
+    assert_eq!(
+        BulkWave::prefix(&bands, three_workers, 3).unwrap(),
+        bands.len()
+    );
+    assert!(BulkWave::prefix(&bands, three_workers - 1, 3).unwrap() < bands.len());
+    assert!(BulkWave::prefix(&bands, 0, 0).is_err());
+}
+
+#[test]
+fn bulk_input_window_claim_uses_local_width_and_rejects_bad_bounds() {
+    use crate::weighting::bulk_source::BulkInputPlan;
+
+    let (_dir, _store, _bands, problem) = input(1, false);
+    let full = BulkInputPlan::new(&problem, 7).unwrap();
+    let middle = BulkInputPlan::for_window(&problem, 7, 2..4).unwrap();
+    let last = BulkInputPlan::for_window(&problem, 7, 5..6).unwrap();
+    let empty = BulkInputPlan::for_window(&problem, 7, 0..0).unwrap();
+    assert_eq!(full.channels, 6);
+    assert_eq!(middle.channels, 2);
+    assert_eq!(last.channels, 1);
+    assert_eq!(empty.channels, 1);
+    assert!(middle.bytes < full.bytes);
+    assert!(last.bytes < middle.bytes);
+    assert!(BulkInputPlan::for_window(&problem, 7, 5..7).is_err());
+    assert!(BulkInputPlan::for_window(&problem, 7, 5..4).is_err());
+}
+
 struct CollectedWave {
     bands: Vec<BandResult>,
     source: StoreIo,

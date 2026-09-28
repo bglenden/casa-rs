@@ -273,7 +273,9 @@ impl BandPlan {
     }
 
     /// Allocate only after runtime admission. Recycled FFT state retains the
-    /// same spatial geometry; model reads stay within one admitted plane.
+    /// same spatial geometry. Model loading is a synchronous leaf of this
+    /// call: each temporary plane is dropped before another band is scheduled
+    /// on this worker, including when loading fails.
     pub fn prepare<'a>(
         self,
         generation: &'a ModelGeneration,
