@@ -1317,18 +1317,16 @@ impl BandWorkspace {
     }
 }
 
-struct PolarizedSampleReducer {
-    conjugates: [Complex64; 4],
-    norm_squares: [f64; 4],
+struct PolarizedSampleReducer<'a> {
+    coefficients: &'a [Complex64],
     correlations: usize,
     direct: Option<usize>,
 }
 
-impl PolarizedSampleReducer {
-    fn new(polarization: &PolarizationOperator) -> Result<Self, SpectralOperatorError> {
+impl<'a> PolarizedSampleReducer<'a> {
+    fn new(polarization: &'a PolarizationOperator) -> Result<Self, SpectralOperatorError> {
         if polarization.model_coordinates() != [PolarizationCoordinate::StokesI]
             || polarization.coefficients().len() != polarization.correlations().len()
-            || !(1..=4).contains(&polarization.coefficients().len())
         {
             return Err(SpectralOperatorError::InvalidSample);
         }
@@ -1340,15 +1338,8 @@ impl PolarizedSampleReducer {
                     .position(|value| *value == Complex64::new(1.0, 0.0))
             })
             .flatten();
-        let mut conjugates = [Complex64::default(); 4];
-        let mut norm_squares = [0.0; 4];
-        for (index, coefficient) in polarization.coefficients().iter().enumerate() {
-            conjugates[index] = coefficient.conj();
-            norm_squares[index] = coefficient.norm_sqr();
-        }
         Ok(Self {
-            conjugates,
-            norm_squares,
+            coefficients: polarization.coefficients(),
             correlations: polarization.correlations().len(),
             direct,
         })
@@ -1381,10 +1372,10 @@ impl PolarizedSampleReducer {
             {
                 return Err(SpectralOperatorError::InvalidSample);
             }
-            let conjugate = self.conjugates[correlation];
-            observed_adjoint += conjugate * (observed * weight);
-            predicted_adjoint += conjugate * (predicted * weight);
-            diagonal += weight * self.norm_squares[correlation];
+            let coefficient = self.coefficients[correlation];
+            observed_adjoint += coefficient.conj() * (observed * weight);
+            predicted_adjoint += coefficient.conj() * (predicted * weight);
+            diagonal += weight * coefficient.norm_sqr();
             if self.direct == Some(correlation) {
                 direct_values = (observed, predicted);
             }
@@ -1492,7 +1483,7 @@ struct RowAccumulator<'a> {
     band: &'a mut BandWorkspace,
     row: VisibilityRow<'a>,
     polarization: &'a PolarizationOperator,
-    reduction: PolarizedSampleReducer,
+    reduction: PolarizedSampleReducer<'a>,
     stencil: Cow<'a, RowStencil>,
     next: usize,
     previous_prediction: SmallVec<[Complex64; 4]>,
