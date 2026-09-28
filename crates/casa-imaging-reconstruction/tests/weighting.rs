@@ -573,6 +573,158 @@ fn native_preparation_matches_scalar_science_and_is_worker_and_batch_invariant()
 }
 
 #[test]
+fn bulk_natural_chunk_preparation_preserves_flags_weights_and_residuals() {
+    use casa_imaging_model::{
+        SelectedNumericRow, SelectedNumericVisibility, SelectedNumericWeights,
+        SelectedObservationRunChannel, SelectedObservationRunRow,
+    };
+    use casa_imaging_reconstruction::runtime_adapter::BulkNaturalWeighting;
+    use num_complex::Complex32;
+
+    let (problem, samples) = native_preparation_fixture();
+    let plan = plan_weighting(&problem, WeightingExecutionLimits::new(17, 1).unwrap()).unwrap();
+    let base = &samples[0];
+    let channels: Vec<_> = [0, 2]
+        .map(|index| {
+            let address = samples[index].address;
+            SelectedObservationRunChannel {
+                channel_index: address.channel_index,
+                frequency_centre_hz: address.frequency_centre_hz,
+                frequency_lower_hz: address.frequency_lower_hz,
+                frequency_upper_hz: address.frequency_upper_hz,
+                channel_width_hz: address.channel_width_hz,
+                frequency_frame: address.frequency_frame,
+            }
+        })
+        .into();
+    let frequencies: Vec<_> = channels.iter().map(|c| c.frequency_centre_hz).collect();
+    let boundaries: Vec<_> = channels
+        .iter()
+        .map(|c| [c.frequency_lower_hz, c.frequency_upper_hz])
+        .collect();
+    let rows: Vec<_> = (0..17)
+        .map(|index| SelectedObservationRunRow {
+            measurement_set: base.address.measurement_set,
+            physical_row: index,
+            data_description_id: base.address.data_description_id,
+            spectral_window_id: base.address.spectral_window_id,
+            polarization_id: base.address.polarization_id,
+            prediction_target: base.prediction_target,
+            row_flag: index == 4,
+            coordinates: base.coordinates,
+            domain_projections: base.domain_projections.clone(),
+            metadata: base.metadata,
+        })
+        .collect();
+    let correlations = [
+        CorrelationType::CircularRr,
+        CorrelationType::CircularRl,
+        CorrelationType::CircularLr,
+        CorrelationType::CircularLl,
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, kind)| CorrelationProduct::new(i as u32, kind))
+    .collect::<Vec<_>>();
+    let mut complex = [Complex32::new(1.0, -0.5); 12];
+    complex[8].re = f32::NAN;
+    let float = complex.map(|value| value.re);
+    let mut flags = [false; 12];
+    flags[1] = true;
+    let per_row = [2.0, 3.0, 4.0, 8.0];
+    let per_channel = [2.0, 3.0, 4.0, 8.0, 1.0, 2.0, 3.0, 4.0, 4.0, 6.0, 8.0, 16.0];
+    for visibility in [
+        SelectedNumericVisibility::Complex32(&complex),
+        SelectedNumericVisibility::Float32(&float),
+    ] {
+        for weights in [
+            SelectedNumericWeights::PerRow(&per_row),
+            SelectedNumericWeights::PerChannel(&per_channel),
+        ] {
+            for selection in [correlations.clone(), vec![correlations[0], correlations[3]]] {
+                let prepare = |initial: bool, chunk_rows: usize| {
+                    let weighting = BulkNaturalWeighting::new(&problem, &plan, initial).unwrap();
+                    let mut output = vec![
+                        (
+                            vec![0.0; 2 * selection.len()],
+                            vec![false; 2 * selection.len()],
+                            vec![false; 2 * selection.len()],
+                            0.0
+                        );
+                        rows.len()
+                    ];
+                    std::thread::scope(|scope| {
+                        for (row_chunk, output_chunk) in
+                            rows.chunks(chunk_rows).zip(output.chunks_mut(chunk_rows))
+                        {
+                            let (weighting, channels, selection, frequencies, boundaries) =
+                                (&weighting, &channels, &selection, &frequencies, &boundaries);
+                            scope.spawn(move || {
+                                for (row, (effective, rejected, weight_flags, sum)) in
+                                    row_chunk.iter().zip(output_chunk)
+                                {
+                                    *sum = weighting
+                                        .prepare_row(
+                                            SelectedNumericRow {
+                                                row,
+                                                channels,
+                                                correlations: selection,
+                                                first_stored_channel: 0,
+                                                stored_channels: 3,
+                                                stored_correlations: 4,
+                                                visibility,
+                                                flags: &flags,
+                                                weights,
+                                            },
+                                            frequencies,
+                                            boundaries,
+                                            effective,
+                                            rejected,
+                                            weight_flags,
+                                            initial,
+                                        )
+                                        .unwrap();
+                                }
+                            });
+                        }
+                    });
+                    output
+                };
+                let serial = prepare(true, 17);
+                for chunk_rows in [6, 5] {
+                    assert_eq!(prepare(true, chunk_rows), serial);
+                }
+                let residual = prepare(false, 5);
+                for (initial, later) in serial.iter().zip(&residual) {
+                    assert_eq!(
+                        (&initial.0, &initial.1, &initial.2),
+                        (&later.0, &later.1, &later.2)
+                    );
+                    assert_eq!(later.3, 0.0);
+                }
+                assert!(serial[4].0.iter().all(|&weight| weight == 0.0));
+                assert!(serial[4].1.iter().all(|&flag| flag));
+                assert!(
+                    serial[0].1[selection.len()],
+                    "nonfinite visibility rejected"
+                );
+                if selection.len() == 4 {
+                    assert!(
+                        serial[0].0[..4].iter().all(|&weight| weight == 0.0),
+                        "cross-hand flag rejects the complete weight group"
+                    );
+                } else {
+                    assert!(
+                        serial[0].0[..2].iter().all(|&weight| weight > 0.0),
+                        "unselected cross-hand flag does not reject parallel hands"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn native_preparation_preserves_tapered_scalar_weights_across_worker_counts() {
     let (problem, samples) =
         native_preparation_fixture_with_taper(Some(UvTaper::new(10.0, 5.0, 0.2)));

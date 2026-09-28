@@ -33,6 +33,13 @@ impl Drop for ActiveChunk<'_> {
     }
 }
 
+fn resize_gathered(buffer: &mut Vec<Complex32>, admitted_samples: usize, samples: usize) {
+    if buffer.capacity() == 0 {
+        buffer.reserve_exact(admitted_samples);
+    }
+    buffer.resize(samples, Complex32::new(0.0, 0.0));
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct BulkInputPlan {
     pub(crate) rows: usize,
@@ -263,7 +270,11 @@ where
         let samples = rows * channels * correlations;
         self.metadata.resize(rows, RowMetadata::default());
         if borrowed.is_none() {
-            self.gathered.resize(samples, Complex32::new(0.0, 0.0));
+            resize_gathered(
+                &mut self.gathered,
+                self.plan.rows * self.plan.channels * self.plan.correlations,
+                samples,
+            );
         } else {
             self.gathered.clear();
         }
@@ -412,6 +423,26 @@ where
             0
         };
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod gather_tests {
+    use super::*;
+
+    #[test]
+    fn bulk_gather_refills_reuse_the_admitted_capacity() {
+        let admitted = 100;
+        let mut buffer = Vec::new();
+        let mut allocation = None;
+        for samples in [60, 90, 100, 3, 99] {
+            resize_gathered(&mut buffer, admitted, samples);
+            assert_eq!(buffer.len(), samples);
+            assert_eq!(buffer.capacity(), admitted);
+            assert_eq!(*allocation.get_or_insert(buffer.as_ptr()), buffer.as_ptr());
+            buffer.fill(Complex32::new(1.0, -1.0));
+            buffer.clear();
+        }
     }
 }
 
