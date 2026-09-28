@@ -1350,7 +1350,7 @@ impl SelectedObservationBlockConsumer<'_> {
         self.bulk_started = true;
         self.bulk_failed = true;
         let mut samples = 0_u64;
-        for row in 0..geometry.rows().len() {
+        for row in 0..geometry.row_count() {
             let numeric = block
                 .numeric_row(geometry, row)
                 .map_err(SelectedObservationTraversalError::Source)?;

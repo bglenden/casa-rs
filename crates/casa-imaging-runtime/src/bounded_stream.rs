@@ -339,6 +339,12 @@ impl BoundedExecution<'_> {
         self.0.is_some_and(|team| team.pool.is_some())
     }
 
+    pub(crate) fn worker_count(self) -> usize {
+        self.0
+            .and_then(|team| team.pool.as_ref())
+            .map_or(1, rayon::ThreadPool::current_num_threads)
+    }
+
     /// Join bounded borrowed jobs inside the already installed, admitted team.
     /// No job or borrowed source storage survives this call, including on error.
     pub(crate) fn for_each_mut<T: Send, E: Send>(

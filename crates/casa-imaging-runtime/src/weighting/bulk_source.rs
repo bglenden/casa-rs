@@ -12,7 +12,26 @@ use casa_imaging_reconstruction::runtime_adapter::{
 };
 use casa_ms::SelectedObservationNumericGeometry;
 use num_complex::Complex32;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
+
+struct PreparedChunk<'a> {
+    first_row: usize,
+    metadata: &'a mut [RowMetadata],
+    weights: &'a mut [f32],
+    flags: &'a mut [bool],
+    weight_flags: &'a mut [bool],
+    gathered: Option<&'a mut [Complex32]>,
+    sum: f64,
+}
+
+struct ActiveChunk<'a>(&'a AtomicUsize);
+
+impl Drop for ActiveChunk<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct BulkInputPlan {
@@ -88,6 +107,7 @@ impl BulkInputPlan {
                         + size_of::<Self>(),
                 )
             })
+            .and_then(|n| n.checked_add(rows.checked_mul(size_of::<PreparedChunk<'static>>())?))
             .ok_or_else(|| io::Error::other("bulk input size overflow"))?;
         Ok(Self {
             rows,
@@ -140,6 +160,10 @@ struct Kernel<'a, F> {
     copied_samples: u64,
     preparation_nanos: u128,
     inspection_and_kernel_nanos: u128,
+    prepared_chunks: u64,
+    peak_active_preparation: usize,
+    projected_chunks: u64,
+    peak_active_projection: usize,
 }
 
 impl<F> Kernel<'_, F>
@@ -152,15 +176,40 @@ where
         execution: BoundedExecution<'_>,
     ) -> io::Result<()> {
         let started = Instant::now();
+        let geometry_active = AtomicUsize::new(0);
+        let geometry_peak = AtomicUsize::new(0);
+        let geometry_chunk_rows = self
+            .plan
+            .rows
+            .div_ceil(execution.worker_count().saturating_mul(4))
+            .max(1);
+        let mut projected_chunks = 0;
         storage
-            .project_numeric_geometry(self.problem, &mut self.geometry)
+            .project_numeric_geometry_with(
+                self.problem,
+                &mut self.geometry,
+                geometry_chunk_rows,
+                |chunks| {
+                    projected_chunks = chunks.len();
+                    execution.for_each_mut(chunks, |_, chunk| {
+                        let live = geometry_active.fetch_add(1, Ordering::Relaxed) + 1;
+                        geometry_peak.fetch_max(live, Ordering::Relaxed);
+                        let _active = ActiveChunk(&geometry_active);
+                        chunk.project()
+                    })
+                },
+            )
             .map_err(io::Error::other)?;
+        self.projected_chunks += projected_chunks as u64;
+        self.peak_active_projection = self
+            .peak_active_projection
+            .max(geometry_peak.load(Ordering::Relaxed));
         let first = storage
             .numeric_row(&self.geometry, 0)
             .map_err(io::Error::other)?;
         let channels = first.channels.len();
         let correlations = first.correlations.len();
-        let rows = self.geometry.rows().len();
+        let rows = self.geometry.row_count();
         if rows > self.plan.rows
             || channels > self.plan.channels
             || correlations != self.plan.correlations
@@ -211,56 +260,132 @@ where
             SelectedNumericVisibility::Complex32(values) if dense => Some(values),
             _ => None,
         };
-        self.metadata.clear();
-        self.gathered.clear();
-        if borrowed.is_none() && self.gathered.capacity() == 0 {
-            self.gathered
-                .reserve_exact(self.plan.rows * self.plan.channels * self.plan.correlations);
+        let samples = rows * channels * correlations;
+        self.metadata.resize(rows, RowMetadata::default());
+        if borrowed.is_none() {
+            self.gathered.resize(samples, Complex32::new(0.0, 0.0));
+        } else {
+            self.gathered.clear();
         }
-        for row in 0..rows {
-            let numeric = storage
-                .numeric_row(&self.geometry, row)
-                .map_err(io::Error::other)?;
-            let projection = numeric
-                .row
-                .domain_projections
-                .get(0)
-                .ok_or_else(|| io::Error::other("bulk row lacks image projection"))?
-                .model();
-            self.metadata.push(RowMetadata {
-                physical_row: numeric.row.physical_row,
-                uvw_m: projection.transformed_uvw_m(),
-                phase_shift_m: projection.phase_shift_m(),
-                original_pair_hz: self.geometry.original_pairs_hz()[row],
+        let stride = channels * correlations;
+        let chunk_rows = rows
+            .div_ceil(execution.worker_count().saturating_mul(4))
+            .max(1);
+        let (weights, flags, weight_flags) = self.derived.buffers_mut();
+        let (mut weights, mut flags, mut weight_flags) = (
+            &mut weights[..samples],
+            &mut flags[..samples],
+            &mut weight_flags[..samples],
+        );
+        let mut metadata = &mut self.metadata[..rows];
+        let mut gathered = &mut self.gathered[..];
+        let mut chunks = Vec::with_capacity(rows.div_ceil(chunk_rows));
+        let mut first_row = 0;
+        while first_row < rows {
+            let take = (rows - first_row).min(chunk_rows);
+            let cells = take * stride;
+            let (metadata_head, metadata_tail) = metadata.split_at_mut(take);
+            let (weights_head, weights_tail) = weights.split_at_mut(cells);
+            let (flags_head, flags_tail) = flags.split_at_mut(cells);
+            let (weight_flags_head, weight_flags_tail) = weight_flags.split_at_mut(cells);
+            let (gather_head, gather_tail) = if borrowed.is_some() {
+                gathered.split_at_mut(0)
+            } else {
+                gathered.split_at_mut(cells)
+            };
+            chunks.push(PreparedChunk {
+                first_row,
+                metadata: metadata_head,
+                weights: weights_head,
+                flags: flags_head,
+                weight_flags: weight_flags_head,
+                gathered: borrowed.is_none().then_some(gather_head),
+                sum: 0.0,
             });
-            let cells = row * channels..(row + 1) * channels;
-            self.weighting
-                .prepare_row(
-                    numeric,
-                    &self.geometry.frequencies_hz()[cells.clone()],
-                    &self.geometry.boundaries_hz()[cells],
-                    &mut self.derived,
-                    row,
-                    self.initial,
-                )
-                .map_err(io::Error::other)?;
-            if borrowed.is_none() {
-                for channel in numeric.channels {
-                    let start = (channel.channel_index - numeric.first_stored_channel) as usize
-                        * numeric.stored_correlations;
-                    for correlation in numeric.correlations {
-                        let index = start + correlation.correlation_index() as usize;
-                        self.gathered.push(match numeric.visibility {
-                            SelectedNumericVisibility::Complex32(values) => values[index],
-                            SelectedNumericVisibility::Float32(values) => {
-                                Complex32::new(values[index], 0.0)
-                            }
-                        });
+            (metadata, weights, flags, weight_flags, gathered) = (
+                metadata_tail,
+                weights_tail,
+                flags_tail,
+                weight_flags_tail,
+                gather_tail,
+            );
+            first_row += take;
+        }
+        let active = AtomicUsize::new(0);
+        let peak_active = AtomicUsize::new(0);
+        let geometry = &self.geometry;
+        let weighting = &self.weighting;
+        let initial = self.initial;
+        execution.for_each_mut(&mut chunks, |_, chunk| -> io::Result<()> {
+            let live = active.fetch_add(1, Ordering::Relaxed) + 1;
+            peak_active.fetch_max(live, Ordering::Relaxed);
+            let _active = ActiveChunk(&active);
+            for local in 0..chunk.metadata.len() {
+                let row = chunk.first_row + local;
+                let numeric = storage
+                    .numeric_row(geometry, row)
+                    .map_err(io::Error::other)?;
+                let projection = numeric
+                    .row
+                    .domain_projections
+                    .get(0)
+                    .ok_or_else(|| io::Error::other("bulk row lacks image projection"))?
+                    .model();
+                chunk.metadata[local] = RowMetadata {
+                    physical_row: numeric.row.physical_row,
+                    uvw_m: projection.transformed_uvw_m(),
+                    phase_shift_m: projection.phase_shift_m(),
+                    original_pair_hz: geometry.original_pairs_hz()[row],
+                };
+                let source_cells = row * channels..(row + 1) * channels;
+                let output_cells = local * stride..(local + 1) * stride;
+                chunk.sum += weighting
+                    .prepare_row(
+                        numeric,
+                        &geometry.frequencies_hz()[source_cells.clone()],
+                        &geometry.boundaries_hz()[source_cells],
+                        &mut chunk.weights[output_cells.clone()],
+                        &mut chunk.flags[output_cells.clone()],
+                        &mut chunk.weight_flags[output_cells.clone()],
+                        initial,
+                    )
+                    .map_err(io::Error::other)?;
+                if let Some(gathered) = chunk.gathered.as_deref_mut() {
+                    let mut destination = output_cells.start;
+                    for channel in numeric.channels {
+                        let start = (channel.channel_index - numeric.first_stored_channel) as usize
+                            * numeric.stored_correlations;
+                        for correlation in numeric.correlations {
+                            let index = start + correlation.correlation_index() as usize;
+                            gathered[destination] = match numeric.visibility {
+                                SelectedNumericVisibility::Complex32(values) => values[index],
+                                SelectedNumericVisibility::Float32(values) => {
+                                    Complex32::new(values[index], 0.0)
+                                }
+                            };
+                            destination += 1;
+                        }
                     }
                 }
             }
+            Ok(())
+        })?;
+        self.prepared_chunks += chunks.len() as u64;
+        self.peak_active_preparation = self
+            .peak_active_preparation
+            .max(peak_active.load(Ordering::Relaxed));
+        if self.initial {
+            for chunk in &chunks {
+                self.weighting
+                    .commit_prepared_chunk(
+                        chunk.sum,
+                        (chunk.metadata.len() * stride) as u64,
+                        chunk.metadata.len() as u64,
+                    )
+                    .map_err(io::Error::other)?;
+            }
         }
-        let samples = rows * channels * correlations;
+        drop(chunks);
         let view = NativeBlockView::new(
             &self.metadata,
             self.geometry.frequencies_hz(),
@@ -327,13 +452,17 @@ where
     }
     fn complete(self, execution: BoundedExecution<'_>) -> io::Result<Self::Completion> {
         eprintln!(
-            "bulk_input blocks={} channels={} capacity_bytes={} copied_samples={} preparation_nanos={} inspection_and_kernel_nanos={}",
+            "bulk_input blocks={} channels={} capacity_bytes={} copied_samples={} preparation_nanos={} inspection_and_kernel_nanos={} projected_chunks={} peak_active_projection={} prepared_chunks={} peak_active_preparation={}",
             self.blocks,
             self.plan.channels,
             self.plan.bytes,
             self.copied_samples,
             self.preparation_nanos,
-            self.inspection_and_kernel_nanos
+            self.inspection_and_kernel_nanos,
+            self.projected_chunks,
+            self.peak_active_projection,
+            self.prepared_chunks,
+            self.peak_active_preparation
         );
         Ok((
             self.consumer,
@@ -386,7 +515,8 @@ where
             derived: NaturalRowPreparation::new(input.rows, input.channels, input.correlations)
                 .map_err(io::Error::other)?,
             gathered: Vec::new(),
-            weighting: BulkNaturalWeighting::new(problem, weighting).map_err(io::Error::other)?,
+            weighting: BulkNaturalWeighting::new(problem, weighting, initial)
+                .map_err(io::Error::other)?,
             initial,
             selected_channels: channels.clone().unwrap_or(0..input.channels),
             emit,
@@ -394,6 +524,10 @@ where
             copied_samples: 0,
             preparation_nanos: 0,
             inspection_and_kernel_nanos: 0,
+            prepared_chunks: 0,
+            peak_active_preparation: 0,
+            projected_chunks: 0,
+            peak_active_projection: 0,
         },
     )
     .map_err(|failure| {

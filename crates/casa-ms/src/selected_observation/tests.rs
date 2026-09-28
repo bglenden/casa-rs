@@ -3078,6 +3078,122 @@ fn numeric_block_consumption_preserves_v9_and_rejects_repeat_and_failed_work() {
 }
 
 #[test]
+fn numeric_geometry_coarse_chunks_match_serial_for_uneven_rows_and_window() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("numeric-chunks.ms");
+    generate_fixture_with_rows(&path, 17);
+    let problem = compiled_problem(&path, 17);
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let binding = ObservationSourceBinding::new(
+        source_state(source),
+        bound_content_budget_for_rows(&problem, source, 17, 1),
+    );
+    let selected =
+        BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding]).unwrap();
+    let (mut source, mut consumer) = selected.into_block_stream(&problem).unwrap();
+    let mut storage = source.create_storage(0);
+    source.fill_next(&mut storage).unwrap().unwrap();
+    let mut serial = super::SelectedObservationNumericGeometry::new(17, 3).unwrap();
+    storage
+        .project_numeric_geometry(&problem, &mut serial)
+        .unwrap();
+    for chunk_rows in [1, 3, 5] {
+        let mut parallel = super::SelectedObservationNumericGeometry::new(17, 3).unwrap();
+        storage
+            .project_numeric_geometry_with(&problem, &mut parallel, chunk_rows, |chunks| {
+                std::thread::scope(|scope| {
+                    let jobs = chunks
+                        .iter_mut()
+                        .map(|chunk| scope.spawn(move || chunk.project()))
+                        .collect::<Vec<_>>();
+                    for job in jobs {
+                        job.join().unwrap()?;
+                    }
+                    Ok(())
+                })
+            })
+            .unwrap();
+        assert_eq!(parallel.row_count(), serial.row_count());
+        assert_eq!(parallel.frequencies_hz(), serial.frequencies_hz());
+        assert_eq!(parallel.boundaries_hz(), serial.boundaries_hz());
+        assert_eq!(parallel.original_pairs_hz(), serial.original_pairs_hz());
+        for row in 0..serial.row_count() {
+            assert_eq!(
+                storage.numeric_row(&parallel, row).unwrap().row,
+                storage.numeric_row(&serial, row).unwrap().row
+            );
+        }
+    }
+    let mut incomplete = super::SelectedObservationNumericGeometry::new(17, 3).unwrap();
+    assert!(
+        storage
+            .project_numeric_geometry_with(&problem, &mut incomplete, 3, |chunks| {
+                chunks[0].project()?;
+                Err(crate::BoundObservationSourceError::StoredSampleShapeMismatch)
+            })
+            .is_err()
+    );
+    assert!(storage.numeric_row(&incomplete, 0).is_err());
+
+    consumer
+        .consume_numeric(&storage, &serial, || Ok::<_, Infallible>(()))
+        .unwrap();
+    while source.fill_next(&mut storage).unwrap().is_some() {
+        storage
+            .project_numeric_geometry(&problem, &mut serial)
+            .unwrap();
+        consumer
+            .consume_numeric(&storage, &serial, || Ok::<_, Infallible>(()))
+            .unwrap();
+    }
+    let (retained, _) = consumer.complete(source.complete().unwrap()).unwrap();
+    let (mut window_source, _) = retained
+        .into_channel_window_block_stream(&problem, 1..2)
+        .unwrap();
+    let mut window_storage = window_source.create_storage(0);
+    window_source
+        .fill_next(&mut window_storage)
+        .unwrap()
+        .unwrap();
+    let mut window_serial = super::SelectedObservationNumericGeometry::new(17, 1).unwrap();
+    window_storage
+        .project_numeric_geometry(&problem, &mut window_serial)
+        .unwrap();
+    let mut window_parallel = super::SelectedObservationNumericGeometry::new(17, 1).unwrap();
+    window_storage
+        .project_numeric_geometry_with(&problem, &mut window_parallel, 3, |chunks| {
+            std::thread::scope(|scope| {
+                let jobs = chunks
+                    .iter_mut()
+                    .map(|chunk| scope.spawn(move || chunk.project()))
+                    .collect::<Vec<_>>();
+                for job in jobs {
+                    job.join().unwrap()?;
+                }
+                Ok(())
+            })
+        })
+        .unwrap();
+    assert_eq!(
+        window_serial.frequencies_hz(),
+        window_parallel.frequencies_hz()
+    );
+    assert_eq!(
+        window_serial.original_pairs_hz(),
+        window_parallel.original_pairs_hz()
+    );
+    for row in 0..window_serial.row_count() {
+        assert_eq!(
+            window_storage
+                .numeric_row(&window_parallel, row)
+                .unwrap()
+                .row,
+            window_storage.numeric_row(&window_serial, row).unwrap().row
+        );
+    }
+}
+
+#[test]
 fn refillable_block_stream_matches_scalar_traversal_and_returns_the_owner() {
     let directory = tempfile::tempdir().expect("temporary block-stream fixture");
     let path = directory.path().join("block-stream.ms");

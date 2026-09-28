@@ -10,7 +10,7 @@ use casa_imaging_model::{
 
 /// Row-independent natural-weighting setup and its initial numerical reduction.
 pub struct BulkNaturalWeighting {
-    sum: WeightingSumWeightPhase,
+    sum: Option<WeightingSumWeightPhase>,
     finite: FiniteValuePolicy,
     centres: Vec<f64>,
     boundaries: Vec<f64>,
@@ -25,7 +25,6 @@ pub struct NaturalRowPreparation {
     weights: Vec<f32>,
     flags: Vec<bool>,
     weight_flags: Vec<bool>,
-    capacity: usize,
 }
 
 impl NaturalRowPreparation {
@@ -40,7 +39,6 @@ impl NaturalRowPreparation {
             weights: vec![0.0; capacity],
             flags: vec![false; capacity],
             weight_flags: vec![false; capacity],
-            capacity,
         })
     }
 
@@ -55,6 +53,11 @@ impl NaturalRowPreparation {
     /// CASA complete-correlation weight-group flags.
     pub fn weight_flags(&self) -> &[bool] {
         &self.weight_flags
+    }
+
+    /// Borrow all three flat outputs for disjoint row-chunk preparation.
+    pub fn buffers_mut(&mut self) -> (&mut [f32], &mut [bool], &mut [bool]) {
+        (&mut self.weights, &mut self.flags, &mut self.weight_flags)
     }
 }
 
@@ -95,7 +98,11 @@ impl BulkNaturalWeighting {
         })
     }
     /// Begin the ordinary constant-MFS or linear-cube natural-weighting route.
-    pub fn new(problem: &CompiledProblem, plan: &WeightingPlan) -> Result<Self, WeightingError> {
+    pub fn new(
+        problem: &CompiledProblem,
+        plan: &WeightingPlan,
+        initial: bool,
+    ) -> Result<Self, WeightingError> {
         if problem.weighting().scheme() != WeightingScheme::Natural
             || problem.weighting().uv_taper().is_some()
             || problem.visibility_transform().is_some()
@@ -129,7 +136,9 @@ impl BulkNaturalWeighting {
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
-            sum: begin_weighting_generation(problem, plan)?.finish(problem)?,
+            sum: initial
+                .then(|| begin_weighting_generation(problem, plan)?.finish(problem))
+                .transpose()?,
             finite: problem.numerics().finite_values(),
             centres,
             boundaries,
@@ -142,27 +151,25 @@ impl BulkNaturalWeighting {
     /// Apply the existing CASA natural-weight/flag rules in a tight row loop.
     /// `initial` controls only the once-per-source reduction, never the science.
     pub fn prepare_row(
-        &mut self,
+        &self,
         row: SelectedNumericRow<'_>,
         frequencies: &[f64],
         boundaries: &[[f64; 2]],
-        output: &mut NaturalRowPreparation,
-        row_ordinal: usize,
+        weights_out: &mut [f32],
+        flags_out: &mut [bool],
+        weight_flags_out: &mut [bool],
         initial: bool,
-    ) -> Result<(), WeightingError> {
+    ) -> Result<f64, WeightingError> {
         let correlations = row.correlations.len();
         let count = row
             .channels
             .len()
             .checked_mul(correlations)
             .ok_or(WeightingError::ResidencyOverflow)?;
-        let offset = row_ordinal
-            .checked_mul(count)
-            .ok_or(WeightingError::ResidencyOverflow)?;
         if !row.has_exact_shape()
-            || offset
-                .checked_add(count)
-                .is_none_or(|end| end > output.capacity)
+            || weights_out.len() != count
+            || flags_out.len() != count
+            || weight_flags_out.len() != count
             || frequencies.len() != row.channels.len()
             || boundaries.len() != frequencies.len()
         {
@@ -204,7 +211,7 @@ impl BulkNaturalWeighting {
             for (ordinal, product) in row.correlations.iter().enumerate() {
                 let corr = product.correlation_index() as usize;
                 let index = source + corr;
-                let destination = offset + channel * correlations + ordinal;
+                let destination = channel * correlations + ordinal;
                 let value = match row.visibility {
                     SelectedNumericVisibility::Float32(values) => {
                         SelectedVisibilitySample::Float32(values[index])
@@ -218,31 +225,42 @@ impl BulkNaturalWeighting {
                 } else {
                     row.flags[index]
                 };
-                output.weights[destination] = if rejected_group { 0.0 } else { base as f32 };
-                output.flags[destination] = !crate::spectral_operator::accept_polarization_value(
+                weights_out[destination] = if rejected_group { 0.0 } else { base as f32 };
+                flags_out[destination] = !crate::spectral_operator::accept_polarization_value(
                     value,
                     weights[corr],
                     row.row.row_flag || row.flags[index],
                     self.finite,
                 )
                 .map_err(|_| WeightingError::CoverageMismatch)?;
-                output.weight_flags[destination] = group_flag || rejected_group || row.row.row_flag;
+                weight_flags_out[destination] = group_flag || rejected_group || row.row.row_flag;
                 if mapped && !rejected_group {
                     sum += base;
                 }
             }
         }
-        if initial {
-            self.sum.sum_weights[0].add(sum)?;
-            self.samples = self
-                .samples
-                .checked_add(count as u64)
-                .ok_or(WeightingError::ResidencyOverflow)?;
-            self.rows = self
-                .rows
-                .checked_add(1)
-                .ok_or(WeightingError::ResidencyOverflow)?;
-        }
+        Ok(sum)
+    }
+
+    /// Publish chunk-local discovery totals only after every chunk has joined.
+    pub fn commit_prepared_chunk(
+        &mut self,
+        sum: f64,
+        samples: u64,
+        rows: u64,
+    ) -> Result<(), WeightingError> {
+        let next_samples = self
+            .samples
+            .checked_add(samples)
+            .ok_or(WeightingError::ResidencyOverflow)?;
+        let next_rows = self
+            .rows
+            .checked_add(rows)
+            .ok_or(WeightingError::ResidencyOverflow)?;
+        let phase = self.sum.as_mut().ok_or(WeightingError::CoverageMismatch)?;
+        phase.sum_weights[0].add(sum)?;
+        self.samples = next_samples;
+        self.rows = next_rows;
         Ok(())
     }
 
@@ -263,9 +281,10 @@ impl BulkNaturalWeighting {
         if self.samples == 0 || self.samples != sample_count {
             return Err(WeightingError::CoverageMismatch);
         }
-        self.sum.sum_sample_count = self.samples;
-        self.sum.density_sample_count = self.samples;
-        let state = self.sum.finish()?;
+        let mut sum = self.sum.take().ok_or(WeightingError::CoverageMismatch)?;
+        sum.sum_sample_count = self.samples;
+        sum.density_sample_count = self.samples;
+        let state = sum.finish()?;
         state.next_replay.store(1, Ordering::Relaxed);
         let mut binding = Sha256::new();
         binding.update(b"casa-rs-ordered-source-weighting-binding-v1");
