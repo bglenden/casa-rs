@@ -12,7 +12,8 @@ use casa_imaging_model::{
     NumericsContractId, ObservationProvenanceId, ObservationReadSet, ObservationSnapshotId,
     ObservationTransactionContract, ObservationWriteSet, ProblemInputIdentities, ProductGraphId,
     ProductRequirements, ReconstructionContract, ReferenceDataKind, RequiredCapability,
-    ScientificContract, SelectedObservationCommitmentId, WeightingOperatorContract,
+    ScientificContract, SelectedObservationCommitmentId, SelectedObservationGenerationId,
+    WeightingOperatorContract,
 };
 use casa_imaging_reconstruction::ExecutableModelProblem;
 use sha2::{Digest, Sha256};
@@ -3288,7 +3289,29 @@ impl ObservationReadCompletionContext {
             owner_node: self.owner_node,
             settled_fences: self.settled_fences,
             lease_epoch: self.lease_epoch,
-            owner_completion,
+            owner_completion: SelectedObservationReadCompletion::Full(owner_completion),
+        })
+    }
+
+    /// Bind a freshly exhausted selected-channel window to this read attempt.
+    /// This remains distinct from an exhaustive selected-observation completion.
+    pub fn bind_window(
+        self,
+        owner_completion: casa_ms::SelectedObservationWindowCompletion,
+    ) -> Result<AttemptBoundObservationCompletion, ObservationCompletionBindingError> {
+        if owner_completion.problem_id() != self.problem_id
+            || owner_completion.observation_snapshot_id() != self.observation_snapshot_id
+            || owner_completion.observation_provenance_id() != self.observation_provenance_id
+            || owner_completion.commitment_id() != self.commitment_id
+        {
+            return Err(ObservationCompletionBindingError);
+        }
+        Ok(AttemptBoundObservationCompletion {
+            attempt_id: self.attempt_id,
+            owner_node: self.owner_node,
+            settled_fences: self.settled_fences,
+            lease_epoch: self.lease_epoch,
+            owner_completion: SelectedObservationReadCompletion::Window(owner_completion),
         })
     }
 }
@@ -3307,19 +3330,23 @@ impl fmt::Display for ObservationCompletionBindingError {
 
 impl Error for ObservationCompletionBindingError {}
 
-/// Affine selected-observation completion bound to one execution attempt and owning node.
+/// Affine selected-observation pass bound to one execution attempt and owning node.
 ///
-/// The contained value is casa-ms's opaque scientific completion. Keeping that
-/// concrete affine value inside this proof prevents the runtime from
-/// synthesizing science identity or treating physical I/O completion alone as
-/// selected-observation completion.
+/// The contained owner value remains either an exhaustive completion or a
+/// genuine bounded window. Physical I/O completion alone cannot become either.
 #[derive(Debug)]
 pub struct AttemptBoundObservationCompletion {
     attempt_id: ExecutionAttemptId,
     owner_node: WorkNodeId,
     settled_fences: BTreeSet<FenceKind>,
     lease_epoch: u64,
-    owner_completion: casa_ms::SelectedObservationCompletion,
+    owner_completion: SelectedObservationReadCompletion,
+}
+
+#[derive(Debug)]
+enum SelectedObservationReadCompletion {
+    Full(casa_ms::SelectedObservationCompletion),
+    Window(casa_ms::SelectedObservationWindowCompletion),
 }
 
 impl AttemptBoundObservationCompletion {
@@ -3347,10 +3374,31 @@ impl AttemptBoundObservationCompletion {
         self.lease_epoch
     }
 
-    /// Return the storage owner's opaque scientific completion.
+    /// Return the exhaustive storage-owner completion, if this was a full pass.
     #[must_use]
-    pub const fn owner_completion(&self) -> &casa_ms::SelectedObservationCompletion {
-        &self.owner_completion
+    pub const fn owner_completion(&self) -> Option<&casa_ms::SelectedObservationCompletion> {
+        match &self.owner_completion {
+            SelectedObservationReadCompletion::Full(owner) => Some(owner),
+            SelectedObservationReadCompletion::Window(_) => None,
+        }
+    }
+
+    /// Return the retained selected generation certified by either kind of pass.
+    #[must_use]
+    pub const fn source_generation(&self) -> SelectedObservationGenerationId {
+        match &self.owner_completion {
+            SelectedObservationReadCompletion::Full(owner) => owner.generation_id(),
+            SelectedObservationReadCompletion::Window(owner) => owner.generation_id(),
+        }
+    }
+
+    /// Return samples actually delivered by this pass, not the frozen full-axis count.
+    #[must_use]
+    pub const fn delivered_sample_count(&self) -> u64 {
+        match &self.owner_completion {
+            SelectedObservationReadCompletion::Full(owner) => owner.sample_count(),
+            SelectedObservationReadCompletion::Window(owner) => owner.sample_count(),
+        }
     }
 }
 

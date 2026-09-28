@@ -71,6 +71,7 @@ impl PendingCubeRefresh {
             reconciliation_node: self.binding.reconciliation_node,
             lease_epoch: self.binding.lease_epoch,
             observation_predecessor_required: true,
+            delivered_source_sample_count: Some(replay.delivered_source_sample_count()),
         })
     }
     #[allow(clippy::too_many_arguments)]
@@ -136,6 +137,7 @@ impl PendingCubeRefresh {
             reconciliation_node: self.binding.reconciliation_node,
             lease_epoch: self.binding.lease_epoch,
             observation_predecessor_required: false,
+            delivered_source_sample_count: None,
         })
     }
 }
@@ -206,8 +208,8 @@ impl PendingStreamingCubeFold {
             || predecessor.lease_epoch() != replay.lease_epoch()
             || predecessor.owner_node() != replay.owner_node()
             || !predecessor.settled_fences().contains(&FenceKind::Io)
-            || predecessor.owner_completion().generation_id() != replay.selected_generation()
-            || predecessor.owner_completion().sample_count() != replay.sample_count()
+            || predecessor.source_generation() != replay.selected_generation()
+            || predecessor.delivered_sample_count() != replay.delivered_source_sample_count()
         {
             return Err(CompleteDataOperatorError::ExecutionBinding);
         }

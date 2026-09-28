@@ -33,6 +33,7 @@ pub struct MajorCycleOperatorState {
     reconciliation_node: WorkNodeId,
     lease_epoch: u64,
     observation_predecessor_required: bool,
+    delivered_source_sample_count: Option<u64>,
 }
 
 impl MajorCycleOperatorState {
@@ -51,6 +52,7 @@ impl MajorCycleOperatorState {
             reconciliation_node: result.reconciliation_node().clone(),
             lease_epoch: result.lease_epoch(),
             observation_predecessor_required: result.observation_predecessor_required(),
+            delivered_source_sample_count: result.delivered_source_sample_count(),
             owner: MajorCycleOwner::from_complete_data(result.into_evidence(), preparation)?,
         };
         Ok(state)
@@ -70,8 +72,8 @@ impl MajorCycleOperatorState {
     /// The context must be the exact plan-authoritative final-reconciliation
     /// Compute node behind the sealed plan, and the exact execution attempt and
     /// lease epoch that ran T19. The settled replay-predecessor evidence must
-    /// carry the same attempt, node, lease epoch, exhaustive sample count, and
-    /// authoritative T17 observation generation as the retained T19 evidence,
+    /// carry the same attempt, node, lease epoch, delivered source sample count,
+    /// and authoritative T17 observation generation as the retained T19 evidence,
     /// and the model lifecycle must be bound to that same canonical attempt
     /// identity and lease epoch. Any mismatch fails atomically before the
     /// reconstruction owner mints any typed completion record.
@@ -102,9 +104,8 @@ impl MajorCycleOperatorState {
             if predecessor.attempt_id() != self.attempt
                 || predecessor.owner_node() != &self.replay_node
                 || predecessor.lease_epoch() != self.lease_epoch
-                || predecessor.owner_completion().generation_id()
-                    != self.owner.selected_generation()
-                || predecessor.owner_completion().sample_count() != self.owner.sample_count()
+                || predecessor.source_generation() != self.owner.selected_generation()
+                || Some(predecessor.delivered_sample_count()) != self.delivered_source_sample_count
             {
                 return Err(MajorCycleOperatorError::ExecutionBinding);
             }

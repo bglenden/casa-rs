@@ -3276,6 +3276,11 @@ fn windowed_block_stream_exhausts_rows_without_reading_disjoint_payload() {
     assert_eq!(channel_completion.channel_ordinals(), Some(1..2));
     assert_eq!(channel_completion.frequency_bounds_hz(), None);
     assert_eq!(channel_completion.sample_count(), 8);
+    let replay_proof = initial_completion.replay_proof().unwrap();
+    assert!(
+        replay_proof.validates_rebound_window_completion(&channel_completion),
+        "the fresh restricted traversal belongs to the initial full proof"
+    );
     assert_eq!(
         channel_completion
             .measurements()
@@ -3310,6 +3315,7 @@ fn windowed_block_stream_exhausts_rows_without_reading_disjoint_payload() {
         .expect("complete disjoint window");
     assert_eq!(emitted_sample_count, 0);
     assert_eq!(window_completion.sample_count(), 0);
+    assert!(!replay_proof.validates_rebound_window_completion(&window_completion));
     let measurements = window_completion.measurements();
     assert_eq!(measurements.stored_row_count(), 0);
     assert_eq!(measurements.logical_output_bytes(), 0);

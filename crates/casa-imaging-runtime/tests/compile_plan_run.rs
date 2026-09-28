@@ -2238,9 +2238,9 @@ impl WorkImplementation for RecordingExecutor {
                 if predecessor.attempt_id() != completion.attempt_id()
                     || predecessor.owner_node() != completion.owner_node()
                     || predecessor.lease_epoch() != completion.lease_epoch()
-                    || predecessor.owner_completion().generation_id()
-                        != completion.selected_generation()
-                    || predecessor.owner_completion().sample_count() != completion.sample_count()
+                    || predecessor.source_generation() != completion.selected_generation()
+                    || predecessor.delivered_sample_count()
+                        != completion.delivered_source_sample_count()
                 {
                     return Err(io::Error::other(
                         "reconciliation received mismatched weighting replay evidence",

@@ -577,6 +577,7 @@ impl BulkCubePhase {
                 &self.problem,
                 selected,
                 self.input,
+                None,
                 super::bulk_mfs::MfsConsumer(operator),
             )?;
             state
@@ -632,6 +633,13 @@ impl BulkCubePhase {
                 &polarization,
                 (initial && first).then_some(state.bands.as_mut_slice()),
             );
+            let first_channels = if initial {
+                None
+            } else {
+                Some(channels.clone().ok_or_else(|| {
+                    io::Error::other("residual wave has no native support window")
+                })?)
+            };
             let results = if first {
                 state.weighting.traverse_bulk(
                     context,
@@ -639,6 +647,7 @@ impl BulkCubePhase {
                     &self.problem,
                     selected.take().expect("first bulk source"),
                     self.input,
+                    first_channels,
                     wave,
                 )?
             } else {
@@ -647,7 +656,7 @@ impl BulkCubePhase {
                     &self.fragment(),
                     &self.problem,
                     self.input,
-                    channels.unwrap_or(0..self.input.channels),
+                    channels.clone().unwrap_or(0..self.input.channels),
                     wave,
                 )?
             };
@@ -721,7 +730,7 @@ impl BulkCubePhase {
                 }
             }
             eprintln!(
-                "bulk_cube_wave ordinal={} first_band={start} bands={count} workers={} source={:?} stream={:?}",
+                "bulk_cube_wave ordinal={} first_band={start} bands={count} workers={} native_window={channels:?} source={:?} stream={:?}",
                 self.pass.ordinal(),
                 self.workers,
                 state.weighting.latest_traversal_measurements(),

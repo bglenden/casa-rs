@@ -4836,6 +4836,7 @@ pub struct CompleteDataOperatorResult {
     reconciliation_node: WorkNodeId,
     lease_epoch: u64,
     observation_predecessor_required: bool,
+    delivered_source_sample_count: Option<u64>,
 }
 
 impl CompleteDataOperatorResult {
@@ -4930,6 +4931,10 @@ impl CompleteDataOperatorResult {
         self.observation_predecessor_required
     }
 
+    pub(crate) const fn delivered_source_sample_count(&self) -> Option<u64> {
+        self.delivered_source_sample_count
+    }
+
     /// Return the exhaustive selected-sample count.
     #[must_use]
     pub const fn sample_count(&self) -> u64 {
@@ -5018,6 +5023,7 @@ impl PendingCompleteDataSlabFold {
             reconciliation_node: self.binding.reconciliation_node,
             lease_epoch: self.binding.lease_epoch,
             observation_predecessor_required: false,
+            delivered_source_sample_count: None,
         })
     }
 
@@ -5065,6 +5071,10 @@ impl PendingCompleteDataSlabFold {
             reconciliation_node: self.binding.reconciliation_node,
             lease_epoch: self.binding.lease_epoch,
             observation_predecessor_required: self.binding.observation_predecessor_required,
+            delivered_source_sample_count: self
+                .binding
+                .observation_predecessor_required
+                .then(|| replay.delivered_source_sample_count()),
         })
     }
 }
@@ -5202,6 +5212,10 @@ impl SpectralOperatorState {
             reconciliation_node: self.binding.reconciliation_node,
             lease_epoch: self.binding.lease_epoch,
             observation_predecessor_required: self.binding.observation_predecessor_required,
+            delivered_source_sample_count: self
+                .binding
+                .observation_predecessor_required
+                .then(|| replay.delivered_source_sample_count()),
         })
     }
 

@@ -2253,7 +2253,9 @@ impl<'a> WeightingPlanFragment<'a> {
         let predecessor = context
             .predecessor_observation_completion(&self.source_read)
             .ok_or(WeightingEvidenceError)?;
-        let owner = predecessor.owner_completion();
+        let owner = predecessor
+            .owner_completion()
+            .ok_or(WeightingEvidenceError)?;
         if predecessor.attempt_id() != context.attempt_id()
             || predecessor.owner_node() != &self.source_read
             || predecessor.lease_epoch() != context.lease_epoch()
@@ -2295,13 +2297,16 @@ impl<'a> WeightingPlanFragment<'a> {
         let predecessor = context
             .predecessor_observation_completion(&self.ids.generation_node)
             .ok_or(WeightingEvidenceError)?;
+        let owner = predecessor
+            .owner_completion()
+            .ok_or(WeightingEvidenceError)?;
         if predecessor.attempt_id() != frozen.binding.attempt_id
             || predecessor.attempt_id() != context.attempt_id()
             || predecessor.owner_node() != &frozen.binding.owner_node
             || predecessor.lease_epoch() != frozen.binding.lease_epoch
             || predecessor.lease_epoch() != context.lease_epoch()
-            || predecessor.owner_completion().generation_id() != frozen.artifact.source_generation
-            || predecessor.owner_completion().sample_count() != frozen.artifact.source_sample_count
+            || owner.generation_id() != frozen.artifact.source_generation
+            || owner.sample_count() != frozen.artifact.source_sample_count
         {
             return Err(WeightingEvidenceError);
         }
@@ -2309,8 +2314,8 @@ impl<'a> WeightingPlanFragment<'a> {
             attempt_id: context.attempt_id(),
             owner_node: self.ids.replay_node.clone(),
             lease_epoch: context.lease_epoch(),
-            source_generation: predecessor.owner_completion().generation_id(),
-            source_sample_count: predecessor.owner_completion().sample_count(),
+            source_generation: owner.generation_id(),
+            source_sample_count: owner.sample_count(),
         })
     }
 
@@ -2942,7 +2947,7 @@ impl WeightingExecutionState {
             frozen,
             pending: Box::new(PendingWeightingReplay {
                 state: summary,
-                owner_completion,
+                owner_completion: ReplaySourceCompletion::Full(owner_completion),
                 binding,
                 continuum_transform: continuum_completion,
                 spectral_support_sample_count,
@@ -3261,7 +3266,7 @@ impl WeightingExecutionState {
             },
             pending: Box::new(PendingWeightingReplay {
                 state: summary,
-                owner_completion,
+                owner_completion: ReplaySourceCompletion::Full(owner_completion),
                 binding,
                 continuum_transform: continuum_completion,
                 spectral_support_sample_count,
@@ -4398,6 +4403,31 @@ impl FrozenWeightingArtifact {
             )
     }
 
+    fn validate_derived_window_completion(
+        &self,
+        owner: &casa_ms::SelectedObservationWindowCompletion,
+        replay: &WeightingReplaySummary,
+    ) -> Result<(), WeightingError> {
+        let selected_proof = self
+            .selected_replay_proof
+            .as_ref()
+            .ok_or(WeightingError::CoverageMismatch)?;
+        if !selected_proof.validates_rebound_window_completion(owner)
+            || owner.generation_id() != self.source_generation
+            || self.continuum_transform.is_some()
+        {
+            return Err(WeightingError::CoverageMismatch);
+        }
+        self.coverage_proof
+            .ok_or(WeightingError::CoverageMismatch)?
+            .validate_derived_replay(
+                owner.generation_id(),
+                self.source_sample_count,
+                None,
+                replay,
+            )
+    }
+
     pub(crate) fn authorize_derived_operator(
         &self,
         operator: &mut crate::SpectralOperatorState,
@@ -4459,7 +4489,10 @@ impl FrozenWeightingGeneration {
         let predecessor = context
             .predecessor_observation_completion(fragment.generation_node())
             .ok_or(WeightingReplayError::Evidence(WeightingEvidenceError))?;
-        if !selected.can_resume_after(predecessor.owner_completion()) {
+        let predecessor_owner = predecessor
+            .owner_completion()
+            .ok_or(WeightingReplayError::Evidence(WeightingEvidenceError))?;
+        if !selected.can_resume_after(predecessor_owner) {
             return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
         }
         let mut phase = self
@@ -4495,7 +4528,7 @@ impl FrozenWeightingGeneration {
         validate_replay_completion(
             self.artifact.source_generation,
             self.artifact.source_sample_count,
-            predecessor.owner_completion(),
+            predecessor_owner,
             &owner_completion,
             &self.artifact.state,
         )
@@ -4508,7 +4541,7 @@ impl FrozenWeightingGeneration {
         let spectral_support_sample_count = state.sample_count();
         Ok(PendingWeightingReplay {
             state,
-            owner_completion,
+            owner_completion: ReplaySourceCompletion::Full(owner_completion),
             binding: replay_binding,
             continuum_transform: None,
             spectral_support_sample_count,
@@ -4537,7 +4570,8 @@ fn traverse_weighting_generation(
     let source_completion = context
         .predecessor_observation_completion(&fragment.source_read)
         .ok_or(WeightingGenerationError::Evidence(WeightingEvidenceError))?
-        .owner_completion();
+        .owner_completion()
+        .ok_or(WeightingGenerationError::Evidence(WeightingEvidenceError))?;
     if !selected.can_resume_after(source_completion) {
         return Err(WeightingGenerationError::Evidence(WeightingEvidenceError));
     }
@@ -4679,10 +4713,39 @@ fn validate_replay_completion(
 #[derive(Debug)]
 struct PendingWeightingReplay {
     state: WeightingReplaySummary,
-    owner_completion: SelectedObservationCompletion,
+    owner_completion: ReplaySourceCompletion,
     binding: WeightingGenerationBinding,
     continuum_transform: Option<ContinuumTransformCompletion>,
     spectral_support_sample_count: u64,
+}
+
+#[derive(Debug)]
+enum ReplaySourceCompletion {
+    Full(SelectedObservationCompletion),
+    Window(casa_ms::SelectedObservationWindowCompletion),
+}
+
+impl ReplaySourceCompletion {
+    fn generation_id(&self) -> SelectedObservationGenerationId {
+        match self {
+            Self::Full(owner) => owner.generation_id(),
+            Self::Window(owner) => owner.generation_id(),
+        }
+    }
+
+    fn sample_count(&self) -> u64 {
+        match self {
+            Self::Full(owner) => owner.sample_count(),
+            Self::Window(owner) => owner.sample_count(),
+        }
+    }
+
+    fn problem_id(&self) -> CompiledProblemId {
+        match self {
+            Self::Full(owner) => owner.problem_id(),
+            Self::Window(owner) => owner.problem_id(),
+        }
+    }
 }
 
 impl PendingWeightingReplay {
@@ -4703,16 +4766,18 @@ impl PendingWeightingReplay {
         }
         let selected_generation = self.owner_completion.generation_id();
         let problem = self.owner_completion.problem_id();
-        let sample_count = self.owner_completion.sample_count();
-        let owner_completion = context
-            .bind(self.owner_completion)
-            .map_err(WeightingReplayCompletionError::Binding)?;
+        let delivered_source_sample_count = self.owner_completion.sample_count();
+        let owner_completion = match self.owner_completion {
+            ReplaySourceCompletion::Full(owner) => context.bind(owner),
+            ReplaySourceCompletion::Window(owner) => context.bind_window(owner),
+        }
+        .map_err(WeightingReplayCompletionError::Binding)?;
         Ok((
             WeightingReplayCompletion {
                 state: self.state,
                 problem,
                 selected_generation,
-                sample_count,
+                delivered_source_sample_count,
                 binding: self.binding,
                 continuum_transform: self.continuum_transform,
                 spectral_support_sample_count: self.spectral_support_sample_count,
@@ -4722,13 +4787,13 @@ impl PendingWeightingReplay {
     }
 }
 
-/// Distinct terminal proof of a weighted replay and its exhaustive T17 traversal.
+/// Distinct terminal proof of frozen full-axis weighting and its completed source pass.
 #[derive(Debug)]
 pub struct WeightingReplayCompletion {
     state: WeightingReplaySummary,
     problem: CompiledProblemId,
     selected_generation: SelectedObservationGenerationId,
-    sample_count: u64,
+    delivered_source_sample_count: u64,
     binding: WeightingGenerationBinding,
     continuum_transform: Option<ContinuumTransformCompletion>,
     spectral_support_sample_count: u64,
@@ -4784,7 +4849,14 @@ impl WeightingReplayCompletion {
     /// Return the exhaustive emitted sample count.
     #[must_use]
     pub const fn sample_count(&self) -> u64 {
-        self.sample_count
+        self.state.sample_count()
+    }
+
+    /// Return the samples actually read in this replay's first source pass.
+    /// For a restricted first residual wave this differs from full frozen coverage.
+    #[must_use]
+    pub const fn delivered_source_sample_count(&self) -> u64 {
+        self.delivered_source_sample_count
     }
 
     /// Return emitted block count.

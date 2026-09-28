@@ -1768,10 +1768,12 @@ impl SelectedObservationBlockConsumer<'_> {
         }
         let generation_id = terminal_proof.generation_id();
         let completion = SelectedObservationWindowCompletion {
+            identity: terminal.identity,
             generation_id,
             sample_count,
             window,
             measurements,
+            replay_proof: proof,
         };
         let selected = BoundSelectedObservation {
             identity: terminal.identity,
@@ -2291,13 +2293,39 @@ pub struct SelectedObservationCompletion {
 /// authorizes it as a replacement for the full replay proof.
 #[derive(Debug)]
 pub struct SelectedObservationWindowCompletion {
+    identity: BoundSelectedObservationIdentity,
     generation_id: SelectedObservationGenerationId,
     sample_count: u64,
     window: SelectedSourceWindow,
     measurements: SelectedObservationTraversalMeasurements,
+    replay_proof: SelectedObservationReplayProof,
 }
 
 impl SelectedObservationWindowCompletion {
+    /// Return the compiled problem that owns this bounded traversal.
+    #[must_use]
+    pub const fn problem_id(&self) -> CompiledProblemId {
+        self.identity.problem_id
+    }
+
+    /// Return the snapshot bound to this traversal.
+    #[must_use]
+    pub const fn observation_snapshot_id(&self) -> ObservationSnapshotId {
+        self.identity.observation_snapshot_id
+    }
+
+    /// Return the source provenance bound to this traversal.
+    #[must_use]
+    pub const fn observation_provenance_id(&self) -> ObservationProvenanceId {
+        self.identity.observation_provenance_id
+    }
+
+    /// Return the selected-observation commitment bound to this traversal.
+    #[must_use]
+    pub const fn commitment_id(&self) -> SelectedObservationCommitmentId {
+        self.identity.commitment_id
+    }
+
     /// Return the retained exhaustive generation identity.
     #[must_use]
     pub const fn generation_id(&self) -> SelectedObservationGenerationId {
@@ -2421,6 +2449,21 @@ impl SelectedObservationReplayProof {
             generation_id: completion.generation_id,
             sample_count: completion.sample_count,
         })
+    }
+
+    /// Check a freshly exhausted channel window against this retained proof
+    /// without treating its delivered samples as exhaustive coverage.
+    #[must_use]
+    pub fn validates_rebound_window_completion(
+        &self,
+        completion: &SelectedObservationWindowCompletion,
+    ) -> bool {
+        Arc::ptr_eq(&self.inner, &completion.replay_proof.inner)
+            && completion.identity == self.inner.identity
+            && completion.generation_id == self.inner.generation_id
+            && completion.sample_count > 0
+            && completion.sample_count <= self.inner.sample_count
+            && matches!(completion.window, SelectedSourceWindow::Channels(_))
     }
 }
 

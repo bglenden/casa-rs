@@ -403,6 +403,7 @@ impl WeightingExecutionState {
         problem: &CompiledProblem,
         selected: BoundSelectedObservation,
         input: BulkInputPlan,
+        channels: Option<std::ops::Range<usize>>,
         consumer: F,
     ) -> io::Result<F::Completion> {
         if !matches!(self.phase, WeightingExecutionPhase::Empty)
@@ -419,6 +420,11 @@ impl WeightingExecutionState {
             .authorize_source_observation(context, problem, selected.residency_certificate())
             .map_err(io::Error::other)?;
         let initial = self.imported.is_none();
+        if initial && channels.is_some() {
+            return Err(io::Error::other(
+                "initial bulk discovery cannot use a channel window",
+            ));
+        }
         let stream = fragment
             .bounded_stream_plan(context, initial)
             .map_err(io::Error::other)?;
@@ -429,7 +435,7 @@ impl WeightingExecutionState {
             input,
             fragment.plan,
             initial,
-            None,
+            channels.clone(),
             consumer,
         )?;
         let BulkInputCompletion {
@@ -438,10 +444,7 @@ impl WeightingExecutionState {
             weighting,
             measurements,
         } = completed;
-        let BulkSourceCompletion::Full(owner) = owner else {
-            return Err(io::Error::other("initial bulk traversal returned a window"));
-        };
-        let (state, summary, proof) = if let Some(artifact) = self.imported.take() {
+        let (state, summary, proof, owner) = if let Some(artifact) = self.imported.take() {
             let proof = artifact
                 .coverage_proof
                 .ok_or_else(|| io::Error::other("bulk replay lacks frozen coverage"))?;
@@ -454,17 +457,42 @@ impl WeightingExecutionState {
                 .sum();
             let summary = BulkNaturalWeighting::replay_summary(&artifact.state, proof, rows)
                 .map_err(io::Error::other)?;
-            artifact
-                .validate_derived_completion(&owner, None, &summary)
-                .map_err(io::Error::other)?;
-            self.latest_traversal_measurements = Some(*owner.measurements());
+            let (source_generation, traversal) = match &owner {
+                BulkSourceCompletion::Full(owner) => {
+                    artifact
+                        .validate_derived_completion(owner, None, &summary)
+                        .map_err(io::Error::other)?;
+                    (owner.generation_id(), *owner.measurements())
+                }
+                BulkSourceCompletion::Window(owner) => {
+                    let window = channels.as_ref().ok_or_else(|| {
+                        io::Error::other("bulk window lacks a declared channel range")
+                    })?;
+                    let expected_samples = rows
+                        .checked_mul(window.len() as u64)
+                        .and_then(|n| n.checked_mul(input.correlations as u64))
+                        .ok_or_else(|| io::Error::other("bulk window sample count overflow"))?;
+                    if owner.channel_ordinals().as_ref() != Some(window)
+                        || owner.sample_count() != expected_samples
+                    {
+                        return Err(io::Error::other(
+                            "first bulk window differs from its selected source",
+                        ));
+                    }
+                    artifact
+                        .validate_derived_window_completion(owner, &summary)
+                        .map_err(io::Error::other)?;
+                    (owner.generation_id(), *owner.measurements())
+                }
+            };
+            self.latest_traversal_measurements = Some(traversal);
             self.latest_stream_measurements = Some(measurements);
             let binding = WeightingGenerationBinding {
                 attempt_id: context.attempt_id(),
                 owner_node: context.node().id.clone(),
                 lease_epoch: context.lease_epoch(),
-                source_generation: owner.generation_id(),
-                source_sample_count: owner.sample_count(),
+                source_generation,
+                source_sample_count: summary.sample_count(),
             };
             self.retained_observation = Some(RetainedWeightingObservation {
                 selected,
@@ -485,7 +513,12 @@ impl WeightingExecutionState {
                 },
                 pending: Box::new(PendingWeightingReplay {
                     state: summary,
-                    owner_completion: owner,
+                    owner_completion: match owner {
+                        BulkSourceCompletion::Full(owner) => ReplaySourceCompletion::Full(owner),
+                        BulkSourceCompletion::Window(owner) => {
+                            ReplaySourceCompletion::Window(owner)
+                        }
+                    },
                     binding,
                     continuum_transform: None,
                     spectral_support_sample_count: 0,
@@ -493,9 +526,13 @@ impl WeightingExecutionState {
             };
             return Ok(output);
         } else {
-            weighting
+            let BulkSourceCompletion::Full(owner) = owner else {
+                return Err(io::Error::other("initial bulk traversal returned a window"));
+            };
+            let (state, summary, proof) = weighting
                 .finish(owner.generation_id(), owner.sample_count())
-                .map_err(io::Error::other)?
+                .map_err(io::Error::other)?;
+            (state, summary, proof, owner)
         };
         let samples = summary.sample_count();
         self.accept_initial_stream_with_coverage::<io::Error>(
