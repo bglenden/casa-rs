@@ -755,14 +755,8 @@ impl<'a> VisibilityRow<'a> {
 #[derive(Clone)]
 struct RowStencil {
     offsets: Vec<usize>,
-    points: Vec<PreparedFineSample>,
+    points: Vec<CasaLinearSample>,
     prediction_terms: Vec<SmallVec<[PreparedPredictionTerm; 4]>>,
-}
-
-#[derive(Clone, Copy)]
-struct PreparedFineSample {
-    sample: CasaLinearSample,
-    wavelength_scale: f64,
 }
 
 #[derive(Clone, Copy)]
@@ -831,13 +825,7 @@ impl RowStencil {
                 .push(address, row.geometry(), row.frequencies_hz[channel], output)
                 .map_err(|_| SpectralOperatorError::IncompleteCoverage)?
             {
-                points.extend(pair.filter_map(|sample| {
-                    core.contains(&sample.output_channel())
-                        .then_some(PreparedFineSample {
-                            sample,
-                            wavelength_scale: sample.frequency_hz() / SPEED_OF_LIGHT_M_PER_S,
-                        })
-                }));
+                points.extend(pair.filter(|fine| core.contains(&fine.output_channel())));
             }
             offsets.push(points.len());
         }
@@ -851,7 +839,7 @@ impl RowStencil {
         })
     }
 
-    fn samples(&self, channel: usize) -> &[PreparedFineSample] {
+    fn samples(&self, channel: usize) -> &[CasaLinearSample] {
         &self.points[self.offsets[channel]..self.offsets[channel + 1]]
     }
 }
@@ -1186,7 +1174,6 @@ impl BandWorkspace {
         &mut self,
         output_channel: usize,
         frequency_hz: f64,
-        wavelength_scale: f64,
         row: &VisibilityRow<'_>,
         observed: Complex64,
         predicted: Complex64,
@@ -1201,6 +1188,7 @@ impl BandWorkspace {
         if weight == 0.0 {
             return Ok(());
         }
+        let wavelength_scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
         let Some(taps) = self.convolution.taps([
             row.uvw_m[0] * wavelength_scale,
             row.uvw_m[1] * wavelength_scale,
@@ -1323,15 +1311,7 @@ impl BandWorkspace {
                     row.flags[index] || row.weight_flags[index],
                 )
             })?;
-            self.grid_sample(
-                0,
-                frequency,
-                frequency / SPEED_OF_LIGHT_M_PER_S,
-                &row,
-                observed,
-                predicted,
-                weight,
-            )?;
+            self.grid_sample(0, frequency, &row, observed, predicted, weight)?;
         }
         Ok(())
     }
@@ -1520,8 +1500,7 @@ impl RowAccumulator<'_> {
                 &self.stencil.prediction_terms[channel],
                 self.polarization,
             )?;
-            for &prepared in self.stencil.samples(channel) {
-                let fine = prepared.sample;
+            for &fine in self.stencil.samples(channel) {
                 let nearest = if fine.nearest_is_right() {
                     channel
                 } else {
@@ -1556,7 +1535,6 @@ impl RowAccumulator<'_> {
                 self.band.grid_sample(
                     fine.output_channel(),
                     fine.frequency_hz(),
-                    prepared.wavelength_scale,
                     &self.row,
                     observed,
                     predicted,
