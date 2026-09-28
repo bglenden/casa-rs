@@ -5091,6 +5091,53 @@ mod tests {
     }
 
     #[test]
+    fn bounded_borrowed_jobs_bound_live_leaf_scopes_across_waves() {
+        struct LiveScope<'a>(&'a AtomicUsize);
+        impl Drop for LiveScope<'_> {
+            fn drop(&mut self) {
+                self.0.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+
+        for workers in [1, 3, 4] {
+            for fail in [false, true] {
+                let team = FixedWorkerTeam::new(workers).unwrap();
+                let barrier = Barrier::new(workers);
+                let live = AtomicUsize::new(0);
+                let peak = AtomicUsize::new(0);
+                let started = AtomicUsize::new(0);
+                let mut output = [0; 17];
+                let result = team.install(|| {
+                    BoundedExecution(Some(&team)).for_each_mut(&mut output, |index, value| {
+                        let count = live.fetch_add(1, Ordering::SeqCst) + 1;
+                        let _scope = LiveScope(&live);
+                        peak.fetch_max(count, Ordering::SeqCst);
+                        assert!(count <= workers);
+                        let ordinal = started.fetch_add(1, Ordering::SeqCst);
+                        if ordinal < workers {
+                            barrier.wait();
+                        }
+                        *value = index + 1;
+                        if fail && ordinal == 0 {
+                            Err("injected leaf error")
+                        } else {
+                            Ok(())
+                        }
+                    })
+                });
+                assert_eq!(result.is_err(), fail);
+                assert_eq!(live.load(Ordering::SeqCst), 0);
+                assert_eq!(peak.load(Ordering::SeqCst), workers);
+                if !fail {
+                    assert_eq!(started.load(Ordering::SeqCst), output.len());
+                    assert_eq!(output, std::array::from_fn(|index| index + 1));
+                }
+                team.shutdown();
+            }
+        }
+    }
+
+    #[test]
     fn bounded_borrowed_jobs_join_every_started_job_before_returning_error() {
         let team = FixedWorkerTeam::new(4).expect("four-worker team");
         let barrier = Barrier::new(4);
