@@ -636,9 +636,7 @@ impl BulkCubePhase {
             let first_channels = if initial {
                 None
             } else {
-                Some(channels.clone().ok_or_else(|| {
-                    io::Error::other("residual wave has no native support window")
-                })?)
+                Some(channels.clone().unwrap_or(0..0))
             };
             let results = if first {
                 state.weighting.traverse_bulk(
@@ -656,7 +654,7 @@ impl BulkCubePhase {
                     &self.fragment(),
                     &self.problem,
                     self.input,
-                    channels.clone().unwrap_or(0..self.input.channels),
+                    channels.clone().unwrap_or(0..0),
                     wave,
                 )?
             };

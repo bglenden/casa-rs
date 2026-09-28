@@ -648,8 +648,11 @@ impl BoundObservationSource {
                     (window.0, Some(window.1))
                 }
                 Some(super::bound_observation::SelectedSourceWindow::Channels(channels)) => {
-                    if channels.is_empty() || channels.end > coordinates.channels.len() {
+                    if channels.start > channels.end || channels.end > coordinates.channels.len() {
                         return Err(BoundObservationSourceError::StoredSampleShapeMismatch);
+                    }
+                    if channels.is_empty() {
+                        continue;
                     }
                     let first = coordinates.channels[channels.start].channel_index as usize;
                     let last = coordinates.channels[channels.end - 1].channel_index as usize;

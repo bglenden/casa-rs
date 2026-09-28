@@ -1087,6 +1087,8 @@ impl BoundSelectedObservation {
     /// Replay a selected-channel ordinal range discovered from a complete source
     /// pass. Each row retains its original spectral coordinates and interpolation
     /// phase, while tiled payload reads cover only the physical channel span.
+    /// An empty range exhausts the retained row domain without reading payload,
+    /// for an imaging wave whose output channels have no native support.
     pub fn into_channel_window_block_stream<'a>(
         self,
         problem: &'a CompiledProblem,
@@ -1104,7 +1106,7 @@ impl BoundSelectedObservation {
         let [spw] = source.selection().spectral_windows() else {
             return Err(BoundSelectedObservationError::ProblemMismatch);
         };
-        if channels.is_empty() || channels.end > spw.channel_indices().len() {
+        if channels.start > channels.end || channels.end > spw.channel_indices().len() {
             return Err(BoundSelectedObservationError::ProblemMismatch);
         }
         self.into_block_stream_with_window(problem, Some(SelectedSourceWindow::Channels(channels)))
@@ -2461,9 +2463,12 @@ impl SelectedObservationReplayProof {
         Arc::ptr_eq(&self.inner, &completion.replay_proof.inner)
             && completion.identity == self.inner.identity
             && completion.generation_id == self.inner.generation_id
-            && completion.sample_count > 0
             && completion.sample_count <= self.inner.sample_count
-            && matches!(completion.window, SelectedSourceWindow::Channels(_))
+            && matches!(
+                &completion.window,
+                SelectedSourceWindow::Channels(channels)
+                    if (completion.sample_count == 0) == channels.is_empty()
+            )
     }
 }
 

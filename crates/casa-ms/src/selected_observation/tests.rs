@@ -3292,6 +3292,31 @@ fn windowed_block_stream_exhausts_rows_without_reading_disjoint_payload() {
             < initial_completion.measurements().logical_output_bytes()
     );
 
+    let (mut empty_source, empty_consumer) = retained
+        .into_channel_window_block_stream(&problem, 0..0)
+        .expect("an unmapped wave has an empty native support window");
+    let mut empty_storage = empty_source.create_storage(0);
+    assert!(
+        empty_source
+            .fill_next(&mut empty_storage)
+            .unwrap()
+            .is_none()
+    );
+    let (retained, empty_completion) = empty_consumer
+        .complete_window(empty_source.complete().unwrap())
+        .expect("empty support still exhausts the retained row domain");
+    assert_eq!(empty_completion.channel_ordinals(), Some(0..0));
+    assert_eq!(empty_completion.sample_count(), 0);
+    assert!(replay_proof.validates_rebound_window_completion(&empty_completion));
+    assert_eq!(empty_completion.measurements().stored_row_count(), 0);
+    assert_eq!(empty_completion.measurements().logical_output_bytes(), 0);
+    assert_eq!(
+        empty_completion
+            .measurements()
+            .modeled_physical_read_bytes(),
+        Some(0)
+    );
+
     let (mut window_source, mut window_consumer) = retained
         .into_windowed_block_stream(&problem, [1.5e9, 1.6e9])
         .expect("split disjoint window replay");
