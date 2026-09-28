@@ -3097,7 +3097,7 @@ fn numeric_geometry_coarse_chunks_match_serial_for_uneven_rows_and_window() {
     storage
         .project_numeric_geometry(&problem, &mut serial)
         .unwrap();
-    for chunk_rows in [1, 3, 5] {
+    for chunk_rows in [1, 3, 5, 6] {
         let mut parallel = super::SelectedObservationNumericGeometry::new(17, 3).unwrap();
         storage
             .project_numeric_geometry_with(&problem, &mut parallel, chunk_rows, |chunks| {
