@@ -574,8 +574,7 @@ fn closure_includes_neighbors_and_excludes_unrelated_model_planes() {
     let polarization = polarization();
     let evaluate = |model: &Array3<Complex64>, channels: Vec<usize>| {
         let mut band = workspace(1..2, channels, model);
-        let mut row = band
-            .begin_row(input.row(support.native.clone()), &output, &polarization)?;
+        let mut row = band.begin_row(input.row(support.native.clone()), &output, &polarization)?;
         row.push(0..support.native.len())?;
         row.finish()?;
         Ok::<_, SpectralOperatorError>(band.residual)
