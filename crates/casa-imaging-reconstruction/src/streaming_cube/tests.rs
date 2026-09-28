@@ -1532,3 +1532,18 @@ fn shared_wide_window_narrows_row_dependent_support_without_copies() {
         }
     }
 }
+
+#[test]
+fn zero_phase_shift_skips_rotation_without_changing_nonzero_phase() {
+    let frequency_hz = 44.5e9;
+    assert_eq!(phase(0.0, frequency_hz), Complex64::new(1.0, 0.0));
+    assert_eq!(phase(-0.0, frequency_hz), Complex64::new(1.0, 0.0));
+    let shift_m = 0.125;
+    assert_eq!(
+        phase(shift_m, frequency_hz),
+        Complex64::from_polar(
+            1.0,
+            std::f64::consts::TAU * shift_m * frequency_hz / SPEED_OF_LIGHT_M_PER_S,
+        )
+    );
+}
