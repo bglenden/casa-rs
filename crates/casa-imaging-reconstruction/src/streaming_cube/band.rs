@@ -654,8 +654,34 @@ struct VisibilityRow<'a> {
 }
 
 impl NativeBlockView<'_> {
+    fn rows<'a>(
+        self,
+        layout: &'a NativeLayout,
+        window: Range<usize>,
+        selected: Range<usize>,
+    ) -> Result<NativeRows<'a>, SpectralOperatorError>
+    where
+        Self: 'a,
+    {
+        if window.len() != self.channels
+            || window.end > layout.channels.len()
+            || self.correlations != layout.correlations.len()
+            || selected.is_empty()
+            || selected.end > self.channels
+        {
+            return Err(SpectralOperatorError::InvalidSample);
+        }
+        Ok(NativeRows {
+            block: self,
+            layout,
+            channels: &layout.channels[window.start + selected.start..window.start + selected.end],
+            selected,
+        })
+    }
+
     /// Borrow a decoded native window directly; no intermediate sample objects.
     /// `channels` identifies the store window within the shared selected layout.
+    #[cfg(test)]
     fn row<'a>(
         self,
         layout: &'a NativeLayout,
@@ -665,32 +691,44 @@ impl NativeBlockView<'_> {
     where
         Self: 'a,
     {
-        if row >= self.metadata.len()
-            || channels.len() != self.channels
-            || channels.end > layout.channels.len()
-            || self.correlations != layout.correlations.len()
-        {
+        if row >= self.metadata.len() {
             return Err(SpectralOperatorError::InvalidSample);
         }
-        let metadata = self.metadata[row];
-        let cells = row * self.channels..(row + 1) * self.channels;
-        let samples = cells.start * self.correlations..cells.end * self.correlations;
-        Ok(VisibilityRow {
+        Ok(self.rows(layout, channels, 0..self.channels)?.row(row))
+    }
+}
+
+/// Bind shape and channel selection once per block, not once per band/row.
+struct NativeRows<'a> {
+    block: NativeBlockView<'a>,
+    layout: &'a NativeLayout,
+    channels: &'a [u32],
+    selected: Range<usize>,
+}
+
+impl<'a> NativeRows<'a> {
+    fn row(&self, row: usize) -> VisibilityRow<'a> {
+        let block = self.block;
+        let metadata = block.metadata[row];
+        let first = row * block.channels;
+        let cells = first + self.selected.start..first + self.selected.end;
+        let samples = cells.start * block.correlations..cells.end * block.correlations;
+        VisibilityRow {
             address: SelectedSampleAddress {
                 physical_row: metadata.physical_row,
-                ..layout.address
+                ..self.layout.address
             },
             uvw_m: metadata.uvw_m,
             phase_shift_m: metadata.phase_shift_m,
             original_pair_hz: metadata.original_pair_hz,
-            channels: &layout.channels[channels],
-            frequencies_hz: &self.frequencies_hz[cells],
-            correlations: self.correlations,
-            values: &self.values[samples.clone()],
-            weights: &self.weights[samples.clone()],
-            flags: &self.flags[samples.clone()],
-            weight_flags: &self.weight_flags[samples],
-        })
+            channels: self.channels,
+            frequencies_hz: &block.frequencies_hz[cells],
+            correlations: block.correlations,
+            values: &block.values[samples.clone()],
+            weights: &block.weights[samples.clone()],
+            flags: &block.flags[samples.clone()],
+            weight_flags: &block.weight_flags[samples],
+        }
     }
 }
 
@@ -709,20 +747,24 @@ impl NativeBlock {
 }
 
 impl<'a> VisibilityRow<'a> {
-    fn window(self, channels: Range<usize>) -> Result<Self, SpectralOperatorError> {
+    #[cfg(test)]
+    fn window(mut self, channels: Range<usize>) -> Result<Self, SpectralOperatorError> {
+        self.restrict(channels)?;
+        Ok(self)
+    }
+
+    fn restrict(&mut self, channels: Range<usize>) -> Result<(), SpectralOperatorError> {
         if channels.is_empty() || channels.end > self.channels.len() {
             return Err(SpectralOperatorError::InvalidSample);
         }
         let samples = channels.start * self.correlations..channels.end * self.correlations;
-        Ok(Self {
-            channels: &self.channels[channels.clone()],
-            frequencies_hz: &self.frequencies_hz[channels.clone()],
-            values: &self.values[samples.clone()],
-            weights: &self.weights[samples.clone()],
-            flags: &self.flags[samples.clone()],
-            weight_flags: &self.weight_flags[samples],
-            ..self
-        })
+        self.channels = &self.channels[channels.clone()];
+        self.frequencies_hz = &self.frequencies_hz[channels];
+        self.values = &self.values[samples.clone()];
+        self.weights = &self.weights[samples.clone()];
+        self.flags = &self.flags[samples.clone()];
+        self.weight_flags = &self.weight_flags[samples];
+        Ok(())
     }
 
     fn validate(&self, correlations: usize) -> Result<(), SpectralOperatorError> {
@@ -1130,14 +1172,14 @@ impl BandWorkspace {
     }
 
     #[cfg(test)]
-    fn begin_row<'a>(
+    fn begin_row<'a, 'input>(
         &'a mut self,
-        row: VisibilityRow<'a>,
+        row: &'a VisibilityRow<'input>,
         output_hz: &'a [f64],
         polarization: &'a PolarizationOperator,
-    ) -> Result<RowAccumulator<'a>, SpectralOperatorError> {
+    ) -> Result<RowAccumulator<'a, 'input>, SpectralOperatorError> {
         let stencil = RowStencil::compile(
-            &row,
+            row,
             output_hz,
             self.core.clone(),
             &self.model_channels,
@@ -1146,21 +1188,21 @@ impl BandWorkspace {
         self.begin_row_with_stencil(row, polarization, Cow::Owned(stencil))
     }
 
-    fn begin_row_cached<'a>(
+    fn begin_row_cached<'a, 'input>(
         &'a mut self,
-        row: VisibilityRow<'a>,
+        row: &'a VisibilityRow<'input>,
         polarization: &'a PolarizationOperator,
         stencil: &'a RowStencil,
-    ) -> Result<RowAccumulator<'a>, SpectralOperatorError> {
+    ) -> Result<RowAccumulator<'a, 'input>, SpectralOperatorError> {
         self.begin_row_with_stencil(row, polarization, Cow::Borrowed(stencil))
     }
 
-    fn begin_row_with_stencil<'a>(
+    fn begin_row_with_stencil<'a, 'input>(
         &'a mut self,
-        row: VisibilityRow<'a>,
+        row: &'a VisibilityRow<'input>,
         polarization: &'a PolarizationOperator,
         stencil: Cow<'a, RowStencil>,
-    ) -> Result<RowAccumulator<'a>, SpectralOperatorError> {
+    ) -> Result<RowAccumulator<'a, 'input>, SpectralOperatorError> {
         row.validate(polarization.correlations().len())?;
         if row.channels.len() < 2 {
             return Err(SpectralOperatorError::InvalidSample);
@@ -1288,12 +1330,11 @@ impl BandWorkspace {
             return Err(SpectralOperatorError::IncompleteSpectralHalo);
         }
         let local = native_range.start - window.start..native_range.end - window.start;
+        let rows = block.rows(layout, window, local)?;
         let mut previous_support: Option<(&[f64], [f64; 2], Range<usize>, Option<RowStencil>)> =
             None;
         for row_index in 0..block.metadata.len() {
-            let row = block
-                .row(layout, row_index, window.clone())?
-                .window(local.clone())?;
+            let mut row = rows.row(row_index);
             if let Some(single) = self.single_channel {
                 self.consume_single_row(row, single, output_hz, polarization)?;
                 continue;
@@ -1319,7 +1360,7 @@ impl BandWorkspace {
                 continue;
             }
             let channels = native.len();
-            let row = row.window(native.clone())?;
+            row.restrict(native.clone())?;
             if !reuse {
                 row.validate(polarization.correlations().len())?;
                 let stencil = RowStencil::compile(
@@ -1337,7 +1378,7 @@ impl BandWorkspace {
                     Some((frequencies_hz, row.original_pair_hz, native, Some(stencil)));
             }
             let stencil = previous_support.as_ref().unwrap().3.as_ref().unwrap();
-            let mut accumulator = self.begin_row_cached(row, polarization, stencil)?;
+            let mut accumulator = self.begin_row_cached(&row, polarization, stencil)?;
             accumulator.push(0..channels)?;
             accumulator.finish()?;
         }
@@ -1534,9 +1575,9 @@ fn widen(value: Complex32) -> Complex64 {
 
 /// A row cursor survives chunk boundaries; only the previous prediction is
 /// retained. All other input accesses are borrowed from the compact row.
-struct RowAccumulator<'a> {
+struct RowAccumulator<'a, 'input> {
     band: &'a mut BandWorkspace,
-    row: VisibilityRow<'a>,
+    row: &'a VisibilityRow<'input>,
     polarization: &'a PolarizationOperator,
     reduction: PolarizedSampleReducer<'a>,
     stencil: Cow<'a, RowStencil>,
@@ -1544,7 +1585,7 @@ struct RowAccumulator<'a> {
     previous_prediction: SmallVec<[Complex64; 4]>,
 }
 
-impl RowAccumulator<'_> {
+impl RowAccumulator<'_, '_> {
     fn push(&mut self, channels: Range<usize>) -> Result<(), SpectralOperatorError> {
         self.push_with(
             channels,
@@ -1581,7 +1622,7 @@ impl RowAccumulator<'_> {
         for channel in channels {
             let prediction = predict(
                 self.band,
-                &self.row,
+                self.row,
                 &self.stencil.prediction_terms[channel],
                 self.polarization,
                 channel,
@@ -1622,7 +1663,7 @@ impl RowAccumulator<'_> {
                     self.band,
                     fine.output_channel(),
                     fine.frequency_hz(),
-                    &self.row,
+                    self.row,
                     observed,
                     predicted,
                     weight,

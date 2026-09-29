@@ -298,6 +298,7 @@ impl BandWorkspace {
         backend: &mut impl CubeSpatialBackend,
     ) -> Result<(), SpectralOperatorError> {
         let rows = block.metadata.len();
+        let native_rows = block.rows(layout, 0..block.channels, native.clone())?;
         let stride = native.len();
         let predicts = self.phase != BandPhase::InitialZero;
         let mut predictions = if predicts {
@@ -317,9 +318,7 @@ impl BandWorkspace {
                 (0..self.model_channels.len()).map(|_| Vec::new()).collect();
             let mut previous: Option<(&[f64], [f64; 2], Range<usize>, Option<RowStencil>)> = None;
             for row_index in 0..rows {
-                let row = block
-                    .row(layout, row_index, 0..block.channels)?
-                    .window(native.clone())?;
+                let mut row = native_rows.row(row_index);
                 let frequencies = row.frequencies_hz;
                 let reuse = previous.as_ref().is_some_and(|(hz, pair, _, _)| {
                     *hz == frequencies && *pair == row.original_pair_hz
@@ -338,7 +337,7 @@ impl BandWorkspace {
                     previous = Some((frequencies, row.original_pair_hz, support, None));
                     continue;
                 }
-                let row = row.window(support.clone())?;
+                row.restrict(support.clone())?;
                 if !reuse {
                     let stencil = RowStencil::compile(
                         &row,
@@ -411,9 +410,7 @@ impl BandWorkspace {
             .collect();
         let mut previous: Option<(&[f64], [f64; 2], Range<usize>, Option<RowStencil>)> = None;
         for row_index in 0..rows {
-            let row = block
-                .row(layout, row_index, 0..block.channels)?
-                .window(native.clone())?;
+            let mut row = native_rows.row(row_index);
             let frequencies = row.frequencies_hz;
             let reuse = previous.as_ref().is_some_and(|(hz, pair, _, _)| {
                 *hz == frequencies && *pair == row.original_pair_hz
@@ -432,7 +429,7 @@ impl BandWorkspace {
                 previous = Some((frequencies, row.original_pair_hz, support, None));
                 continue;
             }
-            let row = row.window(support.clone())?;
+            row.restrict(support.clone())?;
             if !reuse {
                 let stencil = RowStencil::compile(
                     &row,
@@ -450,7 +447,7 @@ impl BandWorkspace {
             }
             let stencil = previous.as_ref().unwrap().3.as_ref().unwrap();
             let count = row.channels.len();
-            let mut accumulator = self.begin_row_cached(row, polarization, stencil)?;
+            let mut accumulator = self.begin_row_cached(&row, polarization, stencil)?;
             accumulator.push_with(
                 0..count,
                 |_, _, _, polarization, channel| {

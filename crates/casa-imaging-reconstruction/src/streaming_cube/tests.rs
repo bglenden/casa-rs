@@ -321,9 +321,8 @@ fn workspace(
 fn full_band(input: &Input, output: &[f64], model: &Array3<Complex64>) -> BandWorkspace {
     let mut band = workspace(0..4, (0..4).collect(), model);
     let polarization = polarization();
-    let mut row = band
-        .begin_row(input.row(0..input.channels.len()), output, &polarization)
-        .unwrap();
+    let input_row = input.row(0..input.channels.len());
+    let mut row = band.begin_row(&input_row, output, &polarization).unwrap();
     row.push(0..input.channels.len()).unwrap();
     row.finish().unwrap();
     band
@@ -710,9 +709,7 @@ fn nonzero_native_prediction_and_band_grids_are_partition_and_chunk_invariant() 
                                 .unwrap();
                             assert_close(predicted, expected);
                         }
-                        let mut row = band
-                            .begin_row(input.row(support.native), &output, &polarization)
-                            .unwrap();
+                        let mut row = band.begin_row(&input_row, &output, &polarization).unwrap();
                         // End a chunk inside the row, then resume the exact cursor.
                         row.push(0..1).unwrap();
                         row.push(1..count).unwrap();
@@ -766,7 +763,8 @@ fn closure_includes_neighbors_and_excludes_unrelated_model_planes() {
     let polarization = polarization();
     let evaluate = |model: &Array3<Complex64>, channels: Vec<usize>| {
         let mut band = workspace(1..2, channels, model);
-        let mut row = band.begin_row(input.row(support.native.clone()), &output, &polarization)?;
+        let input_row = input.row(support.native.clone());
+        let mut row = band.begin_row(&input_row, &output, &polarization)?;
         row.push(0..support.native.len())?;
         row.finish()?;
         Ok::<_, SpectralOperatorError>(band.residual)
@@ -818,9 +816,8 @@ fn compact_views_are_zero_copy_and_reject_bad_shape_or_partial_rows() {
     let allocation = band.forward.as_ptr();
     band.prepare_model(model().view()).unwrap();
     assert_eq!(band.forward.as_ptr(), allocation);
-    let mut row = band
-        .begin_row(input.row(0..4), &output, &polarization)
-        .unwrap();
+    let input_row = input.row(0..4);
+    let mut row = band.begin_row(&input_row, &output, &polarization).unwrap();
     row.push(0..2).unwrap();
     assert!(row.push(3..4).is_err());
     assert!(matches!(
@@ -828,7 +825,7 @@ fn compact_views_are_zero_copy_and_reject_bad_shape_or_partial_rows() {
         Err(SpectralOperatorError::IncompleteCoverage)
     ));
     assert!(matches!(
-        band.begin_row(input.row(0..4), &output, &polarization)
+        band.begin_row(&input_row, &output, &polarization)
             .unwrap()
             .finish(),
         Err(SpectralOperatorError::IncompleteCoverage)
@@ -879,6 +876,27 @@ fn flat_row_windows_borrow_all_payloads_at_each_correlation_width() {
             block.weight_flags[start..].as_ptr()
         );
         assert_eq!(nested.channels, &layout.channels[2..3]);
+        let view = block.view().unwrap();
+        let rows = view.rows(&layout, 0..4, 1..4).unwrap();
+        let mut direct = rows.row(1);
+        direct.restrict(1..2).unwrap();
+        direct.validate(correlations).unwrap();
+        assert_eq!(direct.address, nested.address);
+        assert_eq!(direct.values.as_ptr(), nested.values.as_ptr());
+        assert_eq!(direct.weights.as_ptr(), nested.weights.as_ptr());
+        assert_eq!(direct.flags.as_ptr(), nested.flags.as_ptr());
+        assert_eq!(direct.weight_flags.as_ptr(), nested.weight_flags.as_ptr());
+        assert_eq!(
+            direct.frequencies_hz.as_ptr(),
+            nested.frequencies_hz.as_ptr()
+        );
+        assert_eq!(direct.channels, nested.channels);
+        assert!(view.rows(&layout, 0..3, 0..3).is_err());
+        assert!(view.rows(&layout, 1..5, 0..4).is_err());
+        assert!(view.rows(&layout, 0..4, 0..0).is_err());
+        assert!(view.rows(&layout, 0..4, 1..5).is_err());
+        assert!(direct.restrict(0..2).is_err());
+        assert!(block.row(&layout, 2, 0..4).is_err());
     }
 }
 
@@ -979,7 +997,7 @@ fn stored_native_buffer_is_borrowed_directly_by_the_band_kernel() {
         (&mut actual, row),
         (&mut source_borrowed, source_row),
     ] {
-        let mut accumulator = workspace.begin_row(row, &output, &polarization).unwrap();
+        let mut accumulator = workspace.begin_row(&row, &output, &polarization).unwrap();
         accumulator.push(0..6).unwrap();
         accumulator.finish().unwrap();
     }
@@ -1333,9 +1351,8 @@ fn model_epoch_reads_only_support_planes_with_correct_axes_and_invalid_support()
     let mut expected = workspace(1..2, support.model, &raw);
     let polarization = polarization();
     for band in [&mut job.workspace, &mut expected] {
-        let mut row = band
-            .begin_row(input.row(support.native.clone()), &output, &polarization)
-            .unwrap();
+        let input_row = input.row(support.native.clone());
+        let mut row = band.begin_row(&input_row, &output, &polarization).unwrap();
         row.push(0..support.native.len()).unwrap();
         row.finish().unwrap();
     }
@@ -1415,9 +1432,10 @@ fn completed_epoch_images_preserve_partitioned_fields_and_model_binding() {
         };
         let mut job = plan.prepare(&model, None).unwrap();
         let count = job.native_range.len();
+        let input_row = input.row(job.native_range.clone());
         let mut row = job
             .workspace
-            .begin_row(input.row(job.native_range.clone()), &output, &polarization)
+            .begin_row(&input_row, &output, &polarization)
             .unwrap();
         if partitioned {
             for channel in 0..count {
@@ -1568,9 +1586,10 @@ fn empty_initial_and_residual_refresh_omit_dead_grids_and_do_not_load_prior_arra
         Err(SpectralOperatorError::ReusableNormalStateMismatch)
     ));
     let consume = |job: &mut EpochBand<'_>| {
+        let input_row = input.row(0..8);
         let mut row = job
             .workspace
-            .begin_row(input.row(0..8), &output, &polarization)
+            .begin_row(&input_row, &output, &polarization)
             .unwrap();
         row.push(0..8).unwrap();
         row.finish().unwrap();
@@ -1723,9 +1742,8 @@ fn interpolation_reuse_depends_only_on_admitted_window_and_original_pair() {
                     )
                     .unwrap();
                     let channels = native.len();
-                    let mut accumulator = expected
-                        .begin_row(row.window(native).unwrap(), &output, &polarization)
-                        .unwrap();
+                    let row = row.window(native).unwrap();
+                    let mut accumulator = expected.begin_row(&row, &output, &polarization).unwrap();
                     accumulator.push(0..channels).unwrap();
                     accumulator.finish().unwrap();
                 }
@@ -1793,7 +1811,7 @@ fn shared_wide_window_narrows_row_dependent_support_without_copies() {
     assert!(
         linear
             .begin_row(
-                block.row(&layout, 0, 0..12).unwrap().window(0..1).unwrap(),
+                &block.row(&layout, 0, 0..12).unwrap().window(0..1).unwrap(),
                 &output,
                 &polarization
             )
@@ -1841,8 +1859,9 @@ fn shared_wide_window_narrows_row_dependent_support_without_copies() {
                 .native;
                 assert!(native.start >= support.native.start && native.end <= support.native.end);
                 let count = native.len();
+                let input_row = input.row(native);
                 let mut row = expected
-                    .begin_row(input.row(native), &output, &polarization)
+                    .begin_row(&input_row, &output, &polarization)
                     .unwrap();
                 row.push(0..count).unwrap();
                 row.finish().unwrap();
