@@ -556,12 +556,14 @@ fn t55_model_windows_preserve_values_and_support_with_owner_scoped_identities() 
 struct ModelIoCounts {
     reads: std::sync::atomic::AtomicUsize,
     fail_reads: std::sync::atomic::AtomicBool,
+    creations: std::sync::atomic::AtomicUsize,
+    updated: std::sync::atomic::AtomicUsize,
 }
 
 #[derive(Debug)]
 struct CountedModelStorage {
     counts: std::sync::Arc<ModelIoCounts>,
-    samples: Vec<ModelSample>,
+    samples: std::sync::RwLock<Box<[ModelSample]>>,
 }
 
 #[derive(Debug)]
@@ -572,16 +574,19 @@ impl casa_imaging_reconstruction::ModelStorageFactory for CountedModelFactory {
         &self,
         count: usize,
     ) -> Result<Box<dyn casa_imaging_reconstruction::ModelSampleStorage>, ModelLifecycleError> {
+        self.0
+            .creations
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(Box::new(CountedModelStorage {
             counts: self.0.clone(),
-            samples: vec![ModelSample::invalid(); count],
+            samples: std::sync::RwLock::new(vec![ModelSample::invalid(); count].into()),
         }))
     }
 }
 
 impl casa_imaging_reconstruction::ModelSampleStorage for CountedModelStorage {
     fn sample_count(&self) -> usize {
-        self.samples.len()
+        self.samples.read().unwrap().len()
     }
 
     fn read(
@@ -594,14 +599,89 @@ impl casa_imaging_reconstruction::ModelSampleStorage for CountedModelStorage {
         if self.counts.fail_reads.load(Relaxed) {
             return Err(ModelLifecycleError::Storage("injected read failure".into()));
         }
-        destination.copy_from_slice(&self.samples[start..start + destination.len()]);
+        destination
+            .copy_from_slice(&self.samples.read().unwrap()[start..start + destination.len()]);
         Ok(())
     }
 
     fn write(&mut self, start: usize, samples: &[ModelSample]) -> Result<(), ModelLifecycleError> {
-        self.samples[start..start + samples.len()].copy_from_slice(samples);
+        self.samples.get_mut().unwrap()[start..start + samples.len()].copy_from_slice(samples);
         Ok(())
     }
+
+    fn apply_updates(
+        &self,
+        updates: &[casa_imaging_reconstruction::ModelSampleUpdate],
+        precision: NumericPrecision,
+        bound: f64,
+    ) -> Result<f64, ModelLifecycleError> {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.counts.reads.fetch_add(updates.len(), Relaxed);
+        if self.counts.fail_reads.load(Relaxed) {
+            return Err(ModelLifecycleError::Storage("injected read failure".into()));
+        }
+        self.counts.updated.fetch_add(updates.len(), Relaxed);
+        casa_imaging_reconstruction::ModelSampleStorage::apply_updates(
+            &self.samples,
+            updates,
+            precision,
+            bound,
+        )
+    }
+}
+
+#[test]
+fn sparse_delta_reuses_owned_storage_and_does_not_touch_unchanged_windows() {
+    use std::sync::{Arc, atomic::Ordering::Relaxed};
+    let compiled = problem(
+        1,
+        8,
+        ModelStateIdentity::Empty,
+        empty_requirements(NumericPrecision::F32),
+        NumericPrecision::F32,
+    );
+    let counts = Arc::new(ModelIoCounts::default());
+    let mut owner = ModelLifecycle::bind(
+        ExecutableModelProblem::from_compiled(compiled).unwrap(),
+        attempt(90),
+        1,
+        casa_imaging_reconstruction::ModelStoragePlan::new(
+            Arc::new(CountedModelFactory(counts.clone())),
+            2,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let base = owner.initial_empty().unwrap();
+    let delta = owner
+        .compile_delta(&base, [ModelDeltaTerm::new(cell(3), value(2.0))])
+        .unwrap();
+    counts.reads.store(0, Relaxed);
+    let prepared = owner.prepare_final_model(base, Some(delta)).unwrap();
+    assert_eq!(
+        counts.creations.load(Relaxed),
+        1,
+        "no replacement cube allocation"
+    );
+    assert_eq!(
+        counts.reads.load(Relaxed),
+        0,
+        "preparation must not scan the cube"
+    );
+    assert_eq!(
+        counts.updated.load(Relaxed),
+        0,
+        "worker applies its own updates"
+    );
+    prepared.generation().read_samples(0..2).unwrap();
+    assert_eq!(counts.updated.load(Relaxed), 0, "unaffected plane/window");
+    let samples = prepared.generation().read_samples(2..4).unwrap();
+    assert_eq!(samples[1].value().value(), 2.0);
+    assert_eq!(counts.updated.load(Relaxed), 1, "only the changed cell");
+    let reads = counts.reads.load(Relaxed);
+    owner.commit_final_model(prepared).unwrap();
+    assert_eq!(counts.reads.load(Relaxed), reads, "no completion reread");
+    assert_eq!(counts.creations.load(Relaxed), 1);
 }
 
 #[test]
@@ -755,6 +835,12 @@ fn named_resume_preserves_new_scientific_value_bounds() {
             .compile_delta(&base, [ModelDeltaTerm::new(cell(0), value(1.0))])
             .unwrap();
         let generation = owner.apply_delta(base, delta).unwrap();
+        generation.read_samples(0..1).unwrap();
+        assert_eq!(
+            counts.updated.load(Relaxed),
+            1,
+            "complete the pending scientific update"
+        );
         let id = generation.generation_id();
         let tighter = problem(
             1,

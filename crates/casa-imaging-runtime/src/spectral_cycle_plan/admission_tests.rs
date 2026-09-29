@@ -144,12 +144,27 @@ fn accepted_delta_residency_preserves_both_live_copies_and_logical_limit() {
     let samples = problem.model_lifecycle().target().sample_count();
     let limit = samples.min(problem.model_lifecycle().bounds().max_delta_terms());
     let model_bytes = samples * std::mem::size_of::<ModelSample>();
+    let pending = |terms| {
+        casa_imaging_reconstruction::ModelStoragePlan::pending_update_bytes(
+            terms,
+            samples,
+            problem
+                .model_lifecycle()
+                .target()
+                .domains()
+                .iter()
+                .map(|domain| domain.pixels().into_iter().product())
+                .min()
+                .unwrap(),
+        )
+        .unwrap()
+    };
     for terms in [0, 1, 9, limit] {
         let planned = fragment(terms).unwrap();
         assert_eq!(planned.pending_delta_terms(), Some(terms));
         assert_eq!(
             planned.residency().major_cycle_model_bytes(),
-            model_bytes + 2 * terms * std::mem::size_of::<ModelDeltaTerm>()
+            model_bytes + 2 * terms * std::mem::size_of::<ModelDeltaTerm>() + pending(terms)
         );
     }
     assert!(matches!(
@@ -168,7 +183,7 @@ fn accepted_delta_residency_preserves_both_live_copies_and_logical_limit() {
     assert_eq!(unbound.pending_delta_terms(), None);
     assert_eq!(
         unbound.residency().major_cycle_model_bytes(),
-        model_bytes + 2 * limit * std::mem::size_of::<ModelDeltaTerm>()
+        model_bytes + 2 * limit * std::mem::size_of::<ModelDeltaTerm>() + pending(limit)
     );
 }
 
@@ -427,6 +442,12 @@ fn t51_full_aw_residual_phase_adapts_complete_allocations_and_rejects_below_floo
             .residency()
             .major_cycle_model_bytes(),
         model_samples * (size_of::<ModelSample>() + 2 * size_of::<ModelDeltaTerm>())
+            + casa_imaging_reconstruction::ModelStoragePlan::pending_update_bytes(
+                model_samples,
+                model_samples,
+                4096 * 4096,
+            )
+            .unwrap()
     );
     let receipts = ExecutionReceiptStore::new(
         root.path().join("receipts"),

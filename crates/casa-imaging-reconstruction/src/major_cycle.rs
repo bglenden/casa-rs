@@ -1087,8 +1087,9 @@ pub struct MajorCycleCompletion {
     final_model: ModelGeneration,
 }
 
-/// Validated final-model candidate retained across the exhaustive T18/T19
-/// replay without consuming final-model completion authority.
+/// Model ownership retained across exhaustive T18/T19 replay without consuming
+/// final completion. Sparse updates materialize on each worker's first model
+/// access, before that window can be used for prediction.
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct MajorCyclePreparation {

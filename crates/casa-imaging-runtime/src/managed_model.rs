@@ -4,8 +4,10 @@
 
 use std::{fmt, io, path::Path, sync::Arc};
 
-use casa_imaging_model::{ModelSample, ModelSupport, ModelValue};
-use casa_imaging_reconstruction::{ModelLifecycleError, ModelSampleStorage, ModelStorageFactory};
+use casa_imaging_model::{ModelSample, ModelSupport, ModelValue, NumericPrecision};
+use casa_imaging_reconstruction::{
+    ModelLifecycleError, ModelSampleStorage, ModelSampleUpdate, ModelStorageFactory,
+};
 
 use crate::managed_cube_blocks::{CubeResidency, ManagedPlaneArray};
 
@@ -232,22 +234,54 @@ impl ModelSampleStorage for ManagedModel {
         })
     }
 
-    fn retire(self: Box<Self>) -> Result<(), ModelLifecycleError> {
-        let Self {
-            values,
-            support,
-            residency,
-            _retention: retention,
-            cells: _,
-            samples: _,
-        } = *self;
-        let result = values
-            .retire_dead()
-            .map_err(storage_error)
-            .and_then(|()| support.retire_dead().map_err(storage_error));
-        drop(residency);
-        drop(retention);
-        result
+    fn apply_updates(
+        &self,
+        updates: &[ModelSampleUpdate],
+        precision: NumericPrecision,
+        bound: f64,
+    ) -> Result<f64, ModelLifecycleError> {
+        let mut remaining = updates;
+        let mut maximum: f64 = 0.0;
+        while let Some(first) = remaining.first() {
+            let plane = first.index() / self.cells;
+            let count = remaining.partition_point(|update| update.index() / self.cells == plane);
+            let range = first.index() % self.cells..remaining[count - 1].index() % self.cells + 1;
+            let pins = self
+                .residency
+                .admit(
+                    &[
+                        self.values.request(plane, true).map_err(storage_error)?,
+                        self.support.request(plane, false).map_err(storage_error)?,
+                    ],
+                    0,
+                )
+                .map_err(storage_error)?;
+            let support = self
+                .support
+                .read(&pins, plane, range.clone())
+                .map_err(storage_error)?;
+            let mut values = self
+                .values
+                .write(&pins, plane, range.clone())
+                .map_err(storage_error)?;
+            for update in &remaining[..count] {
+                let offset = update.index() % self.cells - range.start;
+                let sample = if support[offset] {
+                    ModelSample::valid(ModelValue::new(f64::from(values[offset]))?)
+                } else {
+                    ModelSample::invalid()
+                };
+                let updated = update.apply(sample, precision, bound)?.value().value() as f32;
+                if !updated.is_finite() {
+                    return Err(storage_error("model value is not finite in Float storage"));
+                }
+                values[offset] = updated;
+                maximum = maximum.max(f64::from(updated).abs());
+            }
+            values.finish();
+            remaining = &remaining[count..];
+        }
+        Ok(maximum)
     }
 }
 
@@ -348,8 +382,5 @@ mod tests {
             model.read(18, &mut [ModelSample::invalid()]),
             Err(ModelLifecycleError::CellOutsideShape)
         );
-        let live = manager.used_bytes();
-        model.retire().unwrap();
-        assert!(manager.used_bytes() < live);
     }
 }

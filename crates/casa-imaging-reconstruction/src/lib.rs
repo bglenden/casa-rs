@@ -57,7 +57,9 @@ mod streaming_cube;
 mod weighting;
 
 #[doc(hidden)]
-pub use model_storage::{ModelSampleStorage, ModelStorageFactory, ModelStoragePlan};
+pub use model_storage::{
+    ModelSampleStorage, ModelSampleUpdate, ModelStorageFactory, ModelStoragePlan,
+};
 
 pub use aw_generation::{
     EvlaApertureGrid, EvlaApertureModel, EvlaAwWorkspace, NativeAwGenerationError, NativeAwPair,
@@ -506,10 +508,12 @@ pub enum ModelGenerationOrigin {
     },
 }
 
-/// Immutable authoritative model generation.
+/// Logically immutable authoritative model generation.
 ///
 /// It has no public constructor and is deliberately not `Clone`: ownership and
 /// the private authority seal remain coupled to the generation's values.
+/// Sparse updates are materialized once per admitted window on first access,
+/// allowing plane workers to reuse the owned backing without a cube-wide copy.
 #[derive(Debug)]
 pub struct ModelGeneration {
     generation_id: ModelGenerationId,
@@ -779,13 +783,15 @@ pub struct FinalModelUpdate {
     completion: FinalModelCompletion,
 }
 
-/// Validated final-model candidate whose one-shot completion authority has not
+/// Owner-validated final-model candidate whose one-shot completion authority has not
 /// yet been consumed.
 ///
 /// A Major Cycle prepares this value before its exhaustive operator replay and
 /// commits it only after every fallible scientific and resource-bound step has
 /// succeeded. The value has no public constructor and remains bound to one
 /// lifecycle owner.
+/// Pending sparse arithmetic is checked on window access and must succeed
+/// before completion; a storage or scientific error fails the candidate.
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct PreparedFinalModel {
@@ -797,7 +803,7 @@ pub struct PreparedFinalModel {
 }
 
 impl PreparedFinalModel {
-    /// Borrow the validated candidate generation for paired-operator work.
+    /// Borrow the candidate generation for fallible paired-operator work.
     #[must_use]
     pub const fn generation(&self) -> &ModelGeneration {
         &self.generation
@@ -1168,8 +1174,10 @@ impl ModelLifecycle {
         })
     }
 
-    /// Consume a generation and delta, constructing the candidate in bounded windows.
-    /// The base remains immutable until every candidate window has been written.
+    /// Consume the sole owner and queue sparse updates on its existing storage.
+    /// Each bounded window is updated once on first scientific access; disjoint
+    /// windows can be prepared concurrently. Read and completion errors fail the
+    /// candidate rather than returning partially updated model contents.
     pub fn apply_delta(
         &self,
         base: ModelGeneration,
@@ -1196,8 +1204,9 @@ impl ModelLifecycle {
     /// authority.
     ///
     /// This is the first phase of the Major-Cycle transaction. All model and
-    /// delta validation and arithmetic happen here, while the lifecycle remains
-    /// open if later complete-data reconciliation fails. A named generation
+    /// delta association checks happen here. Sparse arithmetic is performed by
+    /// the first consumer of each model window; completion also resolves any
+    /// unvisited updates before consuming the lifecycle authority. A named generation
     /// carried from an earlier attempt is rebound in place to this lifecycle
     /// even when no Model Delta changes its samples.
     pub fn prepare_final_model(
@@ -1304,13 +1313,14 @@ impl ModelLifecycle {
     /// distinct completion evidence.
     pub fn commit_final_model(
         &mut self,
-        prepared: PreparedFinalModel,
+        mut prepared: PreparedFinalModel,
     ) -> Result<FinalModelUpdate, ModelLifecycleError> {
         self.ensure_open()?;
         if prepared.authority != self.authority || prepared.seal != self.seal {
             return Err(ModelLifecycleError::ForeignModelLifecycle);
         }
         self.validate_named_generation(&prepared.generation)?;
+        prepared.generation.samples.complete_updates()?;
         let generation_id = prepared.generation.generation_id;
         let completion_id = final_completion_id(
             self.authority,
@@ -1383,57 +1393,30 @@ impl ModelLifecycle {
 
     fn apply_delta_inner(
         &self,
-        base: ModelGeneration,
+        mut base: ModelGeneration,
         delta: ModelDelta,
     ) -> Result<ModelGeneration, ModelLifecycleError> {
         self.validate_delta_update(&base, &delta)?;
-        let mut candidate = self.storage.create(base.sample_count())?;
-        let mut terms = delta
-            .terms
-            .iter()
-            .map(|term| {
-                (
-                    self.contract
-                        .target()
-                        .flat_index(term.cell())
-                        .expect("validated delta cell remains in range"),
-                    term.increment().value(),
-                )
-            })
-            .peekable();
-        let window_samples = candidate
-            .window_samples()
-            .min(base.samples.window_samples());
-        for start in (0..base.sample_count()).step_by(window_samples) {
-            let end = start
-                .saturating_add(window_samples)
-                .min(base.sample_count());
-            let mut window = base.samples.read(start..end)?;
-            while let Some(&(index, increment)) = terms.peek() {
-                if index >= end {
-                    break;
-                }
-                let sample = &mut window[index - start];
-                let updated = ModelValue::new(add_with_precision(
-                    self.contract.arithmetic_precision(),
-                    sample.value().value(),
-                    increment,
-                ))?;
-                validate_model_value(updated, self.contract.bounds().max_absolute_model_value())?;
-                *sample = ModelSample::valid(updated);
-                terms.next();
-            }
-            candidate.write(start, &window)?;
-        }
-        let next = self.mint_stored_generation(
-            candidate,
+        let terms = delta.terms.iter().map(|term| ModelSampleUpdate {
+            index: self
+                .contract
+                .target()
+                .flat_index(term.cell())
+                .expect("validated delta cell remains in range"),
+            increment: term.increment().value(),
+        });
+        base.samples.queue_updates(
+            terms,
+            self.contract.arithmetic_precision(),
+            self.contract.bounds().max_absolute_model_value(),
+        )?;
+        self.mint_stored_generation(
+            base.samples,
             ModelGenerationOrigin::Delta {
                 base: base.generation_id,
                 delta: delta.delta_id,
             },
-        )?;
-        base.samples.retire()?;
-        Ok(next)
+        )
     }
 
     fn adopt_generation(
@@ -1478,6 +1461,7 @@ impl ModelLifecycle {
         &self,
         generation: &ModelGeneration,
     ) -> Result<(), ModelLifecycleError> {
+        generation.samples.finish_updates()?;
         if generation.samples.len() != generation.shape.sample_count() {
             return Err(ModelLifecycleError::GenerationIdentityMismatch);
         }

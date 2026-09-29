@@ -892,6 +892,72 @@ impl ModelSampleStorage for PagedModelSamples {
         Ok(())
     }
 
+    fn apply_updates(
+        &self,
+        updates: &[casa_imaging_reconstruction::ModelSampleUpdate],
+        precision: casa_imaging_model::NumericPrecision,
+        bound: f64,
+    ) -> Result<f64, ModelLifecycleError> {
+        let Some(first) = updates.first() else {
+            return Ok(0.0);
+        };
+        let start = first.index();
+        let len = updates.last().expect("nonempty updates").index() - start + 1;
+        if len > self.window_samples || start.checked_add(len).is_none_or(|end| end > self.samples)
+        {
+            return Err(ModelLifecycleError::CellOutsideShape);
+        }
+        let mut arrays = self.arrays.lock().map_err(storage_error)?;
+        let before_values = arrays.values.io_stats();
+        let before_support = arrays.support.io_stats();
+        let mut values = vec![0.0; len];
+        let mut support = vec![false; len];
+        transfer_range(
+            self.axes[0],
+            self.axes[1],
+            start,
+            len,
+            |position, shape, range| {
+                arrays
+                    .values
+                    .read_slice_into(&position, &shape, &mut values[range.clone()])
+                    .map_err(storage_error)?;
+                arrays
+                    .support
+                    .read_slice_into(&position, &shape, &mut support[range])
+                    .map_err(storage_error)
+            },
+        )?;
+        let mut maximum: f64 = 0.0;
+        for update in updates {
+            let index = update.index() - start;
+            let sample = if support[index] {
+                ModelSample::valid(ModelValue::new(values[index])?)
+            } else {
+                ModelSample::invalid()
+            };
+            values[index] = update.apply(sample, precision, bound)?.value().value();
+            maximum = maximum.max(values[index].abs());
+        }
+        transfer_range(
+            self.axes[0],
+            self.axes[1],
+            start,
+            len,
+            |position, shape, range| {
+                arrays
+                    .values
+                    .write_slice_from(&position, &shape, &values[range])
+                    .map_err(storage_error)
+            },
+        )?;
+        self.observation
+            .record(len, arrays.values.io_stats().delta_since(before_values));
+        self.observation
+            .record(len, arrays.support.io_stats().delta_since(before_support));
+        Ok(maximum)
+    }
+
     fn write(&mut self, start: usize, samples: &[ModelSample]) -> Result<(), ModelLifecycleError> {
         if start
             .checked_add(samples.len())

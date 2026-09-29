@@ -815,13 +815,13 @@ struct ModelReads {
 
 #[derive(Debug)]
 struct ObservedModelStorage {
-    samples: Box<[casa_imaging_model::ModelSample]>,
+    samples: std::sync::RwLock<Box<[casa_imaging_model::ModelSample]>>,
     reads: std::sync::Arc<ModelReads>,
 }
 
 impl crate::ModelSampleStorage for ObservedModelStorage {
     fn sample_count(&self) -> usize {
-        self.samples.len()
+        self.samples.read().unwrap().len()
     }
     fn read(
         &self,
@@ -838,7 +838,8 @@ impl crate::ModelSampleStorage for ObservedModelStorage {
                 "injected model read failure".into(),
             ));
         }
-        destination.copy_from_slice(&self.samples[start..start + destination.len()]);
+        destination
+            .copy_from_slice(&self.samples.read().unwrap()[start..start + destination.len()]);
         Ok(())
     }
     fn write(
@@ -846,8 +847,17 @@ impl crate::ModelSampleStorage for ObservedModelStorage {
         start: usize,
         samples: &[casa_imaging_model::ModelSample],
     ) -> Result<(), crate::ModelLifecycleError> {
-        self.samples[start..start + samples.len()].copy_from_slice(samples);
+        self.samples.get_mut().unwrap()[start..start + samples.len()].copy_from_slice(samples);
         Ok(())
+    }
+
+    fn apply_updates(
+        &self,
+        updates: &[crate::ModelSampleUpdate],
+        precision: casa_imaging_model::NumericPrecision,
+        bound: f64,
+    ) -> Result<f64, crate::ModelLifecycleError> {
+        crate::ModelSampleStorage::apply_updates(&self.samples, updates, precision, bound)
     }
 }
 
@@ -857,7 +867,9 @@ impl crate::ModelStorageFactory for std::sync::Arc<ModelReads> {
         count: usize,
     ) -> Result<Box<dyn crate::ModelSampleStorage>, crate::ModelLifecycleError> {
         Ok(Box::new(ObservedModelStorage {
-            samples: vec![casa_imaging_model::ModelSample::invalid(); count].into(),
+            samples: std::sync::RwLock::new(
+                vec![casa_imaging_model::ModelSample::invalid(); count].into(),
+            ),
             reads: self.clone(),
         }))
     }

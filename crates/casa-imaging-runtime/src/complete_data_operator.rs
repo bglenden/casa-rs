@@ -4292,15 +4292,31 @@ fn project_residency(
     } else {
         logical_delta_limit
     };
-    // FinalMajorPhaseInput and its recompiled ModelDelta coexist during model
-    // preparation. Their exact count is already sealed by the accepted input;
+    // FinalMajorPhaseInput, its recompiled ModelDelta and queued sparse writes
+    // coexist during preparation. The input supplies their exact term count;
     // generic fragments without that input still reserve the logical ceiling.
+    // Every supported model backing can read a spatial plane; the smallest
+    // domain plane therefore bounds the number of pending update windows.
+    let minimum_plane_samples = model
+        .target()
+        .domains()
+        .iter()
+        .map(|domain| domain.pixels().into_iter().product::<usize>())
+        .min()
+        .ok_or(CompleteDataPlanError::PlanMismatch)?;
+    let pending_update_bytes = casa_imaging_reconstruction::ModelStoragePlan::pending_update_bytes(
+        pending_delta_terms,
+        total_model_samples,
+        minimum_plane_samples,
+    )
+    .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
     let major_cycle_model_bytes = model_samples
         .checked_mul(size_of::<ModelSample>())
         .and_then(|bytes| {
             pending_delta_terms
                 .checked_mul(2 * size_of::<ModelDeltaTerm>())
                 .and_then(|delta_bytes| bytes.checked_add(delta_bytes))
+                .and_then(|bytes| bytes.checked_add(pending_update_bytes))
         })
         .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
     let peak_bytes = grid_bytes
