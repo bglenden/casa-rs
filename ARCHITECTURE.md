@@ -751,12 +751,17 @@ the run-level memory target. If all planes fit, it uses the ordinary one-slab
 route. Any selected multi-slab shape is eligible for bounded shared-source reuse
 when the same formula proves the source cache and concurrent plane state
 resident; neither dataset identity nor a particular `chanchunks` value selects
-that route. Dirty cubes may therefore execute as multiple bounded slabs. Cube
-CLEAN is the deliberate exception: synchronized minor/major-cycle control must
-retain every nonblank plane state together, so planning admits it only when one
-planner-charged shape holds all output planes. A requested CLEAN that would
-require multiple slabs fails during planning instead of accumulating uncharged
-plane state across slabs.
+that route. Dirty cubes may therefore execute as multiple bounded slabs. Bulk
+cube CLEAN also processes memory-admitted channel-band waves rather than
+requiring every plane resident together. The shared reader feeds each wave;
+after initial spectral discovery, source reads are restricted to the wave's
+required native channel window, including interpolation support. Model and
+normal-state buffers use the shared residency and paged-storage machinery
+between phases and waves. Admission charges retained band state plus at most
+the worker-count concurrent transition buffers, alongside the bounded input and
+retained-state reservations. The existing CLEAN controller remains authoritative
+across major cycles; a wave that cannot fit even one output band fails instead
+of exceeding its budget.
 
 Metal gridding is not installed at the application boundary. Runtime Metal
 resource and receipt types define a future execution contract; they do not

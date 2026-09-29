@@ -1,7 +1,7 @@
 # Agent Operating Contract
 
 Truth class: normative
-Last reality check: 2026-09-24
+Last reality check: 2026-09-29
 Verification: just docs-check
 
 ## Purpose
@@ -44,6 +44,17 @@ set `CARGO_INCREMENTAL=0`.
 
 ## Engineering Direction
 
+- **Worker scalability (owner direction, 2026-09-29):** Keep imaging worker
+  counts parameterized beyond four, including W8 and larger systems; admit work
+  against the actual CPU/memory budget, not a hard four- or eight-worker ceiling.
+  W4 is this workstation's validated application checkpoint, not an architecture
+  limit. Further optimization of the current cube worker-scaling path is deferred
+  until a larger system with more high-performance cores is available, unless
+  the owner revises this direction. Do not resume local W8 tuning or full-W8
+  performance runs merely because earlier plans list them. Preserve larger-W
+  support and correctness coverage. This does not declare performance targets
+  or outstanding scientific acceptance complete. See the current owner decision
+  in `docs/imaging-architecture/cube-parallel-scaling-plan.md`.
 - **Performance and numerical agreement (owner direction, 2026-09-24):**
   Minimize runtime and peak memory rather than paying for optional bookkeeping,
   bitwise reproducibility, or slightly closer numerical agreement beyond the
