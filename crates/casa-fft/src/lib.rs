@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![warn(missing_docs)]
-//! Direct, reusable two-dimensional FFTW plans for contiguous complex planes.
+//! Direct, reusable two-dimensional FFTW plans for real and complex planes.
 //!
 //! The native FFTW library is GPL-2.0-or-later. Distributions linking these
 //! plans must satisfy GPLv3 terms for the combined program.
@@ -67,6 +67,7 @@ pub struct Key {
     shape: [usize; 2],
     alignment: c_int,
     threads: usize,
+    real: bool,
 }
 
 /// A shape, layout, or native planner error.
@@ -74,7 +75,7 @@ pub struct Key {
 pub enum FftError {
     /// An extent is zero, exceeds FFTW's signed dimension range, or overflows.
     InvalidShape,
-    /// The requested complex plane has a different shape or noncontiguous layout.
+    /// The supplied storage does not match the transform's required shape or layout.
     InvalidPlane,
     /// FFTW could not create the requested plan.
     PlanningFailed,
@@ -96,7 +97,7 @@ mod sealed {
     impl Sealed for f64 {}
 }
 
-/// The two supported FFTW complex precisions. This trait is sealed.
+/// The two supported FFTW scalar precisions. This trait is sealed.
 pub trait FftScalar: sealed::Sealed + Copy + Default + Send + Sync + 'static {
     #[doc(hidden)]
     fn alignment(pointer: *mut Complex<Self>) -> c_int;
@@ -104,6 +105,14 @@ pub trait FftScalar: sealed::Sealed + Copy + Default + Send + Sync + 'static {
     unsafe fn plan(shape: [c_int; 2], pointer: *mut Complex<Self>, sign: c_int) -> *mut c_void;
     #[doc(hidden)]
     unsafe fn execute(plan: *mut c_void, pointer: *mut Complex<Self>);
+    #[doc(hidden)]
+    unsafe fn plan_real(
+        shape: [c_int; 2],
+        pointer: *mut Complex<Self>,
+        inverse: bool,
+    ) -> *mut c_void;
+    #[doc(hidden)]
+    unsafe fn execute_real(plan: *mut c_void, pointer: *mut Complex<Self>, inverse: bool);
     #[doc(hidden)]
     unsafe fn destroy(plan: *mut c_void);
     #[doc(hidden)]
@@ -118,6 +127,7 @@ macro_rules! ffi {
     ($module:ident, $scalar:ty,
      $plan:literal, $execute:literal, $destroy:literal,
      $alignment:literal, $init:literal, $set:literal,
+     $plan_r2c:literal, $plan_c2r:literal, $execute_r2c:literal, $execute_c2r:literal,
      $cache:ident, $threads:ident) => {
         mod $module {
             use super::*;
@@ -141,6 +151,34 @@ macro_rules! ffi {
                 pub fn destroy_plan(plan: *mut c_void);
                 #[link_name = $alignment]
                 pub fn alignment_of(pointer: *mut $scalar) -> c_int;
+                #[link_name = $plan_r2c]
+                pub fn plan_r2c(
+                    n0: c_int,
+                    n1: c_int,
+                    input: *mut $scalar,
+                    output: *mut Complex<$scalar>,
+                    flags: c_uint,
+                ) -> *mut c_void;
+                #[link_name = $plan_c2r]
+                pub fn plan_c2r(
+                    n0: c_int,
+                    n1: c_int,
+                    input: *mut Complex<$scalar>,
+                    output: *mut $scalar,
+                    flags: c_uint,
+                ) -> *mut c_void;
+                #[link_name = $execute_r2c]
+                pub fn execute_r2c(
+                    plan: *mut c_void,
+                    input: *mut $scalar,
+                    output: *mut Complex<$scalar>,
+                );
+                #[link_name = $execute_c2r]
+                pub fn execute_c2r(
+                    plan: *mut c_void,
+                    input: *mut Complex<$scalar>,
+                    output: *mut $scalar,
+                );
             }
             unsafe extern "C" {
                 #[link_name = $init]
@@ -166,6 +204,30 @@ macro_rules! ffi {
             unsafe fn execute(plan: *mut c_void, pointer: *mut Complex<Self>) {
                 // SAFETY: caller matched FFTW's rank, strides, in-place layout and alignment.
                 unsafe { $module::execute_dft(plan, pointer, pointer) }
+            }
+            unsafe fn plan_real(
+                shape: [c_int; 2],
+                pointer: *mut Complex<Self>,
+                inverse: bool,
+            ) -> *mut c_void {
+                // SAFETY: caller owns the padded in-place real/half-complex plane.
+                unsafe {
+                    if inverse {
+                        $module::plan_c2r(shape[0], shape[1], pointer, pointer.cast(), MEASURE)
+                    } else {
+                        $module::plan_r2c(shape[0], shape[1], pointer.cast(), pointer, MEASURE)
+                    }
+                }
+            }
+            unsafe fn execute_real(plan: *mut c_void, pointer: *mut Complex<Self>, inverse: bool) {
+                // SAFETY: caller matched logical shape, padded strides and alignment.
+                unsafe {
+                    if inverse {
+                        $module::execute_c2r(plan, pointer, pointer.cast());
+                    } else {
+                        $module::execute_r2c(plan, pointer.cast(), pointer);
+                    }
+                }
             }
             unsafe fn destroy(plan: *mut c_void) {
                 // SAFETY: plan was created by the matching FFTW precision.
@@ -198,6 +260,10 @@ ffi!(
     "fftwf_alignment_of",
     "fftwf_init_threads",
     "fftwf_plan_with_nthreads",
+    "fftwf_plan_dft_r2c_2d",
+    "fftwf_plan_dft_c2r_2d",
+    "fftwf_execute_dft_r2c",
+    "fftwf_execute_dft_c2r",
     F32_PLANS,
     F32_THREADS
 );
@@ -210,6 +276,10 @@ ffi!(
     "fftw_alignment_of",
     "fftw_init_threads",
     "fftw_plan_with_nthreads",
+    "fftw_plan_dft_r2c_2d",
+    "fftw_plan_dft_c2r_2d",
+    "fftw_execute_dft_r2c",
+    "fftw_execute_dft_c2r",
     F64_PLANS,
     F64_THREADS
 );
@@ -258,12 +328,24 @@ impl<T: FftScalar> Plans<T> {
             .shape
             .map(|extent| c_int::try_from(extent).expect("validated extent"));
         // SAFETY: pointer addresses a writable scratch plane of the requested shape.
-        let forward = unsafe { T::plan(shape, pointer, FORWARD) };
+        let forward = unsafe {
+            if key.real {
+                T::plan_real(shape, pointer, false)
+            } else {
+                T::plan(shape, pointer, FORWARD)
+            }
+        };
         if forward.is_null() {
             return Err(FftError::PlanningFailed);
         }
         // SAFETY: the planner may overwrite scratch; it remains disposable.
-        let inverse = unsafe { T::plan(shape, pointer, BACKWARD) };
+        let inverse = unsafe {
+            if key.real {
+                T::plan_real(shape, pointer, true)
+            } else {
+                T::plan(shape, pointer, BACKWARD)
+            }
+        };
         if inverse.is_null() {
             // SAFETY: the first plan belongs to this precision.
             unsafe { T::destroy(forward) };
@@ -338,6 +420,15 @@ impl<T: FftScalar> Fft2<T> {
 
     /// Execute a rank-two transform directly on the caller's contiguous plane.
     pub fn transform(&mut self, plane: &mut [Complex<T>], inverse: bool) -> Result<(), FftError> {
+        self.transform_storage(plane, inverse, false)
+    }
+
+    fn transform_storage(
+        &mut self,
+        plane: &mut [Complex<T>],
+        inverse: bool,
+        real: bool,
+    ) -> Result<(), FftError> {
         if plane.len() != self.elements {
             return Err(FftError::InvalidPlane);
         }
@@ -346,6 +437,7 @@ impl<T: FftScalar> Fft2<T> {
             shape: self.shape,
             alignment: T::alignment(pointer),
             threads: self.threads,
+            real,
         };
         if self.current.as_ref().is_none_or(|(held, _)| *held != key) {
             let plans = T::get_plan(key, self.elements)?;
@@ -359,13 +451,74 @@ impl<T: FftScalar> Fft2<T> {
         };
         // SAFETY: key verifies equal rank, contiguous strides, in-place layout,
         // precision, and FFTW alignment class. The plane is uniquely borrowed.
-        unsafe { T::execute(plan, pointer) };
+        unsafe {
+            if real {
+                T::execute_real(plan, pointer, inverse);
+            } else {
+                T::execute(plan, pointer);
+            }
+        }
         Ok(())
     }
 
     /// Number of FFTW threads configured for each transform.
     pub fn threads(&self) -> usize {
         self.threads
+    }
+}
+
+/// Reusable in-place rank-two real/Hermitian FFTW transforms.
+///
+/// The caller owns `shape[0] * (shape[1] / 2 + 1)` complex values. Before a
+/// forward transform and after an inverse, interpret that allocation as real
+/// scalars with row stride `2 * (shape[1] / 2 + 1)`, ignoring end-of-row padding.
+/// In frequency space it is a contiguous Hermitian half-spectrum, reduced on
+/// the last axis. Both directions are unnormalized. Callers preserve Hermitian
+/// boundary constraints when modifying the spectrum before an inverse.
+///
+/// Planning, caching, alignment and worker-thread settings are shared with
+/// [`Fft2`], but real and complex plans have distinct cache keys.
+#[derive(Debug)]
+pub struct RealFft2<T: FftScalar> {
+    fft: Fft2<T>,
+}
+
+impl<T: FftScalar> RealFft2<T> {
+    /// Validate the logical shape and use the configured native FFT thread count.
+    pub fn new(shape: [usize; 2]) -> Result<Self, FftError> {
+        Self::from_fft(Fft2::new(shape)?)
+    }
+
+    /// Validate the logical shape with an explicit native FFT thread count.
+    pub fn with_threads(shape: [usize; 2], threads: usize) -> Result<Self, FftError> {
+        Self::from_fft(Fft2::with_threads(shape, threads)?)
+    }
+
+    fn from_fft(mut fft: Fft2<T>) -> Result<Self, FftError> {
+        fft.elements = fft.shape[0]
+            .checked_mul(fft.shape[1] / 2 + 1)
+            .ok_or(FftError::InvalidShape)?;
+        Ok(Self { fft })
+    }
+
+    /// Number of complex values required by the shared real/spectrum allocation.
+    pub fn storage_len(&self) -> usize {
+        self.fft.elements
+    }
+
+    /// Physical number of real scalars per row, including FFTW's tail padding.
+    pub fn real_row_stride(&self) -> usize {
+        2 * (self.fft.shape[1] / 2 + 1)
+    }
+
+    /// Replace a padded real plane with its Hermitian half-spectrum, in place.
+    pub fn forward(&mut self, storage: &mut [Complex<T>]) -> Result<(), FftError> {
+        self.fft.transform_storage(storage, false, true)
+    }
+
+    /// Replace a Hermitian half-spectrum with an unnormalized padded real plane.
+    pub fn inverse(&mut self, storage: &mut [Complex<T>]) -> Result<(), FftError> {
+        self.fft.transform_storage(storage, true, true)
     }
 }
 
@@ -414,6 +567,92 @@ mod tests {
         fft.transform(&mut actual, true).unwrap();
         for (left, right) in actual.iter().zip(initial) {
             assert!((*left / 15.0 - right).norm() < 1e-11);
+        }
+    }
+
+    #[test]
+    fn real_half_spectrum_matches_direct_dft_and_padded_roundtrip() {
+        for shape in [[3, 5], [4, 6], [1, 1], [5, 4]] {
+            let mut fft = RealFft2::<f64>::with_threads(shape, 1).unwrap();
+            let stride = fft.real_row_stride();
+            let initial: Vec<_> = (0..shape[0] * shape[1])
+                .map(|i| Complex::new((i % 7) as f64 - 2.5, 0.0))
+                .collect();
+            let mut storage = vec![Complex::default(); fft.storage_len()];
+            for x in 0..shape[0] {
+                for y in 0..shape[1] {
+                    let offset = x * stride + y;
+                    let value = initial[x * shape[1] + y].re;
+                    if offset % 2 == 0 {
+                        storage[offset / 2].re = value;
+                    } else {
+                        storage[offset / 2].im = value;
+                    }
+                }
+            }
+            fft.forward(&mut storage).unwrap();
+            let expected = direct(&initial, shape, false);
+            for x in 0..shape[0] {
+                for y in 0..shape[1] / 2 + 1 {
+                    assert!(
+                        (storage[x * (stride / 2) + y] - expected[x * shape[1] + y]).norm() < 1e-10
+                    );
+                }
+            }
+            fft.inverse(&mut storage).unwrap();
+            for x in 0..shape[0] {
+                for y in 0..shape[1] {
+                    let offset = x * stride + y;
+                    let actual = if offset % 2 == 0 {
+                        storage[offset / 2].re
+                    } else {
+                        storage[offset / 2].im
+                    };
+                    assert!(
+                        (actual / initial.len() as f64 - initial[x * shape[1] + y].re).abs()
+                            < 1e-11
+                    );
+                }
+            }
+            assert_eq!(fft.forward(&mut []), Err(FftError::InvalidPlane));
+        }
+    }
+
+    #[test]
+    fn real_single_precision_plans_reuse_concurrently_without_complex_cache_alias() {
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                thread::spawn(|| {
+                    let shape = [16, 18];
+                    let mut fft = RealFft2::<f32>::with_threads(shape, 1).unwrap();
+                    let mut storage = vec![Complex::<f32>::new(1.0, 1.0); fft.storage_len()];
+                    fft.forward(&mut storage).unwrap();
+                    assert!((storage[0].re - 288.0).abs() < 1e-4);
+                    let retained = Arc::clone(&fft.fft.current.as_ref().unwrap().1);
+                    let mut another = RealFft2::<f32>::with_threads(shape, 1).unwrap();
+                    another.inverse(&mut storage).unwrap();
+                    assert!(Arc::ptr_eq(
+                        &retained,
+                        &another.fft.current.as_ref().unwrap().1
+                    ));
+                    for row in storage.chunks_exact(fft.real_row_stride() / 2) {
+                        for value in &row[..shape[1] / 2] {
+                            assert!((value.re / 288.0 - 1.0).abs() < 1e-5);
+                            assert!((value.im / 288.0 - 1.0).abs() < 1e-5);
+                        }
+                    }
+                    let mut complex = Fft2::<f32>::with_threads(shape, 1).unwrap();
+                    let mut full = vec![Complex::<f32>::default(); 288];
+                    complex.transform(&mut full, false).unwrap();
+                    assert!(!Arc::ptr_eq(
+                        &retained,
+                        &complex.current.as_ref().unwrap().1
+                    ));
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().unwrap();
         }
     }
 

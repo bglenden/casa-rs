@@ -2,11 +2,11 @@
 
 //! Clark's compact active pixels and linear residual refreshes.
 
-use ndarray::Array2;
+use casa_fft::RealFft2;
 use num_complex::Complex32;
 
 use super::{ClarkApproximation, MinorCycleError};
-use crate::spectral_operator::{PreparedFft, fft_resident_complex_values_for_shape};
+use crate::spectral_operator::SpectralOperatorError;
 
 pub(super) struct ClarkActivePixel {
     index: usize,
@@ -16,9 +16,9 @@ pub(super) struct ClarkActivePixel {
 struct LinearRefresh {
     shape: [usize; 2],
     padded: [usize; 2],
-    psf_spectrum: Array2<Complex32>,
-    components: Array2<Complex32>,
-    fft: PreparedFft<f32>,
+    psf_spectrum: Vec<Complex32>,
+    components: Vec<Complex32>,
+    fft: RealFft2<f32>,
 }
 
 impl LinearRefresh {
@@ -52,19 +52,23 @@ impl LinearRefresh {
         center: [usize; 2],
         padded: [usize; 2],
     ) -> Result<Self, MinorCycleError> {
-        let mut fft = PreparedFft::new(padded, fft_resident_complex_values_for_shape(padded)?)?;
-        let mut psf_spectrum = Array2::from_elem((padded[0], padded[1]), Complex32::default());
+        let mut fft =
+            RealFft2::new(padded).map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
+        let mut psf_spectrum = vec![Complex32::default(); fft.storage_len()];
+        let real_psf: &mut [f32] = bytemuck::cast_slice_mut(&mut psf_spectrum);
+        let row_stride = fft.real_row_stride();
         for x in 0..shape[0] {
             for y in 0..shape[1] {
                 let offset = [
                     (x + padded[0] - center[0]) % padded[0],
                     (y + padded[1] - center[1]) % padded[1],
                 ];
-                psf_spectrum[(offset[0], offset[1])] = Complex32::new(psf[x * shape[1] + y], 0.0);
+                real_psf[offset[0] * row_stride + offset[1]] = psf[x * shape[1] + y];
             }
         }
-        fft.transform_unshifted(&mut psf_spectrum, false);
-        let components = Array2::from_elem((padded[0], padded[1]), Complex32::default());
+        fft.forward(&mut psf_spectrum)
+            .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
+        let components = vec![Complex32::default(); fft.storage_len()];
         Ok(Self {
             shape,
             padded,
@@ -76,20 +80,27 @@ impl LinearRefresh {
 
     fn add(&mut self, index: usize, flux: f64) {
         let pixel = [index / self.shape[1], index % self.shape[1]];
-        self.components[(pixel[0], pixel[1])].re += flux as f32;
+        let real: &mut [f32] = bytemuck::cast_slice_mut(&mut self.components);
+        real[pixel[0] * self.fft.real_row_stride() + pixel[1]] += flux as f32;
     }
 
     fn refresh(&mut self, residual: &mut [f64]) -> Result<(), MinorCycleError> {
-        self.fft.transform_unshifted(&mut self.components, false);
+        self.fft
+            .forward(&mut self.components)
+            .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
         for (value, kernel) in self.components.iter_mut().zip(self.psf_spectrum.iter()) {
             *value *= kernel;
         }
-        self.fft.transform_unshifted(&mut self.components, true);
+        self.fft
+            .inverse(&mut self.components)
+            .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
         let normalization = (self.padded[0] * self.padded[1]) as f64;
+        let real: &[f32] = bytemuck::cast_slice(&self.components);
+        let row_stride = self.fft.real_row_stride();
         for x in 0..self.shape[0] {
             for y in 0..self.shape[1] {
                 let index = x * self.shape[1] + y;
-                residual[index] -= f64::from(self.components[(x, y)].re) / normalization;
+                residual[index] -= f64::from(real[x * row_stride + y]) / normalization;
                 if !residual[index].is_finite() {
                     return Err(MinorCycleError::GeneratedNonfinite);
                 }
@@ -338,6 +349,9 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
             let mut refresh = LinearRefresh::new(&psf, shape, center).unwrap();
+            let half_cells = refresh.padded[0] * (refresh.padded[1] / 2 + 1);
+            assert_eq!(refresh.psf_spectrum.len(), half_cells);
+            assert_eq!(refresh.components.len(), half_cells);
             for axis in 0..2 {
                 assert_eq!(
                     refresh.padded[axis],
@@ -375,6 +389,12 @@ mod tests {
                     "shape={shape:?}, center={center:?}, actual={actual}, expected={expected}"
                 );
             }
+            let completed = actual.clone();
+            refresh.refresh(&mut actual).unwrap();
+            assert_eq!(
+                actual, completed,
+                "completed component batch must be cleared"
+            );
         }
     }
 

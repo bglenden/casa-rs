@@ -167,10 +167,17 @@ pub(crate) fn minor_cycle_workspace(
         .saturating_add(8)
         .saturating_mul(size_of_u64::<Vec<u8>>());
     let clark_active = if matches!(algorithm, ReconstructionAlgorithm::Clark) {
-        let padded = cells.saturating_mul(4);
+        // Any PSF origin fits within the doubled logical extents. Only the
+        // nonredundant half-spectrum is stored; its allocation also holds the
+        // in-place real plane with FFTW's padded final row stride.
+        let half_spectrum = sat_u64(shape[0])
+            .saturating_mul(2)
+            .saturating_mul(sat_u64(shape[1]).saturating_add(1));
         cells
             .saturating_mul(size_of_u64::<clark::ClarkActivePixel>())
-            .saturating_add(padded.saturating_mul(2 * size_of_u64::<num_complex::Complex32>()))
+            .saturating_add(
+                half_spectrum.saturating_mul(2 * size_of_u64::<num_complex::Complex32>()),
+            )
             .saturating_add(
                 sat_u64(
                     crate::spectral_operator::fft_resident_complex_values_for_shape([
@@ -4973,9 +4980,21 @@ mod tests {
         let hogbom = bytes(&ReconstructionAlgorithm::Hogbom, 8, 0);
         let clark = bytes(&ReconstructionAlgorithm::Clark, 8, 0);
         assert!(hogbom > 16 * (shape[0] * shape[1]) as u64);
-        let padded_complex_planes =
-            8 * (shape[0] * shape[1]) as u64 * size_of::<num_complex::Complex32>() as u64;
-        assert!(clark - hogbom >= padded_complex_planes);
+        let half_spectrum_planes =
+            2 * (2 * shape[0] * (shape[1] + 1)) as u64 * size_of::<num_complex::Complex32>() as u64;
+        let active_pixels =
+            (shape[0] * shape[1] * size_of::<super::clark::ClarkActivePixel>()) as u64;
+        let retained_fft_allowance =
+            crate::spectral_operator::fft_resident_complex_values_for_shape([
+                shape[0] * 2,
+                shape[1] * 2,
+            ])
+            .unwrap() as u64
+                * size_of::<num_complex::Complex32>() as u64;
+        assert_eq!(
+            clark - hogbom,
+            half_spectrum_planes + active_pixels + retained_fft_allowance
+        );
         assert!(clark - hogbom < 16 << 20);
         assert!(bytes(&ReconstructionAlgorithm::Clark, 16, 0) > clark);
         assert_eq!(
