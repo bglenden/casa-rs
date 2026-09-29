@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 #[cfg(all(target_os = "macos", not(coverage)))]
 use std::time::Instant;
 
@@ -16,7 +16,6 @@ use crate::{
     TransferLinkId, WorkDomain, WorkExecutionContext, WorkKind, WorkMeasurements, WorkNodeId,
 };
 
-#[cfg(all(target_os = "macos", not(coverage)))]
 use crate::{IoMeasurement, ResourceMeasurement};
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -73,8 +72,10 @@ impl MetalRuntimeInventory {
 pub struct MetalNodeDecision {
     node: WorkNodeId,
     kind: WorkKind,
+    domain: WorkDomain,
     demand_id: String,
     allocations: Vec<AllocationId>,
+    scheduled_allocations: BTreeMap<AllocationId, (PhysicalSlotId, u64)>,
 }
 
 impl MetalNodeDecision {
@@ -109,6 +110,7 @@ pub struct MetalExecutionDecision {
     inventory: MetalRuntimeInventory,
     nodes: BTreeMap<WorkNodeId, MetalNodeDecision>,
     allocation_slots: BTreeMap<AllocationId, PhysicalSlotId>,
+    allocation_bytes: BTreeMap<AllocationId, u64>,
     physical_slots: BTreeMap<PhysicalSlotId, u64>,
     transfers: Vec<TransferLinkId>,
     host_to_device_staging_bytes: u64,
@@ -175,12 +177,16 @@ impl MetalExecutionDecision {
         let mut nodes = BTreeMap::new();
         let mut used_allocations = BTreeSet::new();
         for node in plan.nodes().values() {
-            let WorkDomain::Metal { demand_id } = &node.domain else {
+            let Some(demand_id) = node.metal_demand_id() else {
                 continue;
             };
             if !matches!(
                 node.kind,
-                WorkKind::Preparation | WorkKind::Jit | WorkKind::Compute
+                WorkKind::Preparation
+                    | WorkKind::Jit
+                    | WorkKind::Compute
+                    | WorkKind::ObservationRead
+                    | WorkKind::ObservationReadWriteback
             ) {
                 return Err(MetalRuntimeError::InvalidPlan(format!(
                     "Metal node {} has runtime-incompatible work kind {:?}",
@@ -188,9 +194,14 @@ impl MetalExecutionDecision {
                     node.kind
                 )));
             }
-            if node.fences != BTreeSet::from([FenceKind::Device]) {
+            let fences = if node.domain == WorkDomain::Io {
+                BTreeSet::from([FenceKind::Io, FenceKind::Device])
+            } else {
+                BTreeSet::from([FenceKind::Device])
+            };
+            if node.fences != fences {
                 return Err(MetalRuntimeError::InvalidPlan(format!(
-                    "Metal node {} must declare exactly one device fence",
+                    "Metal node {} must declare its I/O and device completion fences",
                     node.id.as_str()
                 )));
             }
@@ -199,7 +210,7 @@ impl MetalExecutionDecision {
                 .demand
                 .accelerators
                 .iter()
-                .find(|candidate| candidate.demand_id == *demand_id)
+                .find(|candidate| candidate.demand_id == demand_id)
                 .ok_or_else(|| {
                     MetalRuntimeError::InvalidPlan(format!(
                         "Metal node {} names absent accelerator demand {demand_id}",
@@ -215,9 +226,27 @@ impl MetalExecutionDecision {
                     node.id.as_str()
                 )));
             }
+            let scheduled_allocations = node
+                .allocations
+                .iter()
+                .map(|use_| {
+                    let allocation = &plan.logical_allocations()[&use_.allocation];
+                    let slot = &plan.physical_slots()[&allocation.physical_slot];
+                    (
+                        allocation.id.clone(),
+                        (slot.id.clone(), slot.capacity_bytes),
+                    )
+                })
+                .collect();
             let allocations = node
                 .allocations
                 .iter()
+                .filter(|use_| {
+                    plan.logical_allocations()[&use_.allocation]
+                        .compatibility
+                        .storage_mode
+                        == StorageMode::MetalShared
+                })
                 .map(|use_| use_.allocation.clone())
                 .collect::<Vec<_>>();
             used_allocations.extend(allocations.iter().cloned());
@@ -226,8 +255,10 @@ impl MetalExecutionDecision {
                 MetalNodeDecision {
                     node: node.id.clone(),
                     kind: node.kind,
-                    demand_id: demand_id.clone(),
+                    domain: node.domain.clone(),
+                    demand_id: demand_id.to_owned(),
                     allocations,
+                    scheduled_allocations,
                 },
             );
         }
@@ -243,13 +274,14 @@ impl MetalExecutionDecision {
                 "Metal work requires positive driver and command-buffer envelopes".to_string(),
             ));
         }
-        if nodes.values().any(|node| node.kind == WorkKind::Jit) && overhead.jit_bytes == 0 {
+        if overhead.jit_bytes == 0 {
             return Err(MetalRuntimeError::InvalidPlan(
-                "Metal JIT work requires a positive JIT envelope".to_string(),
+                "Metal pipeline preparation requires a positive JIT envelope".to_string(),
             ));
         }
 
         let mut allocation_slots = BTreeMap::new();
+        let mut allocation_bytes = BTreeMap::new();
         let mut physical_slots = BTreeMap::new();
         for allocation_id in used_allocations {
             let allocation = &plan.logical_allocations()[&allocation_id];
@@ -267,19 +299,14 @@ impl MetalExecutionDecision {
                 .entry(slot.id.clone())
                 .and_modify(|bytes: &mut u64| *bytes = (*bytes).max(slot.capacity_bytes))
                 .or_insert(slot.capacity_bytes);
+            allocation_bytes.insert(allocation_id.clone(), allocation.bytes);
             allocation_slots.insert(allocation_id, slot.id.clone());
         }
-        let residency_bytes = physical_slots.values().try_fold(0_u64, |total, bytes| {
+        physical_slots.values().try_fold(0_u64, |total, bytes| {
             total
                 .checked_add(*bytes)
                 .ok_or(MetalRuntimeError::Overflow("Metal residency"))
         })?;
-        if residency_bytes > domain.capacity_bytes {
-            return Err(MetalRuntimeError::Ineligible(format!(
-                "Metal residency {residency_bytes} exceeds unified capacity {}",
-                domain.capacity_bytes
-            )));
-        }
 
         let io = plan.resource_alternative().demand.io_buffers;
         let transfers = plan
@@ -326,6 +353,7 @@ impl MetalExecutionDecision {
             },
             nodes,
             allocation_slots,
+            allocation_bytes,
             physical_slots,
             transfers,
             host_to_device_staging_bytes: io.bytes(IoBufferKind::HostToDeviceTransfer),
@@ -357,7 +385,7 @@ impl MetalExecutionDecision {
         &self.physical_slots
     }
 
-    /// Return the sum of unique physical-slot capacities.
+    /// Return total declared slot capacity, not peak concurrent live residency.
     #[must_use]
     pub fn residency_bytes(&self) -> u64 {
         self.physical_slots.values().sum()
@@ -411,34 +439,73 @@ pub(crate) struct MetalExecutionState {
 )]
 struct MetalExecutionInner {
     attempt_id: Option<ExecutionAttemptId>,
-    submitted: BTreeSet<WorkNodeId>,
+    nodes: BTreeMap<WorkNodeId, MetalNodeProgress>,
     closed: bool,
     #[cfg(all(target_os = "macos", not(coverage)))]
     platform: Option<MetalPlatformState>,
 }
 
-#[cfg(all(target_os = "macos", not(coverage)))]
 #[allow(
     dead_code,
     reason = "T57 consumes the constrained Metal execution seam"
 )]
+#[cfg(all(target_os = "macos", not(coverage)))]
 struct MetalPlatformState {
-    _device: Retained<ProtocolObject<dyn MTLDevice>>,
+    device: Retained<ProtocolObject<dyn MTLDevice>>,
     queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
     buffers: BTreeMap<PhysicalSlotId, Retained<ProtocolObject<dyn MTLBuffer>>>,
-    active: Option<MetalInFlight>,
+    kernels: Option<crate::metal_cube::MetalCubeKernels>,
 }
 
-#[cfg(all(target_os = "macos", not(coverage)))]
-#[allow(
-    dead_code,
-    reason = "T57 consumes the constrained Metal execution seam"
-)]
-struct MetalInFlight {
-    node: WorkNodeId,
-    command: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
-    measurements: WorkMeasurements,
-    _started: Instant,
+#[derive(Default)]
+struct MetalNodeProgress {
+    prepared: bool,
+    finished: bool,
+    stats: MetalBatchStats,
+}
+
+/// Actual submitted work, not a projection from the resource envelope.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct MetalBatchStats {
+    pub batches: u64,
+    pub grid_samples: u64,
+    pub degrid_samples: u64,
+    pub gpu_seconds: f64,
+    pub submit_wait_seconds: f64,
+}
+
+/// A bounded region of a plan-owned shared allocation. Multiple plane regions
+/// can occupy one wave allocation without separate device allocations.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct MetalBufferRegion<'a> {
+    pub allocation: &'a AllocationId,
+    pub offset: usize,
+    pub bytes: usize,
+}
+
+impl MetalBufferRegion<'_> {
+    fn overlaps(self, other: Self) -> bool {
+        self.allocation == other.allocation
+            && self.offset < other.offset.saturating_add(other.bytes)
+            && other.offset < self.offset.saturating_add(self.bytes)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum CubeDispatchKind<'a> {
+    Grid,
+    Degrid { predicted: MetalBufferRegion<'a> },
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CubeDispatch<'a> {
+    pub kind: CubeDispatchKind<'a>,
+    pub samples: MetalBufferRegion<'a>,
+    pub weights: MetalBufferRegion<'a>,
+    pub grid: MetalBufferRegion<'a>,
+    pub count: u32,
+    pub width: u32,
+    pub height: u32,
 }
 
 impl fmt::Debug for MetalExecutionState {
@@ -462,7 +529,7 @@ impl MetalExecutionState {
             lease_epoch,
             inner: Mutex::new(MetalExecutionInner {
                 attempt_id: None,
-                submitted: BTreeSet::new(),
+                nodes: BTreeMap::new(),
                 closed: false,
                 #[cfg(all(target_os = "macos", not(coverage)))]
                 platform: None,
@@ -470,17 +537,11 @@ impl MetalExecutionState {
         })
     }
 
-    /// Submit a command with no encoders. T57 replaces this host-smoke
-    /// operation with typed, crate-private compute encoding operations.
-    #[allow(
-        dead_code,
-        reason = "T57 consumes the constrained Metal execution seam"
-    )]
-    pub(crate) fn submit_noop(
+    fn lock_for_work(
         &self,
         context: WorkExecutionContext<'_>,
-    ) -> Result<(), MetalRuntimeError> {
-        validate_execution_context(&self.decision, context)?;
+    ) -> Result<MutexGuard<'_, MetalExecutionInner>, MetalRuntimeError> {
+        validate_execution_context(&self.decision, context, false)?;
         if context.lease_epoch() != self.lease_epoch {
             return Err(MetalRuntimeError::LeaseMismatch);
         }
@@ -498,41 +559,133 @@ impl MetalExecutionState {
             None => inner.attempt_id = Some(context.attempt_id()),
             Some(_) => {}
         }
-        let node = context.node().id.clone();
-        if inner.submitted.contains(&node) {
-            return Err(MetalRuntimeError::NodeAlreadySubmitted(node));
+        if inner
+            .nodes
+            .get(&context.node().id)
+            .is_some_and(|node| node.finished)
+        {
+            return Err(MetalRuntimeError::NodeFinished(context.node().id.clone()));
         }
-        submit_platform_noop(&self.decision, &mut inner, context)?;
-        inner.submitted.insert(node);
+        Ok(inner)
+    }
+
+    /// Prepare pipelines and materialize only this admitted node's device slots.
+    /// No command is fabricated for preparation-only work.
+    pub(crate) fn prepare(
+        &self,
+        context: WorkExecutionContext<'_>,
+    ) -> Result<(), MetalRuntimeError> {
+        let mut inner = self.lock_for_work(context)?;
+        prepare_platform(&self.decision, &mut inner, &context.node().id)?;
+        inner
+            .nodes
+            .entry(context.node().id.clone())
+            .or_default()
+            .prepared = true;
         Ok(())
     }
 
-    #[allow(
-        dead_code,
-        reason = "T57 consumes the constrained Metal execution seam"
-    )]
-    pub(crate) fn wait(
+    /// CPU access is scoped under the same lock as synchronous GPU batches. No
+    /// buffer handle or borrowed slice can outlive this call or overlap a command.
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    pub(crate) fn with_shared_bytes<R>(
+        &self,
+        context: WorkExecutionContext<'_>,
+        region: MetalBufferRegion<'_>,
+        use_bytes: impl FnOnce(&mut [u8]) -> R,
+    ) -> Result<R, MetalRuntimeError> {
+        let mut inner = self.lock_for_work(context)?;
+        prepare_platform(&self.decision, &mut inner, &context.node().id)?;
+        let platform = inner.platform.as_ref().expect("prepared platform");
+        let (buffer, offset) = buffer_region(&self.decision, platform, &context.node().id, region)?;
+        // All batches hold this mutex through waitUntilCompleted. Bounds and
+        // the exact scheduler-issued allocation capability were checked above.
+        let bytes = unsafe {
+            std::slice::from_raw_parts_mut(
+                buffer.contents().as_ptr().cast::<u8>().add(offset),
+                region.bytes,
+            )
+        };
+        Ok(use_bytes(bytes))
+    }
+
+    /// Execute one bounded group of real spatial operators. Completion permits
+    /// buffer reuse, but does not release either terminal I/O or device claims.
+    /// The source consumer can therefore safely return its borrowed input block.
+    pub(crate) fn execute_cube_batch(
+        &self,
+        context: WorkExecutionContext<'_>,
+        dispatches: &[CubeDispatch<'_>],
+    ) -> Result<MetalBatchStats, MetalRuntimeError> {
+        let mut inner = self.lock_for_work(context)?;
+        if dispatches.is_empty() {
+            return Err(MetalRuntimeError::InvalidPlan(
+                "empty Metal compute batch".into(),
+            ));
+        }
+        prepare_platform(&self.decision, &mut inner, &context.node().id)?;
+        let stats =
+            execute_platform_batch(&self.decision, &mut inner, &context.node().id, dispatches)?;
+        let progress = inner.nodes.entry(context.node().id.clone()).or_default();
+        progress.prepared = true;
+        progress.stats.batches += stats.batches;
+        progress.stats.grid_samples += stats.grid_samples;
+        progress.stats.degrid_samples += stats.degrid_samples;
+        progress.stats.gpu_seconds += stats.gpu_seconds;
+        progress.stats.submit_wait_seconds += stats.submit_wait_seconds;
+        Ok(stats)
+    }
+
+    /// Consume terminal device evidence once, after any number of drained
+    /// batches. This is distinct from batch completion and works in either
+    /// terminal I/O/device fence order.
+    pub(crate) fn finish(
         &self,
         context: WorkExecutionContext<'_>,
     ) -> Result<WorkMeasurements, MetalRuntimeError> {
-        validate_execution_context(&self.decision, context)?;
-        if context.lease_epoch() != self.lease_epoch {
-            return Err(MetalRuntimeError::LeaseMismatch);
-        }
+        validate_execution_context(&self.decision, context, true)?;
         let mut inner = self
             .inner
             .lock()
             .map_err(|_| MetalRuntimeError::RuntimeStatePoisoned)?;
-        if inner.attempt_id != Some(context.attempt_id()) {
+        if inner.closed {
+            return Err(MetalRuntimeError::RuntimeClosed);
+        }
+        if context.lease_epoch() != self.lease_epoch
+            || inner.attempt_id != Some(context.attempt_id())
+        {
             return Err(MetalRuntimeError::LeaseMismatch);
         }
-        wait_platform(&mut inner, &context.node().id)
+        let progress = inner
+            .nodes
+            .get_mut(&context.node().id)
+            .ok_or(MetalRuntimeError::FenceAlreadySettled)?;
+        if progress.finished {
+            return Err(MetalRuntimeError::FenceAlreadySettled);
+        }
+        if !progress.prepared
+            || (requires_dispatch(context.node().kind) && progress.stats.batches == 0)
+        {
+            return Err(MetalRuntimeError::InvalidPlan(
+                "Metal compute stage did not dispatch".into(),
+            ));
+        }
+        progress.finished = true;
+        Ok(measurements(context))
     }
 
     pub(crate) fn submitted(&self, node: &WorkNodeId) -> Result<bool, MetalRuntimeError> {
         self.inner
             .lock()
-            .map(|inner| inner.submitted.contains(node))
+            .map(|inner| {
+                inner.nodes.get(node).is_some_and(|progress| {
+                    if requires_dispatch(self.decision.nodes[node].kind) {
+                        progress.stats.batches > 0
+                    } else {
+                        progress.prepared
+                    }
+                })
+            })
             .map_err(|_| MetalRuntimeError::RuntimeStatePoisoned)
     }
 
@@ -543,6 +696,28 @@ impl MetalExecutionState {
             .map_err(|_| MetalRuntimeError::RuntimeStatePoisoned)?;
         close_platform(&mut inner)?;
         inner.closed = true;
+        Ok(())
+    }
+
+    /// Called by the scheduler at the allocation ledger's actual release event,
+    /// before its reservation can be reused by another logical allocation.
+    pub(crate) fn release_allocation(
+        &self,
+        allocation: &AllocationId,
+    ) -> Result<(), MetalRuntimeError> {
+        let Some(slot) = self.decision.allocation_slots.get(allocation) else {
+            return Ok(());
+        };
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| MetalRuntimeError::RuntimeStatePoisoned)?;
+        #[cfg(all(target_os = "macos", not(coverage)))]
+        if let Some(platform) = inner.platform.as_mut() {
+            platform.buffers.remove(slot);
+        }
+        #[cfg(not(all(target_os = "macos", not(coverage))))]
+        let _ = (slot, &mut inner);
         Ok(())
     }
 
@@ -570,16 +745,16 @@ pub enum MetalRuntimeError {
     LeaseMismatch,
     /// The execution residency was closed before another submission.
     RuntimeClosed,
-    /// Another command still owns the runtime queue and residency lifetime.
-    CommandAlreadyInFlight,
     /// The runtime command state could not be observed safely.
     RuntimeStatePoisoned,
     /// A checked byte calculation overflowed.
     Overflow(&'static str),
     /// A plan-selected node was absent from the Metal decision.
     UnknownNode(WorkNodeId),
-    /// The scheduler attempted to submit the same Metal node more than once.
-    NodeAlreadySubmitted(WorkNodeId),
+    /// Work attempted another batch after terminal device completion.
+    NodeFinished(WorkNodeId),
+    /// A pipeline or typed dispatch could not be encoded.
+    Encoding(String),
     /// The selected device could not create its command queue or buffer.
     CommandQueueUnavailable,
     /// One resident allocation exceeds the device's buffer limit.
@@ -616,9 +791,6 @@ impl fmt::Display for MetalRuntimeError {
             Self::LeaseMismatch => formatter
                 .write_str("Metal work context does not belong to the runtime execution lease"),
             Self::RuntimeClosed => formatter.write_str("Metal execution residency is closed"),
-            Self::CommandAlreadyInFlight => {
-                formatter.write_str("a Metal command is already in flight")
-            }
             Self::RuntimeStatePoisoned => {
                 formatter.write_str("Metal runtime command state is poisoned")
             }
@@ -630,11 +802,12 @@ impl fmt::Display for MetalRuntimeError {
                     node.as_str()
                 )
             }
-            Self::NodeAlreadySubmitted(node) => write!(
+            Self::NodeFinished(node) => write!(
                 formatter,
-                "Metal node {} was already submitted under this lease",
+                "Metal node {} already finished under this lease",
                 node.as_str()
             ),
+            Self::Encoding(reason) => write!(formatter, "Metal encoding failed: {reason}"),
             Self::CommandQueueUnavailable => {
                 formatter.write_str("plan-selected Metal command queue is unavailable")
             }
@@ -667,16 +840,40 @@ impl Error for MetalRuntimeError {}
 fn validate_execution_context(
     decision: &MetalExecutionDecision,
     context: WorkExecutionContext<'_>,
+    terminal: bool,
 ) -> Result<(), MetalRuntimeError> {
     let node = decision
         .nodes
         .get(&context.node().id)
         .ok_or_else(|| MetalRuntimeError::UnknownNode(context.node().id.clone()))?;
     if context.node().kind != node.kind
-        || context.node().domain
-            != (WorkDomain::Metal {
-                demand_id: node.demand_id.clone(),
+        || context.node().domain != node.domain
+        || context.node().metal_demand_id() != Some(node.demand_id.as_str())
+        || context.resources().len()
+            != context
+                .node()
+                .claims
+                .iter()
+                .filter(|claim| !terminal || claim.lifetime.retains_fence(FenceKind::Device))
+                .count()
+        || context
+            .node()
+            .claims
+            .iter()
+            .filter(|claim| !terminal || claim.lifetime.retains_fence(FenceKind::Device))
+            .any(|claim| {
+                !context.resources().iter().any(|resource| {
+                    resource.resource() == &claim.resource
+                        && resource.amount() == claim.amount
+                        && resource.lifetime() == &claim.lifetime
+                })
             })
+        || context.node().allocations.iter().any(|use_| {
+            !context.allocations().iter().any(|allocation| {
+                allocation.allocation() == &use_.allocation
+                    && allocation.lifetime() == &use_.lifetime
+            })
+        })
     {
         return Err(MetalRuntimeError::LeaseMismatch);
     }
@@ -711,21 +908,12 @@ fn validate_execution_context(
             )
         })
         .collect::<BTreeMap<_, _>>();
-    if scheduled_allocations.len() != node.allocations.len()
-        || node.allocations.iter().any(|allocation| {
-            let Some((slot, capacity)) = scheduled_allocations.get(allocation) else {
-                return true;
-            };
-            decision.allocation_slots.get(allocation) != Some(slot)
-                || decision.physical_slots.get(slot) != Some(capacity)
-        })
-    {
+    if scheduled_allocations != node.scheduled_allocations {
         return Err(MetalRuntimeError::LeaseMismatch);
     }
     Ok(())
 }
 
-#[cfg(all(target_os = "macos", not(coverage)))]
 #[allow(
     dead_code,
     reason = "T57 consumes the constrained Metal execution seam"
@@ -762,13 +950,17 @@ fn measurements(context: WorkExecutionContext<'_>) -> WorkMeasurements {
     )
 }
 
+fn requires_dispatch(kind: WorkKind) -> bool {
+    !matches!(kind, WorkKind::Preparation | WorkKind::Jit)
+}
+
 #[cfg(all(target_os = "macos", not(coverage)))]
 #[allow(
     dead_code,
     reason = "T57 consumes the constrained Metal execution seam"
 )]
 fn open_platform_state(
-    decision: &MetalExecutionDecision,
+    _decision: &MetalExecutionDecision,
 ) -> Result<MetalPlatformState, MetalRuntimeError> {
     let device = MTLCreateSystemDefaultDevice().ok_or_else(|| {
         MetalRuntimeError::Ineligible("no process-accessible Metal device".to_string())
@@ -781,139 +973,254 @@ fn open_platform_state(
     let queue = device
         .newCommandQueue()
         .ok_or(MetalRuntimeError::CommandQueueUnavailable)?;
-    let recommended_working_set_bytes = device.recommendedMaxWorkingSetSize();
-    let maximum_buffer_bytes = device.maxBufferLength() as u64;
-    if decision.residency_bytes() > recommended_working_set_bytes {
-        return Err(MetalRuntimeError::Ineligible(format!(
-            "planned residency {} exceeds the device working-set recommendation {recommended_working_set_bytes}",
-            decision.residency_bytes()
-        )));
-    }
-    let mut buffers = BTreeMap::new();
-    for (slot, bytes) in &decision.physical_slots {
-        if *bytes > maximum_buffer_bytes {
-            return Err(MetalRuntimeError::BufferTooLarge {
-                slot: slot.clone(),
-                bytes: *bytes,
-            });
-        }
-        let buffer = device
-            .newBufferWithLength_options(*bytes as usize, MTLResourceOptions::StorageModeShared)
-            .ok_or_else(|| MetalRuntimeError::AllocationFailed {
-                slot: slot.clone(),
-                bytes: *bytes,
-            })?;
-        buffers.insert(slot.clone(), buffer);
-    }
     Ok(MetalPlatformState {
-        _device: device,
+        device,
         queue,
-        buffers,
-        active: None,
+        buffers: BTreeMap::new(),
+        kernels: None,
     })
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
-#[allow(
-    dead_code,
-    reason = "T57 consumes the constrained Metal execution seam"
-)]
-fn submit_platform_noop(
+fn prepare_platform(
     decision: &MetalExecutionDecision,
     inner: &mut MetalExecutionInner,
-    context: WorkExecutionContext<'_>,
+    node: &WorkNodeId,
 ) -> Result<(), MetalRuntimeError> {
     if inner.platform.is_none() {
         inner.platform = Some(open_platform_state(decision)?);
     }
     let platform = inner.platform.as_mut().expect("platform initialized");
-    if platform.active.is_some() {
-        return Err(MetalRuntimeError::CommandAlreadyInFlight);
+    let slots = decision.nodes[node]
+        .allocations
+        .iter()
+        .map(|id| &decision.allocation_slots[id])
+        .collect::<BTreeSet<_>>();
+    let added_bytes: u64 = slots
+        .iter()
+        .filter(|slot| !platform.buffers.contains_key(**slot))
+        .map(|slot| decision.physical_slots[*slot])
+        .sum();
+    let resident_bytes: u64 = platform
+        .buffers
+        .values()
+        .map(|buffer| buffer.length() as u64)
+        .sum();
+    if resident_bytes
+        .checked_add(added_bytes)
+        .is_none_or(|bytes| bytes > platform.device.recommendedMaxWorkingSetSize())
+    {
+        return Err(MetalRuntimeError::Ineligible(
+            "admitted live Metal slots exceed device working-set recommendation".into(),
+        ));
     }
-    let command = platform
-        .queue
-        .commandBuffer()
-        .ok_or(MetalRuntimeError::CommandQueueUnavailable)?;
-    let started = Instant::now();
-    command.commit();
-    platform.active = Some(MetalInFlight {
-        node: context.node().id.clone(),
-        command,
-        measurements: measurements(context),
-        _started: started,
-    });
+    for slot in slots {
+        if platform.buffers.contains_key(slot) {
+            continue;
+        }
+        let bytes = decision.physical_slots[slot];
+        let maximum_buffer_bytes = platform.device.maxBufferLength() as u64;
+        if bytes > maximum_buffer_bytes {
+            return Err(MetalRuntimeError::BufferTooLarge {
+                slot: slot.clone(),
+                bytes,
+            });
+        }
+        let buffer = platform
+            .device
+            .newBufferWithLength_options(bytes as usize, MTLResourceOptions::StorageModeShared)
+            .ok_or_else(|| MetalRuntimeError::AllocationFailed {
+                slot: slot.clone(),
+                bytes,
+            })?;
+        platform.buffers.insert(slot.clone(), buffer);
+    }
+    if platform.kernels.is_none() {
+        platform.kernels = Some(
+            crate::metal_cube::MetalCubeKernels::compile(&platform.device)
+                .map_err(MetalRuntimeError::Encoding)?,
+        );
+    }
     Ok(())
 }
 
 #[cfg(not(all(target_os = "macos", not(coverage))))]
-#[allow(
-    dead_code,
-    reason = "T57 consumes the constrained Metal execution seam"
-)]
-fn submit_platform_noop(
+fn prepare_platform(
     _decision: &MetalExecutionDecision,
     _inner: &mut MetalExecutionInner,
-    _context: WorkExecutionContext<'_>,
+    _node: &WorkNodeId,
 ) -> Result<(), MetalRuntimeError> {
     Err(MetalRuntimeError::UnsupportedPlatform)
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
-#[allow(
-    dead_code,
-    reason = "T57 consumes the constrained Metal execution seam"
-)]
-fn wait_platform(
+fn buffer_region<'p>(
+    decision: &MetalExecutionDecision,
+    platform: &'p MetalPlatformState,
+    node: &WorkNodeId,
+    region: MetalBufferRegion<'_>,
+) -> Result<(&'p ProtocolObject<dyn MTLBuffer>, usize), MetalRuntimeError> {
+    if !decision.nodes[node].allocations.contains(region.allocation)
+        || region.bytes == 0
+        || region
+            .offset
+            .checked_add(region.bytes)
+            .is_none_or(|end| end as u64 > decision.allocation_bytes[region.allocation])
+    {
+        return Err(MetalRuntimeError::InvalidPlan(
+            "Metal region exceeds this node's logical allocation".into(),
+        ));
+    }
+    let buffer = platform
+        .buffers
+        .get(&decision.allocation_slots[region.allocation])
+        .ok_or_else(|| MetalRuntimeError::InvalidPlan("Metal allocation is not resident".into()))?;
+    Ok((buffer.as_ref(), region.offset))
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn execute_platform_batch(
+    decision: &MetalExecutionDecision,
     inner: &mut MetalExecutionInner,
     node: &WorkNodeId,
-) -> Result<WorkMeasurements, MetalRuntimeError> {
-    let platform = inner
-        .platform
-        .as_mut()
-        .ok_or(MetalRuntimeError::FenceAlreadySettled)?;
-    let active = platform
-        .active
-        .take()
-        .ok_or(MetalRuntimeError::FenceAlreadySettled)?;
-    if &active.node != node {
-        platform.active = Some(active);
-        return Err(MetalRuntimeError::UnknownNode(node.clone()));
+    dispatches: &[CubeDispatch<'_>],
+) -> Result<MetalBatchStats, MetalRuntimeError> {
+    let platform = inner.platform.as_ref().expect("prepared platform");
+    let kernels = platform.kernels.as_ref().expect("prepared pipelines");
+    let command = platform
+        .queue
+        .commandBuffer()
+        .ok_or(MetalRuntimeError::CommandQueueUnavailable)?;
+    let mut stats = MetalBatchStats {
+        batches: 1,
+        ..MetalBatchStats::default()
+    };
+    for dispatch in dispatches {
+        let region = |r| buffer_region(decision, platform, node, r);
+        let samples = region(dispatch.samples)?;
+        let weights = region(dispatch.weights)?;
+        let grid = region(dispatch.grid)?;
+        let count = dispatch.count as usize;
+        let output = match dispatch.kind {
+            CubeDispatchKind::Grid => dispatch.grid,
+            CubeDispatchKind::Degrid { predicted } => predicted,
+        };
+        if count == 0
+            || dispatch.width < 7
+            || dispatch.height < 7
+            || dispatch.samples.offset % 8 != 0
+            || dispatch.grid.offset % 8 != 0
+            || dispatch.weights.offset % 4 != 0
+            || count
+                .checked_mul(size_of::<crate::metal_cube::CubeTap>())
+                .is_none_or(|bytes| bytes > dispatch.samples.bytes)
+            || (dispatch.width as usize)
+                .checked_mul(dispatch.height as usize)
+                .and_then(|cells| cells.checked_mul(8))
+                .is_none_or(|bytes| bytes > dispatch.grid.bytes)
+            || dispatch.weights.bytes < 7 * 4
+            || dispatch.width.checked_mul(dispatch.height).is_none()
+            || output.overlaps(dispatch.samples)
+            || output.overlaps(dispatch.weights)
+            || (matches!(dispatch.kind, CubeDispatchKind::Degrid { .. })
+                && output.overlaps(dispatch.grid))
+        {
+            return Err(MetalRuntimeError::InvalidPlan(
+                "invalid cube dispatch shape or buffer capacity".into(),
+            ));
+        }
+        // Validate the externally encoded tap layout before the GPU can access
+        // it. This is a bounded input check, never a grid-content verification.
+        let taps = unsafe {
+            std::slice::from_raw_parts(
+                samples
+                    .0
+                    .contents()
+                    .as_ptr()
+                    .cast::<u8>()
+                    .add(samples.1)
+                    .cast::<crate::metal_cube::CubeTap>(),
+                count,
+            )
+        };
+        let weight_rows = dispatch.weights.bytes / (7 * 4);
+        if taps.iter().any(|tap| {
+            tap.x > dispatch.width - 7
+                || tap.y > dispatch.height - 7
+                || tap.x_weights as usize >= weight_rows
+                || tap.y_weights as usize >= weight_rows
+        }) {
+            return Err(MetalRuntimeError::InvalidPlan(
+                "cube tap exceeds grid or convolution table".into(),
+            ));
+        }
+        match dispatch.kind {
+            CubeDispatchKind::Grid => {
+                kernels
+                    .encode_grid(
+                        &command,
+                        samples,
+                        weights,
+                        grid,
+                        dispatch.count,
+                        dispatch.width,
+                        dispatch.height,
+                    )
+                    .map_err(MetalRuntimeError::Encoding)?;
+                stats.grid_samples += u64::from(dispatch.count);
+            }
+            CubeDispatchKind::Degrid { predicted } => {
+                if predicted.offset % 8 != 0
+                    || count
+                        .checked_mul(8)
+                        .is_none_or(|bytes| bytes > predicted.bytes)
+                {
+                    return Err(MetalRuntimeError::InvalidPlan(
+                        "invalid predicted visibility capacity".into(),
+                    ));
+                }
+                kernels
+                    .encode_degrid(
+                        &command,
+                        samples,
+                        weights,
+                        grid,
+                        region(predicted)?,
+                        dispatch.count,
+                        dispatch.width,
+                        dispatch.height,
+                    )
+                    .map_err(MetalRuntimeError::Encoding)?;
+                stats.degrid_samples += u64::from(dispatch.count);
+            }
+        }
     }
-    active.command.waitUntilCompleted();
-    if active.command.status() != MTLCommandBufferStatus::Completed {
+    let started = Instant::now();
+    command.commit();
+    command.waitUntilCompleted();
+    if command.status() != MTLCommandBufferStatus::Completed {
         return Err(MetalRuntimeError::CommandFailed {
-            node: active.node,
-            status: active.command.status().0 as u64,
+            node: node.clone(),
+            status: command.status().0 as u64,
         });
     }
-    Ok(active.measurements)
+    stats.submit_wait_seconds = started.elapsed().as_secs_f64();
+    stats.gpu_seconds = (command.GPUEndTime() - command.GPUStartTime()).max(0.0);
+    Ok(stats)
 }
 
 #[cfg(not(all(target_os = "macos", not(coverage))))]
-#[allow(
-    dead_code,
-    reason = "T57 consumes the constrained Metal execution seam"
-)]
-fn wait_platform(
+fn execute_platform_batch(
+    _decision: &MetalExecutionDecision,
     _inner: &mut MetalExecutionInner,
     _node: &WorkNodeId,
-) -> Result<WorkMeasurements, MetalRuntimeError> {
+    _dispatches: &[CubeDispatch<'_>],
+) -> Result<MetalBatchStats, MetalRuntimeError> {
     Err(MetalRuntimeError::UnsupportedPlatform)
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
 fn close_platform(inner: &mut MetalExecutionInner) -> Result<(), MetalRuntimeError> {
-    if let Some(platform) = inner.platform.as_mut()
-        && let Some(active) = platform.active.take()
-    {
-        active.command.waitUntilCompleted();
-        if active.command.status() != MTLCommandBufferStatus::Completed {
-            return Err(MetalRuntimeError::CommandFailed {
-                node: active.node,
-                status: active.command.status().0 as u64,
-            });
-        }
-    }
     inner.platform = None;
     Ok(())
 }
@@ -945,6 +1252,373 @@ mod tests {
 
     fn metal_plan(shared_slot_count: usize) -> (ExecutionDag, ResourceTopology) {
         metal_plan_with_nodes(shared_slot_count, 1)
+    }
+
+    fn specification(plan: &ExecutionDag) -> ExecutionDagSpecification {
+        ExecutionDagSpecification {
+            required_resource_capabilities: plan.required_resource_capabilities().clone(),
+            resource_alternative: plan.resource_alternative().clone(),
+            nodes: plan.nodes().values().cloned().collect(),
+            logical_allocations: plan.logical_allocations().values().cloned().collect(),
+            physical_slots: plan.physical_slots().values().cloned().collect(),
+            initial_knobs: plan.initial_knobs().clone(),
+            adaptations: plan.adaptations().values().cloned().collect(),
+        }
+    }
+
+    fn mixed_specification() -> (ExecutionDagSpecification, ResourceTopology) {
+        let (plan, mut topology) = metal_plan(2);
+        let mut spec = specification(&plan);
+        let node = &mut spec.nodes[0];
+        node.domain = WorkDomain::Io;
+        node.kind = WorkKind::ObservationRead;
+        node.fences.insert(FenceKind::Io);
+        let lifetime = node.payload_lifetime();
+        for claim in &mut node.claims {
+            claim.lifetime = lifetime.clone();
+        }
+        for allocation in &mut node.allocations {
+            allocation.lifetime = lifetime.clone();
+        }
+        for allocation in &mut spec.logical_allocations {
+            allocation
+                .lifetime
+                .release_after
+                .insert(crate::WorkDependency::Fence(crate::FenceId::new(
+                    node.id.clone(),
+                    FenceKind::Io,
+                )));
+        }
+        let measurement_set = casa_imaging_model::MeasurementSetIdentity::new(
+            casa_imaging_model::LogicalIdentity::from_sha256([1; 32]),
+        );
+        for resource in [
+            LeaseResource::MeasurementSetLock { measurement_set },
+            LeaseResource::Queue {
+                demand_id: "reader-queue".into(),
+            },
+            LeaseResource::Rate {
+                demand_id: "reader-rate".into(),
+            },
+        ] {
+            node.claims.push(ResourceClaim {
+                resource,
+                amount: 1,
+                lifetime: lifetime.clone(),
+            });
+        }
+        // The source/CPU slot is deliberately not GPU-visible.
+        let host_views = BTreeSet::from([CapacityViewId::new("host")]);
+        spec.logical_allocations[1].compatibility.storage_mode = StorageMode::Host;
+        spec.logical_allocations[1].compatibility.views = host_views.clone();
+        spec.physical_slots[1].compatibility = spec.logical_allocations[1].compatibility.clone();
+        let demand = &mut spec.resource_alternative.demand;
+        demand.memory[1].views = host_views.into_iter().collect();
+        demand.locks = CountDemand::new(1, 1);
+        let queue = QueueResourceId::new("reader");
+        let rate = crate::RateResourceId::new("reader");
+        demand.queues.push(QueueDemand {
+            demand_id: "reader-queue".into(),
+            resource: queue.clone(),
+            slots: CountDemand::new(1, 1),
+        });
+        demand.rates.push(crate::RateDemand {
+            demand_id: "reader-rate".into(),
+            resource: rate.clone(),
+            amount: CountDemand::new(1, 1),
+        });
+        topology.queue_resources.push(QueueResource::new(queue, 1));
+        topology.rate_resources.push(crate::RateResource::new(
+            rate,
+            crate::RateUnit::BytesPerSecond,
+            1,
+        ));
+        (spec, topology)
+    }
+
+    fn authority(topology: ResourceTopology) -> crate::ResourceAuthority {
+        let pressure = ExternalPressure {
+            memory_available_bytes: topology
+                .memory_domains
+                .iter()
+                .map(|d| (d.id.clone(), d.capacity_bytes))
+                .collect(),
+            available_cpu_threads: topology.logical_cpu_threads,
+            storage_available_bytes: BTreeMap::new(),
+            rate_available_per_second: topology
+                .rate_resources
+                .iter()
+                .map(|r| (r.id.clone(), 1))
+                .collect(),
+            queue_available_slots: topology
+                .queue_resources
+                .iter()
+                .map(|q| (q.id.clone(), q.slots))
+                .collect(),
+            accelerator_available_slots: topology
+                .accelerators
+                .iter()
+                .map(|a| (a.id.clone(), a.occupancy_slots))
+                .collect(),
+            cache_available_bytes: topology.cache_capacity_bytes,
+            available_locks: topology.lock_capacity,
+            available_file_descriptors: topology.file_descriptor_capacity,
+        };
+        crate::ResourceAuthority::with_inventory(HostInventory { topology, pressure })
+            .expect("fixture inventory")
+    }
+
+    #[test]
+    fn mixed_observation_retains_host_and_device_claims_through_both_fence_orders() {
+        for order in [
+            [FenceKind::Io, FenceKind::Device],
+            [FenceKind::Device, FenceKind::Io],
+        ] {
+            let (spec, topology) = mixed_specification();
+            let plan = ExecutionDag::new(spec).expect("mixed observation DAG");
+            let decision = MetalExecutionDecision::bind(&plan, &topology).expect("mixed decision");
+            assert_eq!(decision.physical_slots().len(), 1);
+            assert_eq!(
+                decision
+                    .nodes()
+                    .values()
+                    .next()
+                    .unwrap()
+                    .allocations()
+                    .len(),
+                1
+            );
+            let authority = authority(topology);
+            let mut scheduler =
+                ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &authority, None)
+                    .expect("mixed admission");
+            let SchedulerAction::Work(work) = scheduler.next_action().expect("read") else {
+                panic!("read work");
+            };
+            assert!(
+                work.metal_execution().is_some(),
+                "I/O-only DAG must bind its declared accelerator"
+            );
+            let id = work.node().id.clone();
+            scheduler
+                .finish_work(id.clone(), crate::execution::WorkResult::Succeeded)
+                .expect("work returns");
+            scheduler
+                .complete_fence(crate::FenceId::new(id.clone(), order[0]))
+                .expect("first fence");
+            assert!(matches!(
+                scheduler.next_action().unwrap(),
+                SchedulerAction::Waiting { .. }
+            ));
+            assert_eq!(work.for_fence(order[1]).allocations().len(), 2);
+            scheduler
+                .complete_fence(crate::FenceId::new(id.clone(), order[1]))
+                .expect("second fence");
+            drop(scheduler.take_observation_completion_permits(&id));
+            assert!(matches!(
+                scheduler.next_action().unwrap(),
+                SchedulerAction::Complete(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn mixed_observation_rejects_missing_fences_and_mismatched_accelerator_claims() {
+        for mutation in 0..5 {
+            let (mut spec, _) = mixed_specification();
+            let node = &mut spec.nodes[0];
+            match mutation {
+                0 => {
+                    node.fences.remove(&FenceKind::Device);
+                }
+                1 => {
+                    node.fences.remove(&FenceKind::Io);
+                }
+                2 => {
+                    node.claims.retain(|c| {
+                        !matches!(c.resource, LeaseResource::AcceleratorCommandQueue { .. })
+                    });
+                }
+                3 => {
+                    node.claims[1].resource = LeaseResource::AcceleratorCommandQueue {
+                        demand_id: "wrong".into(),
+                    };
+                }
+                _ => {
+                    node.domain = WorkDomain::Cpu;
+                }
+            }
+            assert!(ExecutionDag::new(spec).is_err(), "mutation {mutation}");
+        }
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    #[ignore = "requires a process-accessible Apple Metal device"]
+    fn mixed_observation_executes_repeated_batches_before_one_terminal_device_fence() {
+        let (mut spec, mut topology) = mixed_specification();
+        spec.logical_allocations[0].bytes = 4096;
+        spec.physical_slots[0].capacity_bytes = 4096;
+        spec.resource_alternative.demand.memory[0].hard_bytes = 4096;
+        spec.resource_alternative.demand.memory[0].preferred_bytes = 4096;
+        topology.memory_domains[0].capacity_bytes = 8192;
+        let plan = ExecutionDag::new(spec).expect("mixed GPU arena");
+        let authority = authority(topology);
+        let mut scheduler =
+            ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &authority, None)
+                .expect("admit");
+        let SchedulerAction::Work(work) = scheduler.next_action().unwrap() else {
+            panic!("read");
+        };
+        let runtime = work.metal_execution().expect("runtime");
+        let problem = crate::execution::tests::compiled_problem();
+        let completed = BTreeMap::new();
+        let prediction = crate::StagePrediction::new(work.node().id.clone(), 1);
+        let context = WorkExecutionContext::for_test(
+            ExecutionAttemptId::from_sha256([1; 32]),
+            crate::execution_bindings::WorkExecutionTestBindings::new(
+                &problem,
+                crate::ImplementationRegistryId::from_sha256([1; 32]),
+                &completed,
+            ),
+            &work,
+            &[],
+            &prediction,
+            plan.resource_alternative(),
+        );
+        runtime.prepare(context).expect("prepare");
+        let stale = WorkExecutionContext::for_test(
+            ExecutionAttemptId::from_sha256([2; 32]),
+            crate::execution_bindings::WorkExecutionTestBindings::new(
+                &problem,
+                crate::ImplementationRegistryId::from_sha256([1; 32]),
+                &completed,
+            ),
+            &work,
+            &[],
+            &prediction,
+            plan.resource_alternative(),
+        );
+        assert_eq!(
+            runtime.prepare(stale),
+            Err(MetalRuntimeError::LeaseMismatch)
+        );
+        assert!(
+            !runtime.submitted(&work.node().id).unwrap(),
+            "preparation is not a science dispatch"
+        );
+        assert!(runtime.execute_cube_batch(context, &[]).is_err());
+        let allocation = AllocationId::new("allocation-0");
+        let region = |offset, bytes| MetalBufferRegion {
+            allocation: &allocation,
+            offset,
+            bytes,
+        };
+        runtime
+            .with_shared_bytes(context, region(0, 4096), |bytes| {
+                bytes.fill(0);
+                for (index, value) in [3_u32, 4, 0, 0].iter().enumerate() {
+                    bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_ne_bytes());
+                }
+                bytes[16..20].copy_from_slice(&1.25_f32.to_ne_bytes());
+                bytes[20..24].copy_from_slice(&(-0.5_f32).to_ne_bytes());
+                for value in bytes[64..92].chunks_exact_mut(4) {
+                    value.copy_from_slice(&1.0_f32.to_ne_bytes());
+                }
+            })
+            .expect("mapped arena");
+        let mut dispatch = CubeDispatch {
+            kind: CubeDispatchKind::Grid,
+            samples: region(0, 24),
+            weights: region(64, 28),
+            grid: region(128, 2048),
+            count: 1,
+            width: 16,
+            height: 16,
+        };
+        let mut oversized = dispatch;
+        oversized.count = 2;
+        assert!(runtime.execute_cube_batch(context, &[oversized]).is_err());
+        let mut aliased = dispatch;
+        aliased.kind = CubeDispatchKind::Degrid {
+            predicted: region(128, 8),
+        };
+        assert!(runtime.execute_cube_batch(context, &[aliased]).is_err());
+        assert!(!runtime.submitted(&work.node().id).unwrap());
+        for _ in 0..2 {
+            let stats = runtime
+                .execute_cube_batch(context, &[dispatch])
+                .expect("grid batch");
+            assert_eq!(stats.batches, 1);
+            assert_eq!(stats.grid_samples, 1);
+        }
+        dispatch.kind = CubeDispatchKind::Degrid {
+            predicted: region(2176, 8),
+        };
+        runtime
+            .execute_cube_batch(context, &[dispatch])
+            .expect("degrid batch");
+        runtime
+            .with_shared_bytes(context, region(2176, 8), |bytes| {
+                assert_eq!(f32::from_ne_bytes(bytes[0..4].try_into().unwrap()), 122.5);
+                assert_eq!(f32::from_ne_bytes(bytes[4..8].try_into().unwrap()), -49.0);
+            })
+            .expect("completed prediction");
+        assert!(runtime.submitted(&work.node().id).unwrap());
+        assert_eq!(
+            runtime.inner.lock().unwrap().nodes[&work.node().id]
+                .stats
+                .batches,
+            3
+        );
+        let slot = PhysicalSlotId::new("slot-0");
+        let identity = runtime.buffer_identity(&slot);
+        assert!(identity.is_some());
+        let id = work.node().id.clone();
+        scheduler
+            .finish_work(id.clone(), crate::execution::WorkResult::Succeeded)
+            .unwrap();
+        scheduler
+            .complete_fence(crate::FenceId::new(id.clone(), FenceKind::Io))
+            .unwrap();
+        assert_eq!(
+            runtime.buffer_identity(&slot),
+            identity,
+            "I/O completion must not release device payload"
+        );
+        let fence = work.for_fence(FenceKind::Device);
+        let fence_context = WorkExecutionContext::for_test(
+            ExecutionAttemptId::from_sha256([1; 32]),
+            crate::execution_bindings::WorkExecutionTestBindings::new(
+                &problem,
+                crate::ImplementationRegistryId::from_sha256([1; 32]),
+                &completed,
+            ),
+            &fence,
+            &[],
+            &prediction,
+            plan.resource_alternative(),
+        );
+        runtime
+            .finish(fence_context)
+            .expect("terminal evidence after prior batch waits");
+        assert_eq!(
+            runtime.finish(fence_context),
+            Err(MetalRuntimeError::FenceAlreadySettled)
+        );
+        assert!(matches!(
+            runtime.execute_cube_batch(context, &[dispatch]),
+            Err(MetalRuntimeError::NodeFinished(_))
+        ));
+        scheduler
+            .complete_fence(crate::FenceId::new(id.clone(), FenceKind::Device))
+            .unwrap();
+        assert_eq!(runtime.buffer_identity(&slot), None);
+        drop(scheduler.take_observation_completion_permits(&id));
+        assert!(matches!(
+            scheduler.next_action().unwrap(),
+            SchedulerAction::Complete(_)
+        ));
     }
 
     fn metal_plan_with_nodes(
@@ -1172,18 +1846,18 @@ mod tests {
             "#include <metal_stdlib>\nusing namespace metal;\nkernel void f64_probe(device double *values [[buffer(0)]], uint index [[thread_position_in_grid]]) { values[index] = values[index] * 0.5; }",
         );
         match platform
-            ._device
+            .device
             .newLibraryWithSource_options_error(&source, None)
         {
             Ok(_) => println!(
                 "t57_native_f64_compile supported=true device={}",
-                platform._device.name()
+                platform.device.name()
             ),
             Err(error) => {
                 let diagnostic = error.localizedDescription().to_string();
                 println!(
                     "t57_native_f64_compile supported=false device={} diagnostic={diagnostic}",
-                    platform._device.name()
+                    platform.device.name()
                 );
                 assert!(
                     diagnostic.contains("double") && diagnostic.contains("not supported"),
@@ -1217,44 +1891,30 @@ mod tests {
 
     #[cfg(all(target_os = "macos", not(coverage)))]
     #[test]
-    fn apple_runtime_retains_one_physical_buffer_across_node_fences() {
+    #[ignore = "requires a process-accessible Apple Metal device"]
+    fn apple_slots_materialize_on_use_and_retire_at_ledger_release() {
         let (plan, topology) = metal_plan_with_nodes(1, 2);
         let state = MetalExecutionState::bind(&plan, &topology, 1).expect("Metal execution");
-        let platform = match open_platform_state(&state.decision) {
-            Ok(platform) => platform,
-            Err(MetalRuntimeError::Ineligible(reason))
-                if reason == "no process-accessible Metal device" =>
-            {
-                return;
-            }
-            Err(error) => panic!("Apple Metal runtime: {error}"),
-        };
-        assert_eq!(platform.buffers.len(), 1);
+        let platform = open_platform_state(&state.decision).expect("actual Metal device");
+        assert!(platform.buffers.is_empty());
         state.inner.lock().expect("runtime state").platform = Some(platform);
         let slot = PhysicalSlotId::new("slot-0");
-        let identity = state.buffer_identity(&slot).expect("resident buffer");
+        let mut identity = None;
         for index in 0..2 {
             let node = WorkNodeId::new(format!("metal-work-{index}"));
             let mut inner = state.inner.lock().expect("runtime state");
-            let platform = inner.platform.as_mut().expect("platform residency");
-            let command = platform
-                .queue
-                .commandBuffer()
-                .expect("plan-selected command queue");
-            command.commit();
-            platform.active = Some(MetalInFlight {
-                node: node.clone(),
-                command,
-                measurements: WorkMeasurements::default(),
-                _started: Instant::now(),
-            });
-            assert_eq!(
-                wait_platform(&mut inner, &node),
-                Ok(WorkMeasurements::default())
-            );
+            prepare_platform(&state.decision, &mut inner, &node).expect("admitted residency");
             drop(inner);
-            assert_eq!(state.buffer_identity(&slot), Some(identity));
+            if index == 0 {
+                identity = state.buffer_identity(&slot);
+            }
+            assert!(identity.is_some());
+            assert_eq!(state.buffer_identity(&slot), identity);
         }
+        state
+            .release_allocation(&AllocationId::new("allocation-0"))
+            .expect("ledger release");
+        assert_eq!(state.buffer_identity(&slot), None);
     }
 
     #[test]

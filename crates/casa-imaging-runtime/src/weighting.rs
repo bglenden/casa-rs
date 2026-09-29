@@ -3843,7 +3843,7 @@ fn validate_work_authority(
                 WorkKind::ObservationRead,
                 WorkDomain::Io,
                 Some(problem),
-                ClaimLifetime::through_fence(FenceKind::Io),
+                context.node().payload_lifetime(),
                 Some((residency, queue, source_allocations)),
             ),
             WeightingWorkContract::Release => (

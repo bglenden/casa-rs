@@ -23,8 +23,8 @@ use crate::{
     ClaimLifetime, DemandAlternatives, ExecutionAttemptId, ExecutionError, ExecutionKnobs,
     ExecutionOutcome, ExecutionReceiptBinding, FenceKind, IoBufferKind, LeaseResource,
     PhysicalSlotId, PublicationLayoutLedger, ReceiptError, ReceiptFailureKind, ReceiptStatus,
-    ResourceAuthority, ResourceError, ResourceOverride, ResourcePolicy, WorkDomain,
-    WorkImplementationId, WorkKind, WorkNodeId,
+    ResourceAuthority, ResourceError, ResourceOverride, ResourcePolicy, WorkImplementationId,
+    WorkKind, WorkNodeId,
     bounded_stream::BOUNDED_WORKER_STACK_BYTES,
     cost_model::PlannerCostModelProfileRecord,
     execution::{
@@ -4426,15 +4426,14 @@ where
                         if work.node().kind == WorkKind::Publication {
                             controller_stopped = true;
                         }
-                        let metal_submitted =
-                            if matches!(work.node().domain, WorkDomain::Metal { .. }) {
-                                context
-                                    .metal_execution()
-                                    .and_then(|execution| execution.submitted(&node_id))
-                                    .unwrap_or(false)
-                            } else {
-                                true
-                            };
+                        let metal_submitted = if work.node().metal_demand_id().is_some() {
+                            context
+                                .metal_execution()
+                                .and_then(|execution| execution.submitted(&node_id))
+                                .unwrap_or(false)
+                        } else {
+                            true
+                        };
                         let validation = if !metal_submitted {
                             Err(ExecutionEvidenceError::MetalRuntimeBypassed {
                                 node: node_id.clone(),

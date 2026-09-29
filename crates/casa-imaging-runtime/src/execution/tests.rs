@@ -2229,6 +2229,7 @@ fn scheduler_rejects_discrete_metal_memory_instead_of_inventing_a_mac_model() {
     }];
     specification.resource_alternative.demand.overhead = RuntimeOverheadDemand {
         driver_bytes: 1,
+        jit_bytes: 1,
         command_buffer_bytes: 1,
         ..RuntimeOverheadDemand::zero()
     };
@@ -2517,6 +2518,7 @@ fn unified_physical_slot_reuse_waits_for_every_declared_fence() {
     }];
     specification.resource_alternative.demand.overhead = RuntimeOverheadDemand {
         driver_bytes: 1,
+        jit_bytes: 1,
         command_buffer_bytes: 1,
         ..RuntimeOverheadDemand::zero()
     };
@@ -2960,11 +2962,11 @@ fn every_io_buffer_kind_has_exact_supported_and_unsupported_work_semantics() {
         ),
         (
             crate::IoBufferKind::HostToDeviceTransfer,
-            &[WorkKind::Transfer][..],
+            &[WorkKind::Transfer, WorkKind::ObservationRead][..],
         ),
         (
             crate::IoBufferKind::DeviceToHostTransfer,
-            &[WorkKind::Transfer][..],
+            &[WorkKind::Transfer, WorkKind::ObservationRead][..],
         ),
         (
             crate::IoBufferKind::SpillRead,

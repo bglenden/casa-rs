@@ -1,6 +1,6 @@
 # T56 planner-owned Metal runtime source study
 
-Truth class: implementation evidence
+Truth class: historical implementation evidence
 Last reality check: 2026-09-01
 Verification: `CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime metal_runtime --lib`; `CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime --test compile_plan_run receipt_compares_plan_predictions_with_actual_stage_resource_and_fence_use -- --exact`; `just arch-check`
 
@@ -9,7 +9,23 @@ select an imaging implementation or define a kernel, precision, reduction,
 normalization, mode, or product rule. T57 remains responsible for scientific
 Metal implementations behind the existing registry and Numerics Contract.
 
-## Old-to-current map
+## Superseding runtime direction — 2026-09-29
+
+The owner explicitly authorized replacing inadequate Metal runtime APIs without
+backwards compatibility. The T57 cube integration removes the no-encoder smoke
+operation and one-submission-per-node restriction. Observation I/O retains its
+source authority and I/O admission while declaring accelerator/queue claims and
+both I/O/device completion fences. Only planned MetalShared allocations become
+GPU buffers; host-only source and FFT/CLEAN buffers remain host allocations.
+Actual grid/degrid batches drain before the borrowed input callback returns;
+batch waits do not complete the stage. Slots materialize on admitted use and
+retire at the existing allocation ledger's release events, not runtime startup
+and shutdown. Pipeline compilation is charged to the planned JIT envelope.
+The old eager-residency and smoke-only descriptions below are historical,
+non-normative T56 evidence, not constraints on T57. Scientific application
+integration and acceptance are separate from these runtime lifecycle checks.
+
+## Historical old-to-current map (T56)
 
 | Evidence lineage | Proven mechanism | Current owner and disposition |
 | --- | --- | --- |

@@ -8,7 +8,7 @@ use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_foundation::NSString;
 use objc2_metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCompileOptions, MTLComputeCommandEncoder,
     MTLComputePipelineState, MTLDevice, MTLLibrary, MTLSize,
 };
 use std::ffi::c_void;
@@ -90,8 +90,11 @@ pub(super) struct CubeTap {
 impl MetalCubeKernels {
     pub(super) fn compile(device: &ProtocolObject<dyn MTLDevice>) -> Result<Self, String> {
         let source = NSString::from_str(SOURCE);
+        let options = MTLCompileOptions::new();
+        #[allow(deprecated)]
+        options.setFastMathEnabled(false);
         let library = device
-            .newLibraryWithSource_options_error(&source, None)
+            .newLibraryWithSource_options_error(&source, Some(&options))
             .map_err(|error| error.localizedDescription().to_string())?;
         let pipeline = |name| {
             let function = library
@@ -110,9 +113,9 @@ impl MetalCubeKernels {
     pub(super) fn encode_grid(
         &self,
         command: &ProtocolObject<dyn MTLCommandBuffer>,
-        samples: &ProtocolObject<dyn MTLBuffer>,
-        weights: &ProtocolObject<dyn MTLBuffer>,
-        grid: &ProtocolObject<dyn MTLBuffer>,
+        samples: (&ProtocolObject<dyn MTLBuffer>, usize),
+        weights: (&ProtocolObject<dyn MTLBuffer>, usize),
+        grid: (&ProtocolObject<dyn MTLBuffer>, usize),
         count: u32,
         width: u32,
         height: u32,
@@ -130,10 +133,10 @@ impl MetalCubeKernels {
     pub(super) fn encode_degrid(
         &self,
         command: &ProtocolObject<dyn MTLCommandBuffer>,
-        samples: &ProtocolObject<dyn MTLBuffer>,
-        weights: &ProtocolObject<dyn MTLBuffer>,
-        grid: &ProtocolObject<dyn MTLBuffer>,
-        predicted: &ProtocolObject<dyn MTLBuffer>,
+        samples: (&ProtocolObject<dyn MTLBuffer>, usize),
+        weights: (&ProtocolObject<dyn MTLBuffer>, usize),
+        grid: (&ProtocolObject<dyn MTLBuffer>, usize),
+        predicted: (&ProtocolObject<dyn MTLBuffer>, usize),
         count: u32,
         width: u32,
         height: u32,
@@ -152,7 +155,7 @@ impl MetalCubeKernels {
         &self,
         command: &ProtocolObject<dyn MTLCommandBuffer>,
         pipeline: &ProtocolObject<dyn MTLComputePipelineState>,
-        buffers: &[&ProtocolObject<dyn MTLBuffer>],
+        buffers: &[(&ProtocolObject<dyn MTLBuffer>, usize)],
         count: u32,
         width: u32,
         height: u32,
@@ -164,9 +167,9 @@ impl MetalCubeKernels {
             .computeCommandEncoder()
             .ok_or_else(|| "Metal compute encoder unavailable".to_string())?;
         encoder.setComputePipelineState(pipeline);
-        for (index, buffer) in buffers.iter().enumerate() {
+        for (index, (buffer, offset)) in buffers.iter().enumerate() {
             // The caller owns every buffer through the terminal command fence.
-            unsafe { encoder.setBuffer_offset_atIndex(Some(buffer), 0, index) };
+            unsafe { encoder.setBuffer_offset_atIndex(Some(buffer), *offset, index) };
         }
         let shape = [count, width, height, 0_u32];
         let shape_ptr = NonNull::new((&shape as *const [u32; 4]).cast_mut().cast::<c_void>())
@@ -266,9 +269,9 @@ mod tests {
         kernels
             .encode_grid(
                 &command,
-                &sample_buffer,
-                &weight_buffer,
-                &grid_buffer,
+                (&sample_buffer, 0),
+                (&weight_buffer, 0),
+                (&grid_buffer, 0),
                 2,
                 16,
                 16,
@@ -277,10 +280,10 @@ mod tests {
         kernels
             .encode_degrid(
                 &command,
-                &sample_buffer,
-                &weight_buffer,
-                &grid_buffer,
-                &predicted_buffer,
+                (&sample_buffer, 0),
+                (&weight_buffer, 0),
+                (&grid_buffer, 0),
+                (&predicted_buffer, 0),
                 2,
                 16,
                 16,

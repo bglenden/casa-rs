@@ -37,6 +37,7 @@ casa-types = { path = "../casa-types" }
 objc2 = "0.6.4"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSString", "NSError"] }
 objc2-metal = { version = "0.3.2", default-features = false, features = [
+    "objc2-core-foundation",
     "MTLAllocation",
     "MTLBuffer",
     "MTLCommandBuffer",

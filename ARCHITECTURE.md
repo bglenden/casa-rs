@@ -73,8 +73,13 @@ and depends inward on the model plus reconstruction's opaque executable-problem
 brand. That reconstruction edge is limited to admitting owner-prepared model
 inputs at the execution and receipt boundary; runtime does not own or invoke
 reprojection algorithms. Its Metal module binds only plan-selected physical
-facts under a one-shot scheduler-issued lease authority, allocates each unified
-physical slot once, and owns command queues, device fences, cancellation drain,
+facts under a scheduler-issued lease authority, materializes only admitted live
+GPU-visible slots, and retires them at the allocation ledger's release events.
+An observation I/O node may explicitly claim accelerator participation while
+retaining I/O-depth admission and both I/O/device terminal fences; CPU-only
+buffers do not become Metal allocations. Bounded synchronous command batches
+reuse residency within the stage without completing either terminal fence.
+The runtime owns command queues, device fences, cancellation drain,
 and canonical work measurements; implementation registries retain kernel and
 Numerics Contract ownership, and unavailable Metal work fails typed without CPU
 substitution. Runtime also
