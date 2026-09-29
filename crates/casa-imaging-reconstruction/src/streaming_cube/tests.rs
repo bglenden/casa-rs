@@ -1434,6 +1434,120 @@ fn empty_initial_and_residual_refresh_omit_dead_grids_and_do_not_load_prior_arra
 }
 
 #[test]
+fn interpolation_reuse_depends_only_on_admitted_window_and_original_pair() {
+    use super::super::input::RowMetadata;
+    let output = [1e9, 1.002e9, 1.004e9, 1.006e9];
+    let polarization = polarization();
+    let raw = model();
+    for descending in [false, true] {
+        let mut frequencies: Vec<_> = (0..12).map(|ch| 0.996e9 + ch as f64 * 1e6).collect();
+        if descending {
+            frequencies.reverse();
+        }
+        let input = Input::new(frequencies.clone());
+        let layout = NativeLayout::new(
+            input.row(0..12).address,
+            input.channels.clone(),
+            smallvec::smallvec![
+                (0, CorrelationType::CircularRr),
+                (1, CorrelationType::CircularLl)
+            ],
+        )
+        .unwrap();
+        for selected in [0..12, 2..10] {
+            let mut block = NativeBlock::new(8, selected.len(), 2).unwrap();
+            let mut row_hz = frequencies.clone();
+            let mut pair = [frequencies[0], frequencies[1]];
+            for row in 0..8 {
+                match row {
+                    1 => row_hz[2] += 0.05e6, // Outside the band's window, inside both source windows.
+                    2 => row_hz[9] += 0.1e6,
+                    3 => row_hz[4] += 0.1e6, // Admitted halo, even if this row narrows its support.
+                    5 => row_hz[6] += 0.2e6,
+                    6 => pair[1] += 0.1e6,
+                    _ => {}
+                }
+                block.metadata[row] = RowMetadata {
+                    physical_row: row as u64,
+                    uvw_m: [7.0 + row as f64, -3.0, 0.0],
+                    phase_shift_m: 0.017,
+                    original_pair_hz: pair,
+                };
+                let cells = row * selected.len()..(row + 1) * selected.len();
+                let samples = cells.start * 2..cells.end * 2;
+                let source = selected.start * 2..selected.end * 2;
+                block.frequencies_hz[cells].copy_from_slice(&row_hz[selected.clone()]);
+                block.values[samples.clone()]
+                    .copy_from_slice(&input.values.as_slice().unwrap()[source.clone()]);
+                block.weights[samples.clone()]
+                    .copy_from_slice(&input.weights.as_slice().unwrap()[source.clone()]);
+                block.flags[samples.clone()]
+                    .copy_from_slice(&input.flags.as_slice().unwrap()[source.clone()]);
+                block.weight_flags[samples]
+                    .copy_from_slice(&input.weight_flags.as_slice().unwrap()[source]);
+            }
+            for phase in [BandPhase::InitialZero, BandPhase::Full, BandPhase::Residual] {
+                let make_band = || {
+                    let mut band = BandWorkspace::new(
+                        geometry(),
+                        1..2,
+                        (0..4).collect(),
+                        PreparedFft::new([10, 10], 7690).unwrap(),
+                        phase,
+                        None,
+                    );
+                    if phase != BandPhase::InitialZero {
+                        band.prepare_model(raw.view()).unwrap();
+                    }
+                    band
+                };
+                let mut actual = make_band();
+                actual
+                    .consume_block(
+                        block.view().unwrap(),
+                        &layout,
+                        selected.clone(),
+                        4..9,
+                        &output,
+                        &polarization,
+                    )
+                    .unwrap();
+                assert_eq!(
+                    actual.stencil_builds, 4,
+                    "outside-window changes must not rebuild"
+                );
+                let mut expected = make_band();
+                for row in 0..8 {
+                    let row = block
+                        .row(&layout, row, selected.clone())
+                        .unwrap()
+                        .window(4 - selected.start..9 - selected.start)
+                        .unwrap();
+                    let native = BandSupport::native_window(
+                        &output,
+                        1..2,
+                        row.frequencies_hz,
+                        row.original_pair_hz,
+                    )
+                    .unwrap();
+                    let channels = native.len();
+                    let mut accumulator = expected
+                        .begin_row(row.window(native).unwrap(), &output, &polarization)
+                        .unwrap();
+                    accumulator.push(0..channels).unwrap();
+                    accumulator.finish().unwrap();
+                }
+                assert_eq!(actual.dirty, expected.dirty);
+                assert_eq!(actual.residual, expected.residual);
+                assert_eq!(actual.psf, expected.psf);
+                assert_eq!(actual.sum_weight, expected.sum_weight);
+                assert_eq!(actual.mapped, expected.mapped);
+            }
+        }
+    }
+}
+
+#[test]
 fn shared_wide_window_narrows_row_dependent_support_without_copies() {
     use super::super::input::RowMetadata;
     let output = [1e9, 1.002e9, 1.004e9, 1.006e9];

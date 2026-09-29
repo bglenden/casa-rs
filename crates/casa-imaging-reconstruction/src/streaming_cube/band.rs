@@ -863,6 +863,8 @@ struct BandWorkspace {
     psf: Array3<Complex32>,
     sum_weight: Vec<f64>,
     mapped: Vec<u64>,
+    #[cfg(test)]
+    stencil_builds: usize,
 }
 
 impl BandWorkspace {
@@ -911,6 +913,8 @@ impl BandWorkspace {
             psf: Array3::zeros(normal),
             sum_weight: vec![0.0; normal_planes],
             mapped: vec![0; normal_planes],
+            #[cfg(test)]
+            stencil_builds: 0,
             convolution: StandardConvolution::new(&geometry),
             geometry,
             core,
@@ -986,6 +990,8 @@ impl BandWorkspace {
             forward_nonzero,
             model_channels,
             single_channel: _,
+            #[cfg(test)]
+                stencil_builds: _,
         } = self;
         drop((forward, forward_nonzero, model_channels));
         let mut image = |mut grids: Array3<Complex32>| {
@@ -1237,7 +1243,7 @@ impl BandWorkspace {
             return Err(SpectralOperatorError::IncompleteSpectralHalo);
         }
         let local = native_range.start - window.start..native_range.end - window.start;
-        let mut previous_support: Option<(usize, [f64; 2], Range<usize>, Option<RowStencil>)> =
+        let mut previous_support: Option<(&[f64], [f64; 2], Range<usize>, Option<RowStencil>)> =
             None;
         for row_index in 0..block.metadata.len() {
             let row = block
@@ -1247,14 +1253,11 @@ impl BandWorkspace {
                 self.consume_single_row(row, single, output_hz, polarization)?;
                 continue;
             }
+            let frequencies_hz = row.frequencies_hz;
             let reuse = previous_support
                 .as_ref()
-                .is_some_and(|(previous_row, pair, _, _)| {
-                    let previous_hz = &block.frequencies_hz
-                        [previous_row * block.channels..(previous_row + 1) * block.channels];
-                    let current_hz = &block.frequencies_hz
-                        [row_index * block.channels..(row_index + 1) * block.channels];
-                    *pair == row.original_pair_hz && previous_hz == current_hz
+                .is_some_and(|(previous_hz, pair, _, _)| {
+                    *pair == row.original_pair_hz && *previous_hz == frequencies_hz
                 });
             let native = if reuse {
                 previous_support.as_ref().unwrap().2.clone()
@@ -1267,7 +1270,7 @@ impl BandWorkspace {
                 )?
             };
             if native.is_empty() {
-                previous_support = Some((row_index, row.original_pair_hz, native, None));
+                previous_support = Some((frequencies_hz, row.original_pair_hz, native, None));
                 continue;
             }
             let channels = native.len();
@@ -1281,7 +1284,12 @@ impl BandWorkspace {
                     &self.model_channels,
                     self.phase,
                 )?;
-                previous_support = Some((row_index, row.original_pair_hz, native, Some(stencil)));
+                #[cfg(test)]
+                {
+                    self.stencil_builds += 1;
+                }
+                previous_support =
+                    Some((frequencies_hz, row.original_pair_hz, native, Some(stencil)));
             }
             let stencil = previous_support.as_ref().unwrap().3.as_ref().unwrap();
             let mut accumulator = self.begin_row_cached(row, polarization, stencil)?;
