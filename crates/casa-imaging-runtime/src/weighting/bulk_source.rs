@@ -167,6 +167,7 @@ struct Kernel<'a, F> {
     copied_samples: u64,
     preparation_nanos: u128,
     inspection_and_kernel_nanos: u128,
+    numerical_consumer_nanos: u128,
     prepared_chunks: u64,
     peak_active_preparation: usize,
     projected_chunks: u64,
@@ -410,12 +411,17 @@ where
         self.preparation_nanos += started.elapsed().as_nanos();
         let started = Instant::now();
         let emit = &mut self.emit;
+        let mut numerical_nanos = 0;
         self.consumer
             .consume_numeric(storage, &self.geometry, || {
-                emit.consume(view, &layout, self.selected_channels.clone(), execution)
+                let numerical_started = Instant::now();
+                let result = emit.consume(view, &layout, self.selected_channels.clone(), execution);
+                numerical_nanos = numerical_started.elapsed().as_nanos();
+                result
             })
             .map_err(io::Error::other)?;
         self.inspection_and_kernel_nanos += started.elapsed().as_nanos();
+        self.numerical_consumer_nanos += numerical_nanos;
         self.blocks += 1;
         self.copied_samples += if borrowed.is_none() {
             samples as u64
@@ -483,7 +489,7 @@ where
     }
     fn complete(self, execution: BoundedExecution<'_>) -> io::Result<Self::Completion> {
         eprintln!(
-            "bulk_input blocks={} channels={} capacity_bytes={} copied_samples={} preparation_nanos={} inspection_and_kernel_nanos={} projected_chunks={} peak_active_projection={} prepared_chunks={} peak_active_preparation={}",
+            "bulk_input blocks={} channels={} capacity_bytes={} copied_samples={} preparation_nanos={} inspection_and_kernel_nanos={} projected_chunks={} peak_active_projection={} prepared_chunks={} peak_active_preparation={} numerical_consumer_nanos={} serial_inspection_nanos={}",
             self.blocks,
             self.plan.channels,
             self.plan.bytes,
@@ -493,7 +499,9 @@ where
             self.projected_chunks,
             self.peak_active_projection,
             self.prepared_chunks,
-            self.peak_active_preparation
+            self.peak_active_preparation,
+            self.numerical_consumer_nanos,
+            self.inspection_and_kernel_nanos - self.numerical_consumer_nanos
         );
         Ok((
             self.consumer,
@@ -555,6 +563,7 @@ where
             copied_samples: 0,
             preparation_nanos: 0,
             inspection_and_kernel_nanos: 0,
+            numerical_consumer_nanos: 0,
             prepared_chunks: 0,
             peak_active_preparation: 0,
             projected_chunks: 0,
