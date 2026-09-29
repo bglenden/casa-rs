@@ -21,6 +21,8 @@ mod managed_model;
 mod managed_normal;
 #[allow(dead_code)]
 mod managed_spill;
+#[cfg(all(target_os = "macos", not(coverage)))]
+mod metal_cube;
 mod metal_runtime;
 mod observation_transaction;
 mod paged_cube_state;
