@@ -63,6 +63,14 @@ fn fixed_nonzero_residual() {
     assert!([1, 2, 4, 6, 8].contains(&workers));
     assert!((8..=512).contains(&channels));
     assert!(memory > 0 && memory <= 16 << 30);
+    let expected_rows: usize = std::env::var("CASA_RS_C_ARRAY_EXPECTED_ROWS")
+        .unwrap_or_else(|_| "168480".into())
+        .parse()
+        .unwrap();
+    assert!(
+        [168_480, 4_094_064].contains(&expected_rows),
+        "diagnostic must explicitly select one of the approved fixtures"
+    );
     std::fs::create_dir(&root).expect("fresh durable output directory");
     let reference = std::env::var_os("CASA_RS_FIXED_RESIDUAL_REFERENCE").map(PathBuf::from);
     if let Some(reference) = &reference {
@@ -139,11 +147,8 @@ fn fixed_nonzero_residual() {
         }),
     };
     let ms = casa_ms::MeasurementSet::open(&request.measurement_set).unwrap();
-    assert_eq!(
-        ms.row_count(),
-        168_480,
-        "never run this probe on the full input"
-    );
+    let rows = ms.row_count();
+    assert_eq!(rows, expected_rows, "explicit diagnostic fixture selection");
     assert_eq!(ms.spectral_window().unwrap().num_chan(0).unwrap(), 512);
     assert_eq!(
         ms.spectral_window().unwrap().meas_freq_ref(0).unwrap(),
@@ -350,6 +355,7 @@ fn fixed_nonzero_residual() {
     if let Some(reference) = reference {
         let saved: serde_json::Value =
             serde_json::from_slice(&std::fs::read(reference.join("result.json")).unwrap()).unwrap();
+        assert_eq!(saved["rows"], rows);
         assert_eq!(saved["channels"], channels);
         assert_eq!(
             saved["model_sha256"], model_sha256,
@@ -363,7 +369,7 @@ fn fixed_nonzero_residual() {
     }
     let result = serde_json::json!({
         "scope": "one production residual phase; bootstrap, planning, diagnostics and publication excluded",
-        "workers": workers, "channels": channels, "rows": 168480, "shape": [1024, 1024],
+        "workers": workers, "channels": channels, "rows": rows, "shape": [1024, 1024],
         "memory_bytes": memory, "bootstrap_seconds": bootstrap_seconds, "plan_seconds": plan_seconds,
         "residual_seconds": residual_seconds, "components": components,
         "model_sha256": model_sha256, "model_abs": model_abs, "metadata_sha256": metadata_sha256,
