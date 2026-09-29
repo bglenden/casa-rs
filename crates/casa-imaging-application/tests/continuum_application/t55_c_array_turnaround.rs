@@ -141,6 +141,11 @@ fn run_c_array(block: bool) {
     imaging.mask = ContinuumMask::Image(mask);
     imaging.write_primary_beam = true;
     imaging.task_requirements = vec![TaskRequirement::PerChannelWeightDensity];
+    if std::env::var_os("CASA_RS_C_ARRAY_METAL").is_some() {
+        imaging
+            .task_requirements
+            .push(TaskRequirement::MetalGridder);
+    }
     if !block {
         imaging.task_requirements.push(TaskRequirement::SerialCpu);
     }

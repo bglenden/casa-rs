@@ -364,7 +364,18 @@ pub fn validate_installed_implementation(
     unsupported.extend(
         task_requirements
             .into_iter()
-            .filter(|requirement| !supports_task(*requirement))
+            .filter(|requirement| {
+                if *requirement == TaskRequirement::MetalGridder {
+                    return !supports_task(*requirement)
+                        || problem.geometry().spectral().output_channels() < 2
+                        || !casa_imaging_runtime::CubePhase::supports(problem).unwrap_or(false)
+                        || !matches!(
+                            problem.reconstruction().basis(),
+                            ReconstructionBasis::ChannelLocal { .. }
+                        );
+                }
+                !supports_task(*requirement)
+            })
             .map(UnsupportedRequirement::Task),
     );
 
@@ -476,6 +487,9 @@ fn coupled_basis_requires_independent_polarization(
 }
 
 const fn supports_task(requirement: TaskRequirement) -> bool {
+    if matches!(requirement, TaskRequirement::MetalGridder) {
+        return cfg!(all(target_os = "macos", not(coverage)));
+    }
     matches!(
         requirement,
         TaskRequirement::SpectralCube
@@ -681,6 +695,23 @@ mod tests {
                 .and_then(ImagingCapabilityCatalogEntry::unsupported),
             Some(UnsupportedRequirement::Capability(mueller))
         );
+    }
+
+    #[test]
+    fn metal_catalog_matches_the_compiled_platform() {
+        let catalog = installed_imaging_capability_catalog();
+        let metal = catalog
+            .iter()
+            .find(|entry| {
+                entry.requirement()
+                    == ImagingCapabilityRequirement::Task(TaskRequirement::MetalGridder)
+            })
+            .unwrap();
+        assert_eq!(
+            metal.unsupported().is_none(),
+            cfg!(all(target_os = "macos", not(coverage)))
+        );
+        assert!(!supports_task(TaskRequirement::MetalRowRunGridder));
     }
 
     #[test]

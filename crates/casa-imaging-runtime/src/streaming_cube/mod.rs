@@ -7,6 +7,8 @@ mod bulk_phase;
 mod bulk_wave;
 mod execute;
 mod input;
+mod metal_plan;
+mod metal_wave;
 mod phase;
 mod plan;
 mod prepare;

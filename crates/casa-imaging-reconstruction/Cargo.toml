@@ -16,7 +16,7 @@ cpp-interop-tests = ["casa-test-support/cpp-interop-tests"]
 workspace = true
 
 [dependencies]
-bytemuck = { version = "1.25", features = ["extern_crate_alloc"] }
+bytemuck = { version = "1.25", features = ["derive", "extern_crate_alloc"] }
 casa-fft = { path = "../casa-fft" }
 casa-imaging-model = { path = "../casa-imaging-model" }
 casa-numerics = { path = "../casa-numerics" }

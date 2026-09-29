@@ -11746,6 +11746,16 @@ fn w_projection_kernel_sum(kernel: &WProjectionKernel, sampling: usize) -> f64 {
 }
 
 impl StandardConvolution {
+    pub(crate) fn weight_row_count() -> usize {
+        OVERSAMPLING + 1
+    }
+    pub(crate) fn float_weights(&self) -> Vec<[f32; 7]> {
+        self.weights
+            .iter()
+            .map(|row| row.map(|value| value as f32))
+            .collect()
+    }
+
     pub(crate) fn dynamic_bytes(shape: [usize; 2]) -> Result<usize, SpectralOperatorError> {
         shape[0]
             .checked_add(shape[1])
@@ -12114,6 +12124,9 @@ fn checked_cells(shape: [usize; 2]) -> Result<usize, SpectralOperatorError> {
 /// Exact reason the spectral operator plan or operator rejected its input.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum SpectralOperatorError {
+    /// The admitted spatial device operation failed; the run cannot continue.
+    #[error("spatial execution: {0}")]
+    SpatialExecution(String),
     /// A bounded Normal State backing operation failed.
     #[error("normal-state storage: {0}")]
     NormalStorage(String),

@@ -445,10 +445,6 @@ struct MetalExecutionInner {
     platform: Option<MetalPlatformState>,
 }
 
-#[allow(
-    dead_code,
-    reason = "T57 consumes the constrained Metal execution seam"
-)]
 #[cfg(all(target_os = "macos", not(coverage)))]
 struct MetalPlatformState {
     device: Retained<ProtocolObject<dyn MTLDevice>>,
@@ -457,11 +453,94 @@ struct MetalPlatformState {
     kernels: Option<crate::metal_cube::MetalCubeKernels>,
 }
 
+// SAFETY: Metal device/queue/buffer/pipeline handles have no thread affinity.
+// MTLBuffer's raw mutable contents prevent objc2 from promising Send/Sync for
+// the handle itself. This owner never exposes handles or slices beyond a call:
+// its execution mutex covers CPU contents access and GPU submission through
+// waitUntilCompleted, and encoders/command buffers remain local to that call.
+#[cfg(all(target_os = "macos", not(coverage)))]
+unsafe impl Send for MetalPlatformState {}
+
 #[derive(Default)]
 struct MetalNodeProgress {
     prepared: bool,
     finished: bool,
     stats: MetalBatchStats,
+    empty_source: bool,
+}
+
+/// Shareable access derived once from the scheduler's exact work capabilities.
+/// It borrows the execution state, so it cannot outlive the admitted stage.
+pub(crate) struct MetalBatchAccess<'a> {
+    runtime: &'a MetalExecutionState,
+    node: WorkNodeId,
+    attempt: ExecutionAttemptId,
+}
+
+impl MetalBatchAccess<'_> {
+    fn lock(&self) -> Result<MutexGuard<'_, MetalExecutionInner>, MetalRuntimeError> {
+        let inner = self
+            .runtime
+            .inner
+            .lock()
+            .map_err(|_| MetalRuntimeError::RuntimeStatePoisoned)?;
+        if inner.closed {
+            return Err(MetalRuntimeError::RuntimeClosed);
+        }
+        if inner.attempt_id != Some(self.attempt) {
+            return Err(MetalRuntimeError::LeaseMismatch);
+        }
+        if inner.nodes.get(&self.node).is_some_and(|p| p.finished) {
+            return Err(MetalRuntimeError::NodeFinished(self.node.clone()));
+        }
+        Ok(inner)
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    pub(crate) fn with_bytes<R>(
+        &self,
+        region: MetalBufferRegion<'_>,
+        use_bytes: impl FnOnce(&mut [u8]) -> R,
+    ) -> Result<R, MetalRuntimeError> {
+        let inner = self.lock()?;
+        let platform = inner.platform.as_ref().expect("admitted prepared platform");
+        let (buffer, offset) = buffer_region(&self.runtime.decision, platform, &self.node, region)?;
+        let bytes = unsafe {
+            std::slice::from_raw_parts_mut(
+                buffer.contents().as_ptr().cast::<u8>().add(offset),
+                region.bytes,
+            )
+        };
+        Ok(use_bytes(bytes))
+    }
+
+    #[cfg(not(all(target_os = "macos", not(coverage))))]
+    pub(crate) fn with_bytes<R>(
+        &self,
+        _: MetalBufferRegion<'_>,
+        _: impl FnOnce(&mut [u8]) -> R,
+    ) -> Result<R, MetalRuntimeError> {
+        Err(MetalRuntimeError::UnsupportedPlatform)
+    }
+
+    pub(crate) fn execute(
+        &self,
+        dispatches: &[CubeDispatch<'_>],
+    ) -> Result<MetalBatchStats, MetalRuntimeError> {
+        if dispatches.is_empty() {
+            return Err(MetalRuntimeError::InvalidPlan("empty compute batch".into()));
+        }
+        let mut inner = self.lock()?;
+        let stats =
+            execute_platform_batch(&self.runtime.decision, &mut inner, &self.node, dispatches)?;
+        let progress = inner.nodes.get_mut(&self.node).expect("prepared node");
+        progress.stats.batches += stats.batches;
+        progress.stats.grid_samples += stats.grid_samples;
+        progress.stats.degrid_samples += stats.degrid_samples;
+        progress.stats.gpu_seconds += stats.gpu_seconds;
+        progress.stats.submit_wait_seconds += stats.submit_wait_seconds;
+        Ok(stats)
+    }
 }
 
 /// Actual submitted work, not a projection from the resource envelope.
@@ -519,6 +598,48 @@ impl fmt::Debug for MetalExecutionState {
 }
 
 impl MetalExecutionState {
+    pub(crate) fn batch_access(
+        &self,
+        context: WorkExecutionContext<'_>,
+    ) -> Result<MetalBatchAccess<'_>, MetalRuntimeError> {
+        self.prepare(context)?;
+        Ok(MetalBatchAccess {
+            runtime: self,
+            node: context.node().id.clone(),
+            attempt: context.attempt_id(),
+        })
+    }
+
+    /// Called only after the observation owner has consumed its complete source.
+    /// All-flagged or empty spatial support needs no fabricated GPU dispatch.
+    pub(crate) fn complete_empty_source(
+        &self,
+        context: WorkExecutionContext<'_>,
+    ) -> Result<(), MetalRuntimeError> {
+        let mut inner = self.lock_for_work(context)?;
+        let progress = inner
+            .nodes
+            .get_mut(&context.node().id)
+            .ok_or(MetalRuntimeError::FenceAlreadySettled)?;
+        if progress.stats.batches == 0 {
+            progress.empty_source = true;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn batch_stats(
+        &self,
+        node: &WorkNodeId,
+    ) -> Result<MetalBatchStats, MetalRuntimeError> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| MetalRuntimeError::RuntimeStatePoisoned)?;
+        Ok(inner
+            .nodes
+            .get(node)
+            .map_or_else(MetalBatchStats::default, |p| p.stats))
+    }
     pub(crate) fn bind(
         plan: &ExecutionDag,
         topology: &ResourceTopology,
@@ -585,57 +706,6 @@ impl MetalExecutionState {
         Ok(())
     }
 
-    /// CPU access is scoped under the same lock as synchronous GPU batches. No
-    /// buffer handle or borrowed slice can outlive this call or overlap a command.
-    #[cfg(all(target_os = "macos", not(coverage)))]
-    pub(crate) fn with_shared_bytes<R>(
-        &self,
-        context: WorkExecutionContext<'_>,
-        region: MetalBufferRegion<'_>,
-        use_bytes: impl FnOnce(&mut [u8]) -> R,
-    ) -> Result<R, MetalRuntimeError> {
-        let mut inner = self.lock_for_work(context)?;
-        prepare_platform(&self.decision, &mut inner, &context.node().id)?;
-        let platform = inner.platform.as_ref().expect("prepared platform");
-        let (buffer, offset) = buffer_region(&self.decision, platform, &context.node().id, region)?;
-        // All batches hold this mutex through waitUntilCompleted. Bounds and
-        // the exact scheduler-issued allocation capability were checked above.
-        let bytes = unsafe {
-            std::slice::from_raw_parts_mut(
-                buffer.contents().as_ptr().cast::<u8>().add(offset),
-                region.bytes,
-            )
-        };
-        Ok(use_bytes(bytes))
-    }
-
-    /// Execute one bounded group of real spatial operators. Completion permits
-    /// buffer reuse, but does not release either terminal I/O or device claims.
-    /// The source consumer can therefore safely return its borrowed input block.
-    pub(crate) fn execute_cube_batch(
-        &self,
-        context: WorkExecutionContext<'_>,
-        dispatches: &[CubeDispatch<'_>],
-    ) -> Result<MetalBatchStats, MetalRuntimeError> {
-        let mut inner = self.lock_for_work(context)?;
-        if dispatches.is_empty() {
-            return Err(MetalRuntimeError::InvalidPlan(
-                "empty Metal compute batch".into(),
-            ));
-        }
-        prepare_platform(&self.decision, &mut inner, &context.node().id)?;
-        let stats =
-            execute_platform_batch(&self.decision, &mut inner, &context.node().id, dispatches)?;
-        let progress = inner.nodes.entry(context.node().id.clone()).or_default();
-        progress.prepared = true;
-        progress.stats.batches += stats.batches;
-        progress.stats.grid_samples += stats.grid_samples;
-        progress.stats.degrid_samples += stats.degrid_samples;
-        progress.stats.gpu_seconds += stats.gpu_seconds;
-        progress.stats.submit_wait_seconds += stats.submit_wait_seconds;
-        Ok(stats)
-    }
-
     /// Consume terminal device evidence once, after any number of drained
     /// batches. This is distinct from batch completion and works in either
     /// terminal I/O/device fence order.
@@ -664,7 +734,9 @@ impl MetalExecutionState {
             return Err(MetalRuntimeError::FenceAlreadySettled);
         }
         if !progress.prepared
-            || (requires_dispatch(context.node().kind) && progress.stats.batches == 0)
+            || (requires_dispatch(context.node().kind)
+                && progress.stats.batches == 0
+                && !progress.empty_source)
         {
             return Err(MetalRuntimeError::InvalidPlan(
                 "Metal compute stage did not dispatch".into(),
@@ -680,7 +752,7 @@ impl MetalExecutionState {
             .map(|inner| {
                 inner.nodes.get(node).is_some_and(|progress| {
                     if requires_dispatch(self.decision.nodes[node].kind) {
-                        progress.stats.batches > 0
+                        progress.stats.batches > 0 || progress.empty_source
                     } else {
                         progress.prepared
                     }
@@ -1507,15 +1579,16 @@ mod tests {
             !runtime.submitted(&work.node().id).unwrap(),
             "preparation is not a science dispatch"
         );
-        assert!(runtime.execute_cube_batch(context, &[]).is_err());
+        let access = runtime.batch_access(context).expect("scoped batch access");
+        assert!(access.execute(&[]).is_err());
         let allocation = AllocationId::new("allocation-0");
         let region = |offset, bytes| MetalBufferRegion {
             allocation: &allocation,
             offset,
             bytes,
         };
-        runtime
-            .with_shared_bytes(context, region(0, 4096), |bytes| {
+        access
+            .with_bytes(region(0, 4096), |bytes| {
                 bytes.fill(0);
                 for (index, value) in [3_u32, 4, 0, 0].iter().enumerate() {
                     bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_ne_bytes());
@@ -1538,28 +1611,24 @@ mod tests {
         };
         let mut oversized = dispatch;
         oversized.count = 2;
-        assert!(runtime.execute_cube_batch(context, &[oversized]).is_err());
+        assert!(access.execute(&[oversized]).is_err());
         let mut aliased = dispatch;
         aliased.kind = CubeDispatchKind::Degrid {
             predicted: region(128, 8),
         };
-        assert!(runtime.execute_cube_batch(context, &[aliased]).is_err());
+        assert!(access.execute(&[aliased]).is_err());
         assert!(!runtime.submitted(&work.node().id).unwrap());
         for _ in 0..2 {
-            let stats = runtime
-                .execute_cube_batch(context, &[dispatch])
-                .expect("grid batch");
+            let stats = access.execute(&[dispatch]).expect("grid batch");
             assert_eq!(stats.batches, 1);
             assert_eq!(stats.grid_samples, 1);
         }
         dispatch.kind = CubeDispatchKind::Degrid {
             predicted: region(2176, 8),
         };
-        runtime
-            .execute_cube_batch(context, &[dispatch])
-            .expect("degrid batch");
-        runtime
-            .with_shared_bytes(context, region(2176, 8), |bytes| {
+        access.execute(&[dispatch]).expect("degrid batch");
+        access
+            .with_bytes(region(2176, 8), |bytes| {
                 assert_eq!(f32::from_ne_bytes(bytes[0..4].try_into().unwrap()), 122.5);
                 assert_eq!(f32::from_ne_bytes(bytes[4..8].try_into().unwrap()), -49.0);
             })
@@ -1607,7 +1676,7 @@ mod tests {
             Err(MetalRuntimeError::FenceAlreadySettled)
         );
         assert!(matches!(
-            runtime.execute_cube_batch(context, &[dispatch]),
+            access.execute(&[dispatch]),
             Err(MetalRuntimeError::NodeFinished(_))
         ));
         scheduler

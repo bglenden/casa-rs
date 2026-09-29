@@ -8,6 +8,198 @@ use casa_imaging_model::{
 };
 use ndarray::{Array2, s};
 
+#[test]
+fn batched_spatial_preparation_matches_cpu_for_flags_phase_and_nonzero_model() {
+    struct Backend {
+        convolution: StandardConvolution,
+        grids: [Array3<Complex32>; 4],
+    }
+    impl CubeSpatialBackend for Backend {
+        fn initialize(
+            &mut self,
+            shape: [usize; 2],
+            weights: &[[f32; 7]],
+            fields: [usize; 4],
+            model: &[Complex32],
+        ) -> Result<(), SpectralOperatorError> {
+            assert_eq!(weights, self.convolution.float_weights());
+            self.grids = fields.map(|planes| Array3::zeros((planes, shape[0], shape[1])));
+            self.grids[3].as_slice_mut().unwrap().copy_from_slice(model);
+            Ok(())
+        }
+        fn degrid(
+            &mut self,
+            batches: &mut [SpatialPredictionBatch],
+        ) -> Result<(), SpectralOperatorError> {
+            for batch in batches {
+                for (tap, value) in batch.taps.iter().zip(&mut batch.values) {
+                    *value = self
+                        .convolution
+                        .degrid_float(&self.grids[3].index_axis(Axis(0), batch.plane), unpack(tap));
+                }
+            }
+            Ok(())
+        }
+        fn grid(&mut self, batches: &[SpatialGridBatch]) -> Result<(), SpectralOperatorError> {
+            for batch in batches {
+                let index = match batch.field {
+                    SpatialField::Dirty => 0,
+                    SpatialField::Residual => 1,
+                    SpatialField::Psf => 2,
+                    SpatialField::Model => 3,
+                };
+                for tap in &batch.taps {
+                    self.convolution.grid_float(
+                        &mut self.grids[index].index_axis_mut(Axis(0), batch.plane),
+                        unpack(tap),
+                        Complex32::new(tap.value[0], tap.value[1]),
+                    );
+                }
+            }
+            Ok(())
+        }
+        fn download(
+            &mut self,
+            _: SpatialField,
+            _: usize,
+            _: &mut [Complex32],
+        ) -> Result<(), SpectralOperatorError> {
+            unreachable!()
+        }
+    }
+    fn unpack(tap: &SpatialTap) -> crate::spectral_operator::SampleTaps {
+        use crate::spectral_operator::{SampleTaps, TapSpan};
+        SampleTaps {
+            x: TapSpan {
+                start: tap.x as usize,
+                weight_index: tap.x_weights as usize,
+            },
+            y: TapSpan {
+                start: tap.y as usize,
+                weight_index: tap.y_weights as usize,
+            },
+        }
+    }
+    let output = [1e9, 1.002e9, 1.004e9, 1.006e9];
+    let mut block = NativeBlock::new(4, 12, 2).unwrap();
+    let mut layout = None;
+    for (r, shift) in [-0.6e6, -0.6e6, 0.1e6, 0.6e6].into_iter().enumerate() {
+        let input = Input::new(
+            (0..12)
+                .map(|ch| 0.996e9 + shift + ch as f64 * 1e6)
+                .collect(),
+        );
+        let row = input.row(0..12);
+        layout.get_or_insert_with(|| {
+            NativeLayout::new(
+                row.address,
+                input.channels.clone(),
+                smallvec::smallvec![
+                    (0, CorrelationType::CircularRr),
+                    (1, CorrelationType::CircularLl)
+                ],
+            )
+            .unwrap()
+        });
+        block.metadata[r] = super::super::input::RowMetadata {
+            physical_row: r as u64,
+            uvw_m: row.uvw_m,
+            phase_shift_m: row.phase_shift_m,
+            original_pair_hz: row.original_pair_hz,
+        };
+        block.frequencies_hz[r * 12..(r + 1) * 12].copy_from_slice(row.frequencies_hz);
+        block.values[r * 24..(r + 1) * 24].copy_from_slice(row.values);
+        block.weights[r * 24..(r + 1) * 24].copy_from_slice(row.weights);
+        block.flags[r * 24..(r + 1) * 24].copy_from_slice(row.flags);
+        block.weight_flags[r * 24..(r + 1) * 24].copy_from_slice(row.weight_flags);
+    }
+    let layout = layout.unwrap();
+    let raw = model();
+    let polarization = polarization();
+    for phase in [BandPhase::InitialZero, BandPhase::Full, BandPhase::Residual] {
+        let make = || {
+            let mut w = BandWorkspace::new(
+                geometry(),
+                0..4,
+                (0..4).collect(),
+                PreparedFft::new([10, 10], 7690).unwrap(),
+                phase,
+                None,
+            );
+            if phase != BandPhase::InitialZero {
+                w.prepare_model(raw.view()).unwrap();
+            }
+            w
+        };
+        let mut cpu = make();
+        let mut candidate = make();
+        let mut backend = Backend {
+            convolution: StandardConvolution::new(&geometry()),
+            grids: std::array::from_fn(|_| Array3::zeros((0, 10, 10))),
+        };
+        backend
+            .initialize(
+                [10, 10],
+                &candidate.convolution.float_weights(),
+                [
+                    candidate.dirty.len_of(Axis(0)),
+                    candidate.residual.len_of(Axis(0)),
+                    candidate.psf.len_of(Axis(0)),
+                    candidate.forward.len_of(Axis(0)),
+                ],
+                candidate.forward.as_slice().unwrap(),
+            )
+            .unwrap();
+        // Repeated refills accumulate into the same resident grids.
+        for _ in 0..2 {
+            cpu.consume_block(
+                block.view().unwrap(),
+                &layout,
+                0..12,
+                0..12,
+                &output,
+                &polarization,
+            )
+            .unwrap();
+            candidate
+                .consume_spatial(
+                    block.view().unwrap(),
+                    &layout,
+                    0..12,
+                    &output,
+                    &polarization,
+                    &mut backend,
+                )
+                .unwrap();
+        }
+        assert_close(backend.grids[0].iter().copied(), cpu.dirty.iter().copied());
+        assert_close(
+            backend.grids[1].iter().copied(),
+            cpu.residual.iter().copied(),
+        );
+        assert_close(backend.grids[2].iter().copied(), cpu.psf.iter().copied());
+        assert_eq!(candidate.mapped, cpu.mapped);
+        assert_eq!(candidate.sum_weight, cpu.sum_weight);
+    }
+}
+
+#[test]
+fn spatial_memory_includes_initialization_for_empty_source() {
+    let plan = BandPlan {
+        geometry: geometry(),
+        core: 0..4,
+        total_channels: 4,
+        single_channel: None,
+        phase: BandPhase::InitialZero,
+        support: BandSupport {
+            native: 0..0,
+            model: Vec::new(),
+        },
+    };
+    assert!(plan.spatial_host_bytes(0).unwrap() >= BandPlan::spatial_weight_bytes());
+    assert_eq!(plan.spatial_request_capacity(0).unwrap(), 0);
+}
+
 fn geometry() -> SpectralOperatorGeometry {
     SpectralOperatorGeometry {
         image_shape: [8, 8],

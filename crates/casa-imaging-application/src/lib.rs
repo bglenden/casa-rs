@@ -346,9 +346,18 @@ where
         request.model_lifecycle,
     );
     let problem = compile(imaging).map_err(ApplicationDispatchError::Compile)?;
+    let metal_cube = request
+        .task_requirements
+        .contains(&TaskRequirement::MetalGridder);
+    if metal_cube && (request.write_model_column || request.write_corrected_data) {
+        return Err(ApplicationDispatchError::Native(boxed(
+            "Metal cube does not implement visibility-column writes",
+        )));
+    }
     validate_installed_implementation(&problem, request.task_requirements)
         .map_err(ApplicationDispatchError::Unavailable)?;
     let input = NativeInput {
+        metal_cube,
         observation: request.observation,
         initial_access: access,
         write_model_column: request.write_model_column,
@@ -364,6 +373,7 @@ where
 }
 
 struct NativeInput<S> {
+    metal_cube: bool,
     observation: SelectedObservationResolutionRequest,
     initial_access: ResolvedSelectedObservationAccess,
     write_model_column: bool,
@@ -431,7 +441,8 @@ where
     let initial_write = !minor_cycle_requested && visibility_write_requested;
     let planning_registry =
         PlanningRegistry::new(runtime.registry, runtime.implementation.clone(), problem);
-    let mut policy = execution_policy(&runtime, residency.clone(), initial_aw.as_ref());
+    let mut policy = execution_policy(&runtime, residency.clone(), initial_aw.as_ref())
+        .with_metal_cube(input.metal_cube);
     if initial_write {
         policy = policy
             .with_visibility_write(initial_access.selected_visibility_storage_plan(write_targets)?);
@@ -634,7 +645,8 @@ where
                     .as_ref()
                     .map(prepared_aw_phase::PreparedAwPhase::bind_plan)
                     .transpose()?;
-                let final_policy = execution_policy(&runtime, residency.clone(), final_aw.as_ref());
+                let final_policy = execution_policy(&runtime, residency.clone(), final_aw.as_ref())
+                    .with_metal_cube(input.metal_cube);
                 let ordinal =
                     u32::try_from(cycle).map_err(|_| boxed("major-cycle ordinal exceeds u32"))?;
                 let minor_program = continue_cleaning

@@ -994,6 +994,7 @@ fn t51_full_aw_source_bind_only() {
     let failure = match crate::run_native(
         &problem,
         crate::NativeInput {
+            metal_cube: false,
             observation: prepared.observation.clone(),
             initial_access: small_access,
             write_model_column: prepared.write_model_column,

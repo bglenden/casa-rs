@@ -3,6 +3,104 @@
 use super::*;
 
 #[test]
+#[cfg(target_os = "macos")]
+#[ignore = "requires an actual Metal device and the guarded integration qualification"]
+fn metal_cube_initial_clean_refresh_and_publication_matches_cpu() {
+    use casa_imaging_runtime::{CapacityDomainId, ResourceOverride, ResourcePolicy};
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().unwrap();
+    let ms = spectral_line_measurement_set(root.path());
+    let mut baseline: Option<Vec<(Vec<usize>, Vec<f32>)>> = None;
+    for metal in [false, true] {
+        let prefix = root.path().join(if metal { "metal" } else { "cpu" });
+        let mut imaging = request(ms.clone(), prefix.clone(), ContinuumAlgorithm::Clark);
+        imaging.image_size = 64;
+        imaging.weighting = ContinuumWeighting::Natural;
+        imaging.spectral_window = Some("0:0~3".into());
+        imaging.channel_count = Some(4);
+        imaging.spectral_mode = SpectralImagingMode::Cube {
+            axis: CubeAxisConfig {
+                outframe: FrequencyRef::TOPO,
+                ..CubeAxisConfig::default()
+            },
+            output_channels: Some(4),
+        };
+        imaging.iterations = 3;
+        imaging.cycle_iterations = 1;
+        imaging.maximum_major_cycles = Some(3);
+        imaging.gain = 0.37;
+        imaging.threshold_jy = 1e-12;
+        imaging.noise_sigma = Some(1e-12);
+        if metal {
+            imaging
+                .task_requirements
+                .push(TaskRequirement::MetalGridder);
+        }
+        imaging.resource_policy = ResourcePolicy::Explicit(ResourceOverride {
+            workers: Some(2),
+            memory_bytes: std::collections::BTreeMap::from([(
+                CapacityDomainId::new("host-memory"),
+                4 << 30,
+            )]),
+            ..ResourceOverride::default()
+        });
+        let result = execute_continuum(imaging).expect("connected spatial backend");
+        assert_cube_execution_route(&result, true);
+        assert_standard_products(&prefix, &result.product_names);
+        assert_eq!(result.outcome.output.major_cycle_count, 3);
+        assert!(result.actual_minor_iterations > 0);
+        assert_eq!(
+            !result
+                .outcome
+                .output
+                .initial_receipt
+                .selected_alternative_projection()
+                .demand
+                .accelerators
+                .is_empty(),
+            metal
+        );
+        let products: Vec<_> = PRODUCT_SUFFIXES
+            .iter()
+            .map(|suffix| {
+                let image =
+                    PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", prefix.display())))
+                        .unwrap();
+                let shape = image.shape().to_vec();
+                let values = image
+                    .get_slice(&[0; 4], &shape)
+                    .unwrap()
+                    .iter()
+                    .copied()
+                    .collect::<Vec<_>>();
+                (shape, values)
+            })
+            .collect();
+        if let Some(expected) = &baseline {
+            for ((shape, values), (expected_shape, expected_values)) in
+                products.iter().zip(expected)
+            {
+                assert_eq!(shape, expected_shape);
+                let scale = expected_values
+                    .iter()
+                    .map(|v: &f32| v.abs())
+                    .fold(0_f32, f32::max)
+                    .max(1e-20);
+                for (&actual, &expected) in values.iter().zip(expected_values) {
+                    assert!(
+                        (actual - expected).abs() <= 1e-3 * scale,
+                        "{actual} vs {expected}, scale={scale}"
+                    );
+                }
+            }
+        } else {
+            baseline = Some(products);
+        }
+    }
+}
+
+#[test]
 fn streaming_cube_complete_application_handoff() {
     use casa_imaging_runtime::{CapacityDomainId, ResourceOverride, ResourcePolicy};
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");

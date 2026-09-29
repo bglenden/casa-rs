@@ -22,12 +22,15 @@ def main():
     parser.add_argument("--science", type=Path, required=True)
     parser.add_argument("--panel", type=Path, required=True)
     parser.add_argument("--metrics", type=Path, required=True)
+    parser.add_argument("--channels", type=int, nargs="+",
+                        help="display a subset of alerted channels; does not alter assessment")
     args = parser.parse_args()
     if args.panel.exists() or args.metrics.exists():
         raise FileExistsError("review evidence must have fresh output paths")
     science = json.loads(args.science.read_text())
     rows = [row for row in science["channels"]
-            if row.get("review_triggers", row.get("failed", []))]
+            if row.get("review_triggers", row.get("failed", []))
+            and (args.channels is None or row["channel"] in args.channels)]
     if not rows:
         raise ValueError("science report has no numerical-review channels")
     size = 1024

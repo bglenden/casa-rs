@@ -2,8 +2,7 @@
 
 //! Crate-private Metal operators for contiguous cube grids.
 
-#![allow(dead_code, reason = "T57 application dispatch is not connected yet")]
-
+pub(super) use casa_imaging_reconstruction::runtime_adapter::SpatialTap as CubeTap;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_foundation::NSString;
@@ -71,20 +70,10 @@ kernel void cube_degrid_taps(
 "#;
 
 /// The CPU supplies CASA's selected sample geometry and seven-tap tables. The
-/// same compiled pipelines are reused across blocks and major phases.
+/// same compiled pipelines are reused across blocks within the admitted execution.
 pub(super) struct MetalCubeKernels {
     grid: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     degrid: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub(super) struct CubeTap {
-    pub x: u32,
-    pub y: u32,
-    pub x_weights: u32,
-    pub y_weights: u32,
-    pub value: [f32; 2],
 }
 
 impl MetalCubeKernels {

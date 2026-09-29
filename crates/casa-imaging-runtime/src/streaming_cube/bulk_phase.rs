@@ -3,6 +3,7 @@
 //! Direct-MS cube major phases on the shared model, CLEAN and publication DAG.
 
 use super::bulk_wave::BulkWave;
+use super::metal_wave::{MetalWave, MetalWaveMemory, WaveConsumer};
 use crate::complete_data_operator::{PendingCubeRefresh, PendingStreamingCubeFold};
 use crate::cube_state_plan::CubeStatePlan;
 use crate::weighting::bulk_source::BulkInputPlan;
@@ -39,6 +40,7 @@ pub struct BulkCubePhase {
     workers: usize,
     workspace: u64,
     wave_bytes: u64,
+    metal_allocation: Option<AllocationId>,
     output_hz: Vec<f64>,
     cube_state: Option<CubeStatePlan>,
     mfs: Option<CompleteDataPlanFragment>,
@@ -233,6 +235,14 @@ impl BulkCubePhase {
             problem.reconstruction().basis(),
             casa_imaging_model::ReconstructionBasis::Constant
         );
+        if policy.metal_cube && (is_mfs || output_hz.len() < 2) {
+            return Err(io::Error::other(
+                "Metal cube requires a channel-local multi-plane problem",
+            ));
+        }
+        let metal_allocation = policy
+            .metal_cube
+            .then(|| AllocationId::new(format!("bulk-cube-metal-{ordinal}")));
         let bands = if is_mfs {
             Vec::new()
         } else if let Some(retained) = &retained {
@@ -306,7 +316,8 @@ impl BulkCubePhase {
             )?)
         };
         let compose_state = |physical,
-                             cube_state: &Option<CubeStatePlan>|
+                             cube_state: &Option<CubeStatePlan>,
+                             gpu_bytes: u64|
          -> io::Result<PhysicalWorkBinding> {
             let physical = if let Some((node, _, _)) = &minor {
                 let resources = crate::spectral_cycle_plan::MinorCycleResources::for_worker_count(
@@ -323,7 +334,7 @@ impl BulkCubePhase {
             } else {
                 physical
             };
-            match cube_state {
+            let physical = match cube_state {
                 Some(cube_state) => cube_state
                     .compose(
                         registry,
@@ -334,6 +345,17 @@ impl BulkCubePhase {
                         &reconcile,
                     )
                     .map_err(io::Error::other),
+                None => Ok(physical),
+            }?;
+            match &metal_allocation {
+                Some(allocation) => super::metal_plan::compose(
+                    physical,
+                    &policy.authority,
+                    &read,
+                    &reconcile,
+                    allocation,
+                    gpu_bytes,
+                ),
                 None => Ok(physical),
             }
         };
@@ -383,6 +405,7 @@ impl BulkCubePhase {
         let minimum = compose_state(
             base_fragment.compose(&base).map_err(io::Error::other)?,
             &cube_state,
+            8,
         )?;
         let remaining_memory = || {
             policy.authority.remaining_planning_memory_bytes(
@@ -406,7 +429,11 @@ impl BulkCubePhase {
             Err(error) => return Err(io::Error::other(error)),
         };
         if let Some(run) = &run {
-            let floor = BulkWave::bytes(&bands[..workers.min(bands.len())], workers)?;
+            let floor = if policy.metal_cube {
+                MetalWaveMemory::new(&bands[..workers.min(bands.len())], workers, rows)?.total()?
+            } else {
+                BulkWave::bytes(&bands[..workers.min(bands.len())], workers)?
+            };
             let deficit = floor.saturating_sub(remaining);
             let current = run.residency.limit_bytes();
             let reclaim = deficit.min(current.saturating_sub(minimum_cache) as u64);
@@ -418,9 +445,20 @@ impl BulkCubePhase {
         let count = if is_mfs {
             0
         } else {
-            BulkWave::prefix(&bands, remaining, workers)?
+            if policy.metal_cube {
+                MetalWaveMemory::prefix(&bands, remaining, workers, rows)?
+            } else {
+                BulkWave::prefix(&bands, remaining, workers)?
+            }
         };
-        let wave_bytes = BulkWave::bytes(&bands[..count], workers)?;
+        let metal_memory = policy
+            .metal_cube
+            .then(|| MetalWaveMemory::new(&bands[..count], workers, rows))
+            .transpose()?;
+        let cpu_wave = BulkWave::bytes(&bands[..count], workers)?;
+        let wave_bytes = metal_memory
+            .as_ref()
+            .map_or(Ok(cpu_wave), MetalWaveMemory::total)?;
         if !is_mfs && run.is_none() {
             let extra = remaining
                 .saturating_sub(wave_bytes)
@@ -438,7 +476,8 @@ impl BulkCubePhase {
             }
         }
         let workspace = fixed
-            .checked_add(wave_bytes)
+            .checked_add(cpu_wave)
+            .and_then(|bytes| bytes.checked_add(metal_memory.as_ref().map_or(0, |m| m.scratch)))
             .ok_or_else(|| io::Error::other("bulk phase residency overflow"))?;
         let physical = compose_state(
             WeightingPlanFragment::streaming_for_pass(
@@ -454,6 +493,7 @@ impl BulkCubePhase {
             .compose(&base)
             .map_err(io::Error::other)?,
             &cube_state,
+            metal_memory.as_ref().map_or(8, |m| m.device),
         )?;
         let (physical, mfs) = if is_mfs {
             let complete = CompleteDataPlanFragment::new_with_preparation_node(
@@ -504,6 +544,7 @@ impl BulkCubePhase {
                 workers,
                 workspace,
                 wave_bytes,
+                metal_allocation,
                 output_hz,
                 cube_state,
                 mfs,
@@ -622,7 +663,16 @@ impl BulkCubePhase {
         let mut selected = Some(selected);
         let mut start = 0;
         while start < state.bands.len() {
-            let count = BulkWave::prefix(&state.bands[start..], self.wave_bytes, self.workers)?;
+            let count = if self.metal_allocation.is_some() {
+                MetalWaveMemory::prefix(
+                    &state.bands[start..],
+                    self.wave_bytes,
+                    self.workers,
+                    self.input.rows,
+                )?
+            } else {
+                BulkWave::prefix(&state.bands[start..], self.wave_bytes, self.workers)?
+            };
             let jobs = state.bands[start..start + count]
                 .iter()
                 .cloned()
@@ -640,13 +690,31 @@ impl BulkCubePhase {
                 .map(BandPlan::native_range)
                 .filter(|r| !r.is_empty())
                 .reduce(|a, b| a.start.min(b.start)..a.end.max(b.end));
-            let wave = BulkWave::new(
-                jobs,
-                model.final_model(),
-                &self.output_hz,
-                &polarization,
-                (initial && first).then_some(state.bands.as_mut_slice()),
-            );
+            let discover = (initial && first).then_some(state.bands.as_mut_slice());
+            let wave = match &self.metal_allocation {
+                Some(allocation) => WaveConsumer::Metal(MetalWave::new(
+                    jobs,
+                    model.final_model(),
+                    &self.output_hz,
+                    &polarization,
+                    discover,
+                    context
+                        .metal_execution()
+                        .map_err(io::Error::other)?
+                        .batch_access(context)
+                        .map_err(io::Error::other)?,
+                    allocation,
+                    self.input.rows,
+                    self.workers,
+                )?),
+                None => WaveConsumer::Cpu(BulkWave::new(
+                    jobs,
+                    model.final_model(),
+                    &self.output_hz,
+                    &polarization,
+                    discover,
+                )),
+            };
             let first_channels = if initial {
                 None
             } else {
@@ -750,6 +818,17 @@ impl BulkCubePhase {
             );
             start += count;
             first = false;
+        }
+        if self.metal_allocation.is_some() {
+            let metal = context.metal_execution().map_err(io::Error::other)?;
+            metal
+                .complete_empty_source(context)
+                .map_err(io::Error::other)?;
+            eprintln!(
+                "bulk_cube_metal ordinal={} stats={:?}",
+                self.pass.ordinal(),
+                metal.batch_stats(&self.read).map_err(io::Error::other)?
+            );
         }
         Ok(())
     }
@@ -955,9 +1034,18 @@ impl WorkImplementation for BulkCubePhase {
     }
     fn wait_for_fence(
         &self,
-        _: WorkExecutionContext<'_>,
-        _: FenceKind,
+        context: WorkExecutionContext<'_>,
+        kind: FenceKind,
     ) -> io::Result<WorkMeasurements> {
+        if kind == FenceKind::Device && self.metal_allocation.is_some() {
+            context
+                .metal_execution()
+                .map_err(io::Error::other)?
+                .finish(context)
+                .map_err(io::Error::other)?;
+            // The synchronous read reports resource use after its batches drain.
+            // This fence settles ownership without reporting the same claims twice.
+        }
         Ok(WorkMeasurements::default())
     }
     fn complete_observation_read(

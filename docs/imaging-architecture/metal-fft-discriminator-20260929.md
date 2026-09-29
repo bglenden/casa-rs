@@ -5,6 +5,11 @@ Last reality check: 2026-09-29
 Verification: six complete-convolution cases, six guarded application runs,
 unchanged CASA checks/panels and focused tests; numerical review remains open.
 
+The later [complete Metal cube application checkpoint](cube-metal-application-checkpoint-20260929.md)
+supersedes future-tense application proposals below. It preserves the FFT
+discriminator results and rejected candidates; Metal spatial application timing
+is now available and is not a win over CPU W4.
+
 ## Current: complete convolution discriminator
 
 The formerly proposed test below has now run. Complete update time includes

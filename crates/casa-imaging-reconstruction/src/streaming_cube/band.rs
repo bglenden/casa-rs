@@ -1129,6 +1129,7 @@ impl BandWorkspace {
             .map_err(|_| SpectralOperatorError::GeneratedNonfinite)
     }
 
+    #[cfg(test)]
     fn begin_row<'a>(
         &'a mut self,
         row: VisibilityRow<'a>,
@@ -1187,6 +1188,38 @@ impl BandWorkspace {
         predicted: Complex64,
         weight: f64,
     ) -> Result<(), SpectralOperatorError> {
+        self.grid_sample_with(
+            output_channel,
+            frequency_hz,
+            row,
+            observed,
+            predicted,
+            weight,
+            |_, convolution, grid, plane, taps, value| {
+                convolution.grid_float(&mut grid.index_axis_mut(Axis(0), plane), taps, value);
+                Ok(())
+            },
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn grid_sample_with(
+        &mut self,
+        output_channel: usize,
+        frequency_hz: f64,
+        row: &VisibilityRow<'_>,
+        observed: Complex64,
+        predicted: Complex64,
+        weight: f64,
+        mut emit: impl FnMut(
+            SpatialField,
+            &StandardConvolution,
+            &mut Array3<Complex32>,
+            usize,
+            crate::spectral_operator::SampleTaps,
+            Complex32,
+        ) -> Result<(), SpectralOperatorError>,
+    ) -> Result<(), SpectralOperatorError> {
         let plane = output_channel - self.core.start;
         if self.phase != BandPhase::Residual {
             self.mapped[plane] = self.mapped[plane]
@@ -1204,22 +1237,34 @@ impl BandWorkspace {
             return Ok(());
         };
         let rotation = phase(row.phase_shift_m, frequency_hz);
-        for (grid, value) in [
-            (&mut self.dirty, observed * rotation * weight),
+        for (field, grid, value) in [
             (
+                SpatialField::Dirty,
+                &mut self.dirty,
+                observed * rotation * weight,
+            ),
+            (
+                SpatialField::Residual,
                 &mut self.residual,
                 (observed - predicted) * rotation * weight,
             ),
-            (&mut self.psf, Complex64::new(weight, 0.0)),
+            (
+                SpatialField::Psf,
+                &mut self.psf,
+                Complex64::new(weight, 0.0),
+            ),
         ] {
             if grid.is_empty() {
                 continue;
             }
-            self.convolution.grid_float(
-                &mut grid.index_axis_mut(Axis(0), plane),
+            emit(
+                field,
+                &self.convolution,
+                grid,
+                plane,
                 taps,
                 Complex32::new(value.re as f32, value.im as f32),
-            );
+            )?;
         }
         if self.phase != BandPhase::Residual {
             self.sum_weight[plane] += weight;
@@ -1501,14 +1546,45 @@ struct RowAccumulator<'a> {
 
 impl RowAccumulator<'_> {
     fn push(&mut self, channels: Range<usize>) -> Result<(), SpectralOperatorError> {
+        self.push_with(
+            channels,
+            |band, row, terms, polarization, _| band.predict_native_terms(row, terms, polarization),
+            |band, channel, frequency, row, observed, predicted, weight| {
+                band.grid_sample(channel, frequency, row, observed, predicted, weight)
+            },
+        )
+    }
+
+    fn push_with(
+        &mut self,
+        channels: Range<usize>,
+        mut predict: impl FnMut(
+            &BandWorkspace,
+            &VisibilityRow<'_>,
+            &[PreparedPredictionTerm],
+            &PolarizationOperator,
+            usize,
+        ) -> Result<SmallVec<[Complex64; 4]>, SpectralOperatorError>,
+        mut grid: impl FnMut(
+            &mut BandWorkspace,
+            usize,
+            f64,
+            &VisibilityRow<'_>,
+            Complex64,
+            Complex64,
+            f64,
+        ) -> Result<(), SpectralOperatorError>,
+    ) -> Result<(), SpectralOperatorError> {
         if channels.start != self.next || channels.end > self.row.channels.len() {
             return Err(SpectralOperatorError::IncompleteCoverage);
         }
         for channel in channels {
-            let prediction = self.band.predict_native_terms(
+            let prediction = predict(
+                self.band,
                 &self.row,
                 &self.stencil.prediction_terms[channel],
                 self.polarization,
+                channel,
             )?;
             for &fine in self.stencil.samples(channel) {
                 let nearest = if fine.nearest_is_right() {
@@ -1542,7 +1618,8 @@ impl RowAccumulator<'_> {
                         ) || self.row.weight_flags[nearest + correlation],
                     )
                 })?;
-                self.band.grid_sample(
+                grid(
+                    self.band,
                     fine.output_channel(),
                     fine.frequency_hz(),
                     &self.row,
@@ -1572,3 +1649,9 @@ mod tests;
 #[path = "memory.rs"]
 mod memory;
 pub use memory::BandMemory;
+
+#[path = "spatial.rs"]
+mod spatial;
+pub use spatial::{
+    CubeSpatialBackend, SpatialField, SpatialGridBatch, SpatialPredictionBatch, SpatialTap,
+};

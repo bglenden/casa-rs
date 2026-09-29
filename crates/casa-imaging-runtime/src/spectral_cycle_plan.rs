@@ -94,9 +94,17 @@ pub struct SpectralCycleExecutionPolicy {
     gridded_normal_storage: Option<ManagedSpillStorage>,
     pub(crate) aw_projection: Option<PreparedAwProjection>,
     pub(crate) aw_reader: Option<PreparedArtifactReaderPlan>,
+    pub(crate) metal_cube: bool,
 }
 
 impl SpectralCycleExecutionPolicy {
+    /// Require the native cube's admitted Metal spatial operators. An unavailable
+    /// device or unsupported geometry fails the run without changing execution.
+    #[must_use]
+    pub fn with_metal_cube(mut self, enabled: bool) -> Self {
+        self.metal_cube = enabled;
+        self
+    }
     /// Construct explicit execution limits bound to runtime-owned resource planning.
     #[must_use]
     pub fn new(
@@ -120,6 +128,7 @@ impl SpectralCycleExecutionPolicy {
             gridded_normal_storage: None,
             aw_projection: None,
             aw_reader: None,
+            metal_cube: false,
         }
     }
 

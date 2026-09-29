@@ -2112,6 +2112,7 @@ impl<'a> WeightingPlanFragment<'a> {
         context: WorkExecutionContext<'_>,
         initial: bool,
     ) -> Result<BoundedStreamPlan, WeightingEvidenceError> {
+        let lifetime = context.node().payload_lifetime();
         let mut workers = context
             .resources()
             .iter()
@@ -2151,7 +2152,7 @@ impl<'a> WeightingPlanFragment<'a> {
                             && capability.capacity_bytes() == heap_bytes
                             && capability.physical_slot()
                                 == &PhysicalSlotId::new(format!("{}-slot", allocation.as_str()))
-                            && capability.lifetime() == &ClaimLifetime::through_fence(FenceKind::Io)
+                            && capability.lifetime() == &lifetime
                     })
                     .count()
                     != 1
@@ -2190,7 +2191,7 @@ impl<'a> WeightingPlanFragment<'a> {
                             && capability.capacity_bytes() == heap_bytes
                             && capability.physical_slot()
                                 == &PhysicalSlotId::new(format!("{}-slot", allocation.as_str()))
-                            && capability.lifetime() == &ClaimLifetime::through_fence(FenceKind::Io)
+                            && capability.lifetime() == &lifetime
                     })
                     .count()
                     != 1
