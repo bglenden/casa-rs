@@ -183,10 +183,13 @@ impl EpochBand<'_> {
         if cells > refill.native.capacity() {
             return Err(SpectralOperatorError::ResidencyOverflow);
         }
-        let empty_native = NativePrediction {
-            indices: [u32::MAX; 2],
-            factors: [0.0; 2],
-        };
+        refill.native.resize(
+            cells,
+            NativePrediction {
+                indices: [u32::MAX; 2],
+                factors: [0.0; 2],
+            },
+        );
         let local =
             self.native_range.start - selected.start..self.native_range.end - selected.start;
         let rows = block.rows(layout, 0..block.channels, local.clone())?;
@@ -230,9 +233,7 @@ impl EpochBand<'_> {
             let stencil = previous.as_ref().unwrap().3.as_ref().unwrap();
             unique.fill(u32::MAX);
             let first = row_index * block.channels + local.start + support.start;
-            refill.native.resize(first, empty_native);
             for channel in 0..row.channels.len() {
-                let mut native = empty_native;
                 let terms = &stencil.prediction_terms[channel];
                 if terms.len() > 2 {
                     return Err(SpectralOperatorError::UnsupportedProblem);
@@ -266,10 +267,9 @@ impl EpochBand<'_> {
                             });
                         }
                     }
-                    native.indices[index] = unique[term.plane];
-                    native.factors[index] = term.factor as f32;
+                    refill.native[first + channel].indices[index] = unique[term.plane];
+                    refill.native[first + channel].factors[index] = term.factor as f32;
                 }
-                refill.native.push(native);
                 for &fine in stencil.samples(channel) {
                     let right = first + channel;
                     let left = right - 1;
@@ -305,7 +305,6 @@ impl EpochBand<'_> {
                 }
             }
         }
-        refill.native.resize(cells, empty_native);
         Ok(())
     }
 }
