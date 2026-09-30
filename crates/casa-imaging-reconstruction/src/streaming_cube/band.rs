@@ -44,6 +44,7 @@ pub struct BandPlan {
     single_channel: Option<CasaSingleChannel>,
     phase: BandPhase,
     support: BandSupport,
+    fine_per_output: usize,
 }
 
 impl BandPlan {
@@ -76,6 +77,7 @@ impl BandPlan {
                 native: 0..0,
                 model: Vec::new(),
             },
+            fine_per_output: 1,
         })
     }
 
@@ -167,6 +169,10 @@ impl BandPlan {
                 metadata.original_pair_hz[1],
             )
             .ok_or(SpectralOperatorError::MissingRowSpectralGeometry)?;
+            let fine_per_output = grid.fine_channel_count() / output_hz.len();
+            for band in bands.iter_mut() {
+                band.fine_per_output = band.fine_per_output.max(fine_per_output);
+            }
             let mut next_fine = 0;
             for (left, pair) in native_hz.windows(2).enumerate() {
                 pairs = pairs
@@ -1695,4 +1701,10 @@ pub use memory::BandMemory;
 mod spatial;
 pub use spatial::{
     CubeSpatialBackend, SpatialField, SpatialGridBatch, SpatialPredictionBatch, SpatialTap,
+};
+
+#[path = "residual_device.rs"]
+mod residual_device;
+pub use residual_device::{
+    DeviceCorrelations, NativePrediction, ResidualPrediction, ResidualRefill, ResidualSample,
 };

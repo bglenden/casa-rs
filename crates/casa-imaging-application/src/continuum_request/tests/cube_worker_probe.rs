@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 //! Fixed-work residual diagnostic on the production bulk-cube phase. Bootstrap
-//! uses W8 and one bounded minor cycle; it is outside the residual timer. Its
+//! uses an explicitly selected CPU worker count; it is outside the residual timer. Its
 //! retained reservations must permit every measured W. Saved FFTW wisdom holds
 //! the seed's numerical work fixed between otherwise independent processes.
 
 use super::super::*;
 use crate::{MajorCyclePhase, PhaseContext, PlanningRegistry, execution_policy, run_phase};
 use casa_imaging_model::{ImagingRequest, ProblemInputIdentities, compile, compile_observation};
-use casa_imaging_runtime::{CubePhase, SpectralCycleRegistry};
+use casa_imaging_reconstruction::{ImageDomainReconstructionMaskPlans, ReconstructionMaskSet};
+use casa_imaging_runtime::{CubePhase, ReconstructionCyclePhaseCompletion, SpectralCycleRegistry};
 use casa_ms::CubeAxisValue;
 use std::io::{Read, Write};
 use std::time::Instant;
@@ -73,6 +74,20 @@ fn fixed_nonzero_residual() {
     );
     std::fs::create_dir(&root).expect("fresh durable output directory");
     let reference = std::env::var_os("CASA_RS_FIXED_RESIDUAL_REFERENCE").map(PathBuf::from);
+    let start_channel = std::env::var("CASA_RS_FIXED_RESIDUAL_START_CHANNEL")
+        .map(|v| v.parse::<usize>().unwrap())
+        .unwrap_or(0);
+    assert!(start_channel + channels <= 512);
+    let bootstrap_cycles = std::env::var("CASA_RS_FIXED_RESIDUAL_BOOTSTRAP_CYCLES")
+        .map(|v| v.parse::<u32>().unwrap())
+        .unwrap_or(1);
+    assert!((1..=16).contains(&bootstrap_cycles));
+    let deep = bootstrap_cycles > 1;
+    let metal = std::env::var_os("CASA_RS_FIXED_RESIDUAL_METAL").is_some();
+    let bootstrap_workers = std::env::var("CASA_RS_FIXED_RESIDUAL_BOOTSTRAP_WORKERS")
+        .map(|v| v.parse::<u64>().unwrap())
+        .unwrap_or(8);
+    assert!((1..=8).contains(&bootstrap_workers));
     if let Some(reference) = &reference {
         wisdom(reference, true);
     }
@@ -97,7 +112,7 @@ fn fixed_nonzero_residual() {
                 outframe: FrequencyRef::LSRK,
                 interpolation: casa_ms::CubeInterpolation::Linear,
                 start: Some(CubeAxisValue::FrequencyHz {
-                    hz: 44e9,
+                    hz: 44e9 + start_channel as f64 * 2e6,
                     frame: None,
                 }),
                 width: Some(CubeAxisValue::FrequencyHz {
@@ -113,10 +128,14 @@ fn fixed_nonzero_residual() {
         polarizations: vec![PolarizationCoordinate::StokesI],
         algorithm: ContinuumAlgorithm::Clark,
         weighting: ContinuumWeighting::Natural,
-        iterations: 64 * channels,
-        cycle_iterations: 64,
+        iterations: if deep {
+            20_000 * channels
+        } else {
+            64 * channels
+        },
+        cycle_iterations: if deep { 1000 } else { 64 },
         hogbom_iteration_accounting: HogbomIterationAccounting::Strict,
-        maximum_major_cycles: Some(1),
+        maximum_major_cycles: Some(bootstrap_cycles as usize),
         noise_sigma: None,
         cycle_factor: 1.0,
         minimum_psf_fraction: 0.05,
@@ -138,7 +157,7 @@ fn fixed_nonzero_residual() {
         aw_projection: None,
         task_requirements: vec![TaskRequirement::PerChannelWeightDensity],
         resource_policy: ResourcePolicy::Explicit(ResourceOverride {
-            workers: Some(8),
+            workers: Some(bootstrap_workers),
             memory_bytes: BTreeMap::from([(
                 casa_imaging_runtime::CapacityDomainId::new("host-memory"),
                 memory,
@@ -190,13 +209,14 @@ fn fixed_nonzero_residual() {
     let minor =
         crate::streaming_cube::minor_program(&problem, prepared.minor_cycle_image_response, None)
             .unwrap();
+    let mut mask_plans = prepared.masks;
     let (initial_plan, phase, _) = <CubePhase as MajorCyclePhase>::initial(
         PhaseContext {
             problem: &problem,
             runtime: &runtime,
             registry: &planning,
             policy: execution_policy(&runtime, residency.clone(), None),
-            minor: Some((prepared.masks, minor)),
+            minor: Some((mask_plans.clone(), minor)),
         },
         access,
         None,
@@ -219,30 +239,79 @@ fn fixed_nonzero_residual() {
         runtime.attempts[0],
     )
     .unwrap();
-    let replay = registry.implementation().take_replay().unwrap();
+    let mut replay = registry.implementation().take_replay().unwrap();
     let minor = registry
         .implementation()
         .take_reconstruction_cycle_completion()
         .unwrap();
-    let components = minor.evidence().iterations();
+    let mut components = minor.evidence().iterations();
+    let mut controller_iterations = minor.evidence().controller_iterations();
     assert!(components > 0, "fixed residual requires a nonzero model");
-    let final_input = minor.into_final_major_input();
+    mask_plans = next_masks(&mask_plans, &minor, 1);
+    let mut final_input = minor.into_final_major_input();
     drop(registry);
+    for ordinal in 1..bootstrap_cycles {
+        let program = crate::streaming_cube::minor_program(
+            &problem,
+            prepared.minor_cycle_image_response,
+            Some((20_000 * channels).saturating_sub(controller_iterations)),
+        )
+        .unwrap();
+        let (plan, phase) = <CubePhase as MajorCyclePhase>::refresh(
+            PhaseContext {
+                problem: &problem,
+                runtime: &runtime,
+                registry: &planning,
+                policy: execution_policy(&runtime, residency.clone(), None),
+                minor: Some((mask_plans.clone(), program)),
+            },
+            final_input,
+            ordinal,
+            replay,
+            None,
+            &observation,
+        )
+        .unwrap();
+        let registry = SpectralCycleRegistry::new(
+            runtime.registry,
+            runtime.implementation.clone(),
+            &problem,
+            phase,
+        );
+        run_phase(
+            &problem,
+            &plan,
+            &registry,
+            &runtime,
+            crate::major_cycle_attempt(runtime.attempts[1], ordinal),
+        )
+        .unwrap();
+        replay = registry.implementation().take_replay().unwrap();
+        let minor = registry
+            .implementation()
+            .take_reconstruction_cycle_completion()
+            .unwrap();
+        components += minor.evidence().iterations();
+        controller_iterations += minor.evidence().controller_iterations();
+        mask_plans = next_masks(&mask_plans, &minor, ordinal as usize + 1);
+        final_input = minor.into_final_major_input();
+    }
     if let ResourcePolicy::Explicit(policy) = &mut runtime.resource_policy {
         policy.workers = Some(workers);
     }
     let bootstrap_seconds = setup_started.elapsed().as_secs_f64();
     let plan_started = Instant::now();
+    let residual_policy = execution_policy(&runtime, residency, None).with_metal_cube(metal);
     let (residual_plan, phase) = <CubePhase as MajorCyclePhase>::refresh(
         PhaseContext {
             problem: &problem,
             runtime: &runtime,
             registry: &planning,
-            policy: execution_policy(&runtime, residency, None),
+            policy: residual_policy,
             minor: None,
         },
         final_input,
-        1,
+        bootstrap_cycles,
         replay,
         None,
         &observation,
@@ -273,7 +342,7 @@ fn fixed_nonzero_residual() {
         &residual_plan,
         &registry,
         &runtime,
-        runtime.attempts[1],
+        crate::major_cycle_attempt(runtime.attempts[1], bootstrap_cycles),
     )
     .unwrap();
     let residual_seconds = started.elapsed().as_secs_f64();
@@ -370,6 +439,7 @@ fn fixed_nonzero_residual() {
     let result = serde_json::json!({
         "scope": "one production residual phase; bootstrap, planning, diagnostics and publication excluded",
         "workers": workers, "channels": channels, "rows": rows, "shape": [1024, 1024],
+        "metal": metal, "start_channel": start_channel, "bootstrap_cycles": bootstrap_cycles,
         "memory_bytes": memory, "bootstrap_seconds": bootstrap_seconds, "plan_seconds": plan_seconds,
         "residual_seconds": residual_seconds, "components": components,
         "model_sha256": model_sha256, "model_abs": model_abs, "metadata_sha256": metadata_sha256,
@@ -381,4 +451,28 @@ fn fixed_nonzero_residual() {
     )
     .unwrap();
     eprintln!("{result}");
+}
+
+fn next_masks(
+    plans: &ImageDomainReconstructionMaskPlans,
+    minor: &ReconstructionCyclePhaseCompletion,
+    cycle: usize,
+) -> ImageDomainReconstructionMaskPlans {
+    let ReconstructionMaskSet::Domains(masks) = minor.masks() else {
+        panic!("cube fixture requires domain masks");
+    };
+    plans
+        .next_cycle(
+            masks,
+            cycle,
+            minor.evidence().cycle_threshold_is_global(),
+            &(0..masks.len())
+                .map(|ordinal| {
+                    minor
+                        .domain_auto_mask_evidence(ordinal)
+                        .is_some_and(|evidence| evidence.channel_stopped)
+                })
+                .collect::<Vec<_>>(),
+        )
+        .unwrap()
 }

@@ -685,6 +685,46 @@ mod tests {
     }
 
     #[test]
+    fn owned_residual_wave_writes_in_admitted_windows_without_partition_copies() {
+        let old_plan = NormalStoragePlan::resident(CHANNELS).unwrap();
+        let old = StoredChannelNormalDomain::begin(streaming_domain(), &old_plan).unwrap();
+        let maximum_access = Arc::new(AtomicUsize::new(0));
+        let allowed = 2 * CELLS * POLARIZATIONS;
+        let plan = NormalStoragePlan::new(
+            Arc::new(ObservedFactory {
+                maximum_access: maximum_access.clone(),
+                allowed,
+                scalar_sensitivity: false,
+            }),
+            1,
+        )
+        .unwrap();
+        let mut next = old.refresh(model(), &plan).unwrap();
+        let values: Box<[_]> = (0..CHANNELS * POLARIZATIONS * CELLS)
+            .map(|n| n as f32 + 0.5)
+            .collect();
+        next.append_residual(&crate::streaming_cube::band::CubeResidual {
+            shape: [3, 2],
+            core: 0..CHANNELS,
+            total_channels: CHANNELS,
+            model: model(),
+            values: values.clone(),
+        })
+        .unwrap();
+        assert!(next.is_complete());
+        assert!(maximum_access.load(Ordering::Relaxed) <= allowed);
+        for channel in 0..CHANNELS {
+            let window = next.read_window(channel..channel + 1).unwrap();
+            for (actual, &expected) in window.primitives().dirty.iter().zip(
+                &values[channel * POLARIZATIONS * CELLS..(channel + 1) * POLARIZATIONS * CELLS],
+            ) {
+                assert_eq!(actual.re, f64::from(expected));
+                assert_eq!(actual.im, 0.0);
+            }
+        }
+    }
+
+    #[test]
     fn failed_residual_refresh_leaves_previous_epoch_readable() {
         #[derive(Debug)]
         struct WriteFailure;
@@ -1736,7 +1776,7 @@ impl StoredChannelNormalDomain {
         {
             return Err(SpectralOperatorError::IncompleteCoverage);
         }
-        if range.len() > self.window_channels {
+        if self.window_channels == 0 {
             return Err(SpectralOperatorError::NormalStorage(
                 "normal-state write exceeds the admitted channel window".into(),
             ));
@@ -1749,10 +1789,17 @@ impl StoredChannelNormalDomain {
         {
             return Err(SpectralOperatorError::ProblemMismatch);
         }
-        self.storage.write_real(
-            range.start * self.polarizations * checked_cells(self.shape)? * 2,
-            &residual.values,
-        )?;
+        let plane_values = self.polarizations * checked_cells(self.shape)?;
+        for (index, values) in residual
+            .values
+            .chunks(self.window_channels * plane_values)
+            .enumerate()
+        {
+            self.storage.write_real(
+                (range.start * plane_values + index * self.window_channels * plane_values) * 2,
+                values,
+            )?;
+        }
         self.next_channel = range.end;
         Ok(())
     }

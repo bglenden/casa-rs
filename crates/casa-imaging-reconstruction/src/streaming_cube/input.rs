@@ -118,6 +118,11 @@ pub struct NativeBlockView<'a> {
 }
 
 impl<'a> NativeBlockView<'a> {
+    /// Borrow the validated contiguous sample arrays for bounded device staging.
+    pub fn sample_arrays(self) -> (&'a [Complex32], &'a [f32], &'a [bool], &'a [bool]) {
+        (self.values, self.weights, self.flags, self.weight_flags)
+    }
+
     /// Bind a source-owned payload and worker-owned derived arrays without
     /// copying either. The caller retains every owner until its workers join.
     #[allow(clippy::too_many_arguments)]

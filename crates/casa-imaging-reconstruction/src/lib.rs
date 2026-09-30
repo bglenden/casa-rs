@@ -111,7 +111,8 @@ pub mod runtime_adapter {
         prepare_spectral_operator, reprepare_spectral_operator, spectral_operator_workload,
     };
     pub use crate::streaming_cube::band::{
-        BandMemory, BandPlan, BandResult, CubeResidual, CubeSpatialBackend, EpochBand,
+        BandMemory, BandPlan, BandResult, CubeResidual, CubeSpatialBackend, DeviceCorrelations,
+        EpochBand, NativePrediction, ResidualPrediction, ResidualRefill, ResidualSample,
         SpatialField, SpatialGridBatch, SpatialPredictionBatch, SpatialTap,
     };
     pub use crate::streaming_cube::input::{

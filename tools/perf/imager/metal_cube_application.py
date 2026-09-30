@@ -25,6 +25,8 @@ def main():
     parser.add_argument("--guard", type=Path)
     parser.add_argument("--outputs", type=Path)
     parser.add_argument("--workers", type=int, choices=(1, 4), default=4)
+    parser.add_argument("--first-channel", type=int, default=240)
+    parser.add_argument("--channels", type=int, default=32)
     parser.add_argument("--depth", choices=("dirty", "shallow", "deep"), default="deep")
     parser.add_argument("--major-cycles", type=int, choices=(1, 2, 3), default=3,
                         help="shallow diagnostic stop; the default workload is unchanged")
@@ -32,6 +34,8 @@ def main():
                         help="lower planning budget for the bounded multi-wave check")
     parser.add_argument("--metal", action="store_true")
     args = parser.parse_args()
+    if args.first_channel < 0 or args.channels < 1 or args.first_channel + args.channels > 512:
+        parser.error("output channels must lie within the existing 512-channel input")
     repo = Path(__file__).resolve().parents[3]
     if args.action == "freeze":
         assert args.build_log and args.binary
@@ -78,7 +82,9 @@ def main():
     replacements = {
         "CASA_RS_C_ARRAY_OUTPUT": str(output),
         "CASA_RS_C_ARRAY_WORKERS": str(args.workers),
-        "CASA_RS_C_ARRAY_NITER": "32000" if args.depth == "shallow" else "640000",
+        "CASA_RS_C_ARRAY_CHANNEL": str(args.first_channel),
+        "CASA_RS_C_ARRAY_OUTPUT_CHANNELS": str(args.channels),
+        "CASA_RS_C_ARRAY_NITER": str((1000 if args.depth == "shallow" else 20000) * args.channels),
         "CASA_RS_C_ARRAY_MEMORY_BYTES": str(args.native_memory_gib << 30),
     }
     command = [f"{part.split('=', 1)[0]}={replacements[part.split('=', 1)[0]]}"

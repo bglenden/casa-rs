@@ -451,20 +451,40 @@ struct MetalPlatformState {
     queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
     buffers: BTreeMap<PhysicalSlotId, Retained<ProtocolObject<dyn MTLBuffer>>>,
     kernels: Option<crate::metal_cube::MetalCubeKernels>,
+    pending: BTreeMap<u64, PendingCubeCommand>,
+    next_ticket: u64,
 }
 
 // SAFETY: Metal device/queue/buffer/pipeline handles have no thread affinity.
 // MTLBuffer's raw mutable contents prevent objc2 from promising Send/Sync for
 // the handle itself. This owner never exposes handles or slices beyond a call:
-// its execution mutex covers CPU contents access and GPU submission through
-// waitUntilCompleted, and encoders/command buffers remain local to that call.
+// its mutex protects CPU access and submission. Every asynchronous command pins
+// its buffers in this owner, and mutable CPU access rejects all in-flight regions.
+// Commands drain before release/close. No handle or CPU slice escapes a call.
 #[cfg(all(target_os = "macos", not(coverage)))]
 unsafe impl Send for MetalPlatformState {}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct PendingCubeCommand {
+    command: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
+    node: WorkNodeId,
+    regions: Vec<(AllocationId, usize, usize)>,
+    status: MetalBufferRegionOwned,
+    stats: MetalBatchStats,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct MetalBufferRegionOwned {
+    allocation: AllocationId,
+    offset: usize,
+    bytes: usize,
+}
 
 #[derive(Default)]
 struct MetalNodeProgress {
     prepared: bool,
     finished: bool,
+    failed: bool,
     stats: MetalBatchStats,
     empty_source: bool,
 }
@@ -504,6 +524,17 @@ impl MetalBatchAccess<'_> {
     ) -> Result<R, MetalRuntimeError> {
         let inner = self.lock()?;
         let platform = inner.platform.as_ref().expect("admitted prepared platform");
+        if platform.pending.values().any(|pending| {
+            pending.regions.iter().any(|(id, start, bytes)| {
+                id == region.allocation
+                    && region.offset < start + bytes
+                    && *start < region.offset + region.bytes
+            })
+        }) {
+            return Err(MetalRuntimeError::InvalidPlan(
+                "CPU access overlaps in-flight GPU work".into(),
+            ));
+        }
         let (buffer, offset) = buffer_region(&self.runtime.decision, platform, &self.node, region)?;
         let bytes = unsafe {
             std::slice::from_raw_parts_mut(
@@ -531,6 +562,12 @@ impl MetalBatchAccess<'_> {
             return Err(MetalRuntimeError::InvalidPlan("empty compute batch".into()));
         }
         let mut inner = self.lock()?;
+        if inner.nodes[&self.node].failed {
+            return Err(MetalRuntimeError::InvalidPlan(
+                "failed Metal node cannot dispatch".into(),
+            ));
+        }
+        drain_cube_commands(&self.runtime.decision, &mut inner, None)?;
         let stats =
             execute_platform_batch(&self.runtime.decision, &mut inner, &self.node, dispatches)?;
         let progress = inner.nodes.get_mut(&self.node).expect("prepared node");
@@ -540,6 +577,31 @@ impl MetalBatchAccess<'_> {
         progress.stats.gpu_seconds += stats.gpu_seconds;
         progress.stats.submit_wait_seconds += stats.submit_wait_seconds;
         Ok(stats)
+    }
+
+    /// Submit two connected passes without returning predictions to the host.
+    /// The runtime pins every referenced allocation and excludes mutable CPU access.
+    pub(crate) fn submit_residual(
+        &self,
+        dispatch: CubeResidualDispatch<'_>,
+    ) -> Result<u64, MetalRuntimeError> {
+        let mut inner = self.lock()?;
+        if inner.nodes[&self.node].failed {
+            return Err(MetalRuntimeError::InvalidPlan(
+                "failed Metal node cannot dispatch".into(),
+            ));
+        }
+        submit_cube_residual(&self.runtime.decision, &mut inner, &self.node, dispatch)
+    }
+
+    pub(crate) fn wait(&self, ticket: u64) -> Result<(), MetalRuntimeError> {
+        let mut inner = self.lock()?;
+        drain_cube_commands(&self.runtime.decision, &mut inner, Some(ticket))
+    }
+
+    pub(crate) fn drain(&self) -> Result<(), MetalRuntimeError> {
+        let mut inner = self.lock()?;
+        drain_cube_commands(&self.runtime.decision, &mut inner, None)
     }
 }
 
@@ -585,6 +647,17 @@ pub(crate) struct CubeDispatch<'a> {
     pub count: u32,
     pub width: u32,
     pub height: u32,
+}
+
+/// Regions are prediction descriptors, native mapping, fine descriptors, native
+/// values/weights/flags, convolution table, models, predictions, residual, status.
+#[derive(Clone, Copy)]
+pub(crate) struct CubeResidualDispatch<'a> {
+    pub regions: [MetalBufferRegion<'a>; 11],
+    /// Requested gathers, fine samples, native endpoints, model planes,
+    /// grid width/height, residual planes, convolution table rows.
+    pub shape: [u32; 8],
+    pub correlations: casa_imaging_reconstruction::runtime_adapter::DeviceCorrelations,
 }
 
 impl fmt::Debug for MetalExecutionState {
@@ -726,12 +799,18 @@ impl MetalExecutionState {
         {
             return Err(MetalRuntimeError::LeaseMismatch);
         }
+        drain_cube_commands(&self.decision, &mut inner, None)?;
         let progress = inner
             .nodes
             .get_mut(&context.node().id)
             .ok_or(MetalRuntimeError::FenceAlreadySettled)?;
         if progress.finished {
             return Err(MetalRuntimeError::FenceAlreadySettled);
+        }
+        if progress.failed {
+            return Err(MetalRuntimeError::InvalidPlan(
+                "failed Metal node cannot complete".into(),
+            ));
         }
         if !progress.prepared
             || (requires_dispatch(context.node().kind)
@@ -766,6 +845,7 @@ impl MetalExecutionState {
             .inner
             .lock()
             .map_err(|_| MetalRuntimeError::RuntimeStatePoisoned)?;
+        drain_cube_commands(&self.decision, &mut inner, None)?;
         close_platform(&mut inner)?;
         inner.closed = true;
         Ok(())
@@ -784,6 +864,7 @@ impl MetalExecutionState {
             .inner
             .lock()
             .map_err(|_| MetalRuntimeError::RuntimeStatePoisoned)?;
+        drain_cube_commands(&self.decision, &mut inner, None)?;
         #[cfg(all(target_os = "macos", not(coverage)))]
         if let Some(platform) = inner.platform.as_mut() {
             platform.buffers.remove(slot);
@@ -1050,6 +1131,8 @@ fn open_platform_state(
         queue,
         buffers: BTreeMap::new(),
         kernels: None,
+        pending: BTreeMap::new(),
+        next_ticket: 1,
     })
 }
 
@@ -1292,7 +1375,228 @@ fn execute_platform_batch(
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
+fn submit_cube_residual(
+    decision: &MetalExecutionDecision,
+    inner: &mut MetalExecutionInner,
+    node: &WorkNodeId,
+    dispatch: CubeResidualDispatch<'_>,
+) -> Result<u64, MetalRuntimeError> {
+    use casa_imaging_reconstruction::runtime_adapter::{
+        NativePrediction, ResidualPrediction, ResidualSample,
+    };
+    let p = dispatch.shape.map(|n| n as usize);
+    let correlations = dispatch.correlations.correlations as usize;
+    let invalid =
+        || MetalRuntimeError::InvalidPlan("invalid connected cube shape or region capacity".into());
+    if p[1] == 0
+        || p[4] < 7
+        || p[5] < 7
+        || p[7] == 0
+        || correlations == 0
+        || correlations > 4
+        || dispatch.correlations.direct < -1
+        || dispatch.correlations.direct >= correlations as i32
+        || dispatch
+            .correlations
+            .coefficients
+            .iter()
+            .flatten()
+            .any(|v| !v.is_finite())
+    {
+        return Err(invalid());
+    }
+    let cells = p[4].checked_mul(p[5]).ok_or_else(invalid)?;
+    let input = p[2].checked_mul(correlations).ok_or_else(invalid)?;
+    let model_cells = cells
+        .checked_mul(p[3])
+        .filter(|&n| n <= u32::MAX as usize)
+        .ok_or_else(invalid)?;
+    let residual_cells = cells
+        .checked_mul(p[6])
+        .filter(|&n| n <= u32::MAX as usize)
+        .ok_or_else(invalid)?;
+    let dimensions = [
+        (p[0], size_of::<ResidualPrediction>()),
+        (p[2], size_of::<NativePrediction>()),
+        (p[1], size_of::<ResidualSample>()),
+        (input, 8),
+        (input, 4),
+        (input, 1),
+        (p[7], 28),
+        (model_cells, 8),
+        (p[0], 8),
+        (residual_cells, 8),
+        (1, 4),
+    ];
+    for (region, (count, element)) in dispatch.regions.iter().zip(dimensions) {
+        if region.offset % 8 != 0 || count.checked_mul(element).is_none_or(|n| n > region.bytes) {
+            return Err(invalid());
+        }
+    }
+    for (index, &output) in dispatch.regions.iter().enumerate().skip(8) {
+        if dispatch
+            .regions
+            .iter()
+            .enumerate()
+            .any(|(other, &r)| other != index && r.overlaps(output))
+        {
+            return Err(invalid());
+        }
+    }
+    let platform = inner.platform.as_mut().expect("prepared platform");
+    let buffers = dispatch
+        .regions
+        .iter()
+        .map(|&r| buffer_region(decision, platform, node, r))
+        .collect::<Result<Vec<_>, _>>()?;
+    let command = platform
+        .queue
+        .commandBuffer()
+        .ok_or(MetalRuntimeError::CommandQueueUnavailable)?;
+    platform
+        .kernels
+        .as_ref()
+        .expect("prepared kernels")
+        .encode_residual(&command, &buffers, dispatch.shape, dispatch.correlations)
+        .map_err(MetalRuntimeError::Encoding)?;
+    let ticket = platform.next_ticket;
+    platform.next_ticket = ticket
+        .checked_add(1)
+        .ok_or(MetalRuntimeError::Overflow("command ticket"))?;
+    let started = Instant::now();
+    command.commit();
+    let status = dispatch.regions[10];
+    platform.pending.insert(
+        ticket,
+        PendingCubeCommand {
+            command,
+            node: node.clone(),
+            regions: dispatch
+                .regions
+                .iter()
+                .map(|r| (r.allocation.clone(), r.offset, r.bytes))
+                .collect(),
+            status: MetalBufferRegionOwned {
+                allocation: status.allocation.clone(),
+                offset: status.offset,
+                bytes: status.bytes,
+            },
+            stats: MetalBatchStats {
+                batches: 1,
+                grid_samples: p[1] as u64,
+                degrid_samples: p[0] as u64,
+                submit_wait_seconds: started.elapsed().as_secs_f64(),
+                ..MetalBatchStats::default()
+            },
+        },
+    );
+    Ok(ticket)
+}
+
+#[cfg(not(all(target_os = "macos", not(coverage))))]
+fn submit_cube_residual(
+    _: &MetalExecutionDecision,
+    _: &mut MetalExecutionInner,
+    _: &WorkNodeId,
+    _: CubeResidualDispatch<'_>,
+) -> Result<u64, MetalRuntimeError> {
+    Err(MetalRuntimeError::UnsupportedPlatform)
+}
+
+/// Drain every selected ticket even if one fails. Mutable access is released only
+/// after the command fence; failure never permits retry into partly filled grids.
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn drain_cube_commands(
+    decision: &MetalExecutionDecision,
+    inner: &mut MetalExecutionInner,
+    ticket: Option<u64>,
+) -> Result<(), MetalRuntimeError> {
+    let Some(platform) = inner.platform.as_mut() else {
+        return Ok(());
+    };
+    let tickets: Vec<_> = match ticket {
+        Some(ticket) if platform.pending.contains_key(&ticket) => vec![ticket],
+        Some(_) => return Err(MetalRuntimeError::FenceAlreadySettled),
+        None => platform.pending.keys().copied().collect(),
+    };
+    let mut error = None;
+    for ticket in tickets {
+        let mut pending = platform.pending.remove(&ticket).expect("selected command");
+        let mut failed = false;
+        let started = Instant::now();
+        pending.command.waitUntilCompleted();
+        pending.stats.submit_wait_seconds += started.elapsed().as_secs_f64();
+        if pending.command.status() != MTLCommandBufferStatus::Completed {
+            failed = true;
+            error.get_or_insert_with(|| MetalRuntimeError::CommandFailed {
+                node: pending.node.clone(),
+                status: pending.command.status().0 as u64,
+            });
+        } else {
+            let status = &pending.status;
+            let region = MetalBufferRegion {
+                allocation: &status.allocation,
+                offset: status.offset,
+                bytes: status.bytes,
+            };
+            match buffer_region(decision, platform, &pending.node, region) {
+                Ok((buffer, offset)) => {
+                    let value = unsafe {
+                        *buffer
+                            .contents()
+                            .as_ptr()
+                            .cast::<u8>()
+                            .add(offset)
+                            .cast::<u32>()
+                    };
+                    if value != 0 {
+                        failed = true;
+                        error.get_or_insert_with(|| {
+                            MetalRuntimeError::Encoding(format!(
+                                "connected cube invalid geometry/numerical input (status {value})"
+                            ))
+                        });
+                    }
+                }
+                Err(failure) => {
+                    failed = true;
+                    error.get_or_insert(failure);
+                }
+            }
+        }
+        pending.stats.gpu_seconds =
+            (pending.command.GPUEndTime() - pending.command.GPUStartTime()).max(0.0);
+        let progress = inner.nodes.get_mut(&pending.node).expect("prepared node");
+        progress.failed |= failed;
+        progress.stats.batches += pending.stats.batches;
+        progress.stats.grid_samples += pending.stats.grid_samples;
+        progress.stats.degrid_samples += pending.stats.degrid_samples;
+        progress.stats.gpu_seconds += pending.stats.gpu_seconds;
+        progress.stats.submit_wait_seconds += pending.stats.submit_wait_seconds;
+    }
+    error.map_or(Ok(()), Err)
+}
+
+#[cfg(not(all(target_os = "macos", not(coverage))))]
+fn drain_cube_commands(
+    _: &MetalExecutionDecision,
+    _: &mut MetalExecutionInner,
+    _: Option<u64>,
+) -> Result<(), MetalRuntimeError> {
+    Ok(())
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn close_platform(inner: &mut MetalExecutionInner) -> Result<(), MetalRuntimeError> {
+    if inner
+        .platform
+        .as_ref()
+        .is_some_and(|p| !p.pending.is_empty())
+    {
+        return Err(MetalRuntimeError::InvalidPlan(
+            "close before draining GPU commands".into(),
+        ));
+    }
     inner.platform = None;
     Ok(())
 }
@@ -1528,166 +1832,324 @@ mod tests {
     #[test]
     #[ignore = "requires a process-accessible Apple Metal device"]
     fn mixed_observation_executes_repeated_batches_before_one_terminal_device_fence() {
-        let (mut spec, mut topology) = mixed_specification();
-        spec.logical_allocations[0].bytes = 4096;
-        spec.physical_slots[0].capacity_bytes = 4096;
-        spec.resource_alternative.demand.memory[0].hard_bytes = 4096;
-        spec.resource_alternative.demand.memory[0].preferred_bytes = 4096;
-        topology.memory_domains[0].capacity_bytes = 8192;
-        let plan = ExecutionDag::new(spec).expect("mixed GPU arena");
-        let authority = authority(topology);
-        let mut scheduler =
-            ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &authority, None)
-                .expect("admit");
-        let SchedulerAction::Work(work) = scheduler.next_action().unwrap() else {
-            panic!("read");
-        };
-        let runtime = work.metal_execution().expect("runtime");
-        let problem = crate::execution::tests::compiled_problem();
-        let completed = BTreeMap::new();
-        let prediction = crate::StagePrediction::new(work.node().id.clone(), 1);
-        let context = WorkExecutionContext::for_test(
-            ExecutionAttemptId::from_sha256([1; 32]),
-            crate::execution_bindings::WorkExecutionTestBindings::new(
-                &problem,
-                crate::ImplementationRegistryId::from_sha256([1; 32]),
-                &completed,
-            ),
-            &work,
-            &[],
-            &prediction,
-            plan.resource_alternative(),
-        );
-        runtime.prepare(context).expect("prepare");
-        let stale = WorkExecutionContext::for_test(
-            ExecutionAttemptId::from_sha256([2; 32]),
-            crate::execution_bindings::WorkExecutionTestBindings::new(
-                &problem,
-                crate::ImplementationRegistryId::from_sha256([1; 32]),
-                &completed,
-            ),
-            &work,
-            &[],
-            &prediction,
-            plan.resource_alternative(),
-        );
-        assert_eq!(
-            runtime.prepare(stale),
-            Err(MetalRuntimeError::LeaseMismatch)
-        );
-        assert!(
-            !runtime.submitted(&work.node().id).unwrap(),
-            "preparation is not a science dispatch"
-        );
-        let access = runtime.batch_access(context).expect("scoped batch access");
-        assert!(access.execute(&[]).is_err());
-        let allocation = AllocationId::new("allocation-0");
-        let region = |offset, bytes| MetalBufferRegion {
-            allocation: &allocation,
-            offset,
-            bytes,
-        };
-        access
-            .with_bytes(region(0, 4096), |bytes| {
-                bytes.fill(0);
-                for (index, value) in [3_u32, 4, 0, 0].iter().enumerate() {
-                    bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_ne_bytes());
-                }
-                bytes[16..20].copy_from_slice(&1.25_f32.to_ne_bytes());
-                bytes[20..24].copy_from_slice(&(-0.5_f32).to_ne_bytes());
-                for value in bytes[64..92].chunks_exact_mut(4) {
-                    value.copy_from_slice(&1.0_f32.to_ne_bytes());
-                }
-            })
-            .expect("mapped arena");
-        let mut dispatch = CubeDispatch {
-            kind: CubeDispatchKind::Grid,
-            samples: region(0, 24),
-            weights: region(64, 28),
-            grid: region(128, 2048),
-            count: 1,
-            width: 16,
-            height: 16,
-        };
-        let mut oversized = dispatch;
-        oversized.count = 2;
-        assert!(access.execute(&[oversized]).is_err());
-        let mut aliased = dispatch;
-        aliased.kind = CubeDispatchKind::Degrid {
-            predicted: region(128, 8),
-        };
-        assert!(access.execute(&[aliased]).is_err());
-        assert!(!runtime.submitted(&work.node().id).unwrap());
-        for _ in 0..2 {
-            let stats = access.execute(&[dispatch]).expect("grid batch");
-            assert_eq!(stats.batches, 1);
-            assert_eq!(stats.grid_samples, 1);
+        for inject_fault in [false, true] {
+            let (mut spec, mut topology) = mixed_specification();
+            spec.logical_allocations[0].bytes = 8192;
+            spec.physical_slots[0].capacity_bytes = 8192;
+            spec.resource_alternative.demand.memory[0].hard_bytes = 8192;
+            spec.resource_alternative.demand.memory[0].preferred_bytes = 8192;
+            topology.memory_domains[0].capacity_bytes = 16384;
+            let plan = ExecutionDag::new(spec).expect("mixed GPU arena");
+            let authority = authority(topology);
+            let mut scheduler =
+                ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &authority, None)
+                    .expect("admit");
+            let SchedulerAction::Work(work) = scheduler.next_action().unwrap() else {
+                panic!("read");
+            };
+            let runtime = work.metal_execution().expect("runtime");
+            let problem = crate::execution::tests::compiled_problem();
+            let completed = BTreeMap::new();
+            let prediction = crate::StagePrediction::new(work.node().id.clone(), 1);
+            let context = WorkExecutionContext::for_test(
+                ExecutionAttemptId::from_sha256([1; 32]),
+                crate::execution_bindings::WorkExecutionTestBindings::new(
+                    &problem,
+                    crate::ImplementationRegistryId::from_sha256([1; 32]),
+                    &completed,
+                ),
+                &work,
+                &[],
+                &prediction,
+                plan.resource_alternative(),
+            );
+            runtime.prepare(context).expect("prepare");
+            let stale = WorkExecutionContext::for_test(
+                ExecutionAttemptId::from_sha256([2; 32]),
+                crate::execution_bindings::WorkExecutionTestBindings::new(
+                    &problem,
+                    crate::ImplementationRegistryId::from_sha256([1; 32]),
+                    &completed,
+                ),
+                &work,
+                &[],
+                &prediction,
+                plan.resource_alternative(),
+            );
+            assert_eq!(
+                runtime.prepare(stale),
+                Err(MetalRuntimeError::LeaseMismatch)
+            );
+            assert!(
+                !runtime.submitted(&work.node().id).unwrap(),
+                "preparation is not a science dispatch"
+            );
+            let access = runtime.batch_access(context).expect("scoped batch access");
+            assert!(access.execute(&[]).is_err());
+            let allocation = AllocationId::new("allocation-0");
+            let region = |offset, bytes| MetalBufferRegion {
+                allocation: &allocation,
+                offset,
+                bytes,
+            };
+            access
+                .with_bytes(region(0, 4096), |bytes| {
+                    bytes.fill(0);
+                    for (index, value) in [3_u32, 4, 0, 0].iter().enumerate() {
+                        bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_ne_bytes());
+                    }
+                    bytes[16..20].copy_from_slice(&1.25_f32.to_ne_bytes());
+                    bytes[20..24].copy_from_slice(&(-0.5_f32).to_ne_bytes());
+                    for value in bytes[64..92].chunks_exact_mut(4) {
+                        value.copy_from_slice(&1.0_f32.to_ne_bytes());
+                    }
+                })
+                .expect("mapped arena");
+            let mut dispatch = CubeDispatch {
+                kind: CubeDispatchKind::Grid,
+                samples: region(0, 24),
+                weights: region(64, 28),
+                grid: region(128, 2048),
+                count: 1,
+                width: 16,
+                height: 16,
+            };
+            let mut oversized = dispatch;
+            oversized.count = 2;
+            assert!(access.execute(&[oversized]).is_err());
+            let mut aliased = dispatch;
+            aliased.kind = CubeDispatchKind::Degrid {
+                predicted: region(128, 8),
+            };
+            assert!(access.execute(&[aliased]).is_err());
+            assert!(!runtime.submitted(&work.node().id).unwrap());
+            for _ in 0..2 {
+                let stats = access.execute(&[dispatch]).expect("grid batch");
+                assert_eq!(stats.batches, 1);
+                assert_eq!(stats.grid_samples, 1);
+            }
+            dispatch.kind = CubeDispatchKind::Degrid {
+                predicted: region(2176, 8),
+            };
+            access.execute(&[dispatch]).expect("degrid batch");
+            access
+                .with_bytes(region(2176, 8), |bytes| {
+                    assert_eq!(f32::from_ne_bytes(bytes[0..4].try_into().unwrap()), 122.5);
+                    assert_eq!(f32::from_ne_bytes(bytes[4..8].try_into().unwrap()), -49.0);
+                })
+                .expect("completed prediction");
+            assert!(runtime.submitted(&work.node().id).unwrap());
+            assert_eq!(
+                runtime.inner.lock().unwrap().nodes[&work.node().id]
+                    .stats
+                    .batches,
+                3
+            );
+            use casa_imaging_reconstruction::runtime_adapter::{
+                DeviceCorrelations, NativePrediction, ResidualPrediction, ResidualSample,
+                SpatialTap,
+            };
+            let tap = SpatialTap {
+                x: 3,
+                y: 4,
+                x_weights: 0,
+                y_weights: 0,
+                value: [1.0, 0.0],
+            };
+            access
+                .with_bytes(region(0, 8192), |bytes| {
+                    bytes.fill(0);
+                    bytes[..32].copy_from_slice(bytemuck::bytes_of(&ResidualPrediction {
+                        tap,
+                        plane: 0,
+                        padding: 0,
+                    }));
+                    bytes[32..48].copy_from_slice(bytemuck::bytes_of(&NativePrediction {
+                        indices: [0, u32::MAX],
+                        factors: [1.0, 0.0],
+                    }));
+                    bytes[48..96].copy_from_slice(bytemuck::bytes_of(&ResidualSample {
+                        tap,
+                        left: 0,
+                        right: 0,
+                        nearest_flags: 3 << 30,
+                        plane: 0,
+                        factors: [0.5, 0.5],
+                    }));
+                    bytes[96..100].copy_from_slice(&50.0_f32.to_ne_bytes());
+                    bytes[104..108].copy_from_slice(&1.0_f32.to_ne_bytes());
+                    for weight in bytes[128..156].chunks_exact_mut(4) {
+                        weight.copy_from_slice(&1.0_f32.to_ne_bytes());
+                    }
+                    for cell in bytes[256..2304].chunks_exact_mut(8) {
+                        cell[..4].copy_from_slice(&1.0_f32.to_ne_bytes());
+                    }
+                })
+                .unwrap();
+            let connected = CubeResidualDispatch {
+                regions: [
+                    region(0, 32),
+                    region(32, 16),
+                    region(48, 48),
+                    region(96, 8),
+                    region(104, 4),
+                    region(112, 1),
+                    region(128, 28),
+                    region(256, 2048),
+                    region(2304, 8),
+                    region(2312, 2048),
+                    region(4360, 4),
+                ],
+                shape: [1, 1, 1, 1, 16, 16, 1, 1],
+                correlations: DeviceCorrelations {
+                    coefficients: [[1.0, 0.0], [0.0; 2], [0.0; 2], [0.0; 2]],
+                    correlations: 1,
+                    direct: 0,
+                    padding: [0; 2],
+                },
+            };
+            let mut aliased = connected;
+            aliased.regions[8] = region(96, 8);
+            assert!(access.submit_residual(aliased).is_err());
+            let ticket = access.submit_residual(connected).unwrap();
+            assert!(
+                access.with_bytes(region(0, 32), |_| ()).is_err(),
+                "in-flight descriptors are immutable"
+            );
+            assert!(
+                access.with_bytes(region(2312, 2048), |_| ()).is_err(),
+                "in-flight output is unreadable"
+            );
+            access
+                .with_bytes(region(4400, 64), |bytes| bytes.fill(7))
+                .unwrap();
+            access.wait(ticket).unwrap();
+            access
+                .with_bytes(region(2312, 2048), |bytes| {
+                    let cells: &[num_complex::Complex32] = bytemuck::cast_slice(bytes);
+                    assert_eq!(
+                        cells.iter().filter(|v| v.re == 1.0 && v.im == 0.0).count(),
+                        49
+                    );
+                    assert_eq!(
+                        cells.iter().filter(|v| v.re == 0.0 && v.im == 0.0).count(),
+                        256 - 49
+                    );
+                })
+                .unwrap();
+            if inject_fault {
+                access
+                    .with_bytes(region(4400, 32), |bytes| {
+                        bytes.copy_from_slice(bytemuck::bytes_of(&ResidualPrediction {
+                            tap,
+                            plane: 0,
+                            padding: 0,
+                        }));
+                    })
+                    .unwrap();
+                access
+                    .with_bytes(region(4496, 4), |bytes| bytes.fill(0))
+                    .unwrap();
+                access
+                    .with_bytes(region(0, 4), |bytes| {
+                        bytes.copy_from_slice(&u32::MAX.to_ne_bytes())
+                    })
+                    .unwrap();
+                access.submit_residual(connected).unwrap();
+                let mut second = connected;
+                second.regions[0] = region(4400, 32);
+                second.regions[10] = region(4496, 4);
+                access.submit_residual(second).unwrap();
+                assert!(access.drain().is_err(), "GPU validation failure propagates");
+                assert!(
+                    runtime
+                        .inner
+                        .lock()
+                        .unwrap()
+                        .platform
+                        .as_ref()
+                        .unwrap()
+                        .pending
+                        .is_empty()
+                );
+                access.with_bytes(region(0, 32), |_| ()).unwrap();
+                assert!(
+                    access.submit_residual(second).is_err(),
+                    "failed node cannot retry partly filled grids"
+                );
+                let fence = work.for_fence(FenceKind::Device);
+                let fence_context = WorkExecutionContext::for_test(
+                    ExecutionAttemptId::from_sha256([1; 32]),
+                    crate::execution_bindings::WorkExecutionTestBindings::new(
+                        &problem,
+                        crate::ImplementationRegistryId::from_sha256([1; 32]),
+                        &completed,
+                    ),
+                    &fence,
+                    &[],
+                    &prediction,
+                    plan.resource_alternative(),
+                );
+                assert!(
+                    runtime.finish(fence_context).is_err(),
+                    "failed node cannot publish completion"
+                );
+                runtime.close().unwrap();
+                assert_eq!(
+                    runtime.buffer_identity(&PhysicalSlotId::new("slot-0")),
+                    None
+                );
+                continue;
+            }
+            let slot = PhysicalSlotId::new("slot-0");
+            let identity = runtime.buffer_identity(&slot);
+            assert!(identity.is_some());
+            let id = work.node().id.clone();
+            scheduler
+                .finish_work(id.clone(), crate::execution::WorkResult::Succeeded)
+                .unwrap();
+            scheduler
+                .complete_fence(crate::FenceId::new(id.clone(), FenceKind::Io))
+                .unwrap();
+            assert_eq!(
+                runtime.buffer_identity(&slot),
+                identity,
+                "I/O completion must not release device payload"
+            );
+            let fence = work.for_fence(FenceKind::Device);
+            let fence_context = WorkExecutionContext::for_test(
+                ExecutionAttemptId::from_sha256([1; 32]),
+                crate::execution_bindings::WorkExecutionTestBindings::new(
+                    &problem,
+                    crate::ImplementationRegistryId::from_sha256([1; 32]),
+                    &completed,
+                ),
+                &fence,
+                &[],
+                &prediction,
+                plan.resource_alternative(),
+            );
+            runtime
+                .finish(fence_context)
+                .expect("terminal evidence after prior batch waits");
+            assert_eq!(
+                runtime.finish(fence_context),
+                Err(MetalRuntimeError::FenceAlreadySettled)
+            );
+            assert!(matches!(
+                access.execute(&[dispatch]),
+                Err(MetalRuntimeError::NodeFinished(_))
+            ));
+            scheduler
+                .complete_fence(crate::FenceId::new(id.clone(), FenceKind::Device))
+                .unwrap();
+            assert_eq!(runtime.buffer_identity(&slot), None);
+            drop(scheduler.take_observation_completion_permits(&id));
+            assert!(matches!(
+                scheduler.next_action().unwrap(),
+                SchedulerAction::Complete(_)
+            ));
         }
-        dispatch.kind = CubeDispatchKind::Degrid {
-            predicted: region(2176, 8),
-        };
-        access.execute(&[dispatch]).expect("degrid batch");
-        access
-            .with_bytes(region(2176, 8), |bytes| {
-                assert_eq!(f32::from_ne_bytes(bytes[0..4].try_into().unwrap()), 122.5);
-                assert_eq!(f32::from_ne_bytes(bytes[4..8].try_into().unwrap()), -49.0);
-            })
-            .expect("completed prediction");
-        assert!(runtime.submitted(&work.node().id).unwrap());
-        assert_eq!(
-            runtime.inner.lock().unwrap().nodes[&work.node().id]
-                .stats
-                .batches,
-            3
-        );
-        let slot = PhysicalSlotId::new("slot-0");
-        let identity = runtime.buffer_identity(&slot);
-        assert!(identity.is_some());
-        let id = work.node().id.clone();
-        scheduler
-            .finish_work(id.clone(), crate::execution::WorkResult::Succeeded)
-            .unwrap();
-        scheduler
-            .complete_fence(crate::FenceId::new(id.clone(), FenceKind::Io))
-            .unwrap();
-        assert_eq!(
-            runtime.buffer_identity(&slot),
-            identity,
-            "I/O completion must not release device payload"
-        );
-        let fence = work.for_fence(FenceKind::Device);
-        let fence_context = WorkExecutionContext::for_test(
-            ExecutionAttemptId::from_sha256([1; 32]),
-            crate::execution_bindings::WorkExecutionTestBindings::new(
-                &problem,
-                crate::ImplementationRegistryId::from_sha256([1; 32]),
-                &completed,
-            ),
-            &fence,
-            &[],
-            &prediction,
-            plan.resource_alternative(),
-        );
-        runtime
-            .finish(fence_context)
-            .expect("terminal evidence after prior batch waits");
-        assert_eq!(
-            runtime.finish(fence_context),
-            Err(MetalRuntimeError::FenceAlreadySettled)
-        );
-        assert!(matches!(
-            access.execute(&[dispatch]),
-            Err(MetalRuntimeError::NodeFinished(_))
-        ));
-        scheduler
-            .complete_fence(crate::FenceId::new(id.clone(), FenceKind::Device))
-            .unwrap();
-        assert_eq!(runtime.buffer_identity(&slot), None);
-        drop(scheduler.take_observation_completion_permits(&id));
-        assert!(matches!(
-            scheduler.next_action().unwrap(),
-            SchedulerAction::Complete(_)
-        ));
     }
 
     fn metal_plan_with_nodes(

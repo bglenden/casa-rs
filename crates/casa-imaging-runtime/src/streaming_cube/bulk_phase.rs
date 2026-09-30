@@ -455,7 +455,9 @@ impl BulkCubePhase {
             .metal_cube
             .then(|| MetalWaveMemory::new(&bands[..count], workers, rows))
             .transpose()?;
-        let cpu_wave = BulkWave::bytes(&bands[..count], workers)?;
+        let cpu_wave = metal_memory
+            .as_ref()
+            .map_or_else(|| BulkWave::bytes(&bands[..count], workers), |m| Ok(m.cpu))?;
         let wave_bytes = metal_memory
             .as_ref()
             .map_or(Ok(cpu_wave), MetalWaveMemory::total)?;

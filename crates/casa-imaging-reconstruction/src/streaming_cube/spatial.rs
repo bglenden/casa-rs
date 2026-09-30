@@ -22,7 +22,7 @@ pub struct SpatialTap {
 }
 
 impl SpatialTap {
-    fn new(
+    pub(super) fn new(
         taps: crate::spectral_operator::SampleTaps,
         value: Complex32,
     ) -> Result<Self, SpectralOperatorError> {

@@ -6,13 +6,16 @@ use super::bulk_wave::BulkWave;
 use crate::{
     AllocationId,
     bounded_stream::BoundedExecution,
-    metal_runtime::{CubeDispatch, CubeDispatchKind, MetalBatchAccess, MetalBufferRegion},
+    metal_runtime::{
+        CubeDispatch, CubeDispatchKind, CubeResidualDispatch, MetalBatchAccess, MetalBufferRegion,
+    },
     weighting::bulk_source::BulkConsumer,
 };
 use casa_imaging_reconstruction::{
     ModelGeneration, PolarizationOperator, SpectralOperatorError,
     runtime_adapter::{
-        BandPlan, BandResult, CubeSpatialBackend, EpochBand, NativeBlockView, NativeLayout,
+        BandPlan, BandResult, CubeSpatialBackend, DeviceCorrelations, EpochBand, NativeBlockView,
+        NativeLayout, NativePrediction, ResidualPrediction, ResidualRefill, ResidualSample,
         SpatialField, SpatialGridBatch, SpatialPredictionBatch, SpatialTap,
     },
 };
@@ -59,6 +62,27 @@ impl BulkConsumer for WaveConsumer<'_> {
 
 impl MetalWaveMemory {
     pub(super) fn new(bands: &[BandPlan], workers: usize, rows: usize) -> io::Result<Self> {
+        if bands.first().is_some_and(BandPlan::is_residual) {
+            let wave = BandPlan::residual_wave(bands).map_err(io::Error::other)?;
+            let layout = ResidualLayout::new(&wave, rows)?;
+            let device = wave
+                .spatial_grid_bytes()
+                .map_err(io::Error::other)?
+                .checked_add(BandPlan::spatial_weight_bytes().next_multiple_of(8))
+                .and_then(|bytes| bytes.checked_add(layout.slot_bytes.checked_mul(2)?))
+                .and_then(|bytes| bytes.checked_add(layout.capacities[0].max(1).checked_mul(8)?))
+                .ok_or_else(overflow)?;
+            let scratch = layout
+                .descriptor_bytes
+                .checked_add(wave.spatial_host_bytes(1).map_err(io::Error::other)?)
+                .ok_or_else(overflow)?;
+            return Ok(Self {
+                cpu: BulkWave::bytes(std::slice::from_ref(&wave), 1)?,
+                device: device as u64,
+                scratch: scratch as u64,
+                requests: layout.capacities[0],
+            });
+        }
         let cpu = BulkWave::bytes(bands, workers)?;
         let grids = bands.iter().try_fold(0_u64, |sum, band| {
             sum.checked_add(band.spatial_grid_bytes().map_err(io::Error::other)? as u64)
@@ -156,11 +180,75 @@ pub(super) struct MetalWave<'a> {
     predicted: usize,
     capacity: usize,
     staging_stride: usize,
+    residual: Option<ResidualDevice>,
+}
+
+struct ResidualLayout {
+    capacities: [usize; 3],
+    offsets: [usize; 7],
+    slot_bytes: usize,
+    descriptor_bytes: usize,
+}
+
+impl ResidualLayout {
+    fn new(wave: &BandPlan, rows: usize) -> io::Result<Self> {
+        let capacities = wave.residual_capacities(rows).map_err(io::Error::other)?;
+        let [predictions, native, fine] = capacities;
+        // At most four correlations per Stokes-I input. The source retains its
+        // actual correlation count; unused staging capacity is never read.
+        let sizes = [
+            predictions
+                .max(1)
+                .checked_mul(size_of::<ResidualPrediction>()),
+            native.max(1).checked_mul(size_of::<NativePrediction>()),
+            fine.max(1).checked_mul(size_of::<ResidualSample>()),
+            native.max(1).checked_mul(4 * 8),
+            native.max(1).checked_mul(4 * 4),
+            native.max(1).checked_mul(4),
+            Some(8),
+        ];
+        let mut offsets = [0; 7];
+        let mut bytes = 0_usize;
+        for (i, size) in sizes.iter().enumerate() {
+            offsets[i] = bytes;
+            bytes = bytes
+                .checked_add(
+                    size.ok_or_else(overflow)?
+                        .checked_next_multiple_of(8)
+                        .ok_or_else(overflow)?,
+                )
+                .ok_or_else(overflow)?;
+        }
+        Ok(Self {
+            capacities,
+            offsets,
+            slot_bytes: bytes,
+            descriptor_bytes: offsets[3],
+        })
+    }
+    fn length(&self, index: usize) -> usize {
+        self.offsets
+            .get(index + 1)
+            .copied()
+            .unwrap_or(self.slot_bytes)
+            - self.offsets[index]
+    }
+}
+
+struct ResidualDevice {
+    layout: ResidualLayout,
+    refill: ResidualRefill,
+    tickets: [Option<u64>; 2],
+    next_slot: usize,
+    requested: u64,
+    unique: u64,
+    staging_bytes: u64,
+    refills: u64,
 }
 
 impl<'a> MetalWave<'a> {
     pub(super) fn new(
-        jobs: Vec<BandPlan>,
+        mut jobs: Vec<BandPlan>,
         model: &'a ModelGeneration,
         output_hz: &'a [f64],
         polarization: &'a PolarizationOperator,
@@ -170,6 +258,24 @@ impl<'a> MetalWave<'a> {
         rows: usize,
         workers: usize,
     ) -> io::Result<Self> {
+        let residual = if jobs.first().is_some_and(BandPlan::is_residual) {
+            let wave = BandPlan::residual_wave(&jobs).map_err(io::Error::other)?;
+            let layout = ResidualLayout::new(&wave, rows)?;
+            let refill = ResidualRefill::with_capacities(layout.capacities);
+            jobs = vec![wave];
+            Some(ResidualDevice {
+                layout,
+                refill,
+                tickets: [None; 2],
+                next_slot: 0,
+                requested: 0,
+                unique: 0,
+                staging_bytes: 0,
+                refills: 0,
+            })
+        } else {
+            None
+        };
         let memory = MetalWaveMemory::new(&jobs, workers, rows)?;
         let weights = jobs.iter().try_fold(0_usize, |sum, b| {
             sum.checked_add(b.spatial_grid_bytes().map_err(io::Error::other)?)
@@ -179,12 +285,18 @@ impl<'a> MetalWave<'a> {
             .checked_add(BandPlan::spatial_weight_bytes().next_multiple_of(8))
             .ok_or_else(overflow)?;
         let predicted = packed
-            .checked_add(
+            .checked_add(if let Some(residual) = &residual {
+                residual
+                    .layout
+                    .slot_bytes
+                    .checked_mul(2)
+                    .ok_or_else(overflow)?
+            } else {
                 memory
                     .requests
                     .checked_mul(size_of::<SpatialTap>())
-                    .ok_or_else(overflow)?,
-            )
+                    .ok_or_else(overflow)?
+            })
             .ok_or_else(overflow)?;
         let mut grids = 0;
         let jobs = jobs
@@ -217,6 +329,7 @@ impl<'a> MetalWave<'a> {
                 .requests
                 .checked_mul(size_of::<SpatialTap>() + size_of::<Complex32>())
                 .ok_or_else(overflow)?,
+            residual,
         })
     }
 }
@@ -443,6 +556,9 @@ impl BulkConsumer for MetalWave<'_> {
             }
             Ok::<_, io::Error>(())
         })?;
+        if self.residual.is_some() {
+            return self.consume_residual(block, layout, selected);
+        }
         let access = &self.access;
         let allocation = self.allocation;
         let output_hz = self.output_hz;
@@ -488,6 +604,13 @@ impl BulkConsumer for MetalWave<'_> {
         })
     }
     fn complete(mut self, execution: BoundedExecution<'_>) -> io::Result<Vec<BandResult>> {
+        self.access.drain().map_err(io::Error::other)?;
+        if let Some(residual) = &self.residual {
+            eprintln!(
+                "cube device residual: refills={} requested_predictions={} unique_predictions={} staging_bytes={} host_prediction_bytes=0 slots=2",
+                residual.refills, residual.requested, residual.unique, residual.staging_bytes
+            );
+        }
         for job in &mut self.jobs {
             if let Some(plan) = job.plan.take() {
                 job.band = Some(plan.prepare(self.model, None).map_err(io::Error::other)?);
@@ -512,7 +635,10 @@ impl BulkConsumer for MetalWave<'_> {
                 .map_err(io::Error::other)?;
         }
         let mut results: Vec<Option<BandResult>> = (0..self.jobs.len()).map(|_| None).collect();
-        let mut jobs: Vec<_> = self.jobs.into_iter().zip(results.iter_mut()).collect();
+        let mut jobs: Vec<_> = std::mem::take(&mut self.jobs)
+            .into_iter()
+            .zip(results.iter_mut())
+            .collect();
         let model = self.model;
         execution.for_each_mut(&mut jobs, |_, (job, result)| {
             **result = Some(
@@ -526,5 +652,157 @@ impl BulkConsumer for MetalWave<'_> {
             Ok::<_, io::Error>(())
         })?;
         Ok(results.into_iter().map(Option::unwrap).collect())
+    }
+}
+
+impl MetalWave<'_> {
+    fn consume_residual(
+        &mut self,
+        block: NativeBlockView<'_>,
+        layout: &NativeLayout,
+        selected: std::ops::Range<usize>,
+    ) -> io::Result<()> {
+        let job = &mut self.jobs[0];
+        let band = job.band.as_mut().expect("prepared residual wave");
+        let mut backend = ResidentBand {
+            access: &self.access,
+            allocation: self.allocation,
+            grids: job.grids,
+            fields: job.fields,
+            shape: job.shape,
+            weights: self.weights,
+            packed: self.packed,
+            predicted: self.predicted,
+            capacity: self.capacity,
+        };
+        if job.shape == [0; 2] {
+            band.initialize_spatial(&mut backend)
+                .map_err(io::Error::other)?;
+            job.shape = backend.shape;
+            job.fields = backend.fields;
+        }
+        let state = self.residual.as_mut().expect("connected residual state");
+        let slot = state.next_slot;
+        if let Some(ticket) = state.tickets[slot].take() {
+            self.access.wait(ticket).map_err(io::Error::other)?;
+        }
+        band.prepare_residual_refill(block, layout, selected, self.output_hz, &mut state.refill)
+            .map_err(io::Error::other)?;
+        let actual = [
+            state.refill.predictions.len(),
+            state.refill.native.len(),
+            state.refill.samples.len(),
+        ];
+        if actual
+            .iter()
+            .zip(state.layout.capacities)
+            .any(|(&n, cap)| n > cap)
+        {
+            return Err(io::Error::other(
+                "connected residual refill exceeds admitted capacity",
+            ));
+        }
+        if actual[2] == 0 {
+            return Ok(());
+        }
+        let base = self.packed + slot * state.layout.slot_bytes;
+        let (values, input_weights, flags, weight_flags) = block.sample_arrays();
+        let slot_region = |i: usize| MetalBufferRegion {
+            allocation: self.allocation,
+            offset: base + state.layout.offsets[i],
+            bytes: state.layout.length(i),
+        };
+        for (i, bytes) in [
+            bytemuck::cast_slice(state.refill.predictions.as_slice()),
+            bytemuck::cast_slice(state.refill.native.as_slice()),
+            bytemuck::cast_slice(state.refill.samples.as_slice()),
+            bytemuck::cast_slice(values),
+            bytemuck::cast_slice(input_weights),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if bytes.is_empty() {
+                continue;
+            }
+            self.access
+                .with_bytes(slot_region(i), |target| {
+                    target[..bytes.len()].copy_from_slice(bytes)
+                })
+                .map_err(io::Error::other)?;
+            state.staging_bytes += bytes.len() as u64;
+        }
+        self.access
+            .with_bytes(slot_region(5), |target| {
+                for ((target, &flag), &weight_flag) in
+                    target.iter_mut().zip(flags).zip(weight_flags)
+                {
+                    *target = u8::from(flag) | (u8::from(weight_flag) << 1);
+                }
+            })
+            .map_err(io::Error::other)?;
+        state.staging_bytes += flags.len() as u64;
+        self.access
+            .with_bytes(slot_region(6), |target| target.fill(0))
+            .map_err(io::Error::other)?;
+        let models = backend
+            .field_region(SpatialField::Model, 0)
+            .map_err(io::Error::other)?;
+        let residual = backend
+            .field_region(SpatialField::Residual, 0)
+            .map_err(io::Error::other)?;
+        let regions = [
+            slot_region(0),
+            slot_region(1),
+            slot_region(2),
+            slot_region(3),
+            slot_region(4),
+            slot_region(5),
+            backend.region(self.weights, BandPlan::spatial_weight_bytes()),
+            MetalBufferRegion {
+                bytes: models.bytes * job.fields[3],
+                ..models
+            },
+            backend.region(self.predicted, state.layout.capacities[0].max(1) * 8),
+            MetalBufferRegion {
+                bytes: residual.bytes * job.fields[1],
+                ..residual
+            },
+            slot_region(6),
+        ];
+        let shape = [
+            actual[0],
+            actual[2],
+            actual[1],
+            job.fields[3],
+            job.shape[0],
+            job.shape[1],
+            job.fields[1],
+            BandPlan::spatial_weight_bytes() / 28,
+        ]
+        .map(|n| u32::try_from(n).map_err(|_| overflow()));
+        let shape: Vec<_> = shape.into_iter().collect::<io::Result<_>>()?;
+        let ticket = self
+            .access
+            .submit_residual(CubeResidualDispatch {
+                regions,
+                shape: shape.try_into().expect("eight shape entries"),
+                correlations: DeviceCorrelations::new(self.polarization)
+                    .map_err(io::Error::other)?,
+            })
+            .map_err(io::Error::other)?;
+        state.tickets[slot] = Some(ticket);
+        state.next_slot = (slot + 1) % 2;
+        state.requested += state.refill.requested_predictions;
+        state.unique += actual[0] as u64;
+        state.refills += 1;
+        Ok(())
+    }
+}
+
+impl Drop for MetalWave<'_> {
+    fn drop(&mut self) {
+        // Source/descriptor failures still drain commands before their arena is released.
+        let _ = self.access.drain();
     }
 }

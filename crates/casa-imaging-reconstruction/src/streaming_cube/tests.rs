@@ -189,6 +189,7 @@ fn spatial_memory_includes_initialization_for_empty_source() {
         geometry: geometry(),
         core: 0..4,
         total_channels: 4,
+        fine_per_output: 1,
         single_channel: None,
         phase: BandPhase::InitialZero,
         support: BandSupport {
@@ -380,6 +381,7 @@ fn single_output_uses_native_frequencies_and_ignores_neighbour_flags() {
                 geometry: geometry(),
                 core: 0..1,
                 total_channels: 1,
+                fine_per_output: 1,
                 single_channel: Some(single),
                 phase: BandPhase::Full,
                 support: BandSupport {
@@ -501,6 +503,7 @@ fn preparation_support_matches_row_reference_with_one_pair_sweep_for_all_bands()
                             geometry: geometry(),
                             core: start..start + depth,
                             total_channels: 4,
+                            fine_per_output: 1,
                             single_channel: None,
                             phase: BandPhase::Full,
                             support: BandSupport {
@@ -566,6 +569,7 @@ fn preparation_reuses_only_identical_spectral_rows_without_losing_support() {
             geometry: geometry(),
             core: channel..channel + 1,
             total_channels: 4,
+            fine_per_output: 1,
             single_channel: None,
             phase: BandPhase::Full,
             support: BandSupport {
@@ -1139,6 +1143,101 @@ fn real_model(channel: usize, x: usize, y: usize) -> casa_imaging_model::ModelSa
 }
 
 #[test]
+fn connected_residual_reuses_coarse_predictions_with_bounded_refill_storage() {
+    let (model, _) = generation(64, real_model);
+    let output = [1e9, 1.002e9, 1.004e9, 1.006e9];
+    let input = Input::new((0..12).map(|ch| 0.996e9 + ch as f64 * 1e6).collect());
+    let row = input.row(0..12);
+    let layout = NativeLayout::new(
+        row.address,
+        input.channels.clone(),
+        smallvec::smallvec![
+            (0, CorrelationType::CircularRr),
+            (1, CorrelationType::CircularLl),
+        ],
+    )
+    .unwrap();
+    let metadata = [super::super::input::RowMetadata {
+        physical_row: 0,
+        uvw_m: row.uvw_m,
+        phase_shift_m: row.phase_shift_m,
+        original_pair_hz: row.original_pair_hz,
+    }];
+    let block = NativeBlockView::new(
+        &metadata,
+        row.frequencies_hz,
+        row.values,
+        row.weights,
+        row.flags,
+        row.weight_flags,
+        12,
+        2,
+    )
+    .unwrap();
+    let bands: Vec<_> = (0..4)
+        .map(|ch| BandPlan {
+            geometry: geometry(),
+            core: ch..ch + 1,
+            total_channels: 4,
+            fine_per_output: 2,
+            single_channel: None,
+            phase: BandPhase::Residual,
+            support: BandSupport {
+                native: 0..12,
+                model: (0..4).collect(),
+            },
+        })
+        .collect();
+    let wave = BandPlan::residual_wave(&bands).unwrap();
+    assert_eq!(wave.support.model, [0, 1, 2, 3]);
+    let capacity = wave.residual_capacities(1).unwrap();
+    let job = wave.prepare(&model, None).unwrap();
+    let mut refill = ResidualRefill::with_capacities(capacity);
+    let pointers = (
+        refill.predictions.as_ptr(),
+        refill.native.as_ptr(),
+        refill.samples.as_ptr(),
+    );
+    for _ in 0..2 {
+        job.prepare_residual_refill(block, &layout, 0..12, &output, &mut refill)
+            .unwrap();
+        assert!(refill.requested_predictions > refill.predictions.len() as u64);
+        let planes: std::collections::BTreeSet<_> =
+            refill.predictions.iter().map(|v| v.plane).collect();
+        assert_eq!(
+            planes.len(),
+            refill.predictions.len(),
+            "one gather per row/coarse plane"
+        );
+        assert!(refill.samples.len() <= capacity[2]);
+        for sample in &refill.samples {
+            assert!((sample.left as usize) < refill.native.len());
+            assert!((sample.right as usize) < refill.native.len());
+            assert!((sample.nearest_flags & ((1 << 30) - 1)) < refill.native.len() as u32);
+        }
+        assert_eq!(
+            pointers,
+            (
+                refill.predictions.as_ptr(),
+                refill.native.as_ptr(),
+                refill.samples.as_ptr()
+            )
+        );
+    }
+    let mut undersized = ResidualRefill::with_capacities([0, capacity[1], capacity[2]]);
+    assert!(matches!(
+        job.prepare_residual_refill(block, &layout, 0..12, &output, &mut undersized),
+        Err(SpectralOperatorError::ResidencyOverflow)
+    ));
+    let mut mismatch = bands.clone();
+    mismatch[1].geometry.increment_rad[0] *= 2.0;
+    assert!(matches!(
+        BandPlan::residual_wave(&mismatch),
+        Err(SpectralOperatorError::ProblemMismatch)
+    ));
+}
+
+#[test]
 fn band_memory_accounts_for_actual_phase_buffers_and_completed_ownership() {
     use std::mem::size_of;
     let (empty, _) = generation_with_origin(
@@ -1152,6 +1251,7 @@ fn band_memory_accounts_for_actual_phase_buffers_and_completed_ownership() {
                 geometry: geometry(),
                 core: 0..depth,
                 total_channels: 4,
+                fine_per_output: 1,
                 single_channel: None,
                 phase,
                 support: BandSupport {
@@ -1251,6 +1351,7 @@ fn band_memory_scales_from_shapes_and_rejects_overflow_without_allocating() {
         geometry: geometry(),
         core: 0..1,
         total_channels: 16_384,
+        fine_per_output: 1,
         single_channel: None,
         phase: BandPhase::InitialZero,
         support: BandSupport {
@@ -1426,6 +1527,7 @@ fn completed_epoch_images_preserve_partitioned_fields_and_model_binding() {
             geometry: geometry(),
             core,
             total_channels: 4,
+            fine_per_output: 1,
             single_channel: None,
             phase: BandPhase::Full,
             support,

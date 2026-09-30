@@ -67,6 +67,144 @@ kernel void cube_degrid_taps(
     }
     predicted[sample_index] = result;
 }
+
+struct Prediction { CubeTap tap; uint plane; uint padding; };
+struct NativePrediction { uint indices[2]; float factors[2]; };
+struct ResidualSample { CubeTap tap; uint left; uint right; uint nearest_flags; uint plane; float factors[2]; };
+struct ResidualParameters { uint shape[8]; float2 coefficients[4]; uint correlations; int direct; uint padding[2]; };
+
+float2 multiply_complex(float2 a, float2 b) {
+    return float2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
+}
+
+kernel void cube_predict_unique(
+    device const Prediction *requests [[buffer(0)]],
+    device const NativePrediction *native [[buffer(1)]],
+    device const ResidualSample *samples [[buffer(2)]],
+    device const float2 *values [[buffer(3)]],
+    device const float *input_weights [[buffer(4)]],
+    device const uchar *flags [[buffer(5)]],
+    device const float *weights [[buffer(6)]],
+    device const float2 *models [[buffer(7)]],
+    device float2 *predicted [[buffer(8)]],
+    device atomic_float *residual [[buffer(9)]],
+    device atomic_uint *status [[buffer(10)]],
+    constant ResidualParameters &p [[buffer(11)]],
+    uint index [[thread_position_in_grid]]) {
+    if (index >= p.shape[0]) return;
+    Prediction request = requests[index];
+    uint width = p.shape[4], height = p.shape[5];
+    if (request.plane >= p.shape[3] || request.tap.x > width - 7 || request.tap.y > height - 7
+        || request.tap.x_weights >= p.shape[7] || request.tap.y_weights >= p.shape[7]) {
+        atomic_fetch_or_explicit(status, 1u, memory_order_relaxed); return;
+    }
+    uint base = request.plane * width * height;
+    float2 result = float2(0.0);
+    for (uint x = 0; x < 7; ++x) {
+        float2 even = float2(0.0), odd = float2(0.0);
+        for (uint y = 0; y < 7; ++y) {
+            uint cell = base + (request.tap.x + x) * height + request.tap.y + y;
+            float2 value = models[cell] * weights[request.tap.y_weights * 7 + y];
+            if ((y & 1) == 0) even += value; else odd += value;
+        }
+        result += (even + odd) * weights[request.tap.x_weights * 7 + x];
+    }
+    result = multiply_complex(result, request.tap.value);
+    if (!all(isfinite(result))) atomic_fetch_or_explicit(status, 2u, memory_order_relaxed);
+    predicted[index] = result;
+}
+
+float2 native_prediction(device const NativePrediction *native, device const float2 *predicted,
+                         uint index, constant ResidualParameters &p, device atomic_uint *status) {
+    NativePrediction terms = native[index];
+    float2 value = float2(0.0);
+    for (uint i = 0; i < 2; ++i) {
+        if (terms.indices[i] == 0xffffffffu) continue;
+        if (terms.indices[i] >= p.shape[0]) {
+            atomic_fetch_or_explicit(status, 1u, memory_order_relaxed); continue;
+        }
+        value += predicted[terms.indices[i]] * terms.factors[i];
+    }
+    return value;
+}
+
+kernel void cube_residual_connected(
+    device const Prediction *requests [[buffer(0)]],
+    device const NativePrediction *native [[buffer(1)]],
+    device const ResidualSample *samples [[buffer(2)]],
+    device const float2 *values [[buffer(3)]],
+    device const float *input_weights [[buffer(4)]],
+    device const uchar *flags [[buffer(5)]],
+    device const float *weights [[buffer(6)]],
+    device const float2 *models [[buffer(7)]],
+    device const float2 *predicted [[buffer(8)]],
+    device atomic_float *residual [[buffer(9)]],
+    device atomic_uint *status [[buffer(10)]],
+    constant ResidualParameters &p [[buffer(11)]],
+    uint index [[thread_position_in_grid]]) {
+    if (index >= p.shape[1]) return;
+    ResidualSample sample = samples[index];
+    uint nearest = sample.nearest_flags & 0x3fffffffu;
+    uint mask = sample.nearest_flags >> 30;
+    if (sample.left >= p.shape[2] || sample.right >= p.shape[2] || nearest >= p.shape[2]
+        || sample.plane >= p.shape[6]) {
+        atomic_fetch_or_explicit(status, 1u, memory_order_relaxed); return;
+    }
+    float2 lp = native_prediction(native, predicted, sample.left, p, status);
+    float2 rp = native_prediction(native, predicted, sample.right, p, status);
+    float2 observed = float2(0.0), prediction = float2(0.0);
+    float2 direct_observed = float2(0.0), direct_prediction = float2(0.0);
+    float diagonal = 0.0;
+    for (uint correlation = 0; correlation < p.correlations; ++correlation) {
+        uint left = sample.left * p.correlations + correlation;
+        uint right = sample.right * p.correlations + correlation;
+        uint weight_index = nearest * p.correlations + correlation;
+        bool flagged = ((mask & 1) && (flags[left] & 1)) || ((mask & 2) && (flags[right] & 1))
+            || (flags[weight_index] & 2);
+        if (flagged) continue;
+        float weight = input_weights[weight_index];
+        if (!isfinite(weight) || weight < 0.0) {
+            atomic_fetch_or_explicit(status, 2u, memory_order_relaxed); continue;
+        }
+        if (weight == 0.0) continue;
+        float2 coefficient = p.coefficients[correlation];
+        float2 observation = values[left] * sample.factors[0] + values[right] * sample.factors[1];
+        float2 estimate = multiply_complex(coefficient, lp) * sample.factors[0]
+            + multiply_complex(coefficient, rp) * sample.factors[1];
+        if (!all(isfinite(observation)) || !all(isfinite(estimate))) {
+            atomic_fetch_or_explicit(status, 2u, memory_order_relaxed); continue;
+        }
+        float2 conjugate = float2(coefficient.x, -coefficient.y);
+        observed += multiply_complex(conjugate, observation * weight);
+        prediction += multiply_complex(conjugate, estimate * weight);
+        diagonal += weight * dot(coefficient, coefficient);
+        if (p.direct == int(correlation)) {
+            direct_observed = observation; direct_prediction = estimate;
+        }
+    }
+    if (diagonal == 0.0 || sample.tap.x == 0xffffffffu) return;
+    if (p.direct >= 0) { observed = direct_observed; prediction = direct_prediction; }
+    else { observed /= diagonal; prediction /= diagonal; }
+    float2 value = multiply_complex(observed - prediction, sample.tap.value) * diagonal;
+    if (!all(isfinite(value))) {
+        atomic_fetch_or_explicit(status, 2u, memory_order_relaxed); return;
+    }
+    uint width = p.shape[4], height = p.shape[5];
+    if (sample.tap.x > width - 7 || sample.tap.y > height - 7
+        || sample.tap.x_weights >= p.shape[7] || sample.tap.y_weights >= p.shape[7]) {
+        atomic_fetch_or_explicit(status, 1u, memory_order_relaxed); return;
+    }
+    uint base = sample.plane * width * height;
+    for (uint x = 0; x < 7; ++x) {
+        float x_weight = weights[sample.tap.x_weights * 7 + x];
+        for (uint y = 0; y < 7; ++y) {
+            float y_weight = weights[sample.tap.y_weights * 7 + y];
+            uint cell = base + (sample.tap.x + x) * height + sample.tap.y + y;
+            atomic_fetch_add_explicit(&residual[2 * cell], value.x * x_weight * y_weight, memory_order_relaxed);
+            atomic_fetch_add_explicit(&residual[2 * cell + 1], value.y * x_weight * y_weight, memory_order_relaxed);
+        }
+    }
+}
 "#;
 
 /// The CPU supplies CASA's selected sample geometry and seven-tap tables. The
@@ -74,6 +212,8 @@ kernel void cube_degrid_taps(
 pub(super) struct MetalCubeKernels {
     grid: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     degrid: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    unique_prediction: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    residual: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl MetalCubeKernels {
@@ -96,6 +236,8 @@ impl MetalCubeKernels {
         Ok(Self {
             grid: pipeline("cube_grid_taps")?,
             degrid: pipeline("cube_degrid_taps")?,
+            unique_prediction: pipeline("cube_predict_unique")?,
+            residual: pipeline("cube_residual_connected")?,
         })
     }
 
@@ -138,6 +280,55 @@ impl MetalCubeKernels {
             width,
             height,
         )
+    }
+
+    pub(super) fn encode_residual(
+        &self,
+        command: &ProtocolObject<dyn MTLCommandBuffer>,
+        buffers: &[(&ProtocolObject<dyn MTLBuffer>, usize)],
+        shape: [u32; 8],
+        correlations: casa_imaging_reconstruction::runtime_adapter::DeviceCorrelations,
+    ) -> Result<(), String> {
+        #[repr(C)]
+        struct Parameters {
+            shape: [u32; 8],
+            correlations: casa_imaging_reconstruction::runtime_adapter::DeviceCorrelations,
+        }
+        let parameters = Parameters {
+            shape,
+            correlations,
+        };
+        for (pipeline, count) in [
+            (&self.unique_prediction, shape[0]),
+            (&self.residual, shape[1]),
+        ] {
+            if count == 0 {
+                continue;
+            }
+            let encoder = command
+                .computeCommandEncoder()
+                .ok_or("Metal compute encoder unavailable")?;
+            encoder.setComputePipelineState(pipeline);
+            for (index, (buffer, offset)) in buffers.iter().enumerate() {
+                unsafe { encoder.setBuffer_offset_atIndex(Some(buffer), *offset, index) };
+            }
+            let pointer = NonNull::from(&parameters).cast::<c_void>();
+            unsafe { encoder.setBytes_length_atIndex(pointer, size_of::<Parameters>(), 11) };
+            encoder.dispatchThreads_threadsPerThreadgroup(
+                MTLSize {
+                    width: count as usize,
+                    height: 1,
+                    depth: 1,
+                },
+                MTLSize {
+                    width: 64,
+                    height: 1,
+                    depth: 1,
+                },
+            );
+            encoder.endEncoding();
+        }
+        Ok(())
     }
 
     fn encode(
