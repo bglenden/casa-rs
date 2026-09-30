@@ -24,7 +24,7 @@ use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 #[cfg(all(target_os = "macos", not(coverage)))]
 use objc2_metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandBufferStatus, MTLCommandQueue,
+    MTLBuffer, MTLCommandBuffer, MTLCommandBufferStatus, MTLCommandEncoder, MTLCommandQueue,
     MTLCreateSystemDefaultDevice, MTLDevice, MTLResourceOptions,
 };
 
@@ -1268,121 +1268,131 @@ fn submit_platform_batch(
         ..MetalBatchStats::default()
     };
     let mut regions = Vec::with_capacity(dispatches.len() * 4);
-    for dispatch in dispatches {
-        let region = |r| buffer_region(decision, platform, node, r);
-        let samples = region(dispatch.samples)?;
-        let weights = region(dispatch.weights)?;
-        let grid = region(dispatch.grid)?;
-        let count = dispatch.count as usize;
-        let output = match dispatch.kind {
-            CubeDispatchKind::Grid => dispatch.grid,
-            CubeDispatchKind::Degrid { predicted } => predicted,
-        };
-        regions.extend([dispatch.samples, dispatch.weights, dispatch.grid]);
-        if let CubeDispatchKind::Degrid { predicted } = dispatch.kind {
-            regions.push(predicted);
-        }
-        if count == 0
-            || dispatch.width < 7
-            || dispatch.height < 7
-            || dispatch.samples.offset % 8 != 0
-            || dispatch.grid.offset % 8 != 0
-            || dispatch.weights.offset % 4 != 0
-            || count
-                .checked_mul(size_of::<crate::metal_cube::CubeTap>())
-                .is_none_or(|bytes| bytes > dispatch.samples.bytes)
-            || (dispatch.width as usize)
-                .checked_mul(dispatch.height as usize)
-                .and_then(|cells| cells.checked_mul(8))
-                .is_none_or(|bytes| bytes > dispatch.grid.bytes)
-            || dispatch.weights.bytes < 7 * 4
-            || dispatch.width.checked_mul(dispatch.height).is_none()
-            || output.overlaps(dispatch.samples)
-            || output.overlaps(dispatch.weights)
-            || (matches!(dispatch.kind, CubeDispatchKind::Degrid { .. })
-                && output.overlaps(dispatch.grid))
-        {
-            return Err(MetalRuntimeError::InvalidPlan(
-                "invalid cube dispatch shape or buffer capacity".into(),
-            ));
-        }
-        // Validate the externally encoded tap layout before the GPU can access
-        // it. This is a bounded input check, never a grid-content verification.
-        if platform.pending.values().any(|pending| {
-            pending.regions.iter().any(|(id, start, bytes)| {
-                id == dispatch.samples.allocation
-                    && dispatch.samples.offset < start + bytes
-                    && *start < dispatch.samples.offset + dispatch.samples.bytes
-            })
-        }) {
-            return Err(MetalRuntimeError::InvalidPlan(
-                "CPU tap validation overlaps in-flight GPU work".into(),
-            ));
-        }
-        let taps = unsafe {
-            std::slice::from_raw_parts(
-                samples
-                    .0
-                    .contents()
-                    .as_ptr()
-                    .cast::<u8>()
-                    .add(samples.1)
-                    .cast::<crate::metal_cube::CubeTap>(),
-                count,
-            )
-        };
-        let weight_rows = dispatch.weights.bytes / (7 * 4);
-        if taps.iter().any(|tap| {
-            tap.x > dispatch.width - 7
-                || tap.y > dispatch.height - 7
-                || tap.x_weights as usize >= weight_rows
-                || tap.y_weights as usize >= weight_rows
-        }) {
-            return Err(MetalRuntimeError::InvalidPlan(
-                "cube tap exceeds grid or convolution table".into(),
-            ));
-        }
-        match dispatch.kind {
-            CubeDispatchKind::Grid => {
-                kernels
-                    .encode_grid(
-                        &command,
-                        samples,
-                        weights,
-                        grid,
-                        dispatch.count,
-                        dispatch.width,
-                        dispatch.height,
-                    )
-                    .map_err(MetalRuntimeError::Encoding)?;
-                stats.grid_samples += u64::from(dispatch.count);
+    let encoder = command
+        .computeCommandEncoder()
+        .ok_or_else(|| MetalRuntimeError::Encoding("Metal compute encoder unavailable".into()))?;
+    // The serial pass preserves grid/degrid dependencies. End it even when a
+    // rejected dispatch prevents this command from being committed.
+    let encoded = (|| {
+        for dispatch in dispatches {
+            let region = |r| buffer_region(decision, platform, node, r);
+            let samples = region(dispatch.samples)?;
+            let weights = region(dispatch.weights)?;
+            let grid = region(dispatch.grid)?;
+            let count = dispatch.count as usize;
+            let output = match dispatch.kind {
+                CubeDispatchKind::Grid => dispatch.grid,
+                CubeDispatchKind::Degrid { predicted } => predicted,
+            };
+            regions.extend([dispatch.samples, dispatch.weights, dispatch.grid]);
+            if let CubeDispatchKind::Degrid { predicted } = dispatch.kind {
+                regions.push(predicted);
             }
-            CubeDispatchKind::Degrid { predicted } => {
-                if predicted.offset % 8 != 0
-                    || count
-                        .checked_mul(8)
-                        .is_none_or(|bytes| bytes > predicted.bytes)
-                {
-                    return Err(MetalRuntimeError::InvalidPlan(
-                        "invalid predicted visibility capacity".into(),
-                    ));
+            if count == 0
+                || dispatch.width < 7
+                || dispatch.height < 7
+                || dispatch.samples.offset % 8 != 0
+                || dispatch.grid.offset % 8 != 0
+                || dispatch.weights.offset % 4 != 0
+                || count
+                    .checked_mul(size_of::<crate::metal_cube::CubeTap>())
+                    .is_none_or(|bytes| bytes > dispatch.samples.bytes)
+                || (dispatch.width as usize)
+                    .checked_mul(dispatch.height as usize)
+                    .and_then(|cells| cells.checked_mul(8))
+                    .is_none_or(|bytes| bytes > dispatch.grid.bytes)
+                || dispatch.weights.bytes < 7 * 4
+                || dispatch.width.checked_mul(dispatch.height).is_none()
+                || output.overlaps(dispatch.samples)
+                || output.overlaps(dispatch.weights)
+                || (matches!(dispatch.kind, CubeDispatchKind::Degrid { .. })
+                    && output.overlaps(dispatch.grid))
+            {
+                return Err(MetalRuntimeError::InvalidPlan(
+                    "invalid cube dispatch shape or buffer capacity".into(),
+                ));
+            }
+            // Validate the externally encoded tap layout before the GPU can access
+            // it. This is a bounded input check, never a grid-content verification.
+            if platform.pending.values().any(|pending| {
+                pending.regions.iter().any(|(id, start, bytes)| {
+                    id == dispatch.samples.allocation
+                        && dispatch.samples.offset < start + bytes
+                        && *start < dispatch.samples.offset + dispatch.samples.bytes
+                })
+            }) {
+                return Err(MetalRuntimeError::InvalidPlan(
+                    "CPU tap validation overlaps in-flight GPU work".into(),
+                ));
+            }
+            let taps = unsafe {
+                std::slice::from_raw_parts(
+                    samples
+                        .0
+                        .contents()
+                        .as_ptr()
+                        .cast::<u8>()
+                        .add(samples.1)
+                        .cast::<crate::metal_cube::CubeTap>(),
+                    count,
+                )
+            };
+            let weight_rows = dispatch.weights.bytes / (7 * 4);
+            if taps.iter().any(|tap| {
+                tap.x > dispatch.width - 7
+                    || tap.y > dispatch.height - 7
+                    || tap.x_weights as usize >= weight_rows
+                    || tap.y_weights as usize >= weight_rows
+            }) {
+                return Err(MetalRuntimeError::InvalidPlan(
+                    "cube tap exceeds grid or convolution table".into(),
+                ));
+            }
+            match dispatch.kind {
+                CubeDispatchKind::Grid => {
+                    kernels
+                        .encode_grid(
+                            &encoder,
+                            samples,
+                            weights,
+                            grid,
+                            dispatch.count,
+                            dispatch.width,
+                            dispatch.height,
+                        )
+                        .map_err(MetalRuntimeError::Encoding)?;
+                    stats.grid_samples += u64::from(dispatch.count);
                 }
-                kernels
-                    .encode_degrid(
-                        &command,
-                        samples,
-                        weights,
-                        grid,
-                        region(predicted)?,
-                        dispatch.count,
-                        dispatch.width,
-                        dispatch.height,
-                    )
-                    .map_err(MetalRuntimeError::Encoding)?;
-                stats.degrid_samples += u64::from(dispatch.count);
+                CubeDispatchKind::Degrid { predicted } => {
+                    if predicted.offset % 8 != 0
+                        || count
+                            .checked_mul(8)
+                            .is_none_or(|bytes| bytes > predicted.bytes)
+                    {
+                        return Err(MetalRuntimeError::InvalidPlan(
+                            "invalid predicted visibility capacity".into(),
+                        ));
+                    }
+                    kernels
+                        .encode_degrid(
+                            &encoder,
+                            samples,
+                            weights,
+                            grid,
+                            region(predicted)?,
+                            dispatch.count,
+                            dispatch.width,
+                            dispatch.height,
+                        )
+                        .map_err(MetalRuntimeError::Encoding)?;
+                    stats.degrid_samples += u64::from(dispatch.count);
+                }
             }
         }
-    }
+        Ok::<_, MetalRuntimeError>(())
+    })();
+    encoder.endEncoding();
+    encoded?;
     // Adjacent plane regions share one arena. Coalesce them so CPU mapping
     // checks stay proportional to live arenas, not to every plane dispatch.
     regions.sort_unstable_by(|left, right| {

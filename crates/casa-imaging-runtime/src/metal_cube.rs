@@ -243,7 +243,7 @@ impl MetalCubeKernels {
 
     pub(super) fn encode_grid(
         &self,
-        command: &ProtocolObject<dyn MTLCommandBuffer>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         samples: (&ProtocolObject<dyn MTLBuffer>, usize),
         weights: (&ProtocolObject<dyn MTLBuffer>, usize),
         grid: (&ProtocolObject<dyn MTLBuffer>, usize),
@@ -252,7 +252,7 @@ impl MetalCubeKernels {
         height: u32,
     ) -> Result<(), String> {
         self.encode(
-            command,
+            encoder,
             &self.grid,
             &[samples, weights, grid],
             count,
@@ -263,7 +263,7 @@ impl MetalCubeKernels {
 
     pub(super) fn encode_degrid(
         &self,
-        command: &ProtocolObject<dyn MTLCommandBuffer>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         samples: (&ProtocolObject<dyn MTLBuffer>, usize),
         weights: (&ProtocolObject<dyn MTLBuffer>, usize),
         grid: (&ProtocolObject<dyn MTLBuffer>, usize),
@@ -273,7 +273,7 @@ impl MetalCubeKernels {
         height: u32,
     ) -> Result<(), String> {
         self.encode(
-            command,
+            encoder,
             &self.degrid,
             &[samples, weights, grid, predicted],
             count,
@@ -333,7 +333,7 @@ impl MetalCubeKernels {
 
     fn encode(
         &self,
-        command: &ProtocolObject<dyn MTLCommandBuffer>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         pipeline: &ProtocolObject<dyn MTLComputePipelineState>,
         buffers: &[(&ProtocolObject<dyn MTLBuffer>, usize)],
         count: u32,
@@ -343,9 +343,6 @@ impl MetalCubeKernels {
         if count == 0 || width < 7 || height < 7 {
             return Err("invalid Metal cube grid shape".to_string());
         }
-        let encoder = command
-            .computeCommandEncoder()
-            .ok_or_else(|| "Metal compute encoder unavailable".to_string())?;
         encoder.setComputePipelineState(pipeline);
         for (index, (buffer, offset)) in buffers.iter().enumerate() {
             // The caller owns every buffer through the terminal command fence.
@@ -368,7 +365,6 @@ impl MetalCubeKernels {
                 depth: 1,
             },
         );
-        encoder.endEncoding();
         Ok(())
     }
 }
@@ -377,7 +373,8 @@ impl MetalCubeKernels {
 mod tests {
     use super::*;
     use objc2_metal::{
-        MTLCommandBufferStatus, MTLCommandQueue, MTLCreateSystemDefaultDevice, MTLResourceOptions,
+        MTLCommandBufferStatus, MTLCommandQueue, MTLCreateSystemDefaultDevice, MTLDispatchType,
+        MTLResourceOptions,
     };
 
     fn shared_buffer(
@@ -446,9 +443,13 @@ mod tests {
         upload(&weight_buffer, &weights);
         upload(&grid_buffer, &vec![[0.0_f32; 2]; reference.len()]);
         let command = queue.commandBuffer().expect("Metal command");
+        let encoder = command
+            .computeCommandEncoder()
+            .expect("serial compute pass");
+        assert_eq!(encoder.dispatchType(), MTLDispatchType::Serial);
         kernels
             .encode_grid(
-                &command,
+                &encoder,
                 (&sample_buffer, 0),
                 (&weight_buffer, 0),
                 (&grid_buffer, 0),
@@ -459,7 +460,7 @@ mod tests {
             .expect("grid encoding");
         kernels
             .encode_degrid(
-                &command,
+                &encoder,
                 (&sample_buffer, 0),
                 (&weight_buffer, 0),
                 (&grid_buffer, 0),
@@ -469,6 +470,7 @@ mod tests {
                 16,
             )
             .expect("degrid encoding");
+        encoder.endEncoding();
         command.commit();
         command.waitUntilCompleted();
         assert_eq!(command.status(), MTLCommandBufferStatus::Completed);
