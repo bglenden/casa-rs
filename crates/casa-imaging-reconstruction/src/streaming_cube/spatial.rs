@@ -205,21 +205,8 @@ impl BandPlan {
             )
             .and_then(|n| n.checked_add(outputs * self.core.len() * size_of::<SpatialGridBatch>()))
             .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-        // A spectral-row change can briefly retain both allocations during growth.
-        let residual_templates = if self.phase == BandPhase::Residual {
-            self.core
-                .len()
-                .checked_mul(self.fine_per_output)
-                .and_then(|n| {
-                    n.checked_mul(2 * size_of::<residual_device::PreparedResidualSample>())
-                })
-                .ok_or(SpectralOperatorError::ResidencyOverflow)?
-        } else {
-            0
-        };
         let preparation = samples
             .checked_add(headers)
-            .and_then(|n| n.checked_add(residual_templates))
             .ok_or(SpectralOperatorError::ResidencyOverflow)?;
         // Initialization converts the convolution table before packing begins.
         // Its transient storage still applies to an empty source refill.

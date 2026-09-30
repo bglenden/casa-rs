@@ -37,12 +37,6 @@ pub struct ResidualSample {
     pub factors: [f32; 2],
 }
 
-pub(super) struct PreparedResidualSample {
-    sample: ResidualSample,
-    frequency_hz: f64,
-    wavelength_scale: f64,
-}
-
 /// Polarization projection shared by every sample in this selected source block.
 #[doc(hidden)]
 #[repr(C)]
@@ -201,7 +195,6 @@ impl EpochBand<'_> {
         let rows = block.rows(layout, 0..block.channels, local.clone())?;
         let mut previous: Option<(&[f64], [f64; 2], Range<usize>, Option<RowStencil>)> = None;
         let mut unique = vec![u32::MAX; w.model_channels.len()];
-        let mut fine_templates = Vec::<PreparedResidualSample>::new();
         for row_index in 0..block.metadata.len() {
             let mut row = rows.row(row_index);
             let frequencies = row.frequencies_hz;
@@ -238,31 +231,6 @@ impl EpochBand<'_> {
                 ));
             }
             let stencil = previous.as_ref().unwrap().3.as_ref().unwrap();
-            if !reuse {
-                fine_templates.clear();
-                fine_templates.reserve_exact(stencil.points.len());
-                for channel in 0..row.channels.len() {
-                    for &fine in stencil.samples(channel) {
-                        let right = channel as u32;
-                        let left = right - 1;
-                        let nearest = if fine.nearest_is_right() { right } else { left };
-                        let flag_mask = u32::from(fine.linear_flag(true, false))
-                            | (u32::from(fine.linear_flag(false, true)) << 1);
-                        fine_templates.push(PreparedResidualSample {
-                            sample: ResidualSample {
-                                tap: SpatialTap::default(),
-                                left,
-                                right,
-                                nearest_flags: nearest | (flag_mask << 30),
-                                plane: (fine.output_channel() - w.core.start) as u32,
-                                factors: fine.factors().map(|v| v as f32),
-                            },
-                            frequency_hz: fine.frequency_hz(),
-                            wavelength_scale: fine.frequency_hz() / SPEED_OF_LIGHT_M_PER_S,
-                        });
-                    }
-                }
-            }
             unique.fill(u32::MAX);
             let first = row_index * block.channels + local.start + support.start;
             for channel in 0..row.channels.len() {
@@ -302,10 +270,14 @@ impl EpochBand<'_> {
                     refill.native[first + channel].indices[index] = unique[term.plane];
                     refill.native[first + channel].factors[index] = term.factor as f32;
                 }
-                for fine in &fine_templates[stencil.offsets[channel]..stencil.offsets[channel + 1]]
-                {
-                    let rotation = phase(row.phase_shift_m, fine.frequency_hz);
-                    let scale = fine.wavelength_scale;
+                for &fine in stencil.samples(channel) {
+                    let right = first + channel;
+                    let left = right - 1;
+                    let nearest = if fine.nearest_is_right() { right } else { left };
+                    let flag_mask = u32::from(fine.linear_flag(true, false))
+                        | (u32::from(fine.linear_flag(false, true)) << 1);
+                    let rotation = phase(row.phase_shift_m, fine.frequency_hz());
+                    let scale = fine.frequency_hz() / SPEED_OF_LIGHT_M_PER_S;
                     let tap = match w
                         .convolution
                         .taps([row.uvw_m[0] * scale, row.uvw_m[1] * scale])
@@ -322,12 +294,14 @@ impl EpochBand<'_> {
                     if refill.samples.len() == refill.samples.capacity() {
                         return Err(SpectralOperatorError::ResidencyOverflow);
                     }
-                    let mut sample = fine.sample;
-                    sample.tap = tap;
-                    sample.left += first as u32;
-                    sample.right += first as u32;
-                    sample.nearest_flags += first as u32;
-                    refill.samples.push(sample);
+                    refill.samples.push(ResidualSample {
+                        tap,
+                        left: left as u32,
+                        right: right as u32,
+                        nearest_flags: nearest as u32 | (flag_mask << 30),
+                        plane: (fine.output_channel() - w.core.start) as u32,
+                        factors: fine.factors().map(|v| v as f32),
+                    });
                 }
             }
         }
