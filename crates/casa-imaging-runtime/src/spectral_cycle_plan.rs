@@ -564,7 +564,13 @@ impl SpectralCyclePlan {
                 if strategy == GriddedNormalStrategy::CreateManagedSpill
                     && policy.visibility_write.is_none() =>
             {
-                if supports_replay_preparation(problem, &policy) {
+                let regions =
+                    casa_imaging_reconstruction::SpectralOperatorSpecification::new(problem)
+                        .map_err(CompleteDataPlanError::from)?
+                        .initial_mfs_region_count();
+                if regions > 0 {
+                    regions as u64 + 1
+                } else if supports_replay_preparation(problem, &policy) {
                     problem.geometry().spectral().output_channels() as u64
                 } else {
                     2
@@ -1104,7 +1110,10 @@ fn compose_major_physical_mode<R: ImplementationRegistry>(
             if strategy == GriddedNormalStrategy::CreateManagedSpill
                 && policy.visibility_write.is_none() =>
         {
-            if supports_replay_preparation(problem, policy) {
+            let regions = casa_imaging_reconstruction::SpectralOperatorSpecification::new(problem)
+                .map_err(CompleteDataPlanError::from)?
+                .initial_mfs_region_count();
+            if regions > 0 || supports_replay_preparation(problem, policy) {
                 workers
             } else {
                 workers.min(2)

@@ -5567,7 +5567,15 @@ impl CompleteDataOwnerState {
         &mut self,
         block: &WeightingReplayChunk,
     ) -> Result<&[FinalVisibilitySample], SpectralOperatorError> {
-        self.stage_initial_planes = false;
+        self.stage_initial_planes = self
+            .initial_planes
+            .as_ref()
+            .is_some_and(|batch| batch.is_mfs())
+            && !self.emit_final_visibilities
+            && self.science_probe.is_none()
+            && self
+                .model_binding
+                .is_none_or(ReconstructionModelBinding::is_initial_certified_zero);
         self.consume_block_dispatched(block, |planes| {
             for plane in planes {
                 plane.execute()?;
@@ -5576,7 +5584,7 @@ impl CompleteDataOwnerState {
         })
     }
 
-    /// Consume canonical source groups, dispatching disjoint initial image planes
+    /// Consume canonical source groups, dispatching disjoint initial planes or MFS regions
     /// through the runtime's already-admitted worker team.
     #[doc(hidden)]
     pub fn consume_block_with_initial_planes(
@@ -11812,6 +11820,18 @@ impl StandardConvolution {
         taps: SampleTaps,
         value: Complex64,
     ) {
+        self.grid_compensated_rows(grid, compensation, taps, value, 0);
+    }
+
+    fn grid_compensated_rows<S: DataMut<Elem = Complex64>, C: DataMut<Elem = Complex64>>(
+        &self,
+        grid: &mut ArrayBase<S, Ix2>,
+        compensation: &mut ArrayBase<C, Ix2>,
+        taps: SampleTaps,
+        value: Complex64,
+        first_row: usize,
+    ) {
+        let end_row = first_row + grid.nrows();
         debug_assert_eq!(grid.dim(), compensation.dim());
         let row_stride = grid.ncols();
         let grid = grid
@@ -11823,7 +11843,11 @@ impl StandardConvolution {
         let x_weights = self.weights[taps.x.weight_index];
         let y_weights = self.weights[taps.y.weight_index];
         for (x, x_weight) in x_weights.into_iter().enumerate() {
-            let start = (taps.x.start + x) * row_stride + taps.y.start;
+            let row = taps.x.start + x;
+            if row < first_row || row >= end_row {
+                continue;
+            }
+            let start = (row - first_row) * row_stride + taps.y.start;
             let grid_row = &mut grid[start..start + y_weights.len()];
             let compensation_row = &mut compensation[start..start + y_weights.len()];
             for ((grid_cell, compensation_cell), y_weight) in

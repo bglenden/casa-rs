@@ -1,7 +1,21 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Bounded initial-pass scheduling over the owner's existing disjoint planes.
+//! Bounded initial-pass scheduling over disjoint planes or shared-grid regions.
 
 use super::*;
+
+mod mfs_regions;
+
+impl SpectralOperatorSpecification {
+    /// Number of disjoint shared-grid regions in the supported initial MFS pass.
+    /// Zero leaves the existing channel-plane or scalar execution in place.
+    pub fn initial_mfs_region_count(&self) -> usize {
+        if mfs_regions::MfsRegions::supports(self, SpectralOperatorPass::InitialMajor) {
+            self.grid_shape[0].div_ceil(mfs_regions::STRIP_ROWS)
+        } else {
+            0
+        }
+    }
+}
 
 const END: usize = usize::MAX;
 
@@ -51,6 +65,7 @@ impl Bucket {
 
 #[derive(Debug)]
 pub(super) struct InitialPlaneBatch {
+    mfs: Option<mfs_regions::MfsRegions>,
     samples: Vec<InitialSample>,
     buckets: Box<[Bucket]>,
     planes_per_chart: usize,
@@ -59,6 +74,10 @@ pub(super) struct InitialPlaneBatch {
 }
 
 impl InitialPlaneBatch {
+    pub(super) fn is_mfs(&self) -> bool {
+        self.mfs.is_some()
+    }
+
     fn plane_count(
         specification: &SpectralOperatorSpecification,
         pass: SpectralOperatorPass,
@@ -83,6 +102,12 @@ impl InitialPlaneBatch {
         pass: SpectralOperatorPass,
         max_replay_block_samples: usize,
     ) -> Result<usize, SpectralOperatorError> {
+        if mfs_regions::MfsRegions::supports(specification, pass) {
+            return mfs_regions::MfsRegions::workspace_bytes(
+                specification.grid_shape,
+                max_replay_block_samples,
+            );
+        }
         let planes = Self::plane_count(specification, pass)?;
         if planes == 0 {
             return Ok(0);
@@ -110,6 +135,19 @@ impl InitialPlaneBatch {
         pass: SpectralOperatorPass,
         max_replay_block_samples: usize,
     ) -> Result<Option<Self>, SpectralOperatorError> {
+        if mfs_regions::MfsRegions::supports(specification, pass) {
+            return Ok(Some(Self {
+                mfs: Some(mfs_regions::MfsRegions::new(
+                    specification.grid_shape,
+                    max_replay_block_samples,
+                )?),
+                samples: Vec::new(),
+                buckets: Box::new([]),
+                planes_per_chart: 1,
+                flush_samples: 0,
+                sample_capacity: 0,
+            }));
+        }
         let planes = Self::plane_count(specification, pass)?;
         if planes == 0 {
             return Ok(None);
@@ -117,6 +155,7 @@ impl InitialPlaneBatch {
         Self::workspace_bytes(specification, pass, max_replay_block_samples)?;
         let sample_capacity = max_replay_block_samples + planes;
         Ok(Some(Self {
+            mfs: None,
             samples: Vec::with_capacity(sample_capacity),
             buckets: vec![Bucket::EMPTY; planes].into_boxed_slice(),
             planes_per_chart: specification.slab.core_depth() * specification.polarization_count(),
@@ -126,7 +165,10 @@ impl InitialPlaneBatch {
     }
 
     pub(super) fn ready(&self) -> bool {
-        self.samples.len() >= self.flush_samples
+        self.mfs.as_ref().map_or_else(
+            || self.samples.len() >= self.flush_samples,
+            mfs_regions::MfsRegions::ready,
+        )
     }
 
     pub(super) fn push(
@@ -136,6 +178,12 @@ impl InitialPlaneBatch {
         sample: SpectralOperatorSample,
         polarization: usize,
     ) -> Result<(), SpectralOperatorError> {
+        if let Some(mfs) = &mut self.mfs {
+            if chart != 0 || polarization != 0 {
+                return Err(SpectralOperatorError::InvalidSample);
+            }
+            return mfs.push(operator, sample);
+        }
         if polarization >= operator.polarization_count {
             return Err(SpectralOperatorError::InvalidSample);
         }
@@ -221,10 +269,27 @@ impl InitialPlaneKernel<'_> {
     }
 }
 
-/// One disjoint initial channel/polarization plane, borrowed from its owner.
+/// One disjoint initial plane or MFS grid region, borrowed from its owner.
 /// The runtime may reorder jobs but must execute each once before returning.
 #[doc(hidden)]
-pub struct InitialPlaneWork<'a> {
+pub struct InitialPlaneWork<'a>(InitialWork<'a>);
+
+enum InitialWork<'a> {
+    Plane(PlaneWork<'a>),
+    Mfs(mfs_regions::MfsWork<'a>),
+}
+
+impl InitialPlaneWork<'_> {
+    /// Accumulate this admitted job once, preserving sample order within each cell.
+    pub fn execute(&mut self) -> Result<(), SpectralOperatorError> {
+        match &mut self.0 {
+            InitialWork::Plane(work) => work.execute(),
+            InitialWork::Mfs(work) => work.execute(),
+        }
+    }
+}
+
+struct PlaneWork<'a> {
     kernel: InitialPlaneKernel<'a>,
     samples: &'a [InitialSample],
     first: usize,
@@ -236,7 +301,7 @@ pub struct InitialPlaneWork<'a> {
     visits: u64,
 }
 
-impl InitialPlaneWork<'_> {
+impl PlaneWork<'_> {
     /// Accumulate this plane's samples in their original canonical order.
     pub fn execute(&mut self) -> Result<(), SpectralOperatorError> {
         if self.executed {
@@ -279,6 +344,12 @@ impl InitialPlaneBatch {
         operators: &mut [SpectralSlabOperator],
         dispatch: &mut impl FnMut(&mut [InitialPlaneWork<'_>]) -> Result<(), SpectralOperatorError>,
     ) -> Result<(), SpectralOperatorError> {
+        if let Some(mfs) = &mut self.mfs {
+            let [operator] = operators else {
+                return Err(SpectralOperatorError::ProblemMismatch);
+            };
+            return mfs.dispatch(operator, dispatch);
+        }
         let batch = self;
         if batch.samples.is_empty() {
             return Ok(());
@@ -352,7 +423,7 @@ impl InitialPlaneBatch {
                     if jobs.len() == batch.buckets.len() {
                         return Err(SpectralOperatorError::ResidencyOverflow);
                     }
-                    jobs.push(InitialPlaneWork {
+                    jobs.push(InitialPlaneWork(InitialWork::Plane(PlaneWork {
                         kernel,
                         samples: &batch.samples,
                         first,
@@ -362,17 +433,22 @@ impl InitialPlaneBatch {
                         bucket,
                         #[cfg(test)]
                         visits: 0,
-                    });
+                    })));
                 }
             }
         }
         dispatch(&mut jobs)?;
-        if jobs.iter().any(|job| !job.completed) {
+        if jobs
+            .iter()
+            .any(|job| !matches!(&job.0, InitialWork::Plane(work) if work.completed))
+        {
             return Err(SpectralOperatorError::BlockSequence);
         }
         #[cfg(test)]
         for job in &jobs {
-            batch.buckets[job.bucket].visits = job.visits;
+            if let InitialWork::Plane(work) = &job.0 {
+                batch.buckets[work.bucket].visits = work.visits;
+            }
         }
         drop(jobs);
         #[cfg(test)]
@@ -495,6 +571,7 @@ mod tests {
     fn batch(charts: usize, threshold: usize) -> InitialPlaneBatch {
         let planes = charts * 4;
         InitialPlaneBatch {
+            mfs: None,
             samples: Vec::with_capacity(threshold + planes),
             buckets: vec![Bucket::EMPTY; planes].into_boxed_slice(),
             planes_per_chart: 4,

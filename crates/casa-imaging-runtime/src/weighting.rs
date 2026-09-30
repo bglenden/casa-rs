@@ -2175,14 +2175,22 @@ impl<'a> WeightingPlanFragment<'a> {
                 .allocations
                 .iter()
                 .any(|usage| usage.allocation == allocation);
+        let consumer_workers = if paired {
+            usize::try_from(worker_claim.amount()).map_err(|_| WeightingEvidenceError)?
+        } else {
+            1
+        };
         if paired {
-            let stack_bytes = 2 * crate::bounded_stream::BOUNDED_WORKER_STACK_BYTES as u64;
-            let heap_bytes = crate::bounded_stream::BoundedKernelPlan::new::<(), ()>(2, 1, 0)
-                .map_err(|_| WeightingEvidenceError)?
-                .capacity_bytes()
-                .checked_sub(stack_bytes)
+            let stack_bytes = (consumer_workers as u64)
+                .checked_mul(crate::bounded_stream::BOUNDED_WORKER_STACK_BYTES as u64)
                 .ok_or(WeightingEvidenceError)?;
-            if worker_claim.amount() != 2
+            let heap_bytes =
+                crate::bounded_stream::BoundedKernelPlan::new::<(), ()>(consumer_workers, 1, 0)
+                    .map_err(|_| WeightingEvidenceError)?
+                    .capacity_bytes()
+                    .checked_sub(stack_bytes)
+                    .ok_or(WeightingEvidenceError)?;
+            if consumer_workers < 2
                 || context
                     .allocations()
                     .iter()
@@ -2215,7 +2223,7 @@ impl<'a> WeightingPlanFragment<'a> {
         // initial-consumer allocation authorizes the paired compute team.
         BoundedStreamPlan::new::<(), ()>(
             self.source_resources.residency.peak_live_blocks(),
-            if paired { 2 } else { 1 },
+            consumer_workers,
             u64::try_from(self.source_resources.residency.aggregate_resident_bytes())
                 .map_err(|_| WeightingEvidenceError)?,
             1,

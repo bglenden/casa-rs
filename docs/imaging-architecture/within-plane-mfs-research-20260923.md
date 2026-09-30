@@ -7,6 +7,25 @@ Source: `405d01adc58c6a4844c41924dbef62c984091492`
 
 ## Decision in brief
 
+**Implementation checkpoint, 2026-09-30 (Linux focused checks only).** The
+existing weighted-stream executor now schedules the empty-model, standard,
+single-term Stokes-I MFS initial pass over disjoint 64-row strips of its shared
+dirty and PSF grids. It retains uniform-density generation, multi-SPW selection,
+the shared Clark controller and bounded residual replay. Routing storage is
+bounded by the admitted sample batch; each standard stencil reaches at most
+two strips, and workers borrow existing grid storage without private full grids.
+W1 uses the same routed numerical kernel. Worker admission follows available
+regions and the resource policy, including the existing replay compiler.
+
+Focused checks compare W1/W4/W8 strip execution with the original scalar
+single-term operator, including boundary crossings and flags. A small four-SPW
+uniform-weighted Clark application case admits W1 and W4 in both major phases
+and compares all emitted products at normalized error <= 1e-6, with exact mask,
+shape and unit checks. These are correctness checks, not a timing result or a
+replacement for the approved 4096-square workload and matched CASA comparison.
+macOS execution remains unverified for this checkpoint. The historical
+two-worker initial-consumer limitation below describes the parent revision.
+
 **Owner update, 2026-09-24: simple imaging baseline.** Reformulate the existing
 90-time/configuration, DATA-only intermediate as single-term MFS, Clark CLEAN,
 standard gridding, Stokes I and uniform weighting. Preserve all selected rows
