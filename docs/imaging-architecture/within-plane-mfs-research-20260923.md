@@ -26,6 +26,51 @@ replacement for the approved 4096-square workload and matched CASA comparison.
 macOS execution remains unverified for this checkpoint. The historical
 two-worker initial-consumer limitation below describes the parent revision.
 
+**Forward-model preparation checkpoint, 2026-09-30.** A bounded follow-up
+uses the existing four-SPW, uniform, 256-square Clark application test (24 rows,
+8 channels/SPW), on Linux with the existing debug/test profile and unchanged
+FFTW 3.3.10 static f32/f64 SIMD libraries. The existing stage trace switch now
+separates gridded model preparation, execution including finish, and window
+folding. These timings are per window and exclude earlier FFT preparation;
+stream worker timers are nested within execution, not additive to it.
+
+The measured residual replay processes 27 reduced prediction groups. In the
+first current control, stream numerical execution was 0.86/0.73 ms for W1/W4,
+versus 33.8/44.0 ms stream wall time. Instrumented model preparation was
+48.7/37.8 ms, with execution including finish at 36.8/34.2 ms. The tiny fixture
+therefore does not measure the target's visibility-throughput scaling.
+
+`SpectralSlabOperator::prepare_forward_generation` formerly reconstructed and
+validated a canonical `ModelCell` index for every pixel. It now validates both
+ends of each row, then uses contiguous canonical indices within that row.
+This retains model-window bounds, sample/support and domain-ownership checks,
+correction arithmetic, FFTs and nonfinite rejection; no buffer or worker state
+is added. At 256 square it reduces shape lookups from 65,536 to 512 per plane.
+The old `fff9c2d` serial MFS path was inspected: it likewise prepared a model
+grid before the paired prediction/residual operation. No old package is restored.
+
+Observed model-preparation times in milliseconds (W1/W4): parent 48.7/37.8,
+candidate 52.3/43.8; a subsequent parent control 69.4/35.9, candidate 40.8/34.4.
+These are individual debug observations, with W4 following W1 in each process;
+filesystem caches were not flushed and initial FFT planning has a cold-start
+cost. They do not establish a speedup, and no release or full-workload claim
+follows from the deterministic reduction in indexing work. The source change
+uses the same path for W1/W4 and both operating systems; macOS is not executed.
+
+The directly affected checks pass: the uniform multi-SPW W1/W4 application
+comparison (all six products at normalized error <= 1e-6, exact masks/shapes/units),
+nonempty-model continuation, and delta composition into the next major cycle.
+Candidate build/application peak sampled aggregate RSS was 2,400,899,072 bytes;
+the standalone candidate application control peaked at 73,056,256 bytes. These
+small-fixture peaks do not establish 4096-square residency.
+
+Evidence resides in `/workspace/casa-rs-tools/logs/mfs-refresh-*.log`; the
+instrumented parent test executable is retained outside the repository as
+`/workspace/casa-rs-tools/mfs-refresh-parent-test`. Builds use two jobs,
+`CARGO_INCREMENTAL=0` and an 8-GiB aggregate RSS guard. The exact 4096-square
+fixture is still unavailable in this executor, and a matched CASA reference
+is still required for full numerical/visual and performance acceptance.
+
 **Owner update, 2026-09-24: simple imaging baseline.** Reformulate the existing
 90-time/configuration, DATA-only intermediate as single-term MFS, Clark CLEAN,
 standard gridding, Stokes I and uniform weighting. Preserve all selected rows

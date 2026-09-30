@@ -8901,18 +8901,28 @@ impl SpectralSlabOperator {
                 let grid = &mut self.forward_grids[plane];
                 grid.fill(Complex64::default());
                 for y in 0..height {
+                    let row_start = generation
+                        .shape()
+                        .flat_index(casa_imaging_model::ModelCell::new(
+                            self.domain_ordinal,
+                            coefficient,
+                            polarization,
+                            [origin[0], origin[1] + y],
+                        ))
+                        .ok_or(SpectralOperatorError::ModelShape)?;
+                    // Validate the entire row before using canonical contiguous indices.
+                    generation
+                        .shape()
+                        .flat_index(casa_imaging_model::ModelCell::new(
+                            self.domain_ordinal,
+                            coefficient,
+                            polarization,
+                            [origin[0] + width - 1, origin[1] + y],
+                        ))
+                        .ok_or(SpectralOperatorError::ModelShape)?;
                     for x in 0..width {
-                        let index = generation
-                            .shape()
-                            .flat_index(casa_imaging_model::ModelCell::new(
-                                self.domain_ordinal,
-                                coefficient,
-                                polarization,
-                                [origin[0] + x, origin[1] + y],
-                            ))
-                            .ok_or(SpectralOperatorError::ModelShape)?;
                         let sample = generation
-                            .sample(index)
+                            .sample(row_start + x)
                             .ok_or(SpectralOperatorError::ModelShape)?;
                         if sample.support() == ModelSupport::Invalid {
                             continue;
