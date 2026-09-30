@@ -233,8 +233,12 @@ impl EpochBand<'_> {
             let stencil = previous.as_ref().unwrap().3.as_ref().unwrap();
             unique.fill(u32::MAX);
             let first = row_index * block.channels + local.start + support.start;
-            for channel in 0..row.channels.len() {
-                let terms = &stencil.prediction_terms[channel];
+            for (channel, (terms, offsets)) in stencil
+                .prediction_terms
+                .iter()
+                .zip(stencil.offsets.windows(2))
+                .enumerate()
+            {
                 if terms.len() > 2 {
                     return Err(SpectralOperatorError::UnsupportedProblem);
                 }
@@ -270,7 +274,7 @@ impl EpochBand<'_> {
                     refill.native[first + channel].indices[index] = unique[term.plane];
                     refill.native[first + channel].factors[index] = term.factor as f32;
                 }
-                for &fine in stencil.samples(channel) {
+                for &fine in &stencil.points[offsets[0]..offsets[1]] {
                     let right = first + channel;
                     let left = right - 1;
                     let nearest = if fine.nearest_is_right() { right } else { left };
