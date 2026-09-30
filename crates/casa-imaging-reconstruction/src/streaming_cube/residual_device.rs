@@ -276,20 +276,32 @@ impl EpochBand<'_> {
                     let nearest = if fine.nearest_is_right() { right } else { left };
                     let flag_mask = u32::from(fine.linear_flag(true, false))
                         | (u32::from(fine.linear_flag(false, true)) << 1);
-                    let rotation = phase(row.phase_shift_m, fine.frequency_hz());
-                    let scale = fine.frequency_hz() / SPEED_OF_LIGHT_M_PER_S;
-                    let tap = match w
-                        .convolution
-                        .taps([row.uvw_m[0] * scale, row.uvw_m[1] * scale])
-                    {
-                        Some(taps) => SpatialTap::new(
-                            taps,
-                            Complex32::new(rotation.re as f32, rotation.im as f32),
-                        )?,
-                        None => SpatialTap {
-                            x: u32::MAX,
-                            ..SpatialTap::default()
-                        },
+                    let prediction = terms.iter().find_map(|term| {
+                        let index = unique[term.plane];
+                        (term.frequency_hz == fine.frequency_hz() && index != u32::MAX)
+                            .then_some(index)
+                    });
+                    let tap = if let Some(index) = prediction {
+                        // The same row/frequency has identical geometry and conjugate phase.
+                        let mut tap = refill.predictions[index as usize].tap;
+                        tap.value[1] = -tap.value[1];
+                        tap
+                    } else {
+                        let rotation = phase(row.phase_shift_m, fine.frequency_hz());
+                        let scale = fine.frequency_hz() / SPEED_OF_LIGHT_M_PER_S;
+                        match w
+                            .convolution
+                            .taps([row.uvw_m[0] * scale, row.uvw_m[1] * scale])
+                        {
+                            Some(taps) => SpatialTap::new(
+                                taps,
+                                Complex32::new(rotation.re as f32, rotation.im as f32),
+                            )?,
+                            None => SpatialTap {
+                                x: u32::MAX,
+                                ..SpatialTap::default()
+                            },
+                        }
                     };
                     if refill.samples.len() == refill.samples.capacity() {
                         return Err(SpectralOperatorError::ResidencyOverflow);
