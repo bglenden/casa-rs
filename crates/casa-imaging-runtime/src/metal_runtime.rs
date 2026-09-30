@@ -469,7 +469,7 @@ struct PendingCubeCommand {
     command: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     node: WorkNodeId,
     regions: Vec<(AllocationId, usize, usize)>,
-    status: MetalBufferRegionOwned,
+    status: Option<MetalBufferRegionOwned>,
     stats: MetalBatchStats,
 }
 
@@ -568,15 +568,32 @@ impl MetalBatchAccess<'_> {
             ));
         }
         drain_cube_commands(&self.runtime.decision, &mut inner, None)?;
-        let stats =
-            execute_platform_batch(&self.runtime.decision, &mut inner, &self.node, dispatches)?;
-        let progress = inner.nodes.get_mut(&self.node).expect("prepared node");
-        progress.stats.batches += stats.batches;
-        progress.stats.grid_samples += stats.grid_samples;
-        progress.stats.degrid_samples += stats.degrid_samples;
-        progress.stats.gpu_seconds += stats.gpu_seconds;
-        progress.stats.submit_wait_seconds += stats.submit_wait_seconds;
-        Ok(stats)
+        let before = inner.nodes[&self.node].stats;
+        let ticket =
+            submit_platform_batch(&self.runtime.decision, &mut inner, &self.node, dispatches)?;
+        drain_cube_commands(&self.runtime.decision, &mut inner, Some(ticket))?;
+        let after = inner.nodes[&self.node].stats;
+        Ok(MetalBatchStats {
+            batches: after.batches - before.batches,
+            grid_samples: after.grid_samples - before.grid_samples,
+            degrid_samples: after.degrid_samples - before.degrid_samples,
+            gpu_seconds: after.gpu_seconds - before.gpu_seconds,
+            submit_wait_seconds: after.submit_wait_seconds - before.submit_wait_seconds,
+        })
+    }
+
+    /// Enqueue a bounded batch, pinning its regions until the returned ticket settles.
+    pub(crate) fn submit(&self, dispatches: &[CubeDispatch<'_>]) -> Result<u64, MetalRuntimeError> {
+        if dispatches.is_empty() {
+            return Err(MetalRuntimeError::InvalidPlan("empty compute batch".into()));
+        }
+        let mut inner = self.lock()?;
+        if inner.nodes[&self.node].failed {
+            return Err(MetalRuntimeError::InvalidPlan(
+                "failed Metal node cannot dispatch".into(),
+            ));
+        }
+        submit_platform_batch(&self.runtime.decision, &mut inner, &self.node, dispatches)
     }
 
     /// Submit two connected passes without returning predictions to the host.
@@ -1234,13 +1251,13 @@ fn buffer_region<'p>(
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
-fn execute_platform_batch(
+fn submit_platform_batch(
     decision: &MetalExecutionDecision,
     inner: &mut MetalExecutionInner,
     node: &WorkNodeId,
     dispatches: &[CubeDispatch<'_>],
-) -> Result<MetalBatchStats, MetalRuntimeError> {
-    let platform = inner.platform.as_ref().expect("prepared platform");
+) -> Result<u64, MetalRuntimeError> {
+    let platform = inner.platform.as_mut().expect("prepared platform");
     let kernels = platform.kernels.as_ref().expect("prepared pipelines");
     let command = platform
         .queue
@@ -1250,6 +1267,7 @@ fn execute_platform_batch(
         batches: 1,
         ..MetalBatchStats::default()
     };
+    let mut regions = Vec::with_capacity(dispatches.len() * 4);
     for dispatch in dispatches {
         let region = |r| buffer_region(decision, platform, node, r);
         let samples = region(dispatch.samples)?;
@@ -1260,6 +1278,10 @@ fn execute_platform_batch(
             CubeDispatchKind::Grid => dispatch.grid,
             CubeDispatchKind::Degrid { predicted } => predicted,
         };
+        regions.extend([dispatch.samples, dispatch.weights, dispatch.grid]);
+        if let CubeDispatchKind::Degrid { predicted } = dispatch.kind {
+            regions.push(predicted);
+        }
         if count == 0
             || dispatch.width < 7
             || dispatch.height < 7
@@ -1286,6 +1308,17 @@ fn execute_platform_batch(
         }
         // Validate the externally encoded tap layout before the GPU can access
         // it. This is a bounded input check, never a grid-content verification.
+        if platform.pending.values().any(|pending| {
+            pending.regions.iter().any(|(id, start, bytes)| {
+                id == dispatch.samples.allocation
+                    && dispatch.samples.offset < start + bytes
+                    && *start < dispatch.samples.offset + dispatch.samples.bytes
+            })
+        }) {
+            return Err(MetalRuntimeError::InvalidPlan(
+                "CPU tap validation overlaps in-flight GPU work".into(),
+            ));
+        }
         let taps = unsafe {
             std::slice::from_raw_parts(
                 samples
@@ -1350,27 +1383,51 @@ fn execute_platform_batch(
             }
         }
     }
+    // Adjacent plane regions share one arena. Coalesce them so CPU mapping
+    // checks stay proportional to live arenas, not to every plane dispatch.
+    regions.sort_unstable_by(|left, right| {
+        left.allocation
+            .cmp(right.allocation)
+            .then(left.offset.cmp(&right.offset))
+    });
+    let mut owned: Vec<(AllocationId, usize, usize)> = Vec::with_capacity(regions.len());
+    for region in regions {
+        if let Some((allocation, offset, bytes)) = owned.last_mut()
+            && allocation == region.allocation
+            && region.offset <= *offset + *bytes
+        {
+            *bytes = (*offset + *bytes).max(region.offset + region.bytes) - *offset;
+        } else {
+            owned.push((region.allocation.clone(), region.offset, region.bytes));
+        }
+    }
+    let ticket = platform.next_ticket;
+    platform.next_ticket = ticket
+        .checked_add(1)
+        .ok_or(MetalRuntimeError::Overflow("command ticket"))?;
     let started = Instant::now();
     command.commit();
-    command.waitUntilCompleted();
-    if command.status() != MTLCommandBufferStatus::Completed {
-        return Err(MetalRuntimeError::CommandFailed {
-            node: node.clone(),
-            status: command.status().0 as u64,
-        });
-    }
     stats.submit_wait_seconds = started.elapsed().as_secs_f64();
-    stats.gpu_seconds = (command.GPUEndTime() - command.GPUStartTime()).max(0.0);
-    Ok(stats)
+    platform.pending.insert(
+        ticket,
+        PendingCubeCommand {
+            command,
+            node: node.clone(),
+            regions: owned,
+            status: None,
+            stats,
+        },
+    );
+    Ok(ticket)
 }
 
 #[cfg(not(all(target_os = "macos", not(coverage))))]
-fn execute_platform_batch(
+fn submit_platform_batch(
     _decision: &MetalExecutionDecision,
     _inner: &mut MetalExecutionInner,
     _node: &WorkNodeId,
     _dispatches: &[CubeDispatch<'_>],
-) -> Result<MetalBatchStats, MetalRuntimeError> {
+) -> Result<u64, MetalRuntimeError> {
     Err(MetalRuntimeError::UnsupportedPlatform)
 }
 
@@ -1476,11 +1533,11 @@ fn submit_cube_residual(
                 .iter()
                 .map(|r| (r.allocation.clone(), r.offset, r.bytes))
                 .collect(),
-            status: MetalBufferRegionOwned {
+            status: Some(MetalBufferRegionOwned {
                 allocation: status.allocation.clone(),
                 offset: status.offset,
                 bytes: status.bytes,
-            },
+            }),
             stats: MetalBatchStats {
                 batches: 1,
                 grid_samples: p[1] as u64,
@@ -1532,8 +1589,7 @@ fn drain_cube_commands(
                 node: pending.node.clone(),
                 status: pending.command.status().0 as u64,
             });
-        } else {
-            let status = &pending.status;
+        } else if let Some(status) = &pending.status {
             let region = MetalBufferRegion {
                 allocation: &status.allocation,
                 offset: status.offset,
@@ -1886,6 +1942,7 @@ mod tests {
             );
             let access = runtime.batch_access(context).expect("scoped batch access");
             assert!(access.execute(&[]).is_err());
+            assert!(access.submit(&[]).is_err());
             let allocation = AllocationId::new("allocation-0");
             let region = |offset, bytes| MetalBufferRegion {
                 allocation: &allocation,
@@ -1923,11 +1980,56 @@ mod tests {
             };
             assert!(access.execute(&[aliased]).is_err());
             assert!(!runtime.submitted(&work.node().id).unwrap());
-            for _ in 0..2 {
-                let stats = access.execute(&[dispatch]).expect("grid batch");
-                assert_eq!(stats.batches, 1);
-                assert_eq!(stats.grid_samples, 1);
-            }
+            let first = access.submit(&[dispatch]).expect("first async grid batch");
+            assert!(access.with_bytes(region(0, 24), |_| ()).is_err());
+            assert!(access.with_bytes(region(128, 2048), |_| ()).is_err());
+            assert_eq!(
+                access.submit(&[CubeDispatch {
+                    samples: region(128, 24),
+                    grid: region(4096, 2048),
+                    ..dispatch
+                }]),
+                Err(MetalRuntimeError::InvalidPlan(
+                    "CPU tap validation overlaps in-flight GPU work".into()
+                ))
+            );
+            access
+                .with_bytes(region(32, 24), |bytes| {
+                    bytes.copy_from_slice(bytemuck::bytes_of(&crate::metal_cube::CubeTap {
+                        x: 3,
+                        y: 4,
+                        x_weights: 0,
+                        y_weights: 0,
+                        value: [1.25, -0.5],
+                    }));
+                })
+                .unwrap();
+            let second = access
+                .submit(&[CubeDispatch {
+                    samples: region(32, 24),
+                    ..dispatch
+                }])
+                .expect("ordered second async grid batch");
+            access.wait(first).unwrap();
+            access
+                .with_bytes(region(0, 24), |bytes| {
+                    bytes[16..20].copy_from_slice(&1.25_f32.to_ne_bytes());
+                })
+                .expect("the settled first staging slot can be reused");
+            assert!(
+                access.with_bytes(region(32, 24), |_| ()).is_err(),
+                "the second staging slot is still GPU-owned"
+            );
+            assert!(
+                access.with_bytes(region(128, 2048), |_| ()).is_err(),
+                "the second pending command still owns the output"
+            );
+            access.wait(second).unwrap();
+            assert_eq!(runtime.batch_stats(&work.node().id).unwrap().batches, 2);
+            assert_eq!(
+                runtime.batch_stats(&work.node().id).unwrap().grid_samples,
+                2
+            );
             dispatch.kind = CubeDispatchKind::Degrid {
                 predicted: region(2176, 8),
             };

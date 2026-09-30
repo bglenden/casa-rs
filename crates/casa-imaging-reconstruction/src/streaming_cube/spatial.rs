@@ -114,6 +114,11 @@ pub trait CubeSpatialBackend {
 }
 
 impl BandPlan {
+    /// Whether this initial band has no model prediction dependency.
+    pub fn is_initial_zero(&self) -> bool {
+        self.phase == BandPhase::InitialZero
+    }
+
     /// Float seven-tap table shared by every grid in the wave.
     pub fn spatial_weight_bytes() -> usize {
         StandardConvolution::weight_row_count() * 7 * size_of::<f32>()

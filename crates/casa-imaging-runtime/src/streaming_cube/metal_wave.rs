@@ -112,14 +112,29 @@ impl MetalWaveMemory {
             .max()
             .unwrap_or(0) as u64;
         let lanes = workers.min(bands.len()) as u64;
-        let scratch = scratch.checked_mul(lanes).ok_or_else(overflow)?;
+        let layout = InitialLayout::new(bands, rows)?;
+        let command_bytes = layout
+            .command_capacity
+            .checked_mul(
+                2 * size_of::<CubeDispatch<'_>>()
+                    + 4 * size_of::<MetalBufferRegion<'_>>()
+                    + 8 * size_of::<(AllocationId, usize, usize)>(),
+            )
+            .ok_or_else(overflow)?;
+        let scratch = scratch
+            .checked_mul(lanes)
+            .and_then(|n| n.checked_add(command_bytes as u64))
+            .and_then(|n| n.checked_add((layout.offsets.len() * 2 * size_of::<usize>()) as u64))
+            .ok_or_else(overflow)?;
         let device = grids
             .checked_add(BandPlan::spatial_weight_bytes().next_multiple_of(8) as u64)
             .and_then(|n| {
                 n.checked_add(
-                    (requests as u64)
-                        .checked_mul((size_of::<SpatialTap>() + size_of::<Complex32>()) as u64)?
-                        .checked_mul(lanes)?,
+                    (layout.slot_bytes as u64).checked_mul(2)?.checked_add(
+                        (requests as u64)
+                            .checked_mul(size_of::<Complex32>() as u64)?
+                            .checked_mul(lanes)?,
+                    )?,
                 )
             })
             .ok_or_else(overflow)?;
@@ -181,6 +196,57 @@ pub(super) struct MetalWave<'a> {
     capacity: usize,
     staging_stride: usize,
     residual: Option<ResidualDevice>,
+    initial: Option<InitialDevice<'a>>,
+}
+
+struct InitialLayout {
+    offsets: Vec<usize>,
+    capacities: Vec<usize>,
+    slot_bytes: usize,
+    command_capacity: usize,
+}
+
+impl InitialLayout {
+    fn new(bands: &[BandPlan], rows: usize) -> io::Result<Self> {
+        let mut offsets = Vec::with_capacity(bands.len());
+        let mut capacities = Vec::with_capacity(bands.len());
+        let mut slot_bytes = 0_usize;
+        let mut command_capacity = 0_usize;
+        for band in bands {
+            let capacity = band
+                .spatial_request_capacity(rows)
+                .map_err(io::Error::other)?;
+            offsets.push(slot_bytes);
+            capacities.push(capacity);
+            slot_bytes = slot_bytes
+                .checked_add(
+                    capacity
+                        .checked_mul(size_of::<SpatialTap>())
+                        .ok_or_else(overflow)?,
+                )
+                .ok_or_else(overflow)?;
+            command_capacity = command_capacity
+                .checked_add(band.spatial_command_capacity())
+                .ok_or_else(overflow)?;
+        }
+        Ok(Self {
+            offsets,
+            capacities,
+            slot_bytes,
+            command_capacity,
+        })
+    }
+}
+
+struct InitialDevice<'a> {
+    layout: InitialLayout,
+    commands: Vec<Vec<CubeDispatch<'a>>>,
+    batch: Vec<CubeDispatch<'a>>,
+    tickets: [Option<u64>; 2],
+    next_slot: usize,
+    predictions: bool,
+    refills: u64,
+    grid_samples: u64,
 }
 
 struct ResidualLayout {
@@ -277,6 +343,29 @@ impl<'a> MetalWave<'a> {
             None
         };
         let memory = MetalWaveMemory::new(&jobs, workers, rows)?;
+        let initial = if residual.is_none() {
+            let layout = InitialLayout::new(&jobs, rows)?;
+            let chunk = jobs.len().div_ceil(workers);
+            let commands = jobs
+                .chunks(chunk)
+                .map(|bands| {
+                    Vec::with_capacity(bands.iter().map(BandPlan::spatial_command_capacity).sum())
+                })
+                .collect();
+            let batch = Vec::with_capacity(layout.command_capacity);
+            Some(InitialDevice {
+                layout,
+                commands,
+                batch,
+                tickets: [None; 2],
+                next_slot: 0,
+                predictions: jobs.iter().any(|band| !band.is_initial_zero()),
+                refills: 0,
+                grid_samples: 0,
+            })
+        } else {
+            None
+        };
         let weights = jobs.iter().try_fold(0_usize, |sum, b| {
             sum.checked_add(b.spatial_grid_bytes().map_err(io::Error::other)?)
                 .ok_or_else(overflow)
@@ -292,9 +381,12 @@ impl<'a> MetalWave<'a> {
                     .checked_mul(2)
                     .ok_or_else(overflow)?
             } else {
-                memory
-                    .requests
-                    .checked_mul(size_of::<SpatialTap>())
+                initial
+                    .as_ref()
+                    .expect("initial wave layout")
+                    .layout
+                    .slot_bytes
+                    .checked_mul(2)
                     .ok_or_else(overflow)?
             })
             .ok_or_else(overflow)?;
@@ -327,16 +419,17 @@ impl<'a> MetalWave<'a> {
             capacity: memory.requests,
             staging_stride: memory
                 .requests
-                .checked_mul(size_of::<SpatialTap>() + size_of::<Complex32>())
+                .checked_mul(size_of::<Complex32>())
                 .ok_or_else(overflow)?,
             residual,
+            initial,
         })
     }
 }
 
-struct ResidentBand<'a, 'r> {
+struct ResidentBand<'a, 'r, 'm> {
     access: &'a MetalBatchAccess<'r>,
-    allocation: &'a AllocationId,
+    allocation: &'m AllocationId,
     grids: usize,
     fields: [usize; 4],
     shape: [usize; 2],
@@ -344,6 +437,7 @@ struct ResidentBand<'a, 'r> {
     packed: usize,
     predicted: usize,
     capacity: usize,
+    queued: Option<&'a mut Vec<CubeDispatch<'m>>>,
 }
 
 struct DispatchTarget<'a> {
@@ -352,8 +446,8 @@ struct DispatchTarget<'a> {
     taps: &'a [SpatialTap],
 }
 
-impl ResidentBand<'_, '_> {
-    fn region(&self, offset: usize, bytes: usize) -> MetalBufferRegion<'_> {
+impl<'m> ResidentBand<'_, '_, 'm> {
+    fn region(&self, offset: usize, bytes: usize) -> MetalBufferRegion<'m> {
         MetalBufferRegion {
             allocation: self.allocation,
             offset,
@@ -364,7 +458,7 @@ impl ResidentBand<'_, '_> {
         &self,
         field: SpatialField,
         plane: usize,
-    ) -> Result<MetalBufferRegion<'_>, SpectralOperatorError> {
+    ) -> Result<MetalBufferRegion<'m>, SpectralOperatorError> {
         let lane = match field {
             SpatialField::Dirty => 0,
             SpatialField::Residual => 1,
@@ -379,7 +473,7 @@ impl ResidentBand<'_, '_> {
         Ok(self.region(self.grids + index * bytes, bytes))
     }
     fn dispatch(
-        &self,
+        &mut self,
         targets: &[DispatchTarget<'_>],
         degrid: bool,
     ) -> Result<(), SpectralOperatorError> {
@@ -438,7 +532,11 @@ impl ResidentBand<'_, '_> {
             });
             offset += target.taps.len();
         }
-        self.access.execute(&commands).map_err(spatial_error)?;
+        if !degrid && let Some(queued) = self.queued.as_deref_mut() {
+            queued.extend(commands);
+        } else {
+            self.access.execute(&commands).map_err(spatial_error)?;
+        }
         Ok(())
     }
 }
@@ -447,7 +545,7 @@ fn spatial_error(error: crate::MetalRuntimeError) -> SpectralOperatorError {
     SpectralOperatorError::SpatialExecution(error.to_string())
 }
 
-impl CubeSpatialBackend for ResidentBand<'_, '_> {
+impl CubeSpatialBackend for ResidentBand<'_, '_, '_> {
     fn initialize(
         &mut self,
         shape: [usize; 2],
@@ -564,14 +662,37 @@ impl BulkConsumer for MetalWave<'_> {
         let output_hz = self.output_hz;
         let polarization = self.polarization;
         let weights = self.weights;
-        let packed = self.packed;
         let predicted = self.predicted;
-        let capacity = self.capacity;
         let staging_stride = self.staging_stride;
+        let initial = self.initial.as_mut().expect("initial device state");
+        let slot = initial.next_slot;
+        // A nonempty initial model needs synchronous host prediction readback.
+        // Settle its queued grids before that dependency, never reuse stale tickets.
+        if initial.predictions {
+            for ticket in &mut initial.tickets {
+                if let Some(ticket) = ticket.take() {
+                    access.wait(ticket).map_err(io::Error::other)?;
+                }
+            }
+        } else if let Some(ticket) = initial.tickets[slot].take() {
+            access.wait(ticket).map_err(io::Error::other)?;
+        }
+        let packed = self.packed + slot * initial.layout.slot_bytes;
+        let offsets = &initial.layout.offsets;
+        let capacities = &initial.layout.capacities;
+        for commands in &mut initial.commands {
+            commands.clear();
+        }
         let chunk = self.jobs.len().div_ceil(execution.worker_count());
-        let mut lanes: Vec<_> = self.jobs.chunks_mut(chunk).collect();
-        execution.for_each_mut(&mut lanes, |lane, jobs| {
-            for job in jobs.iter_mut() {
+        let mut lanes: Vec<_> = self
+            .jobs
+            .chunks_mut(chunk)
+            .zip(initial.commands.iter_mut())
+            .enumerate()
+            .collect();
+        execution.for_each_mut(&mut lanes, |_, (lane, (jobs, commands))| {
+            for (index, job) in jobs.iter_mut().enumerate() {
+                let ordinal = *lane * chunk + index;
                 let mut backend = ResidentBand {
                     access,
                     allocation,
@@ -579,9 +700,10 @@ impl BulkConsumer for MetalWave<'_> {
                     fields: job.fields,
                     shape: job.shape,
                     weights,
-                    packed: packed + lane * staging_stride,
-                    predicted: predicted + lane * staging_stride,
-                    capacity,
+                    packed: packed + offsets[ordinal],
+                    predicted: predicted + *lane * staging_stride,
+                    capacity: capacities[ordinal],
+                    queued: Some(&mut **commands),
                 };
                 let band = job.band.as_mut().expect("prepared band");
                 if job.shape == [0; 2] {
@@ -601,10 +723,35 @@ impl BulkConsumer for MetalWave<'_> {
                 .map_err(io::Error::other)?;
             }
             Ok::<_, io::Error>(())
-        })
+        })?;
+        drop(lanes);
+        initial.batch.clear();
+        for commands in &initial.commands {
+            initial.batch.extend_from_slice(commands);
+        }
+        if !initial.batch.is_empty() {
+            let ticket = access.submit(&initial.batch).map_err(io::Error::other)?;
+            initial.tickets[slot] = Some(ticket);
+            initial.next_slot = (slot + 1) % 2;
+            initial.refills += 1;
+            initial.grid_samples += initial
+                .batch
+                .iter()
+                .map(|dispatch| u64::from(dispatch.count))
+                .sum::<u64>();
+        }
+        Ok(())
     }
     fn complete(mut self, execution: BoundedExecution<'_>) -> io::Result<Vec<BandResult>> {
         self.access.drain().map_err(io::Error::other)?;
+        if let Some(initial) = &self.initial {
+            eprintln!(
+                "cube device initial: refills={} grid_samples={} grid_staging_bytes={} slots=2",
+                initial.refills,
+                initial.grid_samples,
+                initial.grid_samples * size_of::<SpatialTap>() as u64
+            );
+        }
         if let Some(residual) = &self.residual {
             eprintln!(
                 "cube device residual: refills={} requested_predictions={} unique_predictions={} staging_bytes={} host_prediction_bytes=0 slots=2",
@@ -625,6 +772,7 @@ impl BulkConsumer for MetalWave<'_> {
                 packed: self.packed,
                 predicted: self.predicted,
                 capacity: self.capacity,
+                queued: None,
             };
             let band = job.band.as_mut().expect("prepared band");
             if job.shape == [0; 2] {
@@ -674,6 +822,7 @@ impl MetalWave<'_> {
             packed: self.packed,
             predicted: self.predicted,
             capacity: self.capacity,
+            queued: None,
         };
         if job.shape == [0; 2] {
             band.initialize_spatial(&mut backend)
