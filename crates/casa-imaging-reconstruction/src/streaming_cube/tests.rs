@@ -9,23 +9,6 @@ use casa_imaging_model::{
 use ndarray::{Array2, s};
 
 #[test]
-fn phase_rotation_preserves_zero_shift_and_nonfinite_frequency_behavior() {
-    for shift in [0.0, -0.0, 0.017, -0.017] {
-        for hz in [1e9, 44e9, 45.022e9] {
-            let expected = Complex64::from_polar(
-                1.0,
-                std::f64::consts::TAU * shift * hz / SPEED_OF_LIGHT_M_PER_S,
-            );
-            assert_eq!(phase(shift, hz), expected);
-        }
-    }
-    for hz in [f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
-        let value = phase(0.0, hz);
-        assert!(value.re.is_nan() && value.im.is_nan());
-    }
-}
-
-#[test]
 fn batched_spatial_preparation_matches_cpu_for_flags_phase_and_nonzero_model() {
     struct Backend {
         convolution: StandardConvolution,
@@ -121,7 +104,7 @@ fn batched_spatial_preparation_matches_cpu_for_flags_phase_and_nonzero_model() {
         block.metadata[r] = super::super::input::RowMetadata {
             physical_row: r as u64,
             uvw_m: row.uvw_m,
-            phase_shift_m: [0.0, -0.0, 0.017, -0.017][r],
+            phase_shift_m: row.phase_shift_m,
             original_pair_hz: row.original_pair_hz,
         };
         block.frequencies_hz[r * 12..(r + 1) * 12].copy_from_slice(row.frequencies_hz);

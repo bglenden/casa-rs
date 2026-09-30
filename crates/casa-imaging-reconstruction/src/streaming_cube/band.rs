@@ -1569,9 +1569,6 @@ mod polarized_sample_tests {
 }
 
 fn phase(shift_m: f64, frequency_hz: f64) -> Complex64 {
-    if shift_m == 0.0 && frequency_hz.is_finite() {
-        return Complex64::new(1.0, 0.0);
-    }
     Complex64::from_polar(
         1.0,
         std::f64::consts::TAU * shift_m * frequency_hz / SPEED_OF_LIGHT_M_PER_S,
