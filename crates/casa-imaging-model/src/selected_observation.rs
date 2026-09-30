@@ -144,8 +144,8 @@ impl SelectedObservationCommitment {
     /// during one canonical traversal.
     ///
     /// This includes the fixed SHA/coverage state and the active row's
-    /// broadcast-weight vector. It is independent of selected MAIN row and
-    /// DATA_DESCRIPTION cardinality.
+    /// broadcast-weight vector and one reusable canonical numeric-row buffer.
+    /// It is independent of selected MAIN row and DATA_DESCRIPTION cardinality.
     #[must_use]
     pub fn inspection_scratch_bytes(&self) -> Option<usize> {
         let maximum_correlations = self
@@ -156,9 +156,21 @@ impl SelectedObservationCommitment {
             .map(|selection| selection.products().len())
             .max()
             .unwrap_or(0);
+        let maximum_channels = self
+            .read_set
+            .sources()
+            .iter()
+            .flat_map(|source| source.selection().spectral_windows())
+            .map(|selection| selection.channel_indices().len())
+            .max()
+            .unwrap_or(0);
+        let numeric_row_bytes = SelectedObservationGenerationEncoder::numeric_scratch_bound(
+            maximum_channels,
+            maximum_correlations,
+        )?;
         size_of::<SelectedObservationInspection<'static>>()
             .checked_add(maximum_correlations.checked_mul(size_of::<Option<f32>>())?)
-            .and_then(|bytes| bytes.checked_add(maximum_correlations.checked_mul(21)?))
+            .and_then(|bytes| bytes.checked_add(numeric_row_bytes))
     }
 }
 
@@ -425,6 +437,12 @@ impl<'a> SelectedObservationInspection<'a> {
     #[must_use]
     pub const fn generation_proof_hash_calls(&self) -> u64 {
         self.generation.proof_hash_calls()
+    }
+
+    /// Return populated and allocated bytes in the reusable numeric-row encoder.
+    #[must_use]
+    pub fn generation_scratch_bytes(&self) -> (usize, usize) {
+        self.generation.numeric_scratch_bytes()
     }
 
     fn advance_to_source(

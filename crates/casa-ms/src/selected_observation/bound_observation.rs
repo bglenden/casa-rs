@@ -1358,6 +1358,9 @@ impl SelectedObservationBlockConsumer<'_> {
                 inspection
                     .push_numeric_row(numeric)
                     .map_err(SelectedObservationTraversalError::Inspection)?;
+                self.peak_scratch_current_bytes = self
+                    .peak_scratch_current_bytes
+                    .max(inspection.generation_scratch_bytes().0);
             }
             samples = samples
                 .checked_add((numeric.channels.len() * numeric.correlations.len()) as u64)
@@ -1606,6 +1609,13 @@ impl SelectedObservationBlockConsumer<'_> {
                     .and_then(|evaluations| bytes.checked_add(evaluations))
             })
             .and_then(|bytes| bytes.checked_add(size_of::<SelectedInputWeightGroup>()))
+            .and_then(|bytes| {
+                bytes.checked_add(
+                    self.inspection
+                        .as_ref()
+                        .map_or(0, |inspection| inspection.generation_scratch_bytes().1),
+                )
+            })
             .ok_or(SelectedObservationTraversalError::MeasurementOverflow)?;
         let peak_scratch_current_bytes = self.peak_scratch_current_bytes;
         let rebound_sample_count = self.rebound_sample_count;
@@ -2015,13 +2025,13 @@ impl SelectedObservationTraversalMeasurements {
         peak_consumer_scratch_current_bytes,
         peak_consumer_scratch_current_bytes,
         u64,
-        "Return peak populated bytes in reusable run-correlation consumer scratch."
+        "Return peak populated bytes in reusable correlation or numeric-identity scratch."
     );
     traversal_measurement_getter!(
         consumer_scratch_capacity_bytes,
         consumer_scratch_capacity_bytes,
         u64,
-        "Return allocated capacity bytes in reusable run-correlation consumer scratch."
+        "Return allocated capacity bytes in reusable correlation, projection and numeric-identity scratch."
     );
     traversal_measurement_getter!(
         allocated_storage_buffers,

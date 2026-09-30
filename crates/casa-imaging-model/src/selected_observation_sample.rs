@@ -1438,6 +1438,13 @@ impl GenerationCorrelationContent {
 }
 
 impl SelectedObservationGenerationEncoder {
+    pub(crate) fn numeric_scratch_bound(channels: usize, correlations: usize) -> Option<usize> {
+        correlations
+            .checked_mul(21)?
+            .checked_add(47)?
+            .checked_mul(channels)
+    }
+
     pub(crate) fn new() -> Self {
         let mut encoder = CanonicalEncoder::new();
         encoder.bytes(SELECTED_OBSERVATION_GENERATION_DOMAIN);
@@ -1569,18 +1576,35 @@ impl SelectedObservationGenerationEncoder {
         encode_generation_row_content(&mut self.encoder, &row_content);
         self.row_run = Some(row_content);
         self.row_run_count += 1;
-        // One reusable scratch buffer batches v9 correlation encoding.
-        // Each correlation is at most 21 bytes including its marker.
-        let required = numeric.correlations.len() * 21;
+        // A v9 channel has a 38-byte header, a 9-byte terminal, and at
+        // most 21 bytes per correlation. Hash the canonical row in one update.
+        let required =
+            Self::numeric_scratch_bound(numeric.channels.len(), numeric.correlations.len())
+                .expect("validated numeric row encoding fits usize");
         self.numeric_bytes.clear();
         if self.numeric_bytes.capacity() < required {
             self.numeric_bytes.reserve_exact(required);
         }
         for channel in numeric.channels {
-            self.finish_channel_run();
+            let bytes = &mut self.numeric_bytes;
+            if self.channel_run.is_some() {
+                bytes.push(GENERATION_CHANNEL_RUN_TERMINAL);
+                bytes.extend_from_slice(&self.channel_run_sample_count.to_le_bytes());
+            }
             let content = GenerationChannelContent::from_run(channel);
-            self.encoder.u8(GENERATION_CHANNEL_RUN_MARKER);
-            encode_generation_channel_content(&mut self.encoder, &content);
+            bytes.push(GENERATION_CHANNEL_RUN_MARKER);
+            bytes.extend_from_slice(&content.channel_index.to_le_bytes());
+            for value in [
+                content.frequency_centre_hz,
+                content.frequency_lower_hz,
+                content.frequency_upper_hz,
+                content.channel_width_hz,
+            ] {
+                bytes.extend_from_slice(
+                    &(if value == 0.0 { 0 } else { value.to_bits() }).to_le_bytes(),
+                );
+            }
+            bytes.push(frequency_frame_tag(content.frequency_frame));
             self.channel_run = Some(content);
             self.channel_run_count += 1;
             let base = (channel.channel_index - numeric.first_stored_channel) as usize
@@ -1589,8 +1613,6 @@ impl SelectedObservationGenerationEncoder {
                 product.correlation_type().contributes_to_stokes_i()
                     && numeric.flags[base + product.correlation_index() as usize]
             });
-            let bytes = &mut self.numeric_bytes;
-            bytes.clear();
             for product in numeric.correlations {
                 let correlation = product.correlation_index() as usize;
                 let index = base + correlation;
@@ -1627,15 +1649,19 @@ impl SelectedObservationGenerationEncoder {
                 };
                 encode_float(bytes, weight);
             }
-            self.encoder.raw(bytes);
             self.channel_run_sample_count = numeric.correlations.len() as u64;
             self.row_run_sample_count += numeric.correlations.len() as u64;
             self.sample_count += numeric.correlations.len() as u64;
         }
+        self.encoder.raw(&self.numeric_bytes);
     }
 
     pub(crate) const fn proof_hash_calls(&self) -> u64 {
         self.encoder.proof_hash_calls()
+    }
+
+    pub(crate) fn numeric_scratch_bytes(&self) -> (usize, usize) {
+        (self.numeric_bytes.len(), self.numeric_bytes.capacity())
     }
 
     pub(crate) fn finish(mut self) -> (SelectedObservationGenerationId, u64) {
@@ -2273,6 +2299,210 @@ mod tests {
         assert_eq!(
             (encoder.proof_bytes(), encoder.proof_hash_calls()),
             (525, 98),
+        );
+    }
+
+    struct NumericGenerationFixture {
+        row: SelectedObservationRunRow,
+        channels: Vec<SelectedObservationRunChannel>,
+        correlations: [crate::CorrelationProduct; 2],
+        complex: Vec<num_complex::Complex32>,
+        real: Vec<f32>,
+        flags: Vec<bool>,
+        weights: Vec<f32>,
+        row_weights: [f32; 4],
+    }
+
+    impl NumericGenerationFixture {
+        fn new(channels: usize) -> Self {
+            let sample = sample();
+            let row = SelectedObservationRunRow {
+                measurement_set: sample.address.measurement_set,
+                physical_row: sample.address.physical_row,
+                data_description_id: sample.address.data_description_id,
+                spectral_window_id: sample.address.spectral_window_id,
+                polarization_id: sample.address.polarization_id,
+                prediction_target: sample.prediction_target,
+                row_flag: sample.row_flag,
+                coordinates: sample.coordinates,
+                domain_projections: sample.domain_projections,
+                metadata: sample.metadata,
+            };
+            let stored_samples = (channels * 2 - 1) * 4;
+            Self {
+                row,
+                channels: (0..channels)
+                    .map(|index| SelectedObservationRunChannel {
+                        channel_index: 7 + index as u32 * 2,
+                        frequency_centre_hz: 1.4e9 + index as f64 * 1e6,
+                        frequency_lower_hz: 1.4e9 + index as f64 * 1e6 - 5e5,
+                        frequency_upper_hz: 1.4e9 + index as f64 * 1e6 + 5e5,
+                        channel_width_hz: 1e6,
+                        frequency_frame: FrequencyFrame::Topocentric,
+                    })
+                    .collect(),
+                correlations: [
+                    crate::CorrelationProduct::new(0, CorrelationType::CircularRr),
+                    crate::CorrelationProduct::new(3, CorrelationType::CircularLl),
+                ],
+                complex: (0..stored_samples)
+                    .map(|index| {
+                        num_complex::Complex32::new(
+                            if index % 13 == 0 {
+                                -0.0
+                            } else {
+                                index as f32 * 0.01
+                            },
+                            -(index as f32) * 0.02,
+                        )
+                    })
+                    .collect(),
+                real: (0..stored_samples)
+                    .map(|index| index as f32 * -0.01)
+                    .collect(),
+                flags: (0..stored_samples).map(|index| index % 7 == 0).collect(),
+                weights: (0..stored_samples)
+                    .map(|index| 1.0 + index as f32 * 0.001)
+                    .collect(),
+                row_weights: [1.0, 2.0, -0.0, 4.0],
+            }
+        }
+
+        fn numeric(&self, float: bool, spectrum: bool) -> crate::SelectedNumericRow<'_> {
+            crate::SelectedNumericRow {
+                row: &self.row,
+                channels: &self.channels,
+                correlations: &self.correlations,
+                first_stored_channel: 7,
+                stored_channels: self.channels.len() * 2 - 1,
+                stored_correlations: 4,
+                visibility: if float {
+                    crate::SelectedNumericVisibility::Float32(&self.real)
+                } else {
+                    crate::SelectedNumericVisibility::Complex32(&self.complex)
+                },
+                flags: &self.flags,
+                weights: if spectrum {
+                    crate::SelectedNumericWeights::PerChannel(&self.weights)
+                } else {
+                    crate::SelectedNumericWeights::PerRow(&self.row_weights)
+                },
+            }
+        }
+    }
+
+    #[test]
+    fn numeric_generation_preserves_canonical_content_across_rows_and_layouts() {
+        for channels in [1, 3, 512] {
+            for float in [false, true] {
+                for spectrum in [false, true] {
+                    let mut fixture = NumericGenerationFixture::new(channels);
+                    fixture.complex[0].im = f32::NAN;
+                    fixture.real[0] = f32::INFINITY;
+                    let mut numeric_encoder = SelectedObservationGenerationEncoder::new();
+                    let mut run_encoder = SelectedObservationGenerationEncoder::new();
+                    for row in 0..3 {
+                        fixture.row.physical_row += 1;
+                        fixture.row.coordinates.raw_uvw_m[0] += row as f64 + 1.0;
+                        let numeric = fixture.numeric(float, spectrum);
+                        assert!(numeric.has_exact_shape());
+                        numeric_encoder.push_numeric_row(numeric);
+                        for channel in numeric.channels {
+                            let base = (channel.channel_index - numeric.first_stored_channel)
+                                as usize
+                                * numeric.stored_correlations;
+                            let parallel_flag = numeric.correlations.iter().any(|product| {
+                                product.correlation_type().contributes_to_stokes_i()
+                                    && numeric.flags[base + product.correlation_index() as usize]
+                            });
+                            let correlations = numeric
+                                .correlations
+                                .iter()
+                                .map(|product| {
+                                    let correlation = product.correlation_index() as usize;
+                                    let index = base + correlation;
+                                    SelectedObservationRunCorrelation {
+                                        correlation_index: product.correlation_index(),
+                                        correlation_type: product.correlation_type(),
+                                        visibility: match numeric.visibility {
+                                            crate::SelectedNumericVisibility::Float32(values) => {
+                                                SelectedVisibilitySample::Float32(values[index])
+                                            }
+                                            crate::SelectedNumericVisibility::Complex32(values) => {
+                                                SelectedVisibilitySample::Complex32([
+                                                    values[index].re,
+                                                    values[index].im,
+                                                ])
+                                            }
+                                        },
+                                        channel_flag: numeric.flags[index],
+                                        parallel_hand_group_flag: parallel_flag,
+                                        input_weight: match numeric.weights {
+                                            crate::SelectedNumericWeights::PerRow(values) => {
+                                                values[correlation]
+                                            }
+                                            crate::SelectedNumericWeights::PerChannel(values) => {
+                                                values[index]
+                                            }
+                                        },
+                                    }
+                                })
+                                .collect::<Vec<_>>();
+                            run_encoder.push_run(numeric.row, channel, &correlations);
+                        }
+                    }
+                    assert_eq!(numeric_encoder.proof_bytes(), run_encoder.proof_bytes());
+                    assert_eq!(numeric_encoder.finish(), run_encoder.finish());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn numeric_generation_hash_updates_are_row_bounded_and_scratch_is_reused() {
+        let mut calls = Vec::new();
+        for channels in [1, 3, 512] {
+            let fixture = NumericGenerationFixture::new(channels);
+            let mut encoder = SelectedObservationGenerationEncoder::new();
+            encoder.push_numeric_row(fixture.numeric(false, false));
+            calls.push(encoder.proof_hash_calls());
+            let capacity = encoder.numeric_bytes.capacity();
+            assert!(capacity >= channels * (47 + 2 * 21));
+            assert_eq!(encoder.numeric_bytes.len(), channels * (47 + 2 * 21) - 9);
+            encoder.push_numeric_row(fixture.numeric(false, false));
+            assert_eq!(encoder.numeric_bytes.capacity(), capacity);
+        }
+        assert!(calls.windows(2).all(|pair| pair[0] == pair[1]));
+        assert_eq!(
+            SelectedObservationGenerationEncoder::numeric_scratch_bound(16_384, 4),
+            Some(2_146_304)
+        );
+        assert_eq!(
+            SelectedObservationGenerationEncoder::numeric_scratch_bound(usize::MAX, 2),
+            None
+        );
+        assert_eq!(
+            SelectedObservationGenerationEncoder::numeric_scratch_bound(1, usize::MAX),
+            None
+        );
+    }
+
+    #[test]
+    #[ignore = "release-only input identity timing diagnostic, not scientific acceptance"]
+    fn numeric_generation_encoding_timing() {
+        let fixture = NumericGenerationFixture::new(512);
+        let numeric = fixture.numeric(false, false);
+        let mut encoder = SelectedObservationGenerationEncoder::new();
+        let start = std::time::Instant::now();
+        for _ in 0..65_536 {
+            encoder.push_numeric_row(std::hint::black_box(numeric));
+        }
+        let seconds = start.elapsed().as_secs_f64();
+        let bytes = encoder.proof_bytes();
+        let calls = encoder.proof_hash_calls();
+        let (generation, samples) = encoder.finish();
+        eprintln!(
+            "numeric-generation rows=65536 channels=512 samples={samples} bytes={bytes} hash_calls={calls} seconds={seconds:.9} digest={generation}"
         );
     }
 
