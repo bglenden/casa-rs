@@ -306,6 +306,13 @@ impl BandWorkspace {
         let native_rows = block.rows(layout, 0..block.channels, native.clone())?;
         let stride = native.len();
         let predicts = self.phase != BandPhase::InitialZero;
+        let zero_prediction = if predicts {
+            SmallVec::new()
+        } else {
+            polarization
+                .predict(&[Complex64::default()])
+                .map_err(|_| SpectralOperatorError::GeneratedNonfinite)?
+        };
         let mut predictions = if predicts {
             vec![Complex64::default(); rows * stride]
         } else {
@@ -456,13 +463,13 @@ impl BandWorkspace {
             accumulator.push_with(
                 0..count,
                 |_, _, _, polarization, channel| {
-                    polarization
-                        .predict(&[if predicts {
-                            predictions[row_index * stride + support.start + channel]
-                        } else {
-                            Complex64::default()
-                        }])
-                        .map_err(|_| SpectralOperatorError::GeneratedNonfinite)
+                    if predicts {
+                        polarization
+                            .predict(&[predictions[row_index * stride + support.start + channel]])
+                            .map_err(|_| SpectralOperatorError::GeneratedNonfinite)
+                    } else {
+                        Ok(zero_prediction.clone())
+                    }
                 },
                 |band, channel, frequency, row, observed, predicted, weight| {
                     band.grid_sample_with(
