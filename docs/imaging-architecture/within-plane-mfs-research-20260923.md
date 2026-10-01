@@ -1,7 +1,7 @@
 # Within-plane MFS CPU parallelism: research and proposed next slice
 
 Truth class: non-normative research and proposal; not implementation authority
-Last reality check: 2026-09-23
+Last reality check: 2026-09-30
 Work issue: [T55 / #541](https://github.com/bglenden/casa-rs/issues/541)
 Source: `405d01adc58c6a4844c41924dbef62c984091492`
 
@@ -70,6 +70,82 @@ instrumented parent test executable is retained outside the repository as
 `CARGO_INCREMENTAL=0` and an 8-GiB aggregate RSS guard. The exact 4096-square
 fixture is still unavailable in this executor, and a matched CASA reference
 is still required for full numerical/visual and performance acceptance.
+
+### Main-environment handoff (2026-09-30)
+
+The development branch is `codex/mfs-cpu-optimization`, based on approved
+`64ae6f1f6837bd6f690da17f7b0d1ebbe5a8579c` from
+`codex/t55-full-size-validation`. Implementation checkpoints are `bbf54e6d`
+(worker reporting/Linux setup), `2d17324a` (bounded shared-grid MFS regions),
+and `14cd1754` (forward-model indexing and residual-stage timing). This is an
+interim development checkpoint, not completed T55 acceptance. The `Source`
+revision at the top identifies the historical research below.
+
+Start in `SpectralCycleExecutor`, the initial weighted consumer in `weighting.rs`,
+and `spectral_operator/initial_planes/mfs_regions.rs`. The uniform multi-SPW
+application takes this spectral path; do not route it through the cube executor
+or assume the legacy bulk MFS consumer is the running path. Residual refresh
+uses the existing gridded-normal prediction/replay path. Requested/admitted
+worker counts are not measured concurrency; use actual execution telemetry.
+
+Focused commands, if relevant after subsequent changes:
+
+```sh
+export CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=2
+export RUST_MIN_STACK=33554432 RUST_TEST_THREADS=1
+cargo test --locked -p casa-imaging-reconstruction --lib initial_planes
+cargo test --locked -p casa-imaging-application --test continuum_application uniform_multi_spw_mfs_clark_matches_serial_with_four_admitted_workers -- --exact --nocapture
+cargo test --locked -p casa-imaging-reconstruction --test minor_cycle next_major_cycle
+```
+
+Apply the agreed 8-GiB aggregate RSS build/comparison guard around these
+commands. Reuse existing green evidence for unaffected work. The Linux build,
+linked CLI smoke, five initial-grid tests, uniform W1/W4 application comparison,
+serial/Clark controls and two nonempty-model continuation tests passed. Clippy
+and docs checks passed with existing warnings; broad `just verify` and macOS
+execution were not run. Main-environment macOS validation is still needed,
+with coordination before using resources occupied by the cube campaign.
+
+The full fixture has not reached this cloud executor. Its original verified
+location is
+`/Volumes/GLENDENNING/casa-rs-evidence/t55/mfs-4096-workload-20260923/intermediate-90-evla-v1/pilot.ms`;
+verify current availability before running. The transfer package is
+`casa-rs-mfs-intermediate-90-evla-v1.tar`, 4,380,395,520 bytes, SHA-256
+`ab1f07491217e5abf13ec38568a55948b6c2c82416465c4de462a0bcd6d4e7b7`.
+It preserves 2,021,760 rows and 32 SPWs of 64 channels. Do not substitute a
+new simulation. NAS/VPN/WebDAV setup is handled separately; credentials and
+network configuration are not part of this branch.
+
+After fixture verification, use the existing opt-in
+`t55_mfs_pilot::full_field_application` harness in `continuum_application`.
+Set `CASA_RS_MFS_MS` to the verified MS, `CASA_RS_MFS_OUTPUT` to a fresh durable
+directory, `CASA_RS_MFS_WORKERS=4` (then 1 for the control),
+`CASA_RS_MFS_TERMS=1`, `CASA_RS_MFS_GRIDDER=standard`, and
+`CASA_RS_MFS_NITER=10000`. Build before timing with the 8-GiB build guard; execute
+the test binary with the 16-GiB aggregate native RSS guard and check planned
+admission against that same cap. Preserve all rows/channels, 4096 square,
+0.05 arcsec, the intended 6-GHz reference, global uniform weighting, Stokes I,
+Clark gain 0.1, 5-mJy threshold and 1000 cycle iterations. Verify the resolved
+reference frequency and matched CASA request instead of assuming defaults.
+The harness's shape/unit-PSF smoke is not the full scientific comparison.
+
+Reach a complete W4 application run, obtain W1 and matched CASA serial controls,
+then use dominant measured costs to choose the next intervention. Compare every
+required product numerically and visually, retaining approximately 1e-3
+normalized agreement and stricter existing checks. The historical CASA
+415.481-second W-projection/nterms=2 run is not a reference for this milestone.
+Keep FFTW precision/SIMD linkage matched, batched Clark, bounded input/grid
+residency and the common W1/multiworker scientific path. ADR-0014 publication
+attestation remains prohibited. No Metal, MT-MFS, W/AW, mosaics, cube tuning,
+restart of the stopped full512 campaign, release or cleanup is implied.
+
+The local handoff archive `/workspace/mfs-handoff-14cd1754.tar.gz` preserves the
+three implementation commits, bootstrap scripts and essential logs through
+`14cd1754`; it predates this documentation handoff and is not stored in Git.
+Cloud setup scripts/tools and raw logs are workspace-local and do not accompany
+a branch fetch. On macOS use the existing development setup; on Linux follow
+`TESTING.md` for workspace-backed spill storage. Preserve the original workspace
+until any separately requested archive transfer/restoration has been verified.
 
 **Owner update, 2026-09-24: simple imaging baseline.** Reformulate the existing
 90-time/configuration, DATA-only intermediate as single-term MFS, Clark CLEAN,
