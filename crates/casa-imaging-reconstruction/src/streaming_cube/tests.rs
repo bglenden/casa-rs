@@ -1143,6 +1143,54 @@ fn real_model(channel: usize, x: usize, y: usize) -> casa_imaging_model::ModelSa
 }
 
 #[test]
+fn spatial_tap_preserves_checked_integer_projection_and_overflow_errors() {
+    use crate::spectral_operator::{SampleTaps, TapSpan};
+    let taps = SampleTaps {
+        x: TapSpan {
+            start: 7,
+            weight_index: 11,
+        },
+        y: TapSpan {
+            start: 13,
+            weight_index: 17,
+        },
+    };
+    let value = Complex32::new(0.25, -0.5);
+    let actual = SpatialTap::new(taps, value).unwrap();
+    assert_eq!(
+        [actual.x, actual.y, actual.x_weights, actual.y_weights],
+        [7, 13, 11, 17]
+    );
+    assert_eq!(actual.value, [value.re, value.im]);
+    let maximum = SampleTaps {
+        x: TapSpan {
+            start: u32::MAX as usize,
+            weight_index: u32::MAX as usize,
+        },
+        y: TapSpan {
+            start: u32::MAX as usize,
+            weight_index: u32::MAX as usize,
+        },
+    };
+    assert!(SpatialTap::new(maximum, value).is_ok());
+    #[cfg(target_pointer_width = "64")]
+    for field in 0..4 {
+        let mut invalid = taps;
+        let index = match field {
+            0 => &mut invalid.x.start,
+            1 => &mut invalid.y.start,
+            2 => &mut invalid.x.weight_index,
+            _ => &mut invalid.y.weight_index,
+        };
+        *index = u32::MAX as usize + 1;
+        assert!(matches!(
+            SpatialTap::new(invalid, value),
+            Err(SpectralOperatorError::ResidencyOverflow)
+        ));
+    }
+}
+
+#[test]
 fn connected_residual_reuses_coarse_predictions_with_bounded_refill_storage() {
     let (model, _) = generation(64, real_model);
     let output = [1e9, 1.002e9, 1.004e9, 1.006e9];

@@ -242,7 +242,7 @@ impl EpochBand<'_> {
                             *refill
                                 .predictions
                                 .get_mut(refill.counts[0])
-                                .ok_or(SpectralOperatorError::ResidencyOverflow)? =
+                                .ok_or_else(|| SpectralOperatorError::ResidencyOverflow)? =
                                 ResidualPrediction {
                                     tap: SpatialTap::new(
                                         taps,
@@ -281,7 +281,7 @@ impl EpochBand<'_> {
                     *refill
                         .samples
                         .get_mut(refill.counts[2])
-                        .ok_or(SpectralOperatorError::ResidencyOverflow)? = ResidualSample {
+                        .ok_or_else(|| SpectralOperatorError::ResidencyOverflow)? = ResidualSample {
                         tap,
                         left: left as u32,
                         right: right as u32,
