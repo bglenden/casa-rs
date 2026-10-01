@@ -48,25 +48,15 @@ pub struct DeviceCorrelations {
     pub padding: [u32; 2],
 }
 
-/// Reused, bounded geometry lists. No observed or predicted visibility copy.
+/// Borrowed, bounded descriptor destinations, including mapped device storage.
+/// Counts identify initialized prediction, native-endpoint and fine-sample prefixes.
 #[doc(hidden)]
-#[derive(Default)]
-pub struct ResidualRefill {
-    pub predictions: Vec<ResidualPrediction>,
-    pub native: Vec<NativePrediction>,
-    pub samples: Vec<ResidualSample>,
+pub struct ResidualRefill<'a> {
+    pub predictions: &'a mut [ResidualPrediction],
+    pub native: &'a mut [NativePrediction],
+    pub samples: &'a mut [ResidualSample],
+    pub counts: [usize; 3],
     pub requested_predictions: u64,
-}
-
-impl ResidualRefill {
-    pub fn with_capacities(capacities: [usize; 3]) -> Self {
-        Self {
-            predictions: Vec::with_capacity(capacities[0]),
-            native: Vec::with_capacity(capacities[1]),
-            samples: Vec::with_capacity(capacities[2]),
-            requested_predictions: 0,
-        }
-    }
 }
 
 impl DeviceCorrelations {
@@ -154,7 +144,7 @@ impl EpochBand<'_> {
         layout: &NativeLayout,
         selected: Range<usize>,
         output_hz: &[f64],
-        refill: &mut ResidualRefill,
+        refill: &mut ResidualRefill<'_>,
     ) -> Result<(), SpectralOperatorError> {
         let w = &self.workspace;
         if w.phase != BandPhase::Residual
@@ -164,10 +154,8 @@ impl EpochBand<'_> {
         {
             return Err(SpectralOperatorError::ProblemMismatch);
         }
-        refill.predictions.clear();
-        refill.samples.clear();
+        refill.counts = [0; 3];
         refill.requested_predictions = 0;
-        refill.native.clear();
         if self.native_range.is_empty() {
             return Ok(());
         }
@@ -180,16 +168,15 @@ impl EpochBand<'_> {
             .checked_mul(block.channels)
             .filter(|&n| n < (1 << 30))
             .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-        if cells > refill.native.capacity() {
-            return Err(SpectralOperatorError::ResidencyOverflow);
-        }
-        refill.native.resize(
-            cells,
-            NativePrediction {
+        refill
+            .native
+            .get_mut(..cells)
+            .ok_or(SpectralOperatorError::ResidencyOverflow)?
+            .fill(NativePrediction {
                 indices: [u32::MAX; 2],
                 factors: [0.0; 2],
-            },
-        );
+            });
+        refill.counts[1] = cells;
         let local =
             self.native_range.start - selected.start..self.native_range.end - selected.start;
         let rows = block.rows(layout, 0..block.channels, local.clone())?;
@@ -249,22 +236,22 @@ impl EpochBand<'_> {
                             row.uvw_m[1] * term.wavelength_scale,
                         ]) {
                             let rotation = phase(row.phase_shift_m, term.frequency_hz).conj();
-                            unique[term.plane] = refill
-                                .predictions
-                                .len()
+                            unique[term.plane] = refill.counts[0]
                                 .try_into()
                                 .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
-                            if refill.predictions.len() == refill.predictions.capacity() {
-                                return Err(SpectralOperatorError::ResidencyOverflow);
-                            }
-                            refill.predictions.push(ResidualPrediction {
-                                tap: SpatialTap::new(
-                                    taps,
-                                    Complex32::new(rotation.re as f32, rotation.im as f32),
-                                )?,
-                                plane: term.plane as u32,
-                                padding: 0,
-                            });
+                            *refill
+                                .predictions
+                                .get_mut(refill.counts[0])
+                                .ok_or(SpectralOperatorError::ResidencyOverflow)? =
+                                ResidualPrediction {
+                                    tap: SpatialTap::new(
+                                        taps,
+                                        Complex32::new(rotation.re as f32, rotation.im as f32),
+                                    )?,
+                                    plane: term.plane as u32,
+                                    padding: 0,
+                                };
+                            refill.counts[0] += 1;
                         }
                     }
                     refill.native[first + channel].indices[index] = unique[term.plane];
@@ -291,17 +278,18 @@ impl EpochBand<'_> {
                             ..SpatialTap::default()
                         },
                     };
-                    if refill.samples.len() == refill.samples.capacity() {
-                        return Err(SpectralOperatorError::ResidencyOverflow);
-                    }
-                    refill.samples.push(ResidualSample {
+                    *refill
+                        .samples
+                        .get_mut(refill.counts[2])
+                        .ok_or(SpectralOperatorError::ResidencyOverflow)? = ResidualSample {
                         tap,
                         left: left as u32,
                         right: right as u32,
                         nearest_flags: nearest as u32 | (flag_mask << 30),
                         plane: (fine.output_channel() - w.core.start) as u32,
                         factors: fine.factors().map(|v| v as f32),
-                    });
+                    };
+                    refill.counts[2] += 1;
                 }
             }
         }

@@ -1192,28 +1192,39 @@ fn connected_residual_reuses_coarse_predictions_with_bounded_refill_storage() {
     assert_eq!(wave.support.model, [0, 1, 2, 3]);
     let capacity = wave.residual_capacities(1).unwrap();
     let job = wave.prepare(&model, None).unwrap();
-    let mut refill = ResidualRefill::with_capacities(capacity);
-    let pointers = (
-        refill.predictions.as_ptr(),
-        refill.native.as_ptr(),
-        refill.samples.as_ptr(),
-    );
+    use bytemuck::Zeroable;
+    let mut predictions = vec![ResidualPrediction::zeroed(); capacity[0] + 1];
+    let mut native = vec![NativePrediction::zeroed(); capacity[1] + 1];
+    let mut samples = vec![ResidualSample::zeroed(); capacity[2] + 1];
+    predictions[capacity[0]].padding = 0xdead;
+    native[capacity[1]].indices = [0xdead; 2];
+    samples[capacity[2]].plane = 0xdead;
+    let pointers = (predictions.as_ptr(), native.as_ptr(), samples.as_ptr());
     for _ in 0..2 {
+        let mut refill = ResidualRefill {
+            predictions: &mut predictions[..capacity[0]],
+            native: &mut native[..capacity[1]],
+            samples: &mut samples[..capacity[2]],
+            counts: [usize::MAX; 3],
+            requested_predictions: u64::MAX,
+        };
         job.prepare_residual_refill(block, &layout, 0..12, &output, &mut refill)
             .unwrap();
-        assert!(refill.requested_predictions > refill.predictions.len() as u64);
-        let planes: std::collections::BTreeSet<_> =
-            refill.predictions.iter().map(|v| v.plane).collect();
+        assert!(refill.requested_predictions > refill.counts[0] as u64);
+        let planes: std::collections::BTreeSet<_> = refill.predictions[..refill.counts[0]]
+            .iter()
+            .map(|v| v.plane)
+            .collect();
         assert_eq!(
             planes.len(),
-            refill.predictions.len(),
+            refill.counts[0],
             "one gather per row/coarse plane"
         );
-        assert!(refill.samples.len() <= capacity[2]);
-        for sample in &refill.samples {
-            assert!((sample.left as usize) < refill.native.len());
-            assert!((sample.right as usize) < refill.native.len());
-            assert!((sample.nearest_flags & ((1 << 30) - 1)) < refill.native.len() as u32);
+        assert!(refill.counts[2] <= capacity[2]);
+        for sample in &refill.samples[..refill.counts[2]] {
+            assert!((sample.left as usize) < refill.counts[1]);
+            assert!((sample.right as usize) < refill.counts[1]);
+            assert!((sample.nearest_flags & ((1 << 30) - 1)) < refill.counts[1] as u32);
         }
         assert_eq!(
             pointers,
@@ -1224,11 +1235,24 @@ fn connected_residual_reuses_coarse_predictions_with_bounded_refill_storage() {
             )
         );
     }
-    let mut undersized = ResidualRefill::with_capacities([0, capacity[1], capacity[2]]);
-    assert!(matches!(
-        job.prepare_residual_refill(block, &layout, 0..12, &output, &mut undersized),
-        Err(SpectralOperatorError::ResidencyOverflow)
-    ));
+    assert_eq!(predictions[capacity[0]].padding, 0xdead);
+    assert_eq!(native[capacity[1]].indices, [0xdead; 2]);
+    assert_eq!(samples[capacity[2]].plane, 0xdead);
+    for field in 0..3 {
+        let mut bounded = capacity;
+        bounded[field] = 0;
+        let mut undersized = ResidualRefill {
+            predictions: &mut predictions[..bounded[0]],
+            native: &mut native[..bounded[1]],
+            samples: &mut samples[..bounded[2]],
+            counts: [0; 3],
+            requested_predictions: 0,
+        };
+        assert!(matches!(
+            job.prepare_residual_refill(block, &layout, 0..12, &output, &mut undersized),
+            Err(SpectralOperatorError::ResidencyOverflow)
+        ));
+    }
     let mut mismatch = bands.clone();
     mismatch[1].geometry.increment_rad[0] *= 2.0;
     assert!(matches!(
