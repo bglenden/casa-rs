@@ -5667,7 +5667,12 @@ impl CompleteDataOwnerState {
                     .finish()?;
             }
         }
-        if self.stage_initial_planes {
+        if self.stage_initial_planes
+            && !self
+                .initial_planes
+                .as_ref()
+                .is_some_and(InitialPlaneBatch::is_mfs)
+        {
             self.flush_initial_planes(dispatch)?;
         }
         self.sample_count = self
@@ -6926,6 +6931,18 @@ impl CompleteDataOwnerState {
             || self.next_block_sequence != replay.block_count()
         {
             return Err(SpectralOperatorError::IncompleteCoverage);
+        }
+        if self
+            .initial_planes
+            .as_ref()
+            .is_some_and(InitialPlaneBatch::is_mfs)
+        {
+            self.flush_initial_planes(&mut |planes| {
+                for plane in planes {
+                    plane.execute()?;
+                }
+                Ok(())
+            })?;
         }
         self.observe_aw_block_progress(None, true);
         let (coverage, coverage_proof_work) = self

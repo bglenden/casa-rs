@@ -866,6 +866,68 @@ fn residual_refresh_rejects_prior_invariants_from_another_selected_generation() 
 }
 
 #[test]
+fn mfs_initial_batch_spans_input_blocks_and_finishes_partial_tail() {
+    let problem = t19_compatible_problem(249);
+    let samples = fixture_samples(&problem);
+    let plan = plan_weighting(&problem, WeightingExecutionLimits::new(1, 1).unwrap()).unwrap();
+    let selected_generation = replay_selected_generation(&problem, &samples);
+    let generation =
+        freeze_weighting_generation_with(&problem, &plan, &samples, constant_basis_contributions)
+            .unwrap();
+    let (blocks, summary) = replay_with(
+        &generation,
+        &problem,
+        &plan,
+        &samples,
+        constant_basis_contributions,
+    );
+    assert_eq!(blocks.len(), 2);
+    let mut reference = None;
+    for capacity in 1..=3 {
+        let specification = SpectralOperatorSpecification::new(&problem).unwrap();
+        assert!(specification.initial_mfs_region_count() > 0);
+        let workload = spectral_operator_workload(
+            &specification,
+            capacity,
+            SpectralOperatorPass::InitialMajor,
+        )
+        .unwrap();
+        let mut owner = prepare_spectral_operator(specification, workload)
+            .unwrap()
+            .begin(&problem, &generation)
+            .unwrap();
+        let mut dispatches = 0;
+        for block in &blocks {
+            owner
+                .consume_block_with_initial_planes(block, |planes| {
+                    dispatches += 1;
+                    for plane in planes {
+                        plane.execute()?;
+                    }
+                    Ok(())
+                })
+                .unwrap();
+        }
+        assert_eq!(dispatches, samples.len() / capacity);
+        let complete = owner.complete(&summary, selected_generation, None).unwrap();
+        let primitives = complete.primitives();
+        let actual = (
+            primitives.dirty().complex().unwrap().to_vec(),
+            primitives.psf().complex().unwrap().to_vec(),
+            primitives.sensitivity().dense().unwrap().to_vec(),
+            primitives.sum_weights().to_vec(),
+            primitives.channel_validity().to_vec(),
+        );
+        assert!(actual.3.iter().any(|weight| *weight > 0.0));
+        if let Some(reference) = &reference {
+            assert_eq!(&actual, reference);
+        } else {
+            reference = Some(actual);
+        }
+    }
+}
+
+#[test]
 fn t55_all_flagged_program_finishes_without_encoded_frames() {
     let problem = t19_compatible_problem(252);
     let mut samples = fixture_samples(&problem);
