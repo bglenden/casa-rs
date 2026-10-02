@@ -1165,7 +1165,6 @@ fn sealed_gridded_program_is_reused_across_distinct_model_generations() {
         )
     };
     let program_alias = program.clone();
-    assert_eq!(program.record_bytes(), 16);
     assert_eq!(program_alias.identity(), program.identity());
 
     let initial_join = MajorCycleOwner::from_complete_data(

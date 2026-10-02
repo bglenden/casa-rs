@@ -9,8 +9,8 @@ use std::{
 };
 
 use casa_imaging_model::{
-    CompiledProblem, ContinuumTransformGenerationId, LogicalIdentity, PolarizationCoordinate,
-    ReconstructionBasis, SelectedObservationGenerationId,
+    CompiledProblem, ContinuumTransformGenerationId, LogicalIdentity, ReconstructionBasis,
+    SelectedObservationGenerationId,
 };
 use ndarray::Array2;
 use num_complex::Complex64;
@@ -116,12 +116,7 @@ impl GriddedNormalRecordLayout {
             };
         }
         match specification.block_normal_plan() {
-            Some(plan)
-                if plan.coefficient_term_count() > 1
-                    || (specification.supports_bulk_mfs()
-                        && specification.polarization_coordinates()
-                            == [PolarizationCoordinate::StokesI]) =>
-            {
+            Some(plan) if plan.coefficient_term_count() > 1 => {
                 if specification.aw_projection().is_some() {
                     Self::TaylorWithCoordinates(plan)
                 } else {
@@ -1307,83 +1302,65 @@ impl GriddedNormalOperatorCompiler {
         emit: &mut impl FnMut(TaylorRecordKey) -> Result<(), SpectralOperatorError>,
     ) -> Result<GriddedNormalSourceCardinality, SpectralOperatorError> {
         let mut cardinality = GriddedNormalSourceCardinality::default();
-        for correlations in block.correlation_groups() {
-            let operator = self.specification.direction_independent_polarization(
-                &correlations
-                    .iter()
-                    .map(|sample| sample.selected().address().correlation_type)
-                    .collect::<SmallVec<[_; 4]>>(),
-            )?;
-            let flags = correlations
-                .iter()
-                .map(|sample| {
-                    accept_polarization_input(sample.selected(), self.finite_values)
-                        .map(|accepted| !accepted)
-                })
-                .collect::<Result<SmallVec<[_; 4]>, _>>()?;
-            let flags = polarization_effective_flags(operator, flags);
-            for (row, weighted) in correlations.iter().enumerate() {
-                let selected = weighted.selected();
-                if flags[row]
-                    || !accept_weighted_input(selected, self.finite_values)?
-                    || !selected
-                        .address()
-                        .correlation_type
-                        .contributes_to_stokes_i()
-                {
-                    continue;
-                }
-                let uvw_m = selected.transformed_uvw_m();
-                if !selected.phase_shift_m().is_finite()
-                    || uvw_m.iter().any(|value| !value.is_finite())
-                {
-                    return Err(SpectralOperatorError::InvalidSample);
-                }
-                let mut spectral_values = weighted.spectral_values();
-                let spectral = spectral_values
-                    .next()
-                    .ok_or(SpectralOperatorError::InvalidSample)?;
-                if spectral_values.next().is_some() {
-                    return Err(SpectralOperatorError::InvalidSample);
-                }
-                let contribution = spectral.contribution();
-                let frequency_hz = contribution.evaluation_frequency_hz();
-                let factor = contribution.factor();
-                let imaging_weight = spectral.imaging_weight();
-                if contribution.output_channel() != 0
-                    || !frequency_hz.is_finite()
-                    || frequency_hz <= 0.0
-                    || !factor.is_finite()
-                    || factor == 0.0
-                    || !imaging_weight.is_finite()
-                    || imaging_weight < 0.0
-                {
-                    return Err(SpectralOperatorError::InvalidSample);
-                }
-                if imaging_weight == 0.0 {
-                    continue;
-                }
-                let scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
-                let Some(taps) =
-                    self.gridders[0].taps([uvw_m[0] * scale, uvw_m[1] * scale, uvw_m[2] * scale])
-                else {
-                    continue;
-                };
-                let normal_weight = imaging_weight * factor * factor;
-                if !normal_weight.is_finite() || normal_weight < 0.0 {
-                    return Err(SpectralOperatorError::InvalidSample);
-                }
-                emit(TaylorRecordKey {
-                    taps: encode_taps(taps)?,
-                    frequency_hz: canonical_zero_bits(frequency_hz),
-                    imaging_weight: canonical_zero_bits(normal_weight),
-                })?;
-                cardinality.groups = cardinality
-                    .groups
-                    .checked_add(1)
-                    .ok_or(SpectralOperatorError::CoverageOverflow)?;
-                cardinality.records = cardinality.groups;
+        for weighted in block.samples() {
+            let selected = weighted.selected();
+            if !accept_weighted_input(selected, self.finite_values)?
+                || !selected
+                    .address()
+                    .correlation_type
+                    .contributes_to_stokes_i()
+            {
+                continue;
             }
+            let uvw_m = selected.transformed_uvw_m();
+            if !selected.phase_shift_m().is_finite() || uvw_m.iter().any(|value| !value.is_finite())
+            {
+                return Err(SpectralOperatorError::InvalidSample);
+            }
+            let mut spectral_values = weighted.spectral_values();
+            let spectral = spectral_values
+                .next()
+                .ok_or(SpectralOperatorError::InvalidSample)?;
+            if spectral_values.next().is_some() {
+                return Err(SpectralOperatorError::InvalidSample);
+            }
+            let contribution = spectral.contribution();
+            let frequency_hz = contribution.evaluation_frequency_hz();
+            let factor = contribution.factor();
+            let imaging_weight = spectral.imaging_weight();
+            if contribution.output_channel() != 0
+                || !frequency_hz.is_finite()
+                || frequency_hz <= 0.0
+                || !factor.is_finite()
+                || factor == 0.0
+                || !imaging_weight.is_finite()
+                || imaging_weight < 0.0
+            {
+                return Err(SpectralOperatorError::InvalidSample);
+            }
+            if imaging_weight == 0.0 {
+                continue;
+            }
+            let scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+            let Some(taps) =
+                self.gridders[0].taps([uvw_m[0] * scale, uvw_m[1] * scale, uvw_m[2] * scale])
+            else {
+                continue;
+            };
+            let normal_weight = imaging_weight * factor * factor;
+            if !normal_weight.is_finite() || normal_weight < 0.0 {
+                return Err(SpectralOperatorError::InvalidSample);
+            }
+            emit(TaylorRecordKey {
+                taps: encode_taps(taps)?,
+                frequency_hz: canonical_zero_bits(frequency_hz),
+                imaging_weight: canonical_zero_bits(normal_weight),
+            })?;
+            cardinality.groups = cardinality
+                .groups
+                .checked_add(1)
+                .ok_or(SpectralOperatorError::CoverageOverflow)?;
+            cardinality.records = cardinality.groups;
         }
         Ok(cardinality)
     }
@@ -1838,11 +1815,6 @@ impl GriddedNormalOperatorProgram {
             || prior.block_count() != self.manifest.source_block_count
             || prior.catalog()
                 != match self.manifest.record_layout {
-                    GriddedNormalRecordLayout::Taylor(plan)
-                        if plan.coefficient_term_count() == 1 =>
-                    {
-                        crate::NormalStateCatalog::UnnormalizedPlaneV1
-                    }
                     GriddedNormalRecordLayout::Taylor(_)
                     | GriddedNormalRecordLayout::TaylorWithCoordinates(_)
                     | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. } => {
@@ -3177,9 +3149,6 @@ impl GriddedNormalOperatorApply {
                 }),
         )?;
         let primitive_catalog = match program.manifest.record_layout {
-            GriddedNormalRecordLayout::Taylor(plan) if plan.coefficient_term_count() == 1 => {
-                SpectralPrimitiveCatalog::UnnormalizedPlaneV1
-            }
             GriddedNormalRecordLayout::Taylor(_)
             | GriddedNormalRecordLayout::TaylorWithCoordinates(_)
             | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. } => {
