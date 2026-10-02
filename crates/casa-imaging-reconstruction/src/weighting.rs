@@ -900,6 +900,13 @@ fn weighted_sample_from_state(
                 contribution,
                 imaging_weight: if grid.cube_output.is_some() {
                     source_imaging_weight.ok_or(WeightingError::OutputChannelMismatch)?
+                } else if contribution.evaluation_frequency_hz() == sample.output_frame_frequency_hz
+                    && let Some(source_weight) = source_imaging_weight
+                {
+                    // Global density coordinates depend on frequency, not the
+                    // contribution's channel or coefficient. Reuse the evaluation
+                    // already required for the source weight at this frequency.
+                    source_weight
                 } else {
                     weight(Some(contribution))?
                 },
