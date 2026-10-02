@@ -2238,6 +2238,11 @@ pub fn spectral_operator_workload(
     let major_normal_planes = specification.basis.major_normal_planes(specification.slab);
     let polarizations = specification.polarization_count();
     let initial_certified_zero = specification.is_initial_certified_zero(pass);
+    let initial_grid_copies = if specification.initial_mfs_uses_plain_grids(pass) {
+        1
+    } else {
+        2
+    };
     let joint_channels = usize::from(matches!(
         specification.basis,
         SpectralBasisPlan::Joint { .. }
@@ -2246,10 +2251,14 @@ pub fn spectral_operator_workload(
     .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     let grid_planes = match pass {
         SpectralOperatorPass::InitialMajor => major_coefficient_planes
-            .checked_mul(if initial_certified_zero { 2 } else { 4 })
+            .checked_mul(if initial_certified_zero {
+                initial_grid_copies
+            } else {
+                4
+            })
             .and_then(|values| {
                 major_normal_planes
-                    .checked_mul(2)
+                    .checked_mul(initial_grid_copies)
                     .and_then(|moments| values.checked_add(moments))
                     .and_then(|planes| {
                         usize::from(specification.aw_projection.is_some())
@@ -7801,6 +7810,10 @@ impl SpectralSlabOperator {
         let plane_grids =
             |depth: usize| (0..depth).map(|_| Array2::zeros(shape)).collect::<Vec<_>>();
         let initial = workload.pass == SpectralOperatorPass::InitialMajor;
+        let compensated_initial = initial
+            && !specification
+                .as_ref()
+                .is_some_and(|spec| spec.initial_mfs_uses_plain_grids(workload.pass));
         let aw_imaging_oversampling = aw_projection
             .as_ref()
             .map(PreparedAwProjection::imaging_oversampling);
@@ -7851,9 +7864,9 @@ impl SpectralSlabOperator {
             maximum_convolution_support,
             fft,
             dirty_grids: initial.then(|| plane_grids(major_coefficient_planes)),
-            dirty_compensations: initial.then(|| plane_grids(major_coefficient_planes)),
+            dirty_compensations: compensated_initial.then(|| plane_grids(major_coefficient_planes)),
             psf_grids: initial.then(|| plane_grids(major_normal_planes)),
-            psf_compensations: initial.then(|| plane_grids(major_normal_planes)),
+            psf_compensations: compensated_initial.then(|| plane_grids(major_normal_planes)),
             aw_sensitivity_grids: (initial && has_aw_projection)
                 .then(|| plane_grids(major_normal_planes)),
             aw_sensitivity_compensations: (initial && has_aw_projection)
@@ -8403,14 +8416,14 @@ impl SpectralSlabOperator {
             .dirty_grids
             .as_mut()
             .ok_or(SpectralOperatorError::ProblemMismatch)?[plane];
-        let compensation = &mut self
+        let compensation = self
             .dirty_compensations
             .as_mut()
-            .ok_or(SpectralOperatorError::ProblemMismatch)?[plane];
-        grid_operator_compensated(
+            .map(|planes| &mut planes[plane]);
+        grid_operator(
             &self.gridder,
             &self.mosaic_projectors,
-            CompensatedGrid {
+            GridAccumulation {
                 values: grid,
                 errors: compensation,
             },
@@ -8437,14 +8450,14 @@ impl SpectralSlabOperator {
             .psf_grids
             .as_mut()
             .ok_or(SpectralOperatorError::ProblemMismatch)?[moment];
-        let compensation = &mut self
+        let compensation = self
             .psf_compensations
             .as_mut()
-            .ok_or(SpectralOperatorError::ProblemMismatch)?[moment];
-        grid_operator_compensated(
+            .map(|planes| &mut planes[moment]);
+        grid_operator(
             &self.gridder,
             &self.mosaic_projectors,
-            CompensatedGrid {
+            GridAccumulation {
                 values: grid,
                 errors: compensation,
             },
@@ -8474,18 +8487,20 @@ impl SpectralSlabOperator {
         taps: &GridOperatorTaps,
         contribution: &ChannelMajorNormalContribution,
     ) -> Result<(), SpectralOperatorError> {
-        grid_operator_compensated(
+        grid_operator(
             &self.gridder,
             &self.mosaic_projectors,
-            CompensatedGrid {
+            GridAccumulation {
                 values: &mut self
                     .psf_grids
                     .as_mut()
                     .ok_or(SpectralOperatorError::ProblemMismatch)?[plane],
-                errors: &mut self
-                    .psf_compensations
-                    .as_mut()
-                    .ok_or(SpectralOperatorError::ProblemMismatch)?[plane],
+                errors: Some(
+                    &mut self
+                        .psf_compensations
+                        .as_mut()
+                        .ok_or(SpectralOperatorError::ProblemMismatch)?[plane],
+                ),
             },
             taps,
             GridAccumulationRole::Normal,
@@ -9374,12 +9389,12 @@ impl SpectralSlabOperator {
             .residual_compensations
             .as_mut()
             .ok_or(SpectralOperatorError::MissingMajorCycleResidual)?[plane];
-        grid_operator_compensated(
+        grid_operator(
             &self.gridder,
             &self.mosaic_projectors,
-            CompensatedGrid {
+            GridAccumulation {
                 values: grid,
-                errors: compensation,
+                errors: Some(compensation),
             },
             taps,
             GridAccumulationRole::Imaging,
@@ -9407,12 +9422,12 @@ impl SpectralSlabOperator {
             .common_residual_compensations
             .as_mut()
             .ok_or(SpectralOperatorError::MissingMajorCycleResidual)?[output_channel];
-        grid_operator_compensated(
+        grid_operator(
             &self.gridder,
             &self.mosaic_projectors,
-            CompensatedGrid {
+            GridAccumulation {
                 values: grid,
-                errors: compensation,
+                errors: Some(compensation),
             },
             taps,
             GridAccumulationRole::Imaging,
@@ -11108,9 +11123,9 @@ enum GridOperatorTaps {
     },
 }
 
-struct CompensatedGrid<'a> {
+struct GridAccumulation<'a> {
     values: &'a mut Array2<Complex64>,
-    errors: &'a mut Array2<Complex64>,
+    errors: Option<&'a mut Array2<Complex64>>,
 }
 
 impl GridOperatorTaps {
@@ -11152,17 +11167,26 @@ enum GridAccumulationRole {
     Normal,
 }
 
-fn grid_operator_compensated(
+fn grid_operator(
     standard: &ConvolutionOperator,
     mosaic: &BTreeMap<MosaicProjectorKey, MosaicProjector>,
-    grid: CompensatedGrid<'_>,
+    grid: GridAccumulation<'_>,
     taps: &GridOperatorTaps,
     role: GridAccumulationRole,
     value: Complex64,
 ) -> Result<(), SpectralOperatorError> {
-    let CompensatedGrid { values, errors } = grid;
+    let GridAccumulation { values, errors } = grid;
     match taps {
-        GridOperatorTaps::Standard(taps) => standard.grid_compensated(values, errors, *taps, value),
+        GridOperatorTaps::Standard(taps) => match errors {
+            Some(errors) => standard.grid_compensated(values, errors, *taps, value),
+            None => {
+                let ConvolutionOperator::Standard(standard) = standard else {
+                    return Err(SpectralOperatorError::ProblemMismatch);
+                };
+                standard.grid_rows(values, *taps, value, 0);
+                Ok(())
+            }
+        },
         GridOperatorTaps::Aw {
             imaging, normal, ..
         } => {
@@ -11170,6 +11194,7 @@ fn grid_operator_compensated(
                 .as_slice_mut()
                 .ok_or(SpectralOperatorError::ProblemMismatch)?;
             let compensation = errors
+                .ok_or(SpectralOperatorError::ProblemMismatch)?
                 .as_slice_mut()
                 .ok_or(SpectralOperatorError::ProblemMismatch)?;
             let plan = match role {
@@ -11185,7 +11210,12 @@ fn grid_operator_compensated(
             mosaic
                 .get(response_key)
                 .ok_or(SpectralOperatorError::ProblemMismatch)?
-                .grid_compensated(values, errors, *plan, value);
+                .grid_compensated(
+                    values,
+                    errors.ok_or(SpectralOperatorError::ProblemMismatch)?,
+                    *plan,
+                    value,
+                );
             Ok(())
         }
     }
@@ -11867,6 +11897,35 @@ impl StandardConvolution {
                 let updated = *grid_cell + contribution;
                 *compensation_cell = (updated - *grid_cell) - contribution;
                 *grid_cell = updated;
+            }
+        }
+    }
+
+    fn grid_rows<S: DataMut<Elem = Complex64>>(
+        &self,
+        grid: &mut ArrayBase<S, Ix2>,
+        taps: SampleTaps,
+        value: Complex64,
+        first_row: usize,
+    ) {
+        let end_row = first_row + grid.nrows();
+        let row_stride = grid.ncols();
+        let grid = grid
+            .as_slice_mut()
+            .expect("spectral grids use standard contiguous layout");
+        let x_weights = self.weights[taps.x.weight_index];
+        let y_weights = self.weights[taps.y.weight_index];
+        for (x, x_weight) in x_weights.into_iter().enumerate() {
+            let row = taps.x.start + x;
+            if row < first_row || row >= end_row {
+                continue;
+            }
+            let start = (row - first_row) * row_stride + taps.y.start;
+            for (cell, y_weight) in grid[start..start + y_weights.len()]
+                .iter_mut()
+                .zip(y_weights)
+            {
+                *cell += value * x_weight * y_weight;
             }
         }
     }
