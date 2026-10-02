@@ -35,6 +35,9 @@ fn planned_prediction_lane(
         | GriddedNormalRecordLayout::TaylorWithCoordinates(_)
         | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. }
         | GriddedNormalRecordLayout::Joint { .. } => (planned_vec(0)?, planned_vec(0)?),
+        GriddedNormalRecordLayout::Taylor(_) if prediction_width == 1 => {
+            (planned_vec(0)?, planned_vec(0)?)
+        }
         GriddedNormalRecordLayout::Taylor(_) => {
             let mut model_scratch = planned_vec(prediction_width)?;
             model_scratch.resize(prediction_width, Complex64::default());
@@ -1747,15 +1750,28 @@ impl GriddedNormalOperatorApply {
                                 moment_scratch,
                                 ..
                             } = &mut *owner;
-                            record.fill_moments(moment_scratch)?;
-                            self.operators[0].predict_gridded_block_normal(
-                                record.taps,
-                                moment_scratch,
-                                model_scratch,
-                                values
-                                    .get_mut(value_start..value_end)
-                                    .ok_or(SpectralOperatorError::IncompleteCoverage)?,
-                            )?;
+                            let normal_values = values
+                                .get_mut(value_start..value_end)
+                                .ok_or(SpectralOperatorError::IncompleteCoverage)?;
+                            if prepared.prediction_width == 1 {
+                                let mut moments = [0.0];
+                                let mut model = [Complex64::default()];
+                                record.fill_moments(&mut moments)?;
+                                self.operators[0].predict_gridded_block_normal(
+                                    record.taps,
+                                    &moments,
+                                    &mut model,
+                                    normal_values,
+                                )?;
+                            } else {
+                                record.fill_moments(moment_scratch)?;
+                                self.operators[0].predict_gridded_block_normal(
+                                    record.taps,
+                                    moment_scratch,
+                                    model_scratch,
+                                    normal_values,
+                                )?;
+                            }
                         }
                     }
                 }
@@ -2487,8 +2503,18 @@ mod tests {
 
     #[test]
     fn taylor_prediction_lanes_reuse_planned_flat_values_and_scratch() {
+        for terms in [1, 3] {
+            check_taylor_prediction_lane_capacities(terms);
+        }
+    }
+
+    fn check_taylor_prediction_lane_capacities(terms: usize) {
         let catalog = GriddedNormalTileCatalog::new([128, 128], SUPPORT).unwrap();
-        let plan = crate::block_normal::BlockNormalPlan::taylor(1.0, 3).unwrap();
+        let plan = if terms == 1 {
+            crate::block_normal::BlockNormalPlan::constant(1.0).unwrap()
+        } else {
+            crate::block_normal::BlockNormalPlan::taylor(1.0, terms).unwrap()
+        };
         let record_count = 11;
         let mut prepared = PreparedGriddedNormalTwoDomainWindow::with_record_capacities(
             &[record_count],
@@ -2525,9 +2551,16 @@ mod tests {
             );
             assert_eq!(
                 owner.model_scratch.capacity(),
-                plan.coefficient_term_count()
+                if terms == 1 { 0 } else { terms }
             );
-            assert_eq!(owner.moment_scratch.capacity(), plan.normal_moment_count());
+            assert_eq!(
+                owner.moment_scratch.capacity(),
+                if terms == 1 {
+                    0
+                } else {
+                    plan.normal_moment_count()
+                }
+            );
         }
         assert_eq!(
             prepared.route_capacity_bytes().unwrap(),

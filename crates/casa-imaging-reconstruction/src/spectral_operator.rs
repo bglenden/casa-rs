@@ -10019,7 +10019,6 @@ impl SpectralSlabOperator {
         let plan = self
             .basis
             .polynomial()
-            .filter(|plan| plan.coefficient_term_count() > 1)
             .ok_or(SpectralOperatorError::GriddedRecordMismatch)?;
         let terms = plan.coefficient_term_count();
         if moments.len() != plan.normal_moment_count()
@@ -10238,7 +10237,6 @@ impl SpectralSlabOperator {
         let terms = self
             .basis
             .polynomial()
-            .filter(|plan| plan.coefficient_term_count() > 1)
             .map(BlockNormalPlan::coefficient_term_count)
             .ok_or(SpectralOperatorError::GriddedRecordMismatch)?;
         if grids.len() != terms || compensations.len() != terms || normal_values.len() != terms {
