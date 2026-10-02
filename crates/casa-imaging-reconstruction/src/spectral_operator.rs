@@ -2364,7 +2364,7 @@ pub fn spectral_operator_workload(
         let sample_and_observed = crate::weighting::native_row_heap_bytes(correlations, 2)
             .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
         // Previous, current, and interpolated predictions coexist during emission.
-        let predictions = crate::weighting::smallvec_heap_bytes::<Complex64>(correlations)
+        let predictions = crate::weighting::smallvec_heap_bytes::<[Complex64; 4]>(correlations)
             .map_err(|_| SpectralOperatorError::ResidencyOverflow)?
             .checked_mul(3)
             .ok_or(SpectralOperatorError::ResidencyOverflow)?;

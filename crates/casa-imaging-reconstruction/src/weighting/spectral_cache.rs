@@ -116,7 +116,7 @@ fn workspace_bytes(
 ) -> Result<usize, WeightingError> {
     // A miss can retain the old entry while the compiler receipt and its cloned
     // contribution set coexist. All three use the same declared sparse bound.
-    let spilled = smallvec_heap_bytes::<SelectedSpectralContribution>(maximum_terms)?;
+    let spilled = smallvec_heap_bytes::<[SelectedSpectralContribution; 4]>(maximum_terms)?;
     let axis_bytes = if axis_channels == 0 {
         0
     } else {
