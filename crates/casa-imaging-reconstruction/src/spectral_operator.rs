@@ -12022,11 +12022,23 @@ fn shift_even<T, S: DataMut<Elem = T>>(data: &mut ArrayBase<S, Ix2>) {
     let [width, height] = [data.shape()[0], data.shape()[1]];
     debug_assert_eq!(width % 2, 0);
     debug_assert_eq!(height % 2, 0);
-    for x in 0..width / 2 {
-        for y in 0..height / 2 {
-            data.swap((x, y), (x + width / 2, y + height / 2));
-            data.swap((x + width / 2, y), (x, y + height / 2));
-        }
+    let inner = if data.strides() == [1, width as isize] {
+        width
+    } else {
+        height
+    };
+    let values = data
+        .as_slice_memory_order_mut()
+        .expect("FFTW plane must be contiguous");
+    let (first, second) = values.split_at_mut(values.len() / 2);
+    for (first, second) in first
+        .chunks_exact_mut(inner)
+        .zip(second.chunks_exact_mut(inner))
+    {
+        let (first_low, first_high) = first.split_at_mut(inner / 2);
+        let (second_low, second_high) = second.split_at_mut(inner / 2);
+        first_low.swap_with_slice(second_high);
+        first_high.swap_with_slice(second_low);
     }
 }
 
@@ -12590,6 +12602,31 @@ mod tests {
         let expected_corner = f64::from((Complex32::new(3.0, 4.0) * (1.0 / (sinc * sinc))).norm());
         assert_eq!(sensitivity[0], expected_corner);
         assert_ne!(sensitivity[0], sensitivity[centre]);
+    }
+
+    #[test]
+    fn quadrant_shift_matches_rectangular_row_and_column_major_coordinates() {
+        use ndarray::ShapeBuilder;
+
+        for shape in [(4, 6), (6, 4), (2, 8), (8, 2)] {
+            let values = |(x, y)| x * shape.1 + y;
+            let mut row = Array2::from_shape_fn(shape, values);
+            let mut column = Array2::from_shape_fn(shape.f(), values);
+            super::shift_even(&mut row);
+            super::shift_even(&mut column);
+            for x in 0..shape.0 {
+                for y in 0..shape.1 {
+                    let expected =
+                        values(((x + shape.0 / 2) % shape.0, (y + shape.1 / 2) % shape.1));
+                    assert_eq!(row[(x, y)], expected);
+                    assert_eq!(column[(x, y)], expected);
+                }
+            }
+            super::shift_even(&mut row);
+            super::shift_even(&mut column);
+            assert_eq!(row, Array2::from_shape_fn(shape, values));
+            assert_eq!(column, row);
+        }
     }
 
     #[test]
