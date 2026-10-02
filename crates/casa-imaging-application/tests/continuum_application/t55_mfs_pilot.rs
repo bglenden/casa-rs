@@ -94,6 +94,9 @@ fn full_field_application() {
     );
     let summary = serde_json::json!({
         "seconds": seconds, "workers": workers, "terms": terms,
+        "initial_admitted_workers": output.initial_receipt.selected_alternative_projection().demand.workers.hard(),
+        "final_major_admitted_workers": output.final_major_receipt.as_ref().map(|receipt| receipt.selected_alternative_projection().demand.workers.hard()),
+        "worker_count_scope": "workers is the request; admitted counts are phase reservations, not measured concurrent grid workers; see stream/replay measurements for execution",
         "native_memory_bytes": 16_u64 << 30, "image_size": 4096, "cell_arcsec": 0.05,
         "iterations": result.actual_minor_iterations,
         "majors": output.major_cycle_count, "products": result.product_names,

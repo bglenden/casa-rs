@@ -196,6 +196,27 @@ or performance acceptance. Current results and restart authority live in the
   assertion failure. This serializes test cases, not the worker concurrency
   exercised inside an imaging run.
 
+### Linux temporary storage
+
+Managed-spill tests require a filesystem that can release file-backed page
+cache. On Linux, a memory-backed `/tmp` (tmpfs) can return success from
+`posix_fadvise(POSIX_FADV_DONTNEED)` while retaining pages; the runtime correctly
+rejects this with `PageCacheRetention`. Place test temporary files on a
+disk-backed filesystem instead, for example:
+
+```bash
+mkdir -p "$PWD/target/test-tmp"
+TMPDIR="$PWD/target/test-tmp" CARGO_INCREMENTAL=0 RUST_TEST_THREADS=1 \
+  RUST_MIN_STACK=33554432 cargo test -p casa-imaging-application \
+  --test continuum_application application_algorithms_do_not_invent_a_flux_staleness_bound -- --exact
+```
+
+Check the selected filesystem rather than assuming that a path named `target`
+is disk-backed. This setting relocates disposable test fixtures; retain real
+inputs and acceptance evidence in durable storage. It does not disable the
+page-cache residency check or change imaging science. macOS retains its
+existing no-cache I/O path and does not require this Linux-specific setup.
+
 ## Mocking policy
 
 - Prefer real fixtures and integration tests over internal mocks at crate boundaries.

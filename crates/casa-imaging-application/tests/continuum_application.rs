@@ -2225,6 +2225,104 @@ fn application_serial_cpu_requirement_caps_replay_to_one_worker() {
 }
 
 #[test]
+fn uniform_multi_spw_mfs_clark_matches_serial_with_four_admitted_workers() {
+    let _execution_guard = EXECUTION_LOCK.lock().unwrap();
+    set_production_io_environment();
+    let root = tempfile::tempdir().unwrap();
+    let measurement_set = four_spw_vla_measurement_set(root.path());
+    let mut prefixes = Vec::new();
+    for workers in [1, 4] {
+        let prefix = root.path().join(format!("uniform-mfs-w{workers}"));
+        let mut imaging = request(
+            measurement_set.clone(),
+            prefix.clone(),
+            ContinuumAlgorithm::Clark,
+        );
+        imaging.image_size = 256;
+        imaging.cell_arcsec = 3.0;
+        imaging.data_description = None;
+        imaging.spectral_window = Some("0~3".into());
+        imaging.channel_start = None;
+        imaging.channel_count = None;
+        imaging.weighting = ContinuumWeighting::Uniform;
+        imaging.gain = 0.1;
+        imaging.task_requirements = if workers == 1 {
+            vec![TaskRequirement::SerialCpu]
+        } else {
+            vec![]
+        };
+        imaging.resource_policy = casa_imaging_runtime::ResourcePolicy::Explicit(
+            casa_imaging_runtime::ResourceOverride {
+                workers: Some(workers),
+                memory_bytes: std::collections::BTreeMap::from([(
+                    casa_imaging_runtime::CapacityDomainId::new("host-memory"),
+                    2 << 30,
+                )]),
+                ..Default::default()
+            },
+        );
+        let result = execute_continuum(imaging).expect("uniform multi-SPW MFS Clark execution");
+        assert!(result.actual_minor_iterations > 0);
+        assert_eq!(
+            result
+                .outcome
+                .output
+                .initial_receipt
+                .selected_alternative_projection()
+                .demand
+                .workers
+                .hard(),
+            workers
+        );
+        let final_receipt = result
+            .outcome
+            .output
+            .final_major_receipt
+            .as_ref()
+            .expect("CLEAN residual refresh");
+        assert_eq!(
+            final_receipt
+                .selected_alternative_projection()
+                .demand
+                .workers
+                .hard(),
+            workers
+        );
+        assert_standard_products(&prefix, &result.product_names);
+        prefixes.push(prefix);
+    }
+    for suffix in PRODUCT_SUFFIXES {
+        let left =
+            PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", prefixes[0].display())))
+                .unwrap();
+        let right =
+            PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", prefixes[1].display())))
+                .unwrap();
+        assert_eq!(left.shape(), right.shape());
+        assert_eq!(left.units(), right.units());
+        assert_eq!(left.default_mask_name(), right.default_mask_name());
+        let left = left.get().unwrap();
+        let right = right.get().unwrap();
+        let mut square_error = 0.0_f64;
+        let mut square_signal = 0.0_f64;
+        for (&left, &right) in left.iter().zip(right.iter()) {
+            assert_eq!(left.is_finite(), right.is_finite(), "{suffix} validity");
+            if left.is_finite() {
+                if suffix == ".mask" {
+                    assert_eq!(left, right);
+                }
+                square_error += f64::from(left - right).powi(2);
+                square_signal += f64::from(left).powi(2);
+            }
+        }
+        assert!(
+            square_error.sqrt() <= 1e-6 * square_signal.sqrt().max(1e-12),
+            "{suffix} normalized difference"
+        );
+    }
+}
+
+#[test]
 fn application_algorithms_do_not_invent_a_flux_staleness_bound() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();

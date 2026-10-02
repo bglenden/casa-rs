@@ -2104,6 +2104,7 @@ impl SpectralCycleExecutor {
         let mut prepared = prepared;
         let mut fold = None::<crate::complete_data_operator::PendingCompleteDataSlabFold>;
         for ordinal in 0..slab_count {
+            let started = imaging_stage_timing_started();
             let operator = self
                 .complete_data
                 .begin_gridded_replay(
@@ -2115,6 +2116,7 @@ impl SpectralCycleExecutor {
                     replay,
                 )
                 .map_err(io::Error::other)?;
+            log_imaging_stage_timing("gridded_model_preparation", self.pass, started);
             let stream_ordinal = u32::try_from(slab_count)
                 .ok()
                 .and_then(|count| self.pass.ordinal().checked_mul(count))
@@ -2124,8 +2126,11 @@ impl SpectralCycleExecutor {
                         .and_then(|ordinal| pass.checked_add(ordinal))
                 })
                 .ok_or_else(|| io::Error::other("gridded-normal window identity overflow"))?;
+            let started = imaging_stage_timing_started();
             let (window, recycle) =
                 replay.execute_bounded(context, stream_ordinal, operator, route_capacity_bytes)?;
+            log_imaging_stage_timing("gridded_execute_and_finish", self.pass, started);
+            let started = imaging_stage_timing_started();
             fold = Some(
                 match fold.take() {
                     Some(fold) => fold.fold(window),
@@ -2133,6 +2138,7 @@ impl SpectralCycleExecutor {
                 }
                 .map_err(io::Error::other)?,
             );
+            log_imaging_stage_timing("gridded_window_fold", self.pass, started);
             self.log_gridded_replay_measurements(replay);
             if ordinal + 1 == slab_count {
                 break;
