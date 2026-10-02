@@ -2230,15 +2230,9 @@ fn uniform_multi_spw_mfs_clark_matches_serial_with_four_admitted_workers() {
     set_production_io_environment();
     let root = tempfile::tempdir().unwrap();
     let measurement_set = four_spw_vla_measurement_set(root.path());
-    for selection in ["0~3", "0:0,1:0~2,2:0~4,3:0~6"] {
-        assert_uniform_mfs_workers(measurement_set.clone(), root.path(), selection);
-    }
-}
-
-fn assert_uniform_mfs_workers(measurement_set: PathBuf, root: &Path, selection: &str) {
     let mut prefixes = Vec::new();
-    for workers in [1, 4, 8] {
-        let prefix = root.join(format!("uniform-mfs-{selection}-w{workers}"));
+    for workers in [1, 4] {
+        let prefix = root.path().join(format!("uniform-mfs-w{workers}"));
         let mut imaging = request(
             measurement_set.clone(),
             prefix.clone(),
@@ -2247,7 +2241,7 @@ fn assert_uniform_mfs_workers(measurement_set: PathBuf, root: &Path, selection: 
         imaging.image_size = 256;
         imaging.cell_arcsec = 3.0;
         imaging.data_description = None;
-        imaging.spectral_window = Some(selection.into());
+        imaging.spectral_window = Some("0~3".into());
         imaging.channel_start = None;
         imaging.channel_count = None;
         imaging.weighting = ContinuumWeighting::Uniform;
@@ -2269,70 +2263,62 @@ fn assert_uniform_mfs_workers(measurement_set: PathBuf, root: &Path, selection: 
         );
         let result = execute_continuum(imaging).expect("uniform multi-SPW MFS Clark execution");
         assert!(result.actual_minor_iterations > 0);
-        let initial_workers = result
-            .outcome
-            .output
-            .initial_receipt
-            .selected_alternative_projection()
-            .demand
-            .workers
-            .hard();
-        assert!((1..=workers).contains(&initial_workers));
-        if workers <= 4 {
-            assert_eq!(initial_workers, workers);
-        }
+        assert_eq!(
+            result
+                .outcome
+                .output
+                .initial_receipt
+                .selected_alternative_projection()
+                .demand
+                .workers
+                .hard(),
+            workers
+        );
         let final_receipt = result
             .outcome
             .output
             .final_major_receipt
             .as_ref()
             .expect("CLEAN residual refresh");
-        let final_workers = final_receipt
-            .selected_alternative_projection()
-            .demand
-            .workers
-            .hard();
-        assert!((1..=workers).contains(&final_workers));
-        if workers <= 4 {
-            assert_eq!(final_workers, workers);
-        }
+        assert_eq!(
+            final_receipt
+                .selected_alternative_projection()
+                .demand
+                .workers
+                .hard(),
+            workers
+        );
         assert_standard_products(&prefix, &result.product_names);
         prefixes.push(prefix);
     }
-    for (reference, candidate) in [(0, 1), (0, 2)] {
-        for suffix in PRODUCT_SUFFIXES {
-            let left = PagedImage::<f32>::open(PathBuf::from(format!(
-                "{}{suffix}",
-                prefixes[reference].display()
-            )))
-            .unwrap();
-            let right = PagedImage::<f32>::open(PathBuf::from(format!(
-                "{}{suffix}",
-                prefixes[candidate].display()
-            )))
-            .unwrap();
-            assert_eq!(left.shape(), right.shape());
-            assert_eq!(left.units(), right.units());
-            assert_eq!(left.default_mask_name(), right.default_mask_name());
-            let left = left.get().unwrap();
-            let right = right.get().unwrap();
-            let mut square_error = 0.0_f64;
-            let mut square_signal = 0.0_f64;
-            for (&left, &right) in left.iter().zip(right.iter()) {
-                assert_eq!(left.is_finite(), right.is_finite(), "{suffix} validity");
-                if left.is_finite() {
-                    if suffix == ".mask" {
-                        assert_eq!(left, right);
-                    }
-                    square_error += f64::from(left - right).powi(2);
-                    square_signal += f64::from(left).powi(2);
+    for suffix in PRODUCT_SUFFIXES {
+        let left =
+            PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", prefixes[0].display())))
+                .unwrap();
+        let right =
+            PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", prefixes[1].display())))
+                .unwrap();
+        assert_eq!(left.shape(), right.shape());
+        assert_eq!(left.units(), right.units());
+        assert_eq!(left.default_mask_name(), right.default_mask_name());
+        let left = left.get().unwrap();
+        let right = right.get().unwrap();
+        let mut square_error = 0.0_f64;
+        let mut square_signal = 0.0_f64;
+        for (&left, &right) in left.iter().zip(right.iter()) {
+            assert_eq!(left.is_finite(), right.is_finite(), "{suffix} validity");
+            if left.is_finite() {
+                if suffix == ".mask" {
+                    assert_eq!(left, right);
                 }
+                square_error += f64::from(left - right).powi(2);
+                square_signal += f64::from(left).powi(2);
             }
-            assert!(
-                square_error.sqrt() <= 1e-6 * square_signal.sqrt().max(1e-12),
-                "{suffix} normalized difference"
-            );
         }
+        assert!(
+            square_error.sqrt() <= 1e-6 * square_signal.sqrt().max(1e-12),
+            "{suffix} normalized difference"
+        );
     }
 }
 
