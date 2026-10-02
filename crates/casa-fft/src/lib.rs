@@ -16,6 +16,7 @@ use num_complex::Complex;
 const FORWARD: c_int = -1;
 const BACKWARD: c_int = 1;
 const MEASURE: c_uint = 0;
+const ESTIMATE: c_uint = 1 << 6;
 
 static PLANNER: Mutex<()> = Mutex::new(());
 static F32_PLANS: LazyLock<Mutex<PlanCache<f32>>> =
@@ -68,6 +69,7 @@ pub struct Key {
     alignment: c_int,
     threads: usize,
     real: bool,
+    estimate: bool,
 }
 
 /// A shape, layout, or native planner error.
@@ -102,7 +104,12 @@ pub trait FftScalar: sealed::Sealed + Copy + Default + Send + Sync + 'static {
     #[doc(hidden)]
     fn alignment(pointer: *mut Complex<Self>) -> c_int;
     #[doc(hidden)]
-    unsafe fn plan(shape: [c_int; 2], pointer: *mut Complex<Self>, sign: c_int) -> *mut c_void;
+    unsafe fn plan(
+        shape: [c_int; 2],
+        pointer: *mut Complex<Self>,
+        sign: c_int,
+        flags: c_uint,
+    ) -> *mut c_void;
     #[doc(hidden)]
     unsafe fn execute(plan: *mut c_void, pointer: *mut Complex<Self>);
     #[doc(hidden)]
@@ -110,6 +117,7 @@ pub trait FftScalar: sealed::Sealed + Copy + Default + Send + Sync + 'static {
         shape: [c_int; 2],
         pointer: *mut Complex<Self>,
         inverse: bool,
+        flags: c_uint,
     ) -> *mut c_void;
     #[doc(hidden)]
     unsafe fn execute_real(plan: *mut c_void, pointer: *mut Complex<Self>, inverse: bool);
@@ -197,9 +205,10 @@ macro_rules! ffi {
                 shape: [c_int; 2],
                 pointer: *mut Complex<Self>,
                 sign: c_int,
+                flags: c_uint,
             ) -> *mut c_void {
                 // SAFETY: caller owns a writable, shape-sized, aligned scratch plane.
-                unsafe { $module::plan_dft_2d(shape[0], shape[1], pointer, pointer, sign, MEASURE) }
+                unsafe { $module::plan_dft_2d(shape[0], shape[1], pointer, pointer, sign, flags) }
             }
             unsafe fn execute(plan: *mut c_void, pointer: *mut Complex<Self>) {
                 // SAFETY: caller matched FFTW's rank, strides, in-place layout and alignment.
@@ -209,13 +218,14 @@ macro_rules! ffi {
                 shape: [c_int; 2],
                 pointer: *mut Complex<Self>,
                 inverse: bool,
+                flags: c_uint,
             ) -> *mut c_void {
                 // SAFETY: caller owns the padded in-place real/half-complex plane.
                 unsafe {
                     if inverse {
-                        $module::plan_c2r(shape[0], shape[1], pointer, pointer.cast(), MEASURE)
+                        $module::plan_c2r(shape[0], shape[1], pointer, pointer.cast(), flags)
                     } else {
-                        $module::plan_r2c(shape[0], shape[1], pointer.cast(), pointer, MEASURE)
+                        $module::plan_r2c(shape[0], shape[1], pointer.cast(), pointer, flags)
                     }
                 }
             }
@@ -327,12 +337,13 @@ impl<T: FftScalar> Plans<T> {
         let shape = key
             .shape
             .map(|extent| c_int::try_from(extent).expect("validated extent"));
+        let flags = if key.estimate { ESTIMATE } else { MEASURE };
         // SAFETY: pointer addresses a writable scratch plane of the requested shape.
         let forward = unsafe {
             if key.real {
-                T::plan_real(shape, pointer, false)
+                T::plan_real(shape, pointer, false, flags)
             } else {
-                T::plan(shape, pointer, FORWARD)
+                T::plan(shape, pointer, FORWARD, flags)
             }
         };
         if forward.is_null() {
@@ -341,9 +352,9 @@ impl<T: FftScalar> Plans<T> {
         // SAFETY: the planner may overwrite scratch; it remains disposable.
         let inverse = unsafe {
             if key.real {
-                T::plan_real(shape, pointer, true)
+                T::plan_real(shape, pointer, true, flags)
             } else {
-                T::plan(shape, pointer, BACKWARD)
+                T::plan(shape, pointer, BACKWARD, flags)
             }
         };
         if inverse.is_null() {
@@ -365,6 +376,7 @@ pub struct Fft2<T: FftScalar> {
     shape: [usize; 2],
     elements: usize,
     threads: usize,
+    estimate: bool,
     current: Option<(Key, Arc<Plans<T>>)>,
 }
 
@@ -373,6 +385,7 @@ impl<T: FftScalar> fmt::Debug for Fft2<T> {
         f.debug_struct("Fft2")
             .field("shape", &self.shape)
             .field("threads", &self.threads)
+            .field("estimate", &self.estimate)
             .finish()
     }
 }
@@ -414,8 +427,18 @@ impl<T: FftScalar> Fft2<T> {
             shape,
             elements,
             threads,
+            estimate: false,
             current: None,
         })
+    }
+
+    /// Select heuristic planning for short-lived operators with few transforms.
+    /// The backend, transform semantics, and bounded cache remain unchanged.
+    #[doc(hidden)]
+    pub fn with_estimated_plan(mut self) -> Self {
+        self.estimate = true;
+        self.current = None;
+        self
     }
 
     /// Execute a rank-two transform directly on the caller's contiguous plane.
@@ -438,6 +461,7 @@ impl<T: FftScalar> Fft2<T> {
             alignment: T::alignment(pointer),
             threads: self.threads,
             real,
+            estimate: self.estimate,
         };
         if self.current.as_ref().is_none_or(|(held, _)| *held != key) {
             let plans = T::get_plan(key, self.elements)?;
@@ -689,6 +713,38 @@ mod tests {
         let mut second = Fft2::<f64>::new([37, 43]).unwrap();
         second.transform(&mut plane, true).unwrap();
         assert!(Arc::ptr_eq(&retained, &second.current.as_ref().unwrap().1));
+    }
+
+    #[test]
+    fn estimated_plan_matches_dft_and_does_not_alias_measured_cache() {
+        let shape = [5, 7];
+        let initial: Vec<_> = (0..35)
+            .map(|i| Complex::new((i % 11) as f64 / 3.0, (i % 7) as f64 / 5.0))
+            .collect();
+        let mut actual = initial.clone();
+        let mut fft = Fft2::<f64>::with_threads(shape, 1)
+            .unwrap()
+            .with_estimated_plan();
+        fft.transform(&mut actual, false).unwrap();
+        for (actual, expected) in actual.iter().zip(direct(&initial, shape, false)) {
+            assert!((*actual - expected).norm() < 1e-10);
+        }
+        let estimated = Arc::clone(&fft.current.as_ref().unwrap().1);
+        fft.transform(&mut actual, true).unwrap();
+        for (actual, expected) in actual.iter().zip(&initial) {
+            assert!((*actual / 35.0 - expected).norm() < 1e-11);
+        }
+        let mut measured = Fft2::<f64>::with_threads(shape, 1).unwrap();
+        measured.transform(&mut actual, false).unwrap();
+        assert!(!Arc::ptr_eq(
+            &estimated,
+            &measured.current.as_ref().unwrap().1
+        ));
+        let mut reused = Fft2::<f64>::with_threads(shape, 1)
+            .unwrap()
+            .with_estimated_plan();
+        reused.transform(&mut actual, true).unwrap();
+        assert!(Arc::ptr_eq(&estimated, &reused.current.as_ref().unwrap().1));
     }
 
     #[test]

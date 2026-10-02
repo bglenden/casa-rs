@@ -22,6 +22,28 @@ fn fixture() -> (
     (problem, model, normal)
 }
 
+#[test]
+fn ordinary_mfs_estimates_fft_plans_without_changing_cube_policy() {
+    let (problem, _, _) = fixture();
+    let mut specification = SpectralOperatorSpecification::new(&problem).unwrap();
+    specification.basis = SpectralBasisPlan::Polynomial(BlockNormalPlan::constant(1e9).unwrap());
+    assert_ne!(specification.initial_mfs_region_count(), 0);
+    for pass in [
+        SpectralOperatorPass::InitialMajor,
+        SpectralOperatorPass::ResidualRefresh,
+    ] {
+        let workload = spectral_operator_workload(&specification, 3, pass).unwrap();
+        let prepared = prepare_spectral_operator(specification.clone(), workload).unwrap();
+        assert!(prepared.ffts.iter().all(|fft| fft.estimated));
+    }
+    specification.basis = SpectralBasisPlan::ChannelLocal;
+    assert_eq!(specification.initial_mfs_region_count(), 0);
+    let workload =
+        spectral_operator_workload(&specification, 3, SpectralOperatorPass::InitialMajor).unwrap();
+    let prepared = prepare_spectral_operator(specification, workload).unwrap();
+    assert!(prepared.ffts.iter().all(|fft| !fft.estimated));
+}
+
 // The owner unit fixture varies private chart geometry independently of the
 // compiler fixture. Runtime integration separately covers compiled AW inputs.
 fn aw_specification(

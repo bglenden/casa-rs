@@ -2829,10 +2829,16 @@ pub fn prepare_spectral_operator(
         .charts
         .iter()
         .map(|chart| {
-            PreparedFft::new(
+            let mut fft = PreparedFft::new(
                 chart.geometry.grid_shape,
                 fft_resident_complex_values_for_shape(chart.geometry.grid_shape)?,
-            )
+            )?;
+            if specification.initial_mfs_region_count() != 0 {
+                // One MFS plane performs few transforms, unlike a channel cube.
+                fft.fft = fft.fft.with_estimated_plan();
+                fft.estimated = true;
+            }
+            Ok(fft)
         })
         .collect::<Result<Vec<_>, SpectralOperatorError>>()?;
     Ok(PreparedSpectralOperator {
@@ -11957,6 +11963,7 @@ fn convolution_sinc(index: usize, size: usize, oversampling: usize) -> f64 {
 pub struct PreparedFft<T: FftScalar = f64> {
     fft: Fft2<T>,
     column_major_fft: Option<Fft2<T>>,
+    estimated: bool,
 }
 
 impl<T: FftScalar> PreparedFft<T> {
@@ -11975,6 +11982,7 @@ impl<T: FftScalar> PreparedFft<T> {
         Ok(Self {
             fft: Fft2::new(shape).map_err(|_| SpectralOperatorError::ResidencyOverflow)?,
             column_major_fft: None,
+            estimated: false,
         })
     }
 
@@ -11996,9 +12004,15 @@ impl<T: FftScalar> PreparedFft<T> {
         let shape = [data.shape()[0], data.shape()[1]];
         assert_eq!(shape, self.fft.shape(), "FFTW plane shape mismatch");
         let column_major = data.strides() == [1, shape[0] as isize];
+        let estimated = self.estimated;
         let fft = if column_major && shape[0] != shape[1] {
             self.column_major_fft.get_or_insert_with(|| {
-                Fft2::new([shape[1], shape[0]]).expect("valid column-major FFT shape")
+                let mut fft =
+                    Fft2::new([shape[1], shape[0]]).expect("valid column-major FFT shape");
+                if estimated {
+                    fft = fft.with_estimated_plan();
+                }
+                fft
             })
         } else {
             &mut self.fft
