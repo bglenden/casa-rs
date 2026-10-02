@@ -61,7 +61,7 @@ pub struct ResidualRefill<'a> {
 
 impl DeviceCorrelations {
     pub fn new(polarization: &PolarizationOperator) -> Result<Self, SpectralOperatorError> {
-        let reduction = StokesIReducer::new(polarization)?;
+        let reduction = PolarizedSampleReducer::new(polarization)?;
         let mut coefficients = [[0.0; 2]; 4];
         for (target, value) in coefficients.iter_mut().zip(reduction.coefficients) {
             *target = [value.re as f32, value.im as f32];

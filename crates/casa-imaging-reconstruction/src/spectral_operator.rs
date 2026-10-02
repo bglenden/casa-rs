@@ -40,7 +40,7 @@ use crate::{
     block_normal::BlockNormalPlan,
     canonical_f64_bits, imaging_science_trace_enabled,
     mosaic::{MOSAIC_OVERSAMPLING, MosaicNormalAccumulator, MosaicProjector, MosaicSamplePlan},
-    polarization_operator::{MuellerMatrix, PolarizationOperator, StokesIReducer},
+    polarization_operator::{MuellerMatrix, PolarizationOperator},
     primary_beam::PreparedPrimaryBeamPower,
     spectral_sampling::{
         CasaLinearOutputGrid, CasaLinearRowCursor, CasaLinearSample, interpolate_complex_pair,
@@ -6107,9 +6107,6 @@ impl CompleteDataOwnerState {
         let polarization = self
             .specification
             .direction_independent_polarization(&correlations)?;
-        let stokes_i = (polarization.model_coordinates() == [PolarizationCoordinate::StokesI])
-            .then(|| StokesIReducer::new(polarization))
-            .transpose()?;
         let visibilities = group
             .iter()
             .map(|weighted| selected_visibility(weighted.selected().visibility))
@@ -6198,66 +6195,41 @@ impl CompleteDataOwnerState {
                         Ok(spectral.imaging_weight())
                     })
                     .collect::<Result<SmallVec<[_; 4]>, _>>()?;
+                let published_weights =
+                    polarization_published_weights(polarization, &correlation_weights, &flags);
+                let observed_adjoint = polarization
+                    .weighted_adjoint(&visibilities, &correlation_weights, &flags)
+                    .map_err(|_| SpectralOperatorError::InvalidSample)?;
+                let predicted_adjoint = polarization
+                    .weighted_adjoint(&predicted_correlations, &correlation_weights, &flags)
+                    .map_err(|_| SpectralOperatorError::InvalidSample)?;
+                let diagonal = polarization_diagonal(polarization, &correlation_weights, &flags);
                 let contribution = first_spectral.contribution();
-                let mut reductions = SmallVec::<[_; 4]>::new();
-                if let Some(reducer) = &stokes_i {
-                    let (observed, predicted, weight) =
-                        reducer.reduce(predicts_residual, |row| {
-                            (
-                                visibilities[row],
-                                predicted_correlations[row],
-                                correlation_weights[row],
-                                flags[row],
-                            )
-                        })?;
-                    reductions.push((observed, predicted, weight, weight));
-                } else {
-                    let published_weights =
-                        polarization_published_weights(polarization, &correlation_weights, &flags);
-                    let observed_adjoint = polarization
-                        .weighted_adjoint(&visibilities, &correlation_weights, &flags)
-                        .map_err(|_| SpectralOperatorError::InvalidSample)?;
-                    let predicted_adjoint = polarization
-                        .weighted_adjoint(&predicted_correlations, &correlation_weights, &flags)
-                        .map_err(|_| SpectralOperatorError::InvalidSample)?;
-                    let diagonal =
-                        polarization_diagonal(polarization, &correlation_weights, &flags);
-                    for coordinate in 0..polarization.model_coordinates().len() {
-                        let weight = diagonal[coordinate];
-                        let direct_row = (polarization.feed_basis()
-                            == crate::polarization_operator::FeedBasis::Stokes)
-                            .then(|| {
-                                polarization
-                                    .coefficients()
-                                    .chunks_exact(polarization.model_coordinates().len())
-                                    .position(|row| row[coordinate] == Complex64::new(1.0, 0.0))
-                            })
-                            .flatten();
-                        let observed = if weight == 0.0 {
-                            Complex64::new(0.0, 0.0)
-                        } else if let Some(row) = direct_row {
-                            visibilities[row]
-                        } else {
-                            observed_adjoint[coordinate] / weight
-                        };
-                        let predicted = if weight == 0.0 {
-                            Complex64::new(0.0, 0.0)
-                        } else if let Some(row) = direct_row {
-                            predicted_correlations[row]
-                        } else {
-                            predicted_adjoint[coordinate] / weight
-                        };
-                        reductions.push((
-                            observed,
-                            predicted,
-                            weight,
-                            published_weights[coordinate],
-                        ));
-                    }
-                }
-                for (coordinate, (observed, predicted, weight, published_weight)) in
-                    reductions.into_iter().enumerate()
-                {
+                for coordinate in 0..polarization.model_coordinates().len() {
+                    let weight = diagonal[coordinate];
+                    let direct_row = (polarization.feed_basis()
+                        == crate::polarization_operator::FeedBasis::Stokes)
+                        .then(|| {
+                            polarization
+                                .coefficients()
+                                .chunks_exact(polarization.model_coordinates().len())
+                                .position(|row| row[coordinate] == Complex64::new(1.0, 0.0))
+                        })
+                        .flatten();
+                    let observed = if weight == 0.0 {
+                        Complex64::new(0.0, 0.0)
+                    } else if let Some(row) = direct_row {
+                        visibilities[row]
+                    } else {
+                        observed_adjoint[coordinate] / weight
+                    };
+                    let predicted = if weight == 0.0 {
+                        Complex64::new(0.0, 0.0)
+                    } else if let Some(row) = direct_row {
+                        predicted_correlations[row]
+                    } else {
+                        predicted_adjoint[coordinate] / weight
+                    };
                     let sample = SpectralOperatorSample::new(
                         usize::try_from(contribution.output_channel())
                             .map_err(|_| SpectralOperatorError::InvalidSample)?,
@@ -6270,7 +6242,7 @@ impl CompleteDataOwnerState {
                     )?
                     .with_mosaic_route(selected.field_id(), selected.pointing_directions())
                     .with_mosaic_response(mosaic_response)
-                    .with_published_weight(published_weight)?;
+                    .with_published_weight(published_weights[coordinate])?;
                     if predicts_residual {
                         self.operators[chart_ordinal]
                             .push_with_residual_polarization(sample, predicted, coordinate)?;
