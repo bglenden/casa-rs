@@ -3645,34 +3645,51 @@ fn empty_initial_model_emits_zero_predictions_only_for_an_explicit_sink() {
     let (blocks, summary) = replay(&weighting, &problem, &plan, &samples);
     let specification =
         SpectralOperatorSpecification::new(&problem).expect("spectral specification");
-    let workload = spectral_operator_workload(
-        &specification,
-        plan.limits().max_block_samples(),
-        SpectralOperatorPass::InitialMajor,
-    )
-    .expect("initial workload");
-    let mut state = prepare_spectral_operator(specification, workload)
-        .expect("prepare operator")
-        .begin(&problem, &weighting)
-        .expect("begin owner");
-    state
-        .bind_major_cycle_model(preparation.final_model(), None)
-        .expect("bind certified empty model");
-    state.enable_final_visibility_samples();
+    let mut reference = None;
+    for emit in [false, true] {
+        let workload = spectral_operator_workload(
+            &specification,
+            plan.limits().max_block_samples(),
+            SpectralOperatorPass::InitialMajor,
+        )
+        .expect("initial workload");
+        let mut state = prepare_spectral_operator(specification.clone(), workload)
+            .expect("prepare operator")
+            .begin(&problem, &weighting)
+            .expect("begin owner");
+        state
+            .bind_major_cycle_model(preparation.final_model(), None)
+            .expect("bind certified empty model");
+        if emit {
+            state.enable_final_visibility_samples();
+        }
 
-    let mut emitted = 0_usize;
-    for block in &blocks {
-        let output = state.consume_block(block).expect("consume weighted block");
-        emitted += output.len();
-        assert!(output.iter().all(|sample| {
-            sample.predicted() == num_complex::Complex64::default()
-                && sample.residual() == sample.observed()
-        }));
+        let mut emitted = 0_usize;
+        for block in &blocks {
+            let output = state.consume_block(block).expect("consume weighted block");
+            emitted += output.len();
+            assert!(output.iter().all(|sample| {
+                sample.predicted() == num_complex::Complex64::default()
+                    && sample.residual() == sample.observed()
+            }));
+        }
+        assert_eq!(emitted, if emit { samples.len() } else { 0 });
+        let complete = state
+            .complete(&summary, selected_generation, None)
+            .expect("complete empty initial replay");
+        let primitives = complete.primitives();
+        let actual = (
+            primitives.dirty().complex().unwrap().to_vec(),
+            primitives.psf().complex().unwrap().to_vec(),
+            primitives.sum_weights().to_vec(),
+            primitives.channel_validity().to_vec(),
+        );
+        if let Some(reference) = &reference {
+            assert_eq!(&actual, reference);
+        } else {
+            reference = Some(actual);
+        }
     }
-    assert_eq!(emitted, samples.len());
-    state
-        .complete(&summary, selected_generation, None)
-        .expect("complete empty sink-enabled replay");
 }
 
 #[test]
