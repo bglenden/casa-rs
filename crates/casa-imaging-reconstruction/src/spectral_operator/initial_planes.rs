@@ -252,18 +252,28 @@ impl InitialPlaneKernel<'_> {
             return Ok(false);
         };
         let normalization = self.gridder.normalization(taps)?;
-        self.gridder.grid_compensated(
-            self.dirty,
-            self.dirty_compensation,
-            taps,
-            sample.visibility,
-        )?;
-        self.gridder.grid_compensated(
-            self.psf,
-            self.psf_compensation,
-            taps,
-            Complex64::new(sample.normal_weight, 0.0),
-        )?;
+        if let ConvolutionOperator::Standard(gridder) = self.gridder {
+            gridder.grid_pair_compensated_rows(
+                [self.dirty, self.psf],
+                [self.dirty_compensation, self.psf_compensation],
+                taps,
+                [sample.visibility, Complex64::new(sample.normal_weight, 0.0)],
+                0,
+            );
+        } else {
+            self.gridder.grid_compensated(
+                self.dirty,
+                self.dirty_compensation,
+                taps,
+                sample.visibility,
+            )?;
+            self.gridder.grid_compensated(
+                self.psf,
+                self.psf_compensation,
+                taps,
+                Complex64::new(sample.normal_weight, 0.0),
+            )?;
+        }
         if normalization > 0.0 {
             let corrected = sample.normal_weight * normalization - *self.sum_weight_compensation;
             let updated = *self.sum_weight + corrected;

@@ -239,18 +239,14 @@ impl MfsWork<'_> {
             let route = &self.routes[next];
             let record = &self.records[route.record];
             let taps = record.taps.ok_or(SpectralOperatorError::InvalidSample)?;
-            self.gridder.grid_compensated_rows(
-                &mut self.dirty,
-                &mut self.dirty_compensation,
+            self.gridder.grid_pair_compensated_rows(
+                [&mut self.dirty, &mut self.psf],
+                [&mut self.dirty_compensation, &mut self.psf_compensation],
                 taps,
-                record.sample.visibility,
-                self.first_row,
-            );
-            self.gridder.grid_compensated_rows(
-                &mut self.psf,
-                &mut self.psf_compensation,
-                taps,
-                Complex64::new(record.sample.normal_weight, 0.0),
+                [
+                    record.sample.visibility,
+                    Complex64::new(record.sample.normal_weight, 0.0),
+                ],
                 self.first_row,
             );
             next = route.next;

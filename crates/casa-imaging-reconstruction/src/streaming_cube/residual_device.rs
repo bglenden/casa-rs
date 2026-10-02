@@ -281,14 +281,15 @@ impl EpochBand<'_> {
                     *refill
                         .samples
                         .get_mut(refill.counts[2])
-                        .ok_or_else(|| SpectralOperatorError::ResidencyOverflow)? = ResidualSample {
-                        tap,
-                        left: left as u32,
-                        right: right as u32,
-                        nearest_flags: nearest as u32 | (flag_mask << 30),
-                        plane: (fine.output_channel() - w.core.start) as u32,
-                        factors: fine.factors().map(|v| v as f32),
-                    };
+                        .ok_or_else(|| SpectralOperatorError::ResidencyOverflow)? =
+                        ResidualSample {
+                            tap,
+                            left: left as u32,
+                            right: right as u32,
+                            nearest_flags: nearest as u32 | (flag_mask << 30),
+                            plane: (fine.output_channel() - w.core.start) as u32,
+                            factors: fine.factors().map(|v| v as f32),
+                        };
                     refill.counts[2] += 1;
                 }
             }
