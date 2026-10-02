@@ -11,7 +11,6 @@ const _: () = assert!(TAP_COUNT <= STRIP_ROWS);
 struct Record {
     sample: InitialSample,
     taps: Option<SampleTaps>,
-    raw_count: u64,
 }
 
 #[derive(Debug)]
@@ -26,9 +25,6 @@ pub(super) struct MfsRegions {
     routes: Vec<Route>,
     buckets: Box<[Bucket]>,
     capacity: usize,
-    raw_count: usize,
-    dispatched_samples: u64,
-    dispatched_records: u64,
 }
 
 impl MfsRegions {
@@ -67,14 +63,11 @@ impl MfsRegions {
             routes: Vec::with_capacity(capacity * 2),
             buckets: vec![Bucket::EMPTY; shape[0].div_ceil(STRIP_ROWS)].into_boxed_slice(),
             capacity,
-            raw_count: 0,
-            dispatched_samples: 0,
-            dispatched_records: 0,
         })
     }
 
     pub(super) fn ready(&self) -> bool {
-        self.raw_count == self.capacity
+        self.records.len() == self.capacity
     }
 
     pub(super) fn push(
@@ -91,37 +84,10 @@ impl MfsRegions {
         } else {
             None
         };
+        let record = self.records.len();
+        self.records.push(Record { sample, taps });
         if let Some(taps) = taps {
             operator.gridder.validate_taps(taps)?;
-        }
-        self.raw_count += 1;
-        if let Some(last) = self
-            .records
-            .last_mut()
-            .filter(|last| taps.is_some() && last.taps == taps)
-        {
-            let visibility = last.sample.visibility + sample.visibility;
-            let normal_weight = last.sample.normal_weight + sample.normal_weight;
-            let published_weight = last.sample.published_weight + sample.published_weight;
-            if visibility.re.is_finite()
-                && visibility.im.is_finite()
-                && normal_weight.is_finite()
-                && published_weight.is_finite()
-            {
-                last.sample.visibility = visibility;
-                last.sample.normal_weight = normal_weight;
-                last.sample.published_weight = published_weight;
-                last.raw_count += 1;
-                return Ok(());
-            }
-        }
-        let record = self.records.len();
-        self.records.push(Record {
-            sample,
-            taps,
-            raw_count: 1,
-        });
-        if let Some(taps) = taps {
             // A standard seven-row stencil intersects at most two strips.
             for strip in taps.x.start / STRIP_ROWS..=(taps.x.start + TAP_COUNT - 1) / STRIP_ROWS {
                 let bucket = &mut self.buckets[strip];
@@ -208,7 +174,7 @@ impl MfsRegions {
         drop(jobs);
         for record in &self.records {
             operator.mapped_samples[0] = operator.mapped_samples[0]
-                .checked_add(record.raw_count)
+                .checked_add(1)
                 .ok_or(SpectralOperatorError::CoverageOverflow)?;
             if record.taps.is_some() {
                 for (value, sum, compensation) in [
@@ -241,33 +207,10 @@ impl MfsRegions {
                 }
             }
         }
-        self.dispatched_samples = self
-            .dispatched_samples
-            .checked_add(self.raw_count as u64)
-            .ok_or(SpectralOperatorError::CoverageOverflow)?;
-        self.dispatched_records = self
-            .dispatched_records
-            .checked_add(self.records.len() as u64)
-            .ok_or(SpectralOperatorError::CoverageOverflow)?;
-        self.raw_count = 0;
         self.records.clear();
         self.routes.clear();
         self.buckets.fill(Bucket::EMPTY);
         Ok(())
-    }
-}
-
-impl Drop for MfsRegions {
-    fn drop(&mut self) {
-        if imaging_science_trace_enabled() {
-            eprintln!(
-                "imaging_initial_mfs_coalescing_summary dispatched_samples={} dispatched_records={} coalesced_samples={} pending_samples={}",
-                self.dispatched_samples,
-                self.dispatched_records,
-                self.dispatched_samples - self.dispatched_records,
-                self.raw_count,
-            );
-        }
     }
 }
 
@@ -418,105 +361,6 @@ mod tests {
                 (scalar.published_sum_weights[0] - candidate.published_sum_weights[0]).abs()
                     < 1e-12
             );
-        }
-    }
-
-    #[test]
-    fn mfs_coalescing_preserves_raw_coverage_and_weighted_phases() {
-        let mut scalar = operator();
-        let mut candidate = operator();
-        let mut batch = MfsRegions::new([512, 64], 5).unwrap();
-        let uv = [
-            (63.25 - 256.0) * scalar.gridder.standard().du_lambda,
-            0.2 * scalar.gridder.standard().dv_lambda,
-            0.0,
-        ];
-        for index in 0..13 {
-            let mut coordinates = uv;
-            if index == 7 {
-                coordinates[1] += scalar.gridder.standard().dv_lambda;
-            } else if index == 8 {
-                coordinates[0] = -1000.0 * scalar.gridder.standard().du_lambda;
-            }
-            let sample = SpectralOperatorSample::new(
-                0,
-                coordinates,
-                299_792_458.0,
-                (index as f64 - 5.0) * 0.001,
-                [1.0 + index as f64 * 0.01, -0.2],
-                if index == 4 {
-                    0.0
-                } else {
-                    0.3 + index as f64 * 0.01
-                },
-                1.0,
-            )
-            .unwrap()
-            .with_published_weight(0.7 + index as f64 * 0.02)
-            .unwrap();
-            scalar.push_polarization(sample, 0).unwrap();
-            batch.push(&candidate, sample).unwrap();
-            assert!(batch.records.len() <= batch.raw_count);
-            assert!(batch.routes.len() <= 2 * batch.raw_count);
-            assert_eq!(batch.ready(), (index + 1) % 5 == 0);
-            if batch.ready() {
-                batch
-                    .dispatch(&mut candidate, &mut |jobs| {
-                        jobs.iter_mut().try_for_each(InitialPlaneWork::execute)
-                    })
-                    .unwrap();
-            }
-        }
-        batch
-            .dispatch(&mut candidate, &mut |jobs| {
-                jobs.iter_mut().try_for_each(InitialPlaneWork::execute)
-            })
-            .unwrap();
-        assert_eq!(batch.dispatched_samples, 13);
-        assert!(batch.dispatched_records < batch.dispatched_samples);
-        assert_eq!(candidate.mapped_samples, scalar.mapped_samples);
-        for (left, right) in scalar.dirty_grids.as_ref().unwrap()[0]
-            .iter()
-            .zip(candidate.dirty_grids.as_ref().unwrap()[0].iter())
-            .chain(
-                scalar.psf_grids.as_ref().unwrap()[0]
-                    .iter()
-                    .zip(candidate.psf_grids.as_ref().unwrap()[0].iter()),
-            )
-        {
-            assert!((*left - *right).norm() < 1e-12);
-        }
-        assert!((scalar.sum_weights[0] - candidate.sum_weights[0]).abs() < 1e-12);
-        assert!(
-            (scalar.published_sum_weights[0] - candidate.published_sum_weights[0]).abs() < 1e-12
-        );
-    }
-
-    #[test]
-    fn mfs_coalescing_breaks_runs_before_aggregate_overflow() {
-        let mut scalar = operator();
-        let mut candidate = operator();
-        let mut batch = MfsRegions::new([512, 64], 2).unwrap();
-        let sample =
-            SpectralOperatorSample::new(0, [0.0; 3], 1e9, 0.0, [1e308, 0.0], 1.0, 1.0).unwrap();
-        for _ in 0..2 {
-            scalar.push_polarization(sample, 0).unwrap();
-            batch.push(&candidate, sample).unwrap();
-        }
-        assert!(batch.ready());
-        assert_eq!(batch.records.len(), 2);
-        batch
-            .dispatch(&mut candidate, &mut |jobs| {
-                jobs.iter_mut().try_for_each(InitialPlaneWork::execute)
-            })
-            .unwrap();
-        assert_eq!(candidate.mapped_samples, scalar.mapped_samples);
-        for (left, right) in scalar.dirty_grids.as_ref().unwrap()[0]
-            .iter()
-            .zip(candidate.dirty_grids.as_ref().unwrap()[0].iter())
-        {
-            assert!(right.re.is_finite() && right.im.is_finite());
-            assert_eq!(left, right);
         }
     }
 
