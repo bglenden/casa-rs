@@ -1685,7 +1685,8 @@ pub struct WeightingSelectedSample {
     pub(crate) starts_correlation_group: bool,
     pub(crate) ends_correlation_group: bool,
     pub(crate) correlation_group_size: usize,
-    pub(crate) parallactic_angles_rad: [f64; 2],
+    parallactic_angles_rad: [f64; 2],
+    has_parallactic_angles: bool,
     pub(crate) density_uvw_m: [f64; 3],
     output_frame_frequency_hz: f64,
     row_spectral_geometry: Option<NativeRowSpectralGeometry>,
@@ -1730,7 +1731,11 @@ impl WeightingSelectedSample {
             starts_correlation_group: input_weight_group.is_density_owner(),
             ends_correlation_group: input_weight_group.is_terminal_member(),
             correlation_group_size: input_weight_group.member_count(),
-            parallactic_angles_rad: coordinates.parallactic_angles_rad,
+            // Keep the optional tag with the existing flags instead of spending
+            // eight bytes of enum padding in every compact weighted sample.
+            // The payload is never exposed as a physical angle when absent.
+            parallactic_angles_rad: coordinates.parallactic_angles_rad.unwrap_or_default(),
+            has_parallactic_angles: coordinates.parallactic_angles_rad.is_some(),
             density_uvw_m: coordinates.density_uvw_m,
             output_frame_frequency_hz,
             row_spectral_geometry: row_spectral_geometry.map(|geometry| {
@@ -1779,10 +1784,15 @@ impl WeightingSelectedSample {
         self.raw_input_weight
     }
 
-    /// Return row-local parallactic angles for the two receptors.
+    /// Return physical row-local angles when the compiled request demands them.
+    /// Absence does not represent a physical zero angle.
     #[must_use]
-    pub const fn parallactic_angles_rad(&self) -> [f64; 2] {
-        self.parallactic_angles_rad
+    pub const fn parallactic_angles_rad(&self) -> Option<[f64; 2]> {
+        if self.has_parallactic_angles {
+            Some(self.parallactic_angles_rad)
+        } else {
+            None
+        }
     }
 
     /// Return the selected MeasurementSet field identifier used for mosaic routing.
@@ -1879,6 +1889,37 @@ mod selected_sample_tests {
     };
 
     use super::{NativeRowSpectralGeometry, WeightingSelectedSample, primary_aw_pointing_pixel};
+
+    #[test]
+    fn aw_requires_physical_angles_and_never_substitutes_zero_for_absence() {
+        use crate::spectral_operator::{SpectralOperatorGeometry, aw_row_coordinates};
+        let mut selected = native_row_sample(0, 0).sample;
+        let direction = casa_imaging_model::DirectionCoordinateSpec::new(
+            casa_imaging_model::Projection::Sin,
+            selected.pointing_directions.antenna1,
+            [4.0; 2],
+            [-0.002, 0.002],
+            [[1.0, 0.0], [0.0, 1.0]],
+            [180.0, 0.0],
+        );
+        let geometry = SpectralOperatorGeometry {
+            image_shape: [8; 2],
+            grid_shape: [10; 2],
+            image_blc: [2; 2],
+            reference_pixel: [4.0; 2],
+            increment_rad: [-0.002, 0.002],
+            direction,
+        };
+        selected.parallactic_angles_rad = [-0.3, 0.7];
+        selected.has_parallactic_angles = true;
+        assert_eq!(
+            aw_row_coordinates(&selected, geometry, false).unwrap().0,
+            [-0.3, 0.7]
+        );
+        selected.has_parallactic_angles = false;
+        assert!(aw_row_coordinates(&selected, geometry, false).is_err());
+        assert!(aw_row_coordinates(&selected, geometry, true).is_err());
+    }
 
     #[test]
     fn chunk_checkpoint_chain_binds_each_emitted_prefix() {
@@ -2038,6 +2079,7 @@ mod selected_sample_tests {
                 ends_correlation_group: true,
                 correlation_group_size: 1,
                 parallactic_angles_rad: [0.0; 2],
+                has_parallactic_angles: true,
                 density_uvw_m: [0.0; 3],
                 output_frame_frequency_hz: frequency,
                 row_spectral_geometry: Some(NativeRowSpectralGeometry {

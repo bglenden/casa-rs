@@ -2234,6 +2234,21 @@ impl CompiledProblem {
         &self.reconstruction
     }
 
+    /// Whether selected rows must evaluate physical feed-rotation coordinates.
+    ///
+    /// The ordinary Stokes-I operator has no parallactic-angle input. Polarized
+    /// reconstruction and AW responses retain their physical angles;
+    /// phase-centre and spectral-frame conversions have independent requirements.
+    #[must_use]
+    pub fn requires_parallactic_angles(&self) -> bool {
+        self.reconstruction.polarization().coordinates() != [PolarizationCoordinate::StokesI]
+            || self
+                .science
+                .measurement_equation()
+                .aw_projection()
+                .is_some()
+    }
+
     /// Return the compiled positive-semidefinite data metric W.
     #[must_use]
     pub const fn weighting(&self) -> &WeightingOperatorContract {

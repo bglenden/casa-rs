@@ -7244,7 +7244,9 @@ pub(crate) fn aw_row_coordinates(
     geometry: SpectralOperatorGeometry,
     use_pointing: bool,
 ) -> Result<([f64; 2], [f64; 2]), SpectralOperatorError> {
-    let parallactic = selected.parallactic_angles_rad();
+    let parallactic = selected
+        .parallactic_angles_rad()
+        .ok_or(SpectralOperatorError::InvalidSample)?;
     if !use_pointing {
         return Ok((parallactic, [0.0; 2]));
     }

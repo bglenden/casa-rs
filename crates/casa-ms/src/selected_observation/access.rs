@@ -1467,18 +1467,22 @@ fn project_stored_run_row(
         .map_err(|_| BoundObservationSourceError::InvalidRowGeometry)?;
     let antenna2 = usize::try_from(stored.antenna2())
         .map_err(|_| BoundObservationSourceError::InvalidRowGeometry)?;
-    let parallactic_angles_rad = [
-        polarization_operator_angle(geometry_engine.parallactic_angle(
-            stored.time_mjd_seconds(),
-            field_id,
-            antenna1,
-        )?),
-        polarization_operator_angle(geometry_engine.parallactic_angle(
-            stored.time_mjd_seconds(),
-            field_id,
-            antenna2,
-        )?),
-    ];
+    let parallactic_angles_rad = if problem.requires_parallactic_angles() {
+        Some([
+            polarization_operator_angle(geometry_engine.parallactic_angle(
+                stored.time_mjd_seconds(),
+                field_id,
+                antenna1,
+            )?),
+            polarization_operator_angle(geometry_engine.parallactic_angle(
+                stored.time_mjd_seconds(),
+                field_id,
+                antenna2,
+            )?),
+        ])
+    } else {
+        None
+    };
     let antenna_responses = match problem.science().instrument_model() {
         None => None,
         Some(InstrumentModel::CasaAca7mInterferometricDirectPbV1) => {
@@ -1864,6 +1868,14 @@ impl SelectedObservationNumericGeometryChunk<'_> {
 }
 
 impl SelectedObservationBlock {
+    #[cfg(test)]
+    pub(super) fn parallactic_angle_cache_entries(&self) -> usize {
+        self.geometry_engine
+            .as_ref()
+            .unwrap()
+            .parallactic_angle_cache_entries()
+    }
+
     /// Evaluate row geometry and frequency conversion once per row. Numeric
     /// columns stay with this block, and are not turned into sample records.
     pub fn project_numeric_geometry(

@@ -16,7 +16,7 @@ use crate::{
 };
 
 const SELECTED_OBSERVATION_GENERATION_DOMAIN: &[u8] = b"casa-rs-selected-observation-generation";
-const SELECTED_OBSERVATION_GENERATION_VERSION: u32 = 9;
+const SELECTED_OBSERVATION_GENERATION_VERSION: u32 = 10;
 const GENERATION_ROW_RUN_MARKER: u8 = 0xa1;
 const GENERATION_ROW_RUN_TERMINAL: u8 = 0xaf;
 const GENERATION_CHANNEL_RUN_MARKER: u8 = 0xb1;
@@ -376,11 +376,12 @@ pub struct SelectedSampleCoordinates {
     pub interval_seconds: f64,
     /// MAIN `EXPOSURE` in seconds.
     pub exposure_seconds: f64,
-    /// Nominal parallactic angles for `ANTENNA1` and `ANTENNA2`, in radians.
+    /// Evaluated parallactic angles for `ANTENNA1` and `ANTENNA2`, in radians,
+    /// or `None` when the compiled operator does not require feed rotation.
     ///
     /// FEED receptor-angle offsets remain instrument-response inputs and are
     /// deliberately not folded into this source-derived coordinate.
-    pub parallactic_angles_rad: [f64; 2],
+    pub parallactic_angles_rad: Option<[f64; 2]>,
     /// Evaluated phase direction.
     pub phase_direction: SkyDirection,
     /// Evaluated delay direction.
@@ -908,7 +909,7 @@ pub struct SelectedObservationSample {
 
 impl SelectedObservationSample {
     /// Closed schema version of the selected-sample value record.
-    pub const SCHEMA_VERSION: u32 = 5;
+    pub const SCHEMA_VERSION: u32 = 6;
 
     /// Borrow this scalar record through the same interface used by a
     /// row/channel run.
@@ -1749,8 +1750,14 @@ fn encode_generation_row_content(encoder: &mut CanonicalEncoder, content: &Gener
     encode_epoch(encoder, coordinates.time_centroid);
     encoder.f64(coordinates.interval_seconds);
     encoder.f64(coordinates.exposure_seconds);
-    encoder.f64(coordinates.parallactic_angles_rad[0]);
-    encoder.f64(coordinates.parallactic_angles_rad[1]);
+    match coordinates.parallactic_angles_rad {
+        Some(angles) => {
+            encoder.u8(1);
+            encoder.f64(angles[0]);
+            encoder.f64(angles[1]);
+        }
+        None => encoder.u8(0),
+    }
     encode_sky_direction(encoder, coordinates.phase_direction);
     encode_sky_direction(encoder, coordinates.delay_direction);
     encode_sky_direction(encoder, coordinates.pointing_directions.antenna1);
@@ -1850,10 +1857,10 @@ mod tests {
 
     const GENERATION_FIXTURE: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../resources/imaging-architecture/baselines/selected-observation-generation-v9.txt"
+        "/../../resources/imaging-architecture/baselines/selected-observation-generation-v10.txt"
     ));
 
-    const ENCODED_FIELDS: [&str; 54] = [
+    const ENCODED_FIELDS: [&str; 55] = [
         "row.data_description_id:i32",
         "row.spectral_window_id:u32",
         "row.polarization_id:u32",
@@ -1877,8 +1884,9 @@ mod tests {
         "row.time_centroid:mjd-days-f64-then-scale-tag-u8",
         "row.interval_seconds:f64",
         "row.exposure_seconds:f64",
-        "row.parallactic_angle_antenna1_rad:f64",
-        "row.parallactic_angle_antenna2_rad:f64",
+        "row.parallactic_angles:option-tag-u8",
+        "row.parallactic_angle_antenna1_rad:f64-if-present",
+        "row.parallactic_angle_antenna2_rad:f64-if-present",
         "row.phase_direction:frame-tag-u8-longitude-rad-f64-latitude-rad-f64",
         "row.delay_direction:frame-tag-u8-longitude-rad-f64-latitude-rad-f64",
         "row.pointing_antenna1:frame-tag-u8-longitude-rad-f64-latitude-rad-f64",
@@ -1980,7 +1988,7 @@ mod tests {
             vec![first]
         );
         assert!(SelectedSpectralContributions::new([Some(first), Some(first)]).is_none());
-        assert_eq!(SelectedObservationSample::SCHEMA_VERSION, 5);
+        assert_eq!(SelectedObservationSample::SCHEMA_VERSION, 6);
 
         let samples = generation_fixture_samples();
         assert_eq!(
@@ -2003,7 +2011,7 @@ mod tests {
             generation(&[&[second.clone(), first.clone()]]),
             "logical sample order participates in content identity"
         );
-        assert_eq!(SelectedObservationGenerationId::SCHEMA_VERSION, 9);
+        assert_eq!(SelectedObservationGenerationId::SCHEMA_VERSION, 10);
 
         let mutations: &[SampleMutation] = &[
             ("data description", |s| s.address.data_description_id += 1),
@@ -2061,10 +2069,13 @@ mod tests {
             ("interval", |s| s.coordinates.interval_seconds += 1.0),
             ("exposure", |s| s.coordinates.exposure_seconds += 1.0),
             ("antenna1 parallactic angle", |s| {
-                s.coordinates.parallactic_angles_rad[0] += 1.0
+                s.coordinates.parallactic_angles_rad.as_mut().unwrap()[0] += 1.0
             }),
             ("antenna2 parallactic angle", |s| {
-                s.coordinates.parallactic_angles_rad[1] += 1.0
+                s.coordinates.parallactic_angles_rad.as_mut().unwrap()[1] += 1.0
+            }),
+            ("parallactic angles not requested", |s| {
+                s.coordinates.parallactic_angles_rad = None
             }),
             ("phase direction", |s| {
                 s.coordinates.phase_direction = SkyDirection::new(DirectionFrame::J2000, 1.1, -0.5)
@@ -2168,10 +2179,10 @@ mod tests {
         assert_eq!(
             one_block.as_bytes(),
             [
-                208, 185, 128, 230, 73, 170, 22, 87, 177, 39, 200, 199, 95, 200, 118, 231, 38, 37,
-                127, 140, 27, 181, 133, 44, 30, 17, 183, 73, 204, 146, 212, 144,
+                239, 198, 34, 116, 85, 42, 69, 254, 191, 216, 197, 227, 56, 58, 187, 220, 185, 159,
+                177, 75, 14, 2, 201, 0, 228, 199, 182, 120, 143, 254, 15, 18,
             ],
-            "schema-9 golden ratchet"
+            "schema-10 golden ratchet"
         );
     }
 
@@ -2254,7 +2265,7 @@ mod tests {
             fixture_value("identity_domain"),
             "casa-rs-selected-observation-generation"
         );
-        assert_eq!(fixture_value("generation_schema_version"), "9");
+        assert_eq!(fixture_value("generation_schema_version"), "10");
         assert_eq!(fixture_value("row_run_marker"), "0xa1");
         assert_eq!(fixture_value("row_run_terminal"), "0xaf");
         assert_eq!(fixture_value("channel_run_marker"), "0xb1");
@@ -2298,7 +2309,7 @@ mod tests {
 
         assert_eq!(
             (encoder.proof_bytes(), encoder.proof_hash_calls()),
-            (525, 98),
+            (526, 99),
         );
     }
 
@@ -2592,7 +2603,7 @@ mod tests {
             time_centroid: Epoch::new(59_000.000_001, TimeScale::Utc),
             interval_seconds: 1.0,
             exposure_seconds: 0.8,
-            parallactic_angles_rad: [0.2, 0.25],
+            parallactic_angles_rad: Some([0.2, 0.25]),
             phase_direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
             delay_direction: SkyDirection::new(DirectionFrame::J2000, 1.000_5, -0.500_5),
             pointing_directions: SelectedPointingDirections {

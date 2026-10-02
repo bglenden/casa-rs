@@ -313,6 +313,41 @@ fn t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles() {
     assert_eq!(report.time_sample_count, 3);
     assert_eq!(report.main_row_count, 1_053);
 
+    let ordinary_problem = compiled_problem_with_polarization(
+        &path,
+        report.main_row_count,
+        vec![PolarizationCoordinate::StokesI],
+    );
+    assert!(!ordinary_problem.requires_parallactic_angles());
+    let ordinary_source = &ordinary_problem.inputs().observation_snapshot().sources()[0];
+    let ordinary = BoundObservationSource::open(
+        &ordinary_problem,
+        ordinary_source,
+        &source_state(ordinary_source),
+        content_budget_for_rows(&ordinary_problem, ordinary_source, 37, 1),
+    )
+    .unwrap();
+    assert_eq!(
+        ordinary.geometry_engine().parallactic_angle_cache_entries(),
+        0
+    );
+    let ordinary_samples = ordinary
+        .selected_samples(&ordinary_problem)
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert!(
+        ordinary_samples
+            .iter()
+            .all(|sample| sample.coordinates.parallactic_angles_rad.is_none())
+    );
+    // This fresh engine inserts an entry on every PA evaluation, even for a
+    // non-alt-az mount. No entries means the unused PA/AZEL chain was not run.
+    assert_eq!(
+        ordinary.geometry_engine().parallactic_angle_cache_entries(),
+        0
+    );
+
     let problem = compiled_problem_with_polarization(
         &path,
         report.main_row_count,
@@ -324,6 +359,7 @@ fn t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles() {
         ],
     );
     let source = &problem.inputs().observation_snapshot().sources()[0];
+    assert!(problem.requires_parallactic_angles());
     let bound = BoundObservationSource::open(
         &problem,
         source,
@@ -356,6 +392,7 @@ fn t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles() {
     for (operator, physical) in first
         .coordinates
         .parallactic_angles_rad
+        .expect("polarized reconstruction requires physical angles")
         .iter()
         .zip(physical)
     {
@@ -368,12 +405,12 @@ fn t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles() {
     let mut minimum = [f64::INFINITY; 2];
     let mut maximum = [f64::NEG_INFINITY; 2];
     for row_samples in samples.chunks_exact(4) {
-        let expected = row_samples[0].coordinates.parallactic_angles_rad;
+        let expected = row_samples[0].coordinates.parallactic_angles_rad.unwrap();
         assert!(expected.iter().all(|angle| angle.is_finite()));
         assert!(
             row_samples
                 .iter()
-                .all(|sample| sample.coordinates.parallactic_angles_rad == expected)
+                .all(|sample| sample.coordinates.parallactic_angles_rad == Some(expected))
         );
         for antenna in 0..2 {
             minimum[antenna] = minimum[antenna].min(expected[antenna]);
@@ -384,6 +421,7 @@ fn t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles() {
         (maximum[0] - minimum[0]).abs() > 1.0e-4 || (maximum[1] - minimum[1]).abs() > 1.0e-4,
         "realistic VLA rows must not collapse to a constant feed rotation"
     );
+    assert!(bound.geometry_engine().parallactic_angle_cache_entries() > 0);
 }
 
 #[test]
@@ -3014,7 +3052,7 @@ fn selected_observation_residency_is_cardinality_independent_and_schedule_invari
 }
 
 #[test]
-fn numeric_block_consumption_preserves_v9_and_rejects_repeat_and_failed_work() {
+fn numeric_block_consumption_preserves_v10_without_unused_pa_and_rejects_failed_work() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("numeric-stream.ms");
     generate_fixture_with_rows(&path, 4);
@@ -3039,6 +3077,18 @@ fn numeric_block_consumption_preserves_v9_and_rejects_repeat_and_failed_work() {
         storage
             .project_numeric_geometry(&problem, &mut geometry)
             .unwrap();
+        for row in 0..geometry.row_count() {
+            assert!(
+                storage
+                    .numeric_row(&geometry, row)
+                    .unwrap()
+                    .row
+                    .coordinates
+                    .parallactic_angles_rad
+                    .is_none()
+            );
+        }
+        assert_eq!(storage.parallactic_angle_cache_entries(), 0);
         consumer
             .consume_numeric(&storage, &geometry, || {
                 callbacks += 1;

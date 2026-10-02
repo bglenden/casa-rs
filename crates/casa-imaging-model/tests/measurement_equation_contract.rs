@@ -509,7 +509,7 @@ fn problem_and_weighting_commitment_identities_are_pinned() {
                 .to_string(),
         ),
         (
-            "9b94caedd53a2738f12641302aca2fda31e2ea36f0d17a21ec785c5c1ee9e725".to_string(),
+            "6c958745be15259bbca8fde4cb6a94d80b5e64b24665e7f5b2a0d838a2f540d1".to_string(),
             "eb338cfce9791b9c69ae8d457c9ddaa1726ee8ea8a13b4a61e1b918b56f4ca4a".to_string(),
         )
     );
@@ -564,6 +564,12 @@ fn aw_projection_is_distinct_paired_and_identity_bound() {
         Some(contract),
     );
     let standard = compile_contract(SpectralSamplingLaw::LINEAR);
+
+    assert!(aw.requires_parallactic_angles());
+    assert!(
+        !standard.requires_parallactic_angles(),
+        "non-rotating primary beams do not need PA"
+    );
 
     assert!(
         aw.required_capabilities()

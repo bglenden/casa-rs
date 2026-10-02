@@ -3,12 +3,15 @@
 //! Crate-private Metal operators for contiguous cube grids.
 
 pub(super) use casa_imaging_reconstruction::runtime_adapter::SpatialTap as CubeTap;
+use objc2::Message;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
-use objc2_foundation::NSString;
+use objc2_foundation::{NSRange, NSString};
 use objc2_metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCompileOptions, MTLComputeCommandEncoder,
-    MTLComputePipelineState, MTLDevice, MTLLibrary, MTLSize,
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommonCounterSetTimestamp,
+    MTLCompileOptions, MTLComputeCommandEncoder, MTLComputePassDescriptor, MTLComputePipelineState,
+    MTLCounterErrorValue, MTLCounterSampleBuffer, MTLCounterSampleBufferDescriptor,
+    MTLCounterSamplingPoint, MTLCounterSet, MTLDevice, MTLLibrary, MTLSize, MTLStorageMode,
 };
 use std::ffi::c_void;
 use std::ptr::NonNull;
@@ -214,6 +217,127 @@ pub(super) struct MetalCubeKernels {
     degrid: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     unique_prediction: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     residual: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    stage_profiler: Option<MetalStageProfiler>,
+}
+
+struct MetalStageProfiler {
+    device: Retained<ProtocolObject<dyn MTLDevice>>,
+    timestamps: Retained<ProtocolObject<dyn MTLCounterSet>>,
+}
+
+pub(super) struct MetalStageProfile {
+    samples: Retained<ProtocolObject<dyn MTLCounterSampleBuffer>>,
+    clock_start: [u64; 2],
+    active: [bool; 2],
+}
+
+fn sample_clocks(device: &ProtocolObject<dyn MTLDevice>) -> [u64; 2] {
+    let mut clocks = [0_u64; 2];
+    unsafe {
+        device.sampleTimestamps_gpuTimestamp(
+            NonNull::from(&mut clocks[0]),
+            NonNull::from(&mut clocks[1]),
+        );
+    }
+    clocks
+}
+
+impl MetalStageProfiler {
+    fn new(device: &ProtocolObject<dyn MTLDevice>) -> Result<Self, String> {
+        if !device.supportsCounterSampling(MTLCounterSamplingPoint::AtStageBoundary) {
+            return Err("Metal stage-boundary timestamp profiling is unsupported".into());
+        }
+        let sets = device
+            .counterSets()
+            .ok_or("Metal counter sets are unavailable")?;
+        let timestamps = sets
+            .iter()
+            .find(|set| {
+                set.name()
+                    .isEqualToString(unsafe { MTLCommonCounterSetTimestamp })
+            })
+            .ok_or_else(|| {
+                format!(
+                    "Metal timestamp counter set is unavailable; advertised sets: {:?}",
+                    sets.iter()
+                        .map(|set| set.name().to_string())
+                        .collect::<Vec<_>>(),
+                )
+            })?;
+        Ok(Self {
+            device: device.retain(),
+            timestamps,
+        })
+    }
+
+    fn begin(&self, shape: [u32; 8]) -> Result<MetalStageProfile, String> {
+        let descriptor = MTLCounterSampleBufferDescriptor::new();
+        descriptor.setCounterSet(Some(&self.timestamps));
+        descriptor.setStorageMode(MTLStorageMode::Shared);
+        unsafe { descriptor.setSampleCount(4) };
+        let samples = self
+            .device
+            .newCounterSampleBufferWithDescriptor_error(&descriptor)
+            .map_err(|error| error.localizedDescription().to_string())?;
+        Ok(MetalStageProfile {
+            samples,
+            clock_start: sample_clocks(&self.device),
+            active: [shape[0] != 0, shape[1] != 0],
+        })
+    }
+}
+
+impl MetalStageProfile {
+    /// Called only after the existing command fence. CPU timestamps from Metal's
+    /// paired clock API are nanoseconds; GPU counter ticks require calibration.
+    pub(super) fn seconds(&self) -> Result<[f64; 2], String> {
+        let clock_end = sample_clocks(&self.samples.device());
+        let data = unsafe { self.samples.resolveCounterRange(NSRange::new(0, 4)) }
+            .ok_or("Metal timestamp resolve failed")?;
+        let bytes = unsafe { data.as_bytes_unchecked() };
+        if bytes.len() != 4 * size_of::<u64>() {
+            return Err("invalid Metal timestamp result length".into());
+        }
+        let ticks = std::array::from_fn(|i| {
+            u64::from_ne_bytes(
+                bytes[i * 8..(i + 1) * 8]
+                    .try_into()
+                    .expect("timestamp size"),
+            )
+        });
+        calibrated_stage_seconds(ticks, self.active, self.clock_start, clock_end)
+    }
+}
+
+fn calibrated_stage_seconds(
+    ticks: [u64; 4],
+    active: [bool; 2],
+    clock_start: [u64; 2],
+    clock_end: [u64; 2],
+) -> Result<[f64; 2], String> {
+    let cpu_span = clock_end[0]
+        .checked_sub(clock_start[0])
+        .filter(|&span| span != 0)
+        .ok_or("invalid Metal CPU timestamp calibration")?;
+    let gpu_span = clock_end[1]
+        .checked_sub(clock_start[1])
+        .filter(|&span| span != 0)
+        .ok_or("invalid Metal GPU timestamp calibration")?;
+    let mut seconds = [0.0; 2];
+    for (stage, active) in active.into_iter().enumerate() {
+        if !active {
+            continue;
+        }
+        let [start, end] = [ticks[2 * stage], ticks[2 * stage + 1]];
+        if start == 0 || start == MTLCounterErrorValue || end == MTLCounterErrorValue {
+            return Err("unavailable Metal stage timestamps".into());
+        }
+        let span = end
+            .checked_sub(start)
+            .ok_or("non-monotone Metal timestamps")?;
+        seconds[stage] = span as f64 * (cpu_span as f64 / gpu_span as f64) * 1e-9;
+    }
+    Ok(seconds)
 }
 
 impl MetalCubeKernels {
@@ -238,6 +362,9 @@ impl MetalCubeKernels {
             degrid: pipeline("cube_degrid_taps")?,
             unique_prediction: pipeline("cube_predict_unique")?,
             residual: pipeline("cube_residual_connected")?,
+            stage_profiler: std::env::var_os("CASA_RS_PROFILE_METAL_STAGES")
+                .map(|_| MetalStageProfiler::new(device))
+                .transpose()?,
         })
     }
 
@@ -288,7 +415,7 @@ impl MetalCubeKernels {
         buffers: &[(&ProtocolObject<dyn MTLBuffer>, usize)],
         shape: [u32; 8],
         correlations: casa_imaging_reconstruction::runtime_adapter::DeviceCorrelations,
-    ) -> Result<(), String> {
+    ) -> Result<Option<MetalStageProfile>, String> {
         #[repr(C)]
         struct Parameters {
             shape: [u32; 8],
@@ -298,16 +425,35 @@ impl MetalCubeKernels {
             shape,
             correlations,
         };
-        for (pipeline, count) in [
+        let profile = self
+            .stage_profiler
+            .as_ref()
+            .map(|profiler| profiler.begin(shape))
+            .transpose()?;
+        for (stage, (pipeline, count)) in [
             (&self.unique_prediction, shape[0]),
             (&self.residual, shape[1]),
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
             if count == 0 {
                 continue;
             }
-            let encoder = command
-                .computeCommandEncoder()
-                .ok_or("Metal compute encoder unavailable")?;
+            let encoder = if let Some(profile) = &profile {
+                let pass = MTLComputePassDescriptor::computePassDescriptor();
+                let attachment =
+                    unsafe { pass.sampleBufferAttachments().objectAtIndexedSubscript(0) };
+                attachment.setSampleBuffer(Some(&profile.samples));
+                unsafe {
+                    attachment.setStartOfEncoderSampleIndex(stage * 2);
+                    attachment.setEndOfEncoderSampleIndex(stage * 2 + 1);
+                }
+                command.computeCommandEncoderWithDescriptor(&pass)
+            } else {
+                command.computeCommandEncoder()
+            }
+            .ok_or("Metal compute encoder unavailable")?;
             encoder.setComputePipelineState(pipeline);
             for (index, (buffer, offset)) in buffers.iter().enumerate() {
                 unsafe { encoder.setBuffer_offset_atIndex(Some(buffer), *offset, index) };
@@ -328,7 +474,7 @@ impl MetalCubeKernels {
             );
             encoder.endEncoding();
         }
-        Ok(())
+        Ok(profile)
     }
 
     fn encode(
@@ -379,6 +525,35 @@ mod tests {
     use objc2_metal::{
         MTLCommandBufferStatus, MTLCommandQueue, MTLCreateSystemDefaultDevice, MTLResourceOptions,
     };
+
+    #[test]
+    fn stage_timestamps_use_calibrated_clock_and_reject_invalid_samples() {
+        let clocks = ([1_000, 100], [3_000, 200]);
+        let actual =
+            calibrated_stage_seconds([110, 120, 130, 150], [true; 2], clocks.0, clocks.1).unwrap();
+        assert!((actual[0] - 200e-9).abs() < 1e-15);
+        assert!((actual[1] - 400e-9).abs() < 1e-15);
+        for ticks in [
+            [0, 120, 130, 150],
+            [120, 110, 130, 150],
+            [110, MTLCounterErrorValue, 130, 150],
+        ] {
+            assert!(calibrated_stage_seconds(ticks, [true; 2], clocks.0, clocks.1).is_err());
+        }
+        assert!(
+            calibrated_stage_seconds([110, 120, 130, 150], [true; 2], clocks.0, clocks.0).is_err()
+        );
+        assert_eq!(
+            calibrated_stage_seconds(
+                [110, 120, MTLCounterErrorValue, MTLCounterErrorValue],
+                [true, false],
+                clocks.0,
+                clocks.1,
+            )
+            .unwrap()[1],
+            0.0,
+        );
+    }
 
     fn shared_buffer(
         device: &ProtocolObject<dyn MTLDevice>,
@@ -503,6 +678,141 @@ mod tests {
             for lane in 0..2 {
                 assert!((predicted[index][lane] - expected[lane]).abs() < 2.0e-6);
             }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires a process-accessible Apple Metal device"]
+    fn unique_predictions_preserve_tails_phases_and_failure_status() {
+        use casa_imaging_reconstruction::runtime_adapter::{
+            DeviceCorrelations, ResidualPrediction,
+        };
+        let device = MTLCreateSystemDefaultDevice().expect("actual Metal device");
+        let queue = device.newCommandQueue().unwrap();
+        let kernels = MetalCubeKernels::compile(&device).unwrap();
+        let weights = [
+            0.01_f32, 0.04, 0.12, 0.26, 0.12, 0.04, 0.01, 0.02, 0.05, 0.16, 0.31, 0.16, 0.05, 0.02,
+        ];
+        let models = (0..3 * 32 * 32)
+            .map(|cell| {
+                [
+                    (cell % 41) as f32 * 0.03125 - 0.5,
+                    (cell % 37) as f32 * -0.015625 + 0.25,
+                ]
+            })
+            .collect::<Vec<_>>();
+        let dummy = shared_buffer(&device, 16);
+        let weight_buffer = shared_buffer(&device, size_of_val(&weights));
+        let model_buffer = shared_buffer(&device, size_of_val(models.as_slice()));
+        let status_buffer = shared_buffer(&device, size_of::<u32>());
+        upload(&weight_buffer, &weights);
+        upload(&model_buffer, &models);
+        let correlations = DeviceCorrelations {
+            coefficients: [[1.0, 0.0], [0.0; 2], [0.0; 2], [0.0; 2]],
+            correlations: 1,
+            direct: 0,
+            padding: [0; 2],
+        };
+        for count in [1, 3, 4, 7, 8, 9, 31, 33, 137] {
+            let requests = (0..count)
+                .map(|index| ResidualPrediction {
+                    tap: CubeTap {
+                        x: index % 26,
+                        y: (index * 11) % 26,
+                        x_weights: index % 2,
+                        y_weights: (index + 1) % 2,
+                        value: [0.75, -0.25],
+                    },
+                    plane: index % 3,
+                    padding: 0,
+                })
+                .collect::<Vec<_>>();
+            let request_buffer = shared_buffer(&device, size_of_val(requests.as_slice()));
+            let predicted_buffer =
+                shared_buffer(&device, (count as usize + 2) * size_of::<[f32; 2]>());
+            let sentinel = [-321.0, 123.0];
+            let encode = |values: &[ResidualPrediction]| {
+                upload(&request_buffer, values);
+                upload(&predicted_buffer, &vec![sentinel; count as usize + 2]);
+                upload(&status_buffer, &[0_u32]);
+                let command = queue.commandBuffer().unwrap();
+                let profile = kernels
+                    .encode_residual(
+                        &command,
+                        &[
+                            (&request_buffer, 0),
+                            (&dummy, 0),
+                            (&dummy, 0),
+                            (&dummy, 0),
+                            (&dummy, 0),
+                            (&dummy, 0),
+                            (&weight_buffer, 0),
+                            (&model_buffer, 0),
+                            (&predicted_buffer, 0),
+                            (&dummy, 0),
+                            (&status_buffer, 0),
+                        ],
+                        [count, 0, 0, 3, 32, 32, 1, 2],
+                        correlations,
+                    )
+                    .unwrap();
+                command.commit();
+                command.waitUntilCompleted();
+                assert_eq!(command.status(), MTLCommandBufferStatus::Completed);
+                if let Some(profile) = profile {
+                    let seconds = profile
+                        .seconds()
+                        .expect("calibrated fenced stage timestamps");
+                    assert!(seconds[0] > 0.0);
+                    assert_eq!(seconds[1], 0.0);
+                }
+                // Every host access follows the terminal device fence.
+                unsafe { *status_buffer.contents().as_ptr().cast::<u32>() }
+            };
+            assert_eq!(encode(&requests), 0);
+            let predicted = unsafe {
+                std::slice::from_raw_parts(
+                    predicted_buffer.contents().as_ptr().cast::<[f32; 2]>(),
+                    count as usize + 2,
+                )
+            };
+            assert_eq!(&predicted[count as usize..], &[sentinel; 2]);
+            for (request, actual) in requests.iter().zip(predicted) {
+                let mut expected = [0.0_f32; 2];
+                for x in 0..7 {
+                    let mut row = [[0.0_f32; 2]; 2];
+                    for y in 0..7 {
+                        let cell = request.plane as usize * 32 * 32
+                            + (request.tap.x as usize + x) * 32
+                            + request.tap.y as usize
+                            + y;
+                        for part in 0..2 {
+                            row[y % 2][part] += models[cell][part]
+                                * weights[request.tap.y_weights as usize * 7 + y];
+                        }
+                    }
+                    for part in 0..2 {
+                        expected[part] += (row[0][part] + row[1][part])
+                            * weights[request.tap.x_weights as usize * 7 + x];
+                    }
+                }
+                let phase = request.tap.value;
+                let expected = [
+                    expected[0] * phase[0] - expected[1] * phase[1],
+                    expected[0] * phase[1] + expected[1] * phase[0],
+                ];
+                for part in 0..2 {
+                    assert!((actual[part] - expected[part]).abs() < 2e-6);
+                }
+            }
+            let mut invalid = requests.clone();
+            invalid.last_mut().unwrap().tap.x = 26;
+            assert_eq!(encode(&invalid), 1);
+            let mut nonfinite = models.clone();
+            nonfinite[0][0] = f32::NAN;
+            upload(&model_buffer, &nonfinite);
+            assert_eq!(encode(&requests), 2);
+            upload(&model_buffer, &models);
         }
     }
 }

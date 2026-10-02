@@ -1094,7 +1094,10 @@ impl GriddedNormalOperatorCompiler {
                     .iter()
                     .map(|weighted| weighted.selected().address().correlation_type)
                     .collect::<SmallVec<[_; 4]>>(),
-                first.selected().parallactic_angles_rad(),
+                first
+                    .selected()
+                    .parallactic_angles_rad()
+                    .ok_or(SpectralOperatorError::InvalidSample)?,
                 MuellerMatrix::identity(),
             )
             .map_err(|_| SpectralOperatorError::InvalidSample)?;
@@ -1188,7 +1191,9 @@ impl GriddedNormalOperatorCompiler {
                         .iter()
                         .map(|weighted| weighted.selected().address().correlation_type)
                         .collect::<SmallVec<[_; 4]>>(),
-                    selected.parallactic_angles_rad(),
+                    selected
+                        .parallactic_angles_rad()
+                        .ok_or(SpectralOperatorError::InvalidSample)?,
                     MuellerMatrix::identity(),
                 )
                 .map_err(|_| SpectralOperatorError::InvalidSample)?;

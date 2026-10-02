@@ -471,6 +471,7 @@ struct PendingCubeCommand {
     regions: Vec<(AllocationId, usize, usize)>,
     status: Option<MetalBufferRegionOwned>,
     stats: MetalBatchStats,
+    stage_profile: Option<crate::metal_cube::MetalStageProfile>,
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -579,6 +580,9 @@ impl MetalBatchAccess<'_> {
             degrid_samples: after.degrid_samples - before.degrid_samples,
             gpu_seconds: after.gpu_seconds - before.gpu_seconds,
             submit_wait_seconds: after.submit_wait_seconds - before.submit_wait_seconds,
+            profiled_batches: after.profiled_batches - before.profiled_batches,
+            prediction_gpu_seconds: after.prediction_gpu_seconds - before.prediction_gpu_seconds,
+            residual_gpu_seconds: after.residual_gpu_seconds - before.residual_gpu_seconds,
         })
     }
 
@@ -630,6 +634,9 @@ pub(crate) struct MetalBatchStats {
     pub degrid_samples: u64,
     pub gpu_seconds: f64,
     pub submit_wait_seconds: f64,
+    pub profiled_batches: u64,
+    pub prediction_gpu_seconds: f64,
+    pub residual_gpu_seconds: f64,
 }
 
 /// A bounded region of a plan-owned shared allocation. Multiple plane regions
@@ -1416,6 +1423,7 @@ fn submit_platform_batch(
             regions: owned,
             status: None,
             stats,
+            stage_profile: None,
         },
     );
     Ok(ticket)
@@ -1510,7 +1518,7 @@ fn submit_cube_residual(
         .queue
         .commandBuffer()
         .ok_or(MetalRuntimeError::CommandQueueUnavailable)?;
-    platform
+    let stage_profile = platform
         .kernels
         .as_ref()
         .expect("prepared kernels")
@@ -1545,6 +1553,7 @@ fn submit_cube_residual(
                 submit_wait_seconds: started.elapsed().as_secs_f64(),
                 ..MetalBatchStats::default()
             },
+            stage_profile,
         },
     );
     Ok(ticket)
@@ -1622,6 +1631,19 @@ fn drain_cube_commands(
         }
         pending.stats.gpu_seconds =
             (pending.command.GPUEndTime() - pending.command.GPUStartTime()).max(0.0);
+        if !failed && let Some(profile) = pending.stage_profile {
+            match profile.seconds() {
+                Ok([prediction, residual]) => {
+                    pending.stats.profiled_batches = 1;
+                    pending.stats.prediction_gpu_seconds = prediction;
+                    pending.stats.residual_gpu_seconds = residual;
+                }
+                Err(message) => {
+                    failed = true;
+                    error.get_or_insert(MetalRuntimeError::Encoding(message));
+                }
+            }
+        }
         let progress = inner.nodes.get_mut(&pending.node).expect("prepared node");
         progress.failed |= failed;
         progress.stats.batches += pending.stats.batches;
@@ -1629,6 +1651,9 @@ fn drain_cube_commands(
         progress.stats.degrid_samples += pending.stats.degrid_samples;
         progress.stats.gpu_seconds += pending.stats.gpu_seconds;
         progress.stats.submit_wait_seconds += pending.stats.submit_wait_seconds;
+        progress.stats.profiled_batches += pending.stats.profiled_batches;
+        progress.stats.prediction_gpu_seconds += pending.stats.prediction_gpu_seconds;
+        progress.stats.residual_gpu_seconds += pending.stats.residual_gpu_seconds;
     }
     error.map_or(Ok(()), Err)
 }

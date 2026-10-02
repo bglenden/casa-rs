@@ -488,7 +488,7 @@ fn samples(problem: &casa_imaging_model::CompiledProblem) -> Vec<SelectedObserva
                     time_centroid: Epoch::new(59_000.0 + physical_row as f64, TimeScale::Utc),
                     interval_seconds: 1.0,
                     exposure_seconds: 1.0,
-                    parallactic_angles_rad: [0.0, 0.0],
+                    parallactic_angles_rad: Some([0.0, 0.0]),
                     phase_direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
                     delay_direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
                     pointing_directions: casa_imaging_model::SelectedPointingDirections {
@@ -1392,9 +1392,14 @@ fn taylor_generation_demand_charges_retained_families_and_algorithm_scratch() {
     assert_eq!(demand.maximum_member_validity_bytes(), maximum);
     assert_eq!(demand.maximum_window_payload_bytes(), maximum * 4);
     assert_eq!(demand.maximum_window_validity_bytes(), maximum);
+    // Two-term 8x8 fixture: retained families, residual/PB planes, normal solve.
+    let taylor_workspace = 5_516 + 768 + 128;
+    let restoration_workspace = maximum * (4 + 2 * 16 + 4)
+        + (maximum + 64) * 16
+        + maximum * std::mem::size_of::<usize>() as u64;
     assert_eq!(
         demand.algorithm_scratch_bytes(),
-        9_100 + maximum * 10,
+        taylor_workspace + restoration_workspace + maximum * 10,
         "coupled Taylor scratch additionally overlaps its emitted member and bounded backing-write window"
     );
     assert_eq!(
