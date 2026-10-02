@@ -209,18 +209,23 @@ fn prepare_channel<W: StreamingWeightPhase>(
     let contributions =
         SelectedSpectralContributions::new([SelectedSpectralContribution::new(0, 1.0, frequency)])
             .ok_or(WeightingError::RowSpectralGeometryMismatch)?;
+    let first_prepared = prepared.len();
     for ordinal in 0..row.correlations.len() {
         let mut value = correlation(row, channel, ordinal);
-        value.parallel_hand_group_flag = parallel_flag;
-        let sample =
-            SelectedObservationSampleView::from_run(row.row, &row.channels[channel], &value)
-                .with_input_weight_group(
-                    group
-                        .with_density_owner(ordinal == 0)
-                        .with_terminal_member(ordinal + 1 == row.correlations.len()),
-                )
-                .with_row_spectral_geometry(Some(geometry));
-        prepared.push(weights.prepare_sample(problem, sample, frequency, contributions.clone())?);
+        let weighted = if ordinal == 0 {
+            value.parallel_hand_group_flag = parallel_flag;
+            let sample =
+                SelectedObservationSampleView::from_run(row.row, &row.channels[channel], &value)
+                    .with_input_weight_group(
+                        group.with_terminal_member(row.correlations.len() == 1),
+                    )
+                    .with_row_spectral_geometry(Some(geometry));
+            weights.prepare_sample(problem, sample, frequency, contributions.clone())?
+        } else {
+            prepared[first_prepared]
+                .prepare_group_member(value, ordinal + 1 == row.correlations.len())
+        };
+        prepared.push(weighted);
     }
     Ok(())
 }

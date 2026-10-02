@@ -18,9 +18,10 @@ use casa_imaging_model::{
     CompiledProblem, CompiledProblemId, ContinuumTransformGenerationId, FiniteValuePolicy,
     ImageDomainRole, LogicalIdentity, SelectedAntennaResponses, SelectedImageDomainProjections,
     SelectedInputWeightGroup, SelectedNumericRow, SelectedNumericWeights,
-    SelectedObservationGenerationId, SelectedObservationSampleView, SelectedPointingDirections,
-    SelectedSampleAddress, SelectedSpectralContribution, SelectedSpectralContributions,
-    SelectedVisibilitySample, UvTaper, WeightDensityScope, WeightingCommitmentId, WeightingScheme,
+    SelectedObservationGenerationId, SelectedObservationRunCorrelation,
+    SelectedObservationSampleView, SelectedPointingDirections, SelectedSampleAddress,
+    SelectedSpectralContribution, SelectedSpectralContributions, SelectedVisibilitySample, UvTaper,
+    WeightDensityScope, WeightingCommitmentId, WeightingScheme,
 };
 use sha2::{Digest, Sha256};
 use smallvec::SmallVec;
@@ -2600,6 +2601,31 @@ impl Clone for WeightingSampleValue {
 }
 
 impl WeightingSampleValue {
+    /// Prepare another correlation member using this group's evaluated weights.
+    ///
+    /// The runtime supplies a source-owned correlation from this row/channel
+    /// group, with its canonical terminal tag. Row metadata, group flags and
+    /// evaluated weights come from this first member, so no second row/geometry
+    /// projection or weighting evaluation is needed. The supplied member retains
+    /// its own visibility, raw weight, cell flag and correlation address. This
+    /// neither advances coverage nor commits a prepared value.
+    #[doc(hidden)]
+    pub fn prepare_group_member(
+        &self,
+        correlation: SelectedObservationRunCorrelation,
+        terminal_member: bool,
+    ) -> Self {
+        let mut member = self.clone();
+        member.sample.address.correlation_index = correlation.correlation_index;
+        member.sample.address.correlation_type = correlation.correlation_type;
+        member.sample.visibility = correlation.visibility;
+        member.sample.raw_input_weight = correlation.input_weight;
+        member.sample.channel_flag = correlation.channel_flag;
+        member.sample.starts_correlation_group = false;
+        member.sample.ends_correlation_group = terminal_member;
+        member
+    }
+
     /// Return the validated selected sample.
     #[must_use]
     pub const fn selected(&self) -> &WeightingSelectedSample {

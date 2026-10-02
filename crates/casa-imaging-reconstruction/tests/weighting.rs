@@ -20,15 +20,16 @@ use casa_imaging_model::{
     Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
     ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection,
     ScientificContract, SelectedColumns, SelectedImageDomainProjections, SelectedInputWeightGroup,
-    SelectedMainRow, SelectedObservationGenerationId, SelectedObservationSample,
-    SelectedPhaseCentreProjection, SelectedPredictionTarget, SelectedRowSpectralGeometry,
-    SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates, SelectedSampleMetadata,
-    SelectedSpectralContribution, SelectedSpectralContributions, SelectedVisibilitySample,
-    SkyDirection, SourceGenerations, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
-    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection,
-    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection,
-    UvSelection, UvTaper, UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn,
-    WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
+    SelectedMainRow, SelectedObservationGenerationId, SelectedObservationRunCorrelation,
+    SelectedObservationSample, SelectedPhaseCentreProjection, SelectedPredictionTarget,
+    SelectedRowSpectralGeometry, SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates,
+    SelectedSampleMetadata, SelectedSpectralContribution, SelectedSpectralContributions,
+    SelectedVisibilitySample, SkyDirection, SourceGenerations, SpectralContract,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
+    SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
+    TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection, UvTaper, UvwCoordinateLaw,
+    VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract,
+    WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_reconstruction::runtime_adapter::{
     NativeBlock, NativeLayout, NativePreparationWorker, NativeWeightingPreparation,
@@ -2046,6 +2047,107 @@ fn partition_block_worker_and_repeated_replay_choices_are_invariant() {
         .into_samples();
     assert_eq!(terminal.len(), 1);
     assert_eq!(terminal.capacity(), 3);
+}
+
+#[test]
+fn correlation_group_weight_reuse_preserves_member_data_and_flags() {
+    for scheme in [
+        WeightingScheme::Natural,
+        WeightingScheme::Uniform,
+        WeightingScheme::Briggs { robust: 0.5 },
+    ] {
+        let scope = if scheme == WeightingScheme::Natural {
+            WeightDensityScope::NotApplicable
+        } else {
+            WeightDensityScope::GlobalSelection
+        };
+        let problem = problem(scheme, scope, Some(UvTaper::new(1000.0, 700.0, 0.3)));
+        for flagged in [false, true] {
+            let base = exact_samples(&problem)[0].clone();
+            let samples = [
+                CorrelationType::CircularRr,
+                CorrelationType::CircularRl,
+                CorrelationType::CircularLr,
+                CorrelationType::CircularLl,
+            ]
+            .into_iter()
+            .zip([3.0, 100.0, 200.0, 7.0])
+            .enumerate()
+            .map(|(ordinal, (correlation_type, input_weight))| {
+                let mut sample = base.clone();
+                sample.address.correlation_index = ordinal as u32;
+                sample.address.correlation_type = correlation_type;
+                sample.input_weight = input_weight;
+                sample.channel_flag = flagged && ordinal == 1;
+                sample.visibility = SelectedVisibilitySample::Complex32([ordinal as f32, -1.0]);
+                sample
+            })
+            .collect::<Vec<_>>();
+            let group =
+                SelectedInputWeightGroup::correlation_run(3.0, 7.0, 4).with_imaging_flag(flagged);
+            let view = |ordinal: usize| {
+                samples[ordinal].as_view().with_input_weight_group(
+                    group
+                        .with_density_owner(ordinal == 0)
+                        .with_terminal_member(ordinal == 3),
+                )
+            };
+            let plan =
+                plan_weighting(&problem, WeightingExecutionLimits::new(8, 4).unwrap()).unwrap();
+            let mut density = begin_weighting_generation(&problem, &plan).unwrap();
+            for (ordinal, sample) in samples.iter().enumerate() {
+                density
+                    .consume(
+                        &problem,
+                        view(ordinal),
+                        100.0e6,
+                        exact_contributions(sample),
+                    )
+                    .unwrap();
+            }
+            let mut sum = density.finish(&problem).unwrap();
+            for (ordinal, sample) in samples.iter().enumerate() {
+                sum.consume(
+                    &problem,
+                    view(ordinal),
+                    100.0e6,
+                    exact_contributions(sample),
+                )
+                .unwrap();
+            }
+            let generation = sum.finish().unwrap();
+            let phase = generation.begin_replay(&problem, &plan).unwrap();
+            let reference = samples
+                .iter()
+                .enumerate()
+                .map(|(ordinal, sample)| {
+                    phase
+                        .prepare_sample(
+                            &problem,
+                            view(ordinal),
+                            100.0e6,
+                            exact_contributions(sample),
+                        )
+                        .unwrap()
+                })
+                .collect::<Vec<_>>();
+            for ordinal in 1..samples.len() {
+                let sample = &samples[ordinal];
+                let actual = reference[0].prepare_group_member(
+                    SelectedObservationRunCorrelation {
+                        correlation_index: sample.address.correlation_index,
+                        correlation_type: sample.address.correlation_type,
+                        visibility: sample.visibility,
+                        channel_flag: sample.channel_flag,
+                        parallel_hand_group_flag: sample.parallel_hand_group_flag,
+                        input_weight: sample.input_weight,
+                    },
+                    ordinal + 1 == samples.len(),
+                );
+                assert_eq!(actual, reference[ordinal]);
+            }
+        }
+    }
 }
 
 #[test]
