@@ -167,8 +167,6 @@ impl GriddedNormalOperatorCompiler {
                     )?;
                 } else {
                     rows.finish()?;
-                    let single_contribution = (first.spectral_values().count() == 1)
-                        .then(|| first.spectral_values().next().unwrap().contribution());
                     let flags = correlations
                         .iter()
                         .map(|sample| {
@@ -189,22 +187,6 @@ impl GriddedNormalOperatorCompiler {
                             push_fixed(&mut scratch.atom, *record)?;
                         }
                         let prediction_len = scratch.atom.len();
-                        if let Some(contribution) = single_contribution {
-                            let mut values = correlations[row].spectral_values();
-                            let Some(spectral) = values.next() else {
-                                continue;
-                            };
-                            if spectral.contribution() != contribution || values.next().is_some() {
-                                return Err(SpectralOperatorError::InvalidSample);
-                            }
-                            emit_prediction_atom(
-                                &mut scratch.atom,
-                                spectral.imaging_weight(),
-                                emit,
-                                &mut cardinality,
-                            )?;
-                            continue;
-                        }
                         for (ordinal, spectral) in correlations[row].spectral_values().enumerate() {
                             let contribution = spectral.contribution();
                             if first
@@ -449,30 +431,6 @@ fn emit_atom(
             record.role = RecordRole::Both;
         }
     }
-    emit_records(atom, emit, cardinality)
-}
-
-fn emit_prediction_atom(
-    atom: &mut [ReducedRecordKey],
-    imaging_weight: f64,
-    emit: &mut impl FnMut(&[ReducedRecordKey]) -> Result<(), SpectralOperatorError>,
-    cardinality: &mut GriddedNormalSourceCardinality,
-) -> Result<(), SpectralOperatorError> {
-    if atom.is_empty() || imaging_weight == 0.0 {
-        return Ok(());
-    }
-    for record in atom.iter_mut() {
-        record.role = RecordRole::Both;
-        record.imaging_weight = canonical_zero_bits(imaging_weight);
-    }
-    emit_records(atom, emit, cardinality)
-}
-
-fn emit_records(
-    atom: &[ReducedRecordKey],
-    emit: &mut impl FnMut(&[ReducedRecordKey]) -> Result<(), SpectralOperatorError>,
-    cardinality: &mut GriddedNormalSourceCardinality,
-) -> Result<(), SpectralOperatorError> {
     cardinality.groups = cardinality
         .groups
         .checked_add(1)
@@ -556,58 +514,5 @@ mod tests {
             }
         );
         assert_eq!(atom.capacity(), 2);
-    }
-
-    #[test]
-    fn matching_prediction_stencil_is_reused_without_an_accumulation_buffer() {
-        let prediction = ReducedRecordKey {
-            chart_ordinal: 2,
-            output_channel: 3,
-            taps: 17,
-            forward_real: 0.75_f64.to_bits(),
-            forward_imaginary: (-0.125_f64).to_bits(),
-            imaging_weight: 0,
-            role: RecordRole::Prediction,
-            aw: None,
-        };
-        let mut atom = fixed_records(1).unwrap();
-        push_fixed(&mut atom, prediction).unwrap();
-        let pointer = atom.as_ptr();
-        let mut cardinality = GriddedNormalSourceCardinality::default();
-        emit_prediction_atom(
-            &mut atom,
-            3.0,
-            &mut |records| {
-                assert_eq!(records.len(), 1);
-                assert_eq!(
-                    records[0],
-                    ReducedRecordKey {
-                        role: RecordRole::Both,
-                        imaging_weight: 3.0_f64.to_bits(),
-                        ..prediction
-                    }
-                );
-                Ok(())
-            },
-            &mut cardinality,
-        )
-        .unwrap();
-        assert_eq!(atom.as_ptr(), pointer);
-        assert_eq!(atom.capacity(), 1);
-        assert_eq!(
-            cardinality,
-            GriddedNormalSourceCardinality {
-                groups: 1,
-                records: 1
-            }
-        );
-        emit_prediction_atom(
-            &mut atom,
-            0.0,
-            &mut |_| panic!("zero-weight atom emitted"),
-            &mut cardinality,
-        )
-        .unwrap();
-        assert_eq!(cardinality.groups, 1);
     }
 }
