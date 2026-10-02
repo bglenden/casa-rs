@@ -2788,6 +2788,9 @@ impl WorkImplementation for SpectralCycleExecutor {
                     &self.problem,
                     &self.weighting_plan,
                     usize::try_from(workers).map_err(io::Error::other)?,
+                    self.source_resources.as_ref().ok_or_else(|| {
+                        io::Error::other("replay preparation lacks source residency")
+                    })?,
                 )
                 .map_err(io::Error::other)?;
                 fragment = Some(
