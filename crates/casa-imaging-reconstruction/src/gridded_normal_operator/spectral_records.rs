@@ -359,9 +359,6 @@ impl GriddedNormalOperatorCompiler {
         {
             return Err(SpectralOperatorError::InvalidSample);
         }
-        let has_response = coefficients
-            .iter()
-            .any(|coefficient| *coefficient != Complex64::default());
         for (chart_ordinal, chart) in self.specification.charts().iter().enumerate() {
             let (uvw_m, phase_shift_m) = selected_model_projection(
                 selected,
@@ -369,9 +366,6 @@ impl GriddedNormalOperatorCompiler {
                 chart.domain_ordinal(),
                 chart.facet_ordinal(),
             )?;
-            if !has_response {
-                continue;
-            }
             let scale = stencil.frequency_hz / SPEED_OF_LIGHT_M_PER_S;
             let Some(taps) = self.gridders[chart_ordinal].taps(uvw_m.map(|value| value * scale))
             else {
