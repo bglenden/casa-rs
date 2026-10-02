@@ -119,17 +119,32 @@ impl MfsRegions {
             .dirty_grids
             .as_mut()
             .ok_or(SpectralOperatorError::ProblemMismatch)?;
+        let dirty_compensation = operator
+            .dirty_compensations
+            .as_mut()
+            .ok_or(SpectralOperatorError::ProblemMismatch)?;
         let psf = operator
             .psf_grids
             .as_mut()
             .ok_or(SpectralOperatorError::ProblemMismatch)?;
-        let ([dirty], [psf]) = (dirty.as_mut_slice(), psf.as_mut_slice()) else {
+        let psf_compensation = operator
+            .psf_compensations
+            .as_mut()
+            .ok_or(SpectralOperatorError::ProblemMismatch)?;
+        let ([dirty], [dirty_compensation], [psf], [psf_compensation]) = (
+            dirty.as_mut_slice(),
+            dirty_compensation.as_mut_slice(),
+            psf.as_mut_slice(),
+            psf_compensation.as_mut_slice(),
+        ) else {
             return Err(SpectralOperatorError::ProblemMismatch);
         };
         let mut jobs = Vec::with_capacity(self.buckets.len());
-        for (strip, (dirty, psf)) in dirty
+        for (strip, (((dirty, dirty_compensation), psf), psf_compensation)) in dirty
             .axis_chunks_iter_mut(Axis(0), STRIP_ROWS)
+            .zip(dirty_compensation.axis_chunks_iter_mut(Axis(0), STRIP_ROWS))
             .zip(psf.axis_chunks_iter_mut(Axis(0), STRIP_ROWS))
+            .zip(psf_compensation.axis_chunks_iter_mut(Axis(0), STRIP_ROWS))
             .enumerate()
         {
             let first = self.buckets[strip].first;
@@ -137,7 +152,9 @@ impl MfsRegions {
                 jobs.push(InitialPlaneWork(InitialWork::Mfs(MfsWork {
                     gridder,
                     dirty,
+                    dirty_compensation,
                     psf,
+                    psf_compensation,
                     first_row: strip * STRIP_ROWS,
                     records: &self.records,
                     routes: &self.routes,
@@ -200,7 +217,9 @@ impl MfsRegions {
 pub(super) struct MfsWork<'a> {
     gridder: &'a StandardConvolution,
     dirty: ArrayViewMut2<'a, Complex64>,
+    dirty_compensation: ArrayViewMut2<'a, Complex64>,
     psf: ArrayViewMut2<'a, Complex64>,
+    psf_compensation: ArrayViewMut2<'a, Complex64>,
     first_row: usize,
     records: &'a [Record],
     routes: &'a [Route],
@@ -220,14 +239,16 @@ impl MfsWork<'_> {
             let route = &self.routes[next];
             let record = &self.records[route.record];
             let taps = record.taps.ok_or(SpectralOperatorError::InvalidSample)?;
-            self.gridder.grid_rows(
+            self.gridder.grid_compensated_rows(
                 &mut self.dirty,
+                &mut self.dirty_compensation,
                 taps,
                 record.sample.visibility,
                 self.first_row,
             );
-            self.gridder.grid_rows(
+            self.gridder.grid_compensated_rows(
                 &mut self.psf,
+                &mut self.psf_compensation,
                 taps,
                 Complex64::new(record.sample.normal_weight, 0.0),
                 self.first_row,
@@ -265,8 +286,6 @@ mod tests {
         for workers in [1, 4, 8] {
             let mut scalar = operator();
             let mut candidate = operator();
-            candidate.dirty_compensations = None;
-            candidate.psf_compensations = None;
             let mut batch = MfsRegions::new([512, 64], 19).unwrap();
             let records = batch.records.as_ptr();
             let routes = batch.routes.as_ptr();
@@ -325,8 +344,6 @@ mod tests {
                 assert_eq!(batch.routes.as_ptr(), routes);
             }
             assert_eq!(largest_dispatch, 8);
-            assert!(candidate.dirty_compensations.is_none());
-            assert!(candidate.psf_compensations.is_none());
             for (left, right) in scalar.dirty_grids.as_ref().unwrap()[0]
                 .iter()
                 .zip(candidate.dirty_grids.as_ref().unwrap()[0].iter())

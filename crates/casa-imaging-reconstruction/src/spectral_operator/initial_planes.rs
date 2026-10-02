@@ -6,10 +6,6 @@ use super::*;
 mod mfs_regions;
 
 impl SpectralOperatorSpecification {
-    pub(super) fn initial_mfs_uses_plain_grids(&self, pass: SpectralOperatorPass) -> bool {
-        mfs_regions::MfsRegions::supports(self, pass)
-    }
-
     /// Ordinary single-field MFS supported by the bulk numerical ingress.
     pub fn supports_bulk_mfs(&self) -> bool {
         matches!(self.basis, SpectralBasisPlan::Polynomial(plan) if plan.coefficient_term_count() == 1)
