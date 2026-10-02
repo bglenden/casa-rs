@@ -11871,59 +11871,6 @@ impl StandardConvolution {
         }
     }
 
-    fn grid_pair_compensated_rows<S: DataMut<Elem = Complex64>, C: DataMut<Elem = Complex64>>(
-        &self,
-        grids: [&mut ArrayBase<S, Ix2>; 2],
-        compensations: [&mut ArrayBase<C, Ix2>; 2],
-        taps: SampleTaps,
-        values: [Complex64; 2],
-        first_row: usize,
-    ) {
-        let end_row = first_row + grids[0].nrows();
-        let row_stride = grids[0].ncols();
-        debug_assert!(grids.iter().all(|grid| grid.dim() == grids[0].dim()));
-        debug_assert!(
-            compensations
-                .iter()
-                .all(|grid| grid.dim() == grids[0].dim())
-        );
-        let [left, right] = grids.map(|grid| {
-            grid.as_slice_mut()
-                .expect("spectral grids use standard contiguous layout")
-        });
-        let [left_error, right_error] = compensations.map(|grid| {
-            grid.as_slice_mut()
-                .expect("spectral compensation uses standard contiguous layout")
-        });
-        let x_weights = self.weights[taps.x.weight_index];
-        let y_weights = self.weights[taps.y.weight_index];
-        for (x, x_weight) in x_weights.into_iter().enumerate() {
-            let row = taps.x.start + x;
-            if row < first_row || row >= end_row {
-                continue;
-            }
-            let start = (row - first_row) * row_stride + taps.y.start;
-            let range = start..start + y_weights.len();
-            for ((((left, right), left_error), right_error), y_weight) in left[range.clone()]
-                .iter_mut()
-                .zip(&mut right[range.clone()])
-                .zip(&mut left_error[range.clone()])
-                .zip(&mut right_error[range])
-                .zip(y_weights)
-            {
-                for (value, cell, error) in [
-                    (values[0], left, left_error),
-                    (values[1], right, right_error),
-                ] {
-                    let contribution = value * x_weight * y_weight - *error;
-                    let updated = *cell + contribution;
-                    *error = (updated - *cell) - contribution;
-                    *cell = updated;
-                }
-            }
-        }
-    }
-
     pub(crate) fn grid_float<S: DataMut<Elem = Complex32>>(
         &self,
         grid: &mut ArrayBase<S, Ix2>,
