@@ -169,7 +169,7 @@ pub use spectral_sampling::{
     SpectralStencilError, SpectralStencilReceipt, SpectralStencilValidity, compile_spectral_stencil,
 };
 pub use weighting::{
-    FrozenWeightingCoverageProof, FusedWeightingPhase, MfsWeightingGroup, WeightingAlgorithmState,
+    FrozenWeightingCoverageProof, FusedWeightingPhase, WeightingAlgorithmState,
     WeightingDensityPhase, WeightingError, WeightingExecutionLimits, WeightingGenerationId,
     WeightingPlan, WeightingReplayChunk, WeightingReplayCoverageId, WeightingReplayId,
     WeightingReplaySummary, WeightingResidency, WeightingSampleValue, WeightingSelectedSample,

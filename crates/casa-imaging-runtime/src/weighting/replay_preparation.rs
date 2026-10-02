@@ -26,7 +26,6 @@ pub(crate) struct ReplayPreparationPlan {
     index: SelectedObservationBlockIndexPlan,
     workers: usize,
     samples_per_worker: usize,
-    groups_per_worker: usize,
     runs_per_batch: usize,
     numeric: Option<super::bulk_source::NumericGeometryPlan>,
     bytes: u64,
@@ -80,25 +79,8 @@ impl ReplayPreparationPlan {
         let residency = weighting.planned_residency();
         let sample_bytes =
             residency.weighted_block_bytes() / weighting.limits().max_block_samples();
-        let groups_per_worker = runs.div_ceil(workers);
-        let payload = if numeric.is_some() {
-            let group_bytes = size_of::<casa_imaging_reconstruction::MfsWeightingGroup>()
-                .checked_add(if correlations > 4 {
-                    correlations
-                        .checked_mul(size_of::<
-                            casa_imaging_model::SelectedObservationRunCorrelation,
-                        >())
-                        .ok_or(WeightingError::ResidencyOverflow)?
-                } else {
-                    0
-                })
-                .ok_or(WeightingError::ResidencyOverflow)?;
-            groups_per_worker.checked_mul(group_bytes)
-        } else {
-            samples_per_worker.checked_mul(sample_bytes)
-        }
-        .ok_or(WeightingError::ResidencyOverflow)?;
-        let worker_bytes = Some(payload)
+        let worker_bytes = samples_per_worker
+            .checked_mul(sample_bytes)
             .and_then(|bytes| {
                 bytes.checked_add(
                     residency
@@ -124,13 +106,6 @@ impl ReplayPreparationPlan {
                 )
             })
             .and_then(|bytes| bytes.checked_add(size_of::<ReplayPreparation<'_>>()))
-            .and_then(|bytes| {
-                bytes.checked_add(if numeric.is_some() {
-                    payload.checked_mul(workers)?
-                } else {
-                    0
-                })
-            })
             .and_then(|bytes| bytes.checked_add(numeric.map_or(0, |plan| plan.bytes)))
             .and_then(|bytes| u64::try_from(bytes).ok())
             .ok_or(WeightingError::ResidencyOverflow)?;
@@ -138,7 +113,6 @@ impl ReplayPreparationPlan {
             index,
             workers,
             samples_per_worker,
-            groups_per_worker,
             runs_per_batch: runs,
             numeric,
             bytes,
@@ -166,7 +140,6 @@ struct PreparationWorker<'a> {
     projector: SelectedObservationProjector,
     spectral: WeightingSpectralCache<'a>,
     prepared: Vec<ReconstructionWeightedSample>,
-    mfs_prepared: Vec<casa_imaging_reconstruction::MfsWeightingGroup>,
     samples: u64,
 }
 
@@ -182,7 +155,6 @@ pub(super) struct ReplayPreparation<'a> {
     index: Option<SelectedObservationBlockIndex>,
     geometry: Option<casa_ms::SelectedObservationNumericGeometry>,
     workers: Vec<PreparationWorker<'a>>,
-    mfs_batch: Vec<casa_imaging_reconstruction::MfsWeightingGroup>,
     active: AtomicUsize,
     peak_active: AtomicUsize,
     runs: u64,
@@ -201,16 +173,7 @@ impl<'a> ReplayPreparation<'a> {
             workers.push(PreparationWorker {
                 projector: SelectedObservationProjector::new(problem),
                 spectral: WeightingSpectralCache::new(problem)?,
-                prepared: if plan.numeric.is_none() {
-                    Vec::with_capacity(plan.samples_per_worker)
-                } else {
-                    Vec::new()
-                },
-                mfs_prepared: if plan.numeric.is_some() {
-                    Vec::with_capacity(plan.groups_per_worker)
-                } else {
-                    Vec::new()
-                },
+                prepared: Vec::with_capacity(plan.samples_per_worker),
                 samples: 0,
             });
         }
@@ -223,11 +186,6 @@ impl<'a> ReplayPreparation<'a> {
                 .transpose()
                 .map_err(|_| WeightingError::ResidencyOverflow)?,
             workers,
-            mfs_batch: if plan.numeric.is_some() {
-                Vec::with_capacity(plan.runs_per_batch)
-            } else {
-                Vec::new()
-            },
             active: AtomicUsize::new(0),
             peak_active: AtomicUsize::new(0),
             runs: 0,

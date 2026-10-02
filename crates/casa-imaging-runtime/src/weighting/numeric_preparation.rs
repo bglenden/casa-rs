@@ -41,7 +41,6 @@ impl ReplayPreparation<'_> {
         let channels = geometry.channels().len();
         let runs = geometry.row_count() * channels;
         let workers = &mut self.workers;
-        let batch = &mut self.mfs_batch;
         let plan = self.plan;
         let (active, peak_active) = (&self.active, &self.peak_active);
         let preparation_nanos = &mut self.preparation_nanos;
@@ -54,7 +53,7 @@ impl ReplayPreparation<'_> {
                     let runs_per_worker = (last - first).div_ceil(plan.workers);
                     let started = Instant::now();
                     execution.for_each_mut(workers, |ordinal, worker| {
-                        worker.mfs_prepared.clear();
+                        worker.prepared.clear();
                         let lower = (first + ordinal * runs_per_worker).min(last);
                         let upper = (lower + runs_per_worker).min(last);
                         if lower == upper {
@@ -88,33 +87,29 @@ impl ReplayPreparation<'_> {
                                     channel,
                                     frequencies[channel],
                                     row_geometry,
-                                    &mut worker.mfs_prepared,
+                                    &mut worker.prepared,
                                 )
                                 .map_err(ReplayCallbackError::Owner)?;
                             }
                         }
-                        worker.samples += worker
-                            .mfs_prepared
-                            .iter()
-                            .map(|group| group.len() as u64)
-                            .sum::<u64>();
+                        worker.samples += worker.prepared.len() as u64;
                         Ok::<(), ReplayCallbackError<E>>(())
                     })?;
                     *preparation_nanos += started.elapsed().as_nanos();
                     let started = Instant::now();
-                    if workers.len() == 1 {
-                        std::mem::swap(batch, &mut workers[0].mfs_prepared);
-                    } else {
-                        for worker in workers.iter_mut() {
-                            batch.append(&mut worker.mfs_prepared);
+                    for worker in workers.iter_mut() {
+                        while !worker.prepared.is_empty() {
+                            if let Some(block) = weights
+                                .commit_prepared(problem, &mut worker.prepared)
+                                .map_err(ReplayCallbackError::Owner)?
+                            {
+                                emit(&block, execution).map_err(ReplayCallbackError::Consumer)?;
+                                weights
+                                    .reuse_emitted_block(block)
+                                    .map_err(ReplayCallbackError::Owner)?;
+                            }
                         }
                     }
-                    let block = weights
-                        .commit_mfs_groups(problem, batch)
-                        .map_err(ReplayCallbackError::Owner)?;
-                    emit(&block, execution).map_err(ReplayCallbackError::Consumer)?;
-                    *batch = block.into_mfs_groups();
-                    batch.clear();
                     *ordered_commit_nanos += started.elapsed().as_nanos();
                     first = last;
                 }
@@ -189,9 +184,9 @@ fn prepare_channel<W: StreamingWeightPhase>(
     channel: usize,
     frequency: f64,
     geometry: SelectedRowSpectralGeometry,
-    prepared: &mut Vec<casa_imaging_reconstruction::MfsWeightingGroup>,
+    prepared: &mut Vec<ReconstructionWeightedSample>,
 ) -> Result<(), WeightingError> {
-    if prepared.len() == prepared.capacity() {
+    if row.correlations.len() > prepared.capacity() - prepared.len() {
         return Err(WeightingError::ResidencyOverflow);
     }
     let first = correlation(row, channel, 0);
@@ -214,15 +209,23 @@ fn prepare_channel<W: StreamingWeightPhase>(
     let contributions =
         SelectedSpectralContributions::new([SelectedSpectralContribution::new(0, 1.0, frequency)])
             .ok_or(WeightingError::RowSpectralGeometryMismatch)?;
-    let mut value = first;
-    value.parallel_hand_group_flag = parallel_flag;
-    let sample = SelectedObservationSampleView::from_run(row.row, &row.channels[channel], &value)
-        .with_input_weight_group(group.with_terminal_member(row.correlations.len() == 1))
-        .with_row_spectral_geometry(Some(geometry));
-    let weighted = weights.prepare_sample(problem, sample, frequency, contributions)?;
-    prepared.push(casa_imaging_reconstruction::MfsWeightingGroup::new(
-        weighted,
-        (0..row.correlations.len()).map(|ordinal| correlation(row, channel, ordinal)),
-    )?);
+    let first_prepared = prepared.len();
+    for ordinal in 0..row.correlations.len() {
+        let mut value = correlation(row, channel, ordinal);
+        let weighted = if ordinal == 0 {
+            value.parallel_hand_group_flag = parallel_flag;
+            let sample =
+                SelectedObservationSampleView::from_run(row.row, &row.channels[channel], &value)
+                    .with_input_weight_group(
+                        group.with_terminal_member(row.correlations.len() == 1),
+                    )
+                    .with_row_spectral_geometry(Some(geometry));
+            weights.prepare_sample(problem, sample, frequency, contributions.clone())?
+        } else {
+            prepared[first_prepared]
+                .prepare_group_member(value, ordinal + 1 == row.correlations.len())
+        };
+        prepared.push(weighted);
+    }
     Ok(())
 }

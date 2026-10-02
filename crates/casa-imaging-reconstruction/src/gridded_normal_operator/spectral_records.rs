@@ -3,9 +3,7 @@
 //! Stream complete correlation atoms using two native prediction banks.
 
 use super::*;
-use crate::spectral_operator::accept_polarization_value;
-use crate::weighting::WeightedCorrelationGroup;
-use crate::weighting::WeightingSelectedSample;
+use crate::weighting::{WeightingSampleValue, WeightingSelectedSample};
 use std::ops::Range;
 
 #[derive(Debug, Default)]
@@ -127,17 +125,16 @@ impl GriddedNormalOperatorCompiler {
                         .collect::<SmallVec<[_; 4]>>(),
                 )?;
                 let bank = scratch.next_bank;
-                let linear = self
-                    .specification
-                    .uses_casa_linear_resampling(correlations)?;
                 self.standard_predictions(
-                    WeightedCorrelationGroup::Samples(correlations),
-                    linear,
+                    correlations,
                     operator,
                     &mut scratch.banks[bank],
                     scratch.maximum_native_terms_per_correlation,
                 )?;
-                if linear {
+                if self
+                    .specification
+                    .uses_casa_linear_resampling(correlations)?
+                {
                     let observed = std::iter::repeat_n(Complex64::default(), correlations.len())
                         .collect::<SmallVec<[_; 4]>>();
                     let native = NativeSpectralGroup {
@@ -170,14 +167,52 @@ impl GriddedNormalOperatorCompiler {
                     )?;
                 } else {
                     rows.finish()?;
-                    self.standard_accumulations(
-                        WeightedCorrelationGroup::Samples(correlations),
-                        operator,
-                        bank,
-                        &mut scratch,
-                        emit,
-                        &mut cardinality,
-                    )?;
+                    let flags = correlations
+                        .iter()
+                        .map(|sample| {
+                            accept_polarization_input(sample.selected(), self.finite_values)
+                                .map(|accepted| !accepted)
+                        })
+                        .collect::<Result<SmallVec<[_; 4]>, _>>()?;
+                    let flags = polarization_effective_flags(operator, flags);
+                    let columns = operator.model_coordinates().len();
+                    for (row, flagged) in flags.into_iter().enumerate() {
+                        if flagged {
+                            continue;
+                        }
+                        scratch.atom.clear();
+                        for record in &scratch.banks[bank].records
+                            [scratch.banks[bank].correlations[row].clone()]
+                        {
+                            push_fixed(&mut scratch.atom, *record)?;
+                        }
+                        let prediction_len = scratch.atom.len();
+                        for (ordinal, spectral) in correlations[row].spectral_values().enumerate() {
+                            let contribution = spectral.contribution();
+                            if first
+                                .spectral_values()
+                                .nth(ordinal)
+                                .map(|value| value.contribution())
+                                != Some(contribution)
+                            {
+                                return Err(SpectralOperatorError::InvalidSample);
+                            }
+                            self.append_standard_stencil(
+                                &mut scratch.atom,
+                                first.selected(),
+                                RecordStencil {
+                                    output_channel: usize::try_from(contribution.output_channel())
+                                        .map_err(|_| SpectralOperatorError::InvalidSample)?,
+                                    frequency_hz: contribution.evaluation_frequency_hz(),
+                                    factor: contribution.factor(),
+                                    role: RecordRole::Accumulation,
+                                    imaging_weight: spectral.imaging_weight(),
+                                },
+                                &operator.coefficients()[row * columns..(row + 1) * columns],
+                            )?;
+                        }
+                        emit_atom(&mut scratch.atom, prediction_len, emit, &mut cardinality)?;
+                    }
                 }
             }
             Ok(cardinality)
@@ -189,18 +224,22 @@ impl GriddedNormalOperatorCompiler {
 
     fn standard_predictions(
         &self,
-        correlations: WeightedCorrelationGroup<'_>,
-        linear: bool,
+        correlations: &[WeightingSampleValue],
         operator: &PolarizationOperator,
         bank: &mut NativePredictionBank,
         maximum_native_terms_per_correlation: usize,
     ) -> Result<(), SpectralOperatorError> {
-        let first = correlations.first()?;
+        let first = correlations
+            .first()
+            .ok_or(SpectralOperatorError::InvalidSample)?;
         if correlations.len() > bank.correlations.capacity() {
             return Err(SpectralOperatorError::ResidencyOverflow);
         }
         bank.records.clear();
         bank.correlations.clear();
+        let linear = self
+            .specification
+            .uses_casa_linear_resampling(correlations)?;
         let linear_terms = if linear {
             self.specification.prediction_contributions(first)?
         } else {
@@ -240,112 +279,6 @@ impl GriddedNormalOperatorCompiler {
                 }
             }
             push_fixed(&mut bank.correlations, start..bank.records.len())?;
-        }
-        Ok(())
-    }
-
-    pub(super) fn construct_mfs_record_keys(
-        &mut self,
-        block: &WeightingReplayChunk,
-        emit: &mut impl FnMut(&[ReducedRecordKey]) -> Result<(), SpectralOperatorError>,
-    ) -> Result<GriddedNormalSourceCardinality, SpectralOperatorError> {
-        let mut scratch = std::mem::take(&mut self.standard_scratch);
-        let result = (|| {
-            let mut cardinality = GriddedNormalSourceCardinality::default();
-            for group in block
-                .mfs_groups()
-                .ok_or(SpectralOperatorError::InvalidSample)?
-            {
-                let group = WeightedCorrelationGroup::Mfs(group);
-                let operator = self.specification.direction_independent_polarization(
-                    &group
-                        .correlations()
-                        .map(|value| value.correlation_type)
-                        .collect::<SmallVec<[_; 4]>>(),
-                )?;
-                let bank = scratch.next_bank;
-                self.standard_predictions(
-                    group,
-                    false,
-                    operator,
-                    &mut scratch.banks[bank],
-                    scratch.maximum_native_terms_per_correlation,
-                )?;
-                self.standard_accumulations(
-                    group,
-                    operator,
-                    bank,
-                    &mut scratch,
-                    emit,
-                    &mut cardinality,
-                )?;
-            }
-            Ok(cardinality)
-        })();
-        self.standard_scratch = scratch;
-        result
-    }
-
-    fn standard_accumulations(
-        &self,
-        group: WeightedCorrelationGroup<'_>,
-        operator: &PolarizationOperator,
-        bank: usize,
-        scratch: &mut StandardRecordScratch,
-        emit: &mut impl FnMut(&[ReducedRecordKey]) -> Result<(), SpectralOperatorError>,
-        cardinality: &mut GriddedNormalSourceCardinality,
-    ) -> Result<(), SpectralOperatorError> {
-        let first = group.first()?;
-        let flags = group
-            .correlations()
-            .map(|value| {
-                accept_polarization_value(
-                    value.visibility,
-                    value.input_weight,
-                    first.selected().row_flag || value.channel_flag,
-                    self.finite_values,
-                )
-                .map(|accepted| !accepted)
-            })
-            .collect::<Result<SmallVec<[_; 4]>, _>>()?;
-        let flags = polarization_effective_flags(operator, flags);
-        let columns = operator.model_coordinates().len();
-        for (row, flagged) in flags.into_iter().enumerate() {
-            if flagged {
-                continue;
-            }
-            scratch.atom.clear();
-            for record in
-                &scratch.banks[bank].records[scratch.banks[bank].correlations[row].clone()]
-            {
-                push_fixed(&mut scratch.atom, *record)?;
-            }
-            let prediction_len = scratch.atom.len();
-            for (ordinal, spectral) in group.spectral_values(row).enumerate() {
-                let contribution = spectral.contribution();
-                if first
-                    .spectral_values()
-                    .nth(ordinal)
-                    .map(|value| value.contribution())
-                    != Some(contribution)
-                {
-                    return Err(SpectralOperatorError::InvalidSample);
-                }
-                self.append_standard_stencil(
-                    &mut scratch.atom,
-                    first.selected(),
-                    RecordStencil {
-                        output_channel: usize::try_from(contribution.output_channel())
-                            .map_err(|_| SpectralOperatorError::InvalidSample)?,
-                        frequency_hz: contribution.evaluation_frequency_hz(),
-                        factor: contribution.factor(),
-                        role: RecordRole::Accumulation,
-                        imaging_weight: spectral.imaging_weight(),
-                    },
-                    &operator.coefficients()[row * columns..(row + 1) * columns],
-                )?;
-            }
-            emit_atom(&mut scratch.atom, prediction_len, emit, cardinality)?;
         }
         Ok(())
     }

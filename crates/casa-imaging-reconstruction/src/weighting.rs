@@ -5,13 +5,10 @@
 pub(crate) mod bulk_natural;
 #[path = "streaming_cube/coverage.rs"]
 mod coverage;
-mod mfs_group;
 #[path = "streaming_cube/preparation.rs"]
 pub(crate) mod native_preparation;
 mod spectral_cache;
 pub(super) use coverage::CoverageEncoder;
-pub use mfs_group::MfsWeightingGroup;
-pub(crate) use mfs_group::WeightedCorrelationGroup;
 pub use spectral_cache::WeightingSpectralCache;
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -2656,7 +2653,6 @@ impl WeightingSampleValue {
 pub struct WeightingReplayChunk {
     sequence: u64,
     samples: Vec<WeightingSampleValue>,
-    mfs_groups: Vec<MfsWeightingGroup>,
     coverage: CoverageEncoder,
     previous_checkpoint: [u8; 32],
     checkpoint: [u8; 32],
@@ -2673,7 +2669,6 @@ impl WeightingReplayChunk {
         Self {
             sequence,
             samples,
-            mfs_groups: Vec::new(),
             coverage: coverage.clone(),
             previous_checkpoint: std::mem::replace(previous_checkpoint, checkpoint),
             checkpoint,
@@ -2697,34 +2692,7 @@ impl WeightingReplayChunk {
     /// Return weighted samples in canonical selected-observation order.
     #[must_use]
     pub fn samples(&self) -> &[WeightingSampleValue] {
-        assert!(
-            self.mfs_groups.is_empty(),
-            "grouped MFS chunk is not a scalar replay"
-        );
         &self.samples
-    }
-
-    /// Number of selected correlations, independent of the storage representation.
-    #[must_use]
-    pub fn sample_count(&self) -> usize {
-        self.samples.len()
-            + self
-                .mfs_groups
-                .iter()
-                .map(MfsWeightingGroup::len)
-                .sum::<usize>()
-    }
-
-    /// Borrow the shared-metadata MFS groups, if this is a numeric ingress chunk.
-    #[doc(hidden)]
-    pub fn mfs_groups(&self) -> Option<&[MfsWeightingGroup]> {
-        (!self.mfs_groups.is_empty()).then_some(&self.mfs_groups)
-    }
-
-    /// Return the synchronously consumed group allocation for refill.
-    #[doc(hidden)]
-    pub fn into_mfs_groups(self) -> Vec<MfsWeightingGroup> {
-        self.mfs_groups
     }
 
     /// Iterate complete row/channel correlation groups in canonical source order.
