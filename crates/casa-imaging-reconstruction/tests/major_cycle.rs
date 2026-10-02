@@ -2737,7 +2737,7 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
             assert!(actual_workspace.worker_bytes() <= planned_workspace.worker_bytes());
             assert!(actual_workspace.retained_bytes() <= planned_workspace.retained_bytes());
             assert!(matches!(
-                work.execute_plane(&work.prepare_plane(0).unwrap()),
+                work.execute_plane(&work.prepare_plane(0).unwrap(), 1),
                 Err(casa_imaging_reconstruction::ReconstructionCycleError::InvalidPlaneCoverage)
             ));
             for start in (0..work.threshold_plane_count()).step_by(workers) {
@@ -2766,7 +2766,7 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
                     let work = &work;
                     inputs
                         .into_iter()
-                        .map(|input| scope.spawn(move || work.execute_plane(&input)))
+                        .map(|input| scope.spawn(move || work.execute_plane(&input, 1)))
                         .collect::<Vec<_>>()
                         .into_iter()
                         .map(|worker| worker.join().expect("plane worker").expect("plane solve"))
@@ -2818,7 +2818,7 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
             work.commit_statistics(statistics).unwrap();
         }
         let out_of_order = work
-            .execute_plane(&work.prepare_plane(1).unwrap())
+            .execute_plane(&work.prepare_plane(1).unwrap(), 1)
             .expect("second plane");
         assert!(matches!(
             work.commit_plane(out_of_order),
@@ -2839,19 +2839,21 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
         }
         let foreign_input = other_work.prepare_plane(0).unwrap();
         assert!(matches!(
-            work.execute_plane(&foreign_input),
+            work.execute_plane(&foreign_input, 1),
             Err(InvalidPlaneCoverage)
         ));
         let foreign = other_work
-            .execute_plane(&foreign_input)
+            .execute_plane(&foreign_input, 1)
             .expect("foreign partial");
         assert!(matches!(
             work.commit_plane(foreign),
             Err(InvalidPlaneCoverage)
         ));
         let input = work.prepare_plane(0).unwrap();
-        let first = work.execute_plane(&input).expect("first plane");
-        let duplicate = work.execute_plane(&input).expect("duplicate first plane");
+        let first = work.execute_plane(&input, 1).expect("first plane");
+        let duplicate = work
+            .execute_plane(&input, 1)
+            .expect("duplicate first plane");
         work.commit_plane(first).expect("first commit");
         assert!(matches!(
             work.commit_plane(duplicate),

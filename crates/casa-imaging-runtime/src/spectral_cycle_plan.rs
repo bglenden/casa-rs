@@ -56,6 +56,25 @@ fn bounded_worker_stack_bytes(workers: u64) -> Result<u64, SpectralCyclePlanErro
         .ok_or(SpectralCyclePlanError::Overflow)
 }
 
+fn native_fft_pool_stack_bytes(
+    problem: &CompiledProblem,
+    policy: &SpectralCycleExecutionPolicy,
+) -> Result<u64, SpectralCyclePlanError> {
+    if !ReconstructionPlaneWorkspace::for_problem(problem)
+        .map_err(SpectralCyclePlanError::Minor)?
+        .is_some_and(ReconstructionPlaneWorkspace::parallel_fft)
+    {
+        return Ok(0);
+    }
+    let workers = policy
+        .authority
+        .planning_worker_capacity(&policy.resource_policy)?;
+    crate::reconstruction_executor::native_fft_stack_bytes(
+        usize::try_from(workers).map_err(|_| SpectralCyclePlanError::Overflow)?,
+    )
+    .map_err(SpectralCyclePlanError::MinorWorkspace)
+}
+
 /// Explicit non-scientific limits for one spectral cycle physical plan.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SpectralCyclePlanningLimits {
@@ -2125,7 +2144,10 @@ pub(crate) fn base_physical<R: ImplementationRegistry>(
                 },
             ],
             workers: CountDemand::new(1, 1),
-            overhead: RuntimeOverheadDemand::zero(),
+            overhead: RuntimeOverheadDemand {
+                external_library_bytes: native_fft_pool_stack_bytes(problem, policy)?,
+                ..RuntimeOverheadDemand::zero()
+            },
             storage: vec![StorageDemand {
                 demand_id: output_storage_id,
                 domain: policy.storage_io.domain().clone(),
@@ -2258,7 +2280,7 @@ struct GriddedReplayPlanning<'a> {
 }
 
 fn base_gridded_physical<R: ImplementationRegistry>(
-    _problem: &CompiledProblem,
+    problem: &CompiledProblem,
     registry: &R,
     policy: &SpectralCycleExecutionPolicy,
     pass: SpectralPassIdentity,
@@ -2421,6 +2443,7 @@ fn base_gridded_physical<R: ImplementationRegistry>(
             workers: CountDemand::new(maximum_workers, maximum_workers),
             overhead: RuntimeOverheadDemand {
                 thread_stack_bytes: worker_stack_bytes,
+                external_library_bytes: native_fft_pool_stack_bytes(problem, policy)?,
                 ..RuntimeOverheadDemand::zero()
             },
             storage: vec![StorageDemand {
@@ -3530,14 +3553,13 @@ impl MinorCycleResources {
                 stack_bytes: 0,
             });
         };
-        let workers = workers.min(workspace.plane_count() as u64);
         let plan = crate::reconstruction_executor::PlaneExecutionPlan::new(
             workspace,
             usize::try_from(workers).map_err(|_| SpectralCyclePlanError::Overflow)?,
         )
         .map_err(SpectralCyclePlanError::MinorWorkspace)?;
         Ok(Self {
-            workers,
+            workers: plan.workers as u64,
             heap_bytes: plan.heap_bytes,
             stack_bytes: plan.stack_bytes,
         })

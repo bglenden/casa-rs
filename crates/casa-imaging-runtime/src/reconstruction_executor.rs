@@ -23,40 +23,89 @@ pub(crate) struct PlaneExecutionPlan {
     kernel: BoundedKernelPlan,
     pub(crate) heap_bytes: u64,
     pub(crate) stack_bytes: u64,
+    pub(crate) workers: usize,
+    fft_threads: usize,
+}
+
+/// FFTW's pthread pool can survive between phases, so its default stack bound
+/// is also reserved as process-lifetime external-library overhead by planning.
+pub(crate) fn native_fft_stack_bytes(threads: usize) -> io::Result<u64> {
+    if threads <= 1 {
+        return Ok(0);
+    }
+    #[cfg(unix)]
+    {
+        let mut attributes = std::mem::MaybeUninit::<libc::pthread_attr_t>::uninit();
+        let mut stack_bytes = 0;
+        // A null pthread_create attribute uses the same platform defaults.
+        let status = unsafe { libc::pthread_attr_init(attributes.as_mut_ptr()) };
+        if status != 0 {
+            return Err(io::Error::from_raw_os_error(status));
+        }
+        let mut attributes = unsafe { attributes.assume_init() };
+        let status = unsafe { libc::pthread_attr_getstacksize(&attributes, &mut stack_bytes) };
+        let destroyed = unsafe { libc::pthread_attr_destroy(&mut attributes) };
+        if status != 0 || destroyed != 0 {
+            return Err(io::Error::from_raw_os_error(if status != 0 {
+                status
+            } else {
+                destroyed
+            }));
+        }
+        ((threads - 1) as u64)
+            .checked_mul(stack_bytes as u64)
+            .ok_or_else(|| io::Error::other("native FFT stack overflow"))
+    }
+    #[cfg(not(unix))]
+    {
+        Err(io::Error::other(
+            "native FFT stack admission is unavailable",
+        ))
+    }
 }
 
 impl PlaneExecutionPlan {
     pub(crate) fn new(workspace: ReconstructionPlaneWorkspace, workers: usize) -> io::Result<Self> {
+        let fft_threads = if workspace.parallel_fft() { workers } else { 1 };
+        let plane_workers = workers.min(workspace.plane_count());
         let dynamic_bytes = workspace
             .worker_bytes()
-            .checked_mul(workers as u64)
+            .checked_mul(plane_workers as u64)
             .ok_or_else(|| io::Error::other("plane workspace overflow"))?;
         let partitions = workspace
             .plane_count()
             .checked_mul(if workspace.plane_count() == 1 { 1 } else { 2 })
             .ok_or_else(|| io::Error::other("plane partition count overflow"))?;
         let kernel = BoundedKernelPlan::new::<PlanePartition<'_>, PlanePartial<'_>>(
-            workers,
+            plane_workers,
             partitions,
             dynamic_bytes,
         )
         .map_err(|error| io::Error::other(format!("invalid plane kernel plan: {error:?}")))?;
-        let stack_bytes = if workers == 1 {
+        let plane_stack_bytes = if plane_workers == 1 {
             0
         } else {
-            (workers as u64)
+            (plane_workers as u64)
                 .checked_mul(BOUNDED_WORKER_STACK_BYTES as u64)
                 .ok_or_else(|| io::Error::other("plane worker stack overflow"))?
         };
         let heap_bytes = kernel
             .capacity_bytes()
-            .checked_sub(stack_bytes)
+            .checked_sub(plane_stack_bytes)
             .and_then(|bytes| bytes.checked_add(workspace.retained_bytes()))
             .ok_or_else(|| io::Error::other("plane collection workspace overflow"))?;
         Ok(Self {
             kernel,
             heap_bytes,
-            stack_bytes,
+            stack_bytes: plane_stack_bytes
+                .checked_add(native_fft_stack_bytes(fft_threads)?)
+                .ok_or_else(|| io::Error::other("plane FFT stack overflow"))?,
+            workers: if workspace.parallel_fft() {
+                workers
+            } else {
+                plane_workers
+            },
+            fft_threads,
         })
     }
 }
@@ -100,6 +149,15 @@ pub(crate) fn execute(
             "plane solve exceeds its admitted memory capabilities",
         ));
     }
+    if std::env::var_os("CASA_RS_TRACE_IMAGING_STAGE_TIMING").is_some() {
+        eprintln!(
+            "imaging_minor_cycle_execution_budget admitted_workers={} plane_workers={} fft_threads={} native_stack_bytes={}",
+            workers,
+            workspace.plane_count().min(workers as usize),
+            plan.fft_threads,
+            native_fft_stack_bytes(plan.fft_threads)?
+        );
+    }
     match execute_bounded_resident(
         plan.kernel,
         pass,
@@ -107,6 +165,7 @@ pub(crate) fn execute(
         PlaneKernel {
             work,
             worker_bytes: workspace.worker_bytes(),
+            fft_threads: plan.fft_threads,
         },
     ) {
         Ok(outcome) => {
@@ -126,6 +185,7 @@ pub(crate) fn execute(
 struct PlaneKernel<'a> {
     work: ReconstructionPlaneWork<'a>,
     worker_bytes: u64,
+    fft_threads: usize,
 }
 
 enum PlanePartition<'a> {
@@ -190,7 +250,10 @@ impl<'a> PartitionedKernel<()> for PlaneKernel<'a> {
                 .work
                 .plane_statistics(*ordinal)
                 .map(PlanePartial::Statistics),
-            PlanePartition::Solve(input) => self.work.execute_plane(input).map(PlanePartial::Solve),
+            PlanePartition::Solve(input) => self
+                .work
+                .execute_plane(input, self.fft_threads)
+                .map(PlanePartial::Solve),
         }
     }
 
@@ -219,5 +282,174 @@ impl<'a> PartitionedKernel<()> for PlaneKernel<'a> {
         _execution: crate::bounded_stream::BoundedExecution<'_>,
     ) -> Result<Self::Completion, Self::Error> {
         self.work.finish()
+    }
+}
+
+#[cfg(test)]
+#[path = "../../casa-imaging-model/tests/common/mod.rs"]
+#[allow(dead_code, clippy::duplicate_mod)]
+mod model_fixture;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use casa_imaging_model::*;
+    use casa_imaging_reconstruction::runtime_adapter::ReconstructionPlaneWorkspace;
+
+    use super::model_fixture;
+    use crate::complete_data_parallel_mfs_tests::geometry_with_facets;
+
+    fn compiled_problem(channels: usize, algorithm: ReconstructionAlgorithm) -> CompiledProblem {
+        let geometry =
+            geometry_with_facets(FacetLayout::Single).with_spectral(SpectralCoordinateSpec::new(
+                FrequencyFrame::Topocentric,
+                FrequencyFrame::Topocentric,
+                SpectralFrameAnchor::NotApplicable,
+                SpectralWcs::Linear {
+                    channels,
+                    reference_pixel: 0.0,
+                    reference_frequency_hz: 1.4e9,
+                    increment_hz: 1.0e6,
+                },
+                RestFrequency::NotApplicable,
+                DopplerConvention::NotApplicable,
+            ));
+        let validity = ProductValidityPolicies::new(
+            PrimaryBeamValidityPolicy::new(
+                0.2,
+                ProductSupportComparison::StrictlyGreater,
+                ProductBlankingPolicy::Zero,
+            )
+            .unwrap(),
+            TaylorValidityPolicy::new(
+                TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
+                0.1,
+                ProductSupportComparison::StrictlyGreater,
+                ProductBlankingPolicy::Zero,
+            )
+            .unwrap(),
+        );
+        let basis = if channels == 1 {
+            ReconstructionBasis::Constant
+        } else {
+            ReconstructionBasis::ChannelLocal { channels }
+        };
+        let specification = ProblemSpecification::new(
+            ScientificContract::new(
+                SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
+                MeasurementEquationContract::new(
+                    InstrumentResponse::Scalar,
+                    DeclaredInnerProducts::new(
+                        ModelInnerProduct::HermitianEuclidean,
+                        VisibilityInnerProduct::HermitianEuclidean,
+                    ),
+                ),
+            ),
+            ReconstructionContract::new(
+                basis,
+                algorithm,
+                ReconstructionControls::new(8, 0.1, 0.0),
+                PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+            ),
+            WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+            ProductRequirements::new(
+                vec![ProductKind::Psf],
+                ProductNormalization::UnitResponse,
+                RestoringBeamPolicy::None,
+                validity,
+            ),
+            ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
+            NumericsContract::new(
+                vec![NumericPrecision::F64],
+                ReductionPolicy::Compensated,
+                FiniteValuePolicy::FlagInputRejectGenerated,
+                NumericalStage::ALL
+                    .into_iter()
+                    .map(|stage| (stage, StageErrorBudget::new(1.0e-7, 1.0e-3)))
+                    .collect(),
+            ),
+        );
+        compile(ImagingRequest::new(
+            specification,
+            geometry,
+            model_fixture::problem_inputs(1, Vec::new(), ModelStateIdentity::Empty),
+            ModelLifecycleRequirements::new(
+                ModelBounds::new(
+                    10_000_000, 10_000_000, 10_000_000, 10_000_000, 1.0e30, 1.0e30,
+                )
+                .unwrap(),
+                NumericPrecision::F64,
+                ModelInputCommitment::Empty,
+            ),
+        ))
+        .unwrap()
+    }
+
+    fn plane_workspace(
+        channels: usize,
+        algorithm: ReconstructionAlgorithm,
+    ) -> ReconstructionPlaneWorkspace {
+        ReconstructionPlaneWorkspace::for_problem(&compiled_problem(channels, algorithm))
+            .unwrap()
+            .expect("independent reconstruction planes")
+    }
+
+    #[cfg(unix)]
+    fn default_pthread_stack_bytes() -> u64 {
+        let mut attributes = std::mem::MaybeUninit::<libc::pthread_attr_t>::uninit();
+        let initialized = unsafe { libc::pthread_attr_init(attributes.as_mut_ptr()) };
+        assert_eq!(initialized, 0);
+        let mut attributes = unsafe { attributes.assume_init() };
+        let mut stack_bytes = 0;
+        let queried = unsafe { libc::pthread_attr_getstacksize(&attributes, &mut stack_bytes) };
+        let destroyed = unsafe { libc::pthread_attr_destroy(&mut attributes) };
+        assert_eq!(queried, 0);
+        assert_eq!(destroyed, 0);
+        stack_bytes as u64
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn one_plane_clark_uses_admitted_workers_for_fft_and_reserves_native_stacks() {
+        let workspace = plane_workspace(1, ReconstructionAlgorithm::Clark);
+        let serial = PlaneExecutionPlan::new(workspace, 1).unwrap();
+        let pthread_stack_bytes = default_pthread_stack_bytes();
+
+        for workers in [1, 4, 8] {
+            let plan = PlaneExecutionPlan::new(workspace, workers).unwrap();
+            let expected_native_stack = (workers as u64 - 1) * pthread_stack_bytes;
+
+            assert_eq!(plan.workers, workers);
+            assert_eq!(plan.fft_threads, workers);
+            assert_eq!(plan.heap_bytes, serial.heap_bytes);
+            assert_eq!(
+                native_fft_stack_bytes(workers).unwrap(),
+                expected_native_stack
+            );
+            assert_eq!(plan.stack_bytes, expected_native_stack);
+        }
+    }
+
+    #[test]
+    fn multi_plane_clark_keeps_native_ffts_single_threaded_under_outer_parallelism() {
+        let workspace = plane_workspace(4, ReconstructionAlgorithm::Clark);
+        let plan = PlaneExecutionPlan::new(workspace, 8).unwrap();
+
+        assert_eq!(plan.workers, 4);
+        assert_eq!(plan.fft_threads, 1);
+        assert_eq!(native_fft_stack_bytes(plan.fft_threads).unwrap(), 0);
+        assert_eq!(plan.stack_bytes, 4 * BOUNDED_WORKER_STACK_BYTES as u64,);
+    }
+
+    #[test]
+    fn one_plane_hogbom_does_not_claim_admitted_workers_for_native_fft() {
+        let workspace = plane_workspace(1, ReconstructionAlgorithm::Hogbom);
+        let serial = PlaneExecutionPlan::new(workspace, 1).unwrap();
+        let plan = PlaneExecutionPlan::new(workspace, 4).unwrap();
+
+        assert_eq!(plan.workers, 1);
+        assert_eq!(plan.fft_threads, 1);
+        assert_eq!(plan.heap_bytes, serial.heap_bytes);
+        assert_eq!(plan.stack_bytes, 0);
     }
 }

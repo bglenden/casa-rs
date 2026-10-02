@@ -480,7 +480,7 @@ impl ReconstructionCycle {
         }
         for ordinal in 0..work.plane_count() {
             let input = work.prepare_plane(ordinal)?;
-            let partial = work.execute_plane(&input)?;
+            let partial = work.execute_plane(&input, 1)?;
             work.commit_plane(partial)?;
         }
         work.finish()
@@ -635,6 +635,7 @@ pub struct ReconstructionPlaneWorkspace {
     planes: usize,
     worker_bytes: u64,
     retained_bytes: u64,
+    parallel_fft: bool,
 }
 
 impl ReconstructionPlaneWorkspace {
@@ -716,6 +717,12 @@ impl ReconstructionPlaneWorkspace {
                 .saturating_add(normal_bytes)
                 .max(threshold_bytes),
             retained_bytes,
+            parallel_fft: cfg!(unix)
+                && planes == 1
+                && matches!(
+                    program.algorithm(),
+                    casa_imaging_model::ReconstructionAlgorithm::Clark
+                ),
         }
     }
 
@@ -723,6 +730,13 @@ impl ReconstructionPlaneWorkspace {
     #[must_use]
     pub const fn plane_count(self) -> usize {
         self.planes
+    }
+
+    /// A single Clark solve may spend its worker budget inside the native FFT.
+    /// Unix exposes the default pthread stack envelope needed for admission.
+    #[doc(hidden)]
+    pub const fn parallel_fft(self) -> bool {
+        self.parallel_fft
     }
 
     /// Heap envelope for each concurrently executing or pending plane partial.
@@ -847,13 +861,17 @@ impl<'a> ReconstructionPlaneWork<'a> {
         })
     }
 
-    /// Acquire bounded read-only fields and run the existing solver on this worker.
+    /// Acquire bounded fields and run the shared solver. `fft_threads` must fit
+    /// the caller's admitted CPU and native-stack budget; multi-plane solves use one.
     pub fn execute_plane(
         &self,
         input: &ReconstructionPlaneInput<'a>,
+        fft_threads: usize,
     ) -> Result<ReconstructionPlanePartial<'a>, ReconstructionCycleError> {
         if !self.binding.same_inputs(input.binding)
             || self.threshold_planes != self.threshold_plane_count()
+            || fft_threads == 0
+            || (fft_threads != 1 && !self.workspace().parallel_fft())
         {
             return Err(ReconstructionCycleError::InvalidPlaneCoverage);
         }
@@ -874,6 +892,7 @@ impl<'a> ReconstructionPlaneWork<'a> {
             let mut program = cycle
                 .program
                 .clone()
+                .with_fft_threads(fft_threads)
                 .with_fixed_cycle_threshold(self.shared_cycle_threshold)
                 .on_model_plane(MinorCycleModelPlane::new(0, channel, polarization));
             if self.plane_count == 1 {

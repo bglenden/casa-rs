@@ -195,6 +195,9 @@ impl InitialPlaneBatch {
             if chart != 0 || polarization != 0 {
                 return Err(SpectralOperatorError::InvalidSample);
             }
+            if !operator.slab.owns(sample.output_channel) {
+                return Ok(());
+            }
             return mfs.push(operator, sample);
         }
         if polarization >= operator.polarization_count {

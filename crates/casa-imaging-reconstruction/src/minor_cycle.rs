@@ -290,6 +290,7 @@ pub struct MinorCycleProgram {
     maximum_condition_number: Option<f64>,
     image_response: Option<crate::MinorCycleImageResponse>,
     requires_image_response: bool,
+    fft_threads: usize,
 }
 
 /// Validity of the reconstruction-owned normal-state view used by one solve.
@@ -537,6 +538,7 @@ impl MinorCycleProgram {
             maximum_condition_number: None,
             image_response: None,
             requires_image_response: false,
+            fft_threads: 1,
         })
     }
 
@@ -544,6 +546,11 @@ impl MinorCycleProgram {
     #[must_use]
     pub const fn algorithm(&self) -> &ReconstructionAlgorithm {
         &self.algorithm
+    }
+
+    pub(crate) const fn with_fft_threads(mut self, threads: usize) -> Self {
+        self.fft_threads = threads;
+        self
     }
 
     /// Select the typed model plane updated by this shared solver loop.
@@ -2657,6 +2664,7 @@ pub(crate) fn run_minor_cycle_plane(
                 psf_peak,
                 approximation,
                 effective_threshold,
+                controls.fft_threads,
                 |pixel| mask.contains(pixel) && valid_support(base, shape, model_plane, pixel),
             )
         })

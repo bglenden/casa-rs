@@ -518,6 +518,12 @@ impl<T: FftScalar> RealFft2<T> {
         Self::from_fft(Fft2::with_threads(shape, threads)?)
     }
 
+    /// Use FFTW's inexpensive planning policy for a bounded transform sequence.
+    pub fn with_estimated_plan(mut self) -> Self {
+        self.fft = self.fft.with_estimated_plan();
+        self
+    }
+
     fn from_fft(mut fft: Fft2<T>) -> Result<Self, FftError> {
         fft.elements = fft.shape[0]
             .checked_mul(fft.shape[1] / 2 + 1)

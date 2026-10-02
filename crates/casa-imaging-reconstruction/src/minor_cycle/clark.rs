@@ -22,7 +22,12 @@ struct LinearRefresh {
 }
 
 impl LinearRefresh {
-    fn new(psf: &[f32], shape: [usize; 2], center: [usize; 2]) -> Result<Self, MinorCycleError> {
+    fn new(
+        psf: &[f32],
+        shape: [usize; 2],
+        center: [usize; 2],
+        threads: usize,
+    ) -> Result<Self, MinorCycleError> {
         let padded_axis = |axis: usize| {
             let extent = shape[axis];
             let origin = center[axis];
@@ -43,7 +48,7 @@ impl LinearRefresh {
             Ok::<_, MinorCycleError>(positive_tail.max(negative_tail))
         };
         let padded = [padded_axis(0)?, padded_axis(1)?];
-        Self::with_padded(psf, shape, center, padded)
+        Self::with_padded(psf, shape, center, padded, threads)
     }
 
     fn with_padded(
@@ -51,9 +56,13 @@ impl LinearRefresh {
         shape: [usize; 2],
         center: [usize; 2],
         padded: [usize; 2],
+        threads: usize,
     ) -> Result<Self, MinorCycleError> {
-        let mut fft =
-            RealFft2::new(padded).map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
+        let mut fft = RealFft2::with_threads(padded, threads)
+            .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
+        if threads > 1 {
+            fft = fft.with_estimated_plan();
+        }
         let mut psf_spectrum = vec![Complex32::default(); fft.storage_len()];
         let real_psf: &mut [f32] = bytemuck::cast_slice_mut(&mut psf_spectrum);
         let row_stride = fft.real_row_stride();
@@ -141,6 +150,7 @@ impl ClarkWorkState {
         normalization: f64,
         approximation: ClarkApproximation,
         threshold: f64,
+        fft_threads: usize,
         accept: impl Fn([usize; 2]) -> bool,
     ) -> Result<Self, MinorCycleError> {
         let mut max_residual = 0.0_f64;
@@ -160,7 +170,7 @@ impl ClarkWorkState {
         } else {
             usize::MAX
         };
-        let convolution = LinearRefresh::new(psf, shape, psf_peak)?;
+        let convolution = LinearRefresh::new(psf, shape, psf_peak, fft_threads)?;
         let mut state = Self {
             shape,
             psf_peak,
@@ -361,6 +371,7 @@ mod tests {
                 maximum_exterior_sidelobe: 0.0,
             },
             0.1,
+            1,
             accept,
         )
         .unwrap();
@@ -381,12 +392,15 @@ mod tests {
 
     #[test]
     fn compact_refresh_matches_linear_asymmetric_psf_at_edges_and_off_center() {
-        for (shape, center) in [
+        for (shape, center, threads) in [
             ([4, 6], [2, 3]),
             ([5, 7], [2, 3]),
             ([6, 5], [1, 3]),
             ([5, 4], [0, 1]),
-        ] {
+        ]
+        .into_iter()
+        .flat_map(|(shape, center)| [1, 4].map(|threads| (shape, center, threads)))
+        {
             let psf = (0..shape[0] * shape[1])
                 .map(|index| {
                     let x = index / shape[1];
@@ -394,7 +408,7 @@ mod tests {
                     (x as f64 * 0.17 + y as f64 * 0.11).sin() as f32
                 })
                 .collect::<Vec<_>>();
-            let mut refresh = LinearRefresh::new(&psf, shape, center).unwrap();
+            let mut refresh = LinearRefresh::new(&psf, shape, center, threads).unwrap();
             let half_cells = refresh.padded[0] * (refresh.padded[1] / 2 + 1);
             assert_eq!(refresh.psf_spectrum.len(), half_cells);
             assert_eq!(refresh.components.len(), half_cells);
@@ -455,7 +469,7 @@ mod tests {
                     let center = [center_x, center_y];
                     for source_x in [0, shape[0] - 1] {
                         for source_y in [0, shape[1] - 1] {
-                            let mut refresh = LinearRefresh::new(&psf, shape, center).unwrap();
+                            let mut refresh = LinearRefresh::new(&psf, shape, center, 1).unwrap();
                             refresh.add(source_x * shape[1] + source_y, 0.625);
                             let mut actual = vec![0.0; psf.len()];
                             refresh.refresh(&mut actual).unwrap();
@@ -503,7 +517,7 @@ mod tests {
             .collect::<Vec<_>>();
         let run = |padded| {
             let start = Instant::now();
-            let mut refresh = LinearRefresh::with_padded(&psf, shape, center, padded).unwrap();
+            let mut refresh = LinearRefresh::with_padded(&psf, shape, center, padded, 1).unwrap();
             let setup = start.elapsed();
             for index in [0, shape[1] - 1, psf.len() / 2, psf.len() - 1] {
                 refresh.add(index, 0.25);
