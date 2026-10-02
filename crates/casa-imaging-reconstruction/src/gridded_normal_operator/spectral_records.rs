@@ -104,6 +104,13 @@ struct InterpolatedPredictions {
     factors: [f64; 2],
 }
 
+#[derive(Clone, Copy)]
+struct ProjectedStencil {
+    chart_ordinal: u32,
+    taps: u64,
+    forward: Complex64,
+}
+
 impl GriddedNormalOperatorCompiler {
     pub(super) fn construct_standard_record_keys(
         &mut self,
@@ -112,6 +119,7 @@ impl GriddedNormalOperatorCompiler {
     ) -> Result<GriddedNormalSourceCardinality, SpectralOperatorError> {
         let mut scratch = std::mem::take(&mut self.standard_scratch);
         let mut rows = std::mem::replace(&mut self.linear_rows, CasaLinearRowResampler::new());
+        let shared_mfs_stencil = self.specification.supports_bulk_mfs();
         let result = (|| {
             let mut cardinality = GriddedNormalSourceCardinality::default();
             for correlations in block.correlation_groups() {
@@ -124,6 +132,16 @@ impl GriddedNormalOperatorCompiler {
                         .map(|sample| sample.selected().address().correlation_type)
                         .collect::<SmallVec<[_; 4]>>(),
                 )?;
+                if shared_mfs_stencil {
+                    self.construct_mfs_group_keys(
+                        correlations,
+                        operator,
+                        &mut scratch.atom,
+                        emit,
+                        &mut cardinality,
+                    )?;
+                    continue;
+                }
                 let bank = scratch.next_bank;
                 self.standard_predictions(
                     correlations,
@@ -283,6 +301,76 @@ impl GriddedNormalOperatorCompiler {
         Ok(())
     }
 
+    fn construct_mfs_group_keys(
+        &self,
+        correlations: &[WeightingSampleValue],
+        operator: &PolarizationOperator,
+        atom: &mut Vec<ReducedRecordKey>,
+        emit: &mut impl FnMut(&[ReducedRecordKey]) -> Result<(), SpectralOperatorError>,
+        cardinality: &mut GriddedNormalSourceCardinality,
+    ) -> Result<(), SpectralOperatorError> {
+        let first = correlations
+            .first()
+            .ok_or(SpectralOperatorError::InvalidSample)?;
+        let mut spectral = first.spectral_values();
+        let contribution = spectral
+            .next()
+            .ok_or(SpectralOperatorError::InvalidSample)?
+            .contribution();
+        if spectral.next().is_some() {
+            return Err(SpectralOperatorError::InvalidSample);
+        }
+        let stencil = RecordStencil {
+            output_channel: usize::try_from(contribution.output_channel())
+                .map_err(|_| SpectralOperatorError::InvalidSample)?,
+            frequency_hz: contribution.evaluation_frequency_hz(),
+            factor: contribution.factor(),
+            role: RecordRole::Both,
+            imaging_weight: 0.0,
+        };
+        self.validate_standard_stencil(stencil)?;
+        // Bulk MFS has one chart and one contribution shared by every lane.
+        let projected = self.project_chart_stencil(first.selected(), stencil, 0)?;
+        let flags = correlations
+            .iter()
+            .map(|sample| {
+                accept_polarization_input(sample.selected(), self.finite_values)
+                    .map(|accepted| !accepted)
+            })
+            .collect::<Result<SmallVec<[_; 4]>, _>>()?;
+        let flags = polarization_effective_flags(operator, flags);
+        let columns = operator.model_coordinates().len();
+        for (row, flagged) in flags.into_iter().enumerate() {
+            let mut spectral = correlations[row].spectral_values();
+            let weight = spectral
+                .next()
+                .ok_or(SpectralOperatorError::InvalidSample)?;
+            if weight.contribution() != contribution || spectral.next().is_some() {
+                return Err(SpectralOperatorError::InvalidSample);
+            }
+            if flagged || weight.imaging_weight() == 0.0 {
+                continue;
+            }
+            let Some(projected) = &projected else {
+                continue;
+            };
+            atom.clear();
+            append_projected_stencil(
+                atom,
+                projected,
+                &operator.coefficients()[row * columns..(row + 1) * columns],
+                contribution.output_channel() as usize,
+                self.specification.polarization_count(),
+                weight.imaging_weight(),
+                RecordRole::Both,
+            )?;
+            if !atom.is_empty() {
+                emit_records(atom, emit, cardinality)?;
+            }
+        }
+        Ok(())
+    }
+
     fn resampled_record_groups(
         &self,
         resampled: CasaResampledGroup<InterpolatedPredictions>,
@@ -351,6 +439,27 @@ impl GriddedNormalOperatorCompiler {
         if stencil.role == RecordRole::Accumulation && stencil.imaging_weight == 0.0 {
             return Ok(());
         }
+        self.validate_standard_stencil(stencil)?;
+        for chart in 0..self.specification.chart_count() {
+            if let Some(projected) = self.project_chart_stencil(selected, stencil, chart)? {
+                append_projected_stencil(
+                    records,
+                    &projected,
+                    coefficients,
+                    stencil.output_channel,
+                    self.specification.polarization_count(),
+                    stencil.imaging_weight,
+                    stencil.role,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_standard_stencil(
+        &self,
+        stencil: RecordStencil,
+    ) -> Result<(), SpectralOperatorError> {
         if stencil.output_channel >= self.specification.slab().total_channels()
             || !stencil.frequency_hz.is_finite()
             || stencil.frequency_hz <= 0.0
@@ -359,48 +468,70 @@ impl GriddedNormalOperatorCompiler {
         {
             return Err(SpectralOperatorError::InvalidSample);
         }
-        for (chart_ordinal, chart) in self.specification.charts().iter().enumerate() {
-            let (uvw_m, phase_shift_m) = selected_model_projection(
-                selected,
-                self.specification.chart_count(),
-                chart.domain_ordinal(),
-                chart.facet_ordinal(),
-            )?;
-            let scale = stencil.frequency_hz / SPEED_OF_LIGHT_M_PER_S;
-            let Some(taps) = self.gridders[chart_ordinal].taps(uvw_m.map(|value| value * scale))
-            else {
-                continue;
-            };
-            let phase = std::f64::consts::TAU * phase_shift_m * scale;
-            for (polarization, coefficient) in coefficients.iter().copied().enumerate() {
-                if coefficient == Complex64::default() {
-                    continue;
-                }
-                let forward = Complex64::from_polar(stencil.factor, -phase) * coefficient;
-                let output_plane = stencil
-                    .output_channel
-                    .checked_mul(self.specification.polarization_count())
-                    .and_then(|value| value.checked_add(polarization))
-                    .and_then(|value| u32::try_from(value).ok())
-                    .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-                push_fixed(
-                    records,
-                    ReducedRecordKey {
-                        chart_ordinal: u32::try_from(chart_ordinal)
-                            .map_err(|_| SpectralOperatorError::ResidencyOverflow)?,
-                        output_channel: output_plane,
-                        taps: encode_taps(taps)?,
-                        forward_real: canonical_zero_bits(forward.re),
-                        forward_imaginary: canonical_zero_bits(forward.im),
-                        imaging_weight: canonical_zero_bits(stencil.imaging_weight),
-                        role: stencil.role,
-                        aw: None,
-                    },
-                )?;
-            }
-        }
         Ok(())
     }
+
+    fn project_chart_stencil(
+        &self,
+        selected: &WeightingSelectedSample,
+        stencil: RecordStencil,
+        chart_ordinal: usize,
+    ) -> Result<Option<ProjectedStencil>, SpectralOperatorError> {
+        let chart = &self.specification.charts()[chart_ordinal];
+        let (uvw_m, phase_shift_m) = selected_model_projection(
+            selected,
+            self.specification.chart_count(),
+            chart.domain_ordinal(),
+            chart.facet_ordinal(),
+        )?;
+        let scale = stencil.frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+        let Some(taps) = self.gridders[chart_ordinal].taps(uvw_m.map(|value| value * scale)) else {
+            return Ok(None);
+        };
+        let phase = std::f64::consts::TAU * phase_shift_m * scale;
+        Ok(Some(ProjectedStencil {
+            chart_ordinal: u32::try_from(chart_ordinal)
+                .map_err(|_| SpectralOperatorError::ResidencyOverflow)?,
+            taps: encode_taps(taps)?,
+            forward: Complex64::from_polar(stencil.factor, -phase),
+        }))
+    }
+}
+
+fn append_projected_stencil(
+    records: &mut Vec<ReducedRecordKey>,
+    stencil: &ProjectedStencil,
+    coefficients: &[Complex64],
+    output_channel: usize,
+    polarizations: usize,
+    imaging_weight: f64,
+    role: RecordRole,
+) -> Result<(), SpectralOperatorError> {
+    for (polarization, coefficient) in coefficients.iter().copied().enumerate() {
+        if coefficient == Complex64::default() {
+            continue;
+        }
+        let forward = stencil.forward * coefficient;
+        let output_plane = output_channel
+            .checked_mul(polarizations)
+            .and_then(|value| value.checked_add(polarization))
+            .and_then(|value| u32::try_from(value).ok())
+            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+        push_fixed(
+            records,
+            ReducedRecordKey {
+                chart_ordinal: stencil.chart_ordinal,
+                output_channel: output_plane,
+                taps: stencil.taps,
+                forward_real: canonical_zero_bits(forward.re),
+                forward_imaginary: canonical_zero_bits(forward.im),
+                imaging_weight: canonical_zero_bits(imaging_weight),
+                role,
+                aw: None,
+            },
+        )?;
+    }
+    Ok(())
 }
 
 fn emit_atom(
@@ -431,6 +562,14 @@ fn emit_atom(
             record.role = RecordRole::Both;
         }
     }
+    emit_records(atom, emit, cardinality)
+}
+
+fn emit_records(
+    atom: &[ReducedRecordKey],
+    emit: &mut impl FnMut(&[ReducedRecordKey]) -> Result<(), SpectralOperatorError>,
+    cardinality: &mut GriddedNormalSourceCardinality,
+) -> Result<(), SpectralOperatorError> {
     cardinality.groups = cardinality
         .groups
         .checked_add(1)
@@ -447,6 +586,78 @@ fn emit_atom(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_group_geometry_preserves_correlation_atoms_and_phase() {
+        for phase in [0.0, 0.125, -1.75] {
+            let projected = ProjectedStencil {
+                chart_ordinal: 0,
+                taps: 37,
+                forward: Complex64::from_polar(1.0, -phase),
+            };
+            for coefficients in [
+                [Complex64::new(1.0, 0.0), Complex64::default()],
+                [Complex64::new(0.0, -1.0), Complex64::new(0.5, 0.0)],
+                [Complex64::default(); 2],
+            ] {
+                let mut ordinary = fixed_records(4).unwrap();
+                append_projected_stencil(
+                    &mut ordinary,
+                    &projected,
+                    &coefficients,
+                    0,
+                    2,
+                    0.0,
+                    RecordRole::Prediction,
+                )
+                .unwrap();
+                let predictions = ordinary.len();
+                append_projected_stencil(
+                    &mut ordinary,
+                    &projected,
+                    &coefficients,
+                    0,
+                    2,
+                    3.0,
+                    RecordRole::Accumulation,
+                )
+                .unwrap();
+                let mut reference = Vec::new();
+                let mut reference_count = GriddedNormalSourceCardinality::default();
+                emit_atom(
+                    &mut ordinary,
+                    predictions,
+                    &mut |records| {
+                        reference.extend_from_slice(records);
+                        Ok(())
+                    },
+                    &mut reference_count,
+                )
+                .unwrap();
+                let mut shared = fixed_records(2).unwrap();
+                append_projected_stencil(
+                    &mut shared,
+                    &projected,
+                    &coefficients,
+                    0,
+                    2,
+                    3.0,
+                    RecordRole::Both,
+                )
+                .unwrap();
+                assert_eq!(shared, reference);
+                for (record, coefficient) in shared.iter().zip(
+                    coefficients
+                        .iter()
+                        .filter(|value| **value != Complex64::default()),
+                ) {
+                    let forward = Complex64::from_polar(1.0, -phase) * coefficient;
+                    assert_eq!(record.forward_real, canonical_zero_bits(forward.re));
+                    assert_eq!(record.forward_imaginary, canonical_zero_bits(forward.im));
+                }
+            }
+        }
+    }
 
     #[test]
     fn fixed_workspace_rejects_growth_and_overflow() {
