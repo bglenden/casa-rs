@@ -2749,7 +2749,12 @@ fn fused_and_replay_flush_before_a_three_lane_group_without_a_second_block() {
                     fused.reuse_emitted_block(block).unwrap();
                 }
             }
-            assert_eq!((prepared.as_ptr(), prepared.capacity()), allocation);
+            assert_eq!(prepared.capacity(), allocation.1);
+            if prepared.as_ptr() != allocation.0 {
+                assert_eq!(prepared.capacity(), plan.limits().max_block_samples());
+                // The prepared allocation is now the retained replay buffer.
+                replay_buffer = Some(allocation.0);
+            }
             assert!(
                 fused
                     .commit_prepared(&problem, &mut prepared)
