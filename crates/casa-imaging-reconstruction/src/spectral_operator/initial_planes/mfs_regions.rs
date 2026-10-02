@@ -4,7 +4,7 @@
 use super::*;
 use ndarray::{ArrayViewMut2, Axis};
 
-pub(super) const STRIP_ROWS: usize = TAP_COUNT.next_power_of_two();
+pub(super) const STRIP_ROWS: usize = 64;
 const _: () = assert!(TAP_COUNT <= STRIP_ROWS);
 
 #[derive(Debug)]
@@ -268,7 +268,7 @@ mod tests {
         let slab = SpectralSlabPlan::compile(1, 0, 1, SpectralKernel::Nearest).unwrap();
         let mut operator = super::super::super::tests::cube_operator(slab);
         operator.basis = SpectralBasisPlan::Polynomial(BlockNormalPlan::constant(1e9).unwrap());
-        operator.geometry.grid_shape = [8 * STRIP_ROWS, 64];
+        operator.geometry.grid_shape = [512, 64];
         operator.gridder = ConvolutionOperator::new(&operator.geometry, None).unwrap();
         for grids in [
             &mut operator.dirty_grids,
@@ -276,7 +276,7 @@ mod tests {
             &mut operator.psf_grids,
             &mut operator.psf_compensations,
         ] {
-            *grids = Some(vec![Array2::zeros((8 * STRIP_ROWS, 64))]);
+            *grids = Some(vec![Array2::zeros((512, 64))]);
         }
         operator
     }
@@ -286,7 +286,7 @@ mod tests {
         for workers in [1, 4, 8] {
             let mut scalar = operator();
             let mut candidate = operator();
-            let mut batch = MfsRegions::new([8 * STRIP_ROWS, 64], 19).unwrap();
+            let mut batch = MfsRegions::new([512, 64], 19).unwrap();
             let records = batch.records.as_ptr();
             let routes = batch.routes.as_ptr();
             let mut largest_dispatch = 0;
@@ -297,10 +297,10 @@ mod tests {
                     let row = if index % 17 == 0 {
                         -20.0
                     } else {
-                        (index % 8 * STRIP_ROWS) as f64 + 0.25
+                        (index % 8 * 64) as f64 + 0.25
                     };
                     let uv = [
-                        (row - (4 * STRIP_ROWS) as f64) * scalar.gridder.standard().du_lambda,
+                        (row - 256.0) * scalar.gridder.standard().du_lambda,
                         0.25 * scalar.gridder.standard().dv_lambda,
                         0.0,
                     ];
@@ -369,7 +369,7 @@ mod tests {
         let mut operator = operator();
         let sample =
             SpectralOperatorSample::new(0, [0.0; 3], 1e9, 0.0, [1.0, 0.0], 1.0, 1.0).unwrap();
-        let mut batch = MfsRegions::new([8 * STRIP_ROWS, 64], 1).unwrap();
+        let mut batch = MfsRegions::new([512, 64], 1).unwrap();
         batch.push(&operator, sample).unwrap();
         assert!(batch.dispatch(&mut operator, &mut |_| Ok(())).is_err());
         batch
