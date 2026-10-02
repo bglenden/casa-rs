@@ -269,13 +269,32 @@ pub(crate) fn fitted_psf_sidelobe_fraction_with_beam(
     let sigma_minor = beam.minor_fwhm_rad() / 2.354_820_045_030_949_3;
     let cos_pa = beam.position_angle_rad().cos();
     let sin_pa = beam.position_angle_rad().sin();
-    let mut minimum = 0.0_f32;
+    // Beyond 32 major-axis sigmas, exp(-r²/2) rounds to exactly zero
+    // in f32, even after rotation. Retain the original Gaussian calculation
+    // throughout a conservative bounding square, not a tolerance cutoff.
+    let radius = (32.0 * sigma_major).ceil() as usize;
+    let x_range = peak_pixel[0].saturating_sub(radius)
+        ..peak_pixel[0]
+            .saturating_add(radius)
+            .saturating_add(1)
+            .min(shape[0]);
+    let y_range = peak_pixel[1].saturating_sub(radius)
+        ..peak_pixel[1]
+            .saturating_add(radius)
+            .saturating_add(1)
+            .min(shape[1]);
+    let minimum = psf.iter().copied().fold(0.0_f32, f32::min);
     let mut maximum_delobed = 0.0_f32;
-    for x in 0..shape[0] {
-        for y in 0..shape[1] {
-            let index = x * shape[1] + y;
-            let sample = psf[index];
-            minimum = minimum.min(sample);
+    for (x, row) in psf.chunks_exact(shape[1]).enumerate() {
+        if !x_range.contains(&x) {
+            maximum_delobed = row.iter().copied().fold(maximum_delobed, f32::max);
+            continue;
+        }
+        for (y, &sample) in row.iter().enumerate() {
+            if !y_range.contains(&y) {
+                maximum_delobed = maximum_delobed.max(sample);
+                continue;
+            }
             let dx = x as f64 - peak_pixel[0] as f64;
             let dy = y as f64 - peak_pixel[1] as f64;
             let u = dx * cos_pa + dy * sin_pa;
@@ -1017,6 +1036,60 @@ mod tests {
         psf[27 * shape[1] + 26] = -0.4;
         let sidelobe = fitted_psf_sidelobe_fraction(&psf, shape).expect("Gaussian fit");
         assert!((sidelobe - 0.4).abs() <= 1.0e-6, "{sidelobe}");
+    }
+
+    #[test]
+    fn bounded_gaussian_sidelobe_matches_full_plane_evaluation() {
+        let shape = [192_usize, 320];
+        for centre in [[0, 0], [97, 160], [191, 319]] {
+            for major in [0.02, 1.5, 7.0, 30.0] {
+                for pa in [0.0_f64, 0.37, 1.1] {
+                    let beam = RestoringBeam::new(major, major * 0.6, pa).unwrap();
+                    let sigma_major = major / 2.354_820_045_030_949_3;
+                    let sigma_minor = sigma_major * 0.6;
+                    let gaussian = |x: usize, y: usize, origin: [usize; 2]| {
+                        let dx = x as f64 - origin[0] as f64;
+                        let dy = y as f64 - origin[1] as f64;
+                        let u = dx * pa.cos() + dy * pa.sin();
+                        let v = -dx * pa.sin() + dy * pa.cos();
+                        (-0.5 * ((u / sigma_minor).powi(2) + (v / sigma_major).powi(2))).exp()
+                            as f32
+                    };
+                    for sidelobes in [false, true] {
+                        let psf = (0..shape[0] * shape[1])
+                            .map(|index| {
+                                let fringe = if sidelobes {
+                                    0.2 * ((index % 101) as f32 / 50.0 - 1.0)
+                                } else {
+                                    0.0
+                                };
+                                gaussian(index / shape[1], index % shape[1], centre) + fringe
+                            })
+                            .collect::<Vec<_>>();
+                        let (index, peak) = super::peak_flat(&psf).unwrap();
+                        let origin = [index / shape[1], index % shape[1]];
+                        let mut minimum = 0.0_f32;
+                        let mut maximum = 0.0_f32;
+                        for (index, &sample) in psf.iter().enumerate() {
+                            minimum = minimum.min(sample);
+                            maximum = maximum.max(
+                                sample
+                                    - gaussian(index / shape[1], index % shape[1], origin) * peak,
+                            );
+                        }
+                        let expected = f64::from(minimum.abs().max(maximum)) / f64::from(peak);
+                        let actual =
+                            super::fitted_psf_sidelobe_fraction_with_beam(&psf, shape, beam)
+                                .unwrap();
+                        assert_eq!(
+                            actual.to_bits(),
+                            expected.to_bits(),
+                            "{centre:?} {major} {pa} {sidelobes}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
