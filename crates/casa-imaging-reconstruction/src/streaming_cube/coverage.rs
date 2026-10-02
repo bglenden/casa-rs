@@ -8,8 +8,9 @@
 //! carries channel, correlation, output frequency and a length-prefixed spectral
 //! value vector. An end (2) tag precedes the terminal sample count.
 //!
-//! Reuse compares encoded bytes, including float bits and option tags. The inline
-//! row key survives chunk boundaries and is cloned/adopted with the SHA state.
+//! Reuse compares the covered row fields, including float bits and option tags,
+//! before encoding. The inline key survives chunk boundaries and is cloned/adopted
+//! with the SHA state; repeated rows never rebuild their unchanged byte header.
 //! No source array is retained, reread or separately verified by this encoding.
 
 use super::{
@@ -17,13 +18,51 @@ use super::{
     WeightingSampleValue,
 };
 use crate::{spectral_sampling::NativeRowSpectralGeometry, weighting::WeightingSpectralValue};
-use casa_imaging_model::SelectedSampleAddress;
+use casa_imaging_model::{MeasurementSetIdentity, SelectedSampleAddress};
 use sha2::{Digest, Sha256};
 
 const STREAM_VERSION: u32 = 6;
 const COVERAGE_HASH_CHUNK_BYTES: usize = 256;
 // Tag + MS + row + DDID + SPW + full optional native geometry.
 const ROW_HEADER_BYTES: usize = 1 + 32 + 8 + 4 + 4 + 1 + 16 + 12 + 1 + 12 + 1 + 16;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CoverageRow {
+    physical_row: u64,
+    measurement_set: MeasurementSetIdentity,
+    data_description_id: i32,
+    spectral_window_id: u32,
+    geometry: Option<CoverageRowGeometry>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CoverageRowGeometry {
+    channels: usize,
+    first: (u32, u64),
+    second: Option<(u32, u64)>,
+    lattice_first_pair: Option<[u64; 2]>,
+}
+
+impl CoverageRow {
+    fn new(address: SelectedSampleAddress, geometry: Option<NativeRowSpectralGeometry>) -> Self {
+        Self {
+            physical_row: address.physical_row,
+            measurement_set: address.measurement_set,
+            data_description_id: address.data_description_id,
+            spectral_window_id: address.spectral_window_id,
+            geometry: geometry.map(|geometry| CoverageRowGeometry {
+                channels: geometry.selected_channels(),
+                first: (geometry.first().0, geometry.first().1.to_bits()),
+                second: geometry
+                    .second()
+                    .map(|(channel, frequency)| (channel, frequency.to_bits())),
+                lattice_first_pair: geometry
+                    .lattice_first_pair_hz
+                    .map(|pair| pair.map(f64::to_bits)),
+            }),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CoverageProofWork {
@@ -51,8 +90,7 @@ pub(crate) struct CoverageEncoder {
     pub(super) hasher: Option<Sha256>,
     derived: Option<WeightingReplayCoverageId>,
     pub(super) work: CoverageProofWork,
-    previous_row: [u8; ROW_HEADER_BYTES],
-    previous_row_len: usize,
+    previous_row: Option<CoverageRow>,
 }
 
 impl CoverageEncoder {
@@ -79,8 +117,7 @@ impl CoverageEncoder {
                 bytes: 0,
                 hash_calls: 0,
             },
-            previous_row: [0; ROW_HEADER_BYTES],
-            previous_row_len: 0,
+            previous_row: None,
         };
         encoder.update(COVERAGE_DOMAIN);
         encoder.update(&STREAM_VERSION.to_be_bytes());
@@ -95,8 +132,7 @@ impl CoverageEncoder {
                 bytes: 0,
                 hash_calls: 0,
             },
-            previous_row: [0; ROW_HEADER_BYTES],
-            previous_row_len: 0,
+            previous_row: None,
         }
     }
 
@@ -139,84 +175,83 @@ impl CoverageEncoder {
         }
         let mut chunk = [0_u8; COVERAGE_HASH_CHUNK_BYTES];
         let mut used = 1;
-        chunk[0] = 1;
-        append_coverage_bytes(
-            self,
-            &mut chunk,
-            &mut used,
-            &address.measurement_set.identity().as_bytes(),
-        );
-        append_coverage_bytes(
-            self,
-            &mut chunk,
-            &mut used,
-            &address.physical_row.to_be_bytes(),
-        );
-        append_coverage_bytes(
-            self,
-            &mut chunk,
-            &mut used,
-            &address.data_description_id.to_be_bytes(),
-        );
-        append_coverage_bytes(
-            self,
-            &mut chunk,
-            &mut used,
-            &address.spectral_window_id.to_be_bytes(),
-        );
-        match geometry {
-            Some(geometry) => {
-                append_coverage_bytes(self, &mut chunk, &mut used, &[1]);
-                append_coverage_bytes(
-                    self,
-                    &mut chunk,
-                    &mut used,
-                    &(geometry.selected_channels() as u128).to_be_bytes(),
-                );
-                let first = geometry.first();
-                append_coverage_bytes(self, &mut chunk, &mut used, &first.0.to_be_bytes());
-                append_coverage_bytes(
-                    self,
-                    &mut chunk,
-                    &mut used,
-                    &first.1.to_bits().to_be_bytes(),
-                );
-                if let Some(second) = geometry.second() {
+        let row = CoverageRow::new(address, geometry);
+        if self.previous_row == Some(row) {
+            chunk[0] = 0;
+        } else {
+            chunk[0] = 1;
+            append_coverage_bytes(
+                self,
+                &mut chunk,
+                &mut used,
+                &address.measurement_set.identity().as_bytes(),
+            );
+            append_coverage_bytes(
+                self,
+                &mut chunk,
+                &mut used,
+                &address.physical_row.to_be_bytes(),
+            );
+            append_coverage_bytes(
+                self,
+                &mut chunk,
+                &mut used,
+                &address.data_description_id.to_be_bytes(),
+            );
+            append_coverage_bytes(
+                self,
+                &mut chunk,
+                &mut used,
+                &address.spectral_window_id.to_be_bytes(),
+            );
+            match geometry {
+                Some(geometry) => {
                     append_coverage_bytes(self, &mut chunk, &mut used, &[1]);
-                    append_coverage_bytes(self, &mut chunk, &mut used, &second.0.to_be_bytes());
                     append_coverage_bytes(
                         self,
                         &mut chunk,
                         &mut used,
-                        &second.1.to_bits().to_be_bytes(),
+                        &(geometry.selected_channels() as u128).to_be_bytes(),
                     );
-                } else {
-                    append_coverage_bytes(self, &mut chunk, &mut used, &[0]);
-                }
-                match geometry.lattice_first_pair_hz {
-                    Some(pair) => {
+                    let first = geometry.first();
+                    append_coverage_bytes(self, &mut chunk, &mut used, &first.0.to_be_bytes());
+                    append_coverage_bytes(
+                        self,
+                        &mut chunk,
+                        &mut used,
+                        &first.1.to_bits().to_be_bytes(),
+                    );
+                    if let Some(second) = geometry.second() {
                         append_coverage_bytes(self, &mut chunk, &mut used, &[1]);
-                        for frequency in pair {
-                            append_coverage_bytes(
-                                self,
-                                &mut chunk,
-                                &mut used,
-                                &frequency.to_bits().to_be_bytes(),
-                            );
-                        }
+                        append_coverage_bytes(self, &mut chunk, &mut used, &second.0.to_be_bytes());
+                        append_coverage_bytes(
+                            self,
+                            &mut chunk,
+                            &mut used,
+                            &second.1.to_bits().to_be_bytes(),
+                        );
+                    } else {
+                        append_coverage_bytes(self, &mut chunk, &mut used, &[0]);
                     }
-                    None => append_coverage_bytes(self, &mut chunk, &mut used, &[0]),
+                    match geometry.lattice_first_pair_hz {
+                        Some(pair) => {
+                            append_coverage_bytes(self, &mut chunk, &mut used, &[1]);
+                            for frequency in pair {
+                                append_coverage_bytes(
+                                    self,
+                                    &mut chunk,
+                                    &mut used,
+                                    &frequency.to_bits().to_be_bytes(),
+                                );
+                            }
+                        }
+                        None => append_coverage_bytes(self, &mut chunk, &mut used, &[0]),
+                    }
                 }
+                None => append_coverage_bytes(self, &mut chunk, &mut used, &[0]),
             }
-            None => append_coverage_bytes(self, &mut chunk, &mut used, &[0]),
-        }
-        debug_assert!(used <= ROW_HEADER_BYTES);
-        if self.previous_row_len == used && self.previous_row[..used] == chunk[..used] {
-            chunk[0] = 0;
-            used = 1;
-        } else {
-            self.previous_row[..used].copy_from_slice(&chunk[..used]);
-            self.previous_row_len = used;
+            debug_assert!(used <= ROW_HEADER_BYTES);
+            self.previous_row = Some(row);
         }
         append_coverage_bytes(
             self,
@@ -620,6 +655,39 @@ mod tests {
             changed.push(s);
         }
         assert_ne!(changed.checkpoint_token(), whole.checkpoint_token());
+    }
+
+    #[test]
+    fn cached_row_key_reuses_identical_nan_bits_but_distinguishes_payloads() {
+        let setters: &[fn(&mut NativeRowSpectralGeometry, f64)] = &[
+            |geometry, value| geometry.first.1 = value,
+            |geometry, value| geometry.second.as_mut().unwrap().1 = value,
+            |geometry, value| geometry.lattice_first_pair_hz.as_mut().unwrap()[0] = value,
+            |geometry, value| geometry.lattice_first_pair_hz.as_mut().unwrap()[1] = value,
+        ];
+        for set in setters {
+            let mut sample = sample(0, 0);
+            set(
+                sample.sample.row_spectral_geometry.as_mut().unwrap(),
+                f64::from_bits(0x7ff8_0000_0000_0001),
+            );
+            let mut coverage = CoverageEncoder::new();
+            coverage.push(&sample);
+            let start = coverage.work.bytes;
+            coverage.push(&sample);
+            let body_bytes = 1 + 4 + 4 + 8 + 8 + 2 * 28;
+            assert_eq!(coverage.work.bytes - start, body_bytes);
+            set(
+                sample.sample.row_spectral_geometry.as_mut().unwrap(),
+                f64::from_bits(0x7ff8_0000_0000_0002),
+            );
+            let start = coverage.work.bytes;
+            coverage.push(&sample);
+            assert_eq!(
+                coverage.work.bytes - start,
+                body_bytes + ROW_HEADER_BYTES as u64 - 1
+            );
+        }
     }
 
     #[test]
