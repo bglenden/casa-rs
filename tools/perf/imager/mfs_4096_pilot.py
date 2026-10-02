@@ -455,7 +455,7 @@ def image_pilot(args):
         vis=str(args.output / "pilot.ms"),
         imagename=str(target / "image"),
         datacolumn="data",
-        spw="0~31",
+        spw=args.spw,
         imsize=[4096, 4096],
         cell="0.05arcsec",
         phasecenter="J2000 12h00m00s +30d00m00s",
@@ -651,7 +651,7 @@ def compare(args):
                         transform=axis.transAxes,
                     )
     fig.suptitle(
-        f"4096-square, full band, {args.integrations} times/config — "
+        f"4096-square, SPWs {args.spw}, {args.integrations} times/config — "
         f"{args.terms} Taylor term(s), niter ceiling {args.niter}; idealized comparison"
     )
     fig.savefig(target / "dirty-comparison.png", dpi=160)
@@ -691,6 +691,7 @@ if __name__ == "__main__":
     parser.add_argument("--arrays", type=Path)
     parser.add_argument("--integrations", type=int, default=36)
     parser.add_argument("--terms", type=int, choices=range(1, 5), default=1)
+    parser.add_argument("--spw", default="0~31", help="CASA SPW selection for imaging")
     parser.add_argument(
         "--gridder", choices=("standard", "wproject"), default="standard"
     )

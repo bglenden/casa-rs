@@ -20,27 +20,30 @@ class WorkloadDesignTests(unittest.TestCase):
         casa = SimpleNamespace(
             casalog=Mock(), tclean=task, version_string=lambda: "test"
         )
-        args = SimpleNamespace(
-            output=Path("unused"),
-            label="simple",
-            terms=1,
-            gridder="standard",
-            niter=10000,
-        )
-        with (
-            patch.dict("sys.modules", casatasks=casa),
-            patch.object(Path, "mkdir"),
-            patch.object(pilot, "save"),
-            patch("builtins.print"),
-        ):
-            pilot.image_pilot(args)
+        for spw in ("0~31", "0,10,21,31"):
+            with self.subTest(spw=spw):
+                args = SimpleNamespace(
+                    output=Path("unused"),
+                    label="simple",
+                    terms=1,
+                    gridder="standard",
+                    spw=spw,
+                    niter=10000,
+                )
+                with (
+                    patch.dict("sys.modules", casatasks=casa),
+                    patch.object(Path, "mkdir"),
+                    patch.object(pilot, "save"),
+                    patch("builtins.print"),
+                ):
+                    pilot.image_pilot(args)
+                self.assertEqual(task.call_args.kwargs["spw"], spw)
         request = task.call_args.kwargs
         self.assertEqual(request["gridder"], "standard")
         self.assertEqual(request["wprojplanes"], 1)
         self.assertEqual(request["deconvolver"], "clark")
         self.assertEqual(request["nterms"], 1)
         self.assertEqual(request["imsize"], [4096, 4096])
-        self.assertEqual(request["spw"], "0~31")
         self.assertEqual(request["weighting"], "uniform")
         self.assertEqual(request["savemodel"], "none")
 

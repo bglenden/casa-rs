@@ -629,7 +629,7 @@ fn encode_record(
         }
         validate_numeric_record(forward_real, forward_imaginary, imaging_weight)?;
         let key = output_channel
-            | (u64::from(record.chart_ordinal) << TAP_KEY_BITS)
+            | (u64::from(record.chart_ordinal) << super::CHANNEL_KEY_BITS)
             | (u64::from(aw.mueller_element) << AW_MUELLER_SHIFT)
             | if group_end { AW_GROUP_END_BIT } else { 0 };
         for (bytes, value) in encoded.chunks_exact_mut(8).zip([
@@ -657,7 +657,7 @@ fn encode_record(
             | (output_channel << TAP_KEY_BITS)
             | ((record.role as u64) << RECORD_ROLE_SHIFT)
             | if group_end { GROUP_END_BIT } else { 0 };
-        let route = u64::from(record.chart_ordinal) | ((record.taps >> 24) << 24);
+        let route = u64::from(record.chart_ordinal) | (record.taps & !TAP_KEY_MASK);
         for (bytes, value) in encoded.chunks_exact_mut(8).zip([
             key,
             route,
@@ -718,6 +718,56 @@ mod tests {
         .expect("reference codec")
         .0
         .into_vec()
+    }
+
+    #[test]
+    fn large_grid_coordinates_do_not_overlap_channels_routes_or_roles() {
+        use super::super::{SampleTaps, TapSpan, decode_record_for_shape, encode_taps};
+        let taps = SampleTaps {
+            x: TapSpan {
+                start: 4993,
+                weight_index: (1 << 24) - 1,
+            },
+            y: TapSpan {
+                start: 4992,
+                weight_index: 255,
+            },
+        };
+        for role in [
+            RecordRole::Both,
+            RecordRole::Prediction,
+            RecordRole::Accumulation,
+        ] {
+            let record = ReducedRecordKey {
+                chart_ordinal: 0x00ab_cdef,
+                output_channel: 0x00fe_dcba,
+                role,
+                ..record(encode_taps(taps).unwrap())
+            };
+            let mut encoded = [0; 40];
+            encode_record(&record, 1.0, true, false, &mut encoded).unwrap();
+            assert_eq!(
+                encoded.as_slice(),
+                oracle(
+                    vec![ReducedRecordGroup {
+                        records: vec![record.clone()],
+                        multiplicity: 1.0
+                    }],
+                    false
+                )
+            );
+            let decoded = decode_record_for_shape(&encoded, [5000, 5000], 1 << 24).unwrap();
+            assert_eq!(decoded.taps, taps);
+            assert_eq!(decoded.chart_ordinal, record.chart_ordinal as usize);
+            assert_eq!(decoded.output_channel, record.output_channel as usize);
+            assert_eq!(decoded.role, role);
+            assert!(decoded.group_end);
+            encoded[11] = 1;
+            assert_eq!(
+                decode_record_for_shape(&encoded, [5000, 5000], 1 << 24),
+                Err(SpectralOperatorError::InvalidGriddedRecord)
+            );
+        }
     }
 
     #[test]

@@ -20,6 +20,7 @@ fn full_field_application() {
     let terms: usize = std::env::var("CASA_RS_MFS_TERMS").unwrap().parse().unwrap();
     let iterations: usize = std::env::var("CASA_RS_MFS_NITER").unwrap().parse().unwrap();
     let gridder = std::env::var("CASA_RS_MFS_GRIDDER").unwrap_or_else(|_| "standard".into());
+    let spectral_window = std::env::var("CASA_RS_MFS_SPW").unwrap_or_else(|_| "0~31".into());
     assert!(["standard", "wproject"].contains(&gridder.as_str()));
     assert!([1, 4].contains(&workers));
     assert!((1..=4).contains(&terms));
@@ -38,7 +39,7 @@ fn full_field_application() {
     imaging.image_size = 4096;
     imaging.cell_arcsec = 0.05;
     imaging.data_description = None;
-    imaging.spectral_window = Some("0~31".to_string());
+    imaging.spectral_window = Some(spectral_window.clone());
     imaging.channel_start = None;
     imaging.channel_count = None;
     imaging.weighting = ContinuumWeighting::Uniform;
@@ -101,6 +102,7 @@ fn full_field_application() {
         "iterations": result.actual_minor_iterations,
         "majors": output.major_cycle_count, "products": result.product_names,
         "prefix": prefix, "weighting": "uniform", "gridder": gridder,
+        "spectral_window": spectral_window,
         "wplanes": (gridder == "wproject").then_some(32),
         "scope": "application smoke; not full-workload performance or sky-model acceptance",
         "timing_boundary": "execute_continuum: input preparation through publication"

@@ -56,8 +56,12 @@ use crate::{
 use crate::spectral_operator::{GriddedNormalLocalContribution, StandardConvolution};
 
 const RECORD_DOMAIN: &[u8] = b"casa-rs-gridded-normal-operator";
-const RECORD_VERSION: u32 = 11;
-const TAP_KEY_BITS: u32 = 24;
+const RECORD_VERSION: u32 = 12;
+// Padded 4096-square standard imaging exceeds the former 12-bit grid coordinates.
+// Two 16-bit starts and 24/8-bit kernel indices still occupy one 64-bit tap key.
+const TAP_AXIS_BITS: u32 = 16;
+const TAP_AXIS_MASK: u64 = (1_u64 << TAP_AXIS_BITS) - 1;
+const TAP_KEY_BITS: u32 = 2 * TAP_AXIS_BITS;
 const TAP_KEY_MASK: u64 = (1_u64 << TAP_KEY_BITS) - 1;
 const CHANNEL_KEY_BITS: u32 = 24;
 const CHANNEL_KEY_MASK: u64 = (1_u64 << CHANNEL_KEY_BITS) - 1;
@@ -74,7 +78,7 @@ const GRIDDED_NORMAL_HOT_TILE_DUPLICATES: usize = GRIDDED_NORMAL_LANE_COUNT - 1;
 /// [`gridded_normal_operator_record_bytes`].
 pub const GRIDDED_NORMAL_OPERATOR_RECORD_BYTES: usize = 40;
 const AW_GRIDDED_NORMAL_OPERATOR_RECORD_BYTES: usize = 96;
-const AW_MUELLER_SHIFT: u32 = TAP_KEY_BITS + CHANNEL_KEY_BITS;
+const AW_MUELLER_SHIFT: u32 = 2 * CHANNEL_KEY_BITS;
 const AW_GROUP_END_BIT: u64 = 1_u64 << (AW_MUELLER_SHIFT + 4);
 const AW_RECORD_KEY_MASK: u64 = (AW_GROUP_END_BIT << 1) - 1;
 
@@ -3334,7 +3338,7 @@ fn validate_record_geometry(
                 .geometry()
                 .grid_shape
                 .into_iter()
-                .any(|extent| extent > 1 << 12)
+                .any(|extent| extent > 1 << TAP_AXIS_BITS)
         })
     {
         return Err(SpectralOperatorError::UnsupportedGriddedReplay);
@@ -3656,7 +3660,7 @@ fn encode_and_checksum_mode(
                     return Err(SpectralOperatorError::InvalidGriddedRecord);
                 }
                 let key = output_channel
-                    | (u64::from(record.chart_ordinal) << TAP_KEY_BITS)
+                    | (u64::from(record.chart_ordinal) << CHANNEL_KEY_BITS)
                     | (u64::from(aw.mueller_element) << AW_MUELLER_SHIFT)
                     | if index == last { AW_GROUP_END_BIT } else { 0 };
                 let forward_real = f64::from_bits(record.forward_real);
@@ -3701,7 +3705,7 @@ fn encode_and_checksum_mode(
                 | (output_channel << TAP_KEY_BITS)
                 | ((record.role as u64) << RECORD_ROLE_SHIFT)
                 | if index == last { GROUP_END_BIT } else { 0 };
-            let route = u64::from(record.chart_ordinal) | ((record.taps >> 24) << 24);
+            let route = u64::from(record.chart_ordinal) | (record.taps & !TAP_KEY_MASK);
             let forward_real = f64::from_bits(record.forward_real);
             let forward_imaginary = f64::from_bits(record.forward_imaginary);
             let imaging_weight = f64::from_bits(record.imaging_weight) * group.multiplicity;
@@ -3813,16 +3817,16 @@ fn compensated_sum(values: &[f64]) -> Result<f64, SpectralOperatorError> {
 }
 
 fn encode_taps(taps: SampleTaps) -> Result<u64, SpectralOperatorError> {
-    if taps.x.start >= 1 << 12
-        || taps.y.start >= 1 << 12
-        || taps.x.weight_index >= 1 << 32
+    if taps.x.start >= 1 << TAP_AXIS_BITS
+        || taps.y.start >= 1 << TAP_AXIS_BITS
+        || taps.x.weight_index >= 1 << 24
         || taps.y.weight_index >= 1 << 8
     {
         return Err(SpectralOperatorError::InvalidGriddedRecord);
     }
     Ok(taps.x.start as u64
-        | ((taps.y.start as u64) << 12)
-        | ((taps.x.weight_index as u64) << 24)
+        | ((taps.y.start as u64) << TAP_AXIS_BITS)
+        | ((taps.x.weight_index as u64) << TAP_KEY_BITS)
         | ((taps.y.weight_index as u64) << 56))
 }
 
@@ -3891,7 +3895,7 @@ fn decode_aw_record(
     };
     let output_channel = usize::try_from(key & CHANNEL_KEY_MASK)
         .map_err(|_| SpectralOperatorError::InvalidGriddedRecord)?;
-    let chart_ordinal = usize::try_from((key >> TAP_KEY_BITS) & CHANNEL_KEY_MASK)
+    let chart_ordinal = usize::try_from((key >> CHANNEL_KEY_BITS) & CHANNEL_KEY_MASK)
         .map_err(|_| SpectralOperatorError::InvalidGriddedRecord)?;
     let aw = AwReplayCoordinates {
         frequency_hz: value(0)?,
@@ -3974,6 +3978,7 @@ fn decode_record_for_shape(
     let chart_ordinal = usize::try_from(route & 0x00ff_ffff)
         .map_err(|_| SpectralOperatorError::InvalidGriddedRecord)?;
     if key & !RECORD_KEY_MASK != 0
+        || route & (TAP_KEY_MASK & !CHANNEL_KEY_MASK) != 0
         || output_channel >= output_channels
         || !forward_real.is_finite()
         || !forward_imaginary.is_finite()
@@ -3983,7 +3988,7 @@ fn decode_record_for_shape(
     {
         return Err(SpectralOperatorError::InvalidGriddedRecord);
     }
-    let taps = decode_tap_key((key & TAP_KEY_MASK) | ((route >> 24) << 24), grid_shape)?;
+    let taps = decode_tap_key((key & TAP_KEY_MASK) | (route & !TAP_KEY_MASK), grid_shape)?;
     let role = match (key >> RECORD_ROLE_SHIFT) & 3 {
         0 => RecordRole::Both,
         1 => RecordRole::Prediction,
@@ -4042,11 +4047,11 @@ fn decode_tap_key(
 ) -> Result<SampleTaps, SpectralOperatorError> {
     let taps = SampleTaps {
         x: TapSpan {
-            start: (tap_key & 0x0fff) as usize,
-            weight_index: ((tap_key >> 24) & 0xffff_ffff) as usize,
+            start: (tap_key & TAP_AXIS_MASK) as usize,
+            weight_index: ((tap_key >> TAP_KEY_BITS) & 0x00ff_ffff) as usize,
         },
         y: TapSpan {
-            start: ((tap_key >> 12) & 0x0fff) as usize,
+            start: ((tap_key >> TAP_AXIS_BITS) & TAP_AXIS_MASK) as usize,
             weight_index: ((tap_key >> 56) & 0xff) as usize,
         },
     };
@@ -4137,6 +4142,70 @@ mod tests {
     }
 
     #[test]
+    fn packed_taps_preserve_large_padded_grids_and_reject_overflow() {
+        for start in [4095, 4096, 4993, 65529] {
+            let taps = SampleTaps {
+                x: TapSpan {
+                    start,
+                    weight_index: (1 << 24) - 1,
+                },
+                y: TapSpan {
+                    start: 65529 - start,
+                    weight_index: 255,
+                },
+            };
+            let key = encode_taps(taps).unwrap();
+            assert_eq!(decode_tap_key(key, [65536, 65536]).unwrap(), taps);
+            let encoded = [key.to_le_bytes(), 1.0_f64.to_le_bytes()].concat();
+            assert_eq!(
+                decode_taylor_record(&encoded, [65536, 65536], 1)
+                    .unwrap()
+                    .taps,
+                taps
+            );
+            assert_eq!(
+                decode_tap_key(key, [start + 2 * SUPPORT, 65536]),
+                Err(SpectralOperatorError::InvalidGriddedRecord)
+            );
+        }
+        for taps in [
+            SampleTaps {
+                x: TapSpan {
+                    start: 65536,
+                    ..t42_taps().x
+                },
+                ..t42_taps()
+            },
+            SampleTaps {
+                y: TapSpan {
+                    start: 65536,
+                    ..t42_taps().y
+                },
+                ..t42_taps()
+            },
+            SampleTaps {
+                x: TapSpan {
+                    weight_index: 1 << 24,
+                    ..t42_taps().x
+                },
+                ..t42_taps()
+            },
+            SampleTaps {
+                y: TapSpan {
+                    weight_index: 256,
+                    ..t42_taps().y
+                },
+                ..t42_taps()
+            },
+        ] {
+            assert_eq!(
+                encode_taps(taps),
+                Err(SpectralOperatorError::InvalidGriddedRecord)
+            );
+        }
+    }
+
+    #[test]
     fn scalar_v10_roles_preserve_groups_and_separate_prediction_from_accumulation() {
         let roles = [
             RecordRole::Prediction,
@@ -4165,7 +4234,7 @@ mod tests {
             &mut GriddedNormalOperatorBlockMeasurements::default(),
         )
         .unwrap();
-        assert_eq!(RECORD_VERSION, 11);
+        assert_eq!(RECORD_VERSION, 12);
         assert_eq!(encoded.len(), 3 * GRIDDED_NORMAL_OPERATOR_RECORD_BYTES);
         for (index, bytes) in encoded
             .chunks_exact(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
@@ -4219,7 +4288,7 @@ mod tests {
     fn t42_taylor_v5_codec_has_dynamic_width_and_rejects_truncation_and_nonfinite_moments() {
         let plan = crate::block_normal::BlockNormalPlan::taylor(1.0e9, 3).unwrap();
         let layout = GriddedNormalRecordLayout::Taylor(plan);
-        assert_eq!(RECORD_VERSION, 11);
+        assert_eq!(RECORD_VERSION, 12);
         assert_eq!(layout.record_bytes().unwrap(), 48);
         assert_eq!(
             GriddedNormalRecordLayout::Taylor(
@@ -4337,7 +4406,7 @@ mod tests {
         assert_eq!(decoded[1].forward_scale, Complex64::new(1.75, -1.25));
         assert_eq!(decoded[1].imaging_weight, 6.0);
         assert!(decoded[1].group_end);
-        assert_eq!(RECORD_VERSION, 11);
+        assert_eq!(RECORD_VERSION, 12);
         assert_eq!(AW_GRIDDED_NORMAL_OPERATOR_RECORD_BYTES, 96);
         assert!(matches!(
             decode_aw_record(&encoded[..88], 4),
@@ -4379,7 +4448,7 @@ mod tests {
         taylor_v4.usize(layout.record_bytes().unwrap());
         let taylor_v4 = LogicalIdentity::from_sha256(taylor_v4.finish());
 
-        assert_eq!(RECORD_VERSION, 11);
+        assert_eq!(RECORD_VERSION, 12);
         assert_eq!(layout.record_bytes().unwrap(), 32);
         assert_ne!(
             legacy_v2, taylor_v4,
