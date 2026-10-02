@@ -529,7 +529,7 @@ fn run_t19_complete_data(
     let workload =
         spectral_operator_workload(&specification, plan.limits().max_block_samples(), pass)
             .expect("workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
+    let prepared = prepare_spectral_operator(specification, workload, 1).expect("prepare operator");
     let mut state = prepared
         .begin(problem, &generation)
         .expect("begin complete-data owner");

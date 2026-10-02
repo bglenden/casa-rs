@@ -3081,6 +3081,10 @@ impl CompleteDataPlanFragment {
         &self.replay_node
     }
 
+    pub(crate) fn parallel_fft(&self) -> bool {
+        cfg!(unix) && self.specification.supports_bulk_mfs()
+    }
+
     pub(crate) fn initial_working_set(&self) -> Option<&InitialPhaseWorkingSetBinding> {
         self.initial_working_set.as_ref()
     }
@@ -3142,13 +3146,14 @@ impl CompleteDataPlanFragment {
     pub fn prepare(
         &self,
         context: WorkExecutionContext<'_>,
+        fft_thread_limit: usize,
     ) -> Result<CompleteDataPreparedState, CompleteDataPlanError> {
         if context.node().id != self.preparation_node
             || context.node().kind != WorkKind::FftPlanning
         {
             return Err(CompleteDataPlanError::WrongExecutionNode);
         }
-        self.prepare_operator_state(context)
+        self.prepare_operator_state(context, fft_thread_limit)
     }
 
     /// Rebuild the same immutable FFT/operator preparation through a
@@ -3158,6 +3163,7 @@ impl CompleteDataPlanFragment {
     pub(crate) fn recompute(
         &self,
         context: WorkExecutionContext<'_>,
+        fft_thread_limit: usize,
     ) -> Result<CompleteDataPreparedState, CompleteDataPlanError> {
         if context.node().kind != WorkKind::Preparation
             || !context
@@ -3167,12 +3173,13 @@ impl CompleteDataPlanFragment {
         {
             return Err(CompleteDataPlanError::WrongExecutionNode);
         }
-        self.prepare_operator_state(context)
+        self.prepare_operator_state(context, fft_thread_limit)
     }
 
     fn prepare_operator_state(
         &self,
         context: WorkExecutionContext<'_>,
+        fft_thread_limit: usize,
     ) -> Result<CompleteDataPreparedState, CompleteDataPlanError> {
         if context.compiled().problem_id() != self.specification.problem_id() {
             return Err(CompleteDataPlanError::PlanMismatch);
@@ -3184,7 +3191,24 @@ impl CompleteDataPlanFragment {
         }
         self.validate_fft_capability(context)?;
         self.validate_aw_catalog_capability(context)?;
-        let mut owner = prepare_spectral_operator(self.specification.clone(), self.workload)?;
+        let fft_threads = context
+            .resources()
+            .iter()
+            .find(|claim| claim.resource() == &LeaseResource::Workers)
+            .filter(|claim| claim.amount() != 0 && claim.amount() <= context.knobs().workers)
+            .ok_or(CompleteDataPlanError::MissingFftCapability)?
+            .amount();
+        let fft_threads = usize::try_from(fft_threads)
+            .map_err(|_| CompleteDataPlanError::ResidencyOverflow)?
+            .min(fft_thread_limit);
+        if fft_threads == 0 {
+            return Err(CompleteDataPlanError::MissingFftCapability);
+        }
+        let mut owner =
+            prepare_spectral_operator(self.specification.clone(), self.workload, fft_threads)?;
+        if std::env::var_os("CASA_RS_TRACE_IMAGING_STAGE_TIMING").is_some() {
+            eprintln!("imaging_spectral_fft_budget fft_threads={fft_threads}");
+        }
         if let Some(projection) = self.aw_projection.clone() {
             owner = owner.with_aw_projection(projection)?;
         }
@@ -3555,7 +3579,12 @@ impl CompleteDataPlanFragment {
                 return Err(CompleteDataPlanError::PlanMismatch);
             }
         }
-        let specs = self.allocation_specs(reconciliation)?;
+        let defer_operator = self.parallel_fft()
+            && base
+                .observation_transaction()
+                .visibility_writeback()
+                .is_none();
+        let specs = self.allocation_specs(reconciliation, defer_operator)?;
         let reader = self.aw_reader.clone();
         let operator_spec_count = if reader.is_some() {
             specs
@@ -3581,9 +3610,27 @@ impl CompleteDataPlanFragment {
         let replay_fence = ClaimLifetime::through_fence(FenceKind::Io);
         let fft_planning_bytes = u64::try_from(self.residency.fft_planning_bytes())
             .map_err(|_| CompleteDataPlanError::ResidencyOverflow)?;
+        let fft_workers = if defer_operator {
+            let replay_workers = base
+                .execution_dag()
+                .nodes()
+                .get(&self.replay_node)
+                .ok_or(CompleteDataPlanError::MissingReplayNode)?
+                .claims
+                .iter()
+                .find(|claim| claim.resource == LeaseResource::Workers)
+                .ok_or(CompleteDataPlanError::MissingFftCapability)?
+                .amount;
+            base.execution_dag()
+                .initial_knobs()
+                .workers
+                .min(replay_workers)
+        } else {
+            1
+        };
         let mut preparation_claims = vec![ResourceClaim {
             resource: LeaseResource::Workers,
-            amount: 1,
+            amount: fft_workers,
             lifetime: ClaimLifetime::Work,
         }];
         if fft_planning_bytes != 0 {
@@ -3776,6 +3823,12 @@ impl CompleteDataPlanFragment {
         if planned_reconciliation.kind != WorkKind::Compute {
             return Err(CompleteDataPlanError::MissingReconciliationNode);
         }
+        let reconciliation_workers = planned_reconciliation
+            .claims
+            .iter_mut()
+            .find(|claim| claim.resource == LeaseResource::Workers)
+            .ok_or(CompleteDataPlanError::MissingFftCapability)?;
+        reconciliation_workers.amount = reconciliation_workers.amount.max(fft_workers);
         if let Some(reader) = &reader {
             planned_reconciliation.dependencies.extend([
                 WorkDependency::Fence(FenceId::new(reader.node().clone(), FenceKind::Io)),
@@ -4024,6 +4077,7 @@ impl CompleteDataPlanFragment {
     fn allocation_specs(
         &self,
         reconciliation: &WorkNodeId,
+        defer_operator: bool,
     ) -> Result<Vec<CompleteDataAllocation>, CompleteDataPlanError> {
         let suffix = operator_allocation_suffix(self.workload, self.execution_role);
         let residency = self.residency;
@@ -4032,6 +4086,11 @@ impl CompleteDataPlanFragment {
             FenceKind::Io,
         ))]);
         let reconciled = BTreeSet::from([WorkDependency::Work(reconciliation.clone())]);
+        let operator_done = if defer_operator {
+            reconciled.clone()
+        } else {
+            replay_done.clone()
+        };
         let residual_refresh = self.workload.pass() == SpectralOperatorPass::ResidualRefresh;
         let mut allocations = Vec::new();
         if let Some(binding) = &self.initial_working_set {
@@ -4047,7 +4106,7 @@ impl CompleteDataPlanFragment {
                 },
                 InitializationPolicy::ZeroBeforeRead,
                 self.replay_node.clone(),
-                replay_done.clone(),
+                operator_done.clone(),
             )?);
             allocations.push(CompleteDataAllocation::new(
                 format!("spectral-operator-primitives-{suffix}"),
@@ -4069,7 +4128,7 @@ impl CompleteDataPlanFragment {
                 "spectral-operator-convolution-taps-and-corrections",
                 InitializationPolicy::OverwriteBeforeRead,
                 self.replay_node.clone(),
-                replay_done.clone(),
+                operator_done.clone(),
             )?,
             CompleteDataAllocation::new(
                 format!("spectral-operator-fft-state-{suffix}"),
@@ -4077,7 +4136,7 @@ impl CompleteDataPlanFragment {
                 "spectral-operator-fftw-plans-and-planning-scratch",
                 InitializationPolicy::OverwriteBeforeRead,
                 self.preparation_node.clone(),
-                replay_done.clone(),
+                operator_done.clone(),
             )?,
             CompleteDataAllocation::new(
                 format!("spectral-operator-forward-workspace-{suffix}"),
@@ -4085,7 +4144,7 @@ impl CompleteDataPlanFragment {
                 "spectral-operator-forward-grid-and-bounded-predictions",
                 InitializationPolicy::OverwriteBeforeRead,
                 self.replay_node.clone(),
-                replay_done,
+                operator_done,
             )?,
             CompleteDataAllocation::new(
                 format!("spectral-operator-major-cycle-model-{suffix}"),

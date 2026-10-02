@@ -515,7 +515,7 @@ impl InitialWeightedProbe<'_> {
             SpectralOperatorPass::InitialMajor,
         )?;
         let mut operator =
-            prepare_spectral_operator(specification, workload)?.begin_streaming(problem)?;
+            prepare_spectral_operator(specification, workload, 1)?.begin_streaming(problem)?;
         operator.bind_major_cycle_model(initial_preparation.final_model(), None)?;
         let consumer = fresh_rebound_consumer(request, problem, selected_replay_proof)?;
         let mut compilation = GriddedNormalReplayCompilation::new_stage_local_probe(
@@ -1146,7 +1146,7 @@ where
         SpectralOperatorPass::InitialMajor,
     )?;
     let mut initial_operator =
-        prepare_spectral_operator(specification, workload)?.begin_streaming(&problem)?;
+        prepare_spectral_operator(specification, workload, 1)?.begin_streaming(&problem)?;
     initial_operator.bind_major_cycle_model(initial_preparation.final_model(), None)?;
     let initial_consumer = fresh_consumer(&request, &problem)?;
     let (weighting, initial_summary) = {
@@ -1276,7 +1276,7 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
         SpectralOperatorPass::ResidualRefresh,
     )?;
     let mut operator =
-        prepare_spectral_operator(specification, workload)?.begin(&problem, &weighting)?;
+        prepare_spectral_operator(specification, workload, 1)?.begin(&problem, &weighting)?;
     operator.bind_major_cycle_model(preparation.final_model(), Some(prior_normal_state))?;
     operator.enable_final_visibility_samples();
     operator.authorize_derived_coverage(coverage_proof)?;

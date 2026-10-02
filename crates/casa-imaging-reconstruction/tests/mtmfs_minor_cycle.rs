@@ -473,7 +473,8 @@ fn run_operator(
         SpectralOperatorPass::InitialMajor,
     )
     .expect("Taylor workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("prepare Taylor FFT");
+    let prepared =
+        prepare_spectral_operator(specification, workload, 1).expect("prepare Taylor FFT");
     let mut owner = prepared
         .begin(problem, &generation)
         .expect("begin Taylor complete-data owner");

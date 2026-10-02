@@ -137,7 +137,7 @@ fn t51_initial_empty_projection_rejects_delta_before_model_allocation() {
     let specification = SpectralOperatorSpecification::new(&problem).unwrap();
     let initial =
         spectral_operator_workload(&specification, 3, SpectralOperatorPass::InitialMajor).unwrap();
-    let mut owner = prepare_spectral_operator(specification.clone(), initial)
+    let mut owner = prepare_spectral_operator(specification.clone(), initial, 1)
         .unwrap()
         .begin_streaming(&problem)
         .unwrap();
@@ -197,7 +197,7 @@ fn t51_initial_empty_projection_rejects_delta_before_model_allocation() {
         )
         .unwrap();
     let changed = lifecycle.apply_delta(model, delta).unwrap();
-    let mut owner = prepare_spectral_operator(specification.clone(), initial)
+    let mut owner = prepare_spectral_operator(specification.clone(), initial, 1)
         .unwrap()
         .begin_streaming(&problem)
         .unwrap();
@@ -218,7 +218,7 @@ fn t51_initial_empty_projection_rejects_delta_before_model_allocation() {
     let refresh =
         spectral_operator_workload(&specification, 3, SpectralOperatorPass::ResidualRefresh)
             .unwrap();
-    let mut owner = prepare_spectral_operator(specification, refresh)
+    let mut owner = prepare_spectral_operator(specification, refresh, 1)
         .unwrap()
         .begin_streaming(&problem)
         .unwrap();

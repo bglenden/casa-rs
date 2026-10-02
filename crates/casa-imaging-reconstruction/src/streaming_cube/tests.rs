@@ -122,7 +122,7 @@ fn batched_spatial_preparation_matches_cpu_for_flags_phase_and_nonzero_model() {
                 geometry(),
                 0..4,
                 (0..4).collect(),
-                PreparedFft::new([10, 10], 7690).unwrap(),
+                PreparedFft::new([10, 10], 7690, 1).unwrap(),
                 phase,
                 None,
             );
@@ -311,7 +311,7 @@ fn workspace(
         geometry(),
         core,
         model_channels,
-        PreparedFft::new([10, 10], 7690).unwrap(),
+        PreparedFft::new([10, 10], 7690, 1).unwrap(),
         BandPhase::Full,
         None,
     );
@@ -401,7 +401,7 @@ fn single_output_uses_native_frequencies_and_ignores_neighbour_flags() {
                     geometry(),
                     0..1,
                     vec![0],
-                    PreparedFft::new([10, 10], 7690).unwrap(),
+                    PreparedFft::new([10, 10], 7690, 1).unwrap(),
                     BandPhase::Full,
                     Some(single),
                 );
@@ -1489,7 +1489,7 @@ fn model_epoch_reads_only_support_planes_with_correct_axes_and_invalid_support()
         geometry(),
         1..2,
         vec![0, 2],
-        PreparedFft::new([10, 10], 7690).unwrap(),
+        PreparedFft::new([10, 10], 7690, 1).unwrap(),
         BandPhase::Full,
         None,
     );
@@ -1516,7 +1516,7 @@ fn model_epoch_reads_only_support_planes_with_correct_axes_and_invalid_support()
         geometry(),
         1..2,
         support.model.clone(),
-        PreparedFft::new([10, 10], 7690).unwrap(),
+        PreparedFft::new([10, 10], 7690, 1).unwrap(),
         BandPhase::Full,
         None,
     );
@@ -1544,7 +1544,7 @@ fn delayed_band_cannot_complete_into_another_model_epoch_and_model_io_errors_pro
             geometry(),
             0..1,
             vec![0],
-            PreparedFft::new([10, 10], 7690).unwrap(),
+            PreparedFft::new([10, 10], 7690, 1).unwrap(),
             BandPhase::Full,
             None,
         )
@@ -1750,7 +1750,7 @@ fn empty_initial_and_residual_refresh_omit_dead_grids_and_do_not_load_prior_arra
             geometry(),
             0..4,
             (0..4).collect(),
-            PreparedFft::new([10, 10], 7690).unwrap(),
+            PreparedFft::new([10, 10], 7690, 1).unwrap(),
             phase,
             None,
         )
@@ -1877,7 +1877,7 @@ fn interpolation_reuse_depends_only_on_admitted_window_and_original_pair() {
                         geometry(),
                         1..2,
                         (0..4).collect(),
-                        PreparedFft::new([10, 10], 7690).unwrap(),
+                        PreparedFft::new([10, 10], 7690, 1).unwrap(),
                         phase,
                         None,
                     );

@@ -109,7 +109,7 @@ fn t42_real_ms_mtmfs_normal_matches_casa_oracle_inputs() -> Result<(), Box<dyn E
         SpectralOperatorPass::InitialMajor,
     )?;
     let mut owner =
-        prepare_spectral_operator(specification, workload)?.begin_streaming(&problem)?;
+        prepare_spectral_operator(specification, workload, 1)?.begin_streaming(&problem)?;
     owner.bind_major_cycle_model(preparation.final_model(), None)?;
 
     let mut basis_bits = vec![u32::MAX; 2 * SELECTED_ROWS * CHANNELS];

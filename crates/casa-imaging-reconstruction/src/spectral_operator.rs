@@ -2815,6 +2815,7 @@ impl PreparedSpectralOperator {
 pub fn prepare_spectral_operator(
     specification: SpectralOperatorSpecification,
     workload: SpectralOperatorWorkload,
+    fft_threads: usize,
 ) -> Result<PreparedSpectralOperator, SpectralOperatorError> {
     if workload
         != spectral_operator_workload(
@@ -2822,6 +2823,8 @@ pub fn prepare_spectral_operator(
             workload.max_replay_block_samples,
             workload.pass,
         )?
+        || fft_threads == 0
+        || (fft_threads > 1 && !specification.supports_bulk_mfs())
     {
         return Err(SpectralOperatorError::ProblemMismatch);
     }
@@ -2832,8 +2835,9 @@ pub fn prepare_spectral_operator(
             let mut fft = PreparedFft::new(
                 chart.geometry.grid_shape,
                 fft_resident_complex_values_for_shape(chart.geometry.grid_shape)?,
+                fft_threads,
             )?;
-            if specification.initial_mfs_region_count() != 0 {
+            if specification.supports_bulk_mfs() {
                 // One MFS plane performs few transforms, unlike a channel cube.
                 fft.fft = fft.fft.with_estimated_plan();
                 fft.estimated = true;
@@ -11505,7 +11509,7 @@ impl WProjectionConvolution {
             geometry.increment_rad[0].abs() * sampling as f64 * padded_extent[0] / conv_size as f64;
         let s1 =
             geometry.increment_rad[1].abs() * sampling as f64 * padded_extent[1] / conv_size as f64;
-        let mut fft = PreparedFft::new([conv_size, conv_size], usize::MAX)?;
+        let mut fft = PreparedFft::new([conv_size, conv_size], usize::MAX, 1)?;
         let mut kernels = Vec::with_capacity(plane_count);
         let mut plane_zero_peak = None;
         let offset_radius = sampling.div_ceil(2);
@@ -11981,6 +11985,7 @@ pub struct PreparedFft<T: FftScalar = f64> {
     fft: Fft2<T>,
     column_major_fft: Option<Fft2<T>>,
     estimated: bool,
+    threads: usize,
 }
 
 impl<T: FftScalar> PreparedFft<T> {
@@ -11991,15 +11996,18 @@ impl<T: FftScalar> PreparedFft<T> {
     pub(crate) fn new(
         shape: [usize; 2],
         reserved_complex_values: usize,
+        threads: usize,
     ) -> Result<Self, SpectralOperatorError> {
         let required = fft_resident_complex_values_for_shape(shape)?;
         if required > reserved_complex_values {
             return Err(SpectralOperatorError::ResidencyOverflow);
         }
         Ok(Self {
-            fft: Fft2::new(shape).map_err(|_| SpectralOperatorError::ResidencyOverflow)?,
+            fft: Fft2::with_threads(shape, threads)
+                .map_err(|_| SpectralOperatorError::ResidencyOverflow)?,
             column_major_fft: None,
             estimated: false,
+            threads,
         })
     }
 
@@ -12022,10 +12030,11 @@ impl<T: FftScalar> PreparedFft<T> {
         assert_eq!(shape, self.fft.shape(), "FFTW plane shape mismatch");
         let column_major = data.strides() == [1, shape[0] as isize];
         let estimated = self.estimated;
+        let threads = self.threads;
         let fft = if column_major && shape[0] != shape[1] {
             self.column_major_fft.get_or_insert_with(|| {
-                let mut fft =
-                    Fft2::new([shape[1], shape[0]]).expect("valid column-major FFT shape");
+                let mut fft = Fft2::with_threads([shape[1], shape[0]], threads)
+                    .expect("valid column-major FFT shape and threads");
                 if estimated {
                     fft = fft.with_estimated_plan();
                 }
@@ -12607,7 +12616,7 @@ mod tests {
         let gridder = ConvolutionOperator::new(&geometry, None).unwrap();
         let mut grid = Array2::zeros((geometry.grid_shape[0], geometry.grid_shape[1]));
         grid[(geometry.grid_shape[0] / 2, geometry.grid_shape[1] / 2)] = Complex64::new(3.0, 4.0);
-        let mut fft = PreparedFft::new(geometry.grid_shape, 6_000).unwrap();
+        let mut fft = PreparedFft::new(geometry.grid_shape, 6_000, 1).unwrap();
         fft.transform(&mut grid, true);
 
         let corrected = collect_image_planes(Some(&[grid]), &geometry, &gridder, Some(2))
@@ -12636,8 +12645,8 @@ mod tests {
         let mut row_major = Array2::from_shape_fn((3, 5), values);
         let mut column_major = Array2::from_shape_fn((3, 5).f(), values);
         let reserved = super::fft_resident_complex_values_for_shape([3, 5]).unwrap();
-        let mut row_fft = PreparedFft::new([3, 5], reserved).unwrap();
-        let mut column_fft = PreparedFft::new([3, 5], reserved).unwrap();
+        let mut row_fft = PreparedFft::new([3, 5], reserved, 1).unwrap();
+        let mut column_fft = PreparedFft::new([3, 5], reserved, 4).unwrap();
         row_fft.transform_unshifted(&mut row_major, false);
         column_fft.transform_unshifted(&mut column_major, false);
         for (row, column) in row_major.iter().zip(column_major.iter()) {
@@ -12806,7 +12815,7 @@ mod tests {
         geometry.grid_shape = [512, 512];
         geometry.image_blc = [0, 0];
         let reserved = super::fft_resident_complex_values_for_shape([512, 512]).unwrap();
-        PreparedFft::new([512, 512], reserved)
+        PreparedFft::new([512, 512], reserved, 1)
             .unwrap()
             .transform(&mut grid, true);
         let gridder = ConvolutionOperator::new(&geometry, None).unwrap();
@@ -13096,7 +13105,7 @@ mod tests {
 
     fn operator() -> SpectralSlabOperator {
         let workload = workload();
-        let fft = PreparedFft::new([10, 10], workload.fft_resident_complex_values)
+        let fft = PreparedFft::new([10, 10], workload.fft_resident_complex_values, 1)
             .expect("reserved FFT workspace");
         SpectralSlabOperator::new_with_geometry(geometry(), workload.slab, workload, fft)
     }
@@ -13282,7 +13291,7 @@ mod tests {
                 aw_projection: Some(prepared),
             },
             workload,
-            PreparedFft::new([10, 10], workload.fft_resident_complex_values).unwrap(),
+            PreparedFft::new([10, 10], workload.fft_resident_complex_values, 1).unwrap(),
             3,
         )
         .unwrap();
@@ -13492,7 +13501,7 @@ mod tests {
             source_row_workspace_bytes: 0,
             initial_phase_residency: None,
         };
-        let fft = PreparedFft::new([10, 10], workload.fft_resident_complex_values)
+        let fft = PreparedFft::new([10, 10], workload.fft_resident_complex_values, 1)
             .expect("reserved FFT workspace");
         SpectralSlabOperator::new_with_geometry(geometry, slab, workload, fft)
     }
@@ -14147,7 +14156,7 @@ mod tests {
                 *sum_weight += *weight;
             }
         }
-        let mut casa_fft = PreparedFft::new(grid_shape, 7_690).expect("CASA comparison FFT");
+        let mut casa_fft = PreparedFft::new(grid_shape, 7_690, 1).expect("CASA comparison FFT");
         for (channel, (casa_dirty, casa_psf, rust_dirty_grid, rust_psf_grid, casa_sum_weight)) in
             casa_grids.iter_mut().enumerate()
         {

@@ -2827,7 +2827,14 @@ impl WorkImplementation for SpectralCycleExecutor {
             } else if context.node().id == *self.complete_data.preparation_node() {
                 state.prepared = Some(
                     self.complete_data
-                        .prepare(context)
+                        .prepare(
+                            context,
+                            if self.final_visibility_sink.is_some() {
+                                1
+                            } else {
+                                usize::MAX
+                            },
+                        )
                         .map_err(io::Error::other)?,
                 );
             } else if context.node().id == retained_route {
@@ -2850,7 +2857,14 @@ impl WorkImplementation for SpectralCycleExecutor {
                 }
                 state.prepared = Some(
                     self.complete_data
-                        .recompute(context)
+                        .recompute(
+                            context,
+                            if self.final_visibility_sink.is_some() {
+                                1
+                            } else {
+                                usize::MAX
+                            },
+                        )
                         .map_err(io::Error::other)?,
                 );
                 self.select_adaptation_route(&mut state, context, true)?;
@@ -2956,6 +2970,22 @@ impl WorkImplementation for SpectralCycleExecutor {
                 .is_some_and(|node| context.node().id == *node)
                 && self.mode == SpectralCycleExecutionMode::Science
             {
+                if let Some(operator) = state.operator.take() {
+                    if state.complete_data.is_some() {
+                        return Err(io::Error::other("complete-data operator completed twice"));
+                    }
+                    let replay = state
+                        .weighting
+                        .replay_completion()
+                        .ok_or_else(|| io::Error::other("replay completion missing"))?;
+                    // FFT finalization executes while this CPU node holds its
+                    // worker lease, not after the input fence releases workers.
+                    state.complete_data = Some(
+                        operator
+                            .complete(replay, &self.normal_storage()?)
+                            .map_err(io::Error::other)?,
+                    );
+                }
                 let complete = state
                     .complete_data
                     .take()
@@ -3149,63 +3179,74 @@ impl WorkImplementation for SpectralCycleExecutor {
                 }
                 return result;
             }
-            let result =
-                (|| {
-                    let predecessor = state
-                        .weighting
-                        .complete_replay(completion)
-                        .map_err(io::Error::other)?;
-                    let frozen_weighting = match state.weighting.frozen_artifact() {
-                        Some(artifact) => {
-                            if let Some(reservation) = state.pending_frozen_reservation.take() {
-                                Some(
-                                    artifact
-                                        .with_cross_plan_reservation(reservation)
-                                        .map_err(io::Error::other)?,
-                                )
-                            } else {
-                                artifact.has_cross_plan_reservation().then_some(artifact)
-                            }
-                        }
-                        None => None,
-                    };
-                    let compilation = state.gridded_compilation.take();
-                    let folded = state.pending_complete_data_slabs.take();
-                    let serial_operator =
-                        if folded.is_none() {
-                            Some(state.operator.take().ok_or_else(|| {
-                                io::Error::other("complete-data operator missing")
-                            })?)
+            let result = (|| {
+                let predecessor = state
+                    .weighting
+                    .complete_replay(completion)
+                    .map_err(io::Error::other)?;
+                let frozen_weighting = match state.weighting.frozen_artifact() {
+                    Some(artifact) => {
+                        if let Some(reservation) = state.pending_frozen_reservation.take() {
+                            Some(
+                                artifact
+                                    .with_cross_plan_reservation(reservation)
+                                    .map_err(io::Error::other)?,
+                            )
                         } else {
-                            None
-                        };
-                    let replay = state
-                        .weighting
-                        .replay_completion()
-                        .ok_or_else(|| io::Error::other("replay completion missing"))?;
-                    // All fallible scientific validation precedes the in-place
-                    // visibility writer's durable completion boundary.
-                    let complete_data = if let Some(folded) = folded {
-                        folded.complete(replay).map_err(io::Error::other)?
-                    } else {
-                        serial_operator
-                            .expect("serial operator exists when no MVC fold exists")
-                            .complete(replay, &self.normal_storage()?)
-                            .map_err(io::Error::other)?
-                    };
-                    let gridded_replay = compilation
-                        .map(|compilation| compilation.complete(replay))
-                        .transpose()?;
-                    if let Some(sink) = &self.final_visibility_sink {
-                        sink.lock()
-                            .map_err(|_| io::Error::other("final visibility sink poisoned"))?
-                            .finish(replay)?;
+                            artifact.has_cross_plan_reservation().then_some(artifact)
+                        }
                     }
-                    state.frozen_weighting = frozen_weighting;
-                    state.gridded_replay = gridded_replay;
-                    state.complete_data = Some(complete_data);
-                    Ok(predecessor)
-                })();
+                    None => None,
+                };
+                let compilation = state.gridded_compilation.take();
+                let folded = state.pending_complete_data_slabs.take();
+                let serial_operator = if folded.is_none()
+                    && (self.final_visibility_sink.is_some() || !self.complete_data.parallel_fft())
+                {
+                    Some(
+                        state
+                            .operator
+                            .take()
+                            .ok_or_else(|| io::Error::other("complete-data operator missing"))?,
+                    )
+                } else {
+                    None
+                };
+                let replay = state
+                    .weighting
+                    .replay_completion()
+                    .ok_or_else(|| io::Error::other("replay completion missing"))?;
+                // All fallible scientific validation precedes the in-place
+                // visibility writer's durable completion boundary.
+                let complete_data = if let Some(folded) = folded {
+                    Some(folded.complete(replay).map_err(io::Error::other)?)
+                } else if let Some(operator) = serial_operator {
+                    Some(
+                        operator
+                            .complete(replay, &self.normal_storage()?)
+                            .map_err(io::Error::other)?,
+                    )
+                } else {
+                    if state.operator.is_none() {
+                        return Err(io::Error::other("complete-data operator missing"));
+                    }
+                    // Without a visibility writer, finish the numerical owner
+                    // under reconciliation's worker lease after this I/O fence.
+                    None
+                };
+                let gridded_replay = compilation
+                    .map(|compilation| compilation.complete(replay))
+                    .transpose()?;
+                if let Some(sink) = &self.final_visibility_sink {
+                    sink.lock()
+                        .map_err(|_| io::Error::other("final visibility sink poisoned"))?
+                        .finish(replay)?;
+                }
+                state.frozen_weighting = frozen_weighting;
+                state.gridded_replay = gridded_replay;
+                state.complete_data = complete_data;
+                Ok(predecessor)
+            })();
             if result.is_err() {
                 drop(state);
                 self.discard_managed_spill();

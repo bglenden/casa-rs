@@ -33,15 +33,29 @@ fn ordinary_mfs_estimates_fft_plans_without_changing_cube_policy() {
         SpectralOperatorPass::ResidualRefresh,
     ] {
         let workload = spectral_operator_workload(&specification, 3, pass).unwrap();
-        let prepared = prepare_spectral_operator(specification.clone(), workload).unwrap();
-        assert!(prepared.ffts.iter().all(|fft| fft.estimated));
+        for threads in [1, 4, 8] {
+            let prepared =
+                prepare_spectral_operator(specification.clone(), workload, threads).unwrap();
+            assert!(
+                prepared
+                    .ffts
+                    .iter()
+                    .all(|fft| fft.estimated && fft.threads == threads)
+            );
+        }
     }
     specification.basis = SpectralBasisPlan::ChannelLocal;
     assert_eq!(specification.initial_mfs_region_count(), 0);
     let workload =
         spectral_operator_workload(&specification, 3, SpectralOperatorPass::InitialMajor).unwrap();
-    let prepared = prepare_spectral_operator(specification, workload).unwrap();
-    assert!(prepared.ffts.iter().all(|fft| !fft.estimated));
+    assert!(prepare_spectral_operator(specification.clone(), workload, 4).is_err());
+    let prepared = prepare_spectral_operator(specification, workload, 1).unwrap();
+    assert!(
+        prepared
+            .ffts
+            .iter()
+            .all(|fft| !fft.estimated && fft.threads == 1)
+    );
 }
 
 // The owner unit fixture varies private chart geometry independently of the
@@ -223,6 +237,7 @@ fn t51_initial_phase_residency_bounds_actual_formation_and_identity_transfer() {
         PreparedFft::new(
             workload.grid_shape(),
             workload.fft_resident_complex_values(),
+            1,
         )
         .unwrap(),
         3,
@@ -309,7 +324,7 @@ fn t51_initial_phase_residency_rejects_prior_before_retaining_owner_state() {
     let specification = SpectralOperatorSpecification::new(&problem).unwrap();
     let workload =
         spectral_operator_workload(&specification, 3, SpectralOperatorPass::InitialMajor).unwrap();
-    let mut owner = prepare_spectral_operator(specification, workload)
+    let mut owner = prepare_spectral_operator(specification, workload, 1)
         .unwrap()
         .begin_streaming(&problem)
         .unwrap();

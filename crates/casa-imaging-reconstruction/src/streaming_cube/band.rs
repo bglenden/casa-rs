@@ -294,6 +294,7 @@ impl BandPlan {
             None => PreparedFft::new(
                 self.geometry.grid_shape,
                 fft_resident_complex_values_for_shape(self.geometry.grid_shape)?,
+                1,
             )?,
         };
         EpochBand::prepare(

@@ -892,7 +892,7 @@ fn mfs_initial_batch_spans_input_blocks_and_finishes_partial_tail() {
             SpectralOperatorPass::InitialMajor,
         )
         .unwrap();
-        let mut owner = prepare_spectral_operator(specification, workload)
+        let mut owner = prepare_spectral_operator(specification, workload, 1)
             .unwrap()
             .begin(&problem, &generation)
             .unwrap();
@@ -975,7 +975,7 @@ fn t55_all_flagged_program_finishes_without_encoded_frames() {
     let specification = SpectralOperatorSpecification::new(&problem).unwrap();
     let workload =
         spectral_operator_workload(&specification, 1, SpectralOperatorPass::InitialMajor).unwrap();
-    let mut owner = prepare_spectral_operator(specification, workload)
+    let mut owner = prepare_spectral_operator(specification, workload, 1)
         .unwrap()
         .begin(&problem, &generation)
         .unwrap();
@@ -1018,7 +1018,7 @@ fn t55_all_flagged_program_finishes_without_encoded_frames() {
     let workload =
         spectral_operator_workload(&specification, 1, SpectralOperatorPass::ResidualRefresh)
             .unwrap();
-    let prepared = prepare_spectral_operator(specification, workload).unwrap();
+    let prepared = prepare_spectral_operator(specification, workload, 1).unwrap();
     let apply = program
         .begin_apply(
             &problem,
@@ -1143,7 +1143,7 @@ fn sealed_gridded_program_is_reused_across_distinct_model_generations() {
         )
         .expect("initial workload");
         let prepared =
-            prepare_spectral_operator(specification, workload).expect("initial operator");
+            prepare_spectral_operator(specification, workload, 1).expect("initial operator");
         let mut owner = prepared
             .begin(&problem, &generation)
             .expect("initial complete-data owner");
@@ -1212,7 +1212,7 @@ fn sealed_gridded_program_is_reused_across_distinct_model_generations() {
         SpectralOperatorPass::ResidualRefresh,
     )
     .expect("first residual workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("first operator");
+    let prepared = prepare_spectral_operator(specification, workload, 1).expect("first operator");
     let mut first_apply = program
         .begin_apply(
             &problem,
@@ -1281,7 +1281,7 @@ fn sealed_gridded_program_is_reused_across_distinct_model_generations() {
         SpectralOperatorPass::ResidualRefresh,
     )
     .expect("second residual workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("second operator");
+    let prepared = prepare_spectral_operator(specification, workload, 1).expect("second operator");
     let mut second_apply = program
         .begin_apply(
             &problem,
@@ -1748,7 +1748,7 @@ fn check_linear_cube_replay(
             )
             .expect("initial workload");
             let prepared =
-                prepare_spectral_operator(specification, workload).expect("initial operator");
+                prepare_spectral_operator(specification, workload, 1).expect("initial operator");
             let mut owner = prepared
                 .begin(&problem, &generation)
                 .expect("initial complete-data owner");
@@ -1856,8 +1856,8 @@ fn check_linear_cube_replay(
         )
         .expect("residual window workload");
         let convolution_support = specification.maximum_convolution_support();
-        let prepared =
-            prepare_spectral_operator(specification, workload).expect("residual window operator");
+        let prepared = prepare_spectral_operator(specification, workload, 1)
+            .expect("residual window operator");
         let selection = program.select_frames(start..start + depth).unwrap();
         saw_physical_sequence_gap |= selection
             .frame_sequences()
@@ -1889,7 +1889,7 @@ fn check_linear_cube_replay(
                     SpectralOperatorPass::ResidualRefresh,
                 )
                 .unwrap();
-                prepare_spectral_operator(specification, workload).unwrap()
+                prepare_spectral_operator(specification, workload, 1).unwrap()
             };
             if selection.frame_count() > 0 {
                 let incomplete = program
@@ -2113,7 +2113,7 @@ fn check_linear_cube_replay(
         SpectralOperatorPass::ResidualRefresh,
     )
     .expect("direct residual workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("direct operator");
+    let prepared = prepare_spectral_operator(specification, workload, 1).expect("direct operator");
     let mut direct_owner = prepared
         .begin(&problem, &generation)
         .expect("direct complete-data owner with the same frozen weighting");
@@ -3278,7 +3278,7 @@ fn run_t19_complete_data_for_pass_result(
     let workload =
         spectral_operator_workload(&specification, plan.limits().max_block_samples(), pass)
             .expect("workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
+    let prepared = prepare_spectral_operator(specification, workload, 1).expect("prepare operator");
     let mut state = prepared
         .begin(problem, &generation)
         .expect("begin complete-data owner");
@@ -3433,7 +3433,7 @@ fn bound_major_cycle_model_cannot_be_replaced_by_diagnostic_prediction() {
         SpectralOperatorPass::InitialMajor,
     )
     .expect("spectral operator workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
+    let prepared = prepare_spectral_operator(specification, workload, 1).expect("prepare operator");
     let mut state = prepared
         .begin(&problem, &generation)
         .expect("begin complete-data owner");
@@ -3653,7 +3653,7 @@ fn empty_initial_model_emits_zero_predictions_only_for_an_explicit_sink() {
         SpectralOperatorPass::InitialMajor,
     )
     .expect("initial workload");
-    let mut state = prepare_spectral_operator(specification, workload)
+    let mut state = prepare_spectral_operator(specification, workload, 1)
         .expect("prepare operator")
         .begin(&problem, &weighting)
         .expect("begin owner");
@@ -4399,7 +4399,7 @@ fn incomplete_or_foreign_operator_evidence_cannot_become_a_major_cycle_owner() {
     let workload =
         spectral_operator_workload(&specification, 1, SpectralOperatorPass::InitialMajor)
             .expect("other workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("prepared");
+    let prepared = prepare_spectral_operator(specification, workload, 1).expect("prepared");
     let plan = plan_weighting(
         &problem,
         WeightingExecutionLimits::new(1, 1).expect("limits"),

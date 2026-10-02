@@ -1097,7 +1097,8 @@ fn run_operator(
         SpectralOperatorPass::InitialMajor,
     )
     .expect("Taylor workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("prepare Taylor FFT");
+    let prepared =
+        prepare_spectral_operator(specification, workload, 1).expect("prepare Taylor FFT");
     let mut owner = prepared
         .begin(problem, &generation)
         .expect("begin Taylor complete-data owner");
@@ -1420,7 +1421,8 @@ fn complete_frozen_taylor_operator_slab(
         pass,
     )
     .expect("Taylor workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("prepare Taylor FFT");
+    let prepared =
+        prepare_spectral_operator(specification, workload, 1).expect("prepare Taylor FFT");
     let mut owner = prepared
         .begin(problem, &frozen.weighting)
         .expect("begin frozen Taylor owner");
@@ -1460,7 +1462,7 @@ fn complete_derived_taylor_operator_slab(
     )
     .expect("derived Taylor workload");
     let prepared =
-        prepare_spectral_operator(specification, workload).expect("prepare derived Taylor FFT");
+        prepare_spectral_operator(specification, workload, 1).expect("prepare derived Taylor FFT");
     let mut owner = prepared
         .begin_streaming(problem)
         .expect("begin derived Taylor owner");
@@ -1683,7 +1685,8 @@ fn execute_compact_taylor(
         SpectralOperatorPass::ResidualRefresh,
     )
     .expect("Taylor residual workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("prepare Taylor FFT");
+    let prepared =
+        prepare_spectral_operator(specification, workload, 1).expect("prepare Taylor FFT");
     let capacities = blocks
         .iter()
         .map(|block| usize::try_from(block.record_count()).expect("record capacity fits usize"))
@@ -2169,7 +2172,7 @@ fn t607_certified_zero_first_slab_emits_the_complete_visibility_stream() {
         SpectralOperatorPass::InitialMajor,
     )
     .expect("bounded channel-local workload");
-    let prepared = prepare_spectral_operator(specification, workload)
+    let prepared = prepare_spectral_operator(specification, workload, 1)
         .expect("prepare bounded channel-local operator");
     let mut owner = prepared
         .begin(&problem, &frozen.weighting)

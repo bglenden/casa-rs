@@ -60,19 +60,30 @@ fn native_fft_pool_stack_bytes(
     problem: &CompiledProblem,
     policy: &SpectralCycleExecutionPolicy,
 ) -> Result<u64, SpectralCyclePlanError> {
-    if !ReconstructionPlaneWorkspace::for_problem(problem)
+    let clark_pool = ReconstructionPlaneWorkspace::for_problem(problem)
         .map_err(SpectralCyclePlanError::Minor)?
-        .is_some_and(ReconstructionPlaneWorkspace::parallel_fft)
-    {
+        .is_some_and(ReconstructionPlaneWorkspace::parallel_fft);
+    let spectral_pool = cfg!(unix)
+        && SpectralOperatorSpecification::new(problem)
+            .map_err(CompleteDataPlanError::from)?
+            .supports_bulk_mfs();
+    let pools = u64::from(clark_pool) + u64::from(spectral_pool);
+    if pools == 0 {
         return Ok(0);
     }
     let workers = policy
         .authority
         .planning_worker_capacity(&policy.resource_policy)?;
+    // FFTW single- and double-precision workers have separate persistent pools.
     crate::reconstruction_executor::native_fft_stack_bytes(
         usize::try_from(workers).map_err(|_| SpectralCyclePlanError::Overflow)?,
     )
     .map_err(SpectralCyclePlanError::MinorWorkspace)
+    .and_then(|bytes| {
+        bytes
+            .checked_mul(pools)
+            .ok_or(SpectralCyclePlanError::Overflow)
+    })
 }
 
 /// Explicit non-scientific limits for one spectral cycle physical plan.

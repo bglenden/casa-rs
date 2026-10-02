@@ -22,6 +22,8 @@ pub(crate) const ALLOCATION: &str = "spectral-cycle-minor-cycle";
 pub(crate) struct PlaneExecutionPlan {
     kernel: BoundedKernelPlan,
     pub(crate) heap_bytes: u64,
+    /// Bounded outer plane-worker stacks; native FFT stacks are reserved as
+    /// process-lifetime external-library overhead by the cycle planner.
     pub(crate) stack_bytes: u64,
     pub(crate) workers: usize,
     fft_threads: usize,
@@ -97,9 +99,7 @@ impl PlaneExecutionPlan {
         Ok(Self {
             kernel,
             heap_bytes,
-            stack_bytes: plane_stack_bytes
-                .checked_add(native_fft_stack_bytes(fft_threads)?)
-                .ok_or_else(|| io::Error::other("plane FFT stack overflow"))?,
+            stack_bytes: plane_stack_bytes,
             workers: if workspace.parallel_fft() {
                 workers
             } else {
@@ -410,7 +410,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn one_plane_clark_uses_admitted_workers_for_fft_and_reserves_native_stacks() {
+    fn one_plane_clark_separates_persistent_fft_stacks_from_outer_worker_stack_claim() {
         let workspace = plane_workspace(1, ReconstructionAlgorithm::Clark);
         let serial = PlaneExecutionPlan::new(workspace, 1).unwrap();
         let pthread_stack_bytes = default_pthread_stack_bytes();
@@ -426,7 +426,10 @@ mod tests {
                 native_fft_stack_bytes(workers).unwrap(),
                 expected_native_stack
             );
-            assert_eq!(plan.stack_bytes, expected_native_stack);
+            // The cycle alternative reserves these native stacks under
+            // ExternalLibrary. Do not duplicate them in this node's ThreadStack
+            // claim, which covers only bounded outer plane workers.
+            assert_eq!(plan.stack_bytes, 0);
         }
     }
 

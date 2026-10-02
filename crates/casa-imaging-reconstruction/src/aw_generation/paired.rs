@@ -69,7 +69,7 @@ impl EvlaAwWorkspace {
         }
         Ok(Self {
             size: request.size,
-            fft: PreparedFft::<f32>::new([request.size; 2], reserve)
+            fft: PreparedFft::<f32>::new([request.size; 2], reserve, 1)
                 .map_err(|_| NativeAwGenerationError::WorkspaceMismatch)?,
             jones: vec![Complex32::default(); 4 * n],
             imaging: vec![Complex32::default(); n],
@@ -440,7 +440,7 @@ mod tests {
     fn t52_centered_float_fft_obeys_impulse_and_phase_laws() {
         let size = 16;
         let reserve = fft_resident_complex_values_for_shape([size; 2]).unwrap();
-        let mut fft = PreparedFft::<f32>::new([size; 2], reserve).unwrap();
+        let mut fft = PreparedFft::<f32>::new([size; 2], reserve, 1).unwrap();
         let mut values = vec![Complex32::default(); size * size];
         values[8 + size * 8] = Complex32::new(1.0, 0.0);
         transform(&mut fft, size, &mut values);

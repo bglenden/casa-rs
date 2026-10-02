@@ -2040,7 +2040,7 @@ impl WorkImplementation for RecordingExecutor {
         if let Some(complete) = &self.complete_data_plan
             && context.node().id == *complete.preparation_node()
         {
-            let prepared = complete.prepare(context).map_err(io::Error::other)?;
+            let prepared = complete.prepare(context, 1).map_err(io::Error::other)?;
             *self
                 .complete_data_prepared
                 .lock()
@@ -14404,7 +14404,7 @@ fn sealed_products_round(
         SpectralOperatorPass::InitialMajor,
     )
     .expect("workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
+    let prepared = prepare_spectral_operator(specification, workload, 1).expect("prepare operator");
     let mut state = prepared
         .begin(problem, &generation)
         .expect("begin complete-data owner");

@@ -749,6 +749,7 @@ fn screen_fft_temp_at_offsets(
     let mut fft = PreparedFft::new(
         [conv_size, conv_size],
         fft_resident_complex_values_for_shape([conv_size, conv_size])?,
+        1,
     )?;
     fft.transform(&mut screen, false);
     let peak = screen[(conv_size / 2, conv_size / 2)].norm();
@@ -1279,6 +1280,7 @@ mod tests {
         let mut fft = PreparedFft::new(
             geometry.grid_shape,
             fft_resident_complex_values_for_shape(geometry.grid_shape).expect("FFT residency"),
+            1,
         )
         .expect("normal FFT");
         let sensitivity = normal
