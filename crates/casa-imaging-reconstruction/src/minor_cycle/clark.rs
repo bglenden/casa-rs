@@ -143,12 +143,15 @@ impl ClarkWorkState {
         threshold: f64,
         accept: impl Fn([usize; 2]) -> bool,
     ) -> Result<Self, MinorCycleError> {
-        let max_residual = (0..shape[1])
-            .flat_map(|y| (0..shape[0]).map(move |x| [x, y]))
-            .filter(|&pixel| accept(pixel))
-            .fold(0.0_f64, |peak, pixel| {
-                peak.max(residual[pixel[0] * shape[1] + pixel[1]].abs())
-            });
+        let mut max_residual = 0.0_f64;
+        for (x, row) in residual.chunks_exact(shape[1]).enumerate() {
+            for (y, value) in row.iter().enumerate() {
+                let magnitude = value.abs();
+                if magnitude > max_residual && accept([x, y]) {
+                    max_residual = magnitude;
+                }
+            }
+        }
         let exterior = approximation.maximum_exterior_sidelobe / normalization;
         let maximum_subcycle_iterations = if exterior > 0.5 {
             5
@@ -190,17 +193,19 @@ impl ClarkWorkState {
         }
         let cutoff = self.flux_limit.max(self.threshold);
         self.active.clear();
-        // casacore's CCList keeps the first maximum in x-fastest scan order.
-        for y in 0..self.shape[1] {
-            for x in 0..self.shape[0] {
+        for (x, row) in residual.chunks_exact(self.shape[1]).enumerate() {
+            for (y, &value) in row.iter().enumerate() {
                 let pixel = [x, y];
                 let index = x * self.shape[1] + y;
-                let value = residual[index];
                 if value.abs() > cutoff && accept(pixel) {
                     self.active.push(ClarkActivePixel { index, value });
                 }
             }
         }
+        // Sort only compact active pixels to retain casacore's x-fastest tie order.
+        self.active.sort_unstable_by_key(|pixel| {
+            (pixel.index % self.shape[1], pixel.index / self.shape[1])
+        });
         let peak = self
             .active
             .iter()
@@ -332,6 +337,47 @@ impl ClarkWorkState {
 mod tests {
     use super::*;
     use std::time::Instant;
+
+    #[test]
+    fn contiguous_active_scan_preserves_x_fastest_ties_and_support() {
+        let shape = [4, 6];
+        let center = [2, 3];
+        let mut psf = vec![0.0; shape[0] * shape[1]];
+        psf[center[0] * shape[1] + center[1]] = 1.0;
+        let mut residual = vec![0.0; psf.len()];
+        residual[3 * shape[1]] = 1.0;
+        residual[3] = -1.0;
+        residual[2 * shape[1] + 1] = 2.0;
+        let accept = |pixel| pixel != [2, 1];
+        let mut state = ClarkWorkState::new(
+            &residual,
+            &psf,
+            shape,
+            center,
+            1.0,
+            ClarkApproximation {
+                radius: [0, 0],
+                patch_size: [1, 1],
+                maximum_exterior_sidelobe: 0.0,
+            },
+            0.1,
+            accept,
+        )
+        .unwrap();
+        assert_eq!(state.max_residual, 1.0);
+        assert_eq!(
+            state
+                .active
+                .iter()
+                .map(|pixel| pixel.index)
+                .collect::<Vec<_>>(),
+            [18, 3]
+        );
+        assert_eq!(
+            state.candidate(&mut residual, accept).unwrap(),
+            Some((18, 1.0))
+        );
+    }
 
     #[test]
     fn compact_refresh_matches_linear_asymmetric_psf_at_edges_and_off_center() {
