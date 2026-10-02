@@ -1474,8 +1474,7 @@ impl FusedWeightingPhase {
     /// the replay buffer. A full chunk may leave an unconsumed suffix in
     /// `prepared`; return the emitted allocation before committing that suffix.
     /// Values must come from this phase's trusted in-process preparation. The
-    /// caller accounts for the prepared allocation; equal-capacity empty replay
-    /// and prepared buffers may exchange ownership instead of copying values.
+    /// caller retains and accounts for the prepared allocation, which is reused.
     #[doc(hidden)]
     pub fn commit_prepared(
         &mut self,
@@ -2066,30 +2065,6 @@ mod selected_sample_tests {
                     + size_of::<bool>())
         );
         assert!(native_row_heap_bytes(usize::MAX, 5).is_err());
-    }
-
-    #[test]
-    fn full_prepared_buffer_transfers_ownership_without_changing_capacity_or_order() {
-        let mut prepared = Vec::with_capacity(4);
-        prepared.extend((0..4).map(|row| native_row_sample(0, row)));
-        let expected = prepared.clone();
-        let prepared_pointer = prepared.as_ptr();
-        let mut block = Vec::with_capacity(4);
-        let empty_pointer = block.as_ptr();
-        let mut committed = 0;
-        let flush = super::append_prepared_prefix(&mut block, 4, &mut prepared, |sample| {
-            assert_eq!(sample, &expected[committed]);
-            committed += 1;
-            Ok(())
-        })
-        .unwrap();
-        assert!(flush);
-        assert_eq!(committed, 4);
-        assert_eq!(block, expected);
-        assert_eq!(block.as_ptr(), prepared_pointer);
-        assert_eq!(prepared.as_ptr(), empty_pointer);
-        assert!(prepared.is_empty());
-        assert_eq!((block.capacity(), prepared.capacity()), (4, 4));
     }
 
     pub(super) fn native_row_sample(channel: u32, row: u64) -> super::WeightingSampleValue {
@@ -3086,14 +3061,8 @@ fn append_prepared_prefix(
             *block = Vec::with_capacity(max_block_samples);
         }
         if count == prepared.len() {
-            if block.is_empty()
-                && block.capacity() == max_block_samples
-                && prepared.capacity() == max_block_samples
-            {
-                std::mem::swap(block, prepared);
-            } else {
-                block.append(prepared);
-            }
+            // Whole ranges transfer without per-sample iterator temporaries.
+            block.append(prepared);
         } else {
             block.extend(prepared.drain(..count));
         }

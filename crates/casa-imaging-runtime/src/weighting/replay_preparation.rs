@@ -56,6 +56,10 @@ impl ReplayPreparationPlan {
         }
         let index = SelectedObservationBlockIndexPlan::new(problem, runs)
             .map_err(|_| WeightingError::ResidencyOverflow)?;
+        let samples_per_worker = runs
+            .div_ceil(workers)
+            .checked_mul(correlations)
+            .ok_or(WeightingError::ResidencyOverflow)?;
         let numeric = if problem.visibility_transform().is_none()
             && matches!(
                 problem.reconstruction().basis(),
@@ -72,16 +76,6 @@ impl ReplayPreparationPlan {
         } else {
             None
         };
-        let runs_per_batch = if numeric.is_some() {
-            runs.checked_mul(workers)
-                .ok_or(WeightingError::ResidencyOverflow)?
-        } else {
-            runs
-        };
-        let samples_per_worker = runs_per_batch
-            .div_ceil(workers)
-            .checked_mul(correlations)
-            .ok_or(WeightingError::ResidencyOverflow)?;
         let residency = weighting.planned_residency();
         let sample_bytes =
             residency.weighted_block_bytes() / weighting.limits().max_block_samples();
@@ -119,7 +113,7 @@ impl ReplayPreparationPlan {
             index,
             workers,
             samples_per_worker,
-            runs_per_batch,
+            runs_per_batch: runs,
             numeric,
             bytes,
         })
