@@ -208,9 +208,12 @@ fn problem_with_cube_density(
         cube_padding,
         spectral_wcs,
         None,
+        None,
+        FiniteValuePolicy::FlagInputRejectGenerated,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn problem_with_source_shape(
     scheme: WeightingScheme,
     scope: WeightDensityScope,
@@ -219,6 +222,8 @@ fn problem_with_source_shape(
     cube_padding: Option<usize>,
     spectral_wcs: Option<SpectralWcs>,
     native_rows: Option<u64>,
+    basis: Option<ReconstructionBasis>,
+    finite_values: FiniteValuePolicy,
 ) -> casa_imaging_model::CompiledProblem {
     let cube = cube_padding.is_some() || native_rows.is_some();
     let channels = if cube { 3 } else { 2 };
@@ -301,7 +306,7 @@ fn problem_with_source_shape(
                 ),
             ),
             ReconstructionContract::new(
-                ReconstructionBasis::ChannelLocal { channels },
+                basis.unwrap_or(ReconstructionBasis::ChannelLocal { channels }),
                 ReconstructionAlgorithm::Dirty,
                 ReconstructionControls::new(0, 1.0, 0.0),
                 PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
@@ -317,7 +322,7 @@ fn problem_with_source_shape(
             NumericsContract::new(
                 vec![NumericPrecision::F64],
                 ReductionPolicy::DeterministicPairwise,
-                FiniteValuePolicy::FlagInputRejectGenerated,
+                finite_values,
                 NumericalStage::ALL
                     .into_iter()
                     .map(|stage| (stage, StageErrorBudget::new(1.0e-12, 1.0e-9)))
@@ -458,6 +463,8 @@ fn native_preparation_fixture_with_taper(
         None,
         None,
         Some(7),
+        None,
+        FiniteValuePolicy::FlagInputRejectGenerated,
     );
     let base = exact_samples(&problem)[0].clone();
     let samples = (0..7)
@@ -567,9 +574,239 @@ fn prepare_native_group(
 }
 
 #[test]
-fn native_preparation_matches_scalar_science_and_is_worker_and_batch_invariant() {
+fn native_preparation_matches_scalar_science_across_worker_and_batch_shapes() {
     let (problem, samples) = native_preparation_fixture();
     assert_native_preparation_equivalence(problem, samples);
+}
+
+#[test]
+fn numeric_row_density_matches_scalar_groups_flags_finite_policy_and_source_gaps() {
+    use casa_imaging_model::{
+        SelectedNumericRow, SelectedNumericVisibility, SelectedNumericWeights,
+        SelectedObservationRunChannel, SelectedObservationRunRow,
+    };
+    use num_complex::Complex32;
+
+    let correlations = [
+        CorrelationType::CircularRr,
+        CorrelationType::CircularRl,
+        CorrelationType::CircularLr,
+        CorrelationType::CircularLl,
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, kind)| CorrelationProduct::new(index as u32, kind))
+    .collect::<Vec<_>>();
+    let per_row = [2.0, 3.0, 4.0, 8.0];
+    let per_channel = [2.0, 3.0, 4.0, 8.0, 1.0, 2.0, 3.0, 4.0, 4.0, 6.0, 8.0, 16.0];
+    let nonfinite_row = [f32::NAN, 3.0, 4.0, 8.0];
+    let visibility = [Complex32::new(1.0, -0.5); 12];
+    let frequencies = [1.025e9, 1.175e9];
+    for scheme in [
+        WeightingScheme::Uniform,
+        WeightingScheme::Briggs { robust: 0.5 },
+        WeightingScheme::BriggsBandwidthTaper { robust: -0.5 },
+    ] {
+        for finite in [
+            FiniteValuePolicy::FlagInputRejectGenerated,
+            FiniteValuePolicy::RejectAll,
+        ] {
+            let problem = problem_with_source_shape(
+                scheme,
+                WeightDensityScope::GlobalSelection,
+                None,
+                32,
+                None,
+                None,
+                None,
+                Some(ReconstructionBasis::Constant),
+                finite,
+            );
+            let plan =
+                plan_weighting(&problem, WeightingExecutionLimits::new(16, 1).unwrap()).unwrap();
+            let base = exact_samples(&problem)[0].clone();
+            let channels = [0, 2].map(|channel_index| SelectedObservationRunChannel {
+                channel_index,
+                frequency_centre_hz: base.address.frequency_centre_hz,
+                frequency_lower_hz: base.address.frequency_lower_hz,
+                frequency_upper_hz: base.address.frequency_upper_hz,
+                channel_width_hz: base.address.channel_width_hz,
+                frequency_frame: base.address.frequency_frame,
+            });
+            for selection in [
+                correlations.as_slice(),
+                &correlations[0..1],
+                &[correlations[0], correlations[3]],
+            ] {
+                for weights in [
+                    SelectedNumericWeights::PerRow(&per_row),
+                    SelectedNumericWeights::PerChannel(&per_channel),
+                    SelectedNumericWeights::PerRow(&nonfinite_row),
+                ] {
+                    for case in 0..4 {
+                        let mut flags = [false; 12];
+                        if case == 2 {
+                            flags[1] = true;
+                        }
+                        if case == 3 {
+                            flags[8] = true;
+                        }
+                        let mut coordinates = base.coordinates;
+                        coordinates.density_uvw_m = [1.0, 2.0, 0.0];
+                        coordinates.transformed_uvw_m = [100_000.0; 3];
+                        let row = SelectedObservationRunRow {
+                            measurement_set: base.address.measurement_set,
+                            physical_row: base.address.physical_row,
+                            data_description_id: base.address.data_description_id,
+                            spectral_window_id: base.address.spectral_window_id,
+                            polarization_id: base.address.polarization_id,
+                            prediction_target: base.prediction_target,
+                            row_flag: case == 1,
+                            coordinates,
+                            domain_projections: base.domain_projections.clone(),
+                            metadata: base.metadata,
+                        };
+                        let numeric = SelectedNumericRow {
+                            row: &row,
+                            channels: &channels,
+                            correlations: selection,
+                            first_stored_channel: 0,
+                            stored_channels: 3,
+                            stored_correlations: 4,
+                            visibility: SelectedNumericVisibility::Complex32(&visibility),
+                            flags: &flags,
+                            weights,
+                        };
+                        let mut scalar_samples = Vec::new();
+                        for (channel, coordinate) in channels.iter().enumerate() {
+                            let source = coordinate.channel_index as usize * 4;
+                            let weights = match weights {
+                                SelectedNumericWeights::PerRow(values) => values,
+                                SelectedNumericWeights::PerChannel(values) => {
+                                    &values[source..source + 4]
+                                }
+                            };
+                            let group_flag = selection.iter().any(|product| {
+                                flags[source + product.correlation_index() as usize]
+                            });
+                            let parallel_flag = selection.iter().any(|product| {
+                                product.correlation_type().contributes_to_stokes_i()
+                                    && flags[source + product.correlation_index() as usize]
+                            });
+                            let group = SelectedInputWeightGroup::correlation_run(
+                                weights[selection[0].correlation_index() as usize],
+                                weights
+                                    [selection[selection.len() - 1].correlation_index() as usize],
+                                selection.len(),
+                            )
+                            .with_imaging_flag(group_flag);
+                            for (ordinal, product) in selection.iter().enumerate() {
+                                let mut sample = base.clone();
+                                sample.address.channel_index = coordinate.channel_index;
+                                sample.address.correlation_index = product.correlation_index();
+                                sample.address.correlation_type = product.correlation_type();
+                                sample.coordinates = coordinates;
+                                sample.row_flag = row.row_flag;
+                                sample.channel_flag =
+                                    flags[source + product.correlation_index() as usize];
+                                sample.parallel_hand_group_flag = parallel_flag;
+                                sample.input_weight = weights[product.correlation_index() as usize];
+                                let group = group
+                                    .with_density_owner(ordinal == 0)
+                                    .with_terminal_member(ordinal + 1 == selection.len());
+                                scalar_samples.push((sample, group, frequencies[channel]));
+                            }
+                        }
+                        let mut numeric_density =
+                            begin_weighting_generation(&problem, &plan).unwrap();
+                        let mut scalar_density =
+                            begin_weighting_generation(&problem, &plan).unwrap();
+                        assert_eq!(
+                            numeric_density.consume_numeric_row(
+                                &problem,
+                                SelectedNumericRow {
+                                    flags: &flags[..11],
+                                    ..numeric
+                                },
+                                &frequencies,
+                            ),
+                            Err(WeightingError::CoverageMismatch),
+                        );
+                        assert_eq!(
+                            numeric_density.consume_numeric_row(
+                                &problem,
+                                numeric,
+                                &frequencies[..1]
+                            ),
+                            Err(WeightingError::CoverageMismatch),
+                        );
+                        assert_eq!(
+                            numeric_density.consume_numeric_row(
+                                &problem,
+                                numeric,
+                                &[f64::NAN, frequencies[1]]
+                            ),
+                            Err(WeightingError::GeneratedNonFiniteWeight),
+                        );
+                        let actual =
+                            numeric_density.consume_numeric_row(&problem, numeric, &frequencies);
+                        let expected =
+                            scalar_samples
+                                .iter()
+                                .try_for_each(|(sample, group, frequency)| {
+                                    scalar_density.consume(
+                                        &problem,
+                                        sample.as_view().with_input_weight_group(*group),
+                                        *frequency,
+                                        SelectedSpectralContributions::new([
+                                            SelectedSpectralContribution::new(0, 1.0, *frequency),
+                                            None,
+                                        ])
+                                        .unwrap(),
+                                    )
+                                });
+                        assert_eq!(
+                            actual, expected,
+                            "finite policy and complete group rejection"
+                        );
+                        if actual.is_err() {
+                            continue;
+                        }
+                        let mut numeric_sum = numeric_density.finish(&problem).unwrap();
+                        let mut scalar_sum = scalar_density.finish(&problem).unwrap();
+                        for (sample, group, frequency) in &scalar_samples {
+                            let contributions = SelectedSpectralContributions::new([
+                                SelectedSpectralContribution::new(0, 1.0, *frequency),
+                                None,
+                            ])
+                            .unwrap();
+                            for sum in [&mut numeric_sum, &mut scalar_sum] {
+                                sum.consume(
+                                    &problem,
+                                    sample.as_view().with_input_weight_group(*group),
+                                    *frequency,
+                                    contributions.clone(),
+                                )
+                                .unwrap();
+                            }
+                        }
+                        let actual = numeric_sum.finish().unwrap();
+                        let expected = scalar_sum.finish().unwrap();
+                        assert_eq!(
+                            actual.sample_count(),
+                            (channels.len() * selection.len()) as u64
+                        );
+                        assert_eq!(
+                            actual.generation_id(),
+                            expected.generation_id(),
+                            "same ordered density contributions and frequency envelope"
+                        );
+                        assert_eq!(actual.sum_weights(), expected.sum_weights());
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[test]
@@ -756,7 +993,6 @@ fn assert_native_preparation_equivalence(
     if let Some(last) = last {
         expected.extend(last.into_samples());
     }
-    let mut canonical = None;
     for (worker_count, rows_per_worker) in [(1, 7), (1, 2), (2, 2), (4, 1)] {
         let mut owner = NativeWeightingPreparation::new(&problem, &plan).unwrap();
         let mut workers = (0..worker_count)
@@ -823,8 +1059,11 @@ fn assert_native_preparation_equivalence(
         }
         assert_eq!(offset, samples.len());
         let (state, summary) = owner.finish().unwrap();
-        assert_eq!(state.generation_id(), scalar_state.generation_id());
-        assert_eq!(state.sum_weights(), scalar_state.sum_weights());
+        assert_eq!(state.sum_weights().len(), scalar_state.sum_weights().len());
+        for (actual, expected) in state.sum_weights().iter().zip(scalar_state.sum_weights()) {
+            assert!((actual - expected).abs() <= 1.0e-12 * expected.abs().max(1.0));
+        }
+        assert_eq!(summary.weighting_generation(), state.generation_id());
         assert_eq!(summary.sample_count(), samples.len() as u64);
         assert_eq!(
             summary.block_count(),
@@ -832,12 +1071,6 @@ fn assert_native_preparation_equivalence(
             "native coverage blocks are canonical rows"
         );
         assert_eq!(summary.residency().weighted_block_bytes(), 0);
-        let identity = (summary.replay_id(), summary.coverage());
-        if let Some(canonical) = canonical {
-            assert_eq!(identity, canonical);
-        } else {
-            canonical = Some(identity);
-        }
     }
 }
 
@@ -3074,7 +3307,7 @@ fn planned_and_receipted_residency_cover_every_weighting_buffer_class() {
 }
 
 #[test]
-fn casa_anchor_grid_plans_one_shared_bounded_exact_accumulator() {
+fn casa_anchor_grid_plans_one_transferred_density_buffer_and_scalar_sums() {
     let image_size = 1_024;
     let problem = problem_with_image_size(
         WeightingScheme::Briggs { robust: 0.5 },
@@ -3094,25 +3327,23 @@ fn casa_anchor_grid_plans_one_shared_bounded_exact_accumulator() {
     .expect("partitioned anchor plan");
     let planned = plan.planned_residency();
     let density_cells = image_size * image_size;
-    let exact_f32_state_bytes = density_cells * 6 * size_of::<u64>() + 3 * size_of::<usize>();
-
     assert_eq!(
-        planned.shared_density_accumulator_bytes(),
-        exact_f32_state_bytes,
-        "worker count must not multiply the shared exact density grid"
+        planned.density_grid_bytes(),
+        density_cells * size_of::<f64>(),
+        "one f64 buffer is retained through density generation and freezing"
     );
     assert_eq!(
-        partitioned
-            .planned_residency()
-            .shared_density_accumulator_bytes(),
-        exact_f32_state_bytes,
-        "density partitions must use the same shared exact grid"
+        partitioned.planned_residency().density_grid_bytes(),
+        planned.density_grid_bytes(),
+        "density partitions must use the same shared density buffer"
     );
     assert_eq!(
-        planned.sum_weight_accumulator_bytes(),
-        2_047 * 64,
-        "one output plane needs one bounded exact-f64 sum-weight accumulator"
+        planned.sum_weight_bytes(),
+        size_of::<f64>(),
+        "one output plane retains one transferred f64 sum"
     );
+    assert_eq!(planned.shared_density_accumulator_bytes(), 0);
+    assert_eq!(planned.sum_weight_accumulator_bytes(), 0);
 }
 
 #[test]

@@ -415,7 +415,7 @@ fn t55_clark_cube_products_and_repeated_cycles_are_exact_across_channel_windows(
             (1, None),
             (1, Some((9 << 20) + (128 << 10))),
             (1, Some((10 << 20) + (128 << 10))),
-            (1, Some((11 << 20) + (640 << 10))),
+            (1, Some(11 << 20)),
         ],
         true,
         &[ContinuumWeighting::Briggs(0.5)],

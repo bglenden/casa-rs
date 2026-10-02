@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Deterministic field/pointing accumulation for direction-dependent normal state.
+//! Field/pointing accumulation for direction-dependent normal state.
 
 use std::collections::BTreeMap;
 use std::mem::size_of;
@@ -16,7 +16,6 @@ use crate::{
         MosaicProjectorKey, PreparedFft, SpectralOperatorGeometry, fft_planning_words_for_shape,
         fft_resident_complex_values_for_shape,
     },
-    weighting::ExactF64Sum,
 };
 
 pub(crate) const MOSAIC_OVERSAMPLING: usize = 10;
@@ -111,7 +110,6 @@ pub(crate) fn residency_projection(
     response_capacity: usize,
     field_capacity: usize,
     normal_entry_capacity: usize,
-    normal_addition_capacity: usize,
     normal_accumulator_count: usize,
 ) -> Result<MosaicResidencyProjection, SpectralOperatorError> {
     if response_capacity == 0 || field_capacity == 0 {
@@ -136,24 +134,17 @@ pub(crate) fn residency_projection(
         .and_then(|bytes| bytes.checked_mul(response_capacity))
         .and_then(|bytes| bytes.checked_add(projector_tree_bytes))
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    let normal_entry_bytes = bounded_tree_bytes::<
-        (PointingKey, MosaicWeightSupportKey),
-        SignedExactF64Sum,
-    >(normal_entry_capacity, normal_accumulator_count)?;
+    let normal_entry_bytes = bounded_tree_bytes::<(PointingKey, MosaicWeightSupportKey), f64>(
+        normal_entry_capacity,
+        normal_accumulator_count,
+    )?;
     let normal_accumulator_bytes = size_of::<MosaicNormalAccumulator>()
         .checked_mul(normal_accumulator_count)
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    let total_normal_additions = normal_addition_capacity
-        .checked_mul(normal_accumulator_count)
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    // One addition can create at most one new exponent bin. The maximum heap
-    // occurs when every addition lands in a distinct one-bin accumulator.
-    let normal_bin_bytes = bounded_tree_bytes::<i16, u128>(1, total_normal_additions)?;
     let retained_bytes = projector_bytes
         .checked_add(PreparedPrimaryBeamPower::casa_aca_mosaic_retained_table_bytes())
         .and_then(|bytes| bytes.checked_add(normal_entry_bytes))
         .and_then(|bytes| bytes.checked_add(normal_accumulator_bytes))
-        .and_then(|bytes| bytes.checked_add(normal_bin_bytes))
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
 
     let screen_bytes = conv_size
@@ -984,32 +975,6 @@ struct MosaicWeightSupportKey {
     max_y: isize,
 }
 
-#[derive(Default)]
-struct SignedExactF64Sum {
-    positive: ExactF64Sum,
-    negative: ExactF64Sum,
-}
-
-impl SignedExactF64Sum {
-    fn add(&mut self, value: f64) -> Result<(), crate::WeightingError> {
-        if value.is_sign_negative() {
-            self.negative.add(-value)
-        } else {
-            self.positive.add(value)
-        }
-    }
-
-    fn value(&self) -> f64 {
-        self.positive.value() - self.negative.value()
-    }
-
-    #[cfg(test)]
-    fn merge(&mut self, other: Self) -> Result<(), crate::WeightingError> {
-        self.positive.merge(other.positive)?;
-        self.negative.merge(other.negative)
-    }
-}
-
 impl From<MosaicSamplePlan> for MosaicWeightSupportKey {
     fn from(plan: MosaicSamplePlan) -> Self {
         Self {
@@ -1021,13 +986,13 @@ impl From<MosaicSamplePlan> for MosaicWeightSupportKey {
     }
 }
 
-/// Reconstruction-owned exact reduction of mosaic pointing-pair weights.
+/// Reconstruction-owned scalar reduction of mosaic pointing-pair weights.
 ///
 /// The accumulator stores one scalar per unique field, pointing, and evaluation
-/// frequency. It therefore stays independent of source block boundaries and
-/// worker partitions while retaining independent antenna boresights.
+/// frequency while retaining independent antenna boresights. Worker reductions
+/// permit ordinary floating-point rounding within scientific acceptance.
 pub(crate) struct MosaicNormalAccumulator {
-    weights: BTreeMap<(PointingKey, MosaicWeightSupportKey), SignedExactF64Sum>,
+    weights: BTreeMap<(PointingKey, MosaicWeightSupportKey), f64>,
     entry_capacity: usize,
     addition_capacity: usize,
     additions: usize,
@@ -1088,11 +1053,12 @@ impl MosaicNormalAccumulator {
         if self.additions == self.addition_capacity {
             return Err(SpectralOperatorError::ResidencyOverflow);
         }
-        self.weights
-            .entry(key)
-            .or_default()
-            .add(weight)
-            .map_err(|_| SpectralOperatorError::GeneratedNonfinite)?;
+        let sum = self.weights.entry(key).or_default();
+        let next = *sum + weight;
+        if !next.is_finite() {
+            return Err(SpectralOperatorError::GeneratedNonfinite);
+        }
+        *sum = next;
         self.additions = self
             .additions
             .checked_add(1)
@@ -1109,11 +1075,12 @@ impl MosaicNormalAccumulator {
             if !self.weights.contains_key(&key) && self.weights.len() == self.entry_capacity {
                 return Err(SpectralOperatorError::ResidencyOverflow);
             }
-            self.weights
-                .entry(key)
-                .or_default()
-                .merge(weight)
-                .map_err(|_| SpectralOperatorError::GeneratedNonfinite)?;
+            let sum = self.weights.entry(key).or_default();
+            let next = *sum + weight;
+            if !next.is_finite() {
+                return Err(SpectralOperatorError::GeneratedNonfinite);
+            }
+            *sum = next;
         }
         self.additions += other.additions;
         Ok(())
@@ -1135,7 +1102,6 @@ impl MosaicNormalAccumulator {
         let mut grid = Array2::zeros((grid_shape[0], grid_shape[1]));
         let mut compensation = Array2::zeros((grid_shape[0], grid_shape[1]));
         for ((pointing, support), weight) in self.weights {
-            let weight = weight.value();
             if weight == 0.0 {
                 continue;
             }
@@ -1403,7 +1369,7 @@ mod tests {
         .expect("projector with distinct support frequency");
         assert_eq!(projector.normalization_support, expected_support);
 
-        let residency = residency_projection(geometry.image_shape, [16, 16], 1, 1, 100, 100, 1)
+        let residency = residency_projection(geometry.image_shape, [16, 16], 1, 1, 100, 1)
             .expect("mosaic residency");
         let temp_side = conv_size / 4;
         let temp_bytes = temp_side * temp_side * size_of::<Complex32>();
@@ -1460,12 +1426,11 @@ mod tests {
 
     #[test]
     fn residency_scales_with_scientific_mosaic_cardinality() {
-        let base = residency_projection([128, 128], [160, 160], 1, 1, 100, 100, 1).unwrap();
-        let larger_image = residency_projection([512, 512], [640, 640], 1, 1, 100, 100, 1).unwrap();
-        let more_responses =
-            residency_projection([128, 128], [160, 160], 2, 1, 100, 100, 1).unwrap();
-        let more_fields = residency_projection([128, 128], [160, 160], 1, 6, 100, 100, 1).unwrap();
-        let more_normals = residency_projection([128, 128], [160, 160], 1, 1, 100, 100, 2).unwrap();
+        let base = residency_projection([128, 128], [160, 160], 1, 1, 100, 1).unwrap();
+        let larger_image = residency_projection([512, 512], [640, 640], 1, 1, 100, 1).unwrap();
+        let more_responses = residency_projection([128, 128], [160, 160], 2, 1, 100, 1).unwrap();
+        let more_fields = residency_projection([128, 128], [160, 160], 1, 6, 100, 1).unwrap();
+        let more_normals = residency_projection([128, 128], [160, 160], 1, 1, 100, 2).unwrap();
 
         assert!(base.retained_bytes > 0);
         assert!(base.workspace_bytes > 0);
@@ -1562,7 +1527,7 @@ mod tests {
     }
 
     #[test]
-    fn field_pointing_reduction_is_partition_invariant() {
+    fn field_pointing_reduction_preserves_signed_weights_within_tolerance() {
         let samples = [
             (0, point(1.0), 1.0e9, 1.0),
             (1, point(1.1), 1.0e9, -2.0),
@@ -1618,18 +1583,16 @@ mod tests {
             )
             .expect("partition sample");
         }
-        left.merge(right).expect("deterministic merge");
-        let expected = serial
-            .weights
-            .into_iter()
-            .map(|(key, weight)| (key, weight.value()))
-            .collect::<Vec<_>>();
-        let actual = left
-            .weights
-            .into_iter()
-            .map(|(key, weight)| (key, weight.value()))
-            .collect::<Vec<_>>();
+        left.merge(right).expect("finite merge");
+        let expected = serial.weights.into_iter().collect::<Vec<_>>();
+        let actual = left.weights.into_iter().collect::<Vec<_>>();
 
-        assert_eq!(actual, expected);
+        assert_eq!(actual.len(), expected.len());
+        for ((actual_key, actual_weight), (expected_key, expected_weight)) in
+            actual.into_iter().zip(expected)
+        {
+            assert_eq!(actual_key, expected_key);
+            assert!((actual_weight - expected_weight).abs() < 1.0e-12);
+        }
     }
 }

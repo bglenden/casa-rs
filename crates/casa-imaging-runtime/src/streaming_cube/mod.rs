@@ -2,7 +2,6 @@
 
 //! Bounded native storage and execution for the production cube path.
 
-mod bulk_mfs;
 mod bulk_phase;
 mod bulk_wave;
 mod execute;

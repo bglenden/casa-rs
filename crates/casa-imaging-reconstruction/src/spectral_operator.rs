@@ -2,7 +2,6 @@
 
 //! Serial CPU basis-neutral spectral measurement operator and normal-state primitives.
 
-mod bulk_mfs;
 mod initial_planes;
 pub(crate) mod normal_storage;
 use initial_planes::InitialPlaneBatch;
@@ -2442,7 +2441,6 @@ pub fn spectral_operator_workload(
                 chart.geometry.grid_shape,
                 mosaic_projector_capacity,
                 specification.mosaic_field_capacity,
-                specification.mosaic_normal_entry_capacity,
                 specification.mosaic_normal_entry_capacity,
                 normal_moments
                     .checked_mul(polarizations)

@@ -43,7 +43,6 @@ pub struct BulkCubePhase {
     metal_allocation: Option<AllocationId>,
     output_hz: Vec<f64>,
     cube_state: Option<CubeStatePlan>,
-    mfs: Option<CompleteDataPlanFragment>,
     frozen_reservation: Option<Arc<FrozenWeightingReservation>>,
     minor: Option<(
         WorkNodeId,
@@ -74,8 +73,6 @@ struct State {
     masks: Option<ReconstructionMaskSet>,
     fold: Option<PendingStreamingCubeFold>,
     refresh: Option<PendingCubeRefresh>,
-    mfs_prepared: Option<CompleteDataPreparedState>,
-    mfs_operator: Option<SpectralOperatorState>,
     complete: Option<MajorCycleOperatorResult>,
     minor: Option<ReconstructionCyclePhaseCompletion>,
 }
@@ -141,6 +138,12 @@ impl BulkCubePhase {
         ordinal: u32,
         minor: Option<(ImageDomainReconstructionMaskPlans, MinorCycleProgram)>,
     ) -> io::Result<(PhysicalWorkBinding, Self)> {
+        if !Self::supports(&problem)? {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "unsupported bulk cube problem",
+            ));
+        }
         if policy.visibility_write.is_some()
             || policy.aw_projection.is_some()
             || policy.aw_reader.is_some()
@@ -231,11 +234,7 @@ impl BulkCubePhase {
                     .ok_or_else(|| io::Error::other("missing output frequency"))
             })
             .collect::<io::Result<Vec<_>>>()?;
-        let is_mfs = matches!(
-            problem.reconstruction().basis(),
-            casa_imaging_model::ReconstructionBasis::Constant
-        );
-        if policy.metal_cube && (is_mfs || output_hz.len() < 2) {
+        if policy.metal_cube && output_hz.len() < 2 {
             return Err(io::Error::other(
                 "Metal cube requires a channel-local multi-plane problem",
             ));
@@ -243,9 +242,7 @@ impl BulkCubePhase {
         let metal_allocation = policy
             .metal_cube
             .then(|| AllocationId::new(format!("bulk-cube-metal-{ordinal}")));
-        let bands = if is_mfs {
-            Vec::new()
-        } else if let Some(retained) = &retained {
+        let bands = if let Some(retained) = &retained {
             retained
                 .bands
                 .iter()
@@ -265,7 +262,7 @@ impl BulkCubePhase {
         // Initial weighting discovery must inspect the entire selected axis.
         // A replay's frozen weighting and observed band support permit a
         // smaller source claim; each wave allocates only its own window.
-        let bulk_input = if retained.is_some() && !is_mfs {
+        let bulk_input = if retained.is_some() {
             let native = bands
                 .iter()
                 .map(BandPlan::native_range)
@@ -297,24 +294,17 @@ impl BulkCubePhase {
             )
         });
         let run = retained.as_ref().and_then(|r| r.managed.clone());
-        let (minimum_cache, full_cache) = if is_mfs {
-            (0, 0)
-        } else {
-            CubeStatePlan::managed_cache_limits(&problem, &storage, workers)?
-        };
-        let mut cube_state = if is_mfs {
-            None
-        } else {
-            Some(CubeStatePlan::managed_streaming_cube(
-                &problem,
-                &storage,
-                1,
-                prepare.clone(),
-                minor.as_ref().map_or(&reconcile, |m| &m.0).clone(),
-                run.clone(),
-                minimum_cache,
-            )?)
-        };
+        let (minimum_cache, full_cache) =
+            CubeStatePlan::managed_cache_limits(&problem, &storage, workers)?;
+        let mut cube_state = Some(CubeStatePlan::managed_streaming_cube(
+            &problem,
+            &storage,
+            1,
+            prepare.clone(),
+            minor.as_ref().map_or(&reconcile, |m| &m.0).clone(),
+            run.clone(),
+            minimum_cache,
+        )?);
         let compose_state = |physical,
                              cube_state: &Option<CubeStatePlan>,
                              gpu_bytes: u64|
@@ -334,19 +324,18 @@ impl BulkCubePhase {
             } else {
                 physical
             };
-            let physical = match cube_state {
-                Some(cube_state) => cube_state
-                    .compose(
-                        registry,
-                        policy.implementation.clone(),
-                        &storage,
-                        physical,
-                        &read,
-                        &reconcile,
-                    )
-                    .map_err(io::Error::other),
-                None => Ok(physical),
-            }?;
+            let physical = cube_state
+                .as_ref()
+                .expect("cube backing")
+                .compose(
+                    registry,
+                    policy.implementation.clone(),
+                    &storage,
+                    physical,
+                    &read,
+                    &reconcile,
+                )
+                .map_err(io::Error::other)?;
             match &metal_allocation {
                 Some(allocation) => super::metal_plan::compose(
                     physical,
@@ -366,7 +355,6 @@ impl BulkCubePhase {
         let enclosing = super::enclosing_memory_bytes(
             input
                 .as_ref()
-                .filter(|_| !is_mfs)
                 .map_or(Ok(0), |i| {
                     i.evidence().normal_state().retained_resident_bytes()
                 })
@@ -442,14 +430,10 @@ impl BulkCubePhase {
                 remaining = remaining_memory().map_err(io::Error::other)?;
             }
         }
-        let count = if is_mfs {
-            0
+        let count = if policy.metal_cube {
+            MetalWaveMemory::prefix(&bands, remaining, workers, rows)?
         } else {
-            if policy.metal_cube {
-                MetalWaveMemory::prefix(&bands, remaining, workers, rows)?
-            } else {
-                BulkWave::prefix(&bands, remaining, workers)?
-            }
+            BulkWave::prefix(&bands, remaining, workers)?
         };
         let metal_memory = policy
             .metal_cube
@@ -461,7 +445,7 @@ impl BulkCubePhase {
         let wave_bytes = metal_memory
             .as_ref()
             .map_or(Ok(cpu_wave), MetalWaveMemory::total)?;
-        if !is_mfs && run.is_none() {
+        if run.is_none() {
             let extra = remaining
                 .saturating_sub(wave_bytes)
                 .min((full_cache - minimum_cache) as u64) as usize;
@@ -497,24 +481,6 @@ impl BulkCubePhase {
             &cube_state,
             metal_memory.as_ref().map_or(8, |m| m.device),
         )?;
-        let (physical, mfs) = if is_mfs {
-            let complete = CompleteDataPlanFragment::new_with_preparation_node(
-                &problem,
-                1,
-                read.clone(),
-                WorkNodeId::new(format!("bulk-mfs-fft-{ordinal}")),
-                if ordinal == 0 {
-                    SpectralOperatorPass::InitialMajor
-                } else {
-                    SpectralOperatorPass::ResidualRefresh
-                },
-            )
-            .map_err(io::Error::other)?;
-            let (physical, complete) = complete.compose(&physical).map_err(io::Error::other)?;
-            (physical, Some(complete))
-        } else {
-            (physical, None)
-        };
         let imported = retained.map(|r| r.weighting);
         let execution = imported
             .as_ref()
@@ -549,7 +515,6 @@ impl BulkCubePhase {
                 metal_allocation,
                 output_hz,
                 cube_state,
-                mfs,
                 frozen_reservation,
                 minor,
                 state: Mutex::new(State {
@@ -565,8 +530,6 @@ impl BulkCubePhase {
                     masks: None,
                     fold: None,
                     refresh: None,
-                    mfs_prepared: None,
-                    mfs_operator: None,
                     complete: None,
                     minor: None,
                 }),
@@ -618,34 +581,6 @@ impl BulkCubePhase {
             .model
             .as_ref()
             .ok_or_else(|| io::Error::other("bulk model not prepared"))?;
-        if let Some(fragment) = &self.mfs {
-            let mut operator = state
-                .mfs_prepared
-                .take()
-                .ok_or_else(|| io::Error::other("bulk MFS FFT preparation missing"))?
-                .begin_streaming(context, &self.problem, fragment)
-                .map_err(io::Error::other)?;
-            operator
-                .bind_major_cycle_model(model, state.prior.take())
-                .map_err(io::Error::other)?;
-            let mut operator = state.weighting.traverse_bulk(
-                context,
-                &self.fragment(),
-                &self.problem,
-                selected,
-                self.input,
-                None,
-                super::bulk_mfs::MfsConsumer(operator),
-            )?;
-            state
-                .weighting
-                .frozen_artifact()
-                .ok_or_else(|| io::Error::other("bulk MFS weighting completion missing"))?
-                .authorize_derived_operator(&mut operator)
-                .map_err(io::Error::other)?;
-            state.mfs_operator = Some(operator);
-            return Ok(());
-        }
         let products = &self.problem.selected_observation().read_set().sources()[0]
             .selection()
             .correlations()[0];
@@ -853,11 +788,11 @@ impl WorkImplementation for BulkCubePhase {
             let attempt = ModelExecutionAttemptId::new(LogicalIdentity::from_sha256(
                 context.attempt_id().as_bytes(),
             ));
-            let storage = match &self.cube_state {
-                Some(backing) => backing.model_storage(context)?,
-                None => casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
-                    .map_err(io::Error::other)?,
-            };
+            let storage = self
+                .cube_state
+                .as_ref()
+                .expect("cube backing")
+                .model_storage(context)?;
             let (lifecycle, named, terms) = if let Some(input) = state.input.take() {
                 let (terms, continuation, prior, masks) = input.into_execution_parts();
                 let (lifecycle, named) = ModelLifecycle::continue_from(
@@ -891,12 +826,6 @@ impl WorkImplementation for BulkCubePhase {
                     .map_err(io::Error::other)?,
             );
             state.lifecycle = Some(lifecycle);
-        } else if let Some(fragment) = self
-            .mfs
-            .as_ref()
-            .filter(|f| *f.preparation_node() == context.node().id)
-        {
-            state.mfs_prepared = Some(fragment.prepare(context).map_err(io::Error::other)?);
         } else if context.node().id == self.read {
             self.read(&mut state, context)?;
         } else if context.node().id == self.reconcile {
@@ -905,13 +834,7 @@ impl WorkImplementation for BulkCubePhase {
                 .weighting
                 .replay_completion()
                 .ok_or_else(|| io::Error::other("bulk source fence has not completed"))?;
-            let complete = if let Some(operator) = state.mfs_operator.take() {
-                operator.complete(
-                    replay,
-                    &casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(1)
-                        .map_err(io::Error::other)?,
-                )
-            } else if let Some(refresh) = state.refresh.take() {
+            let complete = if let Some(refresh) = state.refresh.take() {
                 refresh.complete_rebound(replay)
             } else {
                 state

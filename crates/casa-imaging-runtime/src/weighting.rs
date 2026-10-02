@@ -391,6 +391,7 @@ struct DensityBlockKernel<'a> {
     consumer: SelectedObservationBlockConsumer<'a>,
     density: WeightingDensityPhase,
     spectral_contributions: WeightingSpectralCache<'a>,
+    numeric: Option<casa_ms::SelectedObservationNumericGeometry>,
 }
 
 struct DensityBlockKernelCompletion<'a> {
@@ -451,8 +452,38 @@ impl DensityBlockKernel<'_> {
     fn consume_selected_block(
         &mut self,
         storage: &SelectedObservationBlock,
+        execution: crate::bounded_stream::BoundedExecution<'_>,
     ) -> Result<(), DensityBlockKernelError> {
         let problem = self.problem;
+        if let Some(geometry) = &mut self.numeric {
+            bulk_source::project_geometry(problem, storage, geometry, execution).map_err(
+                |error| {
+                    DensityBlockKernelError::Traversal(SelectedObservationTraversalError::Source(
+                        error,
+                    ))
+                },
+            )?;
+            let channels = geometry.channels().len();
+            let density = &mut self.density;
+            return self
+                .consumer
+                .consume_numeric(storage, geometry, || {
+                    for row in 0..geometry.row_count() {
+                        let selected = storage
+                            .numeric_row(geometry, row)
+                            .map_err(ContinuumDensityCallbackError::Source)?;
+                        density
+                            .consume_numeric_row(
+                                problem,
+                                selected,
+                                &geometry.frequencies_hz()[row * channels..(row + 1) * channels],
+                            )
+                            .map_err(ContinuumDensityCallbackError::Owner)?;
+                    }
+                    Ok(())
+                })
+                .map_err(DensityBlockKernelError::Traversal);
+        }
         let continuum = problem.visibility_transform();
         let density = &mut self.density;
         let spectral_contributions = &mut self.spectral_contributions;
@@ -775,9 +806,9 @@ impl<'a> PartitionedKernel<SelectedObservationBlock> for DensityBlockKernel<'a> 
         _work: WorkIdentity,
         storage: &SelectedObservationBlock,
         (): Self::Partial,
-        _execution: crate::bounded_stream::BoundedExecution<'_>,
+        execution: crate::bounded_stream::BoundedExecution<'_>,
     ) -> Result<(), Self::Error> {
-        self.consume_selected_block(storage)
+        self.consume_selected_block(storage, execution)
     }
 
     fn complete(
@@ -1141,6 +1172,7 @@ pub struct WeightingPlanFragment<'a> {
     continuum_row_bytes: Option<u64>,
     initial_working_set: Option<InitialPhaseWorkingSetBinding>,
     replay_preparation: Option<PreparationPlan>,
+    numeric_density: Option<bulk_source::NumericGeometryPlan>,
 }
 
 /// Production selected-payload traversal shape for one continuum major pass.
@@ -1202,6 +1234,7 @@ impl<'a> WeightingPlanFragment<'a> {
             continuum_row_bytes: None,
             initial_working_set: None,
             replay_preparation: None,
+            numeric_density: None,
         }
     }
 
@@ -1228,6 +1261,7 @@ impl<'a> WeightingPlanFragment<'a> {
             continuum_row_bytes,
             initial_working_set: None,
             replay_preparation: None,
+            numeric_density: None,
         }
     }
 
@@ -1317,6 +1351,30 @@ impl<'a> WeightingPlanFragment<'a> {
             heap_bytes,
         });
         self
+    }
+
+    pub(crate) fn with_numeric_density(
+        mut self,
+        problem: &CompiledProblem,
+    ) -> Result<Self, WeightingError> {
+        if self.streaming == Some(WeightingStreamingMode::DensityInitial)
+            && problem.visibility_transform().is_none()
+            && problem.weighting().density_scope()
+                == casa_imaging_model::WeightDensityScope::GlobalSelection
+            && matches!(
+                problem.reconstruction().basis(),
+                casa_imaging_model::ReconstructionBasis::Constant
+            )
+            && casa_imaging_reconstruction::SpectralOperatorSpecification::new(problem)
+                .map_err(|_| WeightingError::ProblemMismatch)?
+                .supports_bulk_mfs()
+        {
+            self.numeric_density = Some(bulk_source::NumericGeometryPlan::for_source(
+                problem,
+                &self.source_resources.residency,
+            )?);
+        }
+        Ok(self)
     }
 
     fn preparation_allocation(&self, node: &WorkNodeId) -> AllocationId {
@@ -1566,7 +1624,17 @@ impl<'a> WeightingPlanFragment<'a> {
             .insert(WorkDependency::Work(self.ids.release_node.clone()));
         nodes.extend([generation.clone(), replay.clone(), release.clone()]);
 
-        let allocation_specs = self.allocation_specs()?;
+        let mut allocation_specs = self.allocation_specs()?;
+        let absent = allocation_specs
+            .iter()
+            .filter(|spec| spec.bytes == 0)
+            .map(|spec| spec.allocation.clone())
+            .collect::<BTreeSet<_>>();
+        for node in &mut nodes {
+            node.allocations
+                .retain(|usage| !absent.contains(&usage.allocation));
+        }
+        allocation_specs.retain(|spec| spec.bytes > 0);
         let mut alternative = base.execution_dag().resource_alternative().clone();
         alternative.id = AlternativeId::new(format!(
             "{}-weighting-{}",
@@ -1768,6 +1836,35 @@ impl<'a> WeightingPlanFragment<'a> {
             .values()
             .cloned()
             .collect();
+        if let Some(plan) = self.numeric_density {
+            let id = AllocationId::new(format!(
+                "density-row-geometry-{}",
+                self.source_read.as_str()
+            ));
+            let allocation = AllocationSpec::new(
+                id.clone(),
+                PhysicalSlotId::new(format!("{}-slot", id.as_str())),
+                plan.bytes,
+                "shared-selected-row-geometry",
+                self.source_read.clone(),
+                BTreeSet::from([WorkDependency::Fence(FenceId::new(
+                    self.source_read.clone(),
+                    FenceKind::Io,
+                ))]),
+            )?;
+            nodes
+                .iter_mut()
+                .find(|node| node.id == self.source_read)
+                .expect("source read node")
+                .allocations
+                .push(allocation_use(
+                    &id,
+                    ClaimLifetime::through_fence(FenceKind::Io),
+                ));
+            alternative.demand.memory.push(allocation.memory_demand());
+            allocations.push(allocation.logical_allocation());
+            slots.push(allocation.physical_slot());
+        }
         if matches!(
             self.replay_preparation,
             Some(PreparationPlan::Native(_) | PreparationPlan::Bulk { .. })
@@ -1807,6 +1904,10 @@ impl<'a> WeightingPlanFragment<'a> {
                 BTreeSet::from([terminal_fence]),
             )?;
             let workers = preparation.workers() as u64;
+            alternative.id = AlternativeId::new(format!(
+                "{}-prepared-workers-{workers}",
+                alternative.id.as_str()
+            ));
             let stacks = if workers > 1 {
                 workers
                     .checked_mul(crate::bounded_stream::BOUNDED_WORKER_STACK_BYTES as u64)
@@ -2600,6 +2701,27 @@ impl WeightingExecutionState {
             .map_err(ContinuumDensityTraversalError::Evidence)?;
         let density = begin_weighting_generation(problem, fragment.plan)
             .map_err(ContinuumDensityTraversalError::Owner)?;
+        if let Some(plan) = fragment.numeric_density {
+            let id = AllocationId::new(format!(
+                "density-row-geometry-{}",
+                fragment.source_read.as_str()
+            ));
+            if context
+                .allocations()
+                .iter()
+                .filter(|capability| {
+                    capability.allocation() == &id
+                        && capability.capacity_bytes() == plan.bytes as u64
+                        && capability.lifetime() == &context.node().payload_lifetime()
+                })
+                .count()
+                != 1
+            {
+                return Err(ContinuumDensityTraversalError::Evidence(
+                    WeightingEvidenceError,
+                ));
+            }
+        }
         let plan = fragment
             .bounded_stream_plan(context, false)
             .map_err(ContinuumDensityTraversalError::Evidence)?;
@@ -2618,6 +2740,14 @@ impl WeightingExecutionState {
                 density,
                 spectral_contributions: WeightingSpectralCache::new(problem)
                     .map_err(ContinuumDensityTraversalError::Owner)?,
+                numeric: fragment
+                    .numeric_density
+                    .map(|plan| {
+                        plan.create().map_err(|_| {
+                            ContinuumDensityTraversalError::Owner(WeightingError::ResidencyOverflow)
+                        })
+                    })
+                    .transpose()?,
             },
         ) {
             Ok(outcome) => outcome,
@@ -3892,12 +4022,15 @@ fn validate_work_authority(
                     && capability.lifetime() == &usage.lifetime
             })
         })
-        || expected_allocations.iter().any(|spec| {
-            !context
-                .allocations()
-                .iter()
-                .any(|capability| spec.matches_capability(capability, &lifetime))
-        })
+        || expected_allocations
+            .iter()
+            .filter(|spec| spec.bytes > 0)
+            .any(|spec| {
+                !context
+                    .allocations()
+                    .iter()
+                    .any(|capability| spec.matches_capability(capability, &lifetime))
+            })
     {
         return Err(WeightingEvidenceError);
     }
@@ -4941,6 +5074,8 @@ pub enum WeightingGenerationError {
 /// Failure while resolving channel roles or accumulating the density prepass.
 #[derive(Debug)]
 pub enum ContinuumDensityCallbackError {
+    /// The borrowed numeric row or its source geometry was invalid.
+    Source(BoundObservationSourceError),
     /// The compiled transform did not cover a selected channel.
     Transform(ContinuumTransformError),
     /// Reconstruction rejected the spectral stencil or density sample.
@@ -4956,6 +5091,7 @@ impl From<ContinuumTransformError> for ContinuumDensityCallbackError {
 impl fmt::Display for ContinuumDensityCallbackError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Source(error) => error.fmt(formatter),
             Self::Transform(error) => error.fmt(formatter),
             Self::Owner(error) => error.fmt(formatter),
         }

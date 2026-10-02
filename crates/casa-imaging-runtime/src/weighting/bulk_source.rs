@@ -41,6 +41,89 @@ fn resize_gathered(buffer: &mut Vec<Complex32>, admitted_samples: usize, samples
 }
 
 #[derive(Clone, Copy, Debug)]
+pub(crate) struct NumericGeometryPlan {
+    pub(crate) rows: usize,
+    pub(crate) channels: usize,
+    pub(crate) bytes: usize,
+}
+
+impl NumericGeometryPlan {
+    pub(crate) fn for_source(
+        problem: &CompiledProblem,
+        residency: &SelectedObservationResidencyCertificate,
+    ) -> Result<Self, WeightingError> {
+        let mut rows = 0;
+        let mut channels = 0;
+        for source in problem.selected_observation().read_set().sources() {
+            let budget = residency
+                .content_budget(source.measurement_set())
+                .ok_or(WeightingError::ResidencyOverflow)?
+                .available_bytes();
+            let correlations = source
+                .selection()
+                .correlations()
+                .iter()
+                .map(|p| p.products().len())
+                .min()
+                .ok_or(WeightingError::ResidencyOverflow)?;
+            for spw in source.selection().spectral_windows() {
+                let count = spw.channel_indices().len();
+                // Every stored sample needs at least a Float and a flag. Source
+                // metadata and sparse spans can only reduce this row bound.
+                let row_bytes = count
+                    .checked_mul(correlations)
+                    .and_then(|n| n.checked_mul(5))
+                    .filter(|&n| n != 0)
+                    .ok_or(WeightingError::ResidencyOverflow)?;
+                rows = rows.max(
+                    (budget / row_bytes)
+                        .min(source.selection().rows().selected_row_count() as usize),
+                );
+                channels = channels.max(count);
+            }
+        }
+        let bytes = SelectedObservationNumericGeometry::required_bytes(rows, channels)
+            .map_err(|_| WeightingError::ResidencyOverflow)?;
+        Ok(Self {
+            rows,
+            channels,
+            bytes,
+        })
+    }
+
+    pub(crate) fn create(
+        self,
+    ) -> Result<SelectedObservationNumericGeometry, BoundObservationSourceError> {
+        SelectedObservationNumericGeometry::new(self.rows, self.channels)
+    }
+}
+
+pub(crate) fn project_geometry(
+    problem: &CompiledProblem,
+    storage: &SelectedObservationBlock,
+    geometry: &mut SelectedObservationNumericGeometry,
+    execution: BoundedExecution<'_>,
+) -> Result<(usize, usize), BoundObservationSourceError> {
+    let active = AtomicUsize::new(0);
+    let peak = AtomicUsize::new(0);
+    let mut count = 0;
+    let rows = storage.selected_run_count()? / storage.selected_channels_per_row()?;
+    let chunk_rows = rows
+        .div_ceil(execution.worker_count().saturating_mul(4))
+        .max(1);
+    storage.project_numeric_geometry_with(problem, geometry, chunk_rows, |chunks| {
+        count = chunks.len();
+        execution.for_each_mut(chunks, |_, chunk| {
+            let live = active.fetch_add(1, Ordering::Relaxed) + 1;
+            peak.fetch_max(live, Ordering::Relaxed);
+            let _active = ActiveChunk(&active);
+            chunk.project()
+        })
+    })?;
+    Ok((count, peak.load(Ordering::Relaxed)))
+}
+
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct BulkInputPlan {
     pub(crate) rows: usize,
     pub(crate) channels: usize,
@@ -184,34 +267,11 @@ where
         execution: BoundedExecution<'_>,
     ) -> io::Result<()> {
         let started = Instant::now();
-        let geometry_active = AtomicUsize::new(0);
-        let geometry_peak = AtomicUsize::new(0);
-        let geometry_chunk_rows = self
-            .plan
-            .rows
-            .div_ceil(execution.worker_count().saturating_mul(4))
-            .max(1);
-        let mut projected_chunks = 0;
-        storage
-            .project_numeric_geometry_with(
-                self.problem,
-                &mut self.geometry,
-                geometry_chunk_rows,
-                |chunks| {
-                    projected_chunks = chunks.len();
-                    execution.for_each_mut(chunks, |_, chunk| {
-                        let live = geometry_active.fetch_add(1, Ordering::Relaxed) + 1;
-                        geometry_peak.fetch_max(live, Ordering::Relaxed);
-                        let _active = ActiveChunk(&geometry_active);
-                        chunk.project()
-                    })
-                },
-            )
-            .map_err(io::Error::other)?;
+        let (projected_chunks, geometry_peak) =
+            project_geometry(self.problem, storage, &mut self.geometry, execution)
+                .map_err(io::Error::other)?;
         self.projected_chunks += projected_chunks as u64;
-        self.peak_active_projection = self
-            .peak_active_projection
-            .max(geometry_peak.load(Ordering::Relaxed));
+        self.peak_active_projection = self.peak_active_projection.max(geometry_peak);
         let first = storage
             .numeric_row(&self.geometry, 0)
             .map_err(io::Error::other)?;

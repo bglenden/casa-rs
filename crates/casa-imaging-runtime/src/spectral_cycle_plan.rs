@@ -1129,7 +1129,6 @@ fn compose_major_physical_mode<R: ImplementationRegistry>(
                 base_physical(problem, registry, policy, pass, phase_input)?;
             let preparation = if strategy == GriddedNormalStrategy::CreateManagedSpill
                 && supports_replay_preparation(problem, policy)
-                && replay_workers > 1
             {
                 Some(
                     crate::weighting::ReplayPreparationPlan::new(
@@ -1165,7 +1164,9 @@ fn compose_major_physical_mode<R: ImplementationRegistry>(
                     .transpose()
                     .map_err(|_| SpectralCyclePlanError::Overflow)?,
             )
-            .with_replay_preparation(preparation);
+            .with_replay_preparation(preparation)
+            .with_numeric_density(problem)
+            .map_err(|_| SpectralCyclePlanError::Overflow)?;
             let replay = fragment.streaming_node().clone();
             let mut physical = fragment.compose(&base)?;
             if strategy == GriddedNormalStrategy::CreateManagedSpill {
@@ -2643,10 +2644,15 @@ fn supports_replay_preparation(
     problem: &CompiledProblem,
     policy: &SpectralCycleExecutionPolicy,
 ) -> bool {
-    matches!(
+    (matches!(
         problem.reconstruction().basis(),
         casa_imaging_model::ReconstructionBasis::ChannelLocal { .. }
     ) && problem.weighting().scheme() == casa_imaging_model::WeightingScheme::Natural
+        || matches!(
+            problem.reconstruction().basis(),
+            casa_imaging_model::ReconstructionBasis::Constant
+        ) && problem.weighting().density_scope()
+            == casa_imaging_model::WeightDensityScope::GlobalSelection)
         && matches!(
             problem.model_lifecycle().input(),
             casa_imaging_model::ModelInputCommitment::Empty

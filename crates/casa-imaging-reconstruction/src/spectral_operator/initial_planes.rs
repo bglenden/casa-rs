@@ -6,6 +6,19 @@ use super::*;
 mod mfs_regions;
 
 impl SpectralOperatorSpecification {
+    /// Ordinary single-field MFS supported by the bulk numerical ingress.
+    pub fn supports_bulk_mfs(&self) -> bool {
+        matches!(self.basis, SpectralBasisPlan::Polynomial(plan) if plan.coefficient_term_count() == 1)
+            && self.domains.len() == 1
+            && self.charts.len() == 1
+            && self.charts[0].window.origin() == [0, 0]
+            && self.charts[0].geometry.image_shape == self.image_shape
+            && self.w_projection.is_none()
+            && self.aw_projection.is_none()
+            && self.instrument_model.is_none()
+            && !self.mosaic
+    }
+
     /// Number of disjoint shared-grid regions in the supported initial MFS pass.
     /// Zero leaves the existing channel-plane or scalar execution in place.
     pub fn initial_mfs_region_count(&self) -> usize {

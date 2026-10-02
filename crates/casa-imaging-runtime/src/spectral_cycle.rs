@@ -1515,14 +1515,16 @@ impl SpectralCycleExecutor {
             .abort()
     }
 
-    fn fragment(&self) -> Option<WeightingPlanFragment<'_>> {
-        let source_resources = self.source_resources.clone()?;
+    fn fragment(&self) -> io::Result<Option<WeightingPlanFragment<'_>>> {
+        let Some(source_resources) = self.source_resources.clone() else {
+            return Ok(None);
+        };
         let mode = match self.mode {
             SpectralCycleExecutionMode::SelectedOutputOnly => {
                 crate::WeightingStreamingMode::SelectedOutputOnly
             }
             SpectralCycleExecutionMode::Science => match self.pass.phase() {
-                crate::SpectralPassPhase::FinalMajor => return None,
+                crate::SpectralPassPhase::FinalMajor => return Ok(None),
                 crate::SpectralPassPhase::InitialMajor => match self.problem.weighting().scheme() {
                     casa_imaging_model::WeightingScheme::Natural => {
                         crate::WeightingStreamingMode::NaturalInitial
@@ -1535,7 +1537,7 @@ impl SpectralCycleExecutor {
                 },
             },
         };
-        Some(
+        Ok(Some(
             WeightingPlanFragment::streaming_for_pass(
                 &self.weighting_plan,
                 crate::spectral_cycle_plan::pass_node("transaction-read", self.pass),
@@ -1547,8 +1549,10 @@ impl SpectralCycleExecutor {
                     .expect("compiled transform row plan remains valid")
                     .map(|plan| u64::try_from(plan.bytes()).expect("transform bytes fit u64")),
             )
-            .with_initial_working_set(self.complete_data.initial_working_set()),
-        )
+            .with_initial_working_set(self.complete_data.initial_working_set())
+            .with_numeric_density(&self.problem)
+            .map_err(io::Error::other)?,
+        ))
     }
 
     fn select_adaptation_route(
@@ -2765,7 +2769,7 @@ impl WorkImplementation for SpectralCycleExecutor {
                     "prepared-artifact reader execution binding is missing",
                 ));
             }
-            let mut fragment = self.fragment();
+            let mut fragment = self.fragment()?;
             let preparation_allocation =
                 crate::weighting::replay_preparation_allocation(&context.node().id);
             if context
@@ -3050,7 +3054,7 @@ impl WorkImplementation for SpectralCycleExecutor {
         })();
         result.map_err(|source| {
             let measurements = self.state.lock().ok().and_then(|state| {
-                let fragment = self.fragment();
+                let fragment = self.fragment().ok()?;
                 match fragment.as_ref() {
                     Some(fragment) if state.weighting.latest_stream_measurements().is_some() => {
                         self.node_measurements(context, &state, fragment).ok()
@@ -3110,7 +3114,7 @@ impl WorkImplementation for SpectralCycleExecutor {
         completion: ObservationReadCompletionContext,
     ) -> Result<AttemptBoundObservationCompletion, Self::Error> {
         let fragment = self
-            .fragment()
+            .fragment()?
             .ok_or_else(|| io::Error::other("gridded replay has no observation-read completion"))?;
         let mut state = self
             .state
@@ -3228,7 +3232,7 @@ impl WorkImplementation for SpectralCycleExecutor {
             return Ok(true);
         }
         let fragment = self
-            .fragment()
+            .fragment()?
             .ok_or_else(|| io::Error::other("artifact retention requires a streaming plan"))?;
         if owner_node != fragment.streaming_node() {
             return Err(io::Error::other(
@@ -3277,7 +3281,7 @@ impl WorkImplementation for SpectralCycleExecutor {
             reader.abort();
         }
         let owns_streaming_read = self
-            .fragment()
+            .fragment()?
             .as_ref()
             .is_some_and(|fragment| owner_node == fragment.streaming_node());
         let owns_gridded_replay = owner_node == self.complete_data.replay_node();

@@ -185,20 +185,8 @@ impl BulkNaturalWeighting {
                     &values[source..source + row.stored_correlations]
                 }
             };
-            let group_flag = row
-                .correlations
-                .iter()
-                .any(|product| row.flags[source + product.correlation_index() as usize]);
-            let parallel_flag = row.correlations.iter().any(|product| {
-                product.correlation_type().contributes_to_stokes_i()
-                    && row.flags[source + product.correlation_index() as usize]
-            });
-            let input = casa_unpolarized_input_weight(SelectedInputWeightGroup::correlation_run(
-                weights[row.correlations[0].correlation_index() as usize],
-                weights[row.correlations[correlations - 1].correlation_index() as usize],
-                correlations,
-            ));
-            let base = input_weight_value(input, group_flag || row.row.row_flag, self.finite)?;
+            let (base, group_flag, parallel_flag) =
+                numeric_channel_input_weight(row, source, self.finite)?;
             let mapped = initial
                 && (self.constant
                     || !crate::spectral_sampling::linear_terms(
@@ -258,7 +246,7 @@ impl BulkNaturalWeighting {
             .checked_add(rows)
             .ok_or(WeightingError::ResidencyOverflow)?;
         let phase = self.sum.as_mut().ok_or(WeightingError::CoverageMismatch)?;
-        phase.sum_weights[0].add(sum)?;
+        add_weight(&mut phase.sum_weights[0], sum)?;
         self.samples = next_samples;
         self.rows = next_rows;
         Ok(())

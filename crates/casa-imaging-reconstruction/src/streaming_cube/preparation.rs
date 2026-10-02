@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 //! Whole-row native preparation on the admitted imaging team. Projection and
-//! spectral evaluation feed the shared weighting primitives here; exact
+//! spectral evaluation feed the shared weighting primitives here; numerical
 //! sums and source-coverage encoding stay with their worker until ordered join.
 //! No prepared-sample collection or weighted replay allocation is constructed.
 
@@ -36,21 +36,16 @@ fn natural_sum(
 }
 
 fn sum_required_bytes(plan: &WeightingPlan) -> io::Result<usize> {
-    exact_sum_capacity_bytes(plan.grid.output_planes)
-        .and_then(|bytes| {
-            bytes.checked_add(
-                plan.grid
-                    .output_planes
-                    .checked_mul(size_of::<ExactF64Sum>())?,
-            )
-        })
+    plan.grid
+        .output_planes
+        .checked_mul(size_of::<f64>())
         .and_then(|bytes| bytes.checked_add(plan.grid.planes.checked_mul(size_of::<f64>())?))
         .and_then(|bytes| bytes.checked_add(size_of::<WeightingSumWeightPhase>()))
         .ok_or_else(|| invalid("native sum-weight capacity overflow"))
 }
 
 /// Preparation completion owner. Whole rows are committed in canonical source
-/// order; numerical sums merge exact integer bins, independent of scheduling.
+/// order; numerical sums use ordinary finite f64 reductions.
 pub struct NativeWeightingPreparation {
     sum: WeightingSumWeightPhase,
     coverage: Sha256,
@@ -80,7 +75,7 @@ impl NativeWeightingPreparation {
         })
     }
 
-    /// Required coordinator state, including the conservative exact-bin bound.
+    /// Required coordinator state, including the scalar sum-weight buffers.
     pub fn coordinator_required_bytes(plan: &WeightingPlan) -> io::Result<usize> {
         sum_required_bytes(plan)?
             .checked_add(size_of::<Self>())
@@ -155,7 +150,7 @@ impl NativeWeightingPreparation {
         })
     }
 
-    /// Join a completed worker in source order, merging exact bins and row
+    /// Join a completed worker in source order, merging numerical sums and row
     /// digests only. The native payload remains borrowed for the storage sink.
     pub fn commit<'a>(
         &mut self,
@@ -212,8 +207,7 @@ impl NativeWeightingPreparation {
             .iter_mut()
             .zip(&mut worker.sum.sum_weights)
         {
-            sum.merge(std::mem::take(partial))
-                .map_err(io::Error::other)?;
+            add_weight(sum, std::mem::take(partial)).map_err(io::Error::other)?;
         }
         self.sum.sum_sample_count = self
             .sum
@@ -286,7 +280,7 @@ impl NativeWeightingPreparation {
     }
 }
 
-/// Reusable flat native buffer plus exact sums for a disjoint whole-row range.
+/// Reusable flat native buffer plus scalar sums for a disjoint whole-row range.
 pub struct NativePreparationWorker {
     sum: WeightingSumWeightPhase,
     block: NativeBlock,
@@ -491,8 +485,7 @@ impl NativePreparationWorker {
                     spectral_values.as_slice()
                 };
                 if let Some(value) = spectral.first() {
-                    self.sum.sum_weights[0]
-                        .add(value.imaging_weight)
+                    add_weight(&mut self.sum.sum_weights[0], value.imaging_weight)
                         .map_err(io::Error::other)?;
                 }
                 let mut member_address = address;

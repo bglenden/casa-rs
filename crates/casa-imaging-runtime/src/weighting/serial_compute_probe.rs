@@ -472,9 +472,10 @@ fn rebuild_density_for_stage_local_probe(
         consumer,
         density: begin_weighting_generation(problem, plan)?,
         spectral_contributions: WeightingSpectralCache::new(problem)?,
+        numeric: None,
     };
     for block in blocks {
-        kernel.consume_selected_block(block)?;
+        kernel.consume_selected_block(block, crate::bounded_stream::BoundedExecution::serial())?;
     }
     Ok(kernel
         .complete(crate::bounded_stream::BoundedExecution::serial())?
@@ -1941,9 +1942,10 @@ fn freeze_density<'a>(
         consumer,
         density,
         spectral_contributions: WeightingSpectralCache::new(problem)?,
+        numeric: None,
     };
     for block in blocks {
-        kernel.consume_selected_block(block)?;
+        kernel.consume_selected_block(block, crate::bounded_stream::BoundedExecution::serial())?;
     }
     let resolved = kernel.complete(crate::bounded_stream::BoundedExecution::serial())?;
     terminal.record_runtime_residency(blocks.len(), residency_bytes[0], residency_bytes[1])?;

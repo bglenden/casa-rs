@@ -137,6 +137,53 @@ fn source_admission_fixture() -> (
 }
 
 #[test]
+fn bulk_cube_constructor_rejects_constant_mfs_before_planning() {
+    let (snapshot, access) = resolve_selected_observation(observation_resolution())
+        .unwrap()
+        .into_parts();
+    let problem = compile(ImagingRequest::new(
+        problem_specification(WeightingContract::new(
+            WeightingScheme::Natural,
+            WeightDensityScope::NotApplicable,
+        )),
+        geometry_with_facets(FacetLayout::Single),
+        ProblemInputIdentities::new(compile_observation(snapshot).unwrap()),
+        model_lifecycle(ModelStateIdentity::Empty),
+    ))
+    .unwrap();
+    assert!(
+        SpectralOperatorSpecification::new(&problem)
+            .unwrap()
+            .supports_bulk_mfs()
+    );
+    assert!(!crate::CubePhase::supports(&problem).unwrap());
+    let authority = ResourceAuthority::with_inventory(runtime_inventory()).unwrap();
+    let storage = artifact_storage(&authority, 1);
+    let registry = PlanningRegistry::new(&problem);
+    let policy = SpectralCycleExecutionPolicy::new(
+        implementation_id(),
+        WeightingExecutionLimits::new(1, 1).unwrap(),
+        access.certify_residency(&problem).unwrap(),
+        storage_io(),
+        SpectralCyclePlanningLimits::new(1_000, 1, 900_000),
+        authority,
+        ResourcePolicy::Exclusive,
+    );
+    let error = crate::CubePhase::initial(
+        problem,
+        &registry,
+        policy,
+        storage,
+        access.into_deferred(),
+        None,
+    )
+    .err()
+    .expect("MFS must be rejected before cube planning");
+    assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+    assert_eq!(error.to_string(), "unsupported bulk cube problem");
+}
+
+#[test]
 fn t51_source_budget_selection_is_finite_and_explicit_cap_fails_closed() {
     let (problem, access) = source_admission_fixture();
     let requirements = access.content_requirements(&problem).unwrap();
