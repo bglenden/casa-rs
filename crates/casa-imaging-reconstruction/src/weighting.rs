@@ -181,15 +181,13 @@ pub(crate) fn maximum_spectral_terms(problem: &CompiledProblem) -> usize {
 }
 
 // SmallVec's collect, clone and push paths round spilled capacity to a power of two.
-pub(crate) fn smallvec_heap_bytes<A: smallvec::Array>(
-    maximum_len: usize,
-) -> Result<usize, WeightingError> {
-    if maximum_len <= A::size() {
+pub(crate) fn smallvec_heap_bytes<T>(maximum_len: usize) -> Result<usize, WeightingError> {
+    if maximum_len <= 4 {
         return Ok(0);
     }
     maximum_len
         .checked_next_power_of_two()
-        .and_then(|capacity| capacity.checked_mul(size_of::<A::Item>()))
+        .and_then(|capacity| capacity.checked_mul(size_of::<T>()))
         .ok_or(WeightingError::ResidencyOverflow)
 }
 
@@ -197,18 +195,18 @@ pub(crate) fn native_row_heap_bytes(
     maximum_correlations: usize,
     maximum_terms: usize,
 ) -> Result<usize, WeightingError> {
-    let spectral = smallvec_heap_bytes::<[WeightingSpectralValue; 2]>(maximum_terms)?
+    let spectral = smallvec_heap_bytes::<WeightingSpectralValue>(maximum_terms)?
         .checked_mul(maximum_correlations)
         .ok_or(WeightingError::ResidencyOverflow)?;
-    let native_samples = smallvec_heap_bytes::<[WeightingSampleValue; 4]>(maximum_correlations)?;
+    let native_samples = smallvec_heap_bytes::<WeightingSampleValue>(maximum_correlations)?;
     // A growth step may hold the new backing and its preceding power-of-two capacity.
     let sample_growth_overlap =
-        smallvec_heap_bytes::<[WeightingSampleValue; 4]>(maximum_correlations.div_ceil(2))?;
-    let observed = smallvec_heap_bytes::<[num_complex::Complex64; 4]>(maximum_correlations)?;
+        smallvec_heap_bytes::<WeightingSampleValue>(maximum_correlations.div_ceil(2))?;
+    let observed = smallvec_heap_bytes::<num_complex::Complex64>(maximum_correlations)?;
     let correlations =
-        smallvec_heap_bytes::<[casa_imaging_model::CorrelationType; 4]>(maximum_correlations)?;
-    let weights = smallvec_heap_bytes::<[f64; 4]>(maximum_correlations)?;
-    let flags = smallvec_heap_bytes::<[bool; 4]>(maximum_correlations)?;
+        smallvec_heap_bytes::<casa_imaging_model::CorrelationType>(maximum_correlations)?;
+    let weights = smallvec_heap_bytes::<f64>(maximum_correlations)?;
+    let flags = smallvec_heap_bytes::<bool>(maximum_correlations)?;
     native_samples
         .checked_add(sample_growth_overlap)
         .and_then(|bytes| bytes.checked_add(observed.checked_mul(3)?))
@@ -373,7 +371,7 @@ pub fn plan_weighting(
     };
     let replay_read_bytes = 0;
     let weighted_sample_bytes = size_of::<WeightingSampleValue>()
-        .checked_add(smallvec_heap_bytes::<[WeightingSpectralValue; 2]>(
+        .checked_add(smallvec_heap_bytes::<WeightingSpectralValue>(
             maximum_spectral_terms(problem),
         )?)
         .ok_or(WeightingError::ResidencyOverflow)?;
@@ -908,7 +906,7 @@ fn weighted_sample_from_state(
                 },
             })
         })
-        .collect::<Result<SmallVec<[_; 2]>, WeightingError>>()?;
+        .collect::<Result<SmallVec<[_; 4]>, WeightingError>>()?;
     Ok(WeightingSampleValue {
         sample,
         source_imaging_weight,
@@ -2010,7 +2008,7 @@ mod selected_sample_tests {
         use super::{WeightingSpectralValue, smallvec_heap_bytes};
         use smallvec::SmallVec;
 
-        for terms in [0, 1, 2, 3, 4, 5, 8, 9, 17] {
+        for terms in [0, 1, 4, 5, 8, 9, 17] {
             let values = (0..terms)
                 .map(|channel| {
                     Ok::<_, super::WeightingError>(WeightingSpectralValue {
@@ -2023,7 +2021,7 @@ mod selected_sample_tests {
                         imaging_weight: 1.0,
                     })
                 })
-                .collect::<Result<SmallVec<[_; 2]>, _>>()
+                .collect::<Result<SmallVec<[_; 4]>, _>>()
                 .unwrap();
             for values in [&values, &values.clone()] {
                 let heap = if values.spilled() {
@@ -2033,21 +2031,17 @@ mod selected_sample_tests {
                 };
                 assert_eq!(
                     heap,
-                    smallvec_heap_bytes::<[WeightingSpectralValue; 2]>(terms).unwrap()
+                    smallvec_heap_bytes::<WeightingSpectralValue>(terms).unwrap()
                 );
             }
         }
-        assert!(smallvec_heap_bytes::<[WeightingSpectralValue; 2]>(usize::MAX).is_err());
+        assert!(smallvec_heap_bytes::<WeightingSpectralValue>(usize::MAX).is_err());
     }
 
     #[test]
     fn native_row_heap_counts_one_sample_bank_and_all_observed_vectors() {
         use super::{WeightingSampleValue, WeightingSpectralValue, native_row_heap_bytes};
-        assert_eq!(native_row_heap_bytes(4, 2).unwrap(), 0);
-        assert_eq!(
-            native_row_heap_bytes(4, 4).unwrap(),
-            4 * 4 * size_of::<WeightingSpectralValue>()
-        );
+        assert_eq!(native_row_heap_bytes(4, 4).unwrap(), 0);
         assert_eq!(
             native_row_heap_bytes(4, 5).unwrap(),
             4 * 8 * size_of::<WeightingSpectralValue>()
@@ -2061,10 +2055,7 @@ mod selected_sample_tests {
                 + size_of::<casa_imaging_model::CorrelationType>()
                 + size_of::<f64>()
                 + size_of::<bool>());
-        assert_eq!(
-            native_row_heap_bytes(5, 4).unwrap(),
-            vectors + 5 * 4 * size_of::<WeightingSpectralValue>()
-        );
+        assert_eq!(native_row_heap_bytes(5, 4).unwrap(), vectors);
         assert_eq!(
             native_row_heap_bytes(9, 4).unwrap(),
             24 * size_of::<WeightingSampleValue>()
@@ -2072,7 +2063,6 @@ mod selected_sample_tests {
                     + size_of::<casa_imaging_model::CorrelationType>()
                     + size_of::<f64>()
                     + size_of::<bool>())
-                + 9 * 4 * size_of::<WeightingSpectralValue>()
         );
         assert!(native_row_heap_bytes(usize::MAX, 5).is_err());
     }
@@ -2587,7 +2577,7 @@ fn numeric_channel_input_weight(
 pub struct WeightingSampleValue {
     sample: WeightingSelectedSample,
     source_imaging_weight: Option<f64>,
-    spectral_values: SmallVec<[WeightingSpectralValue; 2]>,
+    spectral_values: SmallVec<[WeightingSpectralValue; 4]>,
 }
 
 #[cfg(test)]
