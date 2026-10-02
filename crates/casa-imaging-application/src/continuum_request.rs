@@ -1704,7 +1704,7 @@ fn prepare(
             })
         })
         .and_then(|profile| {
-            let runtime = runtime(&request, &prepared_domains, &profile, content_budget)?;
+            let runtime = runtime(&request, &prepared_domains, &profile)?;
             let aw_preparation = request
                 .aw_projection
                 .as_ref()
@@ -3341,7 +3341,6 @@ fn runtime(
     request: &ContinuumImagingRequest,
     domains: &[PreparedImageDomain],
     profile: &ProductionStorageProfile,
-    content_budget: SelectedObservationContentBudget,
 ) -> Result<ApplicationRuntime, crate::ApplicationError> {
     let digest = request_digest(request, b"attempt");
     let output_directory = request
@@ -3354,24 +3353,10 @@ fn runtime(
     let storage_io = profile.io_resources();
     let gridded_normal_storage =
         ManagedSpillStorage::bind(&authority, storage_io.clone(), &output_directory)?;
-    let weighting_samples = if matches!(request.spectral_mode, SpectralImagingMode::Continuum)
-        && matches!(request.algorithm, ContinuumAlgorithm::Clark)
-        && request.polarizations == [PolarizationCoordinate::StokesI]
-        && domains.len() == 1
-        && request.facets == 1
-        && request.w_projection_planes.is_none()
-        && request.aw_projection.is_none()
-    {
-        content_budget.available_bytes()
-            / content_budget.maximum_live_blocks()
-            / size_of::<casa_imaging_reconstruction::WeightingSampleValue>()
-    } else {
-        4096
-    };
     Ok(ApplicationRuntime {
         registry: ImplementationRegistryId::from_sha256(hash(b"spectral-cycle-registry")),
         implementation: WorkImplementationId::new("spectral-cycle-cpu-v1"),
-        weighting_limits: WeightingExecutionLimits::new(weighting_samples, 1)?,
+        weighting_limits: WeightingExecutionLimits::new(4096, 1)?,
         stage_nanos: 1_000_000,
         minor_cycle_bytes: domains.iter().try_fold(0_u64, |total, domain| {
             total
