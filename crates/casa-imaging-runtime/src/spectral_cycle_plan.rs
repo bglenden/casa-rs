@@ -1166,6 +1166,7 @@ fn compose_major_physical_mode<R: ImplementationRegistry>(
                         weighting,
                         usize::try_from(replay_workers)
                             .map_err(|_| SpectralCyclePlanError::Overflow)?,
+                        &source_resources,
                     )
                     .map_err(|_| SpectralCyclePlanError::Overflow)?,
                 )

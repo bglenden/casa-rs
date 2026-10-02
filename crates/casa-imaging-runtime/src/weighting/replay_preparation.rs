@@ -18,11 +18,16 @@ use std::error::Error;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
+#[path = "numeric_preparation.rs"]
+mod numeric;
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ReplayPreparationPlan {
     index: SelectedObservationBlockIndexPlan,
     workers: usize,
     samples_per_worker: usize,
+    runs_per_batch: usize,
+    numeric: Option<super::bulk_source::NumericGeometryPlan>,
     bytes: u64,
 }
 
@@ -31,6 +36,7 @@ impl ReplayPreparationPlan {
         problem: &CompiledProblem,
         weighting: &WeightingPlan,
         workers: usize,
+        source: &super::SelectedObservationSourceResources,
     ) -> Result<Self, WeightingError> {
         let correlations = problem
             .selected_observation()
@@ -54,6 +60,22 @@ impl ReplayPreparationPlan {
             .div_ceil(workers)
             .checked_mul(correlations)
             .ok_or(WeightingError::ResidencyOverflow)?;
+        let numeric = if problem.visibility_transform().is_none()
+            && matches!(
+                problem.reconstruction().basis(),
+                casa_imaging_model::ReconstructionBasis::Constant
+            )
+            && casa_imaging_reconstruction::SpectralOperatorSpecification::new(problem)
+                .map_err(|_| WeightingError::ProblemMismatch)?
+                .supports_bulk_mfs()
+        {
+            Some(super::bulk_source::NumericGeometryPlan::for_source(
+                problem,
+                &source.residency,
+            )?)
+        } else {
+            None
+        };
         let residency = weighting.planned_residency();
         let sample_bytes =
             residency.weighted_block_bytes() / weighting.limits().max_block_samples();
@@ -84,12 +106,15 @@ impl ReplayPreparationPlan {
                 )
             })
             .and_then(|bytes| bytes.checked_add(size_of::<ReplayPreparation<'_>>()))
+            .and_then(|bytes| bytes.checked_add(numeric.map_or(0, |plan| plan.bytes)))
             .and_then(|bytes| u64::try_from(bytes).ok())
             .ok_or(WeightingError::ResidencyOverflow)?;
         Ok(Self {
             index,
             workers,
             samples_per_worker,
+            runs_per_batch: runs,
+            numeric,
             bytes,
         })
     }
@@ -127,7 +152,8 @@ impl Drop for ActivePreparation<'_> {
 
 pub(super) struct ReplayPreparation<'a> {
     plan: ReplayPreparationPlan,
-    index: SelectedObservationBlockIndex,
+    index: Option<SelectedObservationBlockIndex>,
+    geometry: Option<casa_ms::SelectedObservationNumericGeometry>,
     workers: Vec<PreparationWorker<'a>>,
     active: AtomicUsize,
     peak_active: AtomicUsize,
@@ -153,7 +179,12 @@ impl<'a> ReplayPreparation<'a> {
         }
         Ok(Self {
             plan,
-            index: plan.index.create_index(),
+            index: plan.numeric.is_none().then(|| plan.index.create_index()),
+            geometry: plan
+                .numeric
+                .map(|plan| plan.create())
+                .transpose()
+                .map_err(|_| WeightingError::ResidencyOverflow)?,
             workers,
             active: AtomicUsize::new(0),
             peak_active: AtomicUsize::new(0),
@@ -170,7 +201,7 @@ impl<'a> ReplayPreparation<'a> {
 
     pub(super) fn log(&self) {
         eprintln!(
-            "imaging_replay_preparation_summary workers={} peak_active_jobs={} indexed_runs={} prepared_samples={} planned_workspace_bytes={} index_payload_bytes={} preparation_nanos={} ordered_commit_nanos={}",
+            "imaging_replay_preparation_summary workers={} peak_active_jobs={} indexed_runs={} prepared_samples={} planned_workspace_bytes={} index_payload_bytes={} preparation_nanos={} ordered_commit_nanos={} source_kind={}",
             self.plan.workers,
             self.peak_active.load(Ordering::Relaxed),
             self.runs,
@@ -178,7 +209,12 @@ impl<'a> ReplayPreparation<'a> {
             self.plan.bytes,
             self.index_payload_bytes,
             self.preparation_nanos,
-            self.ordered_commit_nanos
+            self.ordered_commit_nanos,
+            if self.plan.numeric.is_some() {
+                "numeric_columns"
+            } else {
+                "indexed_samples"
+            }
         );
     }
 
@@ -199,6 +235,10 @@ impl<'a> ReplayPreparation<'a> {
         ) -> Result<(), E>,
         E: Error + Send + 'static,
     {
+        if self.plan.numeric.is_some() {
+            return self.consume_numeric(problem, consumer, weights, storage, execution, emit);
+        }
+        let index = self.index.as_mut().expect("indexed preparation plan");
         let count = storage.selected_run_count().map_err(|error| {
             WeightingBlockKernelError::Traversal(SelectedObservationTraversalError::Source(error))
         })?;
@@ -215,16 +255,16 @@ impl<'a> ReplayPreparation<'a> {
                 })?;
             let end = range.end;
             consumer
-                .index_block_range(storage, start..end, &mut self.index)
+                .index_block_range(storage, start..end, index)
                 .map_err(|error| {
                     WeightingBlockKernelError::Traversal(widen_terminal_traversal_error(error))
                 })?;
             self.runs += (end - start) as u64;
             self.index_payload_bytes +=
-                (self.index.current_bytes().map_err(|_| {
+                (index.current_bytes().map_err(|_| {
                     WeightingBlockKernelError::Owner(WeightingError::ResidencyOverflow)
                 })? - size_of::<SelectedObservationBlockIndex>()) as u64;
-            let indexed = self.index.view(storage, problem).map_err(|error| {
+            let indexed = index.view(storage, problem).map_err(|error| {
                 WeightingBlockKernelError::Traversal(SelectedObservationTraversalError::Source(
                     error,
                 ))
@@ -290,7 +330,7 @@ impl<'a> ReplayPreparation<'a> {
             self.ordered_commit_nanos += started.elapsed().as_nanos();
             start = end;
         }
-        self.index.clear();
+        index.clear();
         Ok(())
     }
 }
