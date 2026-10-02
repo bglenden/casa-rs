@@ -175,6 +175,12 @@ impl OrderedBlockSource for SelectedBlockSource<'_> {
 trait StreamingWeightPhase: Send {
     type Finish: Send;
 
+    fn commit_mfs_groups(
+        &mut self,
+        problem: &CompiledProblem,
+        groups: &mut Vec<casa_imaging_reconstruction::MfsWeightingGroup>,
+    ) -> Result<ReconstructionWeightedBlock, WeightingError>;
+
     fn prepare_sample(
         &self,
         problem: &CompiledProblem,
@@ -209,6 +215,14 @@ trait StreamingWeightPhase: Send {
 
 impl StreamingWeightPhase for FusedWeightingPhase {
     type Finish = (WeightingAlgorithmState, WeightingReplaySummary);
+
+    fn commit_mfs_groups(
+        &mut self,
+        problem: &CompiledProblem,
+        groups: &mut Vec<casa_imaging_reconstruction::MfsWeightingGroup>,
+    ) -> Result<ReconstructionWeightedBlock, WeightingError> {
+        self.commit_mfs_groups(problem, groups)
+    }
 
     fn prepare_sample(
         &self,
@@ -256,6 +270,14 @@ impl StreamingWeightPhase for FusedWeightingPhase {
 impl StreamingWeightPhase for WeightingReplayPhase<'_> {
     type Finish = WeightingReplaySummary;
 
+    fn commit_mfs_groups(
+        &mut self,
+        _problem: &CompiledProblem,
+        groups: &mut Vec<casa_imaging_reconstruction::MfsWeightingGroup>,
+    ) -> Result<ReconstructionWeightedBlock, WeightingError> {
+        self.commit_mfs_groups(groups)
+    }
+
     fn prepare_sample(
         &self,
         problem: &CompiledProblem,
@@ -302,6 +324,14 @@ struct WindowReplayPhase<'a>(WeightingReplayPhase<'a>);
 
 impl StreamingWeightPhase for WindowReplayPhase<'_> {
     type Finish = WeightingReplayWindowSummary;
+
+    fn commit_mfs_groups(
+        &mut self,
+        _problem: &CompiledProblem,
+        groups: &mut Vec<casa_imaging_reconstruction::MfsWeightingGroup>,
+    ) -> Result<ReconstructionWeightedBlock, WeightingError> {
+        self.0.commit_mfs_groups(groups)
+    }
 
     fn prepare_sample(
         &self,

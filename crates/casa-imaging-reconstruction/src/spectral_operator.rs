@@ -5634,41 +5634,60 @@ impl CompleteDataOwnerState {
         }
         self.coverage.adopt(block.coverage_checkpoint());
         self.predicted_selected.clear();
-        for group in block.correlation_groups() {
-            if OBSERVE {
-                if let Some(probe) = self
-                    .science_probe
-                    .as_mut()
-                    .and_then(|probe| probe.cumulative.as_mut())
+        if let Some(groups) = block.mfs_groups() {
+            if !self.specification.supports_bulk_mfs() {
+                return Err(SpectralOperatorError::InvalidSample);
+            }
+            for group in groups {
+                self.consume_direction_independent_group(
+                    crate::weighting::WeightedCorrelationGroup::Mfs(group),
+                )?;
+                if self.stage_initial_planes
+                    && self
+                        .initial_planes
+                        .as_ref()
+                        .is_some_and(InitialPlaneBatch::ready)
                 {
-                    probe.observe_inputs(group)?;
+                    self.flush_initial_planes(dispatch)?;
                 }
             }
-            self.consume_correlation_group::<OBSERVE>(group)?;
-            if self.stage_initial_planes
-                && self
-                    .initial_planes
-                    .as_ref()
-                    .is_some_and(InitialPlaneBatch::ready)
-            {
-                self.flush_initial_planes(dispatch)?;
-            }
-            if OBSERVE
-                && self
-                    .science_probe
-                    .as_ref()
-                    .and_then(|probe| probe.cumulative.as_ref())
-                    .is_some_and(CumulativeAwScienceProbe::complete)
-            {
-                SpectralScienceProbe::emit_actual_aw_accumulator(
-                    self.operators
-                        .first()
-                        .ok_or(SpectralOperatorError::DiagnosticCoverageMismatch)?,
-                )?;
-                self.science_probe
-                    .take()
-                    .expect("complete diagnostic exists")
-                    .finish()?;
+        } else {
+            for group in block.correlation_groups() {
+                if OBSERVE {
+                    if let Some(probe) = self
+                        .science_probe
+                        .as_mut()
+                        .and_then(|probe| probe.cumulative.as_mut())
+                    {
+                        probe.observe_inputs(group)?;
+                    }
+                }
+                self.consume_correlation_group::<OBSERVE>(group)?;
+                if self.stage_initial_planes
+                    && self
+                        .initial_planes
+                        .as_ref()
+                        .is_some_and(InitialPlaneBatch::ready)
+                {
+                    self.flush_initial_planes(dispatch)?;
+                }
+                if OBSERVE
+                    && self
+                        .science_probe
+                        .as_ref()
+                        .and_then(|probe| probe.cumulative.as_ref())
+                        .is_some_and(CumulativeAwScienceProbe::complete)
+                {
+                    SpectralScienceProbe::emit_actual_aw_accumulator(
+                        self.operators
+                            .first()
+                            .ok_or(SpectralOperatorError::DiagnosticCoverageMismatch)?,
+                    )?;
+                    self.science_probe
+                        .take()
+                        .expect("complete diagnostic exists")
+                        .finish()?;
+                }
             }
         }
         if self.stage_initial_planes
@@ -5682,7 +5701,7 @@ impl CompleteDataOwnerState {
         self.sample_count = self
             .sample_count
             .checked_add(
-                u64::try_from(block.samples().len())
+                u64::try_from(block.sample_count())
                     .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
             )
             .ok_or(SpectralOperatorError::CoverageOverflow)?;
@@ -6101,24 +6120,39 @@ impl CompleteDataOwnerState {
         if self.specification.aw_projection.is_some() {
             return self.consume_aw_correlation_group::<OBSERVE>(group);
         }
-        let first = group.first().ok_or(SpectralOperatorError::InvalidSample)?;
+        self.consume_direction_independent_group(
+            crate::weighting::WeightedCorrelationGroup::Samples(group),
+        )
+    }
+
+    fn consume_direction_independent_group(
+        &mut self,
+        group: crate::weighting::WeightedCorrelationGroup<'_>,
+    ) -> Result<(), SpectralOperatorError> {
+        let first = group.first()?;
         let selected = first.selected();
         let mosaic_response = self.mosaic_response(selected)?;
         let correlations = group
-            .iter()
-            .map(|weighted| weighted.selected().address.correlation_type)
+            .correlations()
+            .map(|correlation| correlation.correlation_type)
             .collect::<SmallVec<[_; 4]>>();
         let polarization = self
             .specification
             .direction_independent_polarization(&correlations)?;
         let visibilities = group
-            .iter()
-            .map(|weighted| selected_visibility(weighted.selected().visibility))
+            .correlations()
+            .map(|correlation| selected_visibility(correlation.visibility))
             .collect::<SmallVec<[_; 4]>>();
         let flags = group
-            .iter()
-            .map(|weighted| {
-                accept_polarization_input(weighted.selected(), self.finite_values).map(|ok| !ok)
+            .correlations()
+            .map(|correlation| {
+                accept_polarization_value(
+                    correlation.visibility,
+                    correlation.input_weight,
+                    selected.row_flag || correlation.channel_flag,
+                    self.finite_values,
+                )
+                .map(|ok| !ok)
             })
             .collect::<Result<SmallVec<[_; 4]>, _>>()?;
         let flags = polarization_effective_flags(polarization, flags);
@@ -6186,11 +6220,10 @@ impl CompleteDataOwnerState {
                     .spectral_values()
                     .nth(spectral_ordinal)
                     .ok_or(SpectralOperatorError::InvalidSample)?;
-                let correlation_weights = group
-                    .iter()
-                    .map(|weighted| {
-                        let spectral = weighted
-                            .spectral_values()
+                let correlation_weights = (0..group.len())
+                    .map(|ordinal| {
+                        let spectral = group
+                            .spectral_values(ordinal)
                             .nth(spectral_ordinal)
                             .ok_or(SpectralOperatorError::InvalidSample)?;
                         if spectral.contribution() != first_spectral.contribution() {
@@ -6272,16 +6305,26 @@ impl CompleteDataOwnerState {
             && has_spectral_support
             && (touches_core || self.specification.slab.total_channels() == 1 || predicts_zero)
         {
-            for ((weighted, observed), predicted) in
-                group.iter().zip(visibilities).zip(predicted_correlations)
+            for ((correlation, observed), predicted) in group
+                .correlations()
+                .zip(visibilities)
+                .zip(predicted_correlations)
             {
-                let predicted = casa_model_output_prediction(
-                    weighted.selected(),
-                    predicted,
+                let predicted = if accept_polarization_value(
+                    correlation.visibility,
+                    correlation.input_weight,
+                    selected.row_flag || correlation.channel_flag,
                     self.finite_values,
-                )?;
+                )? {
+                    casa_persistent_complex(predicted)
+                } else {
+                    Complex64::default()
+                };
+                let mut address = selected.address;
+                address.correlation_index = correlation.correlation_index;
+                address.correlation_type = correlation.correlation_type;
                 self.predicted_selected.push(FinalVisibilitySample {
-                    address: weighted.selected().address,
+                    address,
                     observed,
                     predicted,
                     residual: observed - predicted,

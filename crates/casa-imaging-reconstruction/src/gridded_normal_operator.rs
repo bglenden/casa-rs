@@ -943,39 +943,52 @@ impl GriddedNormalOperatorCompiler {
             if block.previous_checkpoint() != self.source_checkpoint {
                 return Err(SpectralOperatorError::IncompleteCoverage);
             }
-            if block.samples().len() > self.plan.maximum_source_samples
-                || block
+            let invalid_groups = if let Some(groups) = block.mfs_groups() {
+                !self.specification.supports_bulk_mfs()
+                    || groups.iter().any(|group| {
+                        group.len() > self.plan.maximum_correlations
+                            || group.first().spectral_values().count()
+                                > self.plan.maximum_spectral_terms
+                            || group.first().selected().domain_projections().len()
+                                > self.specification.chart_count()
+                    })
+            } else {
+                block
                     .correlation_groups()
                     .any(|group| group.len() > self.plan.maximum_correlations)
-                || block.samples().iter().any(|sample| {
-                    sample.spectral_values().count() > self.plan.maximum_spectral_terms
-                        || sample.selected().domain_projections().len()
-                            > self.specification.chart_count()
-                })
-            {
+                    || block.samples().iter().any(|sample| {
+                        sample.spectral_values().count() > self.plan.maximum_spectral_terms
+                            || sample.selected().domain_projections().len()
+                                > self.specification.chart_count()
+                    })
+            };
+            if block.sample_count() > self.plan.maximum_source_samples || invalid_groups {
                 return Err(SpectralOperatorError::GriddedCompilationCapacity);
             }
-            let source_cardinality =
-                if matches!(self.record_layout, GriddedNormalRecordLayout::Taylor(_)) {
-                    self.construct_taylor_record_keys(block, &mut |record| {
-                        frames.push_taylor(record, sink)
-                    })?
-                } else if self.aw_projection {
-                    if self.source_cardinality_observation == SourceCardinalityObservation::Enabled
-                    {
-                        self.observe_aw_weighting(block)?;
-                    }
-                    self.construct_aw_record_keys(block, &mut |group| {
-                        observe_prediction_support(&mut prediction_support, polarizations, group)?;
-                        frames.push_group(group, sink)
-                    })?
-                } else {
-                    self.construct_standard_record_keys(block, &mut |group| {
-                        observe_prediction_support(&mut prediction_support, polarizations, group)?;
-                        frames.push_group(group, sink)
-                    })?
-                };
-            let samples = u64::try_from(block.samples().len())
+            let source_cardinality = if block.mfs_groups().is_some() {
+                self.construct_mfs_record_keys(block, &mut |group| {
+                    observe_prediction_support(&mut prediction_support, polarizations, group)?;
+                    frames.push_group(group, sink)
+                })?
+            } else if matches!(self.record_layout, GriddedNormalRecordLayout::Taylor(_)) {
+                self.construct_taylor_record_keys(block, &mut |record| {
+                    frames.push_taylor(record, sink)
+                })?
+            } else if self.aw_projection {
+                if self.source_cardinality_observation == SourceCardinalityObservation::Enabled {
+                    self.observe_aw_weighting(block)?;
+                }
+                self.construct_aw_record_keys(block, &mut |group| {
+                    observe_prediction_support(&mut prediction_support, polarizations, group)?;
+                    frames.push_group(group, sink)
+                })?
+            } else {
+                self.construct_standard_record_keys(block, &mut |group| {
+                    observe_prediction_support(&mut prediction_support, polarizations, group)?;
+                    frames.push_group(group, sink)
+                })?
+            };
+            let samples = u64::try_from(block.sample_count())
                 .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
             self.sample_count = self
                 .sample_count
