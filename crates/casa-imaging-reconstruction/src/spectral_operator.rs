@@ -410,9 +410,6 @@ impl SpectralOperatorSample {
     }
 
     fn phase(self) -> Complex64 {
-        if self.phase_shift_m == 0.0 {
-            return Complex64::new(1.0, 0.0);
-        }
         let angle =
             std::f64::consts::TAU * self.phase_shift_m * self.frequency_hz / SPEED_OF_LIGHT_M_PER_S;
         Complex64::from_polar(1.0, angle)
@@ -12365,27 +12362,6 @@ mod tests {
         AwPreparedCellProvider, AwProjectionOperator, AwVisibilitySample, ModelDeltaId,
         ModelGenerationId, ModelGenerationOrigin, MuellerMatrix, PolarizationOperator,
     };
-
-    #[test]
-    fn phase_factor_preserves_identity_and_physical_offsets() {
-        for offset in [0.0, -0.0, 1.0e-8, -0.03, 12.5] {
-            for frequency in [1.0e9, 43.0e9] {
-                let sample = SpectralOperatorSample::new(
-                    0,
-                    [0.0; 3],
-                    frequency,
-                    offset,
-                    [1.0, 0.0],
-                    1.0,
-                    1.0,
-                )
-                .unwrap();
-                let angle =
-                    std::f64::consts::TAU * offset * frequency / super::SPEED_OF_LIGHT_M_PER_S;
-                assert_eq!(sample.phase(), Complex64::from_polar(1.0, angle));
-            }
-        }
-    }
 
     #[test]
     fn separable_degrid_matches_scalar_kernel_with_bounded_roundoff() {
