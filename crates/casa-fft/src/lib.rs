@@ -25,9 +25,9 @@ static F64_PLANS: LazyLock<Mutex<PlanCache<f64>>> =
 static F32_THREADS: OnceLock<c_int> = OnceLock::new();
 static F64_THREADS: OnceLock<c_int> = OnceLock::new();
 
-// Temporary product/analysis callers drop their Fft2 after each plane. Retain
-// a small bounded set of measured plans rather than replanning every channel.
-const CACHED_PLAN_PAIRS_PER_PRECISION: usize = 8;
+// Retain measured directions across temporary callers without planning an
+// unused transform. Sixteen directions preserve the former eight-pair bound.
+const CACHED_PLANS_PER_PRECISION: usize = 16;
 
 struct PlanCache<T: FftScalar> {
     plans: HashMap<Key, Arc<Plans<T>>>,
@@ -53,7 +53,7 @@ impl<T: FftScalar> PlanCache<T> {
         let plans = Arc::new(Plans::<T>::create(key, elements)?);
         self.plans.insert(key, Arc::clone(&plans));
         self.oldest_first.push_back(key);
-        if self.plans.len() > CACHED_PLAN_PAIRS_PER_PRECISION {
+        if self.plans.len() > CACHED_PLANS_PER_PRECISION {
             let expired = self.oldest_first.pop_front().expect("nonempty cache");
             self.plans.remove(&expired);
         }
@@ -68,6 +68,7 @@ pub struct Key {
     alignment: c_int,
     threads: usize,
     real: bool,
+    inverse: bool,
 }
 
 /// A shape, layout, or native planner error.
@@ -286,8 +287,7 @@ ffi!(
 
 #[doc(hidden)]
 pub struct Plans<T: FftScalar> {
-    forward: *mut c_void,
-    inverse: *mut c_void,
+    plan: *mut c_void,
     _precision: PhantomData<T>,
 }
 
@@ -300,8 +300,7 @@ impl<T: FftScalar> Drop for Plans<T> {
         let _guard = PLANNER.lock().expect("FFTW planner lock poisoned");
         // SAFETY: these owned plans have no remaining Arc execution owners.
         unsafe {
-            T::destroy(self.forward);
-            T::destroy(self.inverse);
+            T::destroy(self.plan);
         }
     }
 }
@@ -328,32 +327,18 @@ impl<T: FftScalar> Plans<T> {
             .shape
             .map(|extent| c_int::try_from(extent).expect("validated extent"));
         // SAFETY: pointer addresses a writable scratch plane of the requested shape.
-        let forward = unsafe {
+        let plan = unsafe {
             if key.real {
-                T::plan_real(shape, pointer, false)
+                T::plan_real(shape, pointer, key.inverse)
             } else {
-                T::plan(shape, pointer, FORWARD)
+                T::plan(shape, pointer, if key.inverse { BACKWARD } else { FORWARD })
             }
         };
-        if forward.is_null() {
-            return Err(FftError::PlanningFailed);
-        }
-        // SAFETY: the planner may overwrite scratch; it remains disposable.
-        let inverse = unsafe {
-            if key.real {
-                T::plan_real(shape, pointer, true)
-            } else {
-                T::plan(shape, pointer, BACKWARD)
-            }
-        };
-        if inverse.is_null() {
-            // SAFETY: the first plan belongs to this precision.
-            unsafe { T::destroy(forward) };
+        if plan.is_null() {
             return Err(FftError::PlanningFailed);
         }
         Ok(Self {
-            forward,
-            inverse,
+            plan,
             _precision: PhantomData,
         })
     }
@@ -365,7 +350,7 @@ pub struct Fft2<T: FftScalar> {
     shape: [usize; 2],
     elements: usize,
     threads: usize,
-    current: Option<(Key, Arc<Plans<T>>)>,
+    current: [Option<(Key, Arc<Plans<T>>)>; 2],
 }
 
 impl<T: FftScalar> fmt::Debug for Fft2<T> {
@@ -414,7 +399,7 @@ impl<T: FftScalar> Fft2<T> {
             shape,
             elements,
             threads,
-            current: None,
+            current: [None, None],
         })
     }
 
@@ -438,17 +423,14 @@ impl<T: FftScalar> Fft2<T> {
             alignment: T::alignment(pointer),
             threads: self.threads,
             real,
+            inverse,
         };
-        if self.current.as_ref().is_none_or(|(held, _)| *held != key) {
+        let current = &mut self.current[usize::from(inverse)];
+        if current.as_ref().is_none_or(|(held, _)| *held != key) {
             let plans = T::get_plan(key, self.elements)?;
-            self.current = Some((key, plans));
+            *current = Some((key, plans));
         }
-        let plans = &self.current.as_ref().expect("plan exists").1;
-        let plan = if inverse {
-            plans.inverse
-        } else {
-            plans.forward
-        };
+        let plan = current.as_ref().expect("plan exists").1.plan;
         // SAFETY: key verifies equal rank, contiguous strides, in-place layout,
         // precision, and FFTW alignment class. The plane is uniquely borrowed.
         unsafe {
@@ -628,12 +610,18 @@ mod tests {
                     let mut storage = vec![Complex::<f32>::new(1.0, 1.0); fft.storage_len()];
                     fft.forward(&mut storage).unwrap();
                     assert!((storage[0].re - 288.0).abs() < 1e-4);
-                    let retained = Arc::clone(&fft.fft.current.as_ref().unwrap().1);
+                    let retained = Arc::clone(&fft.fft.current[0].as_ref().unwrap().1);
+                    let mut repeat_storage = storage.clone();
                     let mut another = RealFft2::<f32>::with_threads(shape, 1).unwrap();
-                    another.inverse(&mut storage).unwrap();
+                    another.forward(&mut repeat_storage).unwrap();
                     assert!(Arc::ptr_eq(
                         &retained,
-                        &another.fft.current.as_ref().unwrap().1
+                        &another.fft.current[0].as_ref().unwrap().1
+                    ));
+                    another.inverse(&mut storage).unwrap();
+                    assert!(!Arc::ptr_eq(
+                        &retained,
+                        &another.fft.current[1].as_ref().unwrap().1
                     ));
                     for row in storage.chunks_exact(fft.real_row_stride() / 2) {
                         for value in &row[..shape[1] / 2] {
@@ -646,7 +634,7 @@ mod tests {
                     complex.transform(&mut full, false).unwrap();
                     assert!(!Arc::ptr_eq(
                         &retained,
-                        &complex.current.as_ref().unwrap().1
+                        &complex.current[0].as_ref().unwrap().1
                     ));
                 })
             })
@@ -684,11 +672,28 @@ mod tests {
         let mut plane = vec![Complex::<f64>::new(1.0, 0.0); 37 * 43];
         let mut first = Fft2::<f64>::new([37, 43]).unwrap();
         first.transform(&mut plane, false).unwrap();
-        let retained = Arc::clone(&first.current.as_ref().unwrap().1);
+        let retained = Arc::clone(&first.current[0].as_ref().unwrap().1);
         drop(first);
         let mut second = Fft2::<f64>::new([37, 43]).unwrap();
-        second.transform(&mut plane, true).unwrap();
-        assert!(Arc::ptr_eq(&retained, &second.current.as_ref().unwrap().1));
+        second.transform(&mut plane, false).unwrap();
+        assert!(Arc::ptr_eq(
+            &retained,
+            &second.current[0].as_ref().unwrap().1
+        ));
+        assert!(second.current[1].is_none());
+    }
+
+    #[test]
+    fn inverse_only_callers_do_not_plan_the_forward_direction() {
+        let mut plane = vec![Complex::<f64>::new(1.0, 0.0); 6 * 8];
+        let mut fft = Fft2::<f64>::with_threads([6, 8], 1).unwrap();
+        fft.transform(&mut plane, true).unwrap();
+        assert!(fft.current[0].is_none());
+        let retained = Arc::clone(&fft.current[1].as_ref().unwrap().1);
+        fft.transform(&mut plane, true).unwrap();
+        assert!(Arc::ptr_eq(&retained, &fft.current[1].as_ref().unwrap().1));
+        fft.transform(&mut plane, false).unwrap();
+        assert!(!Arc::ptr_eq(&retained, &fft.current[0].as_ref().unwrap().1));
     }
 
     #[test]
