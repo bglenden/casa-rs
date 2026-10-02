@@ -9,6 +9,7 @@
 
 use std::{borrow::Cow, ops::Range};
 
+use crate::polarization_operator::StokesIReducer;
 use casa_imaging_model::{
     ModelSupport, PolarizationCoordinate, ReconstructionBasis, SelectedSampleAddress,
     SelectedSpectralContribution,
@@ -1220,7 +1221,7 @@ impl BandWorkspace {
             band: self,
             row,
             polarization,
-            reduction: PolarizedSampleReducer::new(polarization)?,
+            reduction: StokesIReducer::new(polarization)?,
             stencil,
             next: 0,
             previous_prediction: SmallVec::new(),
@@ -1399,12 +1400,12 @@ impl BandWorkspace {
         polarization: &PolarizationOperator,
     ) -> Result<(), SpectralOperatorError> {
         row.validate(polarization.correlations().len())?;
-        let reduction = PolarizedSampleReducer::new(polarization)?;
+        let reduction = StokesIReducer::new(polarization)?;
         for channel in single.native_window(row.frequencies_hz) {
             let frequency = row.frequencies_hz[channel];
             let predicted = self.predict_native(&row, frequency, output_hz, polarization)?;
             let first = channel * row.correlations;
-            let (observed, predicted, weight) = reduction.reduce(|correlation| {
+            let (observed, predicted, weight) = reduction.reduce(true, |correlation| {
                 let index = first + correlation;
                 (
                     widen(row.values[index]),
@@ -1416,155 +1417,6 @@ impl BandWorkspace {
             self.grid_sample(0, frequency, &row, observed, predicted, weight)?;
         }
         Ok(())
-    }
-}
-
-struct PolarizedSampleReducer<'a> {
-    coefficients: &'a [Complex64],
-    correlations: usize,
-    direct: Option<usize>,
-}
-
-impl<'a> PolarizedSampleReducer<'a> {
-    fn new(polarization: &'a PolarizationOperator) -> Result<Self, SpectralOperatorError> {
-        if polarization.model_coordinates() != [PolarizationCoordinate::StokesI]
-            || polarization.coefficients().len() != polarization.correlations().len()
-        {
-            return Err(SpectralOperatorError::InvalidSample);
-        }
-        let direct = (polarization.feed_basis() == crate::FeedBasis::Stokes)
-            .then(|| {
-                polarization
-                    .coefficients()
-                    .iter()
-                    .position(|value| *value == Complex64::new(1.0, 0.0))
-            })
-            .flatten();
-        Ok(Self {
-            coefficients: polarization.coefficients(),
-            correlations: polarization.correlations().len(),
-            direct,
-        })
-    }
-
-    #[inline]
-    fn reduce(
-        &self,
-        mut lane: impl FnMut(usize) -> (Complex64, Complex64, f64, bool),
-    ) -> Result<(Complex64, Complex64, f64), SpectralOperatorError> {
-        let mut observed_adjoint = Complex64::default();
-        let mut predicted_adjoint = Complex64::default();
-        let mut diagonal = 0.0;
-        let mut direct_values = (Complex64::default(), Complex64::default());
-        for correlation in 0..self.correlations {
-            let (observed, predicted, weight, flagged) = lane(correlation);
-            if flagged {
-                continue;
-            }
-            if !weight.is_finite() || weight < 0.0 {
-                return Err(SpectralOperatorError::InvalidSample);
-            }
-            if weight == 0.0 {
-                continue;
-            }
-            if !observed.re.is_finite()
-                || !observed.im.is_finite()
-                || !predicted.re.is_finite()
-                || !predicted.im.is_finite()
-            {
-                return Err(SpectralOperatorError::InvalidSample);
-            }
-            let coefficient = self.coefficients[correlation];
-            observed_adjoint += coefficient.conj() * (observed * weight);
-            predicted_adjoint += coefficient.conj() * (predicted * weight);
-            diagonal += weight * coefficient.norm_sqr();
-            if self.direct == Some(correlation) {
-                direct_values = (observed, predicted);
-            }
-        }
-        if diagonal == 0.0 {
-            return Ok((Complex64::default(), Complex64::default(), 0.0));
-        }
-        let (observed, predicted) = if self.direct.is_some() {
-            direct_values
-        } else {
-            (observed_adjoint / diagonal, predicted_adjoint / diagonal)
-        };
-        Ok((observed, predicted, diagonal))
-    }
-}
-
-#[cfg(test)]
-mod polarized_sample_tests {
-    use super::*;
-    use crate::{MuellerMatrix, spectral_operator::polarization_diagonal};
-    use casa_imaging_model::CorrelationType;
-
-    #[test]
-    fn fused_reduction_matches_paired_adjoint_for_flags_weights_and_direct_stokes() {
-        let operators = [
-            PolarizationOperator::compile(
-                &[PolarizationCoordinate::StokesI],
-                &[CorrelationType::CircularRr, CorrelationType::CircularLl],
-                [0.0; 2],
-                MuellerMatrix::identity(),
-            )
-            .unwrap(),
-            PolarizationOperator::compile(
-                &[PolarizationCoordinate::StokesI],
-                &[CorrelationType::StokesI],
-                [0.0; 2],
-                MuellerMatrix::identity(),
-            )
-            .unwrap(),
-        ];
-        let observed = [Complex64::new(1.25, -0.5), Complex64::new(-0.4, 0.2)];
-        let predicted = [Complex64::new(0.15, 0.3), Complex64::new(-0.1, -0.2)];
-        for operator in &operators {
-            for flags in [[false, false], [true, false], [false, true], [true, true]] {
-                let lanes = operator.correlations().len();
-                let weights = [2.0, 3.0];
-                let expected_observed = operator
-                    .weighted_adjoint(&observed[..lanes], &weights[..lanes], &flags[..lanes])
-                    .unwrap()[0];
-                let expected_predicted = operator
-                    .weighted_adjoint(&predicted[..lanes], &weights[..lanes], &flags[..lanes])
-                    .unwrap()[0];
-                let expected_weight =
-                    polarization_diagonal(operator, &weights[..lanes], &flags[..lanes])[0];
-                let direct = (operator.feed_basis() == crate::FeedBasis::Stokes)
-                    .then(|| {
-                        operator
-                            .coefficients()
-                            .iter()
-                            .position(|value| *value == Complex64::new(1.0, 0.0))
-                    })
-                    .flatten();
-                let expected = if expected_weight == 0.0 {
-                    (Complex64::default(), Complex64::default(), 0.0)
-                } else {
-                    (
-                        direct.map_or(expected_observed / expected_weight, |index| observed[index]),
-                        direct.map_or(expected_predicted / expected_weight, |index| {
-                            predicted[index]
-                        }),
-                        expected_weight,
-                    )
-                };
-                let actual = PolarizedSampleReducer::new(operator)
-                    .unwrap()
-                    .reduce(|index| {
-                        (
-                            observed[index],
-                            predicted[index],
-                            weights[index],
-                            flags[index],
-                        )
-                    })
-                    .unwrap();
-                assert_eq!(actual, expected);
-            }
-        }
     }
 }
 
@@ -1585,7 +1437,7 @@ struct RowAccumulator<'a, 'input> {
     band: &'a mut BandWorkspace,
     row: &'a VisibilityRow<'input>,
     polarization: &'a PolarizationOperator,
-    reduction: PolarizedSampleReducer<'a>,
+    reduction: StokesIReducer<'a>,
     stencil: Cow<'a, RowStencil>,
     next: usize,
     previous_prediction: SmallVec<[Complex64; 4]>,
@@ -1644,7 +1496,7 @@ impl RowAccumulator<'_, '_> {
                 let nearest = nearest * self.row.correlations;
                 // Interpolate before the paired adjoints, retaining CASA's
                 // flag and nearest-weight order without four packed vectors.
-                let (observed, predicted, weight) = self.reduction.reduce(|correlation| {
+                let (observed, predicted, weight) = self.reduction.reduce(true, |correlation| {
                     let observed = interpolate_complex_pair(
                         widen(self.row.values[left + correlation]),
                         widen(self.row.values[right + correlation]),
