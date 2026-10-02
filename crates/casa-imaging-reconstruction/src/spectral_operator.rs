@@ -6124,42 +6124,38 @@ impl CompleteDataOwnerState {
         let predicts_zero = self
             .model_binding
             .is_some_and(ReconstructionModelBinding::is_initial_certified_zero);
-        let initial_data_only = predicts_zero && !self.emit_final_visibilities;
-        let has_spectral_support = !initial_data_only
-            && !self
-                .specification
-                .prediction_contributions(first)?
-                .is_empty();
+        let has_spectral_support = !self
+            .specification
+            .prediction_contributions(first)?
+            .is_empty();
         let mut model_prediction = SmallVec::<[Complex64; 4]>::new();
         model_prediction.resize(polarization.model_coordinates().len(), Complex64::default());
         let mut touches_core = false;
-        if !initial_data_only {
-            for chart_ordinal in 0..self.operators.len() {
-                let chart = &self.specification.charts[chart_ordinal];
-                let (uvw_m, phase_shift_m) = selected_model_projection(
-                    selected,
-                    self.specification.chart_count(),
-                    chart.domain_ordinal,
-                    chart.facet_ordinal,
-                )?;
-                let stencil = spectral_stencil(
-                    &self.specification,
-                    first,
-                    uvw_m,
-                    phase_shift_m,
-                    mosaic_response,
-                )?;
-                let domain_touches = stencil.iter().any(|sample| {
-                    self.operators[chart_ordinal]
-                        .slab
-                        .owns(sample.output_channel)
-                });
-                touches_core |= domain_touches;
-                if predicts_residual && domain_touches {
-                    for (coordinate, predicted) in model_prediction.iter_mut().enumerate() {
-                        *predicted += self.operators[chart_ordinal]
-                            .predict_stencil_polarization(&stencil, coordinate)?;
-                    }
+        for chart_ordinal in 0..self.operators.len() {
+            let chart = &self.specification.charts[chart_ordinal];
+            let (uvw_m, phase_shift_m) = selected_model_projection(
+                selected,
+                self.specification.chart_count(),
+                chart.domain_ordinal,
+                chart.facet_ordinal,
+            )?;
+            let stencil = spectral_stencil(
+                &self.specification,
+                first,
+                uvw_m,
+                phase_shift_m,
+                mosaic_response,
+            )?;
+            let domain_touches = stencil.iter().any(|sample| {
+                self.operators[chart_ordinal]
+                    .slab
+                    .owns(sample.output_channel)
+            });
+            touches_core |= domain_touches;
+            if predicts_residual && domain_touches {
+                for (coordinate, predicted) in model_prediction.iter_mut().enumerate() {
+                    *predicted += self.operators[chart_ordinal]
+                        .predict_stencil_polarization(&stencil, coordinate)?;
                 }
             }
         }
@@ -6204,15 +6200,8 @@ impl CompleteDataOwnerState {
                 let observed_adjoint = polarization
                     .weighted_adjoint(&visibilities, &correlation_weights, &flags)
                     .map_err(|_| SpectralOperatorError::InvalidSample)?;
-                let predicted_adjoint = (!initial_data_only)
-                    .then(|| {
-                        polarization.weighted_adjoint(
-                            &predicted_correlations,
-                            &correlation_weights,
-                            &flags,
-                        )
-                    })
-                    .transpose()
+                let predicted_adjoint = polarization
+                    .weighted_adjoint(&predicted_correlations, &correlation_weights, &flags)
                     .map_err(|_| SpectralOperatorError::InvalidSample)?;
                 let diagonal = polarization_diagonal(polarization, &correlation_weights, &flags);
                 let contribution = first_spectral.contribution();
@@ -6234,15 +6223,12 @@ impl CompleteDataOwnerState {
                     } else {
                         observed_adjoint[coordinate] / weight
                     };
-                    let predicted = if initial_data_only || weight == 0.0 {
+                    let predicted = if weight == 0.0 {
                         Complex64::new(0.0, 0.0)
                     } else if let Some(row) = direct_row {
                         predicted_correlations[row]
                     } else {
-                        predicted_adjoint
-                            .as_ref()
-                            .expect("evaluated prediction adjoint")[coordinate]
-                            / weight
+                        predicted_adjoint[coordinate] / weight
                     };
                     let sample = SpectralOperatorSample::new(
                         usize::try_from(contribution.output_channel())
