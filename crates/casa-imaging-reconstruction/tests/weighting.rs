@@ -2623,6 +2623,144 @@ fn fused_and_replay_streams_reuse_returned_weighted_block_storage() {
 }
 
 #[test]
+fn fused_prepared_pipeline_reuses_two_buffers_and_preserves_coverage() {
+    let problem = problem(
+        WeightingScheme::Natural,
+        WeightDensityScope::NotApplicable,
+        None,
+    );
+    let samples = exact_samples(&problem);
+    let plan = plan_weighting(&problem, WeightingExecutionLimits::new(1, 1).unwrap()).unwrap();
+    let (expected, _, expected_summary) = fused_stream(&problem, &plan, &samples);
+    let mut fused = begin_natural_weighting_stream(&problem, &plan).unwrap();
+    let mut prepared = samples
+        .iter()
+        .map(|sample| {
+            fused
+                .prepare_sample(
+                    &problem,
+                    sample,
+                    sample.address.frequency_centre_hz,
+                    exact_contributions(sample),
+                )
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let prepared_allocation = (prepared.as_ptr(), prepared.capacity());
+    let mut current = fused
+        .commit_prepared(&problem, &mut prepared)
+        .unwrap()
+        .unwrap();
+    let first_pointer = current.samples().as_ptr();
+    let mut second_pointer = None;
+    let mut ordinal = 0;
+    while !prepared.is_empty() {
+        let next = fused
+            .commit_prepared(&problem, &mut prepared)
+            .unwrap()
+            .unwrap();
+        assert_eq!(current.sequence(), ordinal);
+        assert_eq!(next.sequence(), ordinal + 1);
+        if ordinal == 0 {
+            second_pointer = Some(next.samples().as_ptr());
+            assert_ne!(next.samples().as_ptr(), first_pointer);
+        } else {
+            assert_eq!(
+                next.samples().as_ptr(),
+                if ordinal % 2 == 0 {
+                    second_pointer.unwrap()
+                } else {
+                    first_pointer
+                }
+            );
+        }
+        assert!(matches!(
+            fused.commit_prepared(&problem, &mut prepared),
+            Err(WeightingError::ReturnedBlockMismatch)
+        ));
+        fused.reuse_emitted_block(current).unwrap();
+        current = next;
+        ordinal += 1;
+    }
+    fused.reuse_emitted_block(current).unwrap();
+    assert_eq!(
+        (prepared.as_ptr(), prepared.capacity()),
+        prepared_allocation
+    );
+    let (tail, actual, summary) = fused.finish().unwrap();
+    assert!(tail.is_none());
+    assert_eq!(actual.generation_id(), expected.generation_id());
+    assert_eq!(actual.sum_weights(), expected.sum_weights());
+    assert_eq!(summary.coverage(), expected_summary.coverage());
+    assert_eq!(summary.block_count(), expected_summary.block_count());
+    assert_eq!(
+        summary.residency().weighted_block_bytes(),
+        2 * plan.planned_residency().weighted_block_bytes()
+    );
+}
+
+#[test]
+fn fused_prepared_pipeline_handles_partial_next_block_and_rejects_out_of_order_return() {
+    let problem = problem(
+        WeightingScheme::Natural,
+        WeightDensityScope::NotApplicable,
+        None,
+    );
+    let samples = exact_samples(&problem);
+    let plan = plan_weighting(&problem, WeightingExecutionLimits::new(3, 1).unwrap()).unwrap();
+    let (expected, _, expected_summary) = fused_stream(&problem, &plan, &samples);
+    let prepare = |fused: &casa_imaging_reconstruction::FusedWeightingPhase| {
+        samples
+            .iter()
+            .map(|sample| {
+                fused
+                    .prepare_sample(
+                        &problem,
+                        sample,
+                        sample.address.frequency_centre_hz,
+                        exact_contributions(sample),
+                    )
+                    .unwrap()
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut fused = begin_natural_weighting_stream(&problem, &plan).unwrap();
+    let mut prepared = prepare(&fused);
+    let first = fused
+        .commit_prepared(&problem, &mut prepared)
+        .unwrap()
+        .unwrap();
+    assert!(
+        fused
+            .commit_prepared(&problem, &mut prepared)
+            .unwrap()
+            .is_none()
+    );
+    fused.reuse_emitted_block(first).unwrap();
+    let (tail, actual, summary) = fused.finish().unwrap();
+    assert_eq!(tail.unwrap().samples().len(), samples.len() - 3);
+    assert_eq!(actual.generation_id(), expected.generation_id());
+    assert_eq!(summary.coverage(), expected_summary.coverage());
+
+    let plan = plan_weighting(&problem, WeightingExecutionLimits::new(1, 1).unwrap()).unwrap();
+    let mut fused = begin_natural_weighting_stream(&problem, &plan).unwrap();
+    let mut prepared = prepare(&fused);
+    let first = fused
+        .commit_prepared(&problem, &mut prepared)
+        .unwrap()
+        .unwrap();
+    let second = fused
+        .commit_prepared(&problem, &mut prepared)
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        fused.reuse_emitted_block(second),
+        Err(WeightingError::ReturnedBlockMismatch)
+    ));
+    fused.reuse_emitted_block(first).unwrap();
+}
+
+#[test]
 fn fused_and_replay_flush_before_a_three_lane_group_without_a_second_block() {
     let problem = problem(
         WeightingScheme::Natural,
