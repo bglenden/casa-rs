@@ -19,6 +19,11 @@ fn full_field_application() {
         .unwrap();
     let terms: usize = std::env::var("CASA_RS_MFS_TERMS").unwrap().parse().unwrap();
     let iterations: usize = std::env::var("CASA_RS_MFS_NITER").unwrap().parse().unwrap();
+    let threshold_jy: f64 = std::env::var("CASA_RS_MFS_THRESHOLD_JY")
+        .unwrap_or_else(|_| "0.005".into())
+        .parse()
+        .unwrap();
+    assert!(threshold_jy.is_finite() && threshold_jy > 0.0);
     let gridder = std::env::var("CASA_RS_MFS_GRIDDER").unwrap_or_else(|_| "standard".into());
     let spectral_window = std::env::var("CASA_RS_MFS_SPW").unwrap_or_else(|_| "0~31".into());
     assert!(["standard", "wproject"].contains(&gridder.as_str()));
@@ -47,7 +52,7 @@ fn full_field_application() {
     imaging.cycle_iterations = 1000;
     imaging.maximum_major_cycles = None;
     imaging.gain = 0.1;
-    imaging.threshold_jy = 0.005;
+    imaging.threshold_jy = threshold_jy;
     imaging.psf_cutoff = 0.35;
     imaging.primary_beam_limit = -0.2;
     imaging.normalization = casa_imaging_model::ProductNormalization::FlatNoise;
@@ -100,6 +105,7 @@ fn full_field_application() {
         "worker_count_scope": "workers is the request; admitted counts are phase reservations, not measured concurrent grid workers; see stream/replay measurements for execution",
         "native_memory_bytes": 16_u64 << 30, "image_size": 4096, "cell_arcsec": 0.05,
         "iterations": result.actual_minor_iterations,
+        "iteration_limit": iterations, "threshold_jy": threshold_jy,
         "majors": output.major_cycle_count, "products": result.product_names,
         "prefix": prefix, "weighting": "uniform", "gridder": gridder,
         "spectral_window": spectral_window,
