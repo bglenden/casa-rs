@@ -3370,14 +3370,8 @@ fn assert_t59_low_memory_production_routes(physical: &PhysicalWorkBinding) {
         .expect("explicit final-major memory ceiling seals one low-memory route");
     assert_eq!(dag.adaptations().len(), 1);
     assert_eq!(transition.from, *dag.initial_knobs());
-    assert_eq!(
-        transition.from.batch_size,
-        dag.resource_alternative().scaling.maximum_batch_size
-    );
-    assert_eq!(
-        transition.to.batch_size,
-        transition.from.batch_size.div_ceil(2).max(1)
-    );
+    assert_eq!(transition.from.batch_size, 2);
+    assert_eq!(transition.to.batch_size, 1);
     assert!(transition.to.recomputation);
     assert!(!transition.to.spill);
     assert!(transition.to.prefetch);
@@ -3525,7 +3519,7 @@ fn execute_spectral_cycle_with_weighting_mode(
         WeightColumn::Weight,
         Vec::new(),
         ModelStateIdentity::Empty,
-        SelectedObservationContentBudget::new(176 * 1024, 1, 4),
+        SelectedObservationContentBudget::new(160 * 1024, 1, 4),
         casa_test_support::deterministic_measures_provider_for_identity([90; 32]),
     );
     let (snapshot_input, initial_access) = resolve_selected_observation(resolution.clone())

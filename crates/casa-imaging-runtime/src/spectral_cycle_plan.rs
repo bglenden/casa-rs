@@ -1487,7 +1487,7 @@ fn append_low_memory_adaptation(
             u64::try_from(window_plan.maximum_frames())
                 .map_err(|_| SpectralCyclePlanError::Overflow)?,
         )
-        .max(1);
+        .clamp(1, 2);
     initial.cache_retention_bytes = retained_cache_bytes.max(1);
     initial.spill = false;
     let mut target = initial.clone();
