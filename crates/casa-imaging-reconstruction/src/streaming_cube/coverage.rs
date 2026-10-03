@@ -22,7 +22,6 @@ use sha2::{Digest, Sha256};
 
 const STREAM_VERSION: u32 = 6;
 const COVERAGE_HASH_CHUNK_BYTES: usize = 256;
-const HASH_BATCH_BYTES: usize = 4096;
 // Tag + MS + row + DDID + SPW + full optional native geometry.
 const ROW_HEADER_BYTES: usize = 1 + 32 + 8 + 4 + 4 + 1 + 16 + 12 + 1 + 12 + 1 + 16;
 
@@ -54,16 +53,12 @@ pub(crate) struct CoverageEncoder {
     pub(super) work: CoverageProofWork,
     previous_row: [u8; ROW_HEADER_BYTES],
     previous_row_len: usize,
-    hash_batch: [u8; HASH_BATCH_BYTES],
-    hash_batch_len: usize,
 }
 
 impl CoverageEncoder {
     pub(crate) fn checkpoint_token(&self) -> [u8; 32] {
         if let Some(hasher) = &self.hasher {
-            let mut snapshot = hasher.clone();
-            snapshot.update(&self.hash_batch[..self.hash_batch_len]);
-            snapshot.finalize().into()
+            hasher.clone().finalize().into()
         } else {
             let mut hasher = Sha256::new();
             hasher.update(b"casa-rs-derived-weighting-checkpoint");
@@ -86,8 +81,6 @@ impl CoverageEncoder {
             },
             previous_row: [0; ROW_HEADER_BYTES],
             previous_row_len: 0,
-            hash_batch: [0; HASH_BATCH_BYTES],
-            hash_batch_len: 0,
         };
         encoder.update(COVERAGE_DOMAIN);
         encoder.update(&STREAM_VERSION.to_be_bytes());
@@ -104,44 +97,24 @@ impl CoverageEncoder {
             },
             previous_row: [0; ROW_HEADER_BYTES],
             previous_row_len: 0,
-            hash_batch: [0; HASH_BATCH_BYTES],
-            hash_batch_len: 0,
         }
     }
 
-    pub(super) fn update(&mut self, mut bytes: &[u8]) {
-        assert!(self.hasher.is_some(), "encoded coverage owns a hasher");
+    pub(super) fn update(&mut self, bytes: &[u8]) {
         self.work.bytes = self
             .work
             .bytes
             .checked_add(u64::try_from(bytes.len()).expect("coverage proof chunk fits u64"))
             .expect("coverage proof byte count fits u64");
-        while !bytes.is_empty() {
-            let count = bytes.len().min(HASH_BATCH_BYTES - self.hash_batch_len);
-            let end = self.hash_batch_len + count;
-            self.hash_batch[self.hash_batch_len..end].copy_from_slice(&bytes[..count]);
-            self.hash_batch_len = end;
-            bytes = &bytes[count..];
-            if end == HASH_BATCH_BYTES {
-                self.flush_hash_batch();
-            }
-        }
-    }
-
-    fn flush_hash_batch(&mut self) {
-        if self.hash_batch_len == 0 {
-            return;
-        }
-        self.hasher
-            .as_mut()
-            .expect("encoded coverage owns a hasher")
-            .update(&self.hash_batch[..self.hash_batch_len]);
         self.work.hash_calls = self
             .work
             .hash_calls
             .checked_add(1)
             .expect("coverage proof hash-call count fits u64");
-        self.hash_batch_len = 0;
+        self.hasher
+            .as_mut()
+            .expect("encoded coverage owns a hasher")
+            .update(bytes);
     }
 
     pub(crate) fn push(&mut self, weighted: &WeightingSampleValue) {
@@ -311,7 +284,6 @@ impl CoverageEncoder {
     pub(crate) fn finish_row(mut self, sample_count: u64) -> ([u8; 32], CoverageProofWork) {
         self.update(&[2]);
         self.update(&sample_count.to_be_bytes());
-        self.flush_hash_batch();
         (
             self.hasher
                 .take()
@@ -332,7 +304,6 @@ impl CoverageEncoder {
         }
         self.update(&[2]);
         self.update(&sample_count.to_be_bytes());
-        self.flush_hash_batch();
         let content_work = self.work;
         let content = self
             .hasher
@@ -342,7 +313,6 @@ impl CoverageEncoder {
         let mut identity = Self::new();
         identity.update(&generation.as_bytes());
         identity.update(&content);
-        identity.flush_hash_batch();
         let work = content_work.checked_add(identity.work);
         (
             WeightingReplayCoverageId(LogicalIdentity::from_sha256(
@@ -468,7 +438,7 @@ mod tests {
             work.bytes,
             (bytes.len() + COVERAGE_DOMAIN.len() + 4 + 64) as u64
         );
-        assert_eq!(work.hash_calls, 2);
+        assert_eq!(work.hash_calls, 10);
     }
 
     #[test]
@@ -675,44 +645,9 @@ mod tests {
         );
         let old_bytes = samples * (32 + 8 + 4 + 4 + 4 + 4 + 8 + 58 + 2 * 28 + 1);
         assert!(bytes * 2 < old_bytes);
-        assert_eq!(
-            coverage.work.hash_calls,
-            coverage.work.bytes / HASH_BATCH_BYTES as u64
-        );
+        assert_eq!(coverage.work.hash_calls, samples + 2);
         eprintln!(
             "coverage_samples={samples} old_projection_bytes={old_bytes} framed_bytes={bytes}"
         );
-    }
-
-    #[test]
-    fn hash_batches_preserve_snapshots_adoption_and_exact_stream_bytes() {
-        let payload = (0..HASH_BATCH_BYTES * 3 + 19)
-            .map(|index| (index % 251) as u8)
-            .collect::<Vec<_>>();
-        let mut expected = Sha256::new();
-        expected.update(COVERAGE_DOMAIN);
-        expected.update(STREAM_VERSION.to_be_bytes());
-        let mut whole = CoverageEncoder::new();
-        whole.update(&payload);
-        expected.update(&payload);
-        let expected_digest: [u8; 32] = expected.finalize().into();
-        assert_eq!(whole.checkpoint_token(), expected_digest);
-        for chunk in [1, 53, 64, 256, HASH_BATCH_BYTES - 1, HASH_BATCH_BYTES + 1] {
-            let mut split = CoverageEncoder::new();
-            for bytes in payload.chunks(chunk) {
-                split.update(bytes);
-                let mut resumed = CoverageEncoder::new();
-                resumed.adopt(&split);
-                assert_eq!(resumed.checkpoint_token(), split.checkpoint_token());
-                split = resumed;
-            }
-            assert_eq!(split.checkpoint_token(), expected_digest);
-            let generation = WeightingGenerationId(LogicalIdentity::from_sha256([7; 32]));
-            let (split_id, split_work) = split.finish(generation, 3);
-            let (whole_id, whole_work) = whole.clone().finish(generation, 3);
-            assert_eq!(split_id, whole_id);
-            assert_eq!(split_work.bytes, whole_work.bytes);
-            assert_eq!(split_work.hash_calls, whole_work.hash_calls);
-        }
     }
 }

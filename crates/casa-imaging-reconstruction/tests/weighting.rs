@@ -2006,8 +2006,8 @@ fn partition_block_worker_and_repeated_replay_choices_are_invariant() {
             serial_completion.coverage_proof_bytes(),
             serial_completion.coverage_proof_hash_calls(),
         ),
-        (4 * 102 + 2 * 37 + 64 + 9, 2),
-        "v6: unchanged bytes, one batched content update and one identity update"
+        (4 * 102 + 2 * 37 + 64 + 9, 4 + 8),
+        "v6: four fresh-row frames, two domains, identity, terminator; count every byte/update"
     );
     assert_eq!(
         (
