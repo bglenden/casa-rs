@@ -849,7 +849,6 @@ fn apply_weight_taper(
     }
 }
 
-#[inline(always)]
 fn weighted_sample_from_state(
     problem: &CompiledProblem,
     grid: DensityGridShape,
@@ -1249,7 +1248,6 @@ impl WeightingSumWeightPhase {
         Ok(weighted)
     }
 
-    #[inline(always)]
     fn prepare_sample(
         &self,
         problem: &CompiledProblem,
@@ -1725,7 +1723,6 @@ pub struct WeightingSelectedSample {
 }
 
 impl WeightingSelectedSample {
-    #[inline(always)]
     fn from_selected(
         problem: &CompiledProblem,
         sample: SelectedObservationSampleView<'_>,
@@ -2599,7 +2596,7 @@ pub struct WeightingSampleValue {
 mod streaming_cube;
 
 impl Clone for WeightingSampleValue {
-    #[inline(always)]
+    #[inline]
     fn clone(&self) -> Self {
         Self {
             sample: self.sample.clone(),
@@ -2613,8 +2610,7 @@ impl Clone for WeightingSampleValue {
         self.sample.clone_from(&source.sample);
         self.source_imaging_weight = source.source_imaging_weight;
         self.spectral_values.clear();
-        self.spectral_values
-            .extend_from_slice(&source.spectral_values);
+        self.spectral_values.extend_from_slice(&source.spectral_values);
     }
 }
 
@@ -2628,7 +2624,6 @@ impl WeightingSampleValue {
     /// its own visibility, raw weight, cell flag and correlation address. This
     /// neither advances coverage nor commits a prepared value.
     #[doc(hidden)]
-    #[inline(always)]
     pub fn prepare_group_member(
         &self,
         correlation: SelectedObservationRunCorrelation,
