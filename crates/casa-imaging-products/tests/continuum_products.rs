@@ -725,7 +725,7 @@ fn run_product_fixture_cycles(
             spectral_operator_workload(&specification, plan.limits().max_block_samples(), pass)
                 .expect("workload");
         let prepared =
-            prepare_spectral_operator(specification, workload).expect("prepare operator");
+            prepare_spectral_operator(specification, workload, 1).expect("prepare operator");
         let mut state = prepared
             .begin(problem, generation)
             .expect("begin complete-data owner");
@@ -868,7 +868,7 @@ fn rerun_two_domain_with_masks(
         SpectralOperatorPass::ResidualRefresh,
     )
     .expect("two-domain refresh workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
+    let prepared = prepare_spectral_operator(specification, workload, 1).expect("prepare operator");
     let mut state = prepared
         .begin(problem, &generation)
         .expect("begin complete-data owner");

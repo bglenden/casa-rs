@@ -651,7 +651,7 @@ fn run_round_with_terms(
         )
         .expect("operator workload");
         let prepared =
-            prepare_spectral_operator(specification, workload).expect("prepare operator");
+            prepare_spectral_operator(specification, workload, 1).expect("prepare operator");
         let mut state = prepared
             .begin(problem, &generation)
             .expect("begin complete-data owner");
