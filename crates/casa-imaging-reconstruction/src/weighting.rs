@@ -1985,7 +1985,11 @@ mod selected_sample_tests {
         coverage.update(b"selected prefix");
         let token = coverage.checkpoint_token();
         assert_eq!(coverage.checkpoint_token(), token);
-        let expected: [u8; 32] = coverage.hasher.clone().unwrap().finalize().into();
+        let mut expected = sha2::Sha256::new();
+        expected.update(super::COVERAGE_DOMAIN);
+        expected.update(6_u32.to_be_bytes());
+        expected.update(b"selected prefix");
+        let expected: [u8; 32] = expected.finalize().into();
         assert_eq!(token, expected);
 
         let proof = WeightingReplayCoverageId(super::LogicalIdentity::from_sha256(token));
@@ -2610,7 +2614,8 @@ impl Clone for WeightingSampleValue {
         self.sample.clone_from(&source.sample);
         self.source_imaging_weight = source.source_imaging_weight;
         self.spectral_values.clear();
-        self.spectral_values.extend_from_slice(&source.spectral_values);
+        self.spectral_values
+            .extend_from_slice(&source.spectral_values);
     }
 }
 
@@ -3200,7 +3205,7 @@ impl WeightingReplaySummary {
         self.coverage_proof_bytes
     }
 
-    /// Return coverage identity hasher update calls during this replay.
+    /// Return accumulating coverage hasher update calls, excluding checkpoint snapshots.
     #[must_use]
     pub const fn coverage_proof_hash_calls(&self) -> u64 {
         self.coverage_proof_hash_calls
