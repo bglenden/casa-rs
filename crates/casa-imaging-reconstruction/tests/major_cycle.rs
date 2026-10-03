@@ -3672,9 +3672,30 @@ fn empty_initial_model_emits_zero_predictions_only_for_an_explicit_sink() {
         }));
     }
     assert_eq!(emitted, samples.len());
-    state
+    let with_sink = state
         .complete(&summary, selected_generation, None)
         .expect("complete empty sink-enabled replay");
+    let without_sink = run_t19_complete_data(&problem, Some(&preparation));
+    assert_eq!(
+        with_sink.primitives().dirty().complex().unwrap(),
+        without_sink.primitives().dirty().complex().unwrap()
+    );
+    assert_eq!(
+        with_sink.primitives().psf().complex().unwrap(),
+        without_sink.primitives().psf().complex().unwrap()
+    );
+    assert_eq!(
+        with_sink.primitives().sensitivity().dense().unwrap(),
+        without_sink.primitives().sensitivity().dense().unwrap()
+    );
+    assert_eq!(
+        with_sink.primitives().sum_weights(),
+        without_sink.primitives().sum_weights()
+    );
+    assert_eq!(
+        with_sink.primitives().channel_validity(),
+        without_sink.primitives().channel_validity()
+    );
 }
 
 #[test]
