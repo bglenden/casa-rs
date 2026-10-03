@@ -1719,45 +1719,7 @@ pub struct WeightingSelectedSample {
     pointing_directions: SelectedPointingDirections,
     aw_pointing_pixel: Option<[f64; 2]>,
     antenna_responses: Option<SelectedAntennaResponses>,
-    model_projections: WeightedModelProjections,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-enum WeightedModelProjections {
-    // The single model chart uses the retained density UVW and a zero phase path.
-    CoLocated,
-    Charts(SelectedImageDomainProjections),
-}
-
-impl WeightedModelProjections {
-    fn new(projections: &SelectedImageDomainProjections, density_uvw_m: [f64; 3]) -> Self {
-        let primary = projections.get(0).expect("canonical primary chart").model();
-        if projections.len() == 1
-            && primary.transformed_uvw_m().map(f64::to_bits) == density_uvw_m.map(f64::to_bits)
-            && primary.phase_shift_m().to_bits() == 0.0_f64.to_bits()
-        {
-            Self::CoLocated
-        } else {
-            Self::Charts(projections.clone())
-        }
-    }
-
-    fn len(&self) -> usize {
-        match self {
-            Self::CoLocated => 1,
-            Self::Charts(projections) => projections.len(),
-        }
-    }
-
-    fn get(&self, density_uvw_m: [f64; 3], domain: u32, facet: u32) -> Option<([f64; 3], f64)> {
-        match self {
-            Self::CoLocated => (domain == 0 && facet == 0).then_some((density_uvw_m, 0.0)),
-            Self::Charts(projections) => projections.get_facet(domain, facet).map(|p| {
-                let model = p.model();
-                (model.transformed_uvw_m(), model.phase_shift_m())
-            }),
-        }
-    }
+    domain_projections: SelectedImageDomainProjections,
 }
 
 impl WeightingSelectedSample {
@@ -1781,7 +1743,7 @@ impl WeightingSelectedSample {
         }
         let coordinates = sample.coordinates();
         let input_weight_group = sample.input_weight_group();
-        let domain_projections = sample.domain_projections();
+        let domain_projections = sample.domain_projections().clone();
         Ok(Self {
             address: sample.address(),
             visibility: sample.visibility(),
@@ -1811,12 +1773,9 @@ impl WeightingSelectedSample {
             }),
             field_id: sample.metadata().field_id,
             pointing_directions: coordinates.pointing_directions,
-            aw_pointing_pixel: primary_aw_pointing_pixel(domain_projections),
+            aw_pointing_pixel: primary_aw_pointing_pixel(&domain_projections),
             antenna_responses: sample.metadata().antenna_responses,
-            model_projections: WeightedModelProjections::new(
-                domain_projections,
-                coordinates.density_uvw_m,
-            ),
+            domain_projections,
         })
     }
 
@@ -1918,27 +1877,26 @@ impl WeightingSelectedSample {
     /// Return the transformed UVW coordinate consumed by the paired operator.
     #[must_use]
     pub fn transformed_uvw_m(&self) -> [f64; 3] {
-        self.primary_model_projection().0
+        self.primary_model_projection().transformed_uvw_m()
     }
 
     /// Return the phase-shift path length consumed by prediction and gridding.
     #[must_use]
     pub fn phase_shift_m(&self) -> f64 {
-        self.primary_model_projection().1
+        self.primary_model_projection().phase_shift_m()
     }
 
-    pub(crate) fn projection_count(&self) -> usize {
-        self.model_projections.len()
+    /// Return the projections for every compiled image domain.
+    #[must_use]
+    pub const fn domain_projections(&self) -> &SelectedImageDomainProjections {
+        &self.domain_projections
     }
 
-    pub(crate) fn model_projection(&self, domain: u32, facet: u32) -> Option<([f64; 3], f64)> {
-        self.model_projections
-            .get(self.density_uvw_m, domain, facet)
-    }
-
-    fn primary_model_projection(&self) -> ([f64; 3], f64) {
-        self.model_projection(0, 0)
+    fn primary_model_projection(&self) -> casa_imaging_model::SelectedPhaseCentreProjection {
+        self.domain_projections
+            .get(0)
             .expect("validated selected samples always contain the primary domain")
+            .model()
     }
 }
 
@@ -1955,71 +1913,7 @@ mod selected_sample_tests {
         SelectedPhaseCentreProjection,
     };
 
-    use super::{
-        NativeRowSpectralGeometry, WeightedModelProjections, WeightingSelectedSample,
-        primary_aw_pointing_pixel,
-    };
-
-    #[test]
-    fn single_chart_weighted_projection_has_no_shared_ownership() {
-        let uvw = [1.0, -2.0, 3.0];
-        let phase = SelectedPhaseCentreProjection::new(uvw, 0.0).unwrap();
-        let source = SelectedImageDomainProjections::one_domain_with_shared_psf(phase);
-        let weighted = WeightedModelProjections::new(&source, uvw);
-        assert!(matches!(weighted, WeightedModelProjections::CoLocated));
-        assert_eq!(
-            size_of::<WeightedModelProjections>(),
-            size_of::<SelectedImageDomainProjections>()
-        );
-        drop(source);
-        let copied = weighted.clone();
-        assert_eq!(copied.len(), 1);
-        assert_eq!(copied.get(uvw, 0, 0), Some((uvw, 0.0)));
-        assert_eq!(copied.get(uvw, 0, 1), None);
-        assert_eq!(copied.get(uvw, 1, 0), None);
-    }
-
-    #[test]
-    fn shifted_single_chart_keeps_its_exact_projection() {
-        let density = [1.0, 2.0, 3.0];
-        for (uvw, shift) in [([4.0, 5.0, 6.0], 0.0), (density, -4.0), (density, -0.0)] {
-            let phase = SelectedPhaseCentreProjection::new(uvw, shift).unwrap();
-            let source = SelectedImageDomainProjections::one_domain_with_shared_psf(phase);
-            let weighted = WeightedModelProjections::new(&source, density);
-            assert!(matches!(weighted, WeightedModelProjections::Charts(_)));
-            drop(source);
-            let copied = weighted.clone();
-            let (actual_uvw, actual_shift) = copied.get(density, 0, 0).unwrap();
-            assert_eq!(actual_uvw, uvw);
-            assert_eq!(actual_shift.to_bits(), shift.to_bits());
-            assert_eq!(copied.get(density, 1, 0), None);
-        }
-    }
-
-    #[test]
-    fn weighted_projection_preserves_all_domains_and_facets() {
-        let phases = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]
-            .map(|uvw| SelectedPhaseCentreProjection::new(uvw, uvw[0]).unwrap());
-        let source = SelectedImageDomainProjections::new([
-            SelectedImageDomainProjection::facet_with_shared_psf(0, 0, phases[0]),
-            SelectedImageDomainProjection::facet_with_shared_psf(0, 1, phases[1]),
-            SelectedImageDomainProjection::facet_with_shared_psf(1, 0, phases[2]),
-        ])
-        .unwrap();
-        let density = [0.0; 3];
-        let weighted = WeightedModelProjections::new(&source, density);
-        assert!(matches!(weighted, WeightedModelProjections::Charts(_)));
-        drop(source);
-        let copied = weighted.clone();
-        assert_eq!(copied.len(), 3);
-        for ((domain, facet), phase) in [(0, 0), (0, 1), (1, 0)].into_iter().zip(phases) {
-            assert_eq!(
-                copied.get(density, domain, facet),
-                Some((phase.transformed_uvw_m(), phase.phase_shift_m()))
-            );
-        }
-        assert_eq!(copied.get(density, 1, 1), None);
-    }
+    use super::{NativeRowSpectralGeometry, WeightingSelectedSample, primary_aw_pointing_pixel};
 
     #[test]
     fn aw_requires_physical_angles_and_never_substitutes_zero_for_absence() {
@@ -2226,7 +2120,9 @@ mod selected_sample_tests {
                 },
                 aw_pointing_pixel: None,
                 antenna_responses: None,
-                model_projections: WeightedModelProjections::CoLocated,
+                domain_projections: SelectedImageDomainProjections::one_domain_with_shared_psf(
+                    SelectedPhaseCentreProjection::new([0.0; 3], 0.0).unwrap(),
+                ),
             },
             source_imaging_weight: Some(4.0 + f64::from(channel) * 6.0),
             spectral_values: smallvec::SmallVec::new(),
@@ -2714,8 +2610,7 @@ impl Clone for WeightingSampleValue {
         self.sample.clone_from(&source.sample);
         self.source_imaging_weight = source.source_imaging_weight;
         self.spectral_values.clear();
-        self.spectral_values
-            .extend_from_slice(&source.spectral_values);
+        self.spectral_values.extend_from_slice(&source.spectral_values);
     }
 }
 

@@ -7262,17 +7262,21 @@ pub(crate) fn selected_model_projection(
     domain_ordinal: usize,
     facet_ordinal: usize,
 ) -> Result<([f64; 3], f64), SpectralOperatorError> {
-    if sample.projection_count() != domain_count {
+    let projections = sample.domain_projections();
+    if projections.len() != domain_count {
         return Err(SpectralOperatorError::DomainProjectionMismatch);
     }
-    let (uvw_m, phase_shift_m) = sample
-        .model_projection(
+    let projection = projections
+        .get_facet(
             u32::try_from(domain_ordinal)
                 .map_err(|_| SpectralOperatorError::DomainProjectionMismatch)?,
             u32::try_from(facet_ordinal)
                 .map_err(|_| SpectralOperatorError::DomainProjectionMismatch)?,
         )
-        .ok_or(SpectralOperatorError::DomainProjectionMismatch)?;
+        .ok_or(SpectralOperatorError::DomainProjectionMismatch)?
+        .model();
+    let uvw_m = projection.transformed_uvw_m();
+    let phase_shift_m = projection.phase_shift_m();
     if uvw_m.iter().any(|value| !value.is_finite()) || !phase_shift_m.is_finite() {
         return Err(SpectralOperatorError::InvalidSample);
     }
