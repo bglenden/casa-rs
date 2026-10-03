@@ -174,7 +174,6 @@ impl OrderedBlockSource for SelectedBlockSource<'_> {
 
 trait StreamingWeightPhase: Send {
     type Finish: Send;
-    const OVERLAP_PREPARATION: bool = false;
 
     fn prepare_sample(
         &self,
@@ -210,7 +209,6 @@ trait StreamingWeightPhase: Send {
 
 impl StreamingWeightPhase for FusedWeightingPhase {
     type Finish = (WeightingAlgorithmState, WeightingReplaySummary);
-    const OVERLAP_PREPARATION: bool = true;
 
     fn prepare_sample(
         &self,
@@ -405,10 +403,9 @@ impl<W, F, E> WeightingBlockKernel<'_, W, F>
 where
     W: StreamingWeightPhase + Sync,
     F: FnMut(
-            &ReconstructionWeightedBlock,
-            crate::bounded_stream::BoundedExecution<'_>,
-        ) -> Result<(), E>
-        + Send,
+        &ReconstructionWeightedBlock,
+        crate::bounded_stream::BoundedExecution<'_>,
+    ) -> Result<(), E>,
     E: Error + Send + 'static,
 {
     fn consume_selected_block(

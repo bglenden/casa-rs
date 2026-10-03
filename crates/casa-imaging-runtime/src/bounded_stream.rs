@@ -414,27 +414,6 @@ impl BoundedExecution<'_> {
             (science, compilation) => science.and(compilation),
         }
     }
-
-    /// Join two borrowed pipeline jobs, retaining both outcomes even on panic.
-    /// The caller propagates its typed error and records any sibling failure.
-    pub(crate) fn join_pipeline<A: Send, B: Send>(
-        self,
-        produce: impl FnOnce() -> A + Send,
-        consume: impl FnOnce() -> B + Send,
-    ) -> (std::thread::Result<A>, std::thread::Result<B>) {
-        let pool = self
-            .0
-            .and_then(|team| team.pool.as_ref())
-            .expect("parallel pipeline");
-        assert!(
-            pool.current_thread_index().is_some(),
-            "pipeline outside admitted team"
-        );
-        rayon::join(
-            || std::panic::catch_unwind(std::panic::AssertUnwindSafe(produce)),
-            || std::panic::catch_unwind(std::panic::AssertUnwindSafe(consume)),
-        )
-    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -2595,37 +2574,6 @@ mod tests {
                 assert_eq!(*calls.lock().unwrap(), ["science"]);
             });
         }
-    }
-
-    #[test]
-    fn bounded_pipeline_retains_both_failures_and_joins_panicked_jobs() {
-        let team = FixedWorkerTeam::new(2).unwrap();
-        let completed = AtomicUsize::new(0);
-        let (tx, rx) = mpsc::channel();
-        let (left, right) = team.install(|| {
-            let completed = &completed;
-            BoundedExecution(Some(&team)).join_pipeline(
-                move || {
-                    tx.send(()).unwrap();
-                    completed.fetch_add(1, Ordering::SeqCst);
-                    panic!("preparation failed");
-                },
-                move || {
-                    rx.recv_timeout(Duration::from_secs(5)).unwrap();
-                    completed.fetch_add(1, Ordering::SeqCst);
-                    Err::<(), _>(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "consumer failed",
-                    ))
-                },
-            )
-        });
-        assert_eq!(completed.load(Ordering::SeqCst), 2);
-        assert!(left.is_err());
-        assert_eq!(
-            right.unwrap().unwrap_err().kind(),
-            std::io::ErrorKind::InvalidData
-        );
     }
 
     #[test]

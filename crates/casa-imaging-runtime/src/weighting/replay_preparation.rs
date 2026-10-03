@@ -107,13 +107,6 @@ impl ReplayPreparationPlan {
             })
             .and_then(|bytes| bytes.checked_add(size_of::<ReplayPreparation<'_>>()))
             .and_then(|bytes| bytes.checked_add(numeric.map_or(0, |plan| plan.bytes)))
-            .and_then(|bytes| {
-                bytes.checked_add(if numeric.is_some() && workers > 1 {
-                    residency.weighted_block_bytes()
-                } else {
-                    0
-                })
-            })
             .and_then(|bytes| u64::try_from(bytes).ok())
             .ok_or(WeightingError::ResidencyOverflow)?;
         Ok(Self {
@@ -237,10 +230,9 @@ impl<'a> ReplayPreparation<'a> {
     where
         W: StreamingWeightPhase + Sync,
         F: FnMut(
-                &ReconstructionWeightedBlock,
-                crate::bounded_stream::BoundedExecution<'_>,
-            ) -> Result<(), E>
-            + Send,
+            &ReconstructionWeightedBlock,
+            crate::bounded_stream::BoundedExecution<'_>,
+        ) -> Result<(), E>,
         E: Error + Send + 'static,
     {
         if self.plan.numeric.is_some() {
