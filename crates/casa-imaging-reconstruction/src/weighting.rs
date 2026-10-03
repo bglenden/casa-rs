@@ -2610,8 +2610,7 @@ impl Clone for WeightingSampleValue {
         self.sample.clone_from(&source.sample);
         self.source_imaging_weight = source.source_imaging_weight;
         self.spectral_values.clear();
-        self.spectral_values
-            .extend_from_slice(&source.spectral_values);
+        self.spectral_values.extend_from_slice(&source.spectral_values);
     }
 }
 

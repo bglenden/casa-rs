@@ -164,23 +164,11 @@ impl PlannedContinuumGeneration {
         let workers = match inputs.normal_state().catalog() {
             NormalStateCatalog::UnnormalizedTaylorBlockV1
             | NormalStateCatalog::UnnormalizedJointBlockV1 => 1,
-            _ if cfg!(unix)
-                && maximum_windows == 1
-                && self.members().iter().any(|member| {
-                    matches!(
-                        member.role(),
-                        ProductRole::RestoredImage(_) | ProductRole::PbCorrectedImage(_)
-                    )
-                }) =>
-            {
-                storage_plan.maximum_workers()
-            }
             _ => storage_plan
                 .maximum_workers()
                 .min(maximum_windows.max(beam_jobs)),
         };
         let storage_plan = ProductStoragePlan::new(storage_plan.maximum_channels(), workers)?;
-        let window_workers = workers.min(maximum_windows);
 
         let mut algorithm_scratch_bytes = match inputs.normal_state().catalog() {
             NormalStateCatalog::UnnormalizedTaylorBlockV1 => taylor_scratch_bytes(inputs)?,
@@ -214,11 +202,9 @@ impl PlannedContinuumGeneration {
         )?;
         // Each lane can retain a completed window while another lane still owns
         // its plane workspace. Beam fitting joins before these windows begin.
-        algorithm_scratch_bytes = algorithm_scratch_bytes
-            .checked_mul(window_workers as u64)
-            .ok_or(ProductsError::ResourceDemandOverflow(
-                "parallel product windows",
-            ))?;
+        algorithm_scratch_bytes = algorithm_scratch_bytes.checked_mul(workers as u64).ok_or(
+            ProductsError::ResourceDemandOverflow("parallel product windows"),
+        )?;
         if !matches!(
             inputs.normal_state().catalog(),
             NormalStateCatalog::UnnormalizedTaylorBlockV1
@@ -226,12 +212,12 @@ impl PlannedContinuumGeneration {
         ) {
             algorithm_scratch_bytes = checked_add(
                 algorithm_scratch_bytes,
-                bytes_for::<Option<crate::ProductWindow>>(window_workers, "product window slots")?,
+                bytes_for::<Option<crate::ProductWindow>>(workers, "product window slots")?,
                 "parallel product slots",
             )?;
         }
         let (retained_metadata_bytes, member_beam_bytes, beam_scratch_bytes) =
-            self.metadata_demand(inputs, workers.min(beam_jobs))?;
+            self.metadata_demand(inputs, workers)?;
         let transient_bytes = if matches!(
             inputs.normal_state().catalog(),
             NormalStateCatalog::UnnormalizedTaylorBlockV1

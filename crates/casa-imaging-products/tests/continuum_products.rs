@@ -1742,57 +1742,6 @@ fn output_errors_fail_generation_without_a_completion_receipt() {
 }
 
 #[test]
-fn single_window_restoration_admits_inner_fft_workers_without_replica_buffers() {
-    let problem = continuum_problem(119, &CONTINUUM_PRODUCTS);
-    let round = run_continuum_round(&problem, 120);
-    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join).unwrap();
-    let planned = planned_for(&inputs, &ContinuumProductControls::default());
-    let serial = planned
-        .demand(&inputs, ProductStoragePlan::new(1, 1).unwrap())
-        .unwrap();
-    let serial_output = MemoryProductOutput::default();
-    let serial_generation = produce_continuum_members(
-        &planned,
-        &inputs,
-        serial.storage_plan(),
-        &(),
-        &serial_output,
-    )
-    .unwrap();
-    let serial_values = GeneratedProducts::from_output(&serial_generation, &serial_output);
-    for workers in [4, 8] {
-        let parallel = planned
-            .demand(&inputs, ProductStoragePlan::new(1, workers).unwrap())
-            .unwrap();
-        assert_eq!(
-            parallel.storage_plan().maximum_workers(),
-            if cfg!(unix) { workers } else { 1 }
-        );
-        assert_eq!(
-            parallel.algorithm_scratch_bytes(),
-            serial.algorithm_scratch_bytes()
-        );
-        assert_eq!(parallel.beam_scratch_bytes(), serial.beam_scratch_bytes());
-        assert_eq!(
-            parallel.peak_residency_bytes(),
-            serial.peak_residency_bytes()
-        );
-        let output = MemoryProductOutput::default();
-        let generated =
-            produce_continuum_members(&planned, &inputs, parallel.storage_plan(), &(), &output)
-                .unwrap();
-        let values = GeneratedProducts::from_output(&generated, &output);
-        for (actual, expected) in values.members().iter().zip(serial_values.members()) {
-            assert_eq!(actual.node(), expected.node());
-            assert_eq!(actual.validity(), expected.validity());
-            for (actual, expected) in actual.payload().iter().zip(expected.payload()) {
-                assert!((actual - expected).abs() <= 1.0e-6 * expected.abs().max(1.0));
-            }
-        }
-    }
-}
-
-#[test]
 fn generic_generation_demand_charges_exact_owned_arrays() {
     let products = [
         ProductKind::Psf,

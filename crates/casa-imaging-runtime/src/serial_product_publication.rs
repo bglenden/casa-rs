@@ -370,10 +370,7 @@ fn build_physical<R: ImplementationRegistry>(
                 memory("product-publication-commit", 1),
             ],
             workers: CountDemand::new(workers, workers),
-            overhead: RuntimeOverheadDemand {
-                external_library_bytes: publication_fft_stack_bytes(workers as usize)?,
-                ..RuntimeOverheadDemand::zero()
-            },
+            overhead: RuntimeOverheadDemand::zero(),
             storage: vec![StorageDemand {
                 demand_id: storage_demand,
                 domain: policy.storage_io.domain().clone(),
@@ -566,36 +563,6 @@ fn layout_id(artifact: ArtifactIdentity) -> PhysicalLayoutId {
     PhysicalLayoutId::from_sha256(hash.finalize().into())
 }
 
-fn publication_fft_stack_bytes(workers: usize) -> Result<u64, SerialProductPublicationPlanError> {
-    if !cfg!(unix) {
-        return Ok(0);
-    }
-    // Single- and double-precision FFTW pools can both survive imaging into
-    // publication. Bound both by the admitted CPU budget, not by window lanes.
-    crate::reconstruction_executor::native_fft_stack_bytes(workers)
-        .map_err(SerialProductPublicationPlanError::NativeFftStacks)?
-        .checked_mul(2)
-        .ok_or(SerialProductPublicationPlanError::Overflow)
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn publication_charges_persistent_native_pools_without_replica_images() {
-        for workers in [1, 2, 4, 8, 16] {
-            let expected = if cfg!(unix) {
-                2 * crate::reconstruction_executor::native_fft_stack_bytes(workers).unwrap()
-            } else {
-                0
-            };
-            assert_eq!(
-                super::publication_fft_stack_bytes(workers).unwrap(),
-                expected
-            );
-        }
-    }
-}
-
 /// Planning failure for direct product publication.
 #[derive(Debug)]
 pub enum SerialProductPublicationPlanError {
@@ -609,8 +576,6 @@ pub enum SerialProductPublicationPlanError {
     Physical(PhysicalWorkBindingError),
     /// Invalid output layout.
     Layout(PublicationLayoutError),
-    /// The platform's native FFTW worker-stack bound could not be queried.
-    NativeFftStacks(std::io::Error),
 }
 impl fmt::Display for SerialProductPublicationPlanError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

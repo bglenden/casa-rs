@@ -110,7 +110,6 @@ pub(crate) fn restore_model_plane(
     beam: &RestoringBeam,
     cell_size_rad: [f64; 2],
     total_channels: usize,
-    fft_threads: usize,
 ) -> Vec<f32> {
     // FFT zero signs cannot affect addition except when the residual is -0.
     if model.iter().all(|value| *value == 0.0)
@@ -125,7 +124,7 @@ pub(crate) fn restore_model_plane(
         model,
         kernel.as_slice().expect("contiguous"),
         shape,
-        restoration_fft(shape, total_channels, fft_threads),
+        restoration_fft(shape, total_channels),
     );
     for (restored, residual) in restored.iter_mut().zip(residual) {
         *restored += residual;
@@ -133,8 +132,8 @@ pub(crate) fn restore_model_plane(
     restored
 }
 
-fn restoration_fft(shape: [usize; 2], total_channels: usize, threads: usize) -> Fft2<f64> {
-    let fft = Fft2::with_threads(shape, threads).expect("valid restoration FFT shape");
+fn restoration_fft(shape: [usize; 2], total_channels: usize) -> Fft2<f64> {
+    let fft = Fft2::new(shape).expect("valid restoration FFT shape");
     // One output channel cannot amortize measured planning across cube planes.
     if total_channels == 1 {
         fft.with_estimated_plan()
@@ -329,18 +328,16 @@ mod tests {
     fn restoration_planning_uses_total_channels_not_window_depth() {
         let shape = [8, 16];
         for total_channels in [1, 2, 32, 512, 2048] {
-            for threads in [1, 2, 4, 8] {
-                let actual = restoration_fft(shape, total_channels, threads);
-                let expected = Fft2::<f64>::with_threads(shape, threads).unwrap();
-                let expected = if total_channels == 1 {
-                    expected.with_estimated_plan()
-                } else {
-                    expected
-                };
-                assert_eq!(actual.shape(), shape);
-                assert_eq!(actual.threads(), threads);
-                assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
-            }
+            let actual = restoration_fft(shape, total_channels);
+            let expected = Fft2::<f64>::new(shape).unwrap();
+            let expected = if total_channels == 1 {
+                expected.with_estimated_plan()
+            } else {
+                expected
+            };
+            assert_eq!(actual.shape(), shape);
+            assert_eq!(actual.threads(), expected.threads());
+            assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
         }
     }
 
@@ -388,22 +385,19 @@ mod tests {
                     *value += residual;
                 }
                 for total_channels in [1, 512] {
-                    for threads in [1, 4] {
-                        let actual = restore_model_plane(
-                            &model,
-                            residual.clone(),
-                            shape,
-                            &beam,
-                            [1.0e-6; 2],
-                            total_channels,
-                            threads,
+                    let actual = restore_model_plane(
+                        &model,
+                        residual.clone(),
+                        shape,
+                        &beam,
+                        [1.0e-6; 2],
+                        total_channels,
+                    );
+                    for (actual, expected) in actual.iter().zip(&expected) {
+                        assert!(
+                            (*actual - *expected).abs() <= 1.0e-6 * expected.abs().max(1.0),
+                            "restoration differs for {total_channels} channels: {actual} != {expected}"
                         );
-                        for (actual, expected) in actual.iter().zip(&expected) {
-                            assert!(
-                                (*actual - *expected).abs() <= 1.0e-6 * expected.abs().max(1.0),
-                                "restoration differs for {total_channels} channels: {actual} != {expected}"
-                            );
-                        }
                     }
                 }
             }

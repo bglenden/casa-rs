@@ -27,18 +27,10 @@ impl ProductStoragePlan {
         })
     }
 
-    /// Admitted CPU budget, shared by output-window lanes and inner FFTs.
+    /// Maximum simultaneously prepared windows, bounded by admitted workers.
     #[must_use]
     pub const fn maximum_workers(self) -> usize {
         self.maximum_workers
-    }
-
-    pub(crate) fn fft_threads(self, window_count: usize) -> usize {
-        if cfg!(unix) && window_count == 1 {
-            self.maximum_workers
-        } else {
-            1
-        }
     }
 
     /// Return the selected maximum number of resident output channels.
@@ -327,16 +319,6 @@ fn values_for(shape: [usize; 4]) -> Result<usize, ProductsError> {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn inner_fft_workers_do_not_overlap_parallel_output_windows() {
-        for workers in [1, 2, 4, 8, 16] {
-            let plan = super::ProductStoragePlan::new(1, workers).unwrap();
-            assert_eq!(plan.fft_threads(1), if cfg!(unix) { workers } else { 1 });
-            for windows in [2, 4, 512] {
-                assert_eq!(plan.fft_threads(windows), 1);
-            }
-        }
-    }
     use super::*;
 
     struct FixtureWriter;

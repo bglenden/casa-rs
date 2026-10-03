@@ -672,7 +672,6 @@ pub fn produce_continuum_members(
         let mut writer = ProductMemberWriter::new(layout, writer)?;
         let window_count = channel_count.div_ceil(layout.maximum_channels());
         let workers = storage_plan.maximum_workers().min(window_count);
-        let fft_threads = storage_plan.fft_threads(window_count);
         for wave_start in (0..window_count).step_by(workers) {
             let mut slots: Vec<Option<crate::ProductWindow>> = (0..workers
                 .min(window_count - wave_start))
@@ -743,7 +742,6 @@ pub fn produce_continuum_members(
                             fitted_beam: fitted_beams.get(beam_index).copied().flatten(),
                             restoring_beam: restoring_beams.get(beam_index).copied().flatten(),
                             primary_beam_model: planned.primary_beam_model,
-                            fft_threads,
                         })?;
                         if member.validity != ProductValidityRule::All {
                             let support = product_plane_validity(
@@ -1210,7 +1208,6 @@ struct PlaneMemberRequest<'request, 'inputs, 'plane> {
     fitted_beam: Option<RestoringBeam>,
     restoring_beam: Option<RestoringBeam>,
     primary_beam_model: Option<AnalyticPrimaryBeamModel>,
-    fft_threads: usize,
 }
 
 fn produce_plane_member(
@@ -1225,7 +1222,6 @@ fn produce_plane_member(
         fitted_beam,
         restoring_beam,
         primary_beam_model,
-        fft_threads,
     } = request;
     let scalar_sensitivity = plane.sum_weight();
     let valid = plane.validity() == SpectralChannelValidity::Valid
@@ -1297,7 +1293,6 @@ fn produce_plane_member(
                 polarization,
                 fitted_beam,
                 restoring_beam,
-                fft_threads,
             )
         }
         ProductRole::PrimaryBeam(
@@ -1317,7 +1312,6 @@ fn produce_plane_member(
                 polarization,
                 fitted_beam,
                 restoring_beam,
-                fft_threads,
             )?;
             let primary_beam =
                 primary_beam_plane(primary_beam_model, inputs, member.axes().domain(), plane)?;
@@ -1359,7 +1353,6 @@ fn restored_plane(
     polarization: usize,
     fitted_beam: Option<RestoringBeam>,
     restoring_beam: Option<RestoringBeam>,
-    fft_threads: usize,
 ) -> Result<Vec<f32>, ProductsError> {
     let beam = restoring_beam.ok_or_else(|| {
         ProductsError::BeamFitFailed(
@@ -1394,7 +1387,6 @@ fn restored_plane(
         &beam,
         cell_size,
         inputs.normal_state().slab().total_channels(),
-        fft_threads,
     ))
 }
 
