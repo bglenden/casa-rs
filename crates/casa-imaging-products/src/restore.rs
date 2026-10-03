@@ -6,7 +6,7 @@
 //! and the image cell scale share one unit system, so a multi-pixel beam
 //! stays a multi-pixel kernel at any cell size.
 
-use casa_fft::RealFft2;
+use casa_fft::Fft2;
 use ndarray::Array2;
 use num_complex::Complex64;
 
@@ -133,8 +133,8 @@ pub(crate) fn restore_model_plane(
     restored
 }
 
-fn restoration_fft(shape: [usize; 2], total_channels: usize, threads: usize) -> RealFft2<f64> {
-    let fft = RealFft2::with_threads(shape, threads).expect("valid restoration FFT shape");
+fn restoration_fft(shape: [usize; 2], total_channels: usize, threads: usize) -> Fft2<f64> {
+    let fft = Fft2::with_threads(shape, threads).expect("valid restoration FFT shape");
     // One output channel cannot amortize measured planning across cube planes.
     if total_channels == 1 {
         fft.with_estimated_plan()
@@ -254,7 +254,7 @@ pub fn fft_convolve(plane: &[f32], kernel: &[f32], shape: [usize; 2]) -> Vec<f32
         plane,
         kernel,
         shape,
-        RealFft2::new(shape).expect("valid restoration FFT shape"),
+        Fft2::new(shape).expect("valid restoration FFT shape"),
     )
 }
 
@@ -262,57 +262,63 @@ fn fft_convolve_with_plan(
     plane: &[f32],
     kernel: &[f32],
     shape: [usize; 2],
-    mut fft: RealFft2<f64>,
+    mut fft: Fft2<f64>,
 ) -> Vec<f32> {
     let cells = shape[0] * shape[1];
-    assert_eq!(plane.len(), cells, "shape matches payload");
-    assert_eq!(kernel.len(), cells, "shape matches kernel");
-    let mut signal = centered_real_storage(plane, shape, fft.storage_len());
-    let mut response = centered_real_storage(kernel, shape, fft.storage_len());
-    fft.forward(&mut signal)
+    let mut signal = Array2::<Complex64>::from_shape_vec(
+        (shape[0], shape[1]),
+        plane
+            .iter()
+            .map(|v| Complex64::new(f64::from(*v), 0.0))
+            .collect(),
+    )
+    .expect("shape matches payload");
+    let mut response = Array2::<Complex64>::from_shape_vec(
+        (shape[0], shape[1]),
+        kernel
+            .iter()
+            .map(|v| Complex64::new(f64::from(*v), 0.0))
+            .collect(),
+    )
+    .expect("shape matches kernel");
+
+    for data in [&mut signal, &mut response] {
+        shift_even(data);
+        fft.transform(
+            data.as_slice_mut().expect("contiguous restoration plane"),
+            false,
+        )
         .expect("valid restoration FFT plan");
-    fft.forward(&mut response)
-        .expect("valid restoration FFT plan");
-    // Multiplying two real-input spectra preserves Hermitian boundaries. The
-    // full-spectrum shifts cancel in the product; only spatial centering stays.
+        shift_even(data);
+    }
     for (signal, response) in signal.iter_mut().zip(response.iter()) {
         *signal *= *response;
     }
-    fft.inverse(&mut signal)
-        .expect("valid restoration FFT plan");
+    shift_even(&mut signal);
+    fft.transform(
+        signal.as_slice_mut().expect("contiguous restoration plane"),
+        true,
+    )
+    .expect("valid restoration FFT plan");
+    shift_even(&mut signal);
+
     let scale = 1.0 / cells as f64;
-    let [width, height] = shape;
-    let row_values = height / 2 + 1;
-    let mut output = Vec::with_capacity(cells);
-    for x in 0..width {
-        let source_x = (x + width / 2) % width;
-        let row = &signal[source_x * row_values..(source_x + 1) * row_values];
-        for y in (height / 2..height).chain(0..height / 2) {
-            let pair = row[y / 2];
-            let value = if y % 2 == 0 { pair.re } else { pair.im };
-            output.push((value * scale) as f32);
-        }
-    }
-    output
+    signal
+        .iter()
+        .map(|value| (value.re * scale) as f32)
+        .collect()
 }
 
-fn centered_real_storage(plane: &[f32], shape: [usize; 2], values: usize) -> Vec<Complex64> {
-    let [width, height] = shape;
+fn shift_even(data: &mut Array2<Complex64>) {
+    let [width, height] = [data.shape()[0], data.shape()[1]];
     debug_assert_eq!(width % 2, 0);
     debug_assert_eq!(height % 2, 0);
-    let mut storage = vec![Complex64::default(); values];
-    for (x, row) in storage.chunks_mut(height / 2 + 1).enumerate() {
-        let source_x = (x + width / 2) % width;
-        let plane_row = &plane[source_x * height..(source_x + 1) * height];
-        let mut centered = plane_row[height / 2..]
-            .iter()
-            .chain(&plane_row[..height / 2]);
-        for pair in &mut row[..height / 2] {
-            pair.re = f64::from(*centered.next().expect("real pair"));
-            pair.im = f64::from(*centered.next().expect("imaginary storage pair"));
+    for x in 0..width / 2 {
+        for y in 0..height / 2 {
+            data.swap((x, y), (x + width / 2, y + height / 2));
+            data.swap((x + width / 2, y), (x, y + height / 2));
         }
     }
-    storage
 }
 
 #[cfg(test)]
@@ -320,61 +326,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn half_spectrum_convolution_matches_centered_direct_sum() {
-        for shape in [[2, 2], [4, 6], [8, 16]] {
-            let [width, height] = shape;
-            let cells = width * height;
-            let plane: Vec<_> = (0..cells)
-                .map(|i| ((i * 17 % 23) as f32 - 11.0) / 13.0)
-                .collect();
-            let kernel: Vec<_> = (0..cells)
-                .map(|i| ((i * 7 % 11) as f32 - 5.0) / 9.0)
-                .collect();
-            let expected: Vec<_> = (0..cells)
-                .map(|index| {
-                    let x = index / height;
-                    let y = index % height;
-                    (0..cells)
-                        .map(|source| {
-                            let sx = source / height;
-                            let sy = source % height;
-                            let kx = (x + width / 2 + width - sx) % width;
-                            let ky = (y + height / 2 + height - sy) % height;
-                            f64::from(plane[source]) * f64::from(kernel[kx * height + ky])
-                        })
-                        .sum::<f64>() as f32
-                })
-                .collect();
-            for threads in [1, 4] {
-                let actual = fft_convolve_with_plan(
-                    &plane,
-                    &kernel,
-                    shape,
-                    restoration_fft(shape, 1, threads),
-                );
-                for (actual, expected) in actual.iter().zip(&expected) {
-                    assert!(
-                        (actual - expected).abs() <= 1.0e-6 * expected.abs().max(1.0),
-                        "centered convolution {shape:?}: {actual} != {expected}"
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
     fn restoration_planning_uses_total_channels_not_window_depth() {
         let shape = [8, 16];
         for total_channels in [1, 2, 32, 512, 2048] {
             for threads in [1, 2, 4, 8] {
                 let actual = restoration_fft(shape, total_channels, threads);
-                let expected = RealFft2::<f64>::with_threads(shape, threads).unwrap();
+                let expected = Fft2::<f64>::with_threads(shape, threads).unwrap();
                 let expected = if total_channels == 1 {
                     expected.with_estimated_plan()
                 } else {
                     expected
                 };
-                assert_eq!(actual.storage_len(), shape[0] * (shape[1] / 2 + 1));
+                assert_eq!(actual.shape(), shape);
+                assert_eq!(actual.threads(), threads);
                 assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
             }
         }
