@@ -2176,6 +2176,17 @@ mod selected_sample_tests {
                 assert_eq!(retained.spectral_values.as_ptr(), old_storage);
             }
             let snapshot = source.clone();
+            assert_eq!(snapshot, source);
+            let copied_heap = if snapshot.spectral_values.spilled() {
+                snapshot.spectral_values.capacity() * size_of::<super::WeightingSpectralValue>()
+            } else {
+                0
+            };
+            assert!(
+                copied_heap
+                    <= super::smallvec_heap_bytes::<super::WeightingSpectralValue>(terms as usize)
+                        .unwrap()
+            );
             source.sample.address.physical_row += 1;
             source.spectral_values.clear();
             assert_eq!(retained, snapshot);
@@ -2585,18 +2596,21 @@ pub struct WeightingSampleValue {
 mod streaming_cube;
 
 impl Clone for WeightingSampleValue {
+    #[inline]
     fn clone(&self) -> Self {
         Self {
             sample: self.sample.clone(),
             source_imaging_weight: self.source_imaging_weight,
-            spectral_values: self.spectral_values.clone(),
+            spectral_values: SmallVec::from_slice(&self.spectral_values),
         }
     }
 
+    #[inline]
     fn clone_from(&mut self, source: &Self) {
         self.sample.clone_from(&source.sample);
         self.source_imaging_weight = source.source_imaging_weight;
-        self.spectral_values.clone_from(&source.spectral_values);
+        self.spectral_values.clear();
+        self.spectral_values.extend_from_slice(&source.spectral_values);
     }
 }
 
