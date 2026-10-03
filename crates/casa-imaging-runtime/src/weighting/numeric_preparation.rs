@@ -24,9 +24,10 @@ impl ReplayPreparation<'_> {
     where
         W: StreamingWeightPhase + Sync,
         F: FnMut(
-            &ReconstructionWeightedBlock,
-            crate::bounded_stream::BoundedExecution<'_>,
-        ) -> Result<(), E>,
+                &ReconstructionWeightedBlock,
+                crate::bounded_stream::BoundedExecution<'_>,
+            ) -> Result<(), E>
+            + Send,
         E: Error + Send + 'static,
     {
         let geometry = self.geometry.as_mut().expect("numeric preparation plan");
@@ -40,84 +41,259 @@ impl ReplayPreparation<'_> {
         self.preparation_nanos += started.elapsed().as_nanos();
         let channels = geometry.channels().len();
         let runs = geometry.row_count() * channels;
-        let workers = &mut self.workers;
-        let plan = self.plan;
-        let (active, peak_active) = (&self.active, &self.peak_active);
-        let preparation_nanos = &mut self.preparation_nanos;
-        let ordered_commit_nanos = &mut self.ordered_commit_nanos;
+        let mut producer = NumericProducer {
+            problem,
+            storage,
+            geometry,
+            weights,
+            workers: &mut self.workers,
+            plan: self.plan,
+            active: &self.active,
+            peak_active: &self.peak_active,
+            next_run: 0,
+            next_worker: self.plan.workers,
+            runs,
+            preparation_nanos: 0,
+            commit_nanos: 0,
+        };
+        let mut consumer_nanos = 0;
         consumer
             .consume_numeric(storage, geometry, || {
-                let mut first = 0;
-                while first < runs {
-                    let last = (first + plan.runs_per_batch).min(runs);
-                    let runs_per_worker = (last - first).div_ceil(plan.workers);
-                    let started = Instant::now();
-                    execution.for_each_mut(workers, |ordinal, worker| {
-                        worker.prepared.clear();
-                        let lower = (first + ordinal * runs_per_worker).min(last);
-                        let upper = (lower + runs_per_worker).min(last);
-                        if lower == upper {
-                            return Ok(());
-                        }
-                        let live = active.fetch_add(1, Ordering::Relaxed) + 1;
-                        peak_active.fetch_max(live, Ordering::Relaxed);
-                        let _active = ActivePreparation(active);
-                        for row_index in lower / channels..upper.div_ceil(channels) {
-                            // consume_numeric validated every immutable row before
-                            // entering this callback; no storage I/O occurs here.
-                            let row = storage
-                                .numeric_row(geometry, row_index)
-                                .expect("source owner validated numeric rows");
-                            let frequencies = &geometry.frequencies_hz()
-                                [row_index * channels..(row_index + 1) * channels];
-                            let row_geometry = spectral_geometry(
-                                problem,
-                                row,
-                                frequencies,
-                                geometry.original_pairs_hz()[row_index],
-                            )
+                let mut current = producer
+                    .next_block(execution)
+                    .map_err(ReplayCallbackError::Owner)?;
+                while let Some(block) = current {
+                    let next = if W::OVERLAP_PREPARATION && execution.is_parallel() {
+                        let (next, consumed) = execution.join_pipeline(
+                            || {
+                                producer
+                                    .next_block(execution)
+                                    .map_err(ReplayCallbackError::Owner)
+                            },
+                            || {
+                                let started = Instant::now();
+                                let result =
+                                    emit(&block, execution).map_err(ReplayCallbackError::Consumer);
+                                consumer_nanos += started.elapsed().as_nanos();
+                                result
+                            },
+                        );
+                        finish_pipeline(next, consumed)?
+                    } else {
+                        let started = Instant::now();
+                        emit(&block, execution).map_err(ReplayCallbackError::Consumer)?;
+                        consumer_nanos += started.elapsed().as_nanos();
+                        producer
+                            .weights
+                            .reuse_emitted_block(block)
                             .map_err(ReplayCallbackError::Owner)?;
-                            let begin = lower.saturating_sub(row_index * channels);
-                            let end = (upper - row_index * channels).min(channels);
-                            for channel in begin..end {
-                                prepare_channel(
-                                    problem,
-                                    &*weights,
-                                    row,
-                                    channel,
-                                    frequencies[channel],
-                                    row_geometry,
-                                    &mut worker.prepared,
-                                )
-                                .map_err(ReplayCallbackError::Owner)?;
-                            }
-                        }
-                        worker.samples += worker.prepared.len() as u64;
-                        Ok::<(), ReplayCallbackError<E>>(())
-                    })?;
-                    *preparation_nanos += started.elapsed().as_nanos();
-                    let started = Instant::now();
-                    for worker in workers.iter_mut() {
-                        while !worker.prepared.is_empty() {
-                            if let Some(block) = weights
-                                .commit_prepared(problem, &mut worker.prepared)
-                                .map_err(ReplayCallbackError::Owner)?
-                            {
-                                emit(&block, execution).map_err(ReplayCallbackError::Consumer)?;
-                                weights
-                                    .reuse_emitted_block(block)
-                                    .map_err(ReplayCallbackError::Owner)?;
-                            }
-                        }
-                    }
-                    *ordered_commit_nanos += started.elapsed().as_nanos();
-                    first = last;
+                        current = producer
+                            .next_block(execution)
+                            .map_err(ReplayCallbackError::Owner)?;
+                        continue;
+                    };
+                    producer
+                        .weights
+                        .reuse_emitted_block(block)
+                        .map_err(ReplayCallbackError::Owner)?;
+                    current = next;
                 }
                 Ok::<(), ReplayCallbackError<E>>(())
             })
             .map_err(WeightingBlockKernelError::Traversal)?;
+        self.preparation_nanos += producer.preparation_nanos;
+        // These are nested job durations when pipelined, not disjoint wall time.
+        self.ordered_commit_nanos += producer.commit_nanos + consumer_nanos;
         self.runs += runs as u64;
         Ok(())
+    }
+}
+
+struct NumericProducer<'a, 'p, W> {
+    problem: &'a CompiledProblem,
+    storage: &'a SelectedObservationBlock,
+    geometry: &'a casa_ms::SelectedObservationNumericGeometry,
+    weights: &'a mut W,
+    workers: &'a mut [PreparationWorker<'p>],
+    plan: ReplayPreparationPlan,
+    active: &'a AtomicUsize,
+    peak_active: &'a AtomicUsize,
+    next_run: usize,
+    next_worker: usize,
+    runs: usize,
+    preparation_nanos: u128,
+    commit_nanos: u128,
+}
+
+impl<W: StreamingWeightPhase + Sync> NumericProducer<'_, '_, W> {
+    fn next_block(
+        &mut self,
+        execution: crate::bounded_stream::BoundedExecution<'_>,
+    ) -> Result<Option<ReconstructionWeightedBlock>, WeightingError> {
+        loop {
+            while self.next_worker < self.workers.len() {
+                let prepared = &mut self.workers[self.next_worker].prepared;
+                if prepared.is_empty() {
+                    self.next_worker += 1;
+                    continue;
+                }
+                let started = Instant::now();
+                let block = self.weights.commit_prepared(self.problem, prepared)?;
+                self.commit_nanos += started.elapsed().as_nanos();
+                if block.is_some() {
+                    return Ok(block);
+                }
+            }
+            if self.next_run == self.runs {
+                return Ok(None);
+            }
+            let first = self.next_run;
+            let last = (first + self.plan.runs_per_batch).min(self.runs);
+            let runs_per_worker = (last - first).div_ceil(self.plan.workers);
+            let channels = self.geometry.channels().len();
+            let (problem, storage, geometry, weights) =
+                (self.problem, self.storage, self.geometry, &*self.weights);
+            let (active, peak_active) = (self.active, self.peak_active);
+            let started = Instant::now();
+            execution.for_each_mut(self.workers, |ordinal, worker| {
+                worker.prepared.clear();
+                let lower = (first + ordinal * runs_per_worker).min(last);
+                let upper = (lower + runs_per_worker).min(last);
+                if lower == upper {
+                    return Ok::<(), WeightingError>(());
+                }
+                let live = active.fetch_add(1, Ordering::Relaxed) + 1;
+                peak_active.fetch_max(live, Ordering::Relaxed);
+                let _active = ActivePreparation(active);
+                for row_index in lower / channels..upper.div_ceil(channels) {
+                    let row = storage
+                        .numeric_row(geometry, row_index)
+                        .expect("source owner validated numeric rows");
+                    let frequencies = &geometry.frequencies_hz()
+                        [row_index * channels..(row_index + 1) * channels];
+                    let row_geometry = spectral_geometry(
+                        problem,
+                        row,
+                        frequencies,
+                        geometry.original_pairs_hz()[row_index],
+                    )?;
+                    let begin = lower.saturating_sub(row_index * channels);
+                    let end = (upper - row_index * channels).min(channels);
+                    for channel in begin..end {
+                        prepare_channel(
+                            problem,
+                            weights,
+                            row,
+                            channel,
+                            frequencies[channel],
+                            row_geometry,
+                            &mut worker.prepared,
+                        )?;
+                    }
+                }
+                worker.samples += worker.prepared.len() as u64;
+                Ok(())
+            })?;
+            self.preparation_nanos += started.elapsed().as_nanos();
+            self.next_run = last;
+            self.next_worker = 0;
+        }
+    }
+}
+
+fn finish_pipeline<T, E: Error>(
+    produced: std::thread::Result<Result<T, ReplayCallbackError<E>>>,
+    consumed: std::thread::Result<Result<(), ReplayCallbackError<E>>>,
+) -> Result<T, ReplayCallbackError<E>> {
+    // Preserve the original typed consumer/I/O error. Both jobs are joined;
+    // report a second failure rather than silently dropping it on early return.
+    let describe_panic = |payload: &Box<dyn std::any::Any + Send>| {
+        payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied())
+            .unwrap_or("non-string panic payload")
+            .to_owned()
+    };
+    match consumed {
+        Ok(Err(error)) => {
+            match produced {
+                Ok(Err(sibling)) => eprintln!("weighting producer also failed: {sibling}"),
+                Err(panic) => eprintln!(
+                    "weighting producer also panicked: {}",
+                    describe_panic(&panic)
+                ),
+                Ok(Ok(_)) => {}
+            }
+            Err(error)
+        }
+        Err(panic) => match produced {
+            Ok(Err(error)) => {
+                eprintln!(
+                    "weighting consumer also panicked: {}",
+                    describe_panic(&panic)
+                );
+                Err(error)
+            }
+            Err(sibling) => panic!(
+                "weighting consumer panicked: {}; producer also panicked: {}",
+                describe_panic(&panic),
+                describe_panic(&sibling)
+            ),
+            Ok(Ok(_)) => std::panic::resume_unwind(panic),
+        },
+        Ok(Ok(())) => produced.unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pipeline_preserves_consumer_io_error_with_a_failed_or_panicked_producer() {
+        for producer in [
+            Ok(Err(ReplayCallbackError::Owner(
+                WeightingError::ReturnedBlockMismatch,
+            ))),
+            Err(Box::new("producer panic") as Box<dyn std::any::Any + Send>),
+        ] {
+            let error = finish_pipeline::<(), std::io::Error>(
+                producer,
+                Ok(Err(ReplayCallbackError::Consumer(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "writer failure",
+                )))),
+            )
+            .unwrap_err();
+            let ReplayCallbackError::Consumer(error) = error else {
+                panic!("lost I/O error")
+            };
+            assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+            assert_eq!(error.to_string(), "writer failure");
+        }
+    }
+
+    #[test]
+    fn pipeline_cannot_succeed_after_a_producer_error_or_consumer_panic() {
+        let error = finish_pipeline::<(), std::io::Error>(
+            Ok(Err(ReplayCallbackError::Owner(
+                WeightingError::ReturnedBlockMismatch,
+            ))),
+            Err(Box::new("consumer panic")),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            ReplayCallbackError::Owner(WeightingError::ReturnedBlockMismatch)
+        ));
+        assert!(
+            std::panic::catch_unwind(|| finish_pipeline::<(), std::io::Error>(
+                Ok(Ok(())),
+                Err(Box::new("consumer panic")),
+            ))
+            .is_err()
+        );
     }
 }
 

@@ -1339,10 +1339,12 @@ impl WeightingSumWeightPhase {
             sum: self,
             density_prepass,
             block: Vec::with_capacity(plan.limits.max_block_samples),
+            spare: None,
             pending: None,
             max_block_samples: plan.limits.max_block_samples,
             peak_weighted_capacity: plan.limits.max_block_samples,
             block_sequence: 0,
+            returned_sequence: 0,
             previous_checkpoint: coverage.checkpoint_token(),
             coverage,
         }
@@ -1428,10 +1430,12 @@ pub struct FusedWeightingPhase {
     sum: WeightingSumWeightPhase,
     density_prepass: bool,
     block: Vec<WeightingSampleValue>,
+    spare: Option<Vec<WeightingSampleValue>>,
     pending: Option<WeightingSampleValue>,
     max_block_samples: usize,
     peak_weighted_capacity: usize,
     block_sequence: u64,
+    returned_sequence: u64,
     coverage: CoverageEncoder,
     previous_checkpoint: [u8; 32],
 }
@@ -1472,7 +1476,9 @@ impl FusedWeightingPhase {
     ///
     /// Numerical sums and coverage read borrowed values before one bulk transfer to
     /// the replay buffer. A full chunk may leave an unconsumed suffix in
-    /// `prepared`; return the emitted allocation before committing that suffix.
+    /// `prepared`. At most two emitted/built allocations may be live; callers
+    /// overlapping consumption must admit the additional allocation and return
+    /// consumed chunks in source order before preparing a third chunk.
     /// Values must come from this phase's trusted in-process preparation. The
     /// caller retains and accounts for the prepared allocation, which is reused.
     #[doc(hidden)]
@@ -1481,8 +1487,18 @@ impl FusedWeightingPhase {
         problem: &CompiledProblem,
         prepared: &mut Vec<WeightingSampleValue>,
     ) -> Result<Option<WeightingReplayChunk>, WeightingError> {
-        if self.pending.is_some() {
+        if self.pending.is_some() || self.block_sequence - self.returned_sequence >= 2 {
             return Err(WeightingError::ReturnedBlockMismatch);
+        }
+        if self.block.capacity() == 0 && !prepared.is_empty() {
+            self.block = self
+                .spare
+                .take()
+                .unwrap_or_else(|| Vec::with_capacity(self.max_block_samples));
+            self.peak_weighted_capacity = self.peak_weighted_capacity.max(
+                (self.block_sequence - self.returned_sequence + 1) as usize
+                    * self.max_block_samples,
+            );
         }
         let flush = append_prepared_prefix(
             &mut self.block,
@@ -1517,7 +1533,10 @@ impl FusedWeightingPhase {
             Ok(Some(emitted))
         } else {
             if self.block.capacity() == 0 {
-                self.block = Vec::with_capacity(self.max_block_samples);
+                self.block = self
+                    .spare
+                    .take()
+                    .unwrap_or_else(|| Vec::with_capacity(self.max_block_samples));
             }
             self.block.push(weighted);
             if self.block.len() == self.max_block_samples
@@ -1533,27 +1552,35 @@ impl FusedWeightingPhase {
         }
     }
 
-    /// Return one synchronously consumed full chunk to this phase for refill.
+    /// Return a consumed chunk in source order for bounded refill.
     ///
     /// The runtime adapter calls this immediately after its scientific
-    /// consumer releases the borrowed chunk. Keeping the allocation in the
-    /// phase prevents one full weighted-buffer allocation per emitted chunk.
+    /// consumer releases the borrowed chunk. One next chunk may already be
+    /// emitted or partly filled; retain the returned allocation as its spare.
     pub fn reuse_emitted_block(
         &mut self,
         mut block: WeightingReplayChunk,
     ) -> Result<(), WeightingError> {
-        if !self.block.is_empty()
-            || block.samples.is_empty()
+        if block.samples.is_empty()
             || block.samples.len() > self.max_block_samples
-            || block.sequence.checked_add(1) != Some(self.block_sequence)
+            || block.sequence != self.returned_sequence
+            || self.block_sequence <= self.returned_sequence
+            || self.block_sequence - self.returned_sequence > 2
+            || (self.spare.is_some() && self.block.capacity() != 0)
+            || (self.pending.is_some() && !self.block.is_empty())
         {
             return Err(WeightingError::ReturnedBlockMismatch);
         }
         block.samples.clear();
-        if let Some(pending) = self.pending.take() {
-            block.samples.push(pending);
+        self.returned_sequence += 1;
+        if self.block.capacity() == 0 {
+            if let Some(pending) = self.pending.take() {
+                block.samples.push(pending);
+            }
+            self.block = block.samples;
+        } else {
+            self.spare = Some(block.samples);
         }
-        self.block = block.samples;
         Ok(())
     }
 
