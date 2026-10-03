@@ -124,6 +124,30 @@ impl GriddedNormalOperatorCompiler {
                         .map(|sample| sample.selected().address().correlation_type)
                         .collect::<SmallVec<[_; 4]>>(),
                 )?;
+                let linear = self
+                    .specification
+                    .uses_casa_linear_resampling(correlations)?;
+                if matches!(self.record_layout, GriddedNormalRecordLayout::Scalar)
+                    && operator.model_coordinates()
+                        == [casa_imaging_model::PolarizationCoordinate::StokesI]
+                    && !linear
+                    && first.spectral_values().count() == 1
+                {
+                    rows.finish()?;
+                    self.scalar_correlation_atom(correlations, operator, &mut scratch.atom)?;
+                    if !scratch.atom.is_empty() {
+                        cardinality.groups = cardinality
+                            .groups
+                            .checked_add(1)
+                            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+                        cardinality.records = cardinality
+                            .records
+                            .checked_add(scratch.atom.len() as u64)
+                            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+                        emit(&scratch.atom)?;
+                    }
+                    continue;
+                }
                 let bank = scratch.next_bank;
                 self.standard_predictions(
                     correlations,
@@ -131,10 +155,7 @@ impl GriddedNormalOperatorCompiler {
                     &mut scratch.banks[bank],
                     scratch.maximum_native_terms_per_correlation,
                 )?;
-                if self
-                    .specification
-                    .uses_casa_linear_resampling(correlations)?
-                {
+                if linear {
                     let observed = std::iter::repeat_n(Complex64::default(), correlations.len())
                         .collect::<SmallVec<[_; 4]>>();
                     let native = NativeSpectralGroup {
@@ -220,6 +241,65 @@ impl GriddedNormalOperatorCompiler {
         self.linear_rows = rows;
         self.standard_scratch = scratch;
         result
+    }
+
+    fn scalar_correlation_atom(
+        &self,
+        correlations: &[WeightingSampleValue],
+        operator: &PolarizationOperator,
+        atom: &mut Vec<ReducedRecordKey>,
+    ) -> Result<(), SpectralOperatorError> {
+        let first = &correlations[0];
+        atom.clear();
+        let mut spectral = first.spectral_values();
+        let contribution = spectral
+            .next()
+            .ok_or(SpectralOperatorError::InvalidSample)?
+            .contribution();
+        if spectral.next().is_some() {
+            return Err(SpectralOperatorError::InvalidSample);
+        }
+        let flags = correlations
+            .iter()
+            .map(|sample| {
+                accept_polarization_input(sample.selected(), self.finite_values)
+                    .map(|accepted| !accepted)
+            })
+            .collect::<Result<SmallVec<[_; 4]>, _>>()?;
+        let mut weights = SmallVec::<[f64; 4]>::new();
+        for (sample, flagged) in correlations.iter().zip(&flags) {
+            if *flagged {
+                weights.push(0.0);
+                continue;
+            }
+            let mut spectral = sample.spectral_values();
+            let value = spectral
+                .next()
+                .ok_or(SpectralOperatorError::InvalidSample)?;
+            if value.contribution() != contribution || spectral.next().is_some() {
+                return Err(SpectralOperatorError::InvalidSample);
+            }
+            weights.push(value.imaging_weight());
+        }
+        // For scalar G, sum_r (c_r G)* W_r (c_r G) = G* sum_r W_r |c_r|² G.
+        let weight = polarization_diagonal(operator, &weights, &flags)[0];
+        self.append_standard_stencil(
+            atom,
+            first.selected(),
+            RecordStencil {
+                output_channel: usize::try_from(contribution.output_channel())
+                    .map_err(|_| SpectralOperatorError::InvalidSample)?,
+                frequency_hz: contribution.evaluation_frequency_hz(),
+                factor: contribution.factor(),
+                role: RecordRole::Both,
+                imaging_weight: weight,
+            },
+            &[Complex64::new(1.0, 0.0)],
+        )?;
+        if weight == 0.0 {
+            atom.clear();
+        }
+        Ok(())
     }
 
     fn standard_predictions(
@@ -447,6 +527,69 @@ fn emit_atom(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scalar_correlation_preaggregation_preserves_the_polarization_normal() {
+        use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
+        use smallvec::smallvec;
+
+        for correlations in [
+            [
+                CorrelationType::CircularRr,
+                CorrelationType::CircularRl,
+                CorrelationType::CircularLr,
+                CorrelationType::CircularLl,
+            ],
+            [
+                CorrelationType::LinearXx,
+                CorrelationType::LinearXy,
+                CorrelationType::LinearYx,
+                CorrelationType::LinearYy,
+            ],
+        ] {
+            for angles in [[0.0, 0.0], [0.37, -0.82]] {
+                let mut elements = MuellerMatrix::identity().elements();
+                elements[1][0] = Complex64::new(0.13, -0.21);
+                elements[2][3] = Complex64::new(-0.17, 0.09);
+                for mueller in [
+                    MuellerMatrix::identity(),
+                    MuellerMatrix::new(elements).unwrap(),
+                ] {
+                    let operator = PolarizationOperator::compile(
+                        &[PolarizationCoordinate::StokesI],
+                        &correlations,
+                        angles,
+                        mueller,
+                    )
+                    .unwrap();
+                    for mask in 0..16 {
+                        let flags = polarization_effective_flags(
+                            &operator,
+                            smallvec![mask & 1 != 0, mask & 2 != 0, mask & 4 != 0, mask & 8 != 0],
+                        );
+                        for weights in [[0.75, 0.0, 1.25, 2.3], [0.0; 4]] {
+                            let weight = polarization_diagonal(&operator, &weights, &flags)[0];
+                            let forward = Complex64::from_polar(0.73, -0.41);
+                            let model = Complex64::new(-0.57, 1.33);
+                            let explicit = operator
+                                .weighted_adjoint(
+                                    &operator.predict(&[forward * model]).unwrap(),
+                                    &weights,
+                                    &flags,
+                                )
+                                .unwrap()[0]
+                                * forward.conj();
+                            let combined = forward.conj() * (forward * model) * weight;
+                            assert!(
+                                (combined - explicit).norm() <= 1e-13 * explicit.norm().max(1.0),
+                                "{correlations:?} {angles:?} {mask} {weights:?}: {combined:?} != {explicit:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn fixed_workspace_rejects_growth_and_overflow() {

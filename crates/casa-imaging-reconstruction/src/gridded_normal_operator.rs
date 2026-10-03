@@ -44,7 +44,7 @@ use crate::{
         SpectralOperatorPass, SpectralOperatorSpecification, SpectralPrimitiveCatalog,
         SpectralSlabOperator, TapSpan, WProjectionDiagnostics, accept_polarization_input,
         accept_weighted_input, aw_replay_coordinates, aw_stokes_i_mueller, combine_chart_updates,
-        polarization_effective_flags, selected_model_projection,
+        polarization_diagonal, polarization_effective_flags, selected_model_projection,
     },
     weighting::{
         CoverageEncoder, WeightingReplayChunk, WeightingReplayCoverageId, WeightingReplayId,
