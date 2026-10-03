@@ -949,8 +949,7 @@ impl GriddedNormalOperatorCompiler {
                     .any(|group| group.len() > self.plan.maximum_correlations)
                 || block.samples().iter().any(|sample| {
                     sample.spectral_values().count() > self.plan.maximum_spectral_terms
-                        || sample.selected().domain_projections().len()
-                            > self.specification.chart_count()
+                        || sample.selected().projection_count() > self.specification.chart_count()
                 })
             {
                 return Err(SpectralOperatorError::GriddedCompilationCapacity);

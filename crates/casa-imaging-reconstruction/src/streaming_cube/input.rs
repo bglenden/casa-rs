@@ -380,7 +380,7 @@ impl NativeInput {
             if geometry.channels != self.block.channels
                 || geometry.first.0 != self.layout.channels[0]
                 || geometry.second.map(|second| second.0) != Some(self.layout.channels[1])
-                || sample.domain_projections().len() != 1
+                || sample.projection_count() != 1
             {
                 return Err(invalid(
                     "native input geometry does not match the single-domain layout",
