@@ -1394,9 +1394,11 @@ fn taylor_generation_demand_charges_retained_families_and_algorithm_scratch() {
     assert_eq!(demand.maximum_window_validity_bytes(), maximum);
     // Two-term 8x8 fixture: retained families, residual/PB planes, normal solve.
     let taylor_workspace = 5_516 + 768 + 128;
-    let restoration_workspace = maximum * (4 + 2 * 16 + 4)
-        + (maximum + 64) * 16
-        + maximum * std::mem::size_of::<usize>() as u64;
+    let spectrum_values = (SHAPE[0] * (SHAPE[1] / 2 + 1)) as u64;
+    let restoration_workspace = maximum * 8
+        + spectrum_values * 2 * 16
+        + (spectrum_values + 64) * 16
+        + spectrum_values * std::mem::size_of::<usize>() as u64;
     assert_eq!(
         demand.algorithm_scratch_bytes(),
         taylor_workspace + restoration_workspace + maximum * 10,

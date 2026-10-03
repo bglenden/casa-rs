@@ -557,17 +557,20 @@ fn taylor_scratch_bytes(inputs: &ContinuumProductInputs<'_>) -> Result<u64, Prod
 
 fn fft_convolution_workspace_bytes(shape: [usize; 2]) -> Result<u64, ProductsError> {
     let cells = checked_shape_values([shape[0], shape[1], 1, 1])?;
+    let spectrum_values = shape[0]
+        .checked_mul(shape[1] / 2 + 1)
+        .ok_or(ProductsError::ResourceDemandOverflow("FFT half-spectrum"))?;
     let complex_planes = bytes_for::<Complex64>(
-        cells
+        spectrum_values
             .checked_mul(2)
             .ok_or(ProductsError::ResourceDemandOverflow("FFT complex planes"))?,
         "FFT complex planes",
     )?;
     let output = bytes_for::<f32>(cells, "FFT output plane")?;
-    let planning = cells
+    let planning = spectrum_values
         .checked_add(64)
         .and_then(|values| values.checked_mul(size_of::<Complex64>()))
-        .and_then(|bytes| bytes.checked_add(cells.checked_mul(size_of::<usize>())?))
+        .and_then(|bytes| bytes.checked_add(spectrum_values.checked_mul(size_of::<usize>())?))
         .ok_or(ProductsError::ResourceDemandOverflow("FFTW planning"))?;
     checked_add(
         checked_add(complex_planes, output, "FFT planes and output")?,
@@ -602,6 +605,23 @@ fn checked_mul(left: u64, right: u64, what: &'static str) -> Result<u64, Product
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn convolution_demand_tracks_padded_half_spectra_and_planning_overlap() {
+        for shape in [[2, 2], [4, 6], [4096, 4096]] {
+            let cells = shape[0] * shape[1];
+            let half_values = shape[0] * (shape[1] / 2 + 1);
+            let expected = (2 * half_values * 16
+                + cells * 4
+                + (half_values + 64) * 16
+                + half_values * std::mem::size_of::<usize>()) as u64;
+            assert_eq!(
+                super::fft_convolution_workspace_bytes(shape).unwrap(),
+                expected
+            );
+        }
+        assert!(super::fft_convolution_workspace_bytes([usize::MAX, 2]).is_err());
+    }
+
     #[test]
     fn demand_arithmetic_fails_closed() {
         assert!(matches!(
