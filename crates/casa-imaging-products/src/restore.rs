@@ -109,6 +109,7 @@ pub(crate) fn restore_model_plane(
     shape: [usize; 2],
     beam: &RestoringBeam,
     cell_size_rad: [f64; 2],
+    total_channels: usize,
 ) -> Vec<f32> {
     // FFT zero signs cannot affect addition except when the residual is -0.
     if model.iter().all(|value| *value == 0.0)
@@ -119,11 +120,26 @@ pub(crate) fn restore_model_plane(
         return residual;
     }
     let kernel = gaussian_beam_image(shape, beam, cell_size_rad);
-    let mut restored = fft_convolve(model, kernel.as_slice().expect("contiguous"), shape);
+    let mut restored = fft_convolve_with_plan(
+        model,
+        kernel.as_slice().expect("contiguous"),
+        shape,
+        restoration_fft(shape, total_channels),
+    );
     for (restored, residual) in restored.iter_mut().zip(residual) {
         *restored += residual;
     }
     restored
+}
+
+fn restoration_fft(shape: [usize; 2], total_channels: usize) -> Fft2<f64> {
+    let fft = Fft2::new(shape).expect("valid restoration FFT shape");
+    // One output channel cannot amortize measured planning across cube planes.
+    if total_channels == 1 {
+        fft.with_estimated_plan()
+    } else {
+        fft
+    }
 }
 
 /// Result of rescaling one normalized residual plane to a selected beam.
@@ -233,8 +249,21 @@ pub fn rescale_residual_to_beam(
 /// FFTs, matching the reconstruction owner's transform conventions.
 #[must_use]
 pub fn fft_convolve(plane: &[f32], kernel: &[f32], shape: [usize; 2]) -> Vec<f32> {
+    fft_convolve_with_plan(
+        plane,
+        kernel,
+        shape,
+        Fft2::new(shape).expect("valid restoration FFT shape"),
+    )
+}
+
+fn fft_convolve_with_plan(
+    plane: &[f32],
+    kernel: &[f32],
+    shape: [usize; 2],
+    mut fft: Fft2<f64>,
+) -> Vec<f32> {
     let cells = shape[0] * shape[1];
-    let mut fft = Fft2::<f64>::new(shape).expect("valid restoration FFT shape");
     let mut signal = Array2::<Complex64>::from_shape_vec(
         (shape[0], shape[1]),
         plane
@@ -296,6 +325,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn restoration_planning_uses_total_channels_not_window_depth() {
+        let shape = [8, 16];
+        for total_channels in [1, 2, 32, 512, 2048] {
+            let actual = restoration_fft(shape, total_channels);
+            let expected = Fft2::<f64>::new(shape).unwrap();
+            let expected = if total_channels == 1 {
+                expected.with_estimated_plan()
+            } else {
+                expected
+            };
+            assert_eq!(actual.shape(), shape);
+            assert_eq!(actual.threads(), expected.threads());
+            assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+        }
+    }
+
+    #[test]
     fn psf_normalization_is_exact_and_preserves_coupled_signed_terms() {
         for amplitude in [f32::MIN_POSITIVE, 1.000_000_7, 12345.67] {
             let principal = [-0.25 * amplitude, amplitude, 0.5 * amplitude];
@@ -338,17 +384,22 @@ mod tests {
                 for (value, residual) in expected.iter_mut().zip(&residual) {
                     *value += residual;
                 }
-                let actual = restore_model_plane(&model, residual, shape, &beam, [1.0e-6; 2]);
-                assert_eq!(
-                    actual
-                        .iter()
-                        .map(|value| value.to_bits())
-                        .collect::<Vec<_>>(),
-                    expected
-                        .iter()
-                        .map(|value| value.to_bits())
-                        .collect::<Vec<_>>()
-                );
+                for total_channels in [1, 512] {
+                    let actual = restore_model_plane(
+                        &model,
+                        residual.clone(),
+                        shape,
+                        &beam,
+                        [1.0e-6; 2],
+                        total_channels,
+                    );
+                    for (actual, expected) in actual.iter().zip(&expected) {
+                        assert!(
+                            (*actual - *expected).abs() <= 1.0e-6 * expected.abs().max(1.0),
+                            "restoration differs for {total_channels} channels: {actual} != {expected}"
+                        );
+                    }
+                }
             }
         }
     }

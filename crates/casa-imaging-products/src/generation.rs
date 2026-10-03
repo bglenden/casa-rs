@@ -1285,35 +1285,15 @@ fn produce_plane_member(
             if !valid {
                 return Ok(invalid_residual());
             }
-            let Some(beam) = restoring_beam.as_ref() else {
-                return Err(ProductsError::BeamFitFailed(
-                    "restoration requires a fitted beam for every valid plane".to_string(),
-                ));
-            };
-            let model = model_real_plane(
-                inputs.final_model(),
-                domain_ordinal,
-                plane.output_channel(),
-                polarization,
-                shape,
-            )?;
-            let cell_size = inputs.cell_size_rad_for_domain(member.axes().domain())?;
-            let residual = normalize_domain_plane(
-                &residual_real_plane(plane)?,
-                required_normalization(member)?,
+            restored_plane(
+                member,
+                inputs,
                 plane,
-            )?;
-            let fitted_beam = fitted_beam.ok_or_else(|| {
-                ProductsError::BeamFitFailed(
-                    "restoration requires a fitted beam for every valid plane".to_string(),
-                )
-            })?;
-            let residual =
-                rescale_residual_to_beam(&residual, shape, cell_size, fitted_beam, *beam)?
-                    .into_values();
-            Ok(restore_model_plane(
-                &model, residual, shape, beam, cell_size,
-            ))
+                domain_ordinal,
+                polarization,
+                fitted_beam,
+                restoring_beam,
+            )
         }
         ProductRole::PrimaryBeam(
             casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
@@ -1406,6 +1386,7 @@ fn restored_plane(
         plane.shape(),
         &beam,
         cell_size,
+        inputs.normal_state().slab().total_channels(),
     ))
 }
 
