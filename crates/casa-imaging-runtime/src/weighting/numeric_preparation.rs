@@ -188,6 +188,7 @@ impl<W: StreamingWeightPhase + Sync> NumericProducer<'_, '_, W> {
                             frequencies[channel],
                             row_geometry,
                             &mut worker.prepared,
+                            &mut worker.correlations,
                         )?;
                     }
                 }
@@ -361,19 +362,28 @@ fn prepare_channel<W: StreamingWeightPhase>(
     frequency: f64,
     geometry: SelectedRowSpectralGeometry,
     prepared: &mut Vec<ReconstructionWeightedSample>,
+    correlations: &mut Vec<SelectedObservationRunCorrelation>,
 ) -> Result<(), WeightingError> {
-    if row.correlations.len() > prepared.capacity() - prepared.len() {
+    if row.correlations.len() > prepared.capacity() - prepared.len()
+        || row.correlations.len() > correlations.capacity()
+    {
         return Err(WeightingError::ResidencyOverflow);
     }
-    let first = correlation(row, channel, 0);
-    let last = correlation(row, channel, row.correlations.len() - 1);
+    correlations.clear();
     let mut group_flag = false;
     let mut parallel_flag = false;
     for ordinal in 0..row.correlations.len() {
         let value = correlation(row, channel, ordinal);
         group_flag |= value.channel_flag;
         parallel_flag |= value.channel_flag && value.correlation_type.contributes_to_stokes_i();
+        correlations.push(value);
     }
+    let first = correlations
+        .first()
+        .expect("validated nonempty source correlations");
+    let last = correlations
+        .last()
+        .expect("validated nonempty source correlations");
     let group = SelectedInputWeightGroup::correlation_run(
         first.input_weight,
         last.input_weight,
@@ -386,8 +396,7 @@ fn prepare_channel<W: StreamingWeightPhase>(
         SelectedSpectralContributions::new([SelectedSpectralContribution::new(0, 1.0, frequency)])
             .ok_or(WeightingError::RowSpectralGeometryMismatch)?;
     let first_prepared = prepared.len();
-    for ordinal in 0..row.correlations.len() {
-        let mut value = correlation(row, channel, ordinal);
+    for (ordinal, mut value) in correlations.iter().copied().enumerate() {
         let weighted = if ordinal == 0 {
             value.parallel_hand_group_flag = parallel_flag;
             let sample =

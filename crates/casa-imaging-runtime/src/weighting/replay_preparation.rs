@@ -6,7 +6,7 @@ use super::{
     ReconstructionWeightedBlock, ReconstructionWeightedSample, ReplayCallbackError,
     StreamingWeightPhase, WeightingBlockKernelError, widen_terminal_traversal_error,
 };
-use casa_imaging_model::CompiledProblem;
+use casa_imaging_model::{CompiledProblem, SelectedObservationRunCorrelation};
 use casa_imaging_reconstruction::runtime_adapter::WeightingSpectralCache;
 use casa_imaging_reconstruction::{WeightingError, WeightingPlan};
 use casa_ms::{
@@ -26,6 +26,7 @@ pub(crate) struct ReplayPreparationPlan {
     index: SelectedObservationBlockIndexPlan,
     workers: usize,
     samples_per_worker: usize,
+    correlations_per_worker: usize,
     runs_per_batch: usize,
     numeric: Option<super::bulk_source::NumericGeometryPlan>,
     bytes: u64,
@@ -77,6 +78,7 @@ impl ReplayPreparationPlan {
             None
         };
         let residency = weighting.planned_residency();
+        let correlations_per_worker = numeric.map_or(0, |_| correlations);
         let sample_bytes =
             residency.weighted_block_bytes() / weighting.limits().max_block_samples();
         let worker_bytes = samples_per_worker
@@ -95,6 +97,11 @@ impl ReplayPreparationPlan {
                 )
             })
             .and_then(|bytes| bytes.checked_add(size_of::<PreparationWorker<'_>>()))
+            .and_then(|bytes| {
+                correlations_per_worker
+                    .checked_mul(size_of::<SelectedObservationRunCorrelation>())
+                    .and_then(|correlations| bytes.checked_add(correlations))
+            })
             .ok_or(WeightingError::ResidencyOverflow)?;
         let bytes = workers
             .checked_mul(worker_bytes)
@@ -120,6 +127,7 @@ impl ReplayPreparationPlan {
             index,
             workers,
             samples_per_worker,
+            correlations_per_worker,
             runs_per_batch: runs,
             numeric,
             bytes,
@@ -147,6 +155,7 @@ struct PreparationWorker<'a> {
     projector: SelectedObservationProjector,
     spectral: WeightingSpectralCache<'a>,
     prepared: Vec<ReconstructionWeightedSample>,
+    correlations: Vec<SelectedObservationRunCorrelation>,
     samples: u64,
 }
 
@@ -181,6 +190,7 @@ impl<'a> ReplayPreparation<'a> {
                 projector: SelectedObservationProjector::new(problem),
                 spectral: WeightingSpectralCache::new(problem)?,
                 prepared: Vec::with_capacity(plan.samples_per_worker),
+                correlations: Vec::with_capacity(plan.correlations_per_worker),
                 samples: 0,
             });
         }
