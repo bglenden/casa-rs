@@ -901,14 +901,21 @@ fn mfs_initial_batch_spans_input_blocks_and_finishes_partial_tail() {
             owner
                 .consume_block_with_initial_planes(block, |planes| {
                     dispatches += 1;
-                    for plane in planes {
+                    for plane in planes.iter_mut().rev() {
                         plane.execute()?;
                     }
                     Ok(())
                 })
                 .unwrap();
         }
-        assert_eq!(dispatches, samples.len() / capacity);
+        let preparation_dispatches: usize = blocks
+            .iter()
+            .map(|block| block.correlation_groups().count().div_ceil(capacity))
+            .sum();
+        assert_eq!(
+            dispatches,
+            preparation_dispatches + samples.len() / capacity
+        );
         let complete = owner.complete(&summary, selected_generation, None).unwrap();
         let primitives = complete.primitives();
         let actual = (
@@ -923,6 +930,114 @@ fn mfs_initial_batch_spans_input_blocks_and_finishes_partial_tail() {
             assert_eq!(&actual, reference);
         } else {
             reference = Some(actual);
+        }
+    }
+}
+
+#[test]
+fn mfs_initial_preparation_requires_completed_jobs_and_propagates_errors() {
+    let problem = t19_compatible_problem(250);
+    let samples = fixture_samples(&problem);
+    let plan = plan_weighting(&problem, WeightingExecutionLimits::new(1, 1).unwrap()).unwrap();
+    let generation =
+        freeze_weighting_generation_with(&problem, &plan, &samples, constant_basis_contributions)
+            .unwrap();
+    let (blocks, _) = replay_with(
+        &generation,
+        &problem,
+        &plan,
+        &samples,
+        constant_basis_contributions,
+    );
+    for case in 0..3 {
+        let specification = SpectralOperatorSpecification::new(&problem).unwrap();
+        let workload =
+            spectral_operator_workload(&specification, 1, SpectralOperatorPass::InitialMajor)
+                .unwrap();
+        let mut owner = prepare_spectral_operator(specification, workload, 1)
+            .unwrap()
+            .begin(&problem, &generation)
+            .unwrap();
+        let error = owner
+            .consume_block_with_initial_planes(&blocks[0], |jobs| match case {
+                0 => Ok(()),
+                1 => {
+                    jobs[0].execute()?;
+                    jobs[0].execute()
+                }
+                _ => Err(SpectralOperatorError::InvalidSample),
+            })
+            .unwrap_err();
+        assert_eq!(
+            error,
+            if case == 2 {
+                SpectralOperatorError::InvalidSample
+            } else {
+                SpectralOperatorError::BlockSequence
+            }
+        );
+    }
+}
+
+#[test]
+fn mfs_initial_preparation_matches_general_science_for_flags_and_phase() {
+    let problem = t19_compatible_problem(251);
+    for flagged in [false, true] {
+        let mut samples = fixture_samples(&problem);
+        samples[0].channel_flag = flagged;
+        samples[1].domain_projections = SelectedImageDomainProjections::one_domain_with_shared_psf(
+            SelectedPhaseCentreProjection::new([2.0, 0.0, 0.0], 0.01).unwrap(),
+        );
+        let plan = plan_weighting(&problem, WeightingExecutionLimits::new(2, 2).unwrap()).unwrap();
+        let selected_generation = replay_selected_generation(&problem, &samples);
+        let generation = freeze_weighting_generation_with(
+            &problem,
+            &plan,
+            &samples,
+            constant_basis_contributions,
+        )
+        .unwrap();
+        let (blocks, summary) = replay_with(
+            &generation,
+            &problem,
+            &plan,
+            &samples,
+            constant_basis_contributions,
+        );
+        let mut expected = None;
+        for emit_visibilities in [true, false] {
+            let specification = SpectralOperatorSpecification::new(&problem).unwrap();
+            let workload =
+                spectral_operator_workload(&specification, 1, SpectralOperatorPass::InitialMajor)
+                    .unwrap();
+            let mut owner = prepare_spectral_operator(specification, workload, 1)
+                .unwrap()
+                .begin(&problem, &generation)
+                .unwrap();
+            if emit_visibilities {
+                owner.enable_final_visibility_samples();
+            }
+            for block in &blocks {
+                owner
+                    .consume_block_with_initial_planes(block, |jobs| {
+                        jobs.iter_mut().rev().try_for_each(|job| job.execute())
+                    })
+                    .unwrap();
+            }
+            let complete = owner.complete(&summary, selected_generation, None).unwrap();
+            let primitives = complete.primitives();
+            let actual = (
+                primitives.dirty().complex().unwrap().to_vec(),
+                primitives.psf().complex().unwrap().to_vec(),
+                primitives.sensitivity().dense().unwrap().to_vec(),
+                primitives.sum_weights().to_vec(),
+                primitives.channel_validity().to_vec(),
+            );
+            if let Some(expected) = &expected {
+                assert_eq!(&actual, expected);
+            } else {
+                expected = Some(actual);
+            }
         }
     }
 }

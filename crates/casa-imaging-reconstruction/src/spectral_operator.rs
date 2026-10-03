@@ -5634,41 +5634,50 @@ impl CompleteDataOwnerState {
         }
         self.coverage.adopt(block.coverage_checkpoint());
         self.predicted_selected.clear();
-        for group in block.correlation_groups() {
-            if OBSERVE {
-                if let Some(probe) = self
-                    .science_probe
-                    .as_mut()
-                    .and_then(|probe| probe.cumulative.as_mut())
-                {
-                    probe.observe_inputs(group)?;
+        if self.stage_initial_planes
+            && self
+                .initial_planes
+                .as_ref()
+                .is_some_and(InitialPlaneBatch::is_mfs)
+        {
+            self.prepare_initial_mfs_block(block, dispatch)?;
+        } else {
+            for group in block.correlation_groups() {
+                if OBSERVE {
+                    if let Some(probe) = self
+                        .science_probe
+                        .as_mut()
+                        .and_then(|probe| probe.cumulative.as_mut())
+                    {
+                        probe.observe_inputs(group)?;
+                    }
                 }
-            }
-            self.consume_correlation_group::<OBSERVE>(group)?;
-            if self.stage_initial_planes
-                && self
-                    .initial_planes
-                    .as_ref()
-                    .is_some_and(InitialPlaneBatch::ready)
-            {
-                self.flush_initial_planes(dispatch)?;
-            }
-            if OBSERVE
-                && self
-                    .science_probe
-                    .as_ref()
-                    .and_then(|probe| probe.cumulative.as_ref())
-                    .is_some_and(CumulativeAwScienceProbe::complete)
-            {
-                SpectralScienceProbe::emit_actual_aw_accumulator(
-                    self.operators
-                        .first()
-                        .ok_or(SpectralOperatorError::DiagnosticCoverageMismatch)?,
-                )?;
-                self.science_probe
-                    .take()
-                    .expect("complete diagnostic exists")
-                    .finish()?;
+                self.consume_correlation_group::<OBSERVE>(group)?;
+                if self.stage_initial_planes
+                    && self
+                        .initial_planes
+                        .as_ref()
+                        .is_some_and(InitialPlaneBatch::ready)
+                {
+                    self.flush_initial_planes(dispatch)?;
+                }
+                if OBSERVE
+                    && self
+                        .science_probe
+                        .as_ref()
+                        .and_then(|probe| probe.cumulative.as_ref())
+                        .is_some_and(CumulativeAwScienceProbe::complete)
+                {
+                    SpectralScienceProbe::emit_actual_aw_accumulator(
+                        self.operators
+                            .first()
+                            .ok_or(SpectralOperatorError::DiagnosticCoverageMismatch)?,
+                    )?;
+                    self.science_probe
+                        .take()
+                        .expect("complete diagnostic exists")
+                        .finish()?;
+                }
             }
         }
         if self.stage_initial_planes
@@ -6104,24 +6113,11 @@ impl CompleteDataOwnerState {
         let first = group.first().ok_or(SpectralOperatorError::InvalidSample)?;
         let selected = first.selected();
         let mosaic_response = self.mosaic_response(selected)?;
-        let correlations = group
-            .iter()
-            .map(|weighted| weighted.selected().address.correlation_type)
-            .collect::<SmallVec<[_; 4]>>();
-        let polarization = self
-            .specification
-            .direction_independent_polarization(&correlations)?;
-        let visibilities = group
-            .iter()
-            .map(|weighted| selected_visibility(weighted.selected().visibility))
-            .collect::<SmallVec<[_; 4]>>();
-        let flags = group
-            .iter()
-            .map(|weighted| {
-                accept_polarization_input(weighted.selected(), self.finite_values).map(|ok| !ok)
-            })
-            .collect::<Result<SmallVec<[_; 4]>, _>>()?;
-        let flags = polarization_effective_flags(polarization, flags);
+        let CorrelationInputs {
+            polarization,
+            visibilities,
+            flags,
+        } = correlation_inputs(&self.specification, group, self.finite_values)?;
         let predicts_residual = self
             .model_binding
             .is_some_and(ReconstructionModelBinding::is_evaluated);
@@ -6189,23 +6185,8 @@ impl CompleteDataOwnerState {
             )?;
             let spectral_count = first.spectral_values().count();
             for spectral_ordinal in 0..spectral_count {
-                let first_spectral = first
-                    .spectral_values()
-                    .nth(spectral_ordinal)
-                    .ok_or(SpectralOperatorError::InvalidSample)?;
-                let correlation_weights = group
-                    .iter()
-                    .map(|weighted| {
-                        let spectral = weighted
-                            .spectral_values()
-                            .nth(spectral_ordinal)
-                            .ok_or(SpectralOperatorError::InvalidSample)?;
-                        if spectral.contribution() != first_spectral.contribution() {
-                            return Err(SpectralOperatorError::InvalidSample);
-                        }
-                        Ok(spectral.imaging_weight())
-                    })
-                    .collect::<Result<SmallVec<[_; 4]>, _>>()?;
+                let (first_spectral, correlation_weights) =
+                    correlation_spectral_weights(group, spectral_ordinal)?;
                 let published_weights =
                     polarization_published_weights(polarization, &correlation_weights, &flags);
                 let observed_adjoint = polarization
@@ -7428,6 +7409,61 @@ fn spectral_stencil(
             })
         })
         .collect()
+}
+
+struct CorrelationInputs<'a> {
+    polarization: &'a PolarizationOperator,
+    visibilities: SmallVec<[Complex64; 4]>,
+    flags: SmallVec<[bool; 4]>,
+}
+
+fn correlation_inputs<'a>(
+    specification: &'a SpectralOperatorSpecification,
+    group: &[crate::weighting::WeightingSampleValue],
+    finite_values: FiniteValuePolicy,
+) -> Result<CorrelationInputs<'a>, SpectralOperatorError> {
+    let correlations = group
+        .iter()
+        .map(|value| value.selected().address.correlation_type)
+        .collect::<SmallVec<[_; 4]>>();
+    let polarization = specification.direction_independent_polarization(&correlations)?;
+    let visibilities = group
+        .iter()
+        .map(|value| selected_visibility(value.selected().visibility))
+        .collect();
+    let flags = group
+        .iter()
+        .map(|value| accept_polarization_input(value.selected(), finite_values).map(|ok| !ok))
+        .collect::<Result<SmallVec<[_; 4]>, _>>()?;
+    Ok(CorrelationInputs {
+        polarization,
+        visibilities,
+        flags: polarization_effective_flags(polarization, flags),
+    })
+}
+
+fn correlation_spectral_weights(
+    group: &[crate::weighting::WeightingSampleValue],
+    ordinal: usize,
+) -> Result<(crate::weighting::WeightingSpectralValue, SmallVec<[f64; 4]>), SpectralOperatorError> {
+    let first = group
+        .first()
+        .and_then(|value| value.spectral_values().nth(ordinal))
+        .ok_or(SpectralOperatorError::InvalidSample)?;
+    let weights = group
+        .iter()
+        .map(|value| {
+            let spectral = value
+                .spectral_values()
+                .nth(ordinal)
+                .ok_or(SpectralOperatorError::InvalidSample)?;
+            if spectral.contribution() != first.contribution() {
+                return Err(SpectralOperatorError::InvalidSample);
+            }
+            Ok(spectral.imaging_weight())
+        })
+        .collect::<Result<_, _>>()?;
+    Ok((first, weights))
 }
 
 pub(crate) fn polarization_diagonal(

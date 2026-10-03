@@ -3,6 +3,7 @@
 
 use super::*;
 
+mod mfs_preparation;
 mod mfs_regions;
 
 impl SpectralOperatorSpecification {
@@ -293,14 +294,16 @@ pub struct InitialPlaneWork<'a>(InitialWork<'a>);
 enum InitialWork<'a> {
     Plane(PlaneWork<'a>),
     Mfs(mfs_regions::MfsWork<'a>),
+    MfsPreparation(mfs_preparation::PreparationWork<'a>),
 }
 
 impl InitialPlaneWork<'_> {
-    /// Accumulate this admitted job once, preserving sample order within each cell.
+    /// Prepare or accumulate this admitted job once. Grid jobs preserve cell order.
     pub fn execute(&mut self) -> Result<(), SpectralOperatorError> {
         match &mut self.0 {
             InitialWork::Plane(work) => work.execute(),
             InitialWork::Mfs(work) => work.execute(),
+            InitialWork::MfsPreparation(work) => work.execute(),
         }
     }
 }
@@ -343,6 +346,27 @@ impl PlaneWork<'_> {
 }
 
 impl CompleteDataOwnerState {
+    pub(super) fn prepare_initial_mfs_block(
+        &mut self,
+        block: &WeightingReplayChunk,
+        dispatch: &mut impl FnMut(&mut [InitialPlaneWork<'_>]) -> Result<(), SpectralOperatorError>,
+    ) -> Result<(), SpectralOperatorError> {
+        let [operator] = self.operators.as_mut_slice() else {
+            return Err(SpectralOperatorError::ProblemMismatch);
+        };
+        self.initial_planes
+            .as_mut()
+            .and_then(|batch| batch.mfs.as_mut())
+            .ok_or(SpectralOperatorError::ProblemMismatch)?
+            .prepare_block(
+                &self.specification,
+                operator,
+                block,
+                self.finite_values,
+                dispatch,
+            )
+    }
+
     pub(super) fn flush_initial_planes(
         &mut self,
         dispatch: &mut impl FnMut(&mut [InitialPlaneWork<'_>]) -> Result<(), SpectralOperatorError>,

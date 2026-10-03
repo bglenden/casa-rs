@@ -25,6 +25,8 @@ pub(super) struct MfsRegions {
     routes: Vec<Route>,
     buckets: Box<[Bucket]>,
     capacity: usize,
+    groups: Vec<std::ops::Range<usize>>,
+    prepared: Vec<Option<SpectralOperatorSample>>,
 }
 
 impl MfsRegions {
@@ -45,7 +47,12 @@ impl MfsRegions {
             return Err(SpectralOperatorError::ResidencyOverflow);
         }
         capacity
-            .checked_mul(size_of::<Record>() + 2 * size_of::<Route>())
+            .checked_mul(
+                size_of::<Record>()
+                    + 2 * size_of::<Route>()
+                    + size_of::<std::ops::Range<usize>>()
+                    + size_of::<Option<SpectralOperatorSample>>(),
+            )
             .and_then(|bytes| {
                 shape[0]
                     .div_ceil(STRIP_ROWS)
@@ -63,11 +70,80 @@ impl MfsRegions {
             routes: Vec::with_capacity(capacity * 2),
             buckets: vec![Bucket::EMPTY; shape[0].div_ceil(STRIP_ROWS)].into_boxed_slice(),
             capacity,
+            groups: Vec::with_capacity(capacity),
+            prepared: Vec::with_capacity(capacity),
         })
     }
 
     pub(super) fn ready(&self) -> bool {
         self.records.len() == self.capacity
+    }
+
+    pub(super) fn prepare_block(
+        &mut self,
+        specification: &SpectralOperatorSpecification,
+        operator: &mut SpectralSlabOperator,
+        block: &WeightingReplayChunk,
+        finite_values: FiniteValuePolicy,
+        dispatch: &mut impl FnMut(&mut [InitialPlaneWork<'_>]) -> Result<(), SpectralOperatorError>,
+    ) -> Result<(), SpectralOperatorError> {
+        let mut groups = block.correlation_groups();
+        let mut first = 0;
+        loop {
+            self.groups.clear();
+            for group in groups.by_ref().take(self.capacity) {
+                let last = first + group.len();
+                self.groups.push(first..last);
+                first = last;
+            }
+            if self.groups.is_empty() {
+                break;
+            }
+            self.prepared.clear();
+            self.prepared.resize(self.groups.len(), None);
+            // At most one preparation job per admitted region descriptor, regardless
+            // of worker count. Reuse the runtime's existing bounded worker callback.
+            let groups_per_job = self.groups.len().div_ceil(self.buckets.len());
+            let mut jobs = self
+                .groups
+                .chunks(groups_per_job)
+                .zip(self.prepared.chunks_mut(groups_per_job))
+                .map(|(groups, samples)| {
+                    InitialPlaneWork(InitialWork::MfsPreparation(
+                        mfs_preparation::PreparationWork {
+                            specification,
+                            finite_values,
+                            values: block.samples(),
+                            groups,
+                            samples,
+                            executed: false,
+                            completed: false,
+                        },
+                    ))
+                })
+                .collect::<Vec<_>>();
+            dispatch(&mut jobs)?;
+            if jobs
+                .iter()
+                .any(|job| !matches!(&job.0, InitialWork::MfsPreparation(work) if work.completed))
+            {
+                return Err(SpectralOperatorError::BlockSequence);
+            }
+            drop(jobs);
+            for ordinal in 0..self.prepared.len() {
+                if let Some(sample) = self.prepared[ordinal]
+                    .filter(|sample| operator.slab.owns(sample.output_channel))
+                {
+                    self.push(operator, sample)?;
+                    if self.ready() {
+                        self.dispatch(operator, dispatch)?;
+                    }
+                }
+            }
+        }
+        self.groups.clear();
+        self.prepared.clear();
+        Ok(())
     }
 
     pub(super) fn push(
