@@ -9,6 +9,44 @@ use std::time::Instant;
 use super::{ClarkApproximation, MinorCycleError};
 use crate::spectral_operator::SpectralOperatorError;
 
+pub(crate) const ARRAY_WORKER_STACK_BYTES: usize = 64 << 10;
+
+fn parallel_chunks<T: Send>(
+    mut chunks: impl Iterator<Item = T>,
+    apply: impl Fn(T) -> Result<(), MinorCycleError> + Sync,
+) -> Result<(), MinorCycleError> {
+    if chunks.size_hint() == (1, Some(1)) {
+        return apply(chunks.next().expect("one chunk"));
+    }
+    std::thread::scope(|scope| {
+        let mut chunks = chunks;
+        let Some(first) = chunks.next() else {
+            return Ok(());
+        };
+        let mut jobs = smallvec::SmallVec::<[_; 8]>::new();
+        for chunk in chunks {
+            let apply = &apply;
+            jobs.push(
+                std::thread::Builder::new()
+                    .stack_size(ARRAY_WORKER_STACK_BYTES)
+                    .spawn_scoped(scope, move || apply(chunk))
+                    .map_err(|error| MinorCycleError::ParallelRefresh(error.to_string()))?,
+            );
+        }
+        let mut result = apply(first);
+        for job in jobs {
+            let joined = job
+                .join()
+                .map_err(|_| MinorCycleError::ParallelRefresh("array worker panicked".into()))
+                .and_then(|result| result);
+            if result.is_ok() {
+                result = joined;
+            }
+        }
+        result
+    })
+}
+
 pub(super) struct ClarkActivePixel {
     index: usize,
     value: f64,
@@ -20,6 +58,7 @@ struct LinearRefresh {
     psf_spectrum: Vec<Complex32>,
     components: Vec<Complex32>,
     fft: RealFft2<f32>,
+    workers: usize,
 }
 
 impl LinearRefresh {
@@ -85,6 +124,7 @@ impl LinearRefresh {
             psf_spectrum,
             components,
             fft,
+            workers: threads,
         })
     }
 
@@ -98,25 +138,47 @@ impl LinearRefresh {
         self.fft
             .forward(&mut self.components)
             .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
-        for (value, kernel) in self.components.iter_mut().zip(self.psf_spectrum.iter()) {
-            *value *= kernel;
-        }
+        let spectrum_chunk = self.components.len().div_ceil(self.workers);
+        parallel_chunks(
+            self.components
+                .chunks_mut(spectrum_chunk)
+                .zip(self.psf_spectrum.chunks(spectrum_chunk)),
+            |(values, kernels)| {
+                for (value, kernel) in values.iter_mut().zip(kernels) {
+                    *value *= kernel;
+                }
+                Ok(())
+            },
+        )?;
         self.fft
             .inverse(&mut self.components)
             .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
         let normalization = (self.padded[0] * self.padded[1]) as f64;
-        let real: &[f32] = bytemuck::cast_slice(&self.components);
+        let real: &mut [f32] = bytemuck::cast_slice_mut(&mut self.components);
         let row_stride = self.fft.real_row_stride();
-        for x in 0..self.shape[0] {
-            for y in 0..self.shape[1] {
-                let index = x * self.shape[1] + y;
-                residual[index] -= f64::from(real[x * row_stride + y]) / normalization;
-                if !residual[index].is_finite() {
-                    return Err(MinorCycleError::GeneratedNonfinite);
+        let rows_per_chunk = self.shape[0].div_ceil(self.workers);
+        let (image_rows, padding_rows) = real.split_at_mut(self.shape[0] * row_stride);
+        parallel_chunks(
+            residual
+                .chunks_mut(rows_per_chunk * self.shape[1])
+                .zip(image_rows.chunks_mut(rows_per_chunk * row_stride)),
+            |(output, input)| {
+                for (output_row, input_row) in output
+                    .chunks_mut(self.shape[1])
+                    .zip(input.chunks_mut(row_stride))
+                {
+                    for (value, &convolution) in output_row.iter_mut().zip(input_row.iter()) {
+                        *value -= f64::from(convolution) / normalization;
+                        if !value.is_finite() {
+                            return Err(MinorCycleError::GeneratedNonfinite);
+                        }
+                    }
+                    input_row.fill(0.0);
                 }
-            }
-        }
-        self.components.fill(Complex32::default());
+                Ok(())
+            },
+        )?;
+        padding_rows.fill(0.0);
         Ok(())
     }
 }
@@ -555,6 +617,60 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn clark_parallel_array_chunks_preserve_refresh_and_pending_clear() {
+        let shape = [16, 24];
+        let center = [6, 9];
+        let psf = (0..shape[0] * shape[1])
+            .map(|index| (index as f32 * 0.031).sin())
+            .collect::<Vec<_>>();
+        // Keep the same FFT plans to isolate the partitioned array arithmetic.
+        let mut refresh = LinearRefresh::new(&psf, shape, center, 1).unwrap();
+        let mut serial = vec![0.5; psf.len()];
+        let mut parallel = serial.clone();
+        for workers in [1, 2, 4, 8, 32] {
+            refresh.workers = 1;
+            for index in [0, 23, psf.len() / 2, psf.len() - 1] {
+                refresh.add(index, 0.25);
+            }
+            refresh.refresh(&mut serial).unwrap();
+            refresh.workers = workers;
+            for index in [0, 23, psf.len() / 2, psf.len() - 1] {
+                refresh.add(index, 0.25);
+            }
+            refresh.refresh(&mut parallel).unwrap();
+            assert!(
+                serial
+                    .iter()
+                    .zip(&parallel)
+                    .all(|(a, b)| (a - b).abs() < 1e-12)
+            );
+            assert!(
+                refresh
+                    .components
+                    .iter()
+                    .all(|value| *value == Complex32::default())
+            );
+        }
+        parallel[psf.len() / 2] = f64::INFINITY;
+        assert!(matches!(
+            refresh.refresh(&mut parallel),
+            Err(MinorCycleError::GeneratedNonfinite)
+        ));
+    }
+
+    #[test]
+    fn clark_parallel_array_worker_failure_is_not_dropped() {
+        let failure = parallel_chunks([0, 1, 2, 3].into_iter(), |ordinal| {
+            if ordinal == 2 {
+                Err(MinorCycleError::GeneratedNonfinite)
+            } else {
+                Ok(())
+            }
+        });
+        assert!(matches!(failure, Err(MinorCycleError::GeneratedNonfinite)));
     }
 
     #[test]
