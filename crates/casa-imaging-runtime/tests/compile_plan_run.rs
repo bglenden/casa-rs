@@ -3353,91 +3353,6 @@ fn failed_density_generation_receipt_uses_current_partial_stream_measurements() 
     );
 }
 
-fn assert_t59_low_memory_production_routes(physical: &PhysicalWorkBinding) {
-    let dag = physical.execution_dag();
-    let transition = dag
-        .adaptations()
-        .values()
-        .next()
-        .expect("explicit final-major memory ceiling seals one low-memory route");
-    assert_eq!(dag.adaptations().len(), 1);
-    assert_eq!(transition.from, *dag.initial_knobs());
-    assert_eq!(transition.from.batch_size, 2);
-    assert_eq!(transition.to.batch_size, 1);
-    assert!(transition.to.recomputation);
-    assert!(!transition.to.spill);
-    assert!(transition.to.prefetch);
-    assert_eq!(transition.activate_nodes.len(), 2);
-    assert_eq!(transition.deactivate_nodes.len(), 1);
-
-    let activated_kinds = transition
-        .activate_nodes
-        .iter()
-        .map(|node| dag.nodes()[node].kind)
-        .collect::<BTreeSet<_>>();
-    assert_eq!(
-        activated_kinds,
-        BTreeSet::from([WorkKind::Preparation, WorkKind::Prefetch])
-    );
-    let retained = transition
-        .deactivate_nodes
-        .iter()
-        .next()
-        .expect("retained route");
-    let retained_node = &dag.nodes()[retained];
-    assert_eq!(retained_node.kind, WorkKind::Cache);
-    assert!(
-        retained_node
-            .claims
-            .iter()
-            .any(|claim| { claim.resource == LeaseResource::ResidentCache && claim.amount > 0 })
-    );
-    assert!(retained_node.claims.iter().any(|claim| {
-        claim.resource == LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead) && claim.amount > 0
-    }));
-
-    let prefetch = transition
-        .activate_nodes
-        .iter()
-        .find(|node| dag.nodes()[*node].kind == WorkKind::Prefetch)
-        .expect("managed replay prefetch route");
-    assert!(dag.nodes()[prefetch].claims.iter().any(|claim| {
-        claim.resource == LeaseResource::IoBuffer(IoBufferKind::SpillRead) && claim.amount > 0
-    }));
-    let route_join = dag
-        .nodes()
-        .values()
-        .find(|node| {
-            node.kind == WorkKind::Synchronization
-                && node
-                    .dependencies
-                    .contains(&WorkDependency::Fence(FenceId::new(
-                        retained.clone(),
-                        FenceKind::Io,
-                    )))
-                && node
-                    .dependencies
-                    .contains(&WorkDependency::Fence(FenceId::new(
-                        prefetch.clone(),
-                        FenceKind::Io,
-                    )))
-        })
-        .expect("mutually exclusive routes rejoin before replay");
-    let replay = dag
-        .nodes()
-        .values()
-        .find(|node| {
-            node.kind == WorkKind::Spill
-                && node
-                    .dependencies
-                    .contains(&WorkDependency::Work(route_join.id.clone()))
-        })
-        .expect("fixed replay consumes the selected route");
-    assert!(physical.artifacts().iter().any(|artifact| {
-        artifact.node() == &replay.id && artifact.role() == ArtifactRole::Input
-    }));
-}
-
 fn execute_spectral_cycle_with_weighting(weighting: WeightingContract, abort_after_initial: bool) {
     execute_spectral_cycle_with_weighting_mode(weighting, abort_after_initial, false, false);
 }
@@ -3446,7 +3361,7 @@ fn execute_spectral_cycle_with_weighting_mode(
     weighting: WeightingContract,
     abort_after_initial: bool,
     verify_low_memory_plan: bool,
-    apply_low_memory_route: bool,
+    disable_resident_cache: bool,
 ) -> Option<MajorCycleCompletion> {
     // The deterministic 2 MiB authority is shared by the whole integration
     // binary; serialize with every other plan/run so an unrelated concurrent
@@ -3461,8 +3376,8 @@ fn execute_spectral_cycle_with_weighting_mode(
         ImageShape::new(image_edge, image_edge),
         [-1.0e-6, 1.0e-6],
     );
-    // Fit the whole cube inside the fixed test authority so this fixture
-    // exercises retained-to-recompute adaptation, not static spectral windows.
+    // Fit the whole cube inside the fixed authority to compare admitted
+    // residency with bounded disk replay, not static spectral windows.
     let low_memory_channels = 4;
     if verify_low_memory_plan {
         let spectral = geometry.spectral().clone().with_wcs(SpectralWcs::Linear {
@@ -3787,6 +3702,7 @@ fn execute_spectral_cycle_with_weighting_mode(
         ResourcePolicy::Explicit(ResourceOverride {
             memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 1 << 20)]),
             workers: Some(1),
+            cache_bytes: disable_resident_cache.then_some(0),
             ..ResourceOverride::default()
         })
     } else {
@@ -3870,31 +3786,13 @@ fn execute_spectral_cycle_with_weighting_mode(
         "final-major admission must bind the accepted sparse update, not the logical whole-model delta ceiling"
     );
     if verify_low_memory_plan {
-        assert_t59_low_memory_production_routes(&final_physical);
         let dag = final_physical.execution_dag();
-        let transition = dag
-            .adaptations()
-            .values()
-            .next()
-            .expect("low-memory transition");
-        let retained_node = transition
-            .deactivate_nodes
-            .iter()
-            .next()
-            .expect("retained route")
-            .clone();
-        let recompute_node = transition
-            .activate_nodes
-            .iter()
-            .find(|node| dag.nodes()[*node].kind == WorkKind::Preparation)
-            .expect("recompute route")
-            .clone();
-        let prefetch_node = transition
-            .activate_nodes
-            .iter()
-            .find(|node| dag.nodes()[*node].kind == WorkKind::Prefetch)
-            .expect("prefetch route")
-            .clone();
+        assert!(dag.adaptations().is_empty());
+        assert!(
+            dag.nodes()
+                .values()
+                .all(|node| node.kind != WorkKind::Cache)
+        );
         let replay_node = dag
             .nodes()
             .values()
@@ -3903,151 +3801,65 @@ fn execute_spectral_cycle_with_weighting_mode(
                     && node.claims.iter().any(|claim| {
                         claim.resource == LeaseResource::IoBuffer(IoBufferKind::SpillRead)
                     })
-                    && !transition.activate_nodes.contains(&node.id)
             })
-            .expect("fixed final-major replay node")
+            .unwrap()
             .id
             .clone();
-        let cache_claim = dag.nodes()[&retained_node]
-            .claims
-            .iter()
-            .find(|claim| claim.resource == LeaseResource::ResidentCache)
-            .expect("retained route cache claim")
-            .clone();
-        let final_executor = SpectralCycleExecutor::new_gridded(
+        assert_eq!(dag.initial_knobs().batch_size, 2);
+        assert!(dag.nodes()[&replay_node].claims.iter().any(|claim| {
+            claim.resource == LeaseResource::IoBuffer(IoBufferKind::SpillRead)
+                && claim.amount == 480
+        }));
+        let executor = SpectralCycleExecutor::new_gridded(
             implementation(73),
             problem.clone(),
             final_weighting,
             final_pass,
             final_complete,
-            ExecutableModelProblem::from_compiled(problem.clone()).expect("final executable model"),
+            ExecutableModelProblem::from_compiled(problem.clone()).unwrap(),
             SpectralCyclePassInput::FinalMajor(final_input),
-            planned_gridded_normal.expect("final plan binds retained gridded replay"),
+            planned_gridded_normal.unwrap(),
         )
-        .expect("final executor accepts its planned replay")
+        .unwrap()
         .with_frozen_weighting(frozen_weighting);
-        let final_registry =
-            SpectralCycleRegistry::new(registry(73), implementation(73), &problem, final_executor);
-        let final_current = RunBindings::new(
+        let registry =
+            SpectralCycleRegistry::new(registry(73), implementation(73), &problem, executor);
+        let current = RunBindings::new(
             problem.inputs().clone(),
             &final_resource_policy,
             cost_model(4),
         );
-        let final_attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([75; 32]);
-        let mut controller = SelectSpectralLowMemoryRoute {
-            select: apply_low_memory_route,
-            applied: false,
-        };
+        let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([75; 32]);
         runtime_run(
             &executable,
             &final_plan,
-            &final_current,
-            &final_registry,
+            &current,
+            &registry,
             authority(),
-            &mut controller,
+            &mut RunToCompletion,
             receipts.bind(execution_provenance(
-                final_attempt,
+                attempt,
                 BuildIdentity::from_sha256([76; 32]),
             )),
         )
-        .expect("selected final-major route executes");
-        let final_receipt = receipts.open(final_attempt).expect("final route receipt");
-        let gridded_artifact = final_plan
-            .artifacts()
-            .iter()
-            .find(|artifact| {
-                artifact.node() == &replay_node && artifact.role() == ArtifactRole::Input
-            })
-            .expect("canonical replay owns the gridded input artifact");
-        let adaptation = final_receipt
-            .adaptation_projection(&AdaptationId::new("spectral-low-memory-1"))
-            .expect("receipt projects low-memory transition");
-        assert_eq!(adaptation.was_applied(), apply_low_memory_route);
-        assert_eq!(controller.applied, apply_low_memory_route);
+        .expect("bounded replay under the explicit memory/cache ceilings");
+        let receipt = receipts.open(attempt).unwrap();
         assert_eq!(
-            final_receipt.node_status(&replay_node),
+            receipt.node_status(&replay_node),
             Some(ReceiptStatus::Completed)
         );
+        assert_eq!(receipt.stage_actual_batch(&replay_node), Some((2, 2)));
+        let (bytes, operations) = receipt
+            .stage_actual_io(&replay_node, IoBufferKind::SpillRead)
+            .unwrap();
+        assert_eq!(bytes, replay_descriptor.bytes());
+        assert!(operations > 0);
         assert_eq!(
-            final_receipt.stage_actual_batch(&replay_node),
-            Some(if apply_low_memory_route {
-                (1, 1)
-            } else {
-                (2, 2)
-            }),
-            "canonical replay receipts the exact selected and consumed batch"
+            receipt.observation_transaction_publication_scope(),
+            casa_imaging_runtime::ObservationTransactionPublicationScope::ReconstructionOnly
         );
-        assert_eq!(final_receipt.stage_actual_batch(&retained_node), None);
-        assert_eq!(final_receipt.stage_actual_batch(&recompute_node), None);
-        assert_eq!(final_receipt.stage_actual_batch(&prefetch_node), None);
-        if apply_low_memory_route {
-            assert_eq!(
-                final_receipt.node_status(&retained_node),
-                Some(ReceiptStatus::NotStarted)
-            );
-            assert_eq!(
-                final_receipt.node_status(&recompute_node),
-                Some(ReceiptStatus::Completed)
-            );
-            assert_eq!(
-                final_receipt.node_status(&prefetch_node),
-                Some(ReceiptStatus::Completed)
-            );
-            assert!(
-                final_receipt
-                    .stage_actual_elapsed_nanos(&recompute_node)
-                    .is_some()
-            );
-            let (prefetched_bytes, prefetch_operations) = final_receipt
-                .stage_actual_io(&prefetch_node, IoBufferKind::SpillRead)
-                .expect("prefetch route reports its first-window spill read");
-            assert!(prefetched_bytes > 0 && prefetch_operations > 0);
-            let (bytes, operations) = final_receipt
-                .stage_actual_io(&replay_node, IoBufferKind::SpillRead)
-                .expect("managed route replay reports actual spill reads");
-            assert!(bytes > 0 && operations > 0);
-            assert_eq!(
-                final_receipt.artifact_disposition(gridded_artifact.identity()),
-                Some(ArtifactDisposition::Loaded)
-            );
-            assert_eq!(
-                final_receipt.stage_actual_io(&retained_node, IoBufferKind::SourceReadAhead),
-                None
-            );
-        } else {
-            assert_eq!(
-                final_receipt.node_status(&retained_node),
-                Some(ReceiptStatus::Completed)
-            );
-            assert_eq!(
-                final_receipt.node_status(&recompute_node),
-                Some(ReceiptStatus::NotStarted)
-            );
-            assert_eq!(
-                final_receipt.node_status(&prefetch_node),
-                Some(ReceiptStatus::NotStarted)
-            );
-            assert_eq!(
-                final_receipt.artifact_disposition(gridded_artifact.identity()),
-                Some(ArtifactDisposition::Reused)
-            );
-            assert_eq!(
-                final_receipt.stage_actual_io(&replay_node, IoBufferKind::SpillRead),
-                Some((0, 0))
-            );
-            let (cache_read_bytes, cache_read_operations) = final_receipt
-                .stage_actual_io(&retained_node, IoBufferKind::SourceReadAhead)
-                .expect("retained route reports the cache load I/O");
-            assert!(cache_read_bytes > 0 && cache_read_operations > 0);
-            let actual = final_receipt
-                .actual_resource_peak(&retained_node, &cache_claim.resource, &cache_claim.lifetime)
-                .expect("retained route reports actual residency");
-            assert!(actual > 0 && actual <= cache_claim.amount);
-        }
-        let receipt_path = receipts
-            .root_path()
-            .join(format!("{final_attempt}.receipt.json"));
-        let original = fs::read_to_string(&receipt_path).expect("serialized final-major receipt");
+        let receipt_path = receipts.root_path().join(format!("{attempt}.receipt.json"));
+        let original = fs::read_to_string(&receipt_path).unwrap();
         fs::write(
             &receipt_path,
             with_batch_receipt_tamper(
@@ -4056,10 +3868,8 @@ fn execute_spectral_cycle_with_weighting_mode(
                 BatchReceiptTamper::ValidPeakZero,
             ),
         )
-        .expect("rewrite checksum-valid receipt with valid batch evidence");
-        receipts
-            .open(final_attempt)
-            .expect("order-preserving batch rewrite passes envelope validation");
+        .unwrap();
+        receipts.open(attempt).unwrap();
         for tamper in [
             BatchReceiptTamper::Remove,
             BatchReceiptTamper::MismatchMaximum,
@@ -4068,19 +3878,38 @@ fn execute_spectral_cycle_with_weighting_mode(
                 &receipt_path,
                 with_batch_receipt_tamper(&original, replay_node.as_str(), tamper),
             )
-            .expect("rewrite checksum-valid batch-tampered receipt");
-            assert!(
-                matches!(
-                    receipts.open(final_attempt),
-                    Err(casa_imaging_runtime::ReceiptError::IntegrityMismatch)
-                ),
-                "{tamper:?} must fail terminal batch receipt validation"
-            );
+            .unwrap();
+            assert!(matches!(
+                receipts.open(attempt),
+                Err(casa_imaging_runtime::ReceiptError::IntegrityMismatch)
+            ));
         }
-        return final_registry
+        fs::write(&receipt_path, &original).unwrap();
+        receipts.open(attempt).unwrap();
+        let completion = registry
             .implementation()
             .take_completion()
-            .map(|result| result.into_completion());
+            .unwrap()
+            .into_completion();
+        assert_eq!(
+            completion.normal_state().weighting_generation(),
+            weighting_generation
+        );
+        assert_eq!(
+            completion.normal_state().final_model_generation(),
+            completion.model_completion().generation()
+        );
+        registry
+            .implementation()
+            .abort_node_io(&replay_node)
+            .unwrap();
+        assert!(
+            registry
+                .implementation()
+                .take_gridded_normal_replay()
+                .is_none()
+        );
+        return Some(completion);
     }
     let initial_nodes = execution_plan
         .execution_dag()
@@ -4154,14 +3983,18 @@ fn execute_spectral_cycle_with_weighting_mode(
             .all(|node| node.kind != WorkKind::Prefetch),
         "managed restore is not T59 prefetch scheduling"
     );
-    assert_eq!(final_physical.execution_dag().initial_knobs().batch_size, 1);
+    let expected_batch = 1;
+    assert_eq!(
+        final_physical.execution_dag().initial_knobs().batch_size,
+        expected_batch
+    );
     assert_eq!(
         final_physical
             .execution_dag()
             .resource_alternative()
             .scaling
             .maximum_batch_size,
-        1
+        expected_batch
     );
     let spill_read_claims = replay_nodes[0]
         .claims
@@ -4170,8 +4003,8 @@ fn execute_spectral_cycle_with_weighting_mode(
         .map(|claim| claim.amount)
         .collect::<Vec<_>>();
     assert!(
-        spill_read_claims.contains(&(2 * (40 + 2 * 40))),
-        "two source slots each holding a 40-byte header and two 40-byte records were {spill_read_claims:?}"
+        spill_read_claims.contains(&(2 * expected_batch * (40 + 2 * 40))),
+        "two source slots must cover every frame in the admitted batch: {spill_read_claims:?}"
     );
     assert!(
         replay_nodes[0]
@@ -4275,7 +4108,12 @@ fn execute_spectral_cycle_with_weighting_mode(
         })
         .expect("gridded replay route allocation");
     // Each selected channel contributes one compressed scalar-normal record.
-    let expected_route_bytes = gridded_normal_route_capacity_bytes(2, 1, 1).unwrap();
+    let expected_route_bytes = gridded_normal_route_capacity_bytes(
+        final_complete.gridded_replay_record_bound().unwrap(),
+        expected_batch as usize,
+        1,
+    )
+    .unwrap();
     assert_eq!(route.bytes, expected_route_bytes);
     assert_eq!(
         route.compatibility.layout,
@@ -4367,10 +4205,15 @@ fn execute_spectral_cycle_with_weighting_mode(
             && artifact.node() == &replay_node_id
     }));
     let final_attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([75; 32]);
+    let final_current = RunBindings::new(
+        problem.inputs().clone(),
+        &final_resource_policy,
+        cost_model(4),
+    );
     runtime_run(
         &executable,
         &final_plan,
-        &current,
+        &final_current,
         &final_registry,
         authority(),
         &mut RunToCompletion,
@@ -4381,6 +4224,11 @@ fn execute_spectral_cycle_with_weighting_mode(
     )
     .expect("final ordinary run");
     let final_receipt = receipts.open(final_attempt).expect("final receipt");
+    assert_eq!(
+        final_receipt.stage_actual_batch(&replay_node_id),
+        Some((expected_batch, expected_batch)),
+        "resident and disk cursors execute the same exact bounded batch"
+    );
     assert_eq!(
         final_receipt.observation_transaction_publication_scope(),
         casa_imaging_runtime::ObservationTransactionPublicationScope::ReconstructionOnly
@@ -8384,30 +8232,6 @@ impl RunController for SelectStreamedRoute {
 }
 
 #[derive(Default)]
-struct SelectSpectralLowMemoryRoute {
-    select: bool,
-    applied: bool,
-}
-
-impl RunController for SelectSpectralLowMemoryRoute {
-    fn directive(&mut self, status: &ExecutionStatus) -> RunDirective {
-        let adaptation = AdaptationId::new("spectral-low-memory-1");
-        if self.select
-            && !self.applied
-            && status
-                .eligible_adaptations()
-                .iter()
-                .any(|transition| transition.id == adaptation)
-        {
-            self.applied = true;
-            RunDirective::Adapt(adaptation)
-        } else {
-            RunDirective::Continue
-        }
-    }
-}
-
-#[derive(Default)]
 struct CancelAfterLaunch {
     polls: usize,
 }
@@ -11676,11 +11500,23 @@ fn t41_production_plan_schedules_planner_bounded_mvc_slabs_for_realistic_image_s
 }
 
 #[test]
-fn t59_explicit_memory_policy_seals_low_memory_production_adaptation() {
+fn t59_explicit_memory_policy_bounds_resident_and_streamed_replay() {
     let weighting =
         WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable);
-    execute_spectral_cycle_with_weighting_mode(weighting, false, true, true);
-    execute_spectral_cycle_with_weighting_mode(weighting, false, true, false);
+    let resident =
+        execute_spectral_cycle_with_weighting_mode(weighting, false, true, false).unwrap();
+    let streamed =
+        execute_spectral_cycle_with_weighting_mode(weighting, false, true, true).unwrap();
+    let resident = resident.normal_state().read_window(0..4).unwrap();
+    let streamed = streamed.normal_state().read_window(0..4).unwrap();
+    assert_eq!(
+        resident.residual().iter().collect::<Vec<_>>(),
+        streamed.residual().iter().collect::<Vec<_>>()
+    );
+    assert_eq!(
+        resident.normal_approximation().iter().collect::<Vec<_>>(),
+        streamed.normal_approximation().iter().collect::<Vec<_>>()
+    );
 }
 
 #[test]

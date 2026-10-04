@@ -2,6 +2,7 @@
 
 use std::fs::File;
 use std::io::{self, Write};
+use std::ops::Range;
 use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -328,6 +329,27 @@ pub(crate) struct ManagedSpillMeasurements {
 }
 
 impl ManagedSpillMeasurements {
+    /// Include a one-time cache fill without counting its logical coverage twice.
+    pub(crate) fn with_initial_load(mut self, load: Self) -> Result<Self, ManagedSpillError> {
+        if self.direction != ManagedSpillIoDirection::Read
+            || load.direction != self.direction
+            || self.artifact_bytes != load.artifact_bytes
+            || self.frame_count != load.frame_count
+            || self.record_count != load.record_count
+            || self.payload_bytes != load.payload_bytes
+        {
+            return Err(ManagedSpillError::IncompleteRead);
+        }
+        self.transferred_bytes = self
+            .transferred_bytes
+            .checked_add(load.transferred_bytes)
+            .ok_or(ManagedSpillError::ArithmeticOverflow("cache load transfer"))?;
+        self.operations = self.operations.checked_add(load.operations).ok_or(
+            ManagedSpillError::ArithmeticOverflow("cache load operations"),
+        )?;
+        self.peak_buffer_bytes = self.peak_buffer_bytes.max(load.peak_buffer_bytes);
+        Ok(self)
+    }
     pub(crate) fn aggregate_window(
         aggregate: Option<Self>,
         window: Self,
@@ -1249,7 +1271,11 @@ impl ManagedSpillArtifact {
         frame_counts: Arc<[usize]>,
         source_slot_bytes: u64,
     ) -> Result<ManagedSpillRetainedBlockSource, ManagedSpillError> {
-        let mut source = self.planned_block_source(frame_counts, source_slot_bytes)?;
+        // Cache whole frames independently of a plan's batch size. Later plans
+        // group these same immutable frames without copying their payloads.
+        let frames = usize::try_from(self.seal.frame_count)
+            .map_err(|_| ManagedSpillError::ArithmeticOverflow("retained frames"))?;
+        let mut source = self.planned_block_source(vec![1; frames].into(), source_slot_bytes)?;
         let cancelled = AtomicBool::new(false);
         let mut windows = Vec::with_capacity(source.frame_counts.len());
         let mut retained_bytes = 0_u64;
@@ -1281,13 +1307,20 @@ impl ManagedSpillArtifact {
                 "retained artifact metadata",
             ))?;
         Ok(ManagedSpillRetainedBlockSource {
-            windows: windows.into(),
-            seal: self.seal,
-            retained_bytes,
-            load,
+            backing: Arc::new(ManagedSpillRetainedBacking {
+                windows: windows.into_boxed_slice(),
+                seal: self.seal,
+                retained_bytes,
+                load,
+                _reservation: None,
+            }),
+            frame_counts,
             created_slots: AtomicUsize::new(0),
             blocks_filled: 0,
-        })
+            frames_filled: 0,
+            peak_window_bytes: 0,
+        }
+        .validate_schedule()?)
     }
 }
 
@@ -1302,14 +1335,26 @@ pub(crate) struct ManagedSpillWindowStorage {
 
 #[derive(Debug)]
 struct ManagedSpillRetainedWindow {
-    windows: Arc<[ManagedSpillWindowStorage]>,
-    ordinal: usize,
+    backing: Arc<ManagedSpillRetainedBacking>,
+    frames: Range<usize>,
+}
+
+#[derive(Debug)]
+struct ManagedSpillRetainedBacking {
+    windows: Box<[ManagedSpillWindowStorage]>,
+    seal: ManagedSpillSeal,
+    retained_bytes: u64,
+    load: ManagedSpillMeasurements,
+    // All zero-copy aliases keep the memory charge until their final drop.
+    _reservation: Option<crate::ResourceLease>,
 }
 
 fn retained_window_metadata_bytes(windows: usize) -> Result<u64, ManagedSpillError> {
     windows
         .checked_mul(size_of::<ManagedSpillWindowStorage>())
-        .and_then(|bytes| bytes.checked_add(2 * size_of::<usize>()))
+        .and_then(|bytes| {
+            bytes.checked_add(size_of::<ManagedSpillRetainedBacking>() + 2 * size_of::<usize>())
+        })
         .and_then(|bytes| u64::try_from(bytes).ok())
         .ok_or(ManagedSpillError::ArithmeticOverflow(
             "retained source window metadata",
@@ -1331,32 +1376,66 @@ pub(crate) fn retained_source_capacity_bytes(
 
 #[derive(Debug)]
 pub(crate) struct ManagedSpillRetainedBlockSource {
-    windows: Arc<[ManagedSpillWindowStorage]>,
-    seal: ManagedSpillSeal,
-    retained_bytes: u64,
-    load: ManagedSpillMeasurements,
+    backing: Arc<ManagedSpillRetainedBacking>,
+    frame_counts: Arc<[usize]>,
     created_slots: AtomicUsize,
     blocks_filled: u64,
+    frames_filled: usize,
+    peak_window_bytes: u64,
 }
 
 impl ManagedSpillRetainedBlockSource {
+    fn validate_schedule(self) -> Result<Self, ManagedSpillError> {
+        let frames = self.frame_counts.iter().try_fold(0_usize, |total, &count| {
+            if count == 0 {
+                return None;
+            }
+            total.checked_add(count)
+        });
+        if frames != Some(self.backing.windows.len()) {
+            return Err(ManagedSpillError::InvalidBudget("retained frame schedule"));
+        }
+        Ok(self)
+    }
+
+    pub(crate) fn rebind(&self, frame_counts: Arc<[usize]>) -> Result<Self, ManagedSpillError> {
+        Self {
+            backing: Arc::clone(&self.backing),
+            frame_counts,
+            created_slots: AtomicUsize::new(0),
+            blocks_filled: 0,
+            frames_filled: 0,
+            peak_window_bytes: 0,
+        }
+        .validate_schedule()
+    }
+
+    pub(crate) fn retain_memory(mut self, reservation: crate::ResourceLease) -> Self {
+        Arc::get_mut(&mut self.backing)
+            .expect("new retained backing has no aliases")
+            ._reservation = Some(reservation);
+        self
+    }
+
     fn complete_read(&self) -> Result<ManagedSpillReadCompletion, ManagedSpillError> {
-        if self.blocks_filled != self.windows.len() as u64 {
+        if self.blocks_filled != self.frame_counts.len() as u64
+            || self.frames_filled != self.backing.windows.len()
+        {
             return Err(ManagedSpillError::IncompleteRead);
         }
         let slots = u64::try_from(self.created_slots.load(Ordering::Acquire))
             .map_err(|_| ManagedSpillError::ArithmeticOverflow("retained source slots"))?;
         Ok(ManagedSpillReadCompletion {
-            seal: self.seal,
+            seal: self.backing.seal,
             measurements: ManagedSpillMeasurements {
                 direction: ManagedSpillIoDirection::Read,
-                artifact_bytes: self.seal.artifact_bytes,
-                payload_bytes: self.seal.payload_bytes,
-                frame_count: self.seal.frame_count,
-                record_count: self.seal.record_count,
+                artifact_bytes: self.backing.seal.artifact_bytes,
+                payload_bytes: self.backing.seal.payload_bytes,
+                frame_count: self.backing.seal.frame_count,
+                record_count: self.backing.seal.record_count,
                 transferred_bytes: 0,
                 operations: 0,
-                peak_buffer_bytes: self.retained_bytes,
+                peak_buffer_bytes: self.peak_window_bytes,
                 payload_copy_bytes: 0,
                 payload_copy_operations: 0,
                 buffer_allocations: slots,
@@ -1370,16 +1449,18 @@ impl ManagedSpillRetainedBlockSource {
     ) -> Result<(Self, ManagedSpillReadCompletion), ManagedSpillError> {
         let completion = self.complete_read()?;
         self.blocks_filled = 0;
+        self.frames_filled = 0;
+        self.peak_window_bytes = 0;
         self.created_slots.store(0, Ordering::Release);
         Ok((self, completion))
     }
 
-    pub(crate) const fn retained_bytes(&self) -> u64 {
-        self.retained_bytes
+    pub(crate) fn retained_bytes(&self) -> u64 {
+        self.backing.retained_bytes
     }
 
-    pub(crate) const fn load_measurements(&self) -> ManagedSpillMeasurements {
-        self.load
+    pub(crate) fn load_measurements(&self) -> ManagedSpillMeasurements {
+        self.backing.load
     }
 }
 
@@ -1406,6 +1487,7 @@ impl<'a> ManagedSpillFrame<'a> {
 
 pub(crate) struct ManagedSpillFrames<'a> {
     bytes: &'a [u8],
+    windows: &'a [ManagedSpillWindowStorage],
     remaining: usize,
     offset: usize,
 }
@@ -1416,6 +1498,12 @@ impl<'a> Iterator for ManagedSpillFrames<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         if self.remaining == 0 {
             return None;
+        }
+        if self.offset == self.bytes.len() && !self.windows.is_empty() {
+            let (window, remaining) = self.windows.split_first()?;
+            self.bytes = &window.bytes[..window.used_len];
+            self.windows = remaining;
+            self.offset = 0;
         }
         let header_end = self.offset.checked_add(FRAME_HEADER_BYTES)?;
         let header = self.bytes.get(self.offset..header_end)?;
@@ -1450,11 +1538,13 @@ impl ManagedSpillWindowStorage {
     }
 
     pub(crate) fn frames(&self) -> ManagedSpillFrames<'_> {
-        let bytes = self.retained.as_ref().map_or(&self.bytes, |retained| {
-            &retained.windows[retained.ordinal].bytes
-        });
+        let (bytes, windows) = self.retained.as_ref().map_or_else(
+            || (&self.bytes[..self.used_len], &[][..]),
+            |retained| (&[][..], &retained.backing.windows[retained.frames.clone()]),
+        );
         ManagedSpillFrames {
-            bytes: &bytes[..self.used_len],
+            bytes,
+            windows,
             remaining: self.frame_count,
             offset: 0,
         }
@@ -1469,7 +1559,10 @@ impl ManagedSpillWindowStorage {
             .retained
             .as_ref()
             .map_or(self.bytes.capacity(), |retained| {
-                retained.windows[retained.ordinal].bytes.capacity()
+                retained.backing.windows[retained.frames.clone()]
+                    .iter()
+                    .map(|window| window.bytes.capacity())
+                    .sum()
             });
         u64::try_from(capacity).unwrap_or(u64::MAX)
     }
@@ -2212,27 +2305,26 @@ impl OrderedBlockSource for ManagedSpillRetainedBlockSource {
         }
         let ordinal = usize::try_from(self.blocks_filled)
             .map_err(|_| ManagedSpillError::ArithmeticOverflow("retained window ordinal"))?;
-        let Some(retained) = self.windows.get(ordinal) else {
+        let Some(&count) = self.frame_counts.get(ordinal) else {
             return Ok(SourcePoll::Exhausted);
         };
+        let end = self.frames_filled + count;
+        let frames = self.frames_filled..end;
+        let windows = &self.backing.windows[frames.clone()];
         let source_ordinal = u32::try_from(block_ordinal)
             .map_err(|_| ManagedSpillError::ArithmeticOverflow("retained source ordinal"))?;
-        let logical_bytes = retained.frames().try_fold(0_u64, |total, frame| {
-            total
-                .checked_add(u64::try_from(frame.payload().len()).map_err(|_| {
-                    ManagedSpillError::ArithmeticOverflow("retained frame payload bytes")
-                })?)
-                .ok_or(ManagedSpillError::ArithmeticOverflow(
-                    "retained window payload bytes",
-                ))
-        })?;
-        storage.frame_count = retained.frame_count;
-        storage.record_count = retained.record_count;
-        storage.used_len = retained.used_len;
+        storage.frame_count = count;
+        storage.record_count = windows.iter().map(|window| window.record_count).sum();
+        storage.used_len = windows.iter().map(|window| window.used_len).sum();
+        let logical_bytes = (storage.used_len - count * FRAME_HEADER_BYTES) as u64;
         storage.retained = Some(ManagedSpillRetainedWindow {
-            windows: Arc::clone(&self.windows),
-            ordinal,
+            backing: Arc::clone(&self.backing),
+            frames,
         });
+        self.peak_window_bytes = self
+            .peak_window_bytes
+            .max(storage.resident_capacity_bytes());
+        self.frames_filled = end;
         self.blocks_filled =
             self.blocks_filled
                 .checked_add(1)
@@ -3507,9 +3599,9 @@ pub(crate) mod tests {
         let retained = artifact
             .load_retained_block_source(Arc::from([]), source_slot_bytes)
             .expect("validate empty retained source");
-        assert!(retained.windows.is_empty());
+        assert!(retained.backing.windows.is_empty());
         assert_eq!(
-            retained.retained_bytes,
+            retained.retained_bytes(),
             retained_window_metadata_bytes(0).unwrap()
         );
     }
@@ -3574,7 +3666,54 @@ pub(crate) mod tests {
         assert_eq!(replay.io_measurement().actual(), Some((0, 0)));
         assert_eq!(replay.payload_copy_bytes(), 0);
         assert_eq!(replay.payload_copy_operations(), 0);
-        assert_eq!(replay.peak_buffer_bytes(), retained_bytes);
+        assert!(replay.peak_buffer_bytes() <= source_slot_bytes);
+    }
+
+    #[test]
+    fn retained_replay_alias_keeps_its_cross_plan_memory_lease() {
+        let (root, artifact) = sealed_two_frame_artifact();
+        let (authority, _) = test_authority(root.path(), TEST_CAPACITY_BYTES);
+        let policy = crate::ResourcePolicy::Exclusive;
+        let before = authority
+            .remaining_selected_source_memory_bytes(&policy)
+            .unwrap();
+        let bytes = retained_source_capacity_bytes(artifact.seal.artifact_bytes, 2).unwrap();
+        let lease = authority
+            .reserve_host_cache(policy.clone(), "test-replay-cache", bytes)
+            .unwrap();
+        let cache = artifact
+            .load_retained_block_source(
+                Arc::from([1, 1]),
+                artifact.budget.source_slot_bytes(1).unwrap(),
+            )
+            .unwrap()
+            .retain_memory(lease);
+        let alias = cache.rebind(Arc::from([2])).unwrap();
+        drop(cache);
+        assert_eq!(
+            authority
+                .remaining_selected_source_memory_bytes(&policy)
+                .unwrap(),
+            before - bytes
+        );
+        drop(alias);
+        assert_eq!(
+            authority
+                .remaining_selected_source_memory_bytes(&policy)
+                .unwrap(),
+            before
+        );
+        assert!(matches!(
+            authority.reserve_host_cache(
+                crate::ResourcePolicy::Explicit(crate::ResourceOverride {
+                    cache_bytes: Some(0),
+                    ..crate::ResourceOverride::default()
+                }),
+                "test-replay-cache",
+                bytes,
+            ),
+            Err(crate::ResourceError::NoFeasibleAlternative(_))
+        ));
     }
 
     #[test]
@@ -3668,6 +3807,23 @@ pub(crate) mod tests {
             assert_eq!(completion.measurements().payload_copy_bytes(), 0);
             cached = next;
         }
+        // A later plan changes the batch grouping, not the immutable payload.
+        let mut grouped = cached.rebind(Arc::from([2])).unwrap();
+        let values = read(&mut grouped);
+        assert_eq!(first.as_ref().unwrap(), &values);
+        let (_, completion) = grouped.complete_rewound().unwrap();
+        assert_eq!(
+            completion.measurements().io_measurement().actual(),
+            Some((0, 0))
+        );
+        assert!(matches!(
+            cached.rebind(Arc::from([1])),
+            Err(ManagedSpillError::InvalidBudget(_))
+        ));
+        assert!(matches!(
+            cached.rebind(Arc::from([0, 2])),
+            Err(ManagedSpillError::InvalidBudget(_))
+        ));
     }
 
     #[test]

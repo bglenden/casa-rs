@@ -154,6 +154,13 @@ scientific sealing transfers the existing permit; there is no release/reacquire
 gap or second lease. Runtime-owned shared backing couples the compiled program,
 temporary artifact, and retention capability to every reader and operator.
 The final owning alias releases the exact retained metadata and storage.
+When the complete next phase leaves room, immutable replay frames also retain
+one optional run-scoped host-cache lease, charged exactly once against both
+host-memory and cache ceilings. CPU and Metal use fresh batch cursors over the
+same frame storage; changing batch size does not copy or reload payloads. The
+last view retains the memory charge. At a quiescent major boundary, a phase that
+cannot fit may evict this optional cache before planning bounded disk replay;
+channel-selected replay does not require full-artifact residency.
 Compiler transient and later minor-cycle heaps may reuse one max-sized host
 workspace only across ordered, disjoint lifetimes; exported allocations never
 reuse a physical slot. Private receipt schema 23 records each allocation's

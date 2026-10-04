@@ -2088,6 +2088,97 @@ impl ResourceAuthority {
         self.remaining_memory_bytes(policy, &base.demand.host_memory_view, reserved)
     }
 
+    /// Keep one host allocation charged between execution plans. Its owner
+    /// releases physical storage before dropping this ordinary RAII lease.
+    pub(crate) fn reserve_host_memory(
+        &self,
+        policy: ResourcePolicy,
+        allocation_id: &str,
+        bytes: u64,
+    ) -> Result<ResourceLease, ResourceError> {
+        self.reserve_host_residency(policy, allocation_id, bytes, false)
+    }
+
+    /// Optional immutable replay residency obeys both cache and host ceilings.
+    pub(crate) fn reserve_host_cache(
+        &self,
+        policy: ResourcePolicy,
+        allocation_id: &str,
+        bytes: u64,
+    ) -> Result<ResourceLease, ResourceError> {
+        self.reserve_host_residency(policy, allocation_id, bytes, true)
+    }
+
+    fn reserve_host_residency(
+        &self,
+        policy: ResourcePolicy,
+        allocation_id: &str,
+        bytes: u64,
+        cache: bool,
+    ) -> Result<ResourceLease, ResourceError> {
+        let host = self
+            .inner
+            .topology
+            .memory_views
+            .iter()
+            .find(|view| view.kind == MemoryViewKind::Host)
+            .ok_or_else(|| ResourceError::Invalid("host memory view is missing".into()))?;
+        self.acquire(
+            policy,
+            DemandAlternatives {
+                required_capabilities: BTreeSet::new(),
+                alternatives: vec![DemandAlternative {
+                    id: AlternativeId::new(allocation_id),
+                    capabilities: CapabilityPredicate::default(),
+                    demand: DemandEnvelope {
+                        host_memory_view: host.id.clone(),
+                        // CacheDemand includes its physical host bytes. Do not
+                        // also charge them through a MemoryDemand allocation.
+                        memory: if cache {
+                            vec![]
+                        } else {
+                            vec![MemoryDemand {
+                                allocation_id: allocation_id.into(),
+                                hard_bytes: bytes,
+                                preferred_bytes: bytes,
+                                views: vec![host.id.clone()],
+                            }]
+                        },
+                        workers: CountDemand::zero(),
+                        overhead: RuntimeOverheadDemand::zero(),
+                        storage: vec![],
+                        rates: vec![],
+                        caches: if cache {
+                            CacheDemand {
+                                hard_resident_bytes: bytes,
+                                preferred_resident_bytes: bytes,
+                            }
+                        } else {
+                            CacheDemand::zero()
+                        },
+                        locks: CountDemand::zero(),
+                        file_descriptors: CountDemand::zero(),
+                        queues: vec![],
+                        transfers: vec![],
+                        accelerators: vec![],
+                        io_buffers: IoBufferDemand::zero(),
+                    },
+                    headroom: ResourceHeadroom::default(),
+                    scaling: ScalingMetadata {
+                        minimum_workers: 0,
+                        maximum_workers: 0,
+                        maximum_batch_size: 1,
+                        maximum_tile_width: 1,
+                        maximum_tile_height: 1,
+                        maximum_slab_depth: 1,
+                        memory_bytes_per_worker: BTreeMap::new(),
+                    },
+                    quiescence_points: BTreeSet::from([QuiescencePoint::MajorCycle]),
+                }],
+            },
+        )
+    }
+
     /// Quote current host capacity for an unopened selected source, preserving
     /// policy reserves and active leases including their headroom. This is
     /// source-only feasibility: the complete plan's demand and additional

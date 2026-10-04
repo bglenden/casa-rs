@@ -743,7 +743,7 @@ impl GriddedNormalReplayWindowPlan {
     }
 }
 
-/// Opaque run-scoped normal-operator program and its checksummed spill storage.
+/// Opaque run-scoped normal-operator program and its structurally framed storage.
 ///
 /// The application may move this capability between major-cycle executors, but
 /// cannot inspect records, reopen the selected observation, or apply science.
@@ -763,6 +763,8 @@ pub struct FrozenGriddedNormalReplay {
     latest_prefetch: Option<ManagedSpillMeasurements>,
     latest_cache_load: Option<ManagedSpillMeasurements>,
     latest_cache_resident_bytes: Option<u64>,
+    resident_source: Option<ManagedSpillRetainedBlockSource>,
+    pending_resident_memory: Option<crate::ResourceLease>,
 }
 
 struct RetainedGriddedBacking {
@@ -1161,6 +1163,8 @@ impl GriddedNormalReplayCompilation {
             latest_prefetch: None,
             latest_cache_load: None,
             latest_cache_resident_bytes: None,
+            resident_source: None,
+            pending_resident_memory: None,
         })
     }
 }
@@ -1455,6 +1459,43 @@ impl FrozenGriddedNormalReplay {
         Ok(())
     }
 
+    pub(crate) fn has_resident_source(&self) -> bool {
+        self.resident_source.is_some() || self.pending_resident_memory.is_some()
+    }
+
+    pub(crate) fn evict_resident_source(&mut self) {
+        assert!(self.window_plan.is_none() && self.prepared_source.is_none());
+        self.resident_source = None;
+        self.pending_resident_memory = None;
+    }
+
+    pub(crate) fn reserve_resident_source(
+        &mut self,
+        authority: &crate::ResourceAuthority,
+        policy: &crate::ResourcePolicy,
+        alternative: &crate::DemandAlternative,
+    ) -> Result<(), crate::ResourceError> {
+        if self.has_resident_source() {
+            return Ok(());
+        }
+        let bytes = self
+            .descriptor()
+            .retained_source_capacity_bytes()
+            .map_err(|_| crate::ResourceError::Overflow("resident replay capacity"))?;
+        if authority.remaining_planning_memory_bytes(policy, alternative)? < bytes {
+            return Ok(());
+        }
+        self.pending_resident_memory =
+            match authority.reserve_host_cache(policy.clone(), "run-gridded-normal-records", bytes)
+            {
+                Ok(lease) => Some(lease),
+                // A host-pressure change may retire this optional residency quote.
+                Err(crate::ResourceError::NoFeasibleAlternative(_)) => None,
+                Err(error) => return Err(error),
+            };
+        Ok(())
+    }
+
     pub(crate) fn release_completed_window_plan(&mut self) -> Result<(), CompleteDataPlanError> {
         if self.window_plan.is_none()
             || self.prepared_batch_size.is_none()
@@ -1731,7 +1772,43 @@ impl FrozenGriddedNormalReplay {
                 "gridded-normal prefetch lacks its complete planned resources",
             ));
         }
-        let source = if let Some((selection, selected_plan)) = window_plan.selected_window(0) {
+        let source = if !window_plan.has_selected_windows() && self.has_resident_source() {
+            if self.resident_source.is_none() {
+                let reservation = self
+                    .pending_resident_memory
+                    .take()
+                    .expect("resident source has an admitted memory owner");
+                let source = self
+                    .backing
+                    .spill
+                    .load_retained_block_source(
+                        schedule.frame_counts.clone(),
+                        schedule.source_slot_bytes,
+                    )
+                    .map_err(io::Error::other)?;
+                if source.retained_bytes() > reservation.demand().caches.hard_resident_bytes {
+                    return Err(io::Error::other("resident replay exceeds its memory lease"));
+                }
+                self.latest_cache_load = Some(source.load_measurements());
+                eprintln!(
+                    "imaging_gridded_resident_load bytes={} read_bytes={} read_operations={}",
+                    source.retained_bytes(),
+                    source.load_measurements().transferred_bytes(),
+                    source.load_measurements().operations()
+                );
+                self.resident_source = Some(source.retain_memory(reservation));
+            }
+            let cached = self
+                .resident_source
+                .as_ref()
+                .expect("resident replay loaded");
+            self.latest_cache_resident_bytes = Some(cached.retained_bytes());
+            GriddedNormalReplaySourceKind::Retained(
+                cached
+                    .rebind(schedule.frame_counts.clone())
+                    .map_err(io::Error::other)?,
+            )
+        } else if let Some((selection, selected_plan)) = window_plan.selected_window(0) {
             let selected_schedule =
                 selected_plan.batch_schedule(batch_size.min(selected_plan.maximum_frames()))?;
             let selection = self
@@ -1977,6 +2054,16 @@ impl FrozenGriddedNormalReplay {
                     "gridded-normal read completion changed its required coverage",
                 ));
             }
+        };
+        let read_measurements = if self.resident_source.is_some() && self.artifact_pass_count == 1 {
+            match self.latest_cache_load {
+                Some(load) => read_measurements
+                    .with_initial_load(load)
+                    .map_err(io::Error::other)?,
+                None => read_measurements,
+            }
+        } else {
+            read_measurements
         };
         let stream_measurements = outcome.measurements;
         let (result, routing, recycle) = outcome.kernel_completion;

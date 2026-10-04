@@ -241,6 +241,7 @@ pub struct SpectralCyclePlan {
     weighting: WeightingPlan,
     pass: SpectralPassIdentity,
     gridded_normal: Option<PlannedGriddedNormalBinding>,
+    replay_residency: Option<(ResourceAuthority, ResourcePolicy)>,
 }
 
 /// One complete plan-issued capability for gridded-normal compilation or replay.
@@ -517,6 +518,7 @@ impl SpectralCyclePlan {
             weighting,
             pass,
             gridded_normal: None,
+            replay_residency: None,
         })
     }
 
@@ -527,7 +529,7 @@ impl SpectralCyclePlan {
         pass: SpectralPassIdentity,
         include_minor: bool,
         phase_input: Option<&FinalMajorPhaseInput>,
-        gridded_replay: Option<crate::FrozenGriddedNormalReplay>,
+        mut gridded_replay: Option<crate::FrozenGriddedNormalReplay>,
     ) -> Result<Self, SpectralCyclePlanError> {
         validate_aw_projection_binding(problem, &policy)?;
         let weighting = plan_weighting(problem, policy.weighting_limits)?;
@@ -724,6 +726,30 @@ impl SpectralCyclePlan {
                                         },
                                     );
                                 }
+                                let bounded = compose_major_physical_mode(
+                                    problem,
+                                    registry,
+                                    &policy,
+                                    &weighting,
+                                    phase,
+                                    PhysicalComposition {
+                                        workers,
+                                        window: Some(window),
+                                        retention: RetentionMode::Bounded,
+                                    },
+                                )?;
+                                let resident_bytes =
+                                    replay.descriptor().retained_source_capacity_bytes()?;
+                                let can_reside = candidate_memory_fits(&bounded, &policy)?
+                                    && policy.authority.remaining_planning_memory_bytes(
+                                        &policy.resource_policy,
+                                        bounded.physical.execution_dag().resource_alternative(),
+                                    )? >= resident_bytes;
+                                if replay.has_resident_source() || can_reside {
+                                    // The immutable payload has its own cross-plan
+                                    // lease; do not allocate/load a second DAG cache.
+                                    return Ok(bounded);
+                                }
                                 let retained = compose_major_physical_mode(
                                     problem,
                                     registry,
@@ -747,18 +773,6 @@ impl SpectralCyclePlan {
                                 // fit the explicit ceiling, the direct replay
                                 // route streams the same artifact from disk
                                 // through window-sized buffers.
-                                let bounded = compose_major_physical_mode(
-                                    problem,
-                                    registry,
-                                    &policy,
-                                    &weighting,
-                                    phase,
-                                    PhysicalComposition {
-                                        workers,
-                                        window: Some(window),
-                                        retention: RetentionMode::Bounded,
-                                    },
-                                )?;
                                 if candidate_memory_fits(&bounded, &policy)? {
                                     if imaging_plan_diagnostics_enabled() {
                                         eprintln!(
@@ -889,6 +903,35 @@ impl SpectralCyclePlan {
                 }
             }
         }
+        // At this quiescent boundary no source view is live. If the next complete
+        // phase cannot fit, release optional payload residency before replanning.
+        if gridded_replay
+            .as_ref()
+            .is_some_and(|replay| replay.has_resident_source())
+            && !candidates
+                .iter()
+                .map(|candidate| fits(candidate))
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .any(|fits| fits)
+        {
+            gridded_replay
+                .as_mut()
+                .expect("resident replay exists")
+                .evict_resident_source();
+            return Self::build(
+                problem,
+                registry,
+                policy,
+                pass,
+                include_minor,
+                phase_input,
+                gridded_replay,
+            );
+        }
+        let replay_residency = gridded_replay
+            .as_ref()
+            .map(|_| (policy.authority.clone(), policy.resource_policy.clone()));
         let gridded_normal = match (strategy, gridded_normal_storage, gridded_replay) {
             (GriddedNormalStrategy::ReuseManagedSpill, Some(storage), Some(replay)) => {
                 Some(PlannedGriddedNormalBinding::replay(replay, storage)?)
@@ -912,6 +955,7 @@ impl SpectralCyclePlan {
             weighting,
             pass,
             gridded_normal,
+            replay_residency,
         })
     }
 
@@ -961,6 +1005,21 @@ impl SpectralCyclePlan {
             else {
                 return Err(SpectralCyclePlanError::InvalidGriddedNormalReplay);
             };
+            if window.has_selected_windows() {
+                replay.evict_resident_source();
+            } else if !candidate
+                .physical
+                .execution_dag()
+                .nodes()
+                .contains_key(&retained_route_node(self.pass))
+                && let Some((authority, policy)) = &self.replay_residency
+            {
+                replay.reserve_resident_source(
+                    authority,
+                    policy,
+                    candidate.physical.execution_dag().resource_alternative(),
+                )?;
+            }
             replay.bind_window_plan(window)?;
         }
         Ok(SpectralCyclePlanParts {

@@ -2,13 +2,7 @@
 
 //! Runtime composition of reconstruction phases with opaque T17 traversal evidence.
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    error::Error,
-    fmt, io,
-    mem::align_of,
-    sync::Arc,
-};
+use std::{collections::BTreeSet, error::Error, fmt, io, mem::align_of, sync::Arc};
 
 use casa_imaging_model::{
     CompiledProblem, CompiledProblemId, SelectedObservationSampleView,
@@ -47,17 +41,15 @@ use crate::complete_data_operator::{
 };
 use crate::{
     AllocationAccess, AllocationId, AllocationLayout, AllocationLifetime, AllocationPurpose,
-    AllocationUse, AlternativeId, AttemptBoundObservationCompletion, CacheDemand,
-    CapabilityPredicate, CapacityDomainId, CapacityViewId, ClaimLifetime, CountDemand,
-    DemandAlternative, DemandAlternatives, DemandEnvelope, ExecutionAttemptId, ExecutionDag,
+    AllocationUse, AlternativeId, AttemptBoundObservationCompletion, CapacityDomainId,
+    CapacityViewId, ClaimLifetime, CountDemand, ExecutionAttemptId, ExecutionDag,
     ExecutionDagSpecification, ExecutionError, FenceId, FenceKind, InitializationPolicy,
-    IoBufferDemand, IoBufferKind, IoPrediction, LeaseResource, LogicalAllocation, MemoryDemand,
+    IoBufferKind, IoPrediction, LeaseResource, LogicalAllocation, MemoryDemand,
     ObservationCompletionBindingError, ObservationReadCompletionContext, PhysicalSlot,
-    PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError, PlanPrediction, QuiescencePoint,
-    ResourceAuthority, ResourceClaim, ResourceError, ResourceHeadroom, ResourceLease,
-    ResourcePolicy, RuntimeOverheadDemand, ScalingMetadata, SlotCompatibility, StagePrediction,
-    StorageMode, WorkDependency, WorkDomain, WorkExecutionContext, WorkImplementationId, WorkKind,
-    WorkNode, WorkNodeId,
+    PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError, PlanPrediction,
+    ResourceAuthority, ResourceClaim, ResourceError, ResourceLease, ResourcePolicy,
+    SlotCompatibility, StagePrediction, StorageMode, WorkDependency, WorkDomain,
+    WorkExecutionContext, WorkImplementationId, WorkKind, WorkNode, WorkNodeId,
 };
 use crate::{
     ContinuumTransformCompletion, ContinuumTransformError, ContinuumTransformStream,
@@ -4413,49 +4405,7 @@ impl FrozenWeightingReservation {
         let bytes = Self::required_bytes(residency, replay_proof_bytes)?;
         let replay_proof_bytes = u64::try_from(replay_proof_bytes)
             .map_err(|_| ResourceError::Overflow("selected replay proof residency"))?;
-        let memory = MemoryDemand {
-            allocation_id: "cross-plan-frozen-weighting".to_string(),
-            hard_bytes: bytes,
-            preferred_bytes: bytes,
-            views: vec![CapacityViewId::new("host-memory")],
-        };
-        let alternative = DemandAlternative {
-            id: AlternativeId::new("cross-plan-frozen-weighting"),
-            capabilities: CapabilityPredicate::default(),
-            demand: DemandEnvelope {
-                host_memory_view: CapacityViewId::new("host-memory"),
-                memory: vec![memory],
-                workers: CountDemand::zero(),
-                overhead: RuntimeOverheadDemand::zero(),
-                storage: vec![],
-                rates: vec![],
-                caches: CacheDemand::zero(),
-                locks: CountDemand::zero(),
-                file_descriptors: CountDemand::zero(),
-                queues: vec![],
-                transfers: vec![],
-                accelerators: vec![],
-                io_buffers: IoBufferDemand::zero(),
-            },
-            headroom: ResourceHeadroom::default(),
-            scaling: ScalingMetadata {
-                minimum_workers: 0,
-                maximum_workers: 0,
-                maximum_batch_size: 1,
-                maximum_tile_width: 1,
-                maximum_tile_height: 1,
-                maximum_slab_depth: 1,
-                memory_bytes_per_worker: BTreeMap::new(),
-            },
-            quiescence_points: BTreeSet::from([QuiescencePoint::MajorCycle]),
-        };
-        let lease = authority.acquire(
-            policy,
-            DemandAlternatives {
-                required_capabilities: BTreeSet::new(),
-                alternatives: vec![alternative],
-            },
-        )?;
+        let lease = authority.reserve_host_memory(policy, "cross-plan-frozen-weighting", bytes)?;
         Ok(Self {
             _lease: lease,
             bytes,

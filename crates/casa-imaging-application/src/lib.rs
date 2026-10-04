@@ -723,6 +723,7 @@ where
                     );
                 }
                 {
+                    let output_frozen_weighting = P::visibility_weighting(replay)?;
                     let resolved = resolve_selected_observation(input.observation.clone())?;
                     let (_, access) = resolved.into_parts();
                     let output_residency = access.certify_residency(problem)?;
@@ -778,7 +779,7 @@ where
                         output_complete,
                         access.into_deferred(),
                         completion,
-                        P::visibility_weighting(replay)?,
+                        output_frozen_weighting,
                     )
                     .with_final_visibility_sink(sink);
                     if let Some(binding) = output_aw {

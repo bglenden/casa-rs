@@ -553,6 +553,26 @@ fn balanced_policy_selects_the_largest_feasible_production_replay_team() {
     assert_eq!(run.final_stream.actual_workers, 3);
 }
 
+#[test]
+fn cache_ceiling_keeps_complete_mfs_replay_on_the_bounded_disk_source() {
+    let resident = execute_complete_data_mfs(1);
+    let streamed = execute_complete_data_mfs_with_policy(
+        ResourcePolicy::Explicit(ResourceOverride {
+            workers: Some(1),
+            cache_bytes: Some(0),
+            ..ResourceOverride::default()
+        }),
+        18,
+        FacetLayout::Single,
+    );
+    assert_complex_agreement(
+        &resident.residual,
+        &streamed.residual,
+        "cache-independent residual",
+    );
+    assert_model_agreement(&resident.model, &streamed.model);
+}
+
 fn assert_stream_contract(
     stream: &StreamSummary,
     workers: u64,
@@ -1008,6 +1028,39 @@ fn execute_complete_data_mfs_with_policy(
     assert!(completed_replay.latest_read_measurements().is_some());
     assert!(completed_replay.latest_stream_measurements().is_some());
     assert!(completed_replay.release_completed_window_plan().is_err());
+    if matches!(&resource_policy, ResourcePolicy::Explicit(overrides) if overrides.cache_bytes == Some(0))
+    {
+        assert!(!completed_replay.has_resident_source());
+        assert!(
+            completed_replay
+                .latest_read_measurements()
+                .unwrap()
+                .transferred_bytes()
+                > 0
+        );
+    } else {
+        assert!(
+            completed_replay.has_resident_source(),
+            "the small complete phase admits residency"
+        );
+    }
+    if completed_replay.has_resident_source() {
+        let with_cache = authority
+            .remaining_selected_source_memory_bytes(&resource_policy)
+            .unwrap();
+        let cache_capacity = completed_replay
+            .descriptor()
+            .retained_source_capacity_bytes()
+            .unwrap();
+        completed_replay.evict_resident_source();
+        assert_eq!(
+            authority
+                .remaining_selected_source_memory_bytes(&resource_policy)
+                .unwrap(),
+            with_cache + cache_capacity,
+            "quiescent eviction returns the retained replay reservation"
+        );
+    }
     let next_window = completed_replay
         .preview_windows(
             1,
