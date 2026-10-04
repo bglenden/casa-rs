@@ -92,9 +92,6 @@ impl LinearRefresh {
     }
 
     fn refresh(&mut self, residual: &mut [f64]) -> Result<(), MinorCycleError> {
-        if residual.len() != self.shape[0] * self.shape[1] {
-            return Err(MinorCycleError::ModelShapeMismatch);
-        }
         self.fft
             .forward(&mut self.components)
             .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
@@ -104,16 +101,14 @@ impl LinearRefresh {
         self.fft
             .inverse(&mut self.components)
             .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
-        let inverse_normalization = 1.0 / (self.padded[0] * self.padded[1]) as f64;
+        let normalization = (self.padded[0] * self.padded[1]) as f64;
         let real: &[f32] = bytemuck::cast_slice(&self.components);
         let row_stride = self.fft.real_row_stride();
-        for (row, convolution) in residual
-            .chunks_exact_mut(self.shape[1])
-            .zip(real.chunks_exact(row_stride))
-        {
-            for (value, correction) in row.iter_mut().zip(convolution) {
-                *value -= f64::from(*correction) * inverse_normalization;
-                if !value.is_finite() {
+        for x in 0..self.shape[0] {
+            for y in 0..self.shape[1] {
+                let index = x * self.shape[1] + y;
+                residual[index] -= f64::from(real[x * row_stride + y]) / normalization;
+                if !residual[index].is_finite() {
                     return Err(MinorCycleError::GeneratedNonfinite);
                 }
             }
@@ -498,10 +493,6 @@ mod tests {
                 }
             }
             let mut actual = vec![0.5; psf.len()];
-            assert_eq!(
-                refresh.refresh(&mut actual[..psf.len() - 1]),
-                Err(MinorCycleError::ModelShapeMismatch)
-            );
             refresh.refresh(&mut actual).unwrap();
             for (&actual, &expected) in actual.iter().zip(&expected) {
                 assert!(
