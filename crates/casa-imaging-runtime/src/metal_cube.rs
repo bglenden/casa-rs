@@ -289,7 +289,6 @@ pub(super) struct MetalStageProfile {
     samples: Retained<ProtocolObject<dyn MTLCounterSampleBuffer>>,
     clock_start: [u64; 2],
     active: [bool; 2],
-    sample_offset: usize,
 }
 
 fn sample_clocks(device: &ProtocolObject<dyn MTLDevice>) -> [u64; 2] {
@@ -332,29 +331,19 @@ impl MetalStageProfiler {
     }
 
     fn begin(&self, shape: [u32; 8]) -> Result<MetalStageProfile, String> {
-        let mut profile = self.begin_batch(1)?.pop().expect("one timestamp profile");
-        profile.active = [shape[0] != 0, shape[1] != 0];
-        Ok(profile)
-    }
-
-    fn begin_batch(&self, count: usize) -> Result<Vec<MetalStageProfile>, String> {
         let descriptor = MTLCounterSampleBufferDescriptor::new();
         descriptor.setCounterSet(Some(&self.timestamps));
         descriptor.setStorageMode(MTLStorageMode::Shared);
-        unsafe { descriptor.setSampleCount(count * 4) };
+        unsafe { descriptor.setSampleCount(4) };
         let samples = self
             .device
             .newCounterSampleBufferWithDescriptor_error(&descriptor)
             .map_err(|error| error.localizedDescription().to_string())?;
-        let clock_start = sample_clocks(&self.device);
-        Ok((0..count)
-            .map(|index| MetalStageProfile {
-                samples: samples.clone(),
-                clock_start,
-                active: [true; 2],
-                sample_offset: index * 4,
-            })
-            .collect())
+        Ok(MetalStageProfile {
+            samples,
+            clock_start: sample_clocks(&self.device),
+            active: [shape[0] != 0, shape[1] != 0],
+        })
     }
 }
 
@@ -363,11 +352,8 @@ impl MetalStageProfile {
     /// paired clock API are nanoseconds; GPU counter ticks require calibration.
     pub(super) fn seconds(&self) -> Result<[f64; 2], String> {
         let clock_end = sample_clocks(&self.samples.device());
-        let data = unsafe {
-            self.samples
-                .resolveCounterRange(NSRange::new(self.sample_offset, 4))
-        }
-        .ok_or("Metal timestamp resolve failed")?;
+        let data = unsafe { self.samples.resolveCounterRange(NSRange::new(0, 4)) }
+            .ok_or("Metal timestamp resolve failed")?;
         let bytes = unsafe { data.as_bytes_unchecked() };
         if bytes.len() != 4 * size_of::<u64>() {
             return Err("invalid Metal timestamp result length".into());
@@ -507,12 +493,9 @@ impl MetalCubeKernels {
             command,
             buffers,
             &parameters,
+            shape,
             [&self.unique_prediction, &self.residual],
             [shape[0], shape[1]],
-            self.stage_profiler
-                .as_ref()
-                .map(|p| p.begin(shape))
-                .transpose()?,
         )
     }
 
@@ -521,22 +504,15 @@ impl MetalCubeKernels {
         command: &ProtocolObject<dyn MTLCommandBuffer>,
         buffers: &[(&ProtocolObject<dyn MTLBuffer>, usize)],
         shape: [u32; 4],
-        profile: Option<MetalStageProfile>,
     ) -> Result<Option<MetalStageProfile>, String> {
         self.encode_connected(
             command,
             buffers,
             &shape,
+            [shape[1], shape[0], 0, 0, shape[2], shape[3], 1, 0],
             [&self.normal_prediction, &self.normal_accumulation],
             [shape[1], shape[0]],
-            profile,
         )
-    }
-
-    pub(super) fn normal_profiles(&self, count: usize) -> Result<Vec<MetalStageProfile>, String> {
-        self.stage_profiler
-            .as_ref()
-            .map_or_else(|| Ok(Vec::new()), |p| p.begin_batch(count))
     }
 
     fn encode_connected<T>(
@@ -544,10 +520,15 @@ impl MetalCubeKernels {
         command: &ProtocolObject<dyn MTLCommandBuffer>,
         buffers: &[(&ProtocolObject<dyn MTLBuffer>, usize)],
         parameters: &T,
+        shape: [u32; 8],
         pipelines: [&ProtocolObject<dyn MTLComputePipelineState>; 2],
         counts: [u32; 2],
-        profile: Option<MetalStageProfile>,
     ) -> Result<Option<MetalStageProfile>, String> {
+        let profile = self
+            .stage_profiler
+            .as_ref()
+            .map(|profiler| profiler.begin(shape))
+            .transpose()?;
         for (stage, (pipeline, count)) in pipelines.into_iter().zip(counts).enumerate() {
             if count == 0 {
                 continue;
@@ -558,8 +539,8 @@ impl MetalCubeKernels {
                     unsafe { pass.sampleBufferAttachments().objectAtIndexedSubscript(0) };
                 attachment.setSampleBuffer(Some(&profile.samples));
                 unsafe {
-                    attachment.setStartOfEncoderSampleIndex(profile.sample_offset + stage * 2);
-                    attachment.setEndOfEncoderSampleIndex(profile.sample_offset + stage * 2 + 1);
+                    attachment.setStartOfEncoderSampleIndex(stage * 2);
+                    attachment.setEndOfEncoderSampleIndex(stage * 2 + 1);
                 }
                 command.computeCommandEncoderWithDescriptor(&pass)
             } else {
@@ -784,7 +765,6 @@ mod tests {
                         &command,
                         &bindings,
                         [records.len() as u32, groups.len() as u32, 32, 32],
-                        kernels.normal_profiles(1).unwrap().pop(),
                     )
                     .unwrap();
                 command.commit();

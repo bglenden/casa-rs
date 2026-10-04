@@ -4,8 +4,7 @@
 
 use super::*;
 use crate::metal_runtime::{
-    MetalBatchAccess, MetalBufferRegion, MetalReplayBuffer, NORMAL_BATCHES_PER_COMMAND,
-    NormalDispatch,
+    MetalBatchAccess, MetalBufferRegion, MetalReplayBuffer, NormalDispatch,
 };
 use casa_imaging_reconstruction::runtime_adapter::{
     DeviceNormalApply, DeviceNormalGroup, DeviceNormalPosition, DeviceNormalPreparedBatch,
@@ -362,14 +361,14 @@ impl<'a> MetalNormalReplayKernel<'a> {
             .with_bytes(status, |bytes| bytes.fill(0))
             .map_err(device_error)?;
         let grid_bytes = self.plan.shape[0] * self.plan.shape[1] * 8;
-        let ticket = self.access.submit_normal(&[NormalDispatch {
+        let ticket = self.access.submit_normal(NormalDispatch {
             regions: [records, groups,
                 self.plan.region(self.plan.weights, casa_imaging_reconstruction::runtime_adapter::BandPlan::spatial_weight_bytes()),
                 self.plan.region(self.plan.model, grid_bytes), predictions,
                 self.plan.region(self.plan.normal, grid_bytes), status],
             shape: [self.records as u32, self.groups as u32, self.plan.shape[0] as u32, self.plan.shape[1] as u32],
             replay,
-        }]).map_err(device_error)?;
+        }).map_err(device_error)?;
         if replay.is_none() {
             self.upload_bytes += (self.records * size_of::<DeviceNormalRecord>()
                 + self.groups * size_of::<DeviceNormalGroup>())
@@ -385,34 +384,15 @@ impl<'a> MetalNormalReplayKernel<'a> {
     fn dispatch_prepared(
         &mut self,
         prepared: &Arc<PreparedMetalNormalReplay>,
-        range: std::ops::Range<usize>,
+        ordinal: usize,
     ) -> Result<(), CompleteDataOperatorError> {
         self.settle(self.slot)?;
-        let [records, groups, predictions, status] = self.plan.slot(self.slot);
-        self.access
-            .with_bytes(status, |bytes| bytes.fill(0))
-            .map_err(device_error)?;
-        let grid_bytes = self.plan.shape[0] * self.plan.shape[1] * 8;
-        let mut dispatches = Vec::with_capacity(range.len());
-        for ordinal in range {
-            let batch = &prepared.layout.batches[ordinal];
-            let (count, group_count) = prepared.coverage[ordinal].counts();
-            dispatches.push(NormalDispatch {
-                regions: [records, groups,
-                    self.plan.region(self.plan.weights, casa_imaging_reconstruction::runtime_adapter::BandPlan::spatial_weight_bytes()),
-                    self.plan.region(self.plan.model, grid_bytes), predictions,
-                    self.plan.region(self.plan.normal, grid_bytes), status],
-                shape: [count as u32, group_count as u32, self.plan.shape[0] as u32, self.plan.shape[1] as u32],
-                replay: Some((&prepared.buffer, [batch.offset, batch.groups_offset(), 0])),
-            });
-        }
-        self.tickets[self.slot] = Some(
-            self.access
-                .submit_normal(&dispatches)
-                .map_err(device_error)?,
-        );
-        self.slot ^= 1;
-        Ok(())
+        let batch = &prepared.layout.batches[ordinal];
+        (self.records, self.groups) = prepared.coverage[ordinal].counts();
+        self.dispatch(Some((
+            &prepared.buffer,
+            [batch.offset, batch.groups_offset(), 0],
+        )))
     }
 
     pub(super) fn run_prepared(
@@ -422,14 +402,11 @@ impl<'a> MetalNormalReplayKernel<'a> {
         // These inputs are already resident: no producer thread, cursor slots,
         // replay copies or CPU partition jobs are needed. Two GPU tickets bound
         // the mutable prediction/status slots exactly as in the streaming case.
-        for start in (0..prepared.coverage.len()).step_by(NORMAL_BATCHES_PER_COMMAND) {
-            let end = (start + NORMAL_BATCHES_PER_COMMAND).min(prepared.coverage.len());
-            for ordinal in start..end {
-                self.state
-                    .state
-                    .accept_prepared(&prepared.coverage[ordinal])?;
-            }
-            self.dispatch_prepared(&prepared, start..end)?;
+        for ordinal in 0..prepared.coverage.len() {
+            self.state
+                .state
+                .accept_prepared(&prepared.coverage[ordinal])?;
+            self.dispatch_prepared(&prepared, ordinal)?;
         }
         self.prepared = Some(prepared);
         self.finish()
@@ -449,9 +426,8 @@ impl<'a> MetalNormalReplayKernel<'a> {
                 capacity: self.plan.capacity,
                 read: ManagedSpillMeasurements::retained_device(self.state.backing.spill.seal()),
             });
-            for start in (0..prepared.coverage.len()).step_by(NORMAL_BATCHES_PER_COMMAND) {
-                let end = (start + NORMAL_BATCHES_PER_COMMAND).min(prepared.coverage.len());
-                self.dispatch_prepared(&prepared, start..end)?;
+            for ordinal in 0..prepared.coverage.len() {
+                self.dispatch_prepared(&prepared, ordinal)?;
             }
             self.prepared = Some(prepared);
         }
