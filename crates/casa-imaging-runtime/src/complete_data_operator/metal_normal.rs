@@ -4,8 +4,7 @@
 
 use super::*;
 use crate::metal_runtime::{
-    MetalBatchAccess, MetalBufferRegion, MetalReplayBuffer, NormalDispatch, NormalTile,
-    prepare_normal_tiles,
+    MetalBatchAccess, MetalBufferRegion, MetalReplayBuffer, NormalDispatch,
 };
 use casa_imaging_reconstruction::runtime_adapter::{
     DeviceNormalApply, DeviceNormalGroup, DeviceNormalPosition, DeviceNormalPreparedBatch,
@@ -52,10 +51,9 @@ impl MetalNormalPlan {
                     offset,
                     records: count,
                     frames,
-                    tiles: 0,
                 });
                 offset = offset
-                    .checked_add(ReplayBatchLayout::bytes(count)?)
+                    .checked_add(aligned(count * 48)?)
                     .ok_or_else(|| io::Error::other("Metal replay size overflow"))?;
                 count = 0;
                 frames = 0;
@@ -68,10 +66,9 @@ impl MetalNormalPlan {
                 offset,
                 records: count,
                 frames,
-                tiles: 0,
             });
             offset = offset
-                .checked_add(ReplayBatchLayout::bytes(count)?)
+                .checked_add(aligned(count * 48)?)
                 .ok_or_else(|| io::Error::other("Metal replay size overflow"))?;
         }
         let charged_bytes = offset
@@ -137,8 +134,6 @@ impl MetalNormalPlan {
             capacity
                 .checked_mul(per_record)
                 .and_then(|n| n.checked_add(64))
-                .and_then(|n| n.checked_add(aligned(capacity * 4).ok()?))
-                .and_then(|n| n.checked_add(capacity * size_of::<NormalTile>()))
                 .ok_or_else(|| io::Error::other("device normal staging overflow"))?,
         )?;
         let bytes = stride
@@ -166,20 +161,16 @@ impl MetalNormalPlan {
         }
     }
 
-    fn slot(&self, slot: usize) -> [MetalBufferRegion<'_>; 6] {
+    fn slot(&self, slot: usize) -> [MetalBufferRegion<'_>; 4] {
         let records = self.staging + slot * self.stride;
         let groups = records + self.capacity * size_of::<DeviceNormalRecord>();
         let predictions = groups + self.capacity * size_of::<DeviceNormalGroup>();
         let status = predictions + self.capacity * 8;
-        let indices = status + 64;
-        let tiles = indices + aligned(self.capacity * 4).expect("checked plan capacity");
         [
             self.region(records, self.capacity * size_of::<DeviceNormalRecord>()),
             self.region(groups, self.capacity * size_of::<DeviceNormalGroup>()),
             self.region(predictions, self.capacity * 8),
             self.region(status, 4),
-            self.region(indices, self.capacity * 4),
-            self.region(tiles, self.capacity * size_of::<NormalTile>()),
         ]
     }
 }
@@ -188,23 +179,11 @@ struct ReplayBatchLayout {
     offset: usize,
     records: usize,
     frames: usize,
-    tiles: usize,
 }
 
 impl ReplayBatchLayout {
-    fn bytes(records: usize) -> io::Result<usize> {
-        Ok(aligned(records * 48)?
-            + aligned(records * 4)?
-            + aligned(records * size_of::<NormalTile>())?)
-    }
     fn groups_offset(&self) -> usize {
         self.offset + self.records * size_of::<DeviceNormalRecord>()
-    }
-    fn indices_offset(&self) -> usize {
-        self.offset + aligned(self.records * 48).expect("checked replay layout")
-    }
-    fn tiles_offset(&self) -> usize {
-        self.indices_offset() + aligned(self.records * 4).expect("checked replay layout")
     }
 }
 
@@ -254,7 +233,6 @@ pub(super) struct MetalNormalReplayKernel<'a> {
     slot: usize,
     records: usize,
     groups: usize,
-    tiles: usize,
     packing_seconds: f64,
     wait_seconds: f64,
     upload_bytes: u64,
@@ -335,7 +313,6 @@ impl<'a> MetalNormalReplayKernel<'a> {
             slot: 0,
             records: 0,
             groups: 0,
-            tiles: 0,
             packing_seconds: 0.0,
             wait_seconds: 0.0,
             upload_bytes,
@@ -372,42 +349,14 @@ impl<'a> MetalNormalReplayKernel<'a> {
             self.groups = 0;
             return Ok(());
         }
-        self.dispatch(None, None)
+        self.dispatch(None)
     }
 
     fn dispatch(
         &mut self,
-        replay: Option<(&Arc<MetalReplayBuffer>, [usize; 5])>,
-        prepared_tiles: Option<usize>,
+        replay: Option<(&Arc<MetalReplayBuffer>, [usize; 3])>,
     ) -> Result<(), CompleteDataOperatorError> {
-        let [records, groups, predictions, status, indices, tiles] = self.plan.slot(self.slot);
-        let active_tiles = if let Some(count) = prepared_tiles {
-            count
-        } else {
-            let started = Instant::now();
-            let count = self
-                .access
-                .with_bytes(
-                    self.plan
-                        .region(records.offset, tiles.offset + tiles.bytes - records.offset),
-                    |bytes| {
-                        let (input, scratch) = bytes.split_at_mut(indices.offset - records.offset);
-                        let (index_bytes, tile_bytes) =
-                            scratch.split_at_mut(tiles.offset - indices.offset);
-                        prepare_normal_tiles(
-                            bytemuck::cast_slice(
-                                &input[..self.records * size_of::<DeviceNormalRecord>()],
-                            ),
-                            self.plan.shape[1] as u32,
-                            bytemuck::cast_slice_mut(index_bytes),
-                            bytemuck::cast_slice_mut(tile_bytes),
-                        )
-                    },
-                )
-                .map_err(device_error)?;
-            self.packing_seconds += started.elapsed().as_secs_f64();
-            count
-        };
+        let [records, groups, predictions, status] = self.plan.slot(self.slot);
         self.access
             .with_bytes(status, |bytes| bytes.fill(0))
             .map_err(device_error)?;
@@ -416,16 +365,14 @@ impl<'a> MetalNormalReplayKernel<'a> {
             regions: [records, groups,
                 self.plan.region(self.plan.weights, casa_imaging_reconstruction::runtime_adapter::BandPlan::spatial_weight_bytes()),
                 self.plan.region(self.plan.model, grid_bytes), predictions,
-                self.plan.region(self.plan.normal, grid_bytes), status, indices, tiles],
-            shape: [self.records as u32, self.groups as u32, self.plan.shape[0] as u32, self.plan.shape[1] as u32, active_tiles as u32],
+                self.plan.region(self.plan.normal, grid_bytes), status],
+            shape: [self.records as u32, self.groups as u32, self.plan.shape[0] as u32, self.plan.shape[1] as u32],
             replay,
         }).map_err(device_error)?;
-        self.tiles += active_tiles;
         if replay.is_none() {
             self.upload_bytes += (self.records * size_of::<DeviceNormalRecord>()
-                + self.groups * size_of::<DeviceNormalGroup>()
-                + self.records * 4
-                + active_tiles * size_of::<NormalTile>()) as u64;
+                + self.groups * size_of::<DeviceNormalGroup>())
+                as u64;
         }
         self.tickets[self.slot] = Some(ticket);
         self.slot ^= 1;
@@ -442,19 +389,10 @@ impl<'a> MetalNormalReplayKernel<'a> {
         self.settle(self.slot)?;
         let batch = &prepared.layout.batches[ordinal];
         (self.records, self.groups) = prepared.coverage[ordinal].counts();
-        self.dispatch(
-            Some((
-                &prepared.buffer,
-                [
-                    batch.offset,
-                    batch.groups_offset(),
-                    0,
-                    batch.indices_offset(),
-                    batch.tiles_offset(),
-                ],
-            )),
-            Some(batch.tiles),
-        )
+        self.dispatch(Some((
+            &prepared.buffer,
+            [batch.offset, batch.groups_offset(), 0],
+        )))
     }
 
     pub(super) fn run_prepared(
@@ -476,41 +414,10 @@ impl<'a> MetalNormalReplayKernel<'a> {
 
     fn finish(mut self) -> Result<MetalNormalCompletion, CompleteDataOperatorError> {
         self.submit()?;
-        if let Some(mut builder) = self.building.take() {
+        if let Some(builder) = self.building.take() {
             if builder.coverage.len() != builder.layout.batches.len() {
                 return Err(CompleteDataOperatorError::ExecutionBinding);
             }
-            let started = Instant::now();
-            for batch in &mut builder.layout.batches {
-                let indices_offset = batch.indices_offset() - batch.offset;
-                let tiles_offset = batch.tiles_offset() - batch.offset;
-                batch.tiles = builder
-                    .buffer
-                    .with_bytes_mut(
-                        batch.offset,
-                        ReplayBatchLayout::bytes(batch.records)
-                            .map_err(|_| CompleteDataOperatorError::ExecutionBinding)?,
-                        |bytes| {
-                            let (input, scratch) = bytes.split_at_mut(indices_offset);
-                            let (index_bytes, tile_bytes) =
-                                scratch.split_at_mut(tiles_offset - indices_offset);
-                            prepare_normal_tiles(
-                                bytemuck::cast_slice(
-                                    &input[..batch.records * size_of::<DeviceNormalRecord>()],
-                                ),
-                                self.plan.shape[1] as u32,
-                                &mut bytemuck::cast_slice_mut::<u8, u32>(index_bytes)
-                                    [..batch.records],
-                                &mut bytemuck::cast_slice_mut::<u8, NormalTile>(tile_bytes)
-                                    [..batch.records],
-                            )
-                        },
-                    )
-                    .map_err(device_error)?;
-                self.upload_bytes +=
-                    (batch.records * 4 + batch.tiles * size_of::<NormalTile>()) as u64;
-            }
-            self.packing_seconds += started.elapsed().as_secs_f64();
             let prepared = Arc::new(PreparedMetalNormalReplay {
                 buffer: Arc::new(builder.buffer),
                 layout: builder.layout,
@@ -539,7 +446,7 @@ impl<'a> MetalNormalReplayKernel<'a> {
             return Err(CompleteDataOperatorError::ExecutionBinding);
         }
         eprintln!(
-            "imaging_metal_normal_summary capacity_records={} arena_bytes={} packing_seconds={:.6} wait_seconds={:.6} finish_seconds={:.6} upload_bytes={} readback_bytes={} frames={} records={} groups={} prepared_replay_bytes={} grid_patches={}",
+            "imaging_metal_normal_summary capacity_records={} arena_bytes={} packing_seconds={:.6} wait_seconds={:.6} finish_seconds={:.6} upload_bytes={} readback_bytes={} frames={} records={} groups={} prepared_replay_bytes={}",
             self.plan.capacity,
             self.plan.bytes,
             self.packing_seconds,
@@ -553,7 +460,6 @@ impl<'a> MetalNormalReplayKernel<'a> {
             self.prepared
                 .as_ref()
                 .map_or(0, |cache| cache.resident_bytes()),
-            self.tiles,
         );
         Ok((
             CompleteDataSlabResult {
@@ -654,7 +560,7 @@ impl PartitionedKernel<ManagedSpillWindowStorage> for MetalNormalReplayKernel<'_
                     self.access.wait(ticket).map_err(device_error)?;
                     self.wait_seconds += started.elapsed().as_secs_f64();
                 }
-                let [records, groups, _, _, _, _] = self.plan.slot(self.slot);
+                let [records, groups, _, _] = self.plan.slot(self.slot);
                 self.access
                     .with_bytes(
                         self.plan

@@ -85,7 +85,6 @@ float2 multiply_complex(float2 a, float2 b) {
 
 struct NormalRecord { CubeTap tap; float weight; uint group; uint role; uint padding; };
 struct NormalGroup { uint start; uint end; };
-struct NormalTile { uint start; uint end; uint cell; uint padding; };
 
 kernel void normal_predict(
     device const NormalRecord *records [[buffer(0)]],
@@ -95,7 +94,7 @@ kernel void normal_predict(
     device float2 *predicted [[buffer(4)]],
     device atomic_float *normal [[buffer(5)]],
     device atomic_uint *status [[buffer(6)]],
-    constant uint4 &shape [[buffer(9)]],
+    constant uint4 &shape [[buffer(7)]],
     uint index [[thread_position_in_grid]]) {
     if (index >= shape.y) return;
     NormalGroup group = groups[index];
@@ -120,40 +119,22 @@ kernel void normal_accumulate(
     device const float2 *predicted [[buffer(4)]],
     device atomic_float *normal [[buffer(5)]],
     device atomic_uint *status [[buffer(6)]],
-    device const uint *indices [[buffer(7)]],
-    device const NormalTile *tiles [[buffer(8)]],
-    constant uint *shape [[buffer(9)]],
+    constant uint4 &shape [[buffer(7)]],
     uint index [[thread_position_in_grid]]) {
-    uint tile_index = index / 64, lane = index % 64;
-    if (tile_index >= shape[4]) return;
-    NormalTile tile = tiles[tile_index];
-    threadgroup float2 values[64];
-    threadgroup uint2 rows[64];
-    float2 sum = float2(0.0);
-    for (uint start = tile.start; start < tile.end; start += 64) {
-        uint count = min(64u, tile.end - start);
-        if (lane < count) {
-            NormalRecord record = records[indices[start + lane]];
-            float2 value = float2(0.0);
-            if (record.group >= shape[1]) atomic_fetch_or_explicit(status, 1u, memory_order_relaxed);
-            else value = multiply_complex(predicted[record.group], record.tap.value * float2(1.0, -1.0)) * record.weight;
-            if (!all(isfinite(value))) { atomic_fetch_or_explicit(status, 2u, memory_order_relaxed); value = float2(0.0); }
-            values[lane] = value;
-            rows[lane] = uint2(record.tap.x_weights, record.tap.y_weights);
+    if (index >= shape.x) return;
+    NormalRecord record = records[index];
+    if (record.role == 1) return;
+    if (record.group >= shape.y) { atomic_fetch_or_explicit(status, 1u, memory_order_relaxed); return; }
+    float2 value = multiply_complex(predicted[record.group], record.tap.value * float2(1.0, -1.0)) * record.weight;
+    if (!all(isfinite(value))) { atomic_fetch_or_explicit(status, 2u, memory_order_relaxed); return; }
+    for (uint x = 0; x < 7; ++x) {
+        float x_weight = weights[record.tap.x_weights * 7 + x];
+        for (uint y = 0; y < 7; ++y) {
+            uint cell = (record.tap.x + x) * shape.w + record.tap.y + y;
+            float2 contribution = value * x_weight * weights[record.tap.y_weights * 7 + y];
+            atomic_fetch_add_explicit(&normal[2 * cell], contribution.x, memory_order_relaxed);
+            atomic_fetch_add_explicit(&normal[2 * cell + 1], contribution.y, memory_order_relaxed);
         }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-        if (lane < 49) {
-            for (uint i = 0; i < count; ++i) {
-                sum += values[i] * weights[rows[i].x * 7 + lane / 7]
-                                * weights[rows[i].y * 7 + lane % 7];
-            }
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-    }
-    if (lane < 49 && any(sum != float2(0.0))) {
-        uint cell = tile.cell + (lane / 7) * shape[3] + lane % 7;
-        atomic_fetch_add_explicit(&normal[2 * cell], sum.x, memory_order_relaxed);
-        atomic_fetch_add_explicit(&normal[2 * cell + 1], sum.y, memory_order_relaxed);
     }
 }
 
@@ -514,7 +495,7 @@ impl MetalCubeKernels {
             &parameters,
             shape,
             [&self.unique_prediction, &self.residual],
-            [shape[0] as usize, shape[1] as usize],
+            [shape[0], shape[1]],
         )
     }
 
@@ -522,15 +503,15 @@ impl MetalCubeKernels {
         &self,
         command: &ProtocolObject<dyn MTLCommandBuffer>,
         buffers: &[(&ProtocolObject<dyn MTLBuffer>, usize)],
-        shape: [u32; 5],
+        shape: [u32; 4],
     ) -> Result<Option<MetalStageProfile>, String> {
         self.encode_connected(
             command,
             buffers,
             &shape,
-            [shape[1], shape[4], 0, 0, shape[2], shape[3], 1, 0],
+            [shape[1], shape[0], 0, 0, shape[2], shape[3], 1, 0],
             [&self.normal_prediction, &self.normal_accumulation],
-            [shape[1] as usize, shape[4] as usize * 64],
+            [shape[1], shape[0]],
         )
     }
 
@@ -541,7 +522,7 @@ impl MetalCubeKernels {
         parameters: &T,
         shape: [u32; 8],
         pipelines: [&ProtocolObject<dyn MTLComputePipelineState>; 2],
-        counts: [usize; 2],
+        counts: [u32; 2],
     ) -> Result<Option<MetalStageProfile>, String> {
         let profile = self
             .stage_profiler
@@ -713,12 +694,8 @@ mod tests {
             let start = records.len() as u32;
             for role in 0..3_u32 {
                 records.push(DeviceNormalRecord {
-                    x: if group < 90 { 4 } else { group % 26 },
-                    y: if group < 90 {
-                        5
-                    } else {
-                        (group * 11 + role) % 26
-                    },
+                    x: group % 26,
+                    y: (group * 11 + role) % 26,
                     x_weights: group % 2,
                     y_weights: (group + 1) % 2,
                     scale: [0.75 + role as f32 * 0.125, -0.25],
@@ -762,10 +739,6 @@ mod tests {
                 }
             }
         }
-        let mut indices = vec![0_u32; records.len()];
-        let mut tiles = vec![crate::metal_runtime::NormalTile::default(); records.len()];
-        let tile_count =
-            crate::metal_runtime::prepare_normal_tiles(&records, 32, &mut indices, &mut tiles);
         let buffers = [
             shared_buffer(&device, size_of_val(records.as_slice())),
             shared_buffer(&device, size_of_val(groups.as_slice())),
@@ -774,8 +747,6 @@ mod tests {
             shared_buffer(&device, groups.len() * 8),
             shared_buffer(&device, model.len() * 8),
             shared_buffer(&device, 4),
-            shared_buffer(&device, size_of_val(indices.as_slice())),
-            shared_buffer(&device, size_of_val(tiles.as_slice())),
         ];
         upload(&buffers[0], &records);
         upload(&buffers[1], &groups);
@@ -783,8 +754,6 @@ mod tests {
         upload(&buffers[3], &model);
         upload(&buffers[5], &vec![[0.0_f32; 2]; model.len()]);
         upload(&buffers[6], &[0_u32]);
-        upload(&buffers[7], &indices);
-        upload(&buffers[8], &tiles);
         let bindings = buffers.iter().map(|b| (b.as_ref(), 0)).collect::<Vec<_>>();
         // Two ordered commands accumulate into the same resident grid, without
         // CPU prediction readback or re-uploading/zeroing the grid between them.
@@ -795,13 +764,7 @@ mod tests {
                     .encode_normal(
                         &command,
                         &bindings,
-                        [
-                            records.len() as u32,
-                            groups.len() as u32,
-                            32,
-                            32,
-                            tile_count as u32,
-                        ],
+                        [records.len() as u32, groups.len() as u32, 32, 32],
                     )
                     .unwrap();
                 command.commit();

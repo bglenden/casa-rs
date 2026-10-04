@@ -827,66 +827,12 @@ pub(crate) struct CubeResidualDispatch<'a> {
 #[derive(Clone, Copy)]
 #[cfg_attr(not(all(target_os = "macos", not(coverage))), allow(dead_code))]
 pub(crate) struct NormalDispatch<'a> {
-    pub regions: [MetalBufferRegion<'a>; 9],
-    /// Record count, group count, grid width/height, active grid-patch count.
-    pub shape: [u32; 5],
+    pub regions: [MetalBufferRegion<'a>; 7],
+    /// Record count, group count, grid width, grid height.
+    pub shape: [u32; 4],
     /// If present, immutable records/groups/table live in this run-owned cache.
-    /// Offsets replace records/groups/table/patch indices/patches; mutable regions remain plan-owned.
-    pub replay: Option<(&'a Arc<MetalReplayBuffer>, [usize; 5])>,
-}
-
-#[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
-#[repr(C)]
-pub(crate) struct NormalTile {
-    pub start: u32,
-    pub end: u32,
-    pub cell: u32,
-    pub padding: u32,
-}
-
-pub(crate) fn prepare_normal_tiles(
-    records: &[casa_imaging_reconstruction::runtime_adapter::DeviceNormalRecord],
-    height: u32,
-    indices: &mut [u32],
-    tiles: &mut [NormalTile],
-) -> usize {
-    let mut count = 0;
-    for (index, _) in records
-        .iter()
-        .enumerate()
-        .filter(|(_, record)| record.role != 1)
-    {
-        indices[count] = index as u32;
-        count += 1;
-    }
-    let indices = &mut indices[..count];
-    indices.sort_unstable_by_key(|&index| {
-        let record = &records[index as usize];
-        record.x * height + record.y
-    });
-    let mut start = 0;
-    let mut active = 0;
-    while start < count {
-        let record = &records[indices[start] as usize];
-        let cell = record.x * height + record.y;
-        let mut end = start + 1;
-        while end < count {
-            let record = &records[indices[end] as usize];
-            if record.x * height + record.y != cell {
-                break;
-            }
-            end += 1;
-        }
-        tiles[active] = NormalTile {
-            start: start as u32,
-            end: end as u32,
-            cell,
-            padding: 0,
-        };
-        active += 1;
-        start = end;
-    }
-    active
+    /// The three offsets replace regions 0..3; mutable regions remain plan-owned.
+    pub replay: Option<(&'a Arc<MetalReplayBuffer>, [usize; 3])>,
 }
 
 impl fmt::Debug for MetalExecutionState {
@@ -1784,15 +1730,14 @@ fn submit_normal(
     dispatch: NormalDispatch<'_>,
 ) -> Result<u64, MetalRuntimeError> {
     use casa_imaging_reconstruction::runtime_adapter::{DeviceNormalGroup, DeviceNormalRecord};
-    let [records, groups, width, height, tiles] = dispatch.shape.map(|n| n as usize);
+    let [records, groups, width, height] = dispatch.shape.map(|n| n as usize);
     let invalid =
         || MetalRuntimeError::InvalidPlan("invalid device normal shape or regions".into());
     let cells = width
         .checked_mul(height)
         .filter(|&n| n <= u32::MAX as usize)
         .ok_or_else(invalid)?;
-    if records == 0 || groups == 0 || groups > records || width < 7 || height < 7 || tiles > records
-    {
+    if records == 0 || groups == 0 || groups > records || width < 7 || height < 7 {
         return Err(invalid());
     }
     let sizes = [
@@ -1803,15 +1748,13 @@ fn submit_normal(
         groups.checked_mul(8),
         cells.checked_mul(8),
         Some(4),
-        records.checked_mul(4),
-        tiles.checked_mul(size_of::<NormalTile>()),
     ];
     for (&region, bytes) in dispatch.regions.iter().zip(sizes) {
         if region.offset % 8 != 0 || bytes.is_none_or(|n| n > region.bytes) {
             return Err(invalid());
         }
     }
-    for (index, &output) in dispatch.regions.iter().enumerate().skip(4).take(3) {
+    for (index, &output) in dispatch.regions.iter().enumerate().skip(4) {
         if dispatch
             .regions
             .iter()
@@ -1831,12 +1774,16 @@ fn submit_normal(
         if replay.device != platform.device.registryID() {
             return Err(invalid());
         }
-        for (index, offset) in [0, 1, 2, 7, 8].into_iter().zip(offsets) {
+        for index in 0..3 {
             let bytes = sizes[index].ok_or_else(invalid)?;
-            if offset % 8 != 0 || offset.checked_add(bytes).is_none_or(|n| n > replay.bytes) {
+            if offsets[index] % 8 != 0
+                || offsets[index]
+                    .checked_add(bytes)
+                    .is_none_or(|n| n > replay.bytes)
+            {
                 return Err(invalid());
             }
-            buffers[index] = (&replay.buffer, offset);
+            buffers[index] = (&replay.buffer, offsets[index]);
         }
     }
     let command = platform
@@ -2021,56 +1968,6 @@ fn probe_platform(_decision: &MetalExecutionDecision) -> Result<(), MetalRuntime
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn normal_tiles_preserve_groups_weights_roles_and_exact_inventory() {
-        use casa_imaging_reconstruction::runtime_adapter::DeviceNormalRecord;
-        let records = (0..137)
-            .map(|i| DeviceNormalRecord {
-                x: if i < 100 { 4 } else { 9 },
-                y: 5,
-                x_weights: i % 3,
-                y_weights: i % 7,
-                group: i,
-                role: i % 3,
-                ..Default::default()
-            })
-            .collect::<Vec<_>>();
-        let mut indices = vec![u32::MAX; records.len()];
-        let mut tiles = vec![NormalTile::default(); records.len()];
-        let count = prepare_normal_tiles(&records, 32, &mut indices, &mut tiles);
-        assert_eq!(count, 2);
-        assert!(tiles[0].end - tiles[0].start > 64);
-        let mut seen = vec![false; records.len()];
-        for tile in &tiles[..count] {
-            for &index in &indices[tile.start as usize..tile.end as usize] {
-                assert!(!seen[index as usize]);
-                seen[index as usize] = true;
-                let record = &records[index as usize];
-                assert_ne!(record.role, 1);
-                assert_eq!(tile.cell, record.x * 32 + record.y);
-                assert_eq!(record.group, index);
-                assert_eq!(record.x_weights, index % 3);
-                assert_eq!(record.y_weights, index % 7);
-            }
-        }
-        for (record, seen) in records.iter().zip(seen) {
-            assert_eq!(seen, record.role != 1);
-        }
-        assert_eq!(prepare_normal_tiles(&[], 32, &mut [], &mut []), 0);
-        assert_eq!(
-            prepare_normal_tiles(
-                &[DeviceNormalRecord {
-                    role: 1,
-                    ..Default::default()
-                }],
-                32,
-                &mut [0],
-                &mut [NormalTile::default()]
-            ),
-            0
-        );
-    }
     use crate::execution::{ExecutionScheduler, SchedulerAction};
     use crate::{
         Accelerator, AcceleratorDemand, AllocationAccess, AllocationLayout, AllocationLifetime,
@@ -2707,7 +2604,7 @@ mod tests {
         let weights_bytes = BandPlan::spatial_weight_bytes();
         let grid_bytes = 16 * 16 * 8;
         let arena_bytes = (weights_bytes + 2 * grid_bytes + 1023) & !63;
-        let cache_bytes = weights_bytes + 128;
+        let cache_bytes = weights_bytes + 64;
         let (mut spec, mut topology) = mixed_specification();
         spec.logical_allocations[0].bytes = arena_bytes as u64;
         spec.physical_slots[0].capacity_bytes = arena_bytes as u64;
@@ -2763,14 +2660,7 @@ mod tests {
                 }));
                 bytes[40..48]
                     .copy_from_slice(bytemuck::bytes_of(&DeviceNormalGroup { start: 0, end: 1 }));
-                bytes[48..52].copy_from_slice(&0_u32.to_ne_bytes());
-                bytes[56..72].copy_from_slice(bytemuck::bytes_of(&NormalTile {
-                    start: 0,
-                    end: 1,
-                    cell: 3 * 16 + 4,
-                    padding: 0,
-                }));
-                for weight in bytes[128..128 + weights_bytes].chunks_exact_mut(4) {
+                for weight in bytes[64..64 + weights_bytes].chunks_exact_mut(4) {
                     weight.copy_from_slice(&1.0_f32.to_ne_bytes());
                 }
             })
@@ -2795,11 +2685,9 @@ mod tests {
                 region(predictions, 8),
                 region(normal, grid_bytes),
                 region(status, 4),
-                region(48, 4),
-                region(56, 16),
             ],
-            shape: [1, 1, 16, 16, 1],
-            replay: Some((&prepared, [0, 40, 128, 48, 56])),
+            shape: [1, 1, 16, 16],
+            replay: Some((&prepared, [0, 40, 64])),
         };
         for value in [1.0_f32, 2.0] {
             access
