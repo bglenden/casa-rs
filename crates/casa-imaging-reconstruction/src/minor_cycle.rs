@@ -70,6 +70,7 @@ pub fn minor_cycle_workspace_bytes(
 
 pub(crate) struct MinorCycleWorkspace {
     pub(crate) bytes: u64,
+    pub(crate) clark_refresh_bytes: u64,
     pub(crate) maximum_delta_terms: u64,
     pub(crate) maximum_recorded_components: u64,
 }
@@ -166,18 +167,15 @@ pub(crate) fn minor_cycle_workspace(
         .saturating_add(scale_count.saturating_mul(2))
         .saturating_add(8)
         .saturating_mul(size_of_u64::<Vec<u8>>());
-    let clark_active = if matches!(algorithm, ReconstructionAlgorithm::Clark) {
+    let clark_refresh_bytes = if matches!(algorithm, ReconstructionAlgorithm::Clark) {
         // Any PSF origin fits within the doubled logical extents. Only the
         // nonredundant half-spectrum is stored; its allocation also holds the
         // in-place real plane with FFTW's padded final row stride.
         let half_spectrum = sat_u64(shape[0])
             .saturating_mul(2)
             .saturating_mul(sat_u64(shape[1]).saturating_add(1));
-        cells
-            .saturating_mul(size_of_u64::<clark::ClarkActivePixel>())
-            .saturating_add(
-                half_spectrum.saturating_mul(2 * size_of_u64::<num_complex::Complex32>()),
-            )
+        half_spectrum
+            .saturating_mul(2 * size_of_u64::<num_complex::Complex32>())
             .saturating_add(
                 sat_u64(
                     crate::spectral_operator::fft_resident_complex_values_for_shape([
@@ -191,6 +189,13 @@ pub(crate) fn minor_cycle_workspace(
     } else {
         0
     };
+    let clark_active = clark_refresh_bytes.saturating_add(
+        if matches!(algorithm, ReconstructionAlgorithm::Clark) {
+            cells.saturating_mul(size_of_u64::<clark::ClarkActivePixel>())
+        } else {
+            0
+        },
+    );
     let psf_fit = cells
         .saturating_mul(size_of_u64::<f32>())
         .saturating_add(crate::psf_beam::psf_fit_workspace_bytes(shape));
@@ -208,6 +213,7 @@ pub(crate) fn minor_cycle_workspace(
         .saturating_add(psf_fit);
     MinorCycleWorkspace {
         bytes,
+        clark_refresh_bytes,
         maximum_delta_terms: possible_sparse_terms,
         maximum_recorded_components,
     }
@@ -1230,6 +1236,9 @@ impl MinorCycleResult {
 /// Exact reason a minor-cycle solve failed closed.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum MinorCycleError {
+    /// The explicitly selected runtime convolution failed; no backend substitution.
+    #[error("Clark refresh backend failed: {0}")]
+    ClarkRefresh(String),
     /// A required authoritative Normal State window could not be loaded.
     #[error(transparent)]
     NormalAccess(#[from] crate::SpectralOperatorError),
@@ -1380,6 +1389,7 @@ pub fn run_minor_cycle(
         )?,
         mask,
         controls,
+        None,
     )
 }
 
@@ -2508,6 +2518,7 @@ pub(crate) fn run_minor_cycle_plane(
     plane: FinalNormalStatePlane<'_>,
     mask: &ReconstructionMask,
     controls: MinorCycleProgram,
+    refresh: Option<&dyn clark::ClarkRefreshProvider>,
 ) -> Result<MinorCycleResult, MinorCycleError> {
     let view = plane.owner();
     let shape = view.shape();
@@ -2665,6 +2676,7 @@ pub(crate) fn run_minor_cycle_plane(
                 approximation,
                 effective_threshold,
                 controls.fft_threads,
+                refresh,
                 |pixel| mask.contains(pixel) && valid_support(base, shape, model_plane, pixel),
             )
         })
@@ -4387,7 +4399,7 @@ fn minor_cycle_evidence_id(
 mod deep_clark_tests;
 
 #[path = "minor_cycle/clark.rs"]
-mod clark;
+pub(crate) mod clark;
 
 #[cfg(test)]
 mod tests {

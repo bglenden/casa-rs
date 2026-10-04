@@ -115,6 +115,7 @@ pub(crate) fn execute(
     context: WorkExecutionContext<'_>,
     pass: u32,
     measurements: &mut Option<BoundedStreamMeasurements>,
+    refresh: Option<&dyn casa_imaging_reconstruction::runtime_adapter::ClarkRefreshProvider>,
 ) -> io::Result<ReconstructionCycleResult> {
     let amount = |resource: &LeaseResource| {
         context
@@ -129,7 +130,11 @@ pub(crate) fn execute(
             "plane worker capability does not match the admitted plan",
         ));
     }
-    let workspace = work.workspace();
+    let workspace = if refresh.is_some() {
+        work.workspace().with_external_clark_refresh()
+    } else {
+        work.workspace()
+    };
     let plan = PlaneExecutionPlan::new(
         workspace,
         usize::try_from(workers).map_err(|_| io::Error::other("plane worker count overflow"))?,
@@ -166,6 +171,7 @@ pub(crate) fn execute(
             work,
             worker_bytes: workspace.worker_bytes(),
             fft_threads: plan.fft_threads,
+            refresh,
         },
     ) {
         Ok(outcome) => {
@@ -186,6 +192,7 @@ struct PlaneKernel<'a> {
     work: ReconstructionPlaneWork<'a>,
     worker_bytes: u64,
     fft_threads: usize,
+    refresh: Option<&'a dyn casa_imaging_reconstruction::runtime_adapter::ClarkRefreshProvider>,
 }
 
 enum PlanePartition<'a> {
@@ -252,7 +259,7 @@ impl<'a> PartitionedKernel<()> for PlaneKernel<'a> {
                 .map(PlanePartial::Statistics),
             PlanePartition::Solve(input) => self
                 .work
-                .execute_plane(input, self.fft_threads)
+                .execute_plane(input, self.fft_threads, self.refresh)
                 .map(PlanePartial::Solve),
         }
     }
@@ -431,6 +438,18 @@ mod tests {
             // claim, which covers only bounded outer plane workers.
             assert_eq!(plan.stack_bytes, 0);
         }
+    }
+
+    #[test]
+    fn external_clark_refresh_removes_cpu_scratch_but_retains_solve_buffers() {
+        let cpu = plane_workspace(1, ReconstructionAlgorithm::Clark);
+        let external = cpu.with_external_clark_refresh();
+        assert!(external.worker_bytes() > 0);
+        assert!(external.worker_bytes() < cpu.worker_bytes());
+        assert_eq!(external.retained_bytes(), cpu.retained_bytes());
+        let plan = PlaneExecutionPlan::new(external, 4).unwrap();
+        assert_eq!(plan.workers, 1);
+        assert_eq!(plan.fft_threads, 1);
     }
 
     #[test]

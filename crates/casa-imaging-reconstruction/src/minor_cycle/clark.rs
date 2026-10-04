@@ -14,7 +14,49 @@ pub(super) struct ClarkActivePixel {
     value: f64,
 }
 
-struct LinearRefresh {
+/// Runtime-supplied linear convolution; Clark's scientific control stays here.
+pub trait ClarkRefresh {
+    /// Add one component to the pending batch.
+    fn add(&mut self, index: usize, flux: f64);
+    /// Subtract the complete linear convolution and clear the pending batch.
+    fn refresh(&mut self, residual: &mut [f64]) -> Result<(), MinorCycleError>;
+}
+
+/// Borrow an exclusively owned, resource-admitted refresh workspace for a solve.
+pub trait ClarkRefreshProvider: Send + Sync {
+    /// Bind the actual PSF, shape and peak origin; failures never retry on CPU.
+    fn prepare<'a>(
+        &'a self,
+        psf: &[f32],
+        shape: [usize; 2],
+        center: [usize; 2],
+    ) -> Result<Box<dyn ClarkRefresh + 'a>, MinorCycleError>;
+}
+
+/// Smallest circular extents whose cropped result is the linear convolution.
+pub fn clark_padded_shape(
+    shape: [usize; 2],
+    center: [usize; 2],
+) -> Result<[usize; 2], MinorCycleError> {
+    let axis = |axis: usize| {
+        let extent = shape[axis];
+        let origin = center[axis];
+        if extent == 0 || origin >= extent {
+            return Err(MinorCycleError::ModelShapeMismatch);
+        }
+        let positive = extent
+            .checked_mul(2)
+            .and_then(|n| n.checked_sub(1 + origin));
+        let negative = extent.checked_add(origin);
+        Ok(positive
+            .ok_or(MinorCycleError::ModelShapeMismatch)?
+            .max(negative.ok_or(MinorCycleError::ModelShapeMismatch)?))
+    };
+    Ok([axis(0)?, axis(1)?])
+}
+
+/// CPU FFTW implementation of the shared linear-refresh operation.
+pub struct LinearRefresh {
     shape: [usize; 2],
     padded: [usize; 2],
     psf_spectrum: Vec<Complex32>,
@@ -23,32 +65,14 @@ struct LinearRefresh {
 }
 
 impl LinearRefresh {
-    fn new(
+    /// Prepare the PSF spectrum and alias-free, bounded half-spectrum workspace.
+    pub fn new(
         psf: &[f32],
         shape: [usize; 2],
         center: [usize; 2],
         threads: usize,
     ) -> Result<Self, MinorCycleError> {
-        let padded_axis = |axis: usize| {
-            let extent = shape[axis];
-            let origin = center[axis];
-            if origin >= extent {
-                return Err(MinorCycleError::ModelShapeMismatch);
-            }
-            // For the requested output interval [0, extent), neither the
-            // negative PSF tail nor the positive convolution tail may wrap
-            // into it. This is the smallest alias-free circular extent for
-            // the PSF origin, including off-centre peaks.
-            let positive_tail = extent
-                .checked_mul(2)
-                .and_then(|twice| twice.checked_sub(1 + origin))
-                .ok_or(MinorCycleError::ModelShapeMismatch)?;
-            let negative_tail = extent
-                .checked_add(origin)
-                .ok_or(MinorCycleError::ModelShapeMismatch)?;
-            Ok::<_, MinorCycleError>(positive_tail.max(negative_tail))
-        };
-        let padded = [padded_axis(0)?, padded_axis(1)?];
+        let padded = clark_padded_shape(shape, center)?;
         Self::with_padded(psf, shape, center, padded, threads)
     }
 
@@ -87,7 +111,9 @@ impl LinearRefresh {
             fft,
         })
     }
+}
 
+impl ClarkRefresh for LinearRefresh {
     fn add(&mut self, index: usize, flux: f64) {
         let pixel = [index / self.shape[1], index % self.shape[1]];
         let real: &mut [f32] = bytemuck::cast_slice_mut(&mut self.components);
@@ -121,7 +147,7 @@ impl LinearRefresh {
     }
 }
 
-pub(super) struct ClarkWorkState {
+pub(super) struct ClarkWorkState<'a> {
     shape: [usize; 2],
     psf_peak: [usize; 2],
     approximation: ClarkApproximation,
@@ -138,7 +164,7 @@ pub(super) struct ClarkWorkState {
     subcycles: usize,
     refreshes: usize,
     active: Vec<ClarkActivePixel>,
-    convolution: LinearRefresh,
+    convolution: Box<dyn ClarkRefresh + 'a>,
     measurements: Option<ClarkMeasurements>,
 }
 
@@ -154,7 +180,7 @@ struct ClarkMeasurements {
     maximum_active: usize,
 }
 
-impl ClarkWorkState {
+impl<'a> ClarkWorkState<'a> {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         residual: &[f64],
@@ -165,6 +191,7 @@ impl ClarkWorkState {
         approximation: ClarkApproximation,
         threshold: f64,
         fft_threads: usize,
+        provider: Option<&'a dyn ClarkRefreshProvider>,
         accept: impl Fn([usize; 2]) -> bool,
     ) -> Result<Self, MinorCycleError> {
         let started = std::env::var_os("CASA_RS_TRACE_CLARK_TIMING")
@@ -187,7 +214,10 @@ impl ClarkWorkState {
         } else {
             usize::MAX
         };
-        let convolution = LinearRefresh::new(psf, shape, psf_peak, fft_threads)?;
+        let convolution: Box<dyn ClarkRefresh + 'a> = match provider {
+            Some(provider) => provider.prepare(psf, shape, psf_peak)?,
+            None => Box::new(LinearRefresh::new(psf, shape, psf_peak, fft_threads)?),
+        };
         let mut state = Self {
             shape,
             psf_peak,
@@ -402,6 +432,79 @@ mod tests {
     use super::*;
     use std::time::Instant;
 
+    struct FailingProvider(bool);
+    struct FailingRefresh;
+    impl ClarkRefresh for FailingRefresh {
+        fn add(&mut self, _: usize, _: f64) {}
+        fn refresh(&mut self, _: &mut [f64]) -> Result<(), MinorCycleError> {
+            Err(MinorCycleError::ClarkRefresh(
+                "injected execution failure".into(),
+            ))
+        }
+    }
+    impl ClarkRefreshProvider for FailingProvider {
+        fn prepare<'a>(
+            &'a self,
+            _: &[f32],
+            _: [usize; 2],
+            _: [usize; 2],
+        ) -> Result<Box<dyn ClarkRefresh + 'a>, MinorCycleError> {
+            if self.0 {
+                Err(MinorCycleError::ClarkRefresh(
+                    "injected preparation failure".into(),
+                ))
+            } else {
+                Ok(Box::new(FailingRefresh))
+            }
+        }
+    }
+
+    #[test]
+    fn clark_selected_refresh_errors_propagate_without_cpu_retry() {
+        let mut residual = vec![1.0; 16];
+        let psf = vec![1.0; 16];
+        let approximation = ClarkApproximation {
+            radius: [0, 0],
+            patch_size: [1, 1],
+            maximum_exterior_sidelobe: 0.0,
+        };
+        let failed = FailingProvider(true);
+        assert!(matches!(
+            ClarkWorkState::new(
+                &residual,
+                &psf,
+                [4, 4],
+                [2, 2],
+                1.0,
+                approximation,
+                0.1,
+                1,
+                Some(&failed),
+                |_| true
+            ),
+            Err(MinorCycleError::ClarkRefresh(_))
+        ));
+        let failed = FailingProvider(false);
+        let mut state = ClarkWorkState::new(
+            &residual,
+            &psf,
+            [4, 4],
+            [2, 2],
+            1.0,
+            approximation,
+            0.1,
+            1,
+            Some(&failed),
+            |_| true,
+        )
+        .unwrap();
+        assert!(matches!(
+            state.refresh_pending(&mut residual),
+            Err(MinorCycleError::ClarkRefresh(_))
+        ));
+        assert_eq!(residual, vec![1.0; 16]);
+    }
+
     #[test]
     fn contiguous_active_scan_preserves_x_fastest_ties_and_support() {
         let shape = [4, 6];
@@ -426,6 +529,7 @@ mod tests {
             },
             0.1,
             1,
+            None,
             accept,
         )
         .unwrap();

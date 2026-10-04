@@ -15,6 +15,7 @@ pub(super) struct PhaseContext<'a> {
     pub registry: &'a PlanningRegistry,
     pub policy: SpectralCycleExecutionPolicy,
     pub minor: Option<(ImageDomainReconstructionMaskPlans, MinorCycleProgram)>,
+    pub clark_refresh: Option<std::sync::Arc<casa_imaging_runtime::MetalClarkRefresh>>,
 }
 
 /// Only phase storage differs between capabilities; CLEAN and publication are shared.
@@ -124,11 +125,13 @@ impl MajorCyclePhase for SpectralCycleExecutor {
                     boxed("minor-cycle initial plan omitted gridded replay binding")
                 })?,
             )?;
-            executor = executor.with_reconstruction_cycle(
-                minor_node.ok_or_else(|| boxed("initial plan omitted its minor-cycle node"))?,
-                masks,
-                program,
-            );
+            executor = executor
+                .with_reconstruction_cycle(
+                    minor_node.ok_or_else(|| boxed("initial plan omitted its minor-cycle node"))?,
+                    masks,
+                    program,
+                )
+                .with_clark_refresh(context.clark_refresh);
         }
         let mut initial_terminal_replay = None;
         if initial_write {
@@ -210,11 +213,13 @@ impl MajorCyclePhase for SpectralCycleExecutor {
             executor = executor.with_prepared_artifact_reader(binding.execution)?;
         }
         if let Some((masks, program)) = context.minor {
-            executor = executor.with_reconstruction_cycle(
-                minor_node.ok_or_else(|| boxed("continuing plan omitted minor node"))?,
-                masks,
-                program,
-            );
+            executor = executor
+                .with_reconstruction_cycle(
+                    minor_node.ok_or_else(|| boxed("continuing plan omitted minor node"))?,
+                    masks,
+                    program,
+                )
+                .with_clark_refresh(context.clark_refresh);
         }
         Ok((final_plan, executor))
     }

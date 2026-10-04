@@ -480,7 +480,7 @@ impl ReconstructionCycle {
         }
         for ordinal in 0..work.plane_count() {
             let input = work.prepare_plane(ordinal)?;
-            let partial = work.execute_plane(&input, 1)?;
+            let partial = work.execute_plane(&input, 1, None)?;
             work.commit_plane(partial)?;
         }
         work.finish()
@@ -636,6 +636,7 @@ pub struct ReconstructionPlaneWorkspace {
     worker_bytes: u64,
     retained_bytes: u64,
     parallel_fft: bool,
+    external_refresh_worker_bytes: u64,
 }
 
 impl ReconstructionPlaneWorkspace {
@@ -717,6 +718,11 @@ impl ReconstructionPlaneWorkspace {
                 .saturating_add(normal_bytes)
                 .max(threshold_bytes),
             retained_bytes,
+            external_refresh_worker_bytes: plane
+                .bytes
+                .saturating_sub(plane.clark_refresh_bytes)
+                .saturating_add(normal_bytes)
+                .max(threshold_bytes),
             parallel_fft: cfg!(unix)
                 && planes == 1
                 && matches!(
@@ -749,6 +755,16 @@ impl ReconstructionPlaneWorkspace {
     #[must_use]
     pub const fn retained_bytes(self) -> u64 {
         self.retained_bytes
+    }
+
+    /// Remove CPU convolution scratch when a separate admitted runtime owner
+    /// supplies that workspace. Other solve/threshold buffers remain charged.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn with_external_clark_refresh(mut self) -> Self {
+        self.worker_bytes = self.external_refresh_worker_bytes;
+        self.parallel_fft = false;
+        self
     }
 }
 
@@ -867,6 +883,7 @@ impl<'a> ReconstructionPlaneWork<'a> {
         &self,
         input: &ReconstructionPlaneInput<'a>,
         fft_threads: usize,
+        refresh: Option<&dyn crate::runtime_adapter::ClarkRefreshProvider>,
     ) -> Result<ReconstructionPlanePartial<'a>, ReconstructionCycleError> {
         if !self.binding.same_inputs(input.binding)
             || self.threshold_planes != self.threshold_plane_count()
@@ -899,7 +916,8 @@ impl<'a> ReconstructionPlaneWork<'a> {
                 program = program.with_global_convergence_check();
             }
             let (delta, evidence) =
-                run_minor_cycle_plane(lifecycle, &model, plane, mask, program)?.into_parts();
+                run_minor_cycle_plane(lifecycle, &model, plane, mask, program, refresh)?
+                    .into_parts();
             (delta, Some(evidence))
         } else {
             (None, None)

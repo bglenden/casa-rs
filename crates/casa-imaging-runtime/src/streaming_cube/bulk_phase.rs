@@ -917,6 +917,7 @@ impl WorkImplementation for BulkCubePhase {
                     context,
                     self.pass.ordinal(),
                     &mut measurements,
+                    None,
                 )?,
             );
         } else if context.node().id == *self.fragment().release_node() {
