@@ -34,6 +34,8 @@ pub(super) struct MetalWaveMemory {
     pub requests: usize,
 }
 
+// One admitted wave owns this inline state, independently of its grid payloads.
+#[allow(clippy::large_enum_variant)]
 pub(super) enum WaveConsumer<'a> {
     Cpu(BulkWave<'a>),
     Metal(MetalWave<'a>),
@@ -314,6 +316,7 @@ struct ResidualDevice {
 }
 
 impl<'a> MetalWave<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         mut jobs: Vec<BandPlan>,
         model: &'a ModelGeneration,

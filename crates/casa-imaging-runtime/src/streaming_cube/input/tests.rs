@@ -18,10 +18,8 @@ fn plan(
 ) -> StorePlan {
     let row_bytes = ROW_BYTES + channels * (8 + SAMPLE_BYTES * correlations);
     let encoded = ROW_BYTES.max(tile * (8 + SAMPLE_BYTES * correlations));
-    let budget = size_of::<NativeBlock>()
-        + size_of::<Vec<u8>>()
-        + CRC_BYTES
-        + block_rows * (row_bytes + encoded);
+    let budget =
+        size_of::<NativeBlock>() + size_of::<Vec<u8>>() + block_rows * (row_bytes + encoded);
     StorePlan::new(rows, channels, correlations, tile, budget, u64::MAX).unwrap()
 }
 
@@ -174,10 +172,6 @@ fn worker_row_partitions_write_identical_frames_without_native_concatenation() {
         assert_eq!(actual_bytes, expected_bytes);
         assert_eq!(actual.written.bytes, expected.written.bytes);
         assert_eq!(actual.written.operations, expected.written.operations);
-        assert_eq!(
-            actual.written.checksum_bytes,
-            expected.written.checksum_bytes
-        );
     }
 }
 
@@ -257,10 +251,6 @@ fn overlapping_band_windows_reuse_checked_frames_with_bounded_storage() {
     }
     assert_eq!(reader.io.operations, 6 * plan.blocks());
     assert_eq!(reader.io.cache_hits, 6 * plan.blocks());
-    assert_eq!(
-        reader.io.checksum_bytes,
-        reader.io.bytes + 4 * reader.io.operations
-    );
     let bytes = reader.io.bytes;
     for start in 0..4 {
         for block in 0..plan.blocks() {
@@ -271,7 +261,7 @@ fn overlapping_band_windows_reuse_checked_frames_with_bounded_storage() {
     }
     assert_eq!(
         reader.io.bytes, bytes,
-        "all reused frames avoid another physical read and CRC"
+        "all reused frames avoid another physical read"
     );
     assert_eq!(reader.encoded.as_ptr(), pointer);
     let large = StorePlan::new(1_000_000, 64, 2, 1, plan.preparation_bytes, u64::MAX).unwrap();
@@ -337,20 +327,15 @@ fn cache_eviction_and_failed_load_never_relabel_overwritten_bytes() {
     reader.read_frame(0, Some(1)).unwrap();
     assert_eq!(reader.io.operations, 3);
     assert_eq!(reader.io.cache_hits, 1);
-    // Corrupt a not-yet-cached frame. Its failed read overwrites the slot that
+    // Truncate a not-yet-cached frame. Its failed read overwrites the slot that
     // formerly held metadata; that old identity must no longer be a cache hit.
-    let (_, offset, _) = plan.frame(0, Some(2)).unwrap();
+    let (_, offset, bytes) = plan.frame(0, Some(2)).unwrap();
     let file = reader.store.file.as_file();
-    let mut byte = [0];
-    file.read_exact_at(&mut byte, offset + 8).unwrap();
-    byte[0] ^= 1;
-    file.write_all_at(&byte, offset + 8).unwrap();
-    // Preserve the finished writer's clean-page invariant after fault injection;
-    // Linux cache release must not mask the checksum or later read errors.
+    file.set_len(offset + bytes as u64 - 1).unwrap();
     file.sync_data().unwrap();
     assert_eq!(
         reader.read_frame(0, Some(2)).unwrap_err().kind(),
-        io::ErrorKind::InvalidData
+        io::ErrorKind::UnexpectedEof
     );
     assert_eq!(reader.read_frame(0, None).unwrap(), metadata);
     assert_eq!(reader.io.operations, 4);
@@ -371,10 +356,6 @@ fn tile_windows_roundtrip_exact_payload_and_reuse_bounded_buffers() {
     assert_eq!(
         store.written.operations,
         plan.blocks() * (plan.tiles as u64 + 1)
-    );
-    assert_eq!(
-        store.written.checksum_bytes,
-        plan.artifact_bytes + store.written.operations * 4
     );
     let mut reader = store.reader(1).unwrap();
     let mut output = NativeBlock::new(plan.block_rows, plan.channels, plan.correlations).unwrap();
@@ -564,44 +545,6 @@ fn truncated_or_unreadable_input_is_an_error_not_end_of_stream() {
         .unwrap_err();
     assert!(error.raw_os_error().is_some());
     assert_ne!(error.kind(), io::ErrorKind::UnexpectedEof);
-}
-
-#[test]
-fn misplaced_or_corrupt_frames_fail_at_the_persistence_boundary() {
-    let plan = plan(3, 6, 2, 3, 2);
-    let (_directory, mut store) = store(plan);
-    let (_, source, bytes) = plan.frame(0, Some(0)).unwrap();
-    let (_, destination, _) = plan.frame(0, Some(1)).unwrap();
-    let mut frame = vec![0; bytes];
-    store
-        .file
-        .as_file()
-        .read_exact_at(&mut frame, source)
-        .unwrap();
-    store
-        .file
-        .as_file()
-        .write_all_at(&frame, destination)
-        .unwrap();
-    // A valid metadata frame shares the dirty page with this injected fault.
-    store.file.as_file().sync_data().unwrap();
-    let mut output = NativeBlock::new(plan.block_rows, plan.channels, plan.correlations).unwrap();
-    let error = store
-        .reader(1)
-        .unwrap()
-        .read_block(0, 3..6, &mut output)
-        .unwrap_err();
-    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-    frame[12] ^= 1;
-    store.file.as_file().write_all_at(&frame, source).unwrap();
-    store.file.as_file().sync_data().unwrap();
-    let error = store
-        .reader(1)
-        .unwrap()
-        .read_block(0, 0..3, &mut output)
-        .unwrap_err();
-    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-    assert!(decode_flag(2).is_err());
 }
 
 #[test]

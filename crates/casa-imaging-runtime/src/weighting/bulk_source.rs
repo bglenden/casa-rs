@@ -492,26 +492,6 @@ where
     }
 }
 
-#[cfg(test)]
-mod gather_tests {
-    use super::*;
-
-    #[test]
-    fn bulk_gather_refills_reuse_the_admitted_capacity() {
-        let admitted = 100;
-        let mut buffer = Vec::new();
-        let mut allocation = None;
-        for samples in [60, 90, 100, 3, 99] {
-            resize_gathered(&mut buffer, admitted, samples);
-            assert_eq!(buffer.len(), samples);
-            assert_eq!(buffer.capacity(), admitted);
-            assert_eq!(*allocation.get_or_insert(buffer.as_ptr()), buffer.as_ptr());
-            buffer.fill(Complex32::new(1.0, -1.0));
-            buffer.clear();
-        }
-    }
-}
-
 impl<'a, F> PartitionedKernel<SelectedObservationBlock> for Kernel<'a, F>
 where
     F: BulkConsumer,
@@ -571,6 +551,7 @@ where
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn execute<F>(
     problem: &CompiledProblem,
     selected: BoundSelectedObservation,
@@ -663,6 +644,7 @@ where
 }
 
 impl WeightingExecutionState {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn traverse_bulk<F: BulkConsumer>(
         &mut self,
         context: WorkExecutionContext<'_>,
@@ -724,12 +706,12 @@ impl WeightingExecutionState {
                 .sum();
             let summary = BulkNaturalWeighting::replay_summary(&artifact.state, proof, rows)
                 .map_err(io::Error::other)?;
-            let (source_generation, traversal) = match &owner {
+            let traversal = match &owner {
                 BulkSourceCompletion::Full(owner) => {
                     artifact
                         .validate_derived_completion(owner, None, &summary)
                         .map_err(io::Error::other)?;
-                    (owner.generation_id(), *owner.measurements())
+                    *owner.measurements()
                 }
                 BulkSourceCompletion::Window(owner) => {
                     let window = channels.as_ref().ok_or_else(|| {
@@ -749,7 +731,7 @@ impl WeightingExecutionState {
                     artifact
                         .validate_derived_window_completion(owner, &summary)
                         .map_err(io::Error::other)?;
-                    (owner.generation_id(), *owner.measurements())
+                    *owner.measurements()
                 }
             };
             self.latest_traversal_measurements = Some(traversal);
@@ -758,7 +740,7 @@ impl WeightingExecutionState {
                 attempt_id: context.attempt_id(),
                 owner_node: context.node().id.clone(),
                 lease_epoch: context.lease_epoch(),
-                source_generation,
+
                 source_sample_count: summary.sample_count(),
             };
             self.retained_observation = Some(RetainedWeightingObservation {
@@ -774,7 +756,7 @@ impl WeightingExecutionState {
                         attempt_id: binding.attempt_id,
                         owner_node: binding.owner_node.clone(),
                         lease_epoch: binding.lease_epoch,
-                        source_generation: binding.source_generation,
+
                         source_sample_count: binding.source_sample_count,
                     },
                 },
@@ -797,7 +779,7 @@ impl WeightingExecutionState {
                 return Err(io::Error::other("initial bulk traversal returned a window"));
             };
             let (state, summary, proof) = weighting
-                .finish(owner.generation_id(), owner.sample_count())
+                .finish(owner.sample_count())
                 .map_err(io::Error::other)?;
             (state, summary, proof, owner)
         };
@@ -831,7 +813,7 @@ impl WeightingExecutionState {
         channels: std::ops::Range<usize>,
         consumer: F,
     ) -> io::Result<F::Completion> {
-        let WeightingExecutionPhase::PendingReplay { frozen, .. } = &self.phase else {
+        let WeightingExecutionPhase::PendingReplay { .. } = &self.phase else {
             return Err(io::Error::other(
                 "bulk additional wave lacks a pending source pass",
             ));
@@ -876,8 +858,7 @@ impl WeightingExecutionState {
             .checked_mul(channels.len() as u64)
             .and_then(|n| n.checked_mul(input.correlations as u64))
             .ok_or_else(|| io::Error::other("bulk window sample count overflow"))?;
-        if owner.generation_id() != frozen.binding.source_generation
-            || owner.channel_ordinals().as_ref() != Some(&channels)
+        if owner.channel_ordinals().as_ref() != Some(&channels)
             || owner.sample_count() != expected_samples
             || expected_samples > replay.sample_count()
         {
@@ -892,5 +873,25 @@ impl WeightingExecutionState {
             ..retained
         });
         Ok(output)
+    }
+}
+
+#[cfg(test)]
+mod gather_tests {
+    use super::*;
+
+    #[test]
+    fn bulk_gather_refills_reuse_the_admitted_capacity() {
+        let admitted = 100;
+        let mut buffer = Vec::new();
+        let mut allocation = None;
+        for samples in [60, 90, 100, 3, 99] {
+            resize_gathered(&mut buffer, admitted, samples);
+            assert_eq!(buffer.len(), samples);
+            assert_eq!(buffer.capacity(), admitted);
+            assert_eq!(*allocation.get_or_insert(buffer.as_ptr()), buffer.as_ptr());
+            buffer.fill(Complex32::new(1.0, -1.0));
+            buffer.clear();
+        }
     }
 }

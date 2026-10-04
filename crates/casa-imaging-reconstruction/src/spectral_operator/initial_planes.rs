@@ -232,9 +232,9 @@ impl InitialPlaneBatch {
 struct InitialPlaneKernel<'a> {
     gridder: &'a ConvolutionOperator,
     dirty: &'a mut Array2<Complex64>,
-    dirty_compensation: &'a mut Array2<Complex64>,
+
     psf: &'a mut Array2<Complex64>,
-    psf_compensation: &'a mut Array2<Complex64>,
+
     sum_weight: &'a mut f64,
     sum_weight_compensation: &'a mut f64,
     published_sum_weight: &'a mut f64,
@@ -255,18 +255,9 @@ impl InitialPlaneKernel<'_> {
             return Ok(false);
         };
         let normalization = self.gridder.normalization(taps)?;
-        self.gridder.grid_compensated(
-            self.dirty,
-            self.dirty_compensation,
-            taps,
-            sample.visibility,
-        )?;
-        self.gridder.grid_compensated(
-            self.psf,
-            self.psf_compensation,
-            taps,
-            Complex64::new(sample.normal_weight, 0.0),
-        )?;
+        self.gridder.grid(self.dirty, taps, sample.visibility)?;
+        self.gridder
+            .grid(self.psf, taps, Complex64::new(sample.normal_weight, 0.0))?;
         if normalization > 0.0 {
             let corrected = sample.normal_weight * normalization - *self.sum_weight_compensation;
             let updated = *self.sum_weight + corrected;
@@ -376,24 +367,14 @@ impl InitialPlaneBatch {
                 .dirty_grids
                 .as_mut()
                 .ok_or(SpectralOperatorError::ProblemMismatch)?;
-            let dirty_compensation = operator
-                .dirty_compensations
-                .as_mut()
-                .ok_or(SpectralOperatorError::ProblemMismatch)?;
             let psf = operator
                 .psf_grids
-                .as_mut()
-                .ok_or(SpectralOperatorError::ProblemMismatch)?;
-            let psf_compensation = operator
-                .psf_compensations
                 .as_mut()
                 .ok_or(SpectralOperatorError::ProblemMismatch)?;
             let planes = batch.planes_per_chart;
             if [
                 dirty.len(),
-                dirty_compensation.len(),
                 psf.len(),
-                psf_compensation.len(),
                 operator.sum_weights.len(),
                 operator.sum_weight_compensations.len(),
                 operator.published_sum_weights.len(),
@@ -405,9 +386,7 @@ impl InitialPlaneBatch {
             {
                 return Err(SpectralOperatorError::ProblemMismatch);
             }
-            let mut dirty_compensation = dirty_compensation.iter_mut();
             let mut psf = psf.iter_mut();
-            let mut psf_compensation = psf_compensation.iter_mut();
             let mut sum_weights = operator.sum_weights.iter_mut();
             let mut sum_weight_compensations = operator.sum_weight_compensations.iter_mut();
             let mut published_sum_weights = operator.published_sum_weights.iter_mut();
@@ -418,9 +397,9 @@ impl InitialPlaneBatch {
                 let kernel = InitialPlaneKernel {
                     gridder: &operator.gridder,
                     dirty,
-                    dirty_compensation: dirty_compensation.next().expect("checked plane length"),
+
                     psf: psf.next().expect("checked plane length"),
-                    psf_compensation: psf_compensation.next().expect("checked plane length"),
+
                     sum_weight: sum_weights.next().expect("checked plane length"),
                     sum_weight_compensation: sum_weight_compensations
                         .next()
@@ -502,18 +481,12 @@ impl SpectralSlabOperator {
                 .dirty_grids
                 .as_mut()
                 .ok_or(SpectralOperatorError::ProblemMismatch)?[plane],
-            dirty_compensation: &mut self
-                .dirty_compensations
-                .as_mut()
-                .ok_or(SpectralOperatorError::ProblemMismatch)?[plane],
+
             psf: &mut self
                 .psf_grids
                 .as_mut()
                 .ok_or(SpectralOperatorError::ProblemMismatch)?[plane],
-            psf_compensation: &mut self
-                .psf_compensations
-                .as_mut()
-                .ok_or(SpectralOperatorError::ProblemMismatch)?[plane],
+
             sum_weight: &mut self.sum_weights[plane],
             sum_weight_compensation: &mut self.sum_weight_compensations[plane],
             published_sum_weight: &mut self.published_sum_weights[plane],
@@ -564,12 +537,7 @@ mod tests {
             operator.geometry.grid_shape[0],
             operator.geometry.grid_shape[1],
         );
-        for grids in [
-            &mut operator.dirty_grids,
-            &mut operator.dirty_compensations,
-            &mut operator.psf_grids,
-            &mut operator.psf_compensations,
-        ] {
+        for grids in [&mut operator.dirty_grids, &mut operator.psf_grids] {
             *grids = Some(vec![Array2::zeros(shape); 4]);
         }
         for values in [
@@ -665,9 +633,7 @@ mod tests {
 
     fn assert_same(expected: &SpectralSlabOperator, actual: &SpectralSlabOperator) {
         assert_eq!(actual.dirty_grids, expected.dirty_grids);
-        assert_eq!(actual.dirty_compensations, expected.dirty_compensations);
         assert_eq!(actual.psf_grids, expected.psf_grids);
-        assert_eq!(actual.psf_compensations, expected.psf_compensations);
         assert_eq!(actual.sum_weights, expected.sum_weights);
         assert_eq!(
             actual.sum_weight_compensations,
@@ -690,7 +656,7 @@ mod tests {
     }
 
     #[test]
-    fn initial_planes_preserve_exact_order_weights_and_compensation_with_reverse_dispatch() {
+    fn initial_planes_preserve_plane_ownership_with_reverse_dispatch() {
         for w_projection in [false, true] {
             let mut expected = [operator(w_projection), operator(w_projection)];
             let mut direct = [operator(w_projection), operator(w_projection)];

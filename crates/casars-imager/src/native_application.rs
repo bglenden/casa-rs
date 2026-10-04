@@ -39,10 +39,6 @@ pub(super) fn execute(config: &CliConfig) -> Result<RunSummary, String> {
         crate::task_contract::ImagerVisibilityProductDiagnostic {
             problem_id: hex(completion.problem_id().as_bytes()),
             final_model_generation: hex(completion.final_model().as_bytes()),
-            selected_generation: hex(completion.selected_generation().as_bytes()),
-            weighting_generation: hex(completion.weighting_generation().as_bytes()),
-            model_product: hex(completion.model_product().as_bytes()),
-            residual_product: hex(completion.residual_product().as_bytes()),
             sample_count: completion.sample_count(),
         }
     });

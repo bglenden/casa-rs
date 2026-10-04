@@ -180,7 +180,7 @@ impl EpochBand<'_> {
         let local =
             self.native_range.start - selected.start..self.native_range.end - selected.start;
         let rows = block.rows(layout, 0..block.channels, local.clone())?;
-        let mut previous: Option<(&[f64], [f64; 2], Range<usize>, Option<RowStencil>)> = None;
+        let mut previous: Option<CachedRowSupport<'_>> = None;
         let mut unique = vec![u32::MAX; w.model_channels.len()];
         for row_index in 0..block.metadata.len() {
             let mut row = rows.row(row_index);
@@ -242,7 +242,7 @@ impl EpochBand<'_> {
                             *refill
                                 .predictions
                                 .get_mut(refill.counts[0])
-                                .ok_or_else(|| SpectralOperatorError::ResidencyOverflow)? =
+                                .ok_or(SpectralOperatorError::ResidencyOverflow)? =
                                 ResidualPrediction {
                                     tap: SpatialTap::new(
                                         taps,
@@ -281,15 +281,14 @@ impl EpochBand<'_> {
                     *refill
                         .samples
                         .get_mut(refill.counts[2])
-                        .ok_or_else(|| SpectralOperatorError::ResidencyOverflow)? =
-                        ResidualSample {
-                            tap,
-                            left: left as u32,
-                            right: right as u32,
-                            nearest_flags: nearest as u32 | (flag_mask << 30),
-                            plane: (fine.output_channel() - w.core.start) as u32,
-                            factors: fine.factors().map(|v| v as f32),
-                        };
+                        .ok_or(SpectralOperatorError::ResidencyOverflow)? = ResidualSample {
+                        tap,
+                        left: left as u32,
+                        right: right as u32,
+                        nearest_flags: nearest as u32 | (flag_mask << 30),
+                        plane: (fine.output_channel() - w.core.start) as u32,
+                        factors: fine.factors().map(|v| v as f32),
+                    };
                     refill.counts[2] += 1;
                 }
             }

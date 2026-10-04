@@ -134,7 +134,7 @@ enum VisibilityWriteState {
 
 enum FinalVisibilityReplayState {
     Unbound,
-    Bound(casa_imaging_products::VisibilityProductAuthority),
+    Bound(casa_imaging_products::VisibilityProductProgress),
     Finished(casa_imaging_products::VisibilityProductCompletion),
 }
 
@@ -230,7 +230,7 @@ impl FinalVisibilitySink for FinalVisibilityReplay {
         match &*state {
             FinalVisibilityReplayState::Unbound => {
                 *state = FinalVisibilityReplayState::Bound(
-                    casa_imaging_products::VisibilityProductAuthority::new(problem, final_model),
+                    casa_imaging_products::VisibilityProductProgress::new(problem, final_model),
                 );
                 Ok(())
             }
@@ -309,13 +309,7 @@ impl FinalVisibilitySink for FinalVisibilityReplay {
                 return Err(io::Error::other("final-visibility replay is not bound"));
             }
         };
-        let completion = authority.finish(
-            replay.selected_generation(),
-            replay
-                .continuum_transform()
-                .map(|completion| completion.generation_id()),
-            replay.weighting_generation(),
-        );
+        let completion = authority.finish(replay.weighting_generation());
         if let Some(transform) = replay.continuum_transform()
             && completion.sample_count() != transform.output_sample_count()
         {
@@ -334,7 +328,7 @@ impl FinalVisibilitySink for FinalVisibilityReplay {
                     replay
                         .continuum_transform()
                         .map(|transform| {
-                            LogicalIdentity::from_sha256(transform.generation_id().as_bytes())
+                            LogicalIdentity::from_sha256(transform.contract_id().as_bytes())
                         })
                         .ok_or_else(|| {
                             io::Error::other("CORRECTED_DATA write lacks continuum generation")
@@ -360,7 +354,7 @@ impl FinalVisibilitySink for FinalVisibilityReplay {
                     model_data: write
                         .targets
                         .model_data()
-                        .then_some(completion.model_product().identity()),
+                        .then_some(completion.final_model().identity()),
                     corrected_data,
                 },
             )?;
@@ -1068,7 +1062,7 @@ impl FinalMajorPhaseInput {
         self.evidence.normal_state.maximum_read_channels()
     }
 
-    /// Return the owner-independent accepted-update identity bound into planning.
+    /// Return the run-local accepted-update identity bound into planning.
     #[must_use]
     pub fn identity(&self) -> crate::ArtifactIdentity {
         let mut hash = Sha256::new();
@@ -1077,7 +1071,7 @@ impl FinalMajorPhaseInput {
         match self.source_delta {
             Some(delta) => {
                 hash.update([1]);
-                hash.update(delta.as_bytes());
+                hash.update(delta.ordinal().to_le_bytes());
             }
             None => hash.update([0]),
         }
@@ -1913,14 +1907,14 @@ impl SpectralCycleExecutor {
         if self.complete_data.slab_count() == 1 {
             return Ok(());
         }
-        let (replay, selected_generation, continuum_generation) = weighting
+        let replay = weighting
             .pending_replay_inputs()
             .ok_or_else(|| io::Error::other("initial slab replay summary missing"))?;
         let first_operator = operator
             .take()
             .ok_or_else(|| io::Error::other("initial slab operator missing"))?;
         let (first, mut recycle) = first_operator
-            .complete_initial_slab_recycled(replay, selected_generation, continuum_generation)
+            .complete_initial_slab_recycled(replay)
             .map_err(io::Error::other)?;
         let normal_storage = self.normal_storage()?;
         let mut folded = first
@@ -1976,23 +1970,15 @@ impl SpectralCycleExecutor {
                 .ok_or_else(|| {
                     io::Error::other("channel slab source-pass measurements overflow")
                 })?;
-            let (replay, selected_generation, continuum_generation) = weighting
+            let replay = weighting
                 .pending_replay_inputs()
                 .ok_or_else(|| io::Error::other("channel slab replay summary missing"))?;
             let next_operator = operator
                 .take()
                 .ok_or_else(|| io::Error::other("channel slab operator missing"))?;
             let (next, next_recycle) = match window_replay.as_ref() {
-                Some(window) => next_operator.complete_initial_window_recycled(
-                    window,
-                    replay,
-                    selected_generation,
-                ),
-                None => next_operator.complete_initial_slab_recycled(
-                    replay,
-                    selected_generation,
-                    continuum_generation,
-                ),
+                Some(window) => next_operator.complete_initial_window_recycled(window, replay),
+                None => next_operator.complete_initial_slab_recycled(replay),
             }
             .map_err(io::Error::other)?;
             folded = folded.fold(next).map_err(io::Error::other)?;
@@ -2166,13 +2152,12 @@ impl SpectralCycleExecutor {
     fn log_gridded_replay_measurements(&self, replay: &FrozenGriddedNormalReplay) {
         for (chart, diagnostics) in replay.w_projection_diagnostics().iter().enumerate() {
             eprintln!(
-                "imaging_w_projection_summary chart={} planes={} sampling={} maximum_support={} plane_zero_normalization={:.17e} kernel_identity={:02x?}",
+                "imaging_w_projection_summary chart={} planes={} sampling={} maximum_support={} plane_zero_normalization={:.17e}",
                 chart,
                 diagnostics.plane_count(),
                 diagnostics.sampling(),
                 diagnostics.maximum_support(),
                 diagnostics.plane_zero_normalization(),
-                diagnostics.kernel_identity(),
             );
         }
         let (Some(stream), Some(artifact), Some(routing), Some(window)) = (

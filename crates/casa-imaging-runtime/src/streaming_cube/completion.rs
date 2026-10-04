@@ -21,7 +21,6 @@ impl PendingCubeRefresh {
         previous: &FinalNormalState,
         model: ModelGenerationId,
         replay: &WeightingReplaySummary,
-        selected: SelectedObservationGenerationId,
         storage: &NormalStoragePlan,
     ) -> Result<Self, CompleteDataOperatorError> {
         if context.node().kind != WorkKind::ObservationRead {
@@ -31,8 +30,6 @@ impl PendingCubeRefresh {
             evidence: previous.begin_streaming_cube_refresh(
                 specification,
                 replay,
-                selected,
-                None,
                 model,
                 storage,
             )?,
@@ -59,9 +56,7 @@ impl PendingCubeRefresh {
             return Err(CompleteDataOperatorError::ExecutionBinding);
         }
         let evidence = self.evidence.finish()?;
-        if evidence.completion().replay_id() != replay.reconstruction_summary().replay_id()
-            || evidence.completion().coverage() != replay.reconstruction_summary().coverage()
-        {
+        if evidence.completion().replay_id() != replay.reconstruction_summary().replay_id() {
             return Err(CompleteDataOperatorError::ExecutionBinding);
         }
         Ok(CompleteDataOperatorResult {
@@ -74,6 +69,7 @@ impl PendingCubeRefresh {
             delivered_source_sample_count: Some(replay.delivered_source_sample_count()),
         })
     }
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         context: WorkExecutionContext<'_>,
@@ -101,10 +97,6 @@ impl PendingCubeRefresh {
         let evidence = previous.begin_streaming_cube_refresh(
             specification,
             original.reconstruction_summary(),
-            original.selected_generation(),
-            original
-                .continuum_transform()
-                .map(|value| value.generation_id()),
             model,
             storage,
         )?;
@@ -129,6 +121,7 @@ impl PendingCubeRefresh {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn complete(self) -> Result<CompleteDataOperatorResult, CompleteDataOperatorError> {
         Ok(CompleteDataOperatorResult {
             evidence: self.evidence.finish()?,
@@ -145,8 +138,7 @@ impl PendingCubeRefresh {
 pub(crate) struct PendingStreamingCubeFold {
     binding: CompleteDataExecutionBinding,
     replay: WeightingReplaySummary,
-    selected_generation: SelectedObservationGenerationId,
-    continuum_transform_generation: Option<ContinuumTransformGenerationId>,
+
     storage: NormalStoragePlan,
     fold: Option<PendingCompleteDataSlabFold>,
 }
@@ -159,7 +151,7 @@ impl PendingStreamingCubeFold {
         context: WorkExecutionContext<'_>,
         reconciliation_node: &WorkNodeId,
         replay: &WeightingReplaySummary,
-        selected_generation: SelectedObservationGenerationId,
+
         storage: NormalStoragePlan,
     ) -> Result<Self, CompleteDataOperatorError> {
         if context.node().kind != WorkKind::ObservationRead {
@@ -175,14 +167,14 @@ impl PendingStreamingCubeFold {
                 observation_predecessor_required: true,
             },
             replay: replay.clone(),
-            selected_generation,
-            continuum_transform_generation: None,
+
             storage,
             fold: None,
         })
     }
     /// Validate the caller-bound source and execution once, before any worker
     /// enters the pool. Completed bands carry only owned, context-free data.
+    #[cfg(test)]
     pub(crate) fn new(
         context: WorkExecutionContext<'_>,
         reconciliation_node: &WorkNodeId,
@@ -208,7 +200,6 @@ impl PendingStreamingCubeFold {
             || predecessor.lease_epoch() != replay.lease_epoch()
             || predecessor.owner_node() != replay.owner_node()
             || !predecessor.settled_fences().contains(&FenceKind::Io)
-            || predecessor.source_generation() != replay.selected_generation()
             || predecessor.delivered_sample_count() != replay.delivered_source_sample_count()
         {
             return Err(CompleteDataOperatorError::ExecutionBinding);
@@ -223,10 +214,7 @@ impl PendingStreamingCubeFold {
                 observation_predecessor_required: true,
             },
             replay: replay.reconstruction_summary().clone(),
-            selected_generation: replay.selected_generation(),
-            continuum_transform_generation: replay
-                .continuum_transform()
-                .map(|value| value.generation_id()),
+
             storage,
             fold: None,
         })
@@ -237,13 +225,8 @@ impl PendingStreamingCubeFold {
         specification: &SpectralOperatorSpecification,
         primitives: SpectralOperatorPrimitives,
     ) -> Result<(), CompleteDataOperatorError> {
-        let evidence = CompleteDataOwnerResult::from_streaming_cube(
-            specification,
-            primitives,
-            &self.replay,
-            self.selected_generation,
-            self.continuum_transform_generation,
-        )?;
+        let evidence =
+            CompleteDataOwnerResult::from_streaming_cube(specification, primitives, &self.replay)?;
         if evidence.completion().problem_id() != self.binding.problem {
             return Err(CompleteDataOperatorError::ExecutionBinding);
         }

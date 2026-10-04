@@ -55,7 +55,6 @@ pub use execution_bindings::{
     WorkMeasurements, plan, run,
 };
 
-pub use casa_imaging_model::{ContinuumFitWeightGenerationId, ContinuumTransformGenerationId};
 pub use casa_imaging_reconstruction::{MajorCyclePreparation, SpectralPrimitiveCatalog};
 pub use complete_data_operator::{
     CompleteDataOperatorError, CompleteDataOperatorResult, CompleteDataPlanError,

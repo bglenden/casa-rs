@@ -810,6 +810,8 @@ struct RowStencil {
     prediction_terms: Vec<SmallVec<[PreparedPredictionTerm; 4]>>,
 }
 
+type CachedRowSupport<'a> = (&'a [f64], [f64; 2], Range<usize>, Option<RowStencil>);
+
 #[derive(Clone, Copy)]
 struct PreparedPredictionTerm {
     plane: usize,
@@ -1338,8 +1340,7 @@ impl BandWorkspace {
         }
         let local = native_range.start - window.start..native_range.end - window.start;
         let rows = block.rows(layout, window, local)?;
-        let mut previous_support: Option<(&[f64], [f64; 2], Range<usize>, Option<RowStencil>)> =
-            None;
+        let mut previous_support: Option<CachedRowSupport<'_>> = None;
         for row_index in 0..block.metadata.len() {
             let mut row = rows.row(row_index);
             if let Some(single) = self.single_channel {

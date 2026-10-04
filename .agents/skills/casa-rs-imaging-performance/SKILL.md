@@ -127,6 +127,12 @@ must not serialize or hash full receipts/plans, or scan historical receipt
 stores; current admission is authoritative. Exceptions need a concrete failure
 model and demonstrated benefit.
 
+ADR-0015 extends ownership-only association to trusted within-run input,
+weighting/replay, sparse model updates and reprojection. Do not content-hash
+scientific arrays or private same-run spill bytes for bookkeeping or improbable
+corruption insurance. Retain structural/source/lifecycle and I/O checks;
+independently justified external-input checksums and opt-in diagnostics differ.
+
 Use the smallest existing check that exercises the change, then the applicable
 issue-named acceptance. Reuse unaffected green evidence; do not mechanically
 rerun an eight-stage ladder or broaden the ticket's gates.

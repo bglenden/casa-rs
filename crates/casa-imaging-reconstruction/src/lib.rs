@@ -169,27 +169,18 @@ pub use spectral_sampling::{
     SpectralStencilError, SpectralStencilReceipt, SpectralStencilValidity, compile_spectral_stencil,
 };
 pub use weighting::{
-    FrozenWeightingCoverageProof, FusedWeightingPhase, WeightingAlgorithmState,
-    WeightingDensityPhase, WeightingError, WeightingExecutionLimits, WeightingGenerationId,
-    WeightingPlan, WeightingReplayChunk, WeightingReplayCoverageId, WeightingReplayId,
-    WeightingReplaySummary, WeightingResidency, WeightingSampleValue, WeightingSelectedSample,
-    WeightingSpectralValue, begin_natural_weighting_stream, begin_weighting_generation,
-    plan_weighting,
+    FrozenWeightingBinding, FusedWeightingPhase, WeightingAlgorithmState, WeightingDensityPhase,
+    WeightingError, WeightingExecutionLimits, WeightingGenerationId, WeightingPlan,
+    WeightingReplayChunk, WeightingReplayId, WeightingReplaySummary, WeightingResidency,
+    WeightingSampleValue, WeightingSelectedSample, WeightingSpectralValue,
+    begin_natural_weighting_stream, begin_weighting_generation, plan_weighting,
 };
 
 const AUTHORITY_DOMAIN: &[u8] = b"casa-rs-model-lifecycle-authority";
 const AUTHORITY_VERSION: u32 = 2;
 const GENERATION_DOMAIN: &[u8] = b"casa-rs-model-generation";
 const GENERATION_VERSION: u32 = 4;
-const DELTA_DOMAIN: &[u8] = b"casa-rs-model-delta";
-const DELTA_VERSION: u32 = 2;
 const REPROJECTION_VERSION: u32 = 3;
-const REPROJECTED_SAMPLES_DOMAIN: &[u8] = b"casa-rs-reprojected-model-samples";
-const REPROJECTED_SAMPLES_VERSION: u32 = 1;
-const REPROJECTED_STENCIL_DOMAIN: &[u8] = b"casa-rs-reprojected-model-stencil";
-const REPROJECTED_STENCIL_VERSION: u32 = 1;
-const REPROJECTED_PROOF_DOMAIN: &[u8] = b"casa-rs-reprojected-model-proof";
-const REPROJECTED_PROOF_VERSION: u32 = 1;
 const FINAL_COMPLETION_DOMAIN: &[u8] = b"casa-rs-final-model-completion";
 const FINAL_COMPLETION_VERSION: u32 = 2;
 const FINAL_NORMAL_STATE_DOMAIN: &[u8] = b"casa-rs-final-normal-state";
@@ -241,11 +232,19 @@ lifecycle_identity!(
     GENERATION_VERSION,
     "Stable owner-minted identity of one complete model generation."
 );
-lifecycle_identity!(
-    ModelDeltaId,
-    DELTA_VERSION,
-    "Stable owner-minted identity of one base-bound Model Delta."
-);
+/// Process-local event token for one validated, base-bound model update.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ModelDeltaId(u64);
+
+impl ModelDeltaId {
+    /// Return the event ordinal for compact run-local association.
+    pub const fn ordinal(self) -> u64 {
+        self.0
+    }
+}
+
+static NEXT_MODEL_DELTA: AtomicU64 = AtomicU64::new(1);
+
 lifecycle_identity!(
     ModelReprojectionId,
     REPROJECTION_VERSION,
@@ -364,18 +363,6 @@ impl PreparedReprojectedSeed {
         ModelReprojectionId(self.projection.reprojection())
     }
 
-    /// Return the owner-derived validity identity of the projected target.
-    #[must_use]
-    pub const fn support_identity(&self) -> LogicalIdentity {
-        self.projection.support()
-    }
-
-    /// Return the proof binding exact projected samples and ordered stencils.
-    #[must_use]
-    pub const fn proof_identity(&self) -> LogicalIdentity {
-        self.projection.proof()
-    }
-
     /// Bind this owner preparation to its final compiler projection.
     ///
     /// The compiler projection alone is descriptive. Consuming this opaque
@@ -399,14 +386,7 @@ impl PreparedReprojectedSeed {
         {
             return Err(ModelLifecycleError::SourceProvenanceMismatch);
         }
-        if projection.support() != self.projection.support() {
-            return Err(ModelLifecycleError::SupportIdentityMismatch);
-        }
-        if projection.reprojection() != self.projection.reprojection()
-            || projection.samples() != self.projection.samples()
-            || projection.stencil() != self.projection.stencil()
-            || projection.proof() != self.projection.proof()
-        {
+        if projection.reprojection() != self.projection.reprojection() {
             return Err(ModelLifecycleError::ReprojectionIdentityMismatch);
         }
         Ok(ExecutableModelProblem {
@@ -665,7 +645,7 @@ pub struct ModelDelta {
 }
 
 impl ModelDelta {
-    /// Return the canonical delta identity.
+    /// Return the run-local event associated with this update.
     #[must_use]
     pub const fn delta_id(&self) -> ModelDeltaId {
         self.delta_id
@@ -1020,7 +1000,7 @@ impl ModelLifecycle {
             Ok(storage) => storage,
             Err(error) => return Ok(Err(error)),
         };
-        let samples = match store_exact_samples(
+        let (samples, actual_support) = match store_exact_samples(
             samples,
             storage,
             self.contract.bounds().max_absolute_model_value(),
@@ -1029,12 +1009,7 @@ impl ModelLifecycle {
             Err(error) => return Ok(Err(error)),
         };
         Ok((|| {
-            if casa_imaging_model::try_model_support_identity(
-                samples
-                    .iter()
-                    .map(|sample| sample.map(|sample| sample.support())),
-            )? != *support
-            {
+            if actual_support != *support {
                 return Err(ModelLifecycleError::SupportIdentityMismatch);
             }
             self.mint_stored_generation(
@@ -1166,7 +1141,13 @@ impl ModelLifecycle {
         if canonical.is_empty() {
             return Err(ModelLifecycleError::EmptyDelta);
         }
-        let delta_id = delta_id(self.authority, base, self.contract.target(), &canonical);
+        let delta_id = ModelDeltaId(
+            NEXT_MODEL_DELTA
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |ordinal| {
+                    ordinal.checked_add(1)
+                })
+                .expect("model update event space exhausted"),
+        );
         Ok(ModelDelta {
             delta_id,
             authority: self.authority,
@@ -1713,13 +1694,6 @@ pub fn prepare_reprojected_seed<R: ModelSourceReader>(
         source_shape.identity(),
         target_shape.identity(),
     );
-    let mut stencil_encoder = Encoder::new(REPROJECTED_STENCIL_DOMAIN, REPROJECTED_STENCIL_VERSION);
-    stencil_encoder.identity(source_shape.identity().as_bytes());
-    stencil_encoder.identity(target_shape.identity().as_bytes());
-    stencil_encoder.u8(match precision {
-        NumericPrecision::F32 => 0,
-        NumericPrecision::F64 => 1,
-    });
     let mut samples = Vec::with_capacity(target_shape.sample_count());
     let mut term_count = 0usize;
     for target_index in 0..target_shape.sample_count() {
@@ -1735,22 +1709,6 @@ pub fn prepare_reprojected_seed<R: ModelSourceReader>(
             term_count,
             bounds.max_reprojection_terms(),
         )?;
-        stencil_encoder.usize(target_index);
-        match &stencil {
-            None => stencil_encoder.u8(0),
-            Some(terms) => {
-                stencil_encoder.u8(1);
-                stencil_encoder.usize(terms.len());
-                for weighted in terms {
-                    stencil_encoder.usize(
-                        source_shape
-                            .flat_index(weighted.cell)
-                            .expect("derived source stencil cell belongs to source shape"),
-                    );
-                    stencil_encoder.u64(canonical_f64_bits(weighted.weight));
-                }
-            }
-        }
         match stencil {
             None => match reprojection_policy.uncovered_target() {
                 ModelUncoveredTargetPolicy::Invalid => {
@@ -1801,27 +1759,11 @@ pub fn prepare_reprojected_seed<R: ModelSourceReader>(
             }
         }
     }
-    let support = model_support_identity(samples.iter().map(|sample| sample.support()));
-    let sample_identity = reprojected_samples_identity(&samples);
-    let stencil_identity = LogicalIdentity::from_sha256(stencil_encoder.finish());
-    let proof = reprojected_seed_proof_identity(
-        source,
-        source_shape.identity(),
-        preparation_contract,
-        mapping,
-        support,
-        sample_identity,
-        stencil_identity,
-    );
     let projection = ModelReprojectedSeedProjection::from_identities(
         source,
         source_shape.clone(),
         preparation_contract,
         mapping,
-        support,
-        sample_identity,
-        stencil_identity,
-        proof,
     )
     .map_err(ModelLifecycleError::from)?;
     Ok(PreparedReprojectedSeed {
@@ -2358,106 +2300,6 @@ fn lifecycle_authority(
     LogicalIdentity::from_sha256(encoder.finish())
 }
 
-fn reprojected_samples_identity(samples: &[ModelSample]) -> LogicalIdentity {
-    let mut encoder = Encoder::new(REPROJECTED_SAMPLES_DOMAIN, REPROJECTED_SAMPLES_VERSION);
-    encoder.usize(samples.len());
-    for sample in samples {
-        encoder.u64(canonical_f64_bits(sample.value().value()));
-        encoder.u8(match sample.support() {
-            ModelSupport::Valid => 1,
-            ModelSupport::Invalid => 0,
-        });
-    }
-    LogicalIdentity::from_sha256(encoder.finish())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn reprojected_seed_proof_identity(
-    source: LogicalIdentity,
-    source_shape: LogicalIdentity,
-    preparation_contract: LogicalIdentity,
-    reprojection: LogicalIdentity,
-    support: LogicalIdentity,
-    samples: LogicalIdentity,
-    stencil: LogicalIdentity,
-) -> LogicalIdentity {
-    let mut encoder = Encoder::new(REPROJECTED_PROOF_DOMAIN, REPROJECTED_PROOF_VERSION);
-    encoder.identity(source.as_bytes());
-    encoder.identity(source_shape.as_bytes());
-    encoder.identity(preparation_contract.as_bytes());
-    encoder.identity(reprojection.as_bytes());
-    encoder.identity(support.as_bytes());
-    encoder.identity(samples.as_bytes());
-    encoder.identity(stencil.as_bytes());
-    LogicalIdentity::from_sha256(encoder.finish())
-}
-
-/// Revalidate a durable reconstruction proof from its digest-only projection.
-///
-/// This verifies receipt integrity only; it cannot create the private prepared
-/// values or the [`ExecutableModelProblem`] brand required for execution.
-#[allow(clippy::too_many_arguments)]
-pub fn validate_reprojected_seed_proof_identity(
-    claimed: LogicalIdentity,
-    source: LogicalIdentity,
-    source_shape: LogicalIdentity,
-    preparation_contract: LogicalIdentity,
-    reprojection: LogicalIdentity,
-    support: LogicalIdentity,
-    samples: LogicalIdentity,
-    stencil: LogicalIdentity,
-) -> Result<(), ModelLifecycleError> {
-    let identities = [
-        claimed,
-        source,
-        source_shape,
-        preparation_contract,
-        reprojection,
-        support,
-        samples,
-        stencil,
-    ];
-    if identities
-        .iter()
-        .any(|identity| identity.as_bytes() == [0; 32])
-        || claimed
-            != reprojected_seed_proof_identity(
-                source,
-                source_shape,
-                preparation_contract,
-                reprojection,
-                support,
-                samples,
-                stencil,
-            )
-    {
-        Err(ModelLifecycleError::ReprojectionIdentityMismatch)
-    } else {
-        Ok(())
-    }
-}
-
-fn delta_id(
-    authority: LogicalIdentity,
-    base: ModelGenerationId,
-    shape: &ModelSourceShape,
-    terms: &[ModelDeltaTerm],
-) -> ModelDeltaId {
-    let mut encoder = Encoder::new(DELTA_DOMAIN, DELTA_VERSION);
-    encoder.identity(authority.as_bytes());
-    encoder.identity(base.as_bytes());
-    encoder.usize(terms.len());
-    for term in terms {
-        encoder.usize(
-            shape
-                .flat_index(term.cell())
-                .expect("owner validates delta cells before hashing"),
-        );
-        encoder.u64(canonical_f64_bits(term.increment().value()));
-    }
-    ModelDeltaId(LogicalIdentity::from_sha256(encoder.finish()))
-}
-
 #[allow(clippy::too_many_arguments)]
 fn final_completion_id(
     authority: LogicalIdentity,
@@ -2478,7 +2320,7 @@ fn final_completion_id(
         None => encoder.u8(0),
         Some(delta) => {
             encoder.u8(1);
-            encoder.identity(delta.as_bytes());
+            encoder.u64(delta.ordinal());
         }
     }
     encoder.identity(generation.as_bytes());
@@ -2489,8 +2331,9 @@ fn store_exact_samples<E>(
     samples: impl IntoIterator<Item = Result<ModelSample, E>>,
     mut storage: ModelSamples,
     bound: f64,
-) -> Result<Result<ModelSamples, ModelLifecycleError>, E> {
+) -> Result<Result<(ModelSamples, LogicalIdentity), ModelLifecycleError>, E> {
     let expected = storage.len();
+    let mut support = casa_imaging_model::ModelSourceSupportInspection::new();
     let mut values = Vec::with_capacity(storage.window_samples());
     let mut written = 0;
     let mut iterator = samples.into_iter();
@@ -2512,6 +2355,7 @@ fn store_exact_samples<E>(
         } else if sample.value().value() != 0.0 {
             return Ok(Err(ModelLifecycleError::InvalidSupportPayload));
         }
+        support.push(sample.support());
         values.push(sample);
         if values.len() == storage.window_samples() {
             if let Err(error) = storage.write(written, &values) {
@@ -2536,7 +2380,7 @@ fn store_exact_samples<E>(
             return Ok(Err(error));
         }
     }
-    Ok(Ok(storage))
+    Ok(Ok((storage, support.finish())))
 }
 
 fn validate_model_value(value: ModelValue, bound: f64) -> Result<(), ModelLifecycleError> {
@@ -2705,50 +2549,5 @@ impl Encoder {
 
     pub(crate) fn usize(&mut self, value: usize) {
         self.u64(u64::try_from(value).expect("usize fits in u64 on supported targets"));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        ModelSample, ModelValue, reprojected_samples_identity, reprojected_seed_proof_identity,
-    };
-    use casa_imaging_model::LogicalIdentity;
-
-    fn identity(byte: u8) -> LogicalIdentity {
-        LogicalIdentity::from_sha256([byte; 32])
-    }
-
-    #[test]
-    fn reprojected_proof_binds_exact_values_and_ordered_stencil_identity() {
-        let original_samples = reprojected_samples_identity(&[
-            ModelSample::valid(ModelValue::new(2.0).expect("finite value")),
-            ModelSample::valid(ModelValue::new(6.0).expect("finite value")),
-        ]);
-        let changed_samples = reprojected_samples_identity(&[
-            ModelSample::valid(ModelValue::new(3.0).expect("finite value")),
-            ModelSample::valid(ModelValue::new(6.0).expect("finite value")),
-        ]);
-        assert_ne!(original_samples, changed_samples);
-
-        let proof = |samples, stencil| {
-            reprojected_seed_proof_identity(
-                identity(1),
-                identity(2),
-                identity(3),
-                identity(4),
-                identity(5),
-                samples,
-                stencil,
-            )
-        };
-        assert_ne!(
-            proof(original_samples, identity(6)),
-            proof(changed_samples, identity(6)),
-        );
-        assert_ne!(
-            proof(original_samples, identity(6)),
-            proof(original_samples, identity(7)),
-        );
     }
 }

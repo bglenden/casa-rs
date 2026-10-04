@@ -220,8 +220,6 @@ impl CompleteDataOwnerResult {
         specification: &SpectralOperatorSpecification,
         primitives: SpectralOperatorPrimitives,
         replay: &WeightingReplaySummary,
-        selected_generation: SelectedObservationGenerationId,
-        continuum_transform_generation: Option<ContinuumTransformGenerationId>,
     ) -> Result<Self, SpectralOperatorError> {
         let geometry = specification.cube_geometry()?;
         primitives.validate_cube_layout(
@@ -233,12 +231,7 @@ impl CompleteDataOwnerResult {
             combine_initial_chart_primitives(specification, std::iter::once(Ok(primitives)))?;
         Ok(Self {
             domains,
-            completion: CompleteDataOwnerCompletion::from_streaming_cube(
-                specification,
-                replay,
-                selected_generation,
-                continuum_transform_generation,
-            )?,
+            completion: CompleteDataOwnerCompletion::from_streaming_cube(specification, replay)?,
         })
     }
 }
@@ -247,8 +240,6 @@ impl CompleteDataOwnerCompletion {
     pub(crate) fn from_streaming_cube(
         specification: &SpectralOperatorSpecification,
         replay: &WeightingReplaySummary,
-        selected_generation: SelectedObservationGenerationId,
-        continuum_transform_generation: Option<ContinuumTransformGenerationId>,
     ) -> Result<Self, SpectralOperatorError> {
         specification.cube_geometry()?;
         if replay.sample_count() == 0 || replay.block_count() == 0 {
@@ -261,13 +252,10 @@ impl CompleteDataOwnerCompletion {
             weighting_commitment: specification.weighting_commitment,
             weighting_generation: replay.weighting_generation(),
             replay: replay.replay_id(),
-            coverage: replay.coverage(),
+
             // Reuse terminal source coverage; no second encoding pass.
-            coverage_proof_bytes: 0,
-            coverage_proof_hash_calls: 0,
             primitives: SpectralPrimitiveCatalog::UnnormalizedChannelSlabV1,
-            selected_generation,
-            continuum_transform_generation,
+
             sample_count: replay.sample_count(),
             block_count: replay.block_count(),
         })

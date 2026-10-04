@@ -56,6 +56,8 @@ impl WaveCharge {
     }
 }
 
+// Inline state is charged by WaveCharge; transitions need no extra heap owner.
+#[allow(clippy::large_enum_variant)]
 enum Job<'a> {
     Pending(BandPlan),
     Active(EpochBand<'a>),

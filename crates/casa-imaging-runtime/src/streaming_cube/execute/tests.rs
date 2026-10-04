@@ -25,7 +25,7 @@ const OUTPUT: [f64; 4] = [1e9, 1.001e9, 1.002e9, 1.003e9];
 fn native_input(
     problem: &CompiledProblem,
     mut consume: impl FnMut(u64, &[&NativeBlock], &NativeLayout) -> io::Result<()>,
-) -> (WeightingReplaySummary, SelectedObservationGenerationId) {
+) -> WeightingReplaySummary {
     let plan = plan_weighting(problem, WeightingExecutionLimits::new(7, 1).unwrap()).unwrap();
     let mut coordinator = NativeWeightingPreparation::new(problem, &plan).unwrap();
     let samples = fixture::selected_samples(problem);
@@ -50,7 +50,7 @@ fn native_input(
     let mut visited = 0;
     let mut ordinal = 0;
     let mut pending = None;
-    let (selected, count) = problem
+    let count = problem
         .inspect_selected_observation(samples.into_iter().map(Ok::<_, io::Error>), |sample| {
             let worker_index = (visited / 12) % workers.len();
             let (worker, cache) = &mut workers[worker_index];
@@ -151,7 +151,7 @@ fn native_input(
     assert_eq!(count, 60);
     assert_eq!(replay.sample_count(), count);
     assert_eq!(ordinal, 3);
-    (replay, selected)
+    replay
 }
 
 #[test]
@@ -171,7 +171,7 @@ fn native_preparation_and_real_bands_feed_the_existing_fold_and_controller() {
     let (_, storage) = test_authority(directory.path(), plan.artifact_bytes);
     let mut input = NativePreparation::new(&storage, plan, &problem, &OUTPUT, bands).unwrap();
     let mut first_address = None;
-    let (replay, selected) = native_input(&problem, |_, parts, layout| {
+    let replay = native_input(&problem, |_, parts, layout| {
         first_address.get_or_insert(layout.address);
         input.consume(parts, layout)
     });
@@ -202,14 +202,8 @@ fn native_preparation_and_real_bands_feed_the_existing_fold_and_controller() {
             real.invariant_dirty().map(|values| values.as_ptr()),
             real.psf().as_ptr(),
         );
-        let band = CompleteDataOwnerResult::from_streaming_cube(
-            specification,
-            normal,
-            &replay,
-            selected,
-            None,
-        )
-        .unwrap();
+        let band =
+            CompleteDataOwnerResult::from_streaming_cube(specification, normal, &replay).unwrap();
         let real = band.primitives().cube_real_fields().unwrap();
         assert_eq!(
             pointers,
@@ -219,10 +213,7 @@ fn native_preparation_and_real_bands_feed_the_existing_fold_and_controller() {
                 real.psf().as_ptr()
             )
         );
-        assert_eq!(band.completion().coverage(), replay.coverage());
         assert_eq!(band.completion().sample_count(), 60);
-        assert_eq!(band.completion().coverage_proof_bytes(), 0);
-        assert_eq!(band.completion().coverage_proof_hash_calls(), 0);
         fold = Some(match fold.take() {
             None => {
                 CompleteDataOwnerSlabFold::begin(band, &NormalStoragePlan::resident(1).unwrap())
@@ -251,7 +242,6 @@ fn native_preparation_and_real_bands_feed_the_existing_fold_and_controller() {
     assert_eq!(result.bands_consumed, 4);
     assert_eq!(next, 4);
     let normal = fold.unwrap().finish().unwrap();
-    assert_eq!(normal.completion().selected_generation(), selected);
     for channel in 0..4 {
         let window = normal.read_window(channel..channel + 1).unwrap();
         assert_eq!(
@@ -299,7 +289,7 @@ fn native_preparation_rejects_missing_duplicate_and_out_of_order_row_parts() {
         .unwrap()
     };
     let mut missing = create();
-    let (replay, _) = native_input(&problem, |ordinal, parts, layout| {
+    let replay = native_input(&problem, |ordinal, parts, layout| {
         if ordinal == 0 {
             missing.consume(parts, layout)?;
         }
@@ -309,7 +299,7 @@ fn native_preparation_rejects_missing_duplicate_and_out_of_order_row_parts() {
     for duplicate in [true, false] {
         let mut input = create();
         let mut exercised = false;
-        let (replay, _) = native_input(&problem, |ordinal, parts, layout| {
+        let replay = native_input(&problem, |ordinal, parts, layout| {
             if ordinal == 0 {
                 if duplicate {
                     input.consume(parts, layout)?;
@@ -531,7 +521,7 @@ fn bulk_input_window_claim_uses_local_width_and_rejects_bad_bounds() {
     assert!(middle.bytes < full.bytes);
     assert!(last.bytes < middle.bytes);
     assert!(BulkInputPlan::for_window(&problem, 7, 5..7).is_err());
-    assert!(BulkInputPlan::for_window(&problem, 7, 5..4).is_err());
+    assert!(BulkInputPlan::for_window(&problem, 7, std::ops::Range { start: 5, end: 4 }).is_err());
 }
 
 struct CollectedWave {

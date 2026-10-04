@@ -33,9 +33,7 @@ use casa_imaging_model::{
     WeightingScheme, validate_compiled_problem_identity,
     validate_model_lifecycle_contract_identity, validate_model_reprojection_contract_identity,
 };
-use casa_imaging_reconstruction::{
-    ExecutableModelProblem, validate_reprojected_seed_proof_identity,
-};
+use casa_imaging_reconstruction::ExecutableModelProblem;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
@@ -53,8 +51,8 @@ use crate::{
 };
 
 const RECEIPT_SCHEMA: &str = "casa-rs-imaging-execution-receipt";
-const RECEIPT_SCHEMA_VERSION: u32 = 24;
-const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 11;
+const RECEIPT_SCHEMA_VERSION: u32 = 25;
+const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 12;
 const RECEIPT_SUFFIX: &str = ".receipt.json";
 const RECEIPT_STAGING_PREFIX: &str = ".casa-rs-receipt-staging-";
 const RECEIPT_STAGING_SUFFIX: &str = ".tmp";
@@ -2014,10 +2012,6 @@ enum ModelLifecycleInputProjection {
         source_shape_identity: String,
         preparation_contract_identity: String,
         reprojection_identity: String,
-        support_identity: String,
-        sample_identity: String,
-        stencil_identity: String,
-        proof_identity: String,
     },
     Generation {
         generation_identity: String,
@@ -2037,10 +2031,6 @@ impl ModelLifecycleInputProjection {
                 source_shape_identity: hex(&commitment.source_shape().identity().as_bytes()),
                 preparation_contract_identity: hex(&commitment.preparation_contract().as_bytes()),
                 reprojection_identity: hex(&commitment.reprojection().as_bytes()),
-                support_identity: hex(&commitment.support().as_bytes()),
-                sample_identity: hex(&commitment.samples().as_bytes()),
-                stencil_identity: hex(&commitment.stencil().as_bytes()),
-                proof_identity: hex(&commitment.proof().as_bytes()),
             },
             ModelInputCommitment::Generation(generation) => Self::Generation {
                 generation_identity: hex(&generation.as_bytes()),
@@ -2060,47 +2050,16 @@ impl ModelLifecycleInputProjection {
                 source_shape_identity,
                 preparation_contract_identity,
                 reprojection_identity,
-                support_identity,
-                sample_identity,
-                stencil_identity,
-                proof_identity,
             } => {
                 is_nonzero_digest(source_identity)
                     && is_nonzero_digest(source_shape_identity)
                     && is_nonzero_digest(preparation_contract_identity)
                     && is_nonzero_digest(reprojection_identity)
-                    && is_nonzero_digest(support_identity)
-                    && is_nonzero_digest(sample_identity)
-                    && is_nonzero_digest(stencil_identity)
-                    && is_nonzero_digest(proof_identity)
             }
             Self::Generation {
                 generation_identity,
             } => is_nonzero_digest(generation_identity),
         })?;
-        if let Self::ReprojectedSeed {
-            source_identity,
-            source_shape_identity,
-            preparation_contract_identity,
-            reprojection_identity,
-            support_identity,
-            sample_identity,
-            stencil_identity,
-            proof_identity,
-        } = self
-        {
-            validate_reprojected_seed_proof_identity(
-                LogicalIdentity::from_sha256(parse_digest(proof_identity)),
-                LogicalIdentity::from_sha256(parse_digest(source_identity)),
-                LogicalIdentity::from_sha256(parse_digest(source_shape_identity)),
-                LogicalIdentity::from_sha256(parse_digest(preparation_contract_identity)),
-                LogicalIdentity::from_sha256(parse_digest(reprojection_identity)),
-                LogicalIdentity::from_sha256(parse_digest(support_identity)),
-                LogicalIdentity::from_sha256(parse_digest(sample_identity)),
-                LogicalIdentity::from_sha256(parse_digest(stencil_identity)),
-            )
-            .map_err(|_| ReceiptError::IntegrityMismatch)?;
-        }
         Ok(())
     }
 
@@ -2119,10 +2078,6 @@ impl ModelLifecycleInputProjection {
                 source_shape_identity,
                 preparation_contract_identity,
                 reprojection_identity,
-                support_identity,
-                sample_identity,
-                stencil_identity,
-                proof_identity,
             } => ModelInputCommitmentIdentity::ReprojectedSeed {
                 source: LogicalIdentity::from_sha256(parse_digest(source_identity)),
                 source_shape: LogicalIdentity::from_sha256(parse_digest(source_shape_identity)),
@@ -2130,10 +2085,6 @@ impl ModelLifecycleInputProjection {
                     preparation_contract_identity,
                 )),
                 reprojection: LogicalIdentity::from_sha256(parse_digest(reprojection_identity)),
-                support: LogicalIdentity::from_sha256(parse_digest(support_identity)),
-                samples: LogicalIdentity::from_sha256(parse_digest(sample_identity)),
-                stencil: LogicalIdentity::from_sha256(parse_digest(stencil_identity)),
-                proof: LogicalIdentity::from_sha256(parse_digest(proof_identity)),
             },
             Self::Generation {
                 generation_identity,
@@ -2164,10 +2115,6 @@ impl ModelLifecycleInputProjection {
                     source_shape_identity,
                     preparation_contract_identity,
                     reprojection_identity,
-                    support_identity,
-                    sample_identity,
-                    stencil_identity,
-                    proof_identity,
                 } => {
                     evidence.field("model_lifecycle.input.source_identity")
                         == Some(source_identity.as_str())
@@ -2177,14 +2124,6 @@ impl ModelLifecycleInputProjection {
                             == Some(preparation_contract_identity.as_str())
                         && evidence.field("model_lifecycle.input.reprojection_identity")
                             == Some(reprojection_identity.as_str())
-                        && evidence.field("model_lifecycle.input.support_identity")
-                            == Some(support_identity.as_str())
-                        && evidence.field("model_lifecycle.input.sample_identity")
-                            == Some(sample_identity.as_str())
-                        && evidence.field("model_lifecycle.input.stencil_identity")
-                            == Some(stencil_identity.as_str())
-                        && evidence.field("model_lifecycle.input.proof_identity")
-                            == Some(proof_identity.as_str())
                 }
                 Self::Generation {
                     generation_identity,
@@ -6682,26 +6621,6 @@ fn project_model_lifecycle(fields: &mut BTreeMap<String, String>, problem: &Comp
                 fields,
                 "model_lifecycle.input.reprojection_identity",
                 hex(&commitment.reprojection().as_bytes()),
-            );
-            evidence_field(
-                fields,
-                "model_lifecycle.input.support_identity",
-                hex(&commitment.support().as_bytes()),
-            );
-            evidence_field(
-                fields,
-                "model_lifecycle.input.sample_identity",
-                hex(&commitment.samples().as_bytes()),
-            );
-            evidence_field(
-                fields,
-                "model_lifecycle.input.stencil_identity",
-                hex(&commitment.stencil().as_bytes()),
-            );
-            evidence_field(
-                fields,
-                "model_lifecycle.input.proof_identity",
-                hex(&commitment.proof().as_bytes()),
             );
         }
         ModelInputCommitment::Generation(generation) => {

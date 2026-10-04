@@ -429,7 +429,7 @@ impl BoundedRecordEncoder {
         sink: &mut impl FnMut(&[u8], u64, [u32; 2]) -> Result<(), SpectralOperatorError>,
     ) -> Result<(), SpectralOperatorError> {
         let started = self.observe_timings.then(Instant::now);
-        let encoding_before = self.timings.encoding_checksum;
+        let encoding_before = self.timings.encoding;
         let sink_before = if self.observe_timings {
             self.sink_duration()
         } else {
@@ -439,7 +439,7 @@ impl BoundedRecordEncoder {
         if let Some(started) = started {
             self.timings.grouping_reduction += started
                 .elapsed()
-                .saturating_sub(self.timings.encoding_checksum - encoding_before)
+                .saturating_sub(self.timings.encoding - encoding_before)
                 .saturating_sub(self.sink_duration() - sink_before);
         }
         result
@@ -520,7 +520,7 @@ impl BoundedRecordEncoder {
                         }
                     }
                     if let Some(started) = started {
-                        self.timings.encoding_checksum += started.elapsed();
+                        self.timings.encoding += started.elapsed();
                     }
                     self.reduced_groups = self
                         .reduced_groups
@@ -576,7 +576,7 @@ impl BoundedRecordEncoder {
                         bytes.copy_from_slice(&canonical_zero_bits(*sum).to_le_bytes());
                     }
                     if let Some(started) = started {
-                        self.timings.encoding_checksum += started.elapsed();
+                        self.timings.encoding += started.elapsed();
                     }
                     self.reduced_groups = self
                         .reduced_groups
@@ -692,7 +692,7 @@ fn validate_numeric_record(
 mod tests {
     use super::super::{
         AwRecordCoordinates, GriddedNormalOperatorBlockMeasurements, ReducedRecordGroup,
-        encode_and_checksum_mode, encode_taylor_and_checksum, group_and_reduce_taylor,
+        encode_records_mode, encode_taylor_records, group_and_reduce_taylor,
     };
     use super::*;
 
@@ -710,13 +710,12 @@ mod tests {
     }
 
     fn oracle(groups: Vec<ReducedRecordGroup>, aw: bool) -> Vec<u8> {
-        encode_and_checksum_mode(
+        encode_records_mode(
             groups,
             aw,
             &mut GriddedNormalOperatorBlockMeasurements::default(),
         )
         .expect("reference codec")
-        .0
         .into_vec()
     }
 
@@ -750,7 +749,7 @@ mod tests {
                 encoded.as_slice(),
                 oracle(
                     vec![ReducedRecordGroup {
-                        records: vec![record.clone()],
+                        records: vec![record],
                         multiplicity: 1.0
                     }],
                     false
@@ -1199,9 +1198,8 @@ mod tests {
                     group_and_reduce_taylor::<false>(chunk.to_vec(), plan, &mut measurements)
                         .expect("reference Taylor reduction");
                 expected.extend_from_slice(
-                    &encode_taylor_and_checksum(reduced, plan, &mut measurements)
-                        .expect("reference Taylor encoding")
-                        .0,
+                    &encode_taylor_records(reduced, plan, &mut measurements)
+                        .expect("reference Taylor encoding"),
                 );
             }
             assert_eq!(actual, expected);
@@ -1313,10 +1311,7 @@ mod tests {
         let elapsed = started.elapsed();
         let timings = encoder.timings();
         assert!(encoder.sink_duration() >= Duration::from_millis(6));
-        assert!(
-            timings.grouping_reduction + timings.encoding_checksum + encoder.sink_duration()
-                <= elapsed
-        );
+        assert!(timings.grouping_reduction + timings.encoding + encoder.sink_duration() <= elapsed);
         assert_eq!(timings.record_key_construction, Duration::ZERO);
         assert_eq!(timings.completion, Duration::ZERO);
     }

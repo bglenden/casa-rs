@@ -38,8 +38,7 @@ pub use storage::{
     ProductWriter,
 };
 pub use visibility::{
-    ModelVisibilityProductId, ResidualVisibilityProductId, VisibilityProductAuthority,
-    VisibilityProductCompletion, VisibilityProductError,
+    VisibilityProductCompletion, VisibilityProductError, VisibilityProductProgress,
 };
 
 #[cfg(test)]

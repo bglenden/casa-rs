@@ -33,7 +33,7 @@ use casa_imaging_model::{
     compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
-    ExecutableModelProblem, FrozenWeightingCoverageProof, MajorCycleOwner, MajorCyclePreparation,
+    ExecutableModelProblem, FrozenWeightingBinding, MajorCycleOwner, MajorCyclePreparation,
     ModelLifecycle, SpectralOperatorSpecification, WeightingExecutionLimits,
     begin_weighting_generation, plan_weighting,
     runtime_adapter::{
@@ -369,7 +369,7 @@ struct InitialWeightedProbe<'a> {
     request: &'a SelectedObservationResolutionRequest,
     plan: &'a casa_imaging_reconstruction::WeightingPlan,
     blocks: &'a [SelectedObservationBlock],
-    selected_generation: SelectedObservationGenerationId,
+
     selected_replay_proof: &'a SelectedObservationReplayProof,
     replay_storage: &'a StageLocalReplayStorage,
 }
@@ -378,14 +378,7 @@ struct InitialWeightedProbe<'a> {
 struct InitialWeightedSignature {
     weighting_generation: String,
     weighting_replay: String,
-    weighting_coverage: String,
     weighting_residency_bytes: usize,
-    selected_generation_proof_bytes: u64,
-    selected_generation_proof_hash_calls: u64,
-    weighting_coverage_proof_bytes: u64,
-    weighting_coverage_proof_hash_calls: u64,
-    operator_coverage_proof_bytes: u64,
-    operator_coverage_proof_hash_calls: u64,
     normal_state_identity: String,
     artifact_identity: String,
     artifact_seal: ManagedSpillSeal,
@@ -405,7 +398,7 @@ struct InitialWeightedTimings {
     science_consume: Duration,
     record_key_construction: Duration,
     grouping_reduction: Duration,
-    encoding_checksum: Duration,
+    encoding: Duration,
     payload_movement: Duration,
     artifact_writes: Duration,
     completion: Duration,
@@ -488,7 +481,6 @@ impl InitialWeightedProbe<'_> {
         let request = self.request;
         let plan = self.plan;
         let blocks = self.blocks;
-        let selected_generation = self.selected_generation;
         let selected_replay_proof = self.selected_replay_proof;
         let replay_storage = self.replay_storage;
         let density = rebuild_density_for_stage_local_probe(
@@ -531,7 +523,7 @@ impl InitialWeightedProbe<'_> {
         let mut emitted_blocks = 0_u64;
         let stream_started = Instant::now();
         let WeightingBlockKernelCompletion {
-            consumer: replay_consumer,
+            consumer: _replay_consumer,
             weights: (_weighting, replay_summary),
             ..
         } = {
@@ -576,7 +568,7 @@ impl InitialWeightedProbe<'_> {
 
         let finish_started = Instant::now();
         let science_finish_started = observe_timings.then(Instant::now);
-        let result = operator.complete(&replay_summary, selected_generation, None)?;
+        let result = operator.complete(&replay_summary)?;
         let science_finish =
             science_finish_started.map_or(Duration::ZERO, |started| started.elapsed());
         let callback_compilation_timings = compilation.stage_timings().unwrap_or_default();
@@ -585,8 +577,7 @@ impl InitialWeightedProbe<'_> {
         let compilation_measurements = compilation.compilation_measurements();
         let write_measurements = compilation.write_measurements();
         let compiler_finish_started = observe_timings.then(Instant::now);
-        let frozen =
-            compilation.complete_stage_local_probe(&replay_summary, selected_generation)?;
+        let frozen = compilation.complete_stage_local_probe(&replay_summary)?;
         let compiler_finish =
             compiler_finish_started.map_or(Duration::ZERO, |started| started.elapsed());
         let finish_seal = finish_started.elapsed();
@@ -594,7 +585,7 @@ impl InitialWeightedProbe<'_> {
         let measured_callback = science_consume
             .saturating_add(callback_compilation_timings.record_key_construction)
             .saturating_add(callback_compilation_timings.grouping_reduction)
-            .saturating_add(callback_compilation_timings.encoding_checksum)
+            .saturating_add(callback_compilation_timings.encoding)
             .saturating_add(callback_compilation_timings.payload_movement)
             .saturating_add(callback_compilation_timings.artifact_writes)
             .saturating_add(callback_compilation_timings.completion);
@@ -609,14 +600,7 @@ impl InitialWeightedProbe<'_> {
         let signature = InitialWeightedSignature {
             weighting_generation: replay_summary.weighting_generation().to_string(),
             weighting_replay: replay_summary.replay_id().to_string(),
-            weighting_coverage: replay_summary.coverage().to_string(),
             weighting_residency_bytes: replay_summary.residency().peak_bytes(),
-            selected_generation_proof_bytes: replay_consumer.generation_proof_bytes(),
-            selected_generation_proof_hash_calls: replay_consumer.generation_proof_hash_calls(),
-            weighting_coverage_proof_bytes: replay_summary.coverage_proof_bytes(),
-            weighting_coverage_proof_hash_calls: replay_summary.coverage_proof_hash_calls(),
-            operator_coverage_proof_bytes: result.completion().coverage_proof_bytes(),
-            operator_coverage_proof_hash_calls: result.completion().coverage_proof_hash_calls(),
             normal_state_identity: result
                 .primitives()
                 .normal_state_content_identity()
@@ -639,7 +623,7 @@ impl InitialWeightedProbe<'_> {
                 science_consume,
                 record_key_construction: compilation_timings.record_key_construction,
                 grouping_reduction: compilation_timings.grouping_reduction,
-                encoding_checksum: compilation_timings.encoding_checksum,
+                encoding: compilation_timings.encoding,
                 payload_movement: compilation_timings.payload_movement,
                 artifact_writes: compilation_timings.artifact_writes,
                 completion: compilation_timings
@@ -698,7 +682,7 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
     // This owner-validated traversal only mints the replay capability used by
     // all three measurements. Density reconstruction and artifact admission
     // are intentionally outside the timed stage-local discriminator.
-    let (selected_generation, selected_replay_proof, _density) = freeze_density(
+    let (selected_replay_proof, _density) = freeze_density(
         &problem,
         &plan,
         &blocks,
@@ -713,7 +697,7 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
         request: &request,
         plan: &plan,
         blocks: &blocks,
-        selected_generation,
+
         selected_replay_proof: &selected_replay_proof,
         replay_storage: &replay_storage,
     };
@@ -790,7 +774,6 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
         "sealed artifact and writer counters differ"
     );
     assert_eq!(seal.artifact_bytes(), write.artifact_bytes());
-    assert_ne!(seal.global_crc32c(), 0);
     assert_eq!(write.frame_count(), compilation.frames);
     assert!(compilation.frames <= u64::try_from(admission.compiler.descriptor_capacity())?);
     assert_eq!(
@@ -804,7 +787,6 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
     );
     assert_eq!(write.transferred_bytes(), write.artifact_bytes());
     assert_eq!(write.operations(), write.frame_count() + 2);
-    assert_eq!(write.checksum_calls(), write.frame_count() + 1);
     assert_eq!(write.payload_copy_bytes(), write.payload_bytes());
     assert_eq!(
         write.payload_copy_operations(),
@@ -815,31 +797,6 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
     assert_eq!(write.buffer_reuses(), write.frame_count() - 1);
     assert_eq!(write.peak_buffer_bytes(), signature.io_buffer_bytes);
     assert!(write.artifact_bytes() <= signature.maximum_artifact_bytes);
-    assert_eq!(
-        write.checksum_bytes(),
-        write.artifact_bytes()
-            - write.payload_bytes()
-            - admission.spill.serialization_buffer_bytes()
-    );
-    assert_eq!(
-        [
-            signature.selected_generation_proof_bytes,
-            signature.selected_generation_proof_hash_calls,
-        ],
-        [0, 0],
-        "rebound selected-generation proof must perform zero replay hashing"
-    );
-    assert_eq!(
-        [
-            signature.weighting_coverage_proof_bytes,
-            signature.weighting_coverage_proof_hash_calls,
-        ],
-        [
-            signature.operator_coverage_proof_bytes,
-            signature.operator_coverage_proof_hash_calls,
-        ],
-        "weighting and science owners must account for the same initial coverage work"
-    );
     assert_eq!(
         [
             compilation.source_blocks,
@@ -883,7 +840,7 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
         .saturating_add(observed.timings.science_consume)
         .saturating_add(observed.timings.record_key_construction)
         .saturating_add(observed.timings.grouping_reduction)
-        .saturating_add(observed.timings.encoding_checksum)
+        .saturating_add(observed.timings.encoding)
         .saturating_add(observed.timings.payload_movement)
         .saturating_add(observed.timings.artifact_writes)
         .saturating_add(observed.timings.completion)
@@ -919,7 +876,7 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
                 "initial_science_operator_consume": milliseconds(observed.timings.science_consume),
                 "record_key_construction": milliseconds(observed.timings.record_key_construction),
                 "grouping_reduction": milliseconds(observed.timings.grouping_reduction),
-                "encoding_checksum": milliseconds(observed.timings.encoding_checksum),
+                "encoding": milliseconds(observed.timings.encoding),
                 "payload_movement": milliseconds(observed.timings.payload_movement),
                 "artifact_writes": milliseconds(observed.timings.artifact_writes),
                 "completion": milliseconds(observed.timings.completion),
@@ -934,11 +891,8 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
             "identity": {
                 "weighting_generation": signature.weighting_generation,
                 "weighting_replay": signature.weighting_replay,
-                "weighting_coverage": signature.weighting_coverage,
                 "normal_state": signature.normal_state_identity,
                 "artifact": signature.artifact_identity,
-                "artifact_checksum": checksum_hex(seal.global_crc32c()),
-                "artifact_checksum_scheme": "managed-spill-v3/header-transcript-crc32c",
             },
             "residency": {
                 "weighting_peak_bytes": signature.weighting_residency_bytes,
@@ -970,20 +924,12 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
                 "records": write.record_count(),
                 "transferred_bytes": write.transferred_bytes(),
                 "operations": write.operations(),
-                "checksum_bytes": write.checksum_bytes(),
-                "checksum_calls": write.checksum_calls(),
                 "payload_copy_bytes": write.payload_copy_bytes(),
                 "payload_copy_operations": write.payload_copy_operations(),
                 "buffer_allocations": write.buffer_allocations(),
                 "buffer_reuses": write.buffer_reuses(),
             },
             "proof_counters": {
-                "selected_generation_bytes": signature.selected_generation_proof_bytes,
-                "selected_generation_hash_calls": signature.selected_generation_proof_hash_calls,
-                "weighting_coverage_bytes": signature.weighting_coverage_proof_bytes,
-                "weighting_coverage_hash_calls": signature.weighting_coverage_proof_hash_calls,
-                "operator_coverage_bytes": signature.operator_coverage_proof_bytes,
-                "operator_coverage_hash_calls": signature.operator_coverage_proof_hash_calls,
             },
         }))?
     );
@@ -1014,7 +960,7 @@ struct CapturedReplayData {
     blocks: Vec<SelectedObservationBlock>,
     selected_rows: u64,
     selected_samples: u64,
-    selected_generation: SelectedObservationGenerationId,
+
     selected_replay_proof: SelectedObservationReplayProof,
     density: casa_imaging_reconstruction::WeightingDensityPhase,
     density_setup_elapsed: Duration,
@@ -1028,10 +974,10 @@ struct PreparedReplayCohort {
     blocks: Vec<SelectedObservationBlock>,
     selected_rows: u64,
     selected_samples: u64,
-    selected_generation: SelectedObservationGenerationId,
+
     selected_replay_proof: SelectedObservationReplayProof,
     weighting: casa_imaging_reconstruction::WeightingAlgorithmState,
-    coverage_proof: FrozenWeightingCoverageProof,
+    coverage_proof: FrozenWeightingBinding,
     prior_normal_state: casa_imaging_reconstruction::FinalNormalState,
     preparation: MajorCyclePreparation,
     capture: CapturedReplayMeasurements,
@@ -1065,7 +1011,7 @@ fn capture_mounted_replay_data(path: &Path) -> Result<CapturedReplayData, Box<dy
         elapsed,
     } = captured;
     let density_started = Instant::now();
-    let (selected_generation, selected_replay_proof, density) = freeze_density(
+    let (selected_replay_proof, density) = freeze_density(
         &problem,
         &plan,
         &blocks,
@@ -1082,7 +1028,7 @@ fn capture_mounted_replay_data(path: &Path) -> Result<CapturedReplayData, Box<dy
         blocks,
         selected_rows,
         selected_samples,
-        selected_generation,
+
         selected_replay_proof,
         density,
         density_setup_elapsed,
@@ -1121,7 +1067,7 @@ where
         blocks,
         selected_rows,
         selected_samples,
-        selected_generation,
+
         selected_replay_proof,
         density,
         density_setup_elapsed,
@@ -1173,16 +1119,9 @@ where
         } = replay_weighting_kernel(initial_kernel, &blocks)?;
         (weighting, summary)
     };
-    let initial_complete =
-        initial_operator.complete(&initial_summary, selected_generation, None)?;
-    let coverage_proof = FrozenWeightingCoverageProof::seal(
-        &problem,
-        &weighting,
-        &initial_summary,
-        selected_generation,
-        selected_samples,
-        None,
-    )?;
+    let initial_complete = initial_operator.complete(&initial_summary)?;
+    let coverage_proof =
+        FrozenWeightingBinding::bind(&problem, &weighting, &initial_summary, selected_samples)?;
     let normal_storage = casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
         initial_complete.primitives().slab().total_channels(),
     )
@@ -1217,7 +1156,7 @@ where
         blocks,
         selected_rows,
         selected_samples,
-        selected_generation,
+
         selected_replay_proof,
         weighting,
         coverage_proof,
@@ -1251,7 +1190,7 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
         blocks,
         selected_rows,
         selected_samples,
-        selected_generation,
+
         selected_replay_proof,
         weighting,
         coverage_proof,
@@ -1280,11 +1219,11 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
     operator.bind_major_cycle_model(preparation.final_model(), Some(prior_normal_state))?;
     operator.enable_final_visibility_samples();
     operator.authorize_derived_coverage(coverage_proof)?;
-    let replay = weighting.begin_derived_replay(&problem, &plan, coverage_proof, None)?;
+    let replay = weighting.begin_derived_replay(&problem, &plan, coverage_proof)?;
     let consumer = fresh_rebound_consumer(&request, &problem, &selected_replay_proof)?;
     let (
         replay_summary,
-        replay_consumer,
+        _replay_consumer,
         replay_elapsed,
         operator_elapsed,
         normal_replay_probe_elapsed,
@@ -1339,27 +1278,10 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
         )
     };
     assert_eq!(replay_summary.sample_count(), selected_samples);
-    coverage_proof.validate_derived_replay(
-        selected_generation,
-        selected_samples,
-        None,
-        &replay_summary,
-    )?;
+    coverage_proof.validate_derived_replay(selected_samples, &replay_summary)?;
     let finish_started = Instant::now();
-    let result = operator.complete(&replay_summary, selected_generation, None)?;
+    let result = operator.complete(&replay_summary)?;
     let finish_elapsed = finish_started.elapsed();
-    let selected_generation_proof_bytes = replay_consumer.generation_proof_bytes();
-    let selected_generation_proof_hash_calls = replay_consumer.generation_proof_hash_calls();
-    let weighting_coverage_proof_bytes = replay_summary.coverage_proof_bytes();
-    let weighting_coverage_proof_hash_calls = replay_summary.coverage_proof_hash_calls();
-    let operator_coverage_proof_bytes = result.completion().coverage_proof_bytes();
-    let operator_coverage_proof_hash_calls = result.completion().coverage_proof_hash_calls();
-    let total_coverage_proof_bytes = weighting_coverage_proof_bytes
-        .checked_add(operator_coverage_proof_bytes)
-        .ok_or("coverage proof byte count overflowed")?;
-    let total_coverage_proof_hash_calls = weighting_coverage_proof_hash_calls
-        .checked_add(operator_coverage_proof_hash_calls)
-        .ok_or("coverage proof hash-call count overflowed")?;
     let checksum = result.primitives().normal_state_content_identity();
     let checksum_text = checksum.to_string();
     let source_revision = source_revision()?;
@@ -1458,15 +1380,6 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
             "projection_spectral_weighting_ms": milliseconds(weighting_exclusive),
             "operator_finish_ms": milliseconds(finish_elapsed),
             "normal_replay_probe": normal_replay_probe_json,
-            "selected_generation_proof_bytes": selected_generation_proof_bytes,
-            "selected_generation_proof_hash_calls": selected_generation_proof_hash_calls,
-            "selected_generation_proof_terminalized": false,
-            "weighting_coverage_proof_bytes": weighting_coverage_proof_bytes,
-            "weighting_coverage_proof_hash_calls": weighting_coverage_proof_hash_calls,
-            "operator_coverage_proof_bytes": operator_coverage_proof_bytes,
-            "operator_coverage_proof_hash_calls": operator_coverage_proof_hash_calls,
-            "total_coverage_proof_bytes": total_coverage_proof_bytes,
-            "total_coverage_proof_hash_calls": total_coverage_proof_hash_calls,
             "total_ms": milliseconds(total_start.elapsed()),
             "normal_state_identity": checksum_text,
         }))?
@@ -1492,25 +1405,6 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
             EXPECTED_SELECTED_SAMPLES,
         ],
         "setup handoff, weighted block shape, or prediction count changed"
-    );
-    assert!(
-        selected_generation_proof_bytes == 0 && selected_generation_proof_hash_calls == 0,
-        "rebound selected-generation proof must perform zero timed hashing"
-    );
-    assert!(
-        weighting_coverage_proof_bytes == 0 && weighting_coverage_proof_hash_calls == 0,
-        "derived weighting coverage must perform zero timed hashing"
-    );
-    assert_eq!(
-        [
-            weighting_coverage_proof_bytes,
-            weighting_coverage_proof_hash_calls,
-        ],
-        [
-            operator_coverage_proof_bytes,
-            operator_coverage_proof_hash_calls,
-        ],
-        "weighting and operator coverage derivation must perform the same zero work"
     );
     assert!(
         replay_without_probe > Duration::ZERO && replay_without_probe <= total_start.elapsed(),
@@ -1819,7 +1713,7 @@ fn specification() -> Result<ProblemSpecification, Box<dyn Error>> {
         ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
         NumericsContract::new(
             vec![NumericPrecision::F64],
-            ReductionPolicy::Compensated,
+            ReductionPolicy::UnorderedWithinBudget,
             FiniteValuePolicy::FlagInputRejectGenerated,
             NumericalStage::ALL
                 .into_iter()
@@ -1930,7 +1824,6 @@ fn freeze_density<'a>(
     expected_samples: u64,
 ) -> Result<
     (
-        SelectedObservationGenerationId,
         SelectedObservationReplayProof,
         casa_imaging_reconstruction::WeightingDensityPhase,
     ),
@@ -1960,7 +1853,7 @@ fn freeze_density<'a>(
     let replay_proof = completion
         .replay_proof()
         .ok_or("owner-validated density traversal omitted replay proof")?;
-    Ok((completion.generation_id(), replay_proof, resolved.density))
+    Ok((replay_proof, resolved.density))
 }
 
 fn fresh_consumer<'a>(
@@ -2075,8 +1968,4 @@ fn source_revision() -> Result<String, Box<dyn Error>> {
 
 fn milliseconds(duration: Duration) -> f64 {
     duration.as_secs_f64() * 1_000.0
-}
-
-fn checksum_hex(checksum: u32) -> String {
-    format!("{checksum:08x}")
 }

@@ -21,6 +21,7 @@ pub(crate) struct NativePreparationPlan {
 }
 
 impl NativePreparationPlan {
+    #[cfg(test)]
     pub(crate) fn new(
         problem: &CompiledProblem,
         weighting: &WeightingPlan,

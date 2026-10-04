@@ -53,7 +53,7 @@ impl<'a> NativePreparation<'a> {
                 |parts, layout| self.consume(parts, layout),
             )
             .map_err(io::Error::other)?;
-        let (replay, _, _) = weighting.pending_replay_inputs().ok_or_else(|| {
+        let replay = weighting.pending_replay_inputs().ok_or_else(|| {
             io::Error::other("native preparation lacks terminal source traversal")
         })?;
         self.finish(replay)
@@ -191,12 +191,8 @@ impl<'a> NativePreparation<'a> {
             ));
         }
         eprintln!(
-            "streaming_cube_preparation support_nanos={} write_nanos={} pair_visits={} coverage_bytes={} coverage_hash_calls={}",
-            self.support_nanos,
-            self.write_nanos,
-            self.pair_visits,
-            replay.coverage_proof_bytes(),
-            replay.coverage_proof_hash_calls()
+            "streaming_cube_preparation support_nanos={} write_nanos={} pair_visits={}",
+            self.support_nanos, self.write_nanos, self.pair_visits,
         );
         Ok(PreparedNative {
             store: self.writer.finish()?,

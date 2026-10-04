@@ -89,6 +89,11 @@ set `CARGO_INCREMENTAL=0`.
   every lifecycle transition. Routine telemetry must not serialize/hash/rewrite
   whole plans or scan historical receipts; keep lightweight progress and final
   summaries. Exceptions require a concrete failure model and demonstrated benefit.
+- ADR-0015 extends this rule to within-run imaging input, weighting, replay,
+  model updates and reprojection targets. Use live ownership and exact structural
+  checks, not scientific-content fingerprints. Trusted private spill retains
+  framing/order/length and I/O checks, not payload or header-transcript CRCs.
+  External artifact integrity and opt-in diagnostic fingerprints are distinct.
 
 This project is early and is not constrained by an existing external user
 base. Prefer the best long-term code, architecture, API, and testing shape over

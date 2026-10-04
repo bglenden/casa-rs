@@ -4,12 +4,17 @@
 
 mod bulk_phase;
 mod bulk_wave;
+#[cfg(test)]
 mod execute;
+#[cfg(test)]
 mod input;
 mod metal_plan;
 mod metal_wave;
+#[cfg(test)]
 mod phase;
+#[cfg(test)]
 mod plan;
+#[cfg(test)]
 mod prepare;
 
 pub use bulk_phase::{BulkCubePhase as CubePhase, BulkCubeReplay as NativeReplay};

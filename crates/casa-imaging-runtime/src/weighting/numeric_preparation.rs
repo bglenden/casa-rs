@@ -179,13 +179,15 @@ impl<W: StreamingWeightPhase + Sync> NumericProducer<'_, '_, W> {
                     )?;
                     let begin = lower.saturating_sub(row_index * channels);
                     let end = (upper - row_index * channels).min(channels);
-                    for channel in begin..end {
+                    for (channel, &frequency) in
+                        frequencies.iter().enumerate().take(end).skip(begin)
+                    {
                         prepare_channel(
                             problem,
                             weights,
                             row,
                             channel,
-                            frequencies[channel],
+                            frequency,
                             row_geometry,
                             &mut worker.prepared,
                         )?;
@@ -243,57 +245,6 @@ fn finish_pipeline<T, E: Error>(
             Ok(Ok(_)) => std::panic::resume_unwind(panic),
         },
         Ok(Ok(())) => produced.unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn pipeline_preserves_consumer_io_error_with_a_failed_or_panicked_producer() {
-        for producer in [
-            Ok(Err(ReplayCallbackError::Owner(
-                WeightingError::ReturnedBlockMismatch,
-            ))),
-            Err(Box::new("producer panic") as Box<dyn std::any::Any + Send>),
-        ] {
-            let error = finish_pipeline::<(), std::io::Error>(
-                producer,
-                Ok(Err(ReplayCallbackError::Consumer(std::io::Error::new(
-                    std::io::ErrorKind::PermissionDenied,
-                    "writer failure",
-                )))),
-            )
-            .unwrap_err();
-            let ReplayCallbackError::Consumer(error) = error else {
-                panic!("lost I/O error")
-            };
-            assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
-            assert_eq!(error.to_string(), "writer failure");
-        }
-    }
-
-    #[test]
-    fn pipeline_cannot_succeed_after_a_producer_error_or_consumer_panic() {
-        let error = finish_pipeline::<(), std::io::Error>(
-            Ok(Err(ReplayCallbackError::Owner(
-                WeightingError::ReturnedBlockMismatch,
-            ))),
-            Err(Box::new("consumer panic")),
-        )
-        .unwrap_err();
-        assert!(matches!(
-            error,
-            ReplayCallbackError::Owner(WeightingError::ReturnedBlockMismatch)
-        ));
-        assert!(
-            std::panic::catch_unwind(|| finish_pipeline::<(), std::io::Error>(
-                Ok(Ok(())),
-                Err(Box::new("consumer panic")),
-            ))
-            .is_err()
-        );
     }
 }
 
@@ -404,4 +355,55 @@ fn prepare_channel<W: StreamingWeightPhase>(
         prepared.push(weighted);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pipeline_preserves_consumer_io_error_with_a_failed_or_panicked_producer() {
+        for producer in [
+            Ok(Err(ReplayCallbackError::Owner(
+                WeightingError::ReturnedBlockMismatch,
+            ))),
+            Err(Box::new("producer panic") as Box<dyn std::any::Any + Send>),
+        ] {
+            let error = finish_pipeline::<(), std::io::Error>(
+                producer,
+                Ok(Err(ReplayCallbackError::Consumer(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "writer failure",
+                )))),
+            )
+            .unwrap_err();
+            let ReplayCallbackError::Consumer(error) = error else {
+                panic!("lost I/O error")
+            };
+            assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+            assert_eq!(error.to_string(), "writer failure");
+        }
+    }
+
+    #[test]
+    fn pipeline_cannot_succeed_after_a_producer_error_or_consumer_panic() {
+        let error = finish_pipeline::<(), std::io::Error>(
+            Ok(Err(ReplayCallbackError::Owner(
+                WeightingError::ReturnedBlockMismatch,
+            ))),
+            Err(Box::new("consumer panic")),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            ReplayCallbackError::Owner(WeightingError::ReturnedBlockMismatch)
+        ));
+        assert!(
+            std::panic::catch_unwind(|| finish_pipeline::<(), std::io::Error>(
+                Ok(Ok(())),
+                Err(Box::new("consumer panic")),
+            ))
+            .is_err()
+        );
+    }
 }

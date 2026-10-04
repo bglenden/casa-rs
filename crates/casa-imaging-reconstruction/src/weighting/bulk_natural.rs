@@ -66,7 +66,7 @@ impl BulkNaturalWeighting {
     /// The runtime must validate the fresh source completion against this proof.
     pub fn replay_summary(
         state: &WeightingAlgorithmState,
-        proof: FrozenWeightingCoverageProof,
+        proof: FrozenWeightingBinding,
         rows: u64,
     ) -> Result<WeightingReplaySummary, WeightingError> {
         if proof.generation != state.generation_id
@@ -78,22 +78,15 @@ impl BulkNaturalWeighting {
             return Err(WeightingError::CoverageMismatch);
         }
         let sequence = state.next_replay.fetch_add(1, Ordering::Relaxed);
-        let replay_id = replay_identity(
-            state.generation_id,
-            proof.coverage,
-            state.sample_count,
-            rows,
-            sequence,
-        );
+        let replay_id = WeightingReplayId::new()?;
         Ok(WeightingReplaySummary {
             replay_id,
             generation: state.generation_id,
-            coverage: proof.coverage,
+
             sample_count: state.sample_count,
             block_count: rows,
             replay_sequence: sequence,
-            coverage_proof_bytes: 0,
-            coverage_proof_hash_calls: 0,
+
             residency: state.generation_residency,
         })
     }
@@ -150,6 +143,7 @@ impl BulkNaturalWeighting {
 
     /// Apply the existing CASA natural-weight/flag rules in a tight row loop.
     /// `initial` controls only the once-per-source reduction, never the science.
+    #[allow(clippy::too_many_arguments)]
     pub fn prepare_row(
         &self,
         row: SelectedNumericRow<'_>,
@@ -256,13 +250,12 @@ impl BulkNaturalWeighting {
     /// traversal. This versioned identity associates owners, not product content.
     pub fn finish(
         mut self,
-        selected: SelectedObservationGenerationId,
         sample_count: u64,
     ) -> Result<
         (
             WeightingAlgorithmState,
             WeightingReplaySummary,
-            FrozenWeightingCoverageProof,
+            FrozenWeightingBinding,
         ),
         WeightingError,
     > {
@@ -274,16 +267,7 @@ impl BulkNaturalWeighting {
         sum.density_sample_count = self.samples;
         let state = sum.finish()?;
         state.next_replay.store(1, Ordering::Relaxed);
-        let mut binding = Sha256::new();
-        binding.update(b"casa-rs-ordered-source-weighting-binding-v1");
-        binding.update(selected.as_bytes());
-        binding.update(state.problem.as_bytes());
-        binding.update(state.generation_id.as_bytes());
-        binding.update(self.samples.to_le_bytes());
-        binding.update(self.rows.to_le_bytes());
-        let coverage =
-            WeightingReplayCoverageId(LogicalIdentity::from_sha256(binding.finalize().into()));
-        let replay_id = replay_identity(state.generation_id, coverage, self.samples, self.rows, 0);
+        let replay_id = WeightingReplayId::new()?;
         let mut residency = state.generation_residency;
         residency.weighted_block_bytes = 0;
         residency.weighted_sample_bytes = 0;
@@ -291,22 +275,20 @@ impl BulkNaturalWeighting {
         let summary = WeightingReplaySummary {
             replay_id,
             generation: state.generation_id,
-            coverage,
+
             sample_count: self.samples,
             block_count: self.rows,
             replay_sequence: 0,
-            coverage_proof_bytes: 0,
-            coverage_proof_hash_calls: 0,
+
             residency,
         };
-        let proof = FrozenWeightingCoverageProof {
+        let proof = FrozenWeightingBinding {
             problem: state.problem,
             commitment: state.commitment,
             generation: state.generation_id,
-            coverage,
-            selected_generation: selected,
+
             selected_sample_count: sample_count,
-            continuum_transform_generation: None,
+
             weighted_sample_count: self.samples,
         };
         Ok((state, summary, proof))

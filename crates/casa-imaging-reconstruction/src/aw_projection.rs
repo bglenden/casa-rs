@@ -1244,33 +1244,19 @@ impl AwGridPlan {
         self.normalization.norm()
     }
 
-    pub(crate) fn grid_compensated(
+    pub(crate) fn grid(
         &self,
         grid: &mut [Complex64],
-        compensation: &mut [Complex64],
         value: Complex64,
     ) -> Result<(), AwOperatorError> {
         if !finite(value) {
             return Err(AwOperatorError::NonFiniteValue);
         }
         validate_grid(grid, self.shape)?;
-        validate_grid(compensation, self.shape)?;
-        compensated_taps(grid, compensation, &self.taps, value);
+        for tap in &self.taps {
+            grid[tap.index] += tap.coefficient * value;
+        }
         Ok(())
-    }
-}
-
-fn compensated_taps(
-    grid: &mut [Complex64],
-    compensation: &mut [Complex64],
-    taps: &[FusedTap],
-    value: Complex64,
-) {
-    for tap in taps {
-        let contribution = tap.coefficient * value - compensation[tap.index];
-        let updated = grid[tap.index] + contribution;
-        compensation[tap.index] = (updated - grid[tap.index]) - contribution;
-        grid[tap.index] = updated;
     }
 }
 
@@ -2123,25 +2109,15 @@ mod tests {
                         }
                         let mut actual_grid = vec![Complex64::default(); model.len()];
                         let mut expected_grid = actual_grid.clone();
-                        let mut actual_error = actual_grid.clone();
-                        let mut expected_error = actual_grid.clone();
                         for value in [
                             Complex64::new(1e8, -2e8),
                             Complex64::new(0.3, -0.7),
                             Complex64::new(-1e8, 2e8),
                         ] {
-                            actual
-                                .grid_compensated(&mut actual_grid, &mut actual_error, value)
-                                .unwrap();
-                            expected
-                                .grid_compensated(&mut expected_grid, &mut expected_error, value)
-                                .unwrap();
+                            actual.grid(&mut actual_grid, value).unwrap();
+                            expected.grid(&mut expected_grid, value).unwrap();
                         }
-                        for (actual, expected) in actual_grid
-                            .into_iter()
-                            .chain(actual_error)
-                            .zip(expected_grid.into_iter().chain(expected_error))
-                        {
+                        for (actual, expected) in actual_grid.into_iter().zip(expected_grid) {
                             assert_eq!(bits(actual), bits(expected));
                         }
                     }
@@ -2205,10 +2181,8 @@ mod tests {
         let observed_plan = observed.prepare_imaging_grid([10, 10], sample).unwrap();
         let apply = |plan: AwGridPlan| {
             let mut grid = vec![Complex64::default(); 100];
-            let mut errors = grid.clone();
-            plan.grid_compensated(&mut grid, &mut errors, Complex64::new(2.0, -0.5))
-                .unwrap();
-            (grid, errors)
+            plan.grid(&mut grid, Complex64::new(2.0, -0.5)).unwrap();
+            grid
         };
         assert_eq!(apply(observed_plan), apply(plain_plan));
         assert_eq!(observed.diagnostics(), plain.diagnostics());
@@ -2623,11 +2597,10 @@ mod tests {
         .unwrap();
         let mut operator = operator_with_kernels(metadata, kernel.clone(), kernel);
         let mut image = vec![Complex64::default(); 100];
-        let mut compensation = vec![Complex64::default(); 100];
+
         let visibility = Complex64::new(0.5, -1.5);
         let plan = operator.prepare_imaging_grid([10, 10], sample).unwrap();
-        plan.grid_compensated(&mut image, &mut compensation, visibility * 2.0)
-            .unwrap();
+        plan.grid(&mut image, visibility * 2.0).unwrap();
         for (index, coefficient) in [44, 54, 64].into_iter().zip(raw) {
             assert_eq!(image[index], coefficient * visibility * 2.0);
         }
@@ -2901,20 +2874,14 @@ mod tests {
         let mut op = operator(entries);
         let s = sample(10.0, -1.0, 3, 0.0);
         let mut image = vec![Complex64::default(); 100];
-        let mut image_error = vec![Complex64::default(); 100];
+
         let imaging = op.prepare_imaging_grid([10, 10], s).unwrap();
-        imaging
-            .grid_compensated(&mut image, &mut image_error, Complex64::new(1.0, 0.0))
-            .unwrap();
+        imaging.grid(&mut image, Complex64::new(1.0, 0.0)).unwrap();
         let mut sensitivity = vec![Complex64::default(); 100];
-        let mut sensitivity_error = vec![Complex64::default(); 100];
+
         let weight = op.prepare_sensitivity_grid([10, 10], s).unwrap();
         weight
-            .grid_compensated(
-                &mut sensitivity,
-                &mut sensitivity_error,
-                Complex64::new(1.0, 0.0),
-            )
+            .grid(&mut sensitivity, Complex64::new(1.0, 0.0))
             .unwrap();
         assert_eq!(image.iter().filter(|v| v.norm_sqr() > 0.0).count(), 9);
         assert_eq!(
@@ -2939,30 +2906,20 @@ mod tests {
         let mut op = operator(entries);
         let s = sample(10.0, 0.1, 3, 0.0);
         let mut positive = vec![Complex64::default(); 100];
-        let mut positive_error = vec![Complex64::default(); 100];
+
         let plan = op.prepare_sensitivity_grid([10, 10], s).unwrap();
-        plan.grid_compensated(&mut positive, &mut positive_error, Complex64::new(2.0, 0.0))
-            .unwrap();
+        plan.grid(&mut positive, Complex64::new(2.0, 0.0)).unwrap();
         let mut negative = vec![Complex64::default(); 100];
-        let mut negative_error = vec![Complex64::default(); 100];
-        plan.grid_compensated(
-            &mut negative,
-            &mut negative_error,
-            Complex64::new(-2.0, 0.0),
-        )
-        .unwrap();
+
+        plan.grid(&mut negative, Complex64::new(-2.0, 0.0)).unwrap();
 
         for (positive, negative) in positive.iter().zip(negative) {
             assert!((*positive + negative).norm() < 1.0e-12);
         }
         let mut invalid = vec![Complex64::default(); 100];
-        let mut invalid_error = vec![Complex64::default(); 100];
+
         assert_eq!(
-            plan.grid_compensated(
-                &mut invalid,
-                &mut invalid_error,
-                Complex64::new(f64::NAN, 0.0),
-            ),
+            plan.grid(&mut invalid, Complex64::new(f64::NAN, 0.0),),
             Err(AwOperatorError::NonFiniteValue)
         );
     }
@@ -3034,29 +2991,21 @@ mod tests {
         let sample =
             AwVisibilitySample::new(10.0, 10.0, 1.0, 0, 0.0, [6.2, 5.8], [0.0, 0.0]).unwrap();
         let mut psf = vec![Complex64::default(); 100];
-        let mut psf_error = vec![Complex64::default(); 100];
+
         let (imaging, normal) = operator
             .prepare_imaging_and_normal_grid([10, 10], sample)
             .unwrap();
         let imaging_normalization = imaging.normalization();
         let normal_normalization = normal.normalization();
         let mut dirty = vec![Complex64::default(); 100];
-        let mut dirty_error = vec![Complex64::default(); 100];
-        imaging
-            .grid_compensated(&mut dirty, &mut dirty_error, Complex64::new(-1.0, 0.5))
-            .unwrap();
-        normal
-            .grid_compensated(&mut psf, &mut psf_error, Complex64::new(2.0, 0.0))
-            .unwrap();
+
+        imaging.grid(&mut dirty, Complex64::new(-1.0, 0.5)).unwrap();
+        normal.grid(&mut psf, Complex64::new(2.0, 0.0)).unwrap();
         let mut sensitivity = vec![Complex64::default(); 100];
-        let mut sensitivity_error = vec![Complex64::default(); 100];
+
         let sensitivity_plan = operator.prepare_sensitivity_grid([10, 10], sample).unwrap();
         sensitivity_plan
-            .grid_compensated(
-                &mut sensitivity,
-                &mut sensitivity_error,
-                Complex64::new(2.0, 0.0),
-            )
+            .grid(&mut sensitivity, Complex64::new(2.0, 0.0))
             .unwrap();
 
         assert_eq!(imaging_normalization, 5.0);
@@ -3073,15 +3022,9 @@ mod tests {
             1
         );
         let before_reuse = operator.diagnostics();
-        normal
-            .grid_compensated(&mut psf, &mut psf_error, Complex64::new(-0.5, 0.0))
-            .unwrap();
+        normal.grid(&mut psf, Complex64::new(-0.5, 0.0)).unwrap();
         sensitivity_plan
-            .grid_compensated(
-                &mut sensitivity,
-                &mut sensitivity_error,
-                Complex64::new(-0.5, 0.0),
-            )
+            .grid(&mut sensitivity, Complex64::new(-0.5, 0.0))
             .unwrap();
         assert_eq!(operator.diagnostics(), before_reuse);
         assert_eq!(
@@ -3108,10 +3051,10 @@ mod tests {
         let normalization = fused_taps(kernel, [10, 10], s, true).unwrap().normalization;
         let predicted = op.degrid(&model, [10, 10], s).unwrap();
         let mut adj = vec![Complex64::default(); 100];
-        let mut adj_error = vec![Complex64::default(); 100];
+
         op.prepare_imaging_grid([10, 10], s)
             .unwrap()
-            .grid_compensated(&mut adj, &mut adj_error, y)
+            .grid(&mut adj, y)
             .unwrap();
         let left = predicted.conj() * y;
         let right: Complex64 = model.iter().zip(adj).map(|(x, a)| x.conj() * a).sum();

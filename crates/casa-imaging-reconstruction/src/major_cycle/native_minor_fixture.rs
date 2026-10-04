@@ -221,7 +221,7 @@ fn problem(
             ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
             NumericsContract::new(
                 vec![NumericPrecision::F64],
-                ReductionPolicy::Compensated,
+                ReductionPolicy::UnorderedWithinBudget,
                 FiniteValuePolicy::FlagInputRejectGenerated,
                 NumericalStage::ALL
                     .into_iter()
@@ -394,7 +394,7 @@ fn build_problem(
     )
     .expect("fixture lifecycle");
     let base = lifecycle.initial_empty().expect("zero fixture model");
-    let (selected_generation, sample_count) = problem
+    let sample_count = problem
         .inspect_selected_observation(
             samples(&problem)
                 .into_iter()
@@ -402,8 +402,7 @@ fn build_problem(
             |_| Ok(()),
         )
         .expect("synthetic fixture lineage");
-    let (weighting_generation, replay, coverage) =
-        crate::weighting::native_normal_fixture_weighting_ids();
+    let (weighting_generation, replay) = crate::weighting::native_normal_fixture_weighting_ids();
     let primitives = SpectralPrimitiveDomains::new(
         vec![SpectralDomainPrimitives::new(
             0,
@@ -427,14 +426,13 @@ fn build_problem(
         weighting_commitment: problem.weighting().commitment_id(),
         weighting_generation,
         replay,
-        coverage,
+
         catalog,
         sample_count,
         block_count: 1,
         input_model_generation: base.generation_id(),
         final_model_generation: base.generation_id(),
-        selected_generation,
-        continuum_transform_generation: None,
+
         coupled_mask_generation: None,
         image_domain_mask_generation: None,
         primitives: crate::spectral_operator::normal_storage::NormalStatePrimitives::Coupled(

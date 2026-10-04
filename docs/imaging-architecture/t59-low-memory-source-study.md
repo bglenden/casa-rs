@@ -1,4 +1,12 @@
 # T59 low-memory adaptation source study
+## Owner supersession, 2026-10-03
+
+ADR-0015 supersedes all content-generation/coverage proofs and private same-run
+spill checksum requirements in this record. Retain live owner/source state,
+shape/order/window/count and I/O checks. Historical proof encodings, checksum
+timings and implementation descriptions below are non-normative; do not restore
+them. Scientific acceptance, bounded streaming and CASA formats are unchanged.
+
 
 Truth class: implementation evidence
 Source baseline: `e854bab7346ac10e08f7856b72b0195741256f9d`

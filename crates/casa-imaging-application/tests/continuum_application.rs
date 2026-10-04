@@ -38,6 +38,67 @@ use ndarray::ArrayD;
 const PRODUCT_SUFFIXES: [&str; 6] = [".psf", ".residual", ".model", ".image", ".sumwt", ".mask"];
 const DIRTY_PRODUCT_SUFFIXES: [&str; 5] = [".psf", ".residual", ".model", ".image", ".sumwt"];
 
+fn assert_real_agreement<T: Copy + Into<f64>>(expected: &[T], actual: &[T]) {
+    assert_eq!(expected.len(), actual.len());
+    let scale = expected
+        .iter()
+        .map(|&value| value.into().powi(2))
+        .sum::<f64>()
+        .sqrt();
+    let error = expected
+        .iter()
+        .zip(actual)
+        .map(|(&a, &b)| (a.into() - b.into()).powi(2))
+        .sum::<f64>()
+        .sqrt();
+    assert!(
+        error <= (1e-3 * scale).max(1e-12),
+        "error={error:e}, scale={scale:e}"
+    );
+}
+
+fn assert_complex_agreement(
+    expected: &[num_complex::Complex64],
+    actual: &[num_complex::Complex64],
+) {
+    assert_eq!(expected.len(), actual.len());
+    let scale = expected
+        .iter()
+        .map(|value| value.norm_sqr())
+        .sum::<f64>()
+        .sqrt();
+    let error = expected
+        .iter()
+        .zip(actual)
+        .map(|(a, b)| (*a - *b).norm_sqr())
+        .sum::<f64>()
+        .sqrt();
+    assert!(
+        error <= (1e-3 * scale).max(1e-12),
+        "error={error:e}, scale={scale:e}"
+    );
+}
+
+fn assert_model_agreement(
+    expected: &[casa_imaging_model::ModelSample],
+    actual: &[casa_imaging_model::ModelSample],
+) {
+    assert_eq!(expected.len(), actual.len());
+    for (expected, actual) in expected.iter().zip(actual) {
+        assert_eq!(expected.support(), actual.support());
+    }
+    assert_real_agreement(
+        &expected
+            .iter()
+            .map(|value| value.value().value())
+            .collect::<Vec<_>>(),
+        &actual
+            .iter()
+            .map(|value| value.value().value())
+            .collect::<Vec<_>>(),
+    );
+}
+
 fn fixture_model_samples(
     model: &casa_imaging_reconstruction::ModelGeneration,
 ) -> Vec<casa_imaging_model::ModelSample> {
@@ -258,7 +319,7 @@ fn assert_unit_psf_planes(path: &Path) {
 }
 
 fn product_plane(image_name: &Path, suffix: &str) -> ArrayD<f32> {
-    product_plane_with_size(image_name, suffix, 16)
+    product_plane_with_size(image_name, suffix, if suffix == ".sumwt" { 1 } else { 16 })
 }
 
 fn product_plane_with_size(image_name: &Path, suffix: &str, image_size: usize) -> ArrayD<f32> {

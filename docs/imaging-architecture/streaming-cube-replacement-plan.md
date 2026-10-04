@@ -1,4 +1,12 @@
 # Bounded streaming cube replacement plan
+## Owner supersession, 2026-10-03
+
+ADR-0015 supersedes all content-generation/coverage proofs and private same-run
+spill checksum requirements in this record. Retain live owner/source state,
+shape/order/window/count and I/O checks. Historical proof encodings, checksum
+timings and implementation descriptions below are non-normative; do not restore
+them. Scientific acceptance, bounded streaming and CASA formats are unchanged.
+
 
 Truth class: user-approved implementation plan, not an accepted architectural decision
 Last reality check: 2026-09-23
@@ -777,7 +785,10 @@ peak <= native_budget
 Use max over phase peaks only when their allocations actually stop overlapping;
 otherwise count their live union. For Complex64/f64 grids, bytes are
 16 * padded_pixels * complex_array_count + 8 * padded_pixels * real_array_count,
-including compensation arrays; use actual types for other arrays. The current
+using only the science arrays actually allocated; full-size grid/fold error
+arrays were removed by the owner-approved 2026-10-03 simplification. Historical
+references to compensated grids or bitwise worker outputs do not require their
+restoration. Use actual types for other arrays. The current
 homogeneous native store derives offsets from shape and needs no resident index
 or directory cache. Bound writer arenas and open files as well as read buffers.
 

@@ -24,9 +24,7 @@ use crate::selected_observation::{
     SelectedObservationCommitment, SelectedObservationInspection, SelectedObservationPassError,
     compile_selected_observation_commitment, inspect_selected_observation,
 };
-use crate::selected_observation_sample::{
-    SelectedObservationGenerationId, SelectedObservationSample,
-};
+use crate::selected_observation_sample::SelectedObservationSample;
 use crate::transaction::{
     ObservationTransactionCompileError, ObservationTransactionContract,
     ObservationTransactionRequirements, compile_observation_transaction,
@@ -2285,16 +2283,16 @@ impl CompiledProblem {
         &self.selected_observation
     }
 
-    /// Validate, consume, and identify one canonical selected-observation sample pass.
+    /// Validate and consume one canonical selected-observation sample pass.
     ///
     /// Each sample is scientifically validated before reaching `consume`. The
-    /// inspection state and content-identity encoder never escape this closed
+    /// inspection state never escapes this closed
     /// call. This does not prove retained source access or mint completion.
     pub fn inspect_selected_observation<E>(
         &self,
         samples: impl IntoIterator<Item = Result<SelectedObservationSample, E>>,
         consume: impl FnMut(SelectedObservationSample) -> Result<(), E>,
-    ) -> Result<(SelectedObservationGenerationId, u64), SelectedObservationPassError<E>> {
+    ) -> Result<u64, SelectedObservationPassError<E>> {
         inspect_selected_observation(
             &self.selected_observation,
             self.observation_transaction.write_set(),
@@ -3644,29 +3642,17 @@ fn encode_numerics(encoder: &mut CanonicalEncoder, numerics: &NumericsContract) 
 
 pub(crate) struct CanonicalEncoder {
     hasher: Sha256,
-    proof_bytes: u64,
-    proof_hash_calls: u64,
 }
 
 impl CanonicalEncoder {
     pub(crate) fn new() -> Self {
         Self {
             hasher: Sha256::new(),
-            proof_bytes: 0,
-            proof_hash_calls: 0,
         }
     }
 
     fn update(&mut self, value: impl AsRef<[u8]>) {
         let value = value.as_ref();
-        self.proof_bytes = self
-            .proof_bytes
-            .checked_add(u64::try_from(value.len()).expect("encoded identity chunk fits u64"))
-            .expect("encoded identity byte count fits u64");
-        self.proof_hash_calls = self
-            .proof_hash_calls
-            .checked_add(1)
-            .expect("encoded identity hash-call count fits u64");
         self.hasher.update(value);
     }
 
@@ -3675,10 +3661,6 @@ impl CanonicalEncoder {
     }
 
     pub(crate) fn u32(&mut self, value: u32) {
-        self.update(value.to_le_bytes());
-    }
-
-    pub(crate) fn i32(&mut self, value: i32) {
         self.update(value.to_le_bytes());
     }
 
@@ -3695,11 +3677,6 @@ impl CanonicalEncoder {
         self.update(value);
     }
 
-    /// Append already canonical bytes without an additional length prefix.
-    pub(crate) fn raw(&mut self, value: &[u8]) {
-        self.update(value);
-    }
-
     pub(crate) fn identity(&mut self, identity: LogicalIdentity) {
         self.update(identity.0);
     }
@@ -3711,19 +3688,6 @@ impl CanonicalEncoder {
     pub(crate) fn f64(&mut self, value: f64) {
         let bits = if value == 0.0 { 0 } else { value.to_bits() };
         self.update(bits.to_le_bytes());
-    }
-
-    pub(crate) fn f32(&mut self, value: f32) {
-        let bits = if value == 0.0 { 0 } else { value.to_bits() };
-        self.update(bits.to_le_bytes());
-    }
-
-    pub(crate) const fn proof_bytes(&self) -> u64 {
-        self.proof_bytes
-    }
-
-    pub(crate) const fn proof_hash_calls(&self) -> u64 {
-        self.proof_hash_calls
     }
 
     pub(crate) fn finish(self) -> [u8; 32] {

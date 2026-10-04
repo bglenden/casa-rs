@@ -665,7 +665,7 @@ fn t51_aw_subset_source_eligibility() {
     eprintln!(
         "t51_subset_source_eligibility {}",
         serde_json::json!({
-            "root":scratch,"problem":problem.problem_id().to_string(),"generation":completion.generation_id().to_string(),
+            "root":scratch,"problem":problem.problem_id().to_string(),"selected_samples":completion.sample_count(),
             "samples":completion.sample_count(),"field_ddid_spw_groups":groups.len(),"channel_groups":counts.len(),
             "groups_without_mapped_parallel_hands":uncovered_groups,
             "channel_groups_without_mapped_parallel_hands":counts.values().filter(|count|count[3]==0).count(),

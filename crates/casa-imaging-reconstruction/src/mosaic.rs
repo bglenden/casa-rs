@@ -194,7 +194,7 @@ pub(crate) fn residency_projection(
     let completion_workspace = grid_shape
         .into_iter()
         .try_fold(1_usize, |cells, side| cells.checked_mul(side))
-        .and_then(|cells| cells.checked_mul(2 * size_of::<Complex64>()))
+        .and_then(|cells| cells.checked_mul(size_of::<Complex64>()))
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     Ok(MosaicResidencyProjection {
         retained_bytes,
@@ -541,10 +541,9 @@ impl MosaicProjector {
         plan.center_in_bounds
     }
 
-    pub(crate) fn grid_compensated(
+    pub(crate) fn grid(
         &self,
         grid: &mut Array2<Complex64>,
-        _compensation: &mut Array2<Complex64>,
         plan: MosaicSamplePlan,
         value: Complex64,
     ) {
@@ -607,7 +606,6 @@ impl MosaicProjector {
         support: MosaicWeightSupportKey,
         value: f64,
         grid: &mut Array2<Complex64>,
-        compensation: &mut Array2<Complex64>,
     ) -> Result<(), SpectralOperatorError> {
         let (pointing_pixels, midpoint_pixel) = pointing_pair_geometry(self.geometry, pointing)?;
         let relative_offsets = pointing_pixels.map(|pixel| {
@@ -659,10 +657,7 @@ impl MosaicProjector {
                     (center[0] as isize + x) as usize,
                     (center[1] as isize + y) as usize,
                 );
-                let corrected = contribution - compensation[cell];
-                let updated = grid[cell] + corrected;
-                compensation[cell] = (updated - grid[cell]) - corrected;
-                grid[cell] = updated;
+                grid[cell] += contribution;
             }
         }
         Ok(())
@@ -1101,7 +1096,6 @@ impl MosaicNormalAccumulator {
             .map(|projector| projector.grid_shape)
             .ok_or(SpectralOperatorError::ProblemMismatch)?;
         let mut grid = Array2::zeros((grid_shape[0], grid_shape[1]));
-        let mut compensation = Array2::zeros((grid_shape[0], grid_shape[1]));
         for ((pointing, support), weight) in self.weights {
             if weight == 0.0 {
                 continue;
@@ -1115,7 +1109,6 @@ impl MosaicNormalAccumulator {
                 support,
                 weight,
                 &mut grid,
-                &mut compensation,
             )?;
         }
         fft.transform(&mut grid, true);
@@ -1253,9 +1246,9 @@ mod tests {
         );
 
         let mut grid = Array2::zeros((160, 160));
-        let mut compensation = Array2::zeros((160, 160));
+
         let input = Complex64::new(0.75, -0.25);
-        projector.grid_compensated(&mut grid, &mut compensation, differential_plan, input);
+        projector.grid(&mut grid, differential_plan, input);
         let data = Array2::from_shape_fn((160, 160), |(x, y)| {
             Complex64::new((x as f64 * 0.01).sin(), (y as f64 * 0.02).cos())
         });

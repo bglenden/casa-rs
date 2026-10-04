@@ -2313,7 +2313,7 @@ fn compiled_problem_identity_has_a_pinned_schema_twenty_five_digest() {
     assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 25);
     assert_eq!(
         compiled.problem_id().to_string(),
-        "c1030692a03bd794f6aedf485330e4646481310ee9f6749a54823845b2970577"
+        "20d7a473af8e69ed52734aa165a8cbca1adbe67308615c28b8c292b4898024c8"
     );
     let lifecycle = casa_imaging_model::LogicalIdentity::from_sha256(
         compiled.model_lifecycle().contract_id().as_bytes(),

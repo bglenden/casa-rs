@@ -19,8 +19,8 @@ use std::fmt;
 pub(crate) mod native_minor_fixture;
 
 use casa_imaging_model::{
-    CompiledGeometryId, CompiledProblemId, ContinuumTransformGenerationId, ImageDomainRole,
-    LogicalIdentity, NumericsContractId, SelectedObservationGenerationId, WeightingCommitmentId,
+    CompiledGeometryId, CompiledProblemId, ImageDomainRole, LogicalIdentity, NumericsContractId,
+    WeightingCommitmentId,
 };
 
 use crate::{
@@ -28,8 +28,7 @@ use crate::{
     FinalModelCompletionId, FinalModelContinuation, FinalNormalStateCompletionId,
     MAJOR_CYCLE_DOMAIN, MAJOR_CYCLE_VERSION, MajorCycleCompletionId, ModelDelta, ModelGeneration,
     ModelGenerationId, ModelLifecycle, ModelLifecycleError, PreparedFinalModel,
-    SpectralOperatorError, SpectralPrimitiveCatalog, WeightingGenerationId,
-    WeightingReplayCoverageId, WeightingReplayId,
+    SpectralOperatorError, SpectralPrimitiveCatalog, WeightingGenerationId, WeightingReplayId,
     runtime_adapter::CompleteDataNormalState,
     spectral_operator::{
         ReusableNormalState,
@@ -110,14 +109,13 @@ pub struct FinalNormalState {
     weighting_commitment: WeightingCommitmentId,
     weighting_generation: WeightingGenerationId,
     replay: WeightingReplayId,
-    coverage: WeightingReplayCoverageId,
+
     catalog: NormalStateCatalog,
     sample_count: u64,
     block_count: u64,
     input_model_generation: ModelGenerationId,
     final_model_generation: ModelGenerationId,
-    selected_generation: SelectedObservationGenerationId,
-    continuum_transform_generation: Option<ContinuumTransformGenerationId>,
+
     coupled_mask_generation: Option<crate::ReconstructionMaskGenerationId>,
     image_domain_mask_generation: Option<crate::ReconstructionMaskGenerationId>,
     primitives: NormalStatePrimitives,
@@ -145,8 +143,6 @@ impl FinalNormalState {
         &self,
         specification: &crate::SpectralOperatorSpecification,
         replay: &crate::weighting::WeightingReplaySummary,
-        selected: SelectedObservationGenerationId,
-        transform: Option<ContinuumTransformGenerationId>,
         model: ModelGenerationId,
         storage: &crate::spectral_operator::normal_storage::NormalStoragePlan,
     ) -> Result<CubeNormalRefresh, SpectralOperatorError> {
@@ -154,8 +150,6 @@ impl FinalNormalState {
             crate::spectral_operator::CompleteDataOwnerCompletion::from_streaming_cube(
                 specification,
                 replay,
-                selected,
-                transform,
             )?;
         if self.catalog != NormalStateCatalog::UnnormalizedChannelSlabV1
             || self.problem != completion.problem_id()
@@ -163,9 +157,6 @@ impl FinalNormalState {
             || self.numerics != completion.numerics_id()
             || self.weighting_commitment != completion.weighting_commitment_id()
             || self.weighting_generation != completion.weighting_generation()
-            || self.coverage != completion.coverage()
-            || self.selected_generation != selected
-            || self.continuum_transform_generation != transform
             || self.sample_count != replay.sample_count()
             || self.block_count != replay.block_count()
         {
@@ -207,8 +198,6 @@ impl FinalNormalState {
                     self.numerics,
                     self.weighting_commitment,
                     self.weighting_generation,
-                    self.selected_generation,
-                    self.continuum_transform_generation,
                     primitives,
                 )
             })
@@ -224,8 +213,7 @@ impl FinalNormalState {
             numerics,
             weighting_commitment,
             weighting_generation,
-            selected_generation,
-            continuum_transform_generation,
+
             primitives,
             ..
         } = self;
@@ -242,8 +230,6 @@ impl FinalNormalState {
                     numerics,
                     weighting_commitment,
                     weighting_generation,
-                    selected_generation,
-                    continuum_transform_generation,
                     primitives,
                 )
             })
@@ -322,12 +308,6 @@ impl FinalNormalState {
         self.replay
     }
 
-    /// Return the exact T18 weighted-sample coverage.
-    #[must_use]
-    pub const fn coverage(&self) -> WeightingReplayCoverageId {
-        self.coverage
-    }
-
     /// Return the versioned Normal State Generation catalog.
     #[must_use]
     pub const fn catalog(&self) -> NormalStateCatalog {
@@ -362,18 +342,6 @@ impl FinalNormalState {
     #[must_use]
     pub const fn final_model_generation(&self) -> ModelGenerationId {
         self.final_model_generation
-    }
-
-    /// Return the exact T17 observation generation behind every weighted sample.
-    #[must_use]
-    pub const fn selected_generation(&self) -> SelectedObservationGenerationId {
-        self.selected_generation
-    }
-
-    /// Return the sequential continuum-transform generation, when present.
-    #[must_use]
-    pub const fn continuum_transform_generation(&self) -> Option<ContinuumTransformGenerationId> {
-        self.continuum_transform_generation
     }
 
     /// Return the immutable coupled spatial-support generation bound to this state.
@@ -1189,10 +1157,9 @@ pub struct MajorCycleOwner {
     weighting_commitment: WeightingCommitmentId,
     weighting_generation: WeightingGenerationId,
     replay: WeightingReplayId,
-    coverage: WeightingReplayCoverageId,
+
     catalog: SpectralPrimitiveCatalog,
-    selected_generation: SelectedObservationGenerationId,
-    continuum_transform_generation: Option<ContinuumTransformGenerationId>,
+
     coupled_mask_generation: Option<crate::ReconstructionMaskGenerationId>,
     image_domain_mask_generation: Option<crate::ReconstructionMaskGenerationId>,
     sample_count: u64,
@@ -1231,10 +1198,9 @@ impl MajorCycleOwner {
             weighting_commitment: completion.weighting_commitment_id(),
             weighting_generation: completion.weighting_generation(),
             replay: completion.replay_id(),
-            coverage: completion.coverage(),
+
             catalog: completion.primitive_catalog(),
-            selected_generation: completion.selected_generation(),
-            continuum_transform_generation: completion.continuum_transform_generation(),
+
             coupled_mask_generation: None,
             image_domain_mask_generation: None,
             sample_count: completion.sample_count(),
@@ -1254,12 +1220,6 @@ impl MajorCycleOwner {
     #[must_use]
     pub const fn problem_id(&self) -> CompiledProblemId {
         self.problem
-    }
-
-    /// Return the authoritative T17 observation generation of the retained evidence.
-    #[must_use]
-    pub const fn selected_generation(&self) -> SelectedObservationGenerationId {
-        self.selected_generation
     }
 
     /// Return the exhaustive selected-sample count of the retained evidence.
@@ -1332,11 +1292,8 @@ impl MajorCycleOwner {
                 epoch,
                 self.weighting_generation,
                 self.replay,
-                self.coverage,
                 input_model_generation,
                 final_model_generation,
-                self.selected_generation,
-                self.continuum_transform_generation,
                 self.coupled_mask_generation,
                 self.image_domain_mask_generation,
             ),
@@ -1346,7 +1303,7 @@ impl MajorCycleOwner {
             weighting_commitment: self.weighting_commitment,
             weighting_generation: self.weighting_generation,
             replay: self.replay,
-            coverage: self.coverage,
+
             catalog: match self.catalog {
                 SpectralPrimitiveCatalog::UnnormalizedPlaneV1 => {
                     NormalStateCatalog::UnnormalizedPlaneV1
@@ -1365,8 +1322,7 @@ impl MajorCycleOwner {
             block_count: self.block_count,
             input_model_generation,
             final_model_generation,
-            selected_generation: self.selected_generation,
-            continuum_transform_generation: self.continuum_transform_generation,
+
             coupled_mask_generation: self.coupled_mask_generation,
             image_domain_mask_generation: self.image_domain_mask_generation,
             primitives: self.primitives,
@@ -1398,11 +1354,10 @@ fn final_normal_state_id(
     epoch: u64,
     weighting_generation: WeightingGenerationId,
     replay: WeightingReplayId,
-    coverage: WeightingReplayCoverageId,
+
     input_model_generation: ModelGenerationId,
     final_model_generation: ModelGenerationId,
-    selected_generation: SelectedObservationGenerationId,
-    continuum_transform_generation: Option<ContinuumTransformGenerationId>,
+
     coupled_mask_generation: Option<crate::ReconstructionMaskGenerationId>,
     image_domain_mask_generation: Option<crate::ReconstructionMaskGenerationId>,
 ) -> FinalNormalStateCompletionId {
@@ -1410,19 +1365,12 @@ fn final_normal_state_id(
     encoder.identity(authority.as_bytes());
     encoder.identity(attempt.identity().as_bytes());
     encoder.u64(epoch);
-    encoder.identity(weighting_generation.as_bytes());
-    encoder.identity(replay.as_bytes());
-    encoder.identity(coverage.as_bytes());
+    encoder.u64(weighting_generation.ordinal());
+    encoder.u64(replay.ordinal());
+
     encoder.identity(input_model_generation.as_bytes());
     encoder.identity(final_model_generation.as_bytes());
-    encoder.identity(selected_generation.as_bytes());
-    match continuum_transform_generation {
-        Some(generation) => {
-            encoder.u8(1);
-            encoder.identity(generation.as_bytes());
-        }
-        None => encoder.u8(0),
-    }
+
     match coupled_mask_generation {
         Some(generation) => {
             encoder.u8(1);

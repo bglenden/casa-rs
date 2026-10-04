@@ -54,10 +54,10 @@ ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "f992a51a25a086e44cbd9be28453a8a345f7dbd0c6bce0cfc44fb8a6796db2c0"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "9506e7ec2d056fab895592d108731030712f7f567f4af03428dc3d5a30403dc7"
+    "d1778bd8ee98c24bae04758261252801fce78290826c02a9d10050e3df718efa"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "e277d799114b7eb9e357570cd49c6d0824af6875c89f0b19f5ca8f65b8a02210"
+    "81b0617b32994c8647213e3a19b2b697cbddba327b07d895fca01abe65b2c892"
 )
 ACCEPTED_MATRIX_CONTRACT_REVISION = 91
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
@@ -1458,7 +1458,7 @@ def validate_t28_model_lifecycle_transfer(rows: list[dict[str, Any]]) -> None:
         "crates/casa-imaging-reconstruction/src/lib.rs::pub struct ExecutableModelProblem",
         "crates/casa-imaging-reconstruction/src/lib.rs::pub struct ModelLifecycle",
         "crates/casa-imaging-reconstruction/src/lib.rs::prepare_reprojected_seed",
-        "crates/casa-imaging-reconstruction/src/lib.rs::validate_reprojected_seed_proof_identity",
+        "crates/casa-imaging-reconstruction/src/lib.rs::PreparedReprojectedSeed",
         "crates/casa-imaging-runtime/src/receipt.rs::struct ModelLifecycleProjection",
     }
     if not required_evidence.issubset(set(row.get("source_evidence", []))):
@@ -1546,10 +1546,6 @@ def validate_t28_model_lifecycle_sources(
         "source_shape": "Box<ModelSourceShape>",
         "preparation_contract": "LogicalIdentity",
         "reprojection": "LogicalIdentity",
-        "support": "LogicalIdentity",
-        "samples": "LogicalIdentity",
-        "stencil": "LogicalIdentity",
-        "proof": "LogicalIdentity",
     }:
         raise ArchitectureError("T28 reprojected digest projection is not complete")
     if re.search(r"\bpub\s+fn\s+from_prepared_samples\b", model):
@@ -1629,12 +1625,6 @@ def validate_t28_model_lifecycle_sources(
         or "prepared:Some(self)" not in prepared_brand
     ):
         raise ArchitectureError("T28 executable brand bypasses reconstruction preparation")
-    proof = re.sub(
-        r"\s+", "", rust_function_body(reconstruction, "reprojected_seed_proof_identity", reconstruction_path)
-    )
-    if "encoder.identity(samples.as_bytes());" not in proof or "encoder.identity(stencil.as_bytes());" not in proof:
-        raise ArchitectureError("T28 reprojected proof omits samples or ordered stencils")
-
     lifecycle_projection = rust_struct_fields(receipt, "ModelLifecycleProjection", receipt_path)
     if lifecycle_projection.get("reprojection") != "ModelReprojectionProjection":
         raise ArchitectureError("T28 receipt does not project the reprojection contract")
@@ -1693,17 +1683,8 @@ def validate_t28_model_lifecycle_sources(
         raise ArchitectureError(
             "T28 receipt does not canonically revalidate lifecycle input evidence"
         )
-    if not all(
-        field in receipt
-        for field in (
-            "sample_identity: String",
-            "stencil_identity: String",
-            "proof_identity: String",
-            "validate_reprojected_seed_proof_identity(",
-            "validate_compiled_problem_identity(",
-        )
-    ):
-        raise ArchitectureError("T28 receipt omits canonical model proof closure")
+    if "validate_compiled_problem_identity(" not in receipt:
+        raise ArchitectureError("T28 receipt omits compiled source/geometry closure")
     for tag in (
         "same_tangent_plane_affine_bilinear_v1",
         "exact_spectral_v1",
@@ -1933,12 +1914,9 @@ def validate_t18_global_weighting_sources(
         raise ArchitectureError(
             "T18/T36 spectral trace and sparse coefficients differ from the accepted paired model"
         )
-    if (
-        "spectral_contributions" in selected_sample_fields
-        or "pub const SCHEMA_VERSION: u32 = 5;" not in sample_model
-    ):
+    if "spectral_contributions" in selected_sample_fields:
         raise ArchitectureError(
-            "T18 spectral contributions must remain outside the persisted selected-sample schema"
+            "T18 spectral contributions must remain outside the selected input record"
         )
 
     traversal_fields = rust_struct_fields(
@@ -2057,12 +2035,11 @@ def validate_t18_global_weighting_sources(
         or artifact_fields
         != {
             "state": "Arc<WeightingAlgorithmState>",
-            "source_generation": "SelectedObservationGenerationId",
             "source_sample_count": "u64",
             "continuum_transform": "Option<ContinuumTransformCompletion>",
             "selected_replay_proof": "Option<SelectedObservationReplayProof>",
             "selected_replay_proof_bytes": "usize",
-            "coverage_proof": "Option<FrozenWeightingCoverageProof>",
+            "coverage_proof": "Option<FrozenWeightingBinding>",
             "cross_plan_reservation": "Option<Arc<FrozenWeightingReservation>>",
         }
     ):
@@ -2168,14 +2145,14 @@ def validate_t18_global_weighting_sources(
     if "IntoIterator" in weighting or "inspect_selected_observation(" in weighting:
         raise ArchitectureError("T18 reconstruction exposes a bypass around T17 callback traversal")
     coverage_proof_fields = rust_struct_fields(
-        weighting, "FrozenWeightingCoverageProof", weighting_path
+        weighting, "FrozenWeightingBinding", weighting_path
     )
     coverage_proof_validation = re.sub(
         r"\s+",
         "",
         rust_impl_method_body(
             weighting,
-            "FrozenWeightingCoverageProof",
+            "FrozenWeightingBinding",
             "validate_derived_replay",
             weighting_path,
         ),
@@ -2194,38 +2171,22 @@ def validate_t18_global_weighting_sources(
             weighting, "WeightingReplayWindowSummary", "matches_parent", weighting_path
         ),
     )
-    if (
-        weighting.count("SelectedObservationGenerationId") != 6
-        or coverage_proof_fields
-        != {
-            "problem": "CompiledProblemId",
-            "commitment": "WeightingCommitmentId",
-            "generation": "WeightingGenerationId",
-            "coverage": "WeightingReplayCoverageId",
-            "selected_generation": "SelectedObservationGenerationId",
-            "selected_sample_count": "u64",
-            "continuum_transform_generation": "Option<ContinuumTransformGenerationId>",
-            "weighted_sample_count": "u64",
-        }
-        or "self.selected_generation!=selected_generation"
-        not in coverage_proof_validation
-        or "replay.coverage()!=self.coverage" not in coverage_proof_validation
-        or "replay.coverage_proof_bytes()!=0" not in coverage_proof_validation
-        or "replay.coverage_proof_hash_calls()!=0"
-        not in coverage_proof_validation
-    ):
-        raise ArchitectureError(
-            "T18 reconstruction must confine T17 identity to frozen coverage and validated replay windows"
-        )
+    if coverage_proof_fields != {
+        "problem": "CompiledProblemId", "commitment": "WeightingCommitmentId",
+        "generation": "WeightingGenerationId", "selected_sample_count": "u64",
+        "weighted_sample_count": "u64",
+    } or not all(token in coverage_proof_validation for token in (
+        "self.selected_sample_count!=selected_sample_count",
+        "replay.weighting_generation()!=self.generation",
+        "replay.sample_count()!=self.weighted_sample_count",
+    )):
+        raise ArchitectureError("T18 replay must preserve live weighting ownership and exact counts")
     if not all(token in window_validation for token in (
-        "selected_generation!=self.scope.proof.selected_generation",
         "sample_count!=self.actual.sample_count",
         "frequency_bounds_hz!=self.scope.frequency_bounds_hz",
     )) or not all(token in window_parent for token in (
         "proof.problem==problem", "proof.commitment==commitment",
-        "proof.selected_generation==selected_generation",
-        "proof.continuum_transform_generation.is_none()",
-        "proof.generation==parent.generation", "proof.coverage==parent.coverage",
+        "proof.generation==parent.generation",
         "proof.weighted_sample_count==parent.sample_count",
         "self.actual.generation==parent.generation",
     )):
@@ -2239,11 +2200,12 @@ def validate_t18_global_weighting_sources(
         runtime_weighting, "bind", runtime_weighting_path
     )
     if (
-        replay_completion.get("selected_generation")
-        != "SelectedObservationGenerationId"
-        or replay_completion.get("sample_count") != "u64"
+        replay_completion.get("delivered_source_sample_count") != "u64"
         or replay_completion.get("binding") != "WeightingGenerationBinding"
-        or "context.bind(self.owner_completion)" not in re.sub(r"\s+", "", replay_binding)
+        or not all(token in re.sub(r"\s+", "", replay_binding) for token in (
+            "ReplaySourceCompletion::Full(owner)=>context.bind(owner)",
+            "ReplaySourceCompletion::Window(owner)=>context.bind_window(owner)",
+        ))
         or "(WeightingReplayCompletion,AttemptBoundObservationCompletion)"
         not in compact_runtime
     ):
@@ -2300,6 +2262,7 @@ def validate_t18_global_weighting_sources(
             "ends_correlation_group": "bool",
             "correlation_group_size": "usize",
             "parallactic_angles_rad": "[f64;2]",
+            "has_parallactic_angles": "bool",
             "density_uvw_m": "[f64;3]",
             "output_frame_frequency_hz": "f64",
             "row_spectral_geometry": "Option<NativeRowSpectralGeometry>",
@@ -2317,7 +2280,6 @@ def validate_t18_global_weighting_sources(
         or "self.commit_sample(weighted)" not in replay_consume
         or "weighted_sample_from_state(" not in replay_prepare
         or "WeightingSelectedSample::from_selected(" not in replay_prepare
-        or "self.coverage.push(&weighted)" not in replay_commit
         or "self.block.push(weighted)" not in replay_commit
         or "std::mem::take(&mut self.block)" not in take_block
         or "Vec::with_capacity(self.max_block_samples)" not in weighting
@@ -2580,7 +2542,7 @@ def validate_t17_ms_selection_transfer(rows: list[dict[str, Any]]) -> None:
             "T17 must leave capability.ms-selection Native with no migration obligation"
         )
     required_evidence = {
-        "crates/casa-imaging-model/src/selected_observation_sample.rs::SelectedObservationGenerationEncoder",
+        "crates/casa-imaging-model/src/selected_observation.rs::SelectedObservationInspection",
         "crates/casa-imaging-model/src/observation.rs::additional_retained_heap_bytes",
         "crates/casa-ms/src/selected_observation/access.rs::BoundObservationSource",
         "crates/casa-ms/src/selected_observation/bound_observation.rs::binding_graph_initialization_bytes",
@@ -3233,12 +3195,14 @@ def validate_t17_runtime_completion_source(source: str, path: Path) -> None:
     )
     if completion_fields != {
         **runtime_authority_fields,
-        "owner_completion": "casa_ms::SelectedObservationCompletion",
+        "owner_completion": "SelectedObservationReadCompletion",
     }:
         raise ArchitectureError(
-            "attempt-bound observation completion must retain casa-ms's concrete owner completion"
+            "attempt-bound observation completion must retain a concrete full or window owner completion"
         )
     compact_source = re.sub(r"\s+", "", source)
+    if "enumSelectedObservationReadCompletion{Full(casa_ms::SelectedObservationCompletion),Window(casa_ms::SelectedObservationWindowCompletion),}" not in compact_source:
+        raise ArchitectureError("runtime observation completion must own a genuine casa-ms full or window completion")
     if (
         "pubfnbind(self,owner_completion:casa_ms::SelectedObservationCompletion,)->Result<AttemptBoundObservationCompletion,ObservationCompletionBindingError>"
         not in compact_source
@@ -3445,7 +3409,6 @@ def validate_product_write_only_sources(
 ) -> None:
     """Guard ADR-0014's ownership seam, not the spelling of attestation types.
 
-    The visibility stream has an independent MeasurementSet-generation consumer.
     Image generation has no hashing or persisted-output read capability. Runtime
     counting/error tests additionally exercise the actual bounded write path.
     """
@@ -3476,8 +3439,6 @@ def validate_product_write_only_sources(
         r"|\b(?:std|tokio)\s*::\s*fs\b"
     )
     for name, source in product_sources.items():
-        if name == "visibility.rs":
-            continue
         production = without_inline_rust_tests(source)
         production = re.sub(r"//[^\n]*", "", production)
         if forbidden.search(production):
@@ -3516,6 +3477,60 @@ def validate_product_write_only_path(repo_root: Path = REPO_ROOT) -> None:
     validate_prepared_model_transfer(reconstruction.read_text(encoding="utf-8"))
 
 
+def validate_trusted_buffer_sources(sources: dict[str, str]) -> None:
+    """Trusted transport has no content-fingerprint capability, regardless of name.
+
+    Managed spill's one compact storage-binding identity is not payload work;
+    no other hashing helper is allowed in these transport/weighting modules.
+    Science/ownership and real I/O failure tests guard behavior separately.
+    """
+    forbidden = re.compile(
+        r"\b(?:sha1|sha2|sha3|blake3|crc32c|crc32fast|xxhash_rust|"
+        r"Sha256|Sha512|DefaultHasher|SipHasher|Hasher|CanonicalEncoder)\b"
+        r"|\bstd\s*::\s*hash\b"
+    )
+    for name, source in sources.items():
+        production = without_inline_rust_tests(source)
+        production = re.sub(r"//[^\n]*", "", production)
+        if name == "managed_spill.rs":
+            body = rust_function_body(production, "retention_identity", Path(name))
+            production = production.replace(body, "", 1)
+            production = production.replace("use sha2::{Digest, Sha256};", "", 1)
+        if forbidden.search(production):
+            raise ArchitectureError(f"ADR-0015: {name} adds trusted-buffer content hashing")
+
+
+def validate_trusted_buffer_path(repo_root: Path = REPO_ROOT) -> None:
+    paths = (
+        "casa-imaging-model/src/selected_observation_sample.rs",
+        "casa-imaging-reconstruction/src/weighting.rs",
+        "casa-imaging-reconstruction/src/weighting/bulk_natural.rs",
+        "casa-imaging-reconstruction/src/streaming_cube/preparation.rs",
+        "casa-imaging-runtime/src/weighting/bulk_source.rs",
+        "casa-imaging-runtime/src/continuum_transform.rs",
+        "casa-imaging-runtime/src/streaming_cube/input.rs",
+        "casa-imaging-runtime/src/managed_spill.rs",
+    )
+    sources = {Path(path).name: (repo_root / "crates" / path).read_text(encoding="utf-8") for path in paths}
+    validate_trusted_buffer_sources(sources)
+    model = repo_root / "crates/casa-imaging-reconstruction/src/lib.rs"
+    source = model.read_text(encoding="utf-8")
+    for method in ("prepare_reprojected_seed", "compile_delta_with_support", "bind_compiled_problem"):
+        body = rust_function_body(source, method, model)
+        if re.search(r"\b(?:Encoder|Sha256|Hasher)\b|\.(?:hash|digest)\s*\(", body):
+            raise ArchitectureError(f"ADR-0015: {method} attests trusted scientific content")
+    masks = repo_root / "crates/casa-imaging-reconstruction/src/mask.rs"
+    validate_owned_mask_mint(masks.read_text(encoding="utf-8"))
+
+
+def validate_owned_mask_mint(source: str) -> None:
+    body = rust_impl_method_body(source, "ReconstructionMask", "mint", Path("mask.rs"))
+    body = re.sub(r"//[^\n]*", "", body)
+    body = re.sub(r"support\s*:\s*support\s*\.\s*into_boxed_slice\s*\(\s*\)", "", body)
+    if re.search(r"\bsupport\b", body):
+        raise ArchitectureError("ADR-0015: mask mint must transfer support without a content pass")
+
+
 def main() -> int:
     args = parse_args()
     try:
@@ -3533,6 +3548,7 @@ def main() -> int:
         validate_forward_invariants(policy, metadata)
         validate_source_boundaries(policy)
         validate_product_write_only_path()
+        validate_trusted_buffer_path()
 
         matrix_path = (
             resolve_input(args.migration_matrix)

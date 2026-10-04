@@ -102,8 +102,8 @@ fn t51_initial_phase_residency_is_geometry_derived_and_fail_closed() {
     let workload =
         spectral_operator_workload(&specification, 3, SpectralOperatorPass::InitialMajor).unwrap();
     let phases = workload.initial_phase_residency().unwrap();
-    assert_eq!(phases.accumulation_bytes(), 4_294_967_296);
-    assert_eq!(phases.completion_bytes(), 7_381_975_089);
+    assert_eq!(phases.accumulation_bytes(), 2_147_483_648);
+    assert_eq!(phases.completion_bytes(), 5_234_491_441);
     assert_eq!(phases.retained_bytes(), 2_281_701_425);
 
     let small = aw_specification(&problem, [8, 6]);
@@ -114,10 +114,10 @@ fn t51_initial_phase_residency_is_geometry_derived_and_fail_closed() {
     let complex = 8 * 6 * size_of::<Complex64>();
     let real = 8 * 6 * size_of::<f64>();
     let metadata = 6 * size_of::<f64>() + size_of::<SpectralChannelValidity>();
-    assert_eq!(projected.accumulation_bytes(), 16 * complex);
+    assert_eq!(projected.accumulation_bytes(), 8 * complex);
     assert_eq!(
         projected.completion_bytes(),
-        26 * complex + 3 * real + metadata
+        18 * complex + 3 * real + metadata
     );
     assert_eq!(
         projected.retained_bytes(),
@@ -246,11 +246,8 @@ fn t51_initial_phase_residency_bounds_actual_formation_and_identity_transfer() {
     .unwrap();
     let grid_values: usize = [
         &source.dirty_grids,
-        &source.dirty_compensations,
         &source.psf_grids,
-        &source.psf_compensations,
         &source.aw_sensitivity_grids,
-        &source.aw_sensitivity_compensations,
     ]
     .into_iter()
     .flat_map(|grids| grids.iter().flatten())
@@ -260,10 +257,8 @@ fn t51_initial_phase_residency_bounds_actual_formation_and_identity_transfer() {
         grid_values * size_of::<Complex64>(),
         phases.accumulation_bytes()
     );
-    assert!(source.residual_grids.is_none() && source.residual_compensations.is_none());
-    assert!(
-        source.common_residual_grids.is_none() && source.common_residual_compensations.is_none()
-    );
+    assert!(source.residual_grids.is_none());
+    assert!(source.common_residual_grids.is_none());
     assert!(source.primary_beam.is_none() && source.mosaic_normal.is_none());
     assert!(provider_lifetime.upgrade().is_some());
     let mut received_local = false;
@@ -349,8 +344,7 @@ fn t51_initial_phase_residency_rejects_prior_before_retaining_owner_state() {
             .iter()
             .all(|operator| operator.primary_beam_replay.is_none()
                 && operator.reused_normal_state.is_none()
-                && operator.residual_grids.is_none()
-                && operator.residual_compensations.is_none())
+                && operator.residual_grids.is_none())
     );
     owner.bind_major_cycle_model(&model, None).unwrap();
 }

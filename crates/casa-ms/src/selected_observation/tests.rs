@@ -36,15 +36,15 @@ use casa_imaging_model::{
     PsfPhaseCentreLaw, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
     ReconstructionControls, ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy,
     RowSelection, ScientificContract, SelectedColumns, SelectedInputWeightGroup, SelectedMainRow,
-    SelectedObservationGenerationId, SelectedObservationInspectionError,
-    SelectedObservationPassError, SelectedObservationRunChannel, SelectedObservationRunCorrelation,
-    SelectedObservationRunRow, SelectedObservationSample, SelectedRows, SelectedSpectralEvaluation,
-    SelectedVisibilitySample, SelectionBound, SkyDirection, SourceGenerations, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
-    SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
-    TaylorValidityPolicy, TimeRange, TimeScale, TimeSelection, UvSelection, UvwCoordinateLaw,
-    VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract,
-    WeightingScheme, compile, compile_observation,
+    SelectedObservationInspectionError, SelectedObservationPassError,
+    SelectedObservationRunChannel, SelectedObservationRunCorrelation, SelectedObservationRunRow,
+    SelectedObservationSample, SelectedRows, SelectedSpectralEvaluation, SelectedVisibilitySample,
+    SelectionBound, SkyDirection, SourceGenerations, SpectralContract, SpectralCoordinateSpec,
+    SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs,
+    SpectralWindowSelection, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy,
+    TimeRange, TimeScale, TimeSelection, UvSelection, UvwCoordinateLaw, VisibilityColumn,
+    VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
+    compile, compile_observation,
 };
 use casa_imaging_reconstruction::compile_spectral_stencil;
 use casa_tables::{ColumnSchema, LockMode, LockOptions, LockType, Table, TableOptions};
@@ -511,9 +511,9 @@ fn facet_chart_projections_are_domain_major_and_block_partition_invariant() {
         "physical block boundaries are not geometry"
     );
     assert_eq!(
-        one_row_completion.generation_id(),
-        two_row_completion.generation_id(),
-        "selected generation is invariant to block partitioning"
+        one_row_completion.sample_count(),
+        two_row_completion.sample_count(),
+        "sample count is invariant to block partitioning"
     );
     assert_eq!(one_row.len(), 480);
     for (_, raw_uvw_m, projections) in one_row {
@@ -1479,8 +1479,8 @@ fn selected_row_spectral_geometry_uses_exact_selected_centres_including_flagged_
             .complete(terminal)
             .expect("complete borrowed source");
         assert_eq!(
-            borrowed_completion.generation_id(),
-            scalar_completion.generation_id()
+            borrowed_completion.sample_count(),
+            scalar_completion.sample_count()
         );
         assert_eq!(borrowed_samples, scalar_samples);
     }
@@ -2770,7 +2770,7 @@ fn owner_rebound_requires_exhaustive_proof_and_fresh_locked_state() {
     let authorization = proof
         .authorize_rebound_completion(&rebound_completion)
         .expect("only the freshly rebound terminal completion authorizes generation and count");
-    assert_eq!(authorization.generation_id(), initial.generation_id());
+    assert_eq!(authorization.sample_count(), initial.sample_count());
     assert_eq!(authorization.sample_count(), initial.sample_count());
     drop(rebound);
 
@@ -2974,8 +2974,8 @@ fn selected_observation_residency_is_cardinality_independent_and_schedule_invari
         .traverse(&small_problem, |_| Ok::<_, Infallible>(()))
         .expect("complete double-buffered owner traversal");
     assert_eq!(
-        synchronous_completion.generation_id(),
-        double_buffered_completion.generation_id(),
+        synchronous_completion.sample_count(),
+        double_buffered_completion.sample_count(),
         "read-ahead scheduling and alternating physical buffers are absent from content identity"
     );
     assert_eq!(
@@ -3098,7 +3098,7 @@ fn numeric_block_consumption_preserves_v10_without_unused_pa_and_rejects_failed_
     }
     let (_, actual) = consumer.complete(source.complete().unwrap()).unwrap();
     assert_eq!(callbacks, 4);
-    assert_eq!(actual.generation_id(), expected.generation_id());
+    assert_eq!(actual.sample_count(), expected.sample_count());
     assert_eq!(actual.sample_count(), expected.sample_count());
     assert_eq!(actual.measurements().selected_sample_handoff_bytes(), 0);
 
@@ -3346,8 +3346,8 @@ fn refillable_block_stream_matches_scalar_traversal_and_returns_the_owner() {
 
     assert_eq!(block_samples, scalar_samples);
     assert_eq!(
-        block_completion.generation_id(),
-        scalar_completion.generation_id()
+        block_completion.sample_count(),
+        scalar_completion.sample_count()
     );
     assert_eq!(
         block_completion.sample_count(),
@@ -3436,8 +3436,8 @@ fn windowed_block_stream_exhausts_rows_without_reading_disjoint_payload() {
         .complete_window(channel_source.complete().unwrap())
         .unwrap();
     assert_eq!(
-        channel_completion.generation_id(),
-        initial_completion.generation_id()
+        channel_completion.commitment_id(),
+        initial_completion.commitment_id()
     );
     assert_eq!(channel_completion.channel_ordinals(), Some(1..2));
     assert_eq!(channel_completion.frequency_bounds_hz(), None);
@@ -3728,7 +3728,7 @@ fn collect_borrowed_samples(
             .peak_consumer_scratch_current_bytes(),
         (2 * size_of::<SelectedObservationRunCorrelation>()) as u64
     );
-    let (generation, _) = problem
+    let sample_count = problem
         .inspect_selected_observation(
             samples
                 .iter()
@@ -3736,7 +3736,7 @@ fn collect_borrowed_samples(
             |_| Ok::<_, Infallible>(()),
         )
         .expect("independent borrowed sample inspection");
-    assert_eq!(generation, completion.generation_id());
+    assert_eq!(sample_count, completion.sample_count());
     samples
 }
 
@@ -3773,8 +3773,6 @@ fn borrowed_source_ranges_reject_invalid_windows_and_propagate_consumer_failure(
             .is_some()
     );
     let count = storage.selected_run_count().expect("validation run count");
-    let proof_bytes = consumer.generation_proof_bytes();
-    let proof_calls = consumer.generation_proof_hash_calls();
     for range in [std::ops::Range { start: 2, end: 1 }, 0..count + 1] {
         assert!(
             projector
@@ -3785,8 +3783,6 @@ fn borrowed_source_ranges_reject_invalid_windows_and_propagate_consumer_failure(
         );
         assert!(consumer.inspect_block_range(&storage, range).is_err());
     }
-    assert_eq!(consumer.generation_proof_bytes(), proof_bytes);
-    assert_eq!(consumer.generation_proof_hash_calls(), proof_calls);
     projector
         .visit_block_range(
             &problem,
@@ -3862,15 +3858,13 @@ fn borrowed_source_inspection_preserves_rebound_sample_counts_and_completion() {
                 .expect("inspect borrowed rebound range");
         }
     }
-    assert_eq!(consumer.generation_proof_bytes(), 0);
-    assert_eq!(consumer.generation_proof_hash_calls(), 0);
     let (_, completion) = consumer
         .complete(source.complete().expect("rebound terminal"))
         .expect("complete borrowed rebound source");
     let authorization = proof
         .authorize_rebound_completion(&completion)
         .expect("ordered borrowed windows preserve rebound authorization");
-    assert_eq!(authorization.generation_id(), initial.generation_id());
+    assert_eq!(authorization.sample_count(), initial.sample_count());
     assert_eq!(authorization.sample_count(), initial.sample_count());
 }
 
@@ -3959,7 +3953,7 @@ fn collect_indexed_samples(
         .complete(terminal)
         .expect("indexed inspection completion");
     assert_eq!(completion.sample_count(), samples.len() as u64);
-    let (generation, _) = problem
+    let sample_count = problem
         .inspect_selected_observation(
             samples
                 .iter()
@@ -3967,7 +3961,7 @@ fn collect_indexed_samples(
             |_| Ok::<_, Infallible>(()),
         )
         .expect("independent indexed sample inspection");
-    assert_eq!(generation, completion.generation_id());
+    assert_eq!(sample_count, completion.sample_count());
     samples
 }
 
@@ -4162,8 +4156,8 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
     assert_eq!(two_row_measurements.allocated_storage_buffers(), 38);
     assert_eq!(two_row_measurements.reused_storage_buffers(), 0);
     assert_eq!(
-        one_row_completion.generation_id(),
-        two_row_completion.generation_id(),
+        one_row_completion.sample_count(),
+        two_row_completion.sample_count(),
         "physical source and row blocking are absent from content identity"
     );
     assert_eq!(
@@ -4197,9 +4191,9 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
         .traverse(&problem, |_| Ok::<_, Infallible>(()))
         .expect("mint a fresh completion for a repeated retained traversal");
     assert_eq!(
-        one_row_completion.generation_id(),
-        repeated.generation_id(),
-        "content generation remains stable across attempts"
+        one_row_completion.sample_count(),
+        repeated.sample_count(),
+        "sample count remains stable across attempts"
     );
     assert!(one_row_completion.precedes(&repeated));
     assert!(!one_row_completion.same_access_binding(&two_row_completion));
@@ -4947,7 +4941,7 @@ fn multi_spw_selection_is_block_invariant_across_prediction_and_residual_replays
 fn inspect_samples(
     problem: &casa_imaging_model::CompiledProblem,
     samples: impl IntoIterator<Item = SelectedObservationSample>,
-) -> Result<(SelectedObservationGenerationId, u64), SelectedObservationInspectionError> {
+) -> Result<u64, SelectedObservationInspectionError> {
     match problem.inspect_selected_observation(samples.into_iter().map(Ok::<_, Infallible>), |_| {
         Ok::<_, Infallible>(())
     }) {

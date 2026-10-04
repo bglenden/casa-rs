@@ -12,8 +12,7 @@ use casa_imaging_model::{
     NumericsContractId, ObservationProvenanceId, ObservationReadSet, ObservationSnapshotId,
     ObservationTransactionContract, ObservationWriteSet, ProblemInputIdentities, ProductGraphId,
     ProductRequirements, ReconstructionContract, ReferenceDataKind, RequiredCapability,
-    ScientificContract, SelectedObservationCommitmentId, SelectedObservationGenerationId,
-    WeightingOperatorContract,
+    ScientificContract, SelectedObservationCommitmentId, WeightingOperatorContract,
 };
 use casa_imaging_reconstruction::ExecutableModelProblem;
 use sha2::{Digest, Sha256};
@@ -3380,15 +3379,6 @@ impl AttemptBoundObservationCompletion {
         match &self.owner_completion {
             SelectedObservationReadCompletion::Full(owner) => Some(owner),
             SelectedObservationReadCompletion::Window(_) => None,
-        }
-    }
-
-    /// Return the retained selected generation certified by either kind of pass.
-    #[must_use]
-    pub const fn source_generation(&self) -> SelectedObservationGenerationId {
-        match &self.owner_completion {
-            SelectedObservationReadCompletion::Full(owner) => owner.generation_id(),
-            SelectedObservationReadCompletion::Window(owner) => owner.generation_id(),
         }
     }
 

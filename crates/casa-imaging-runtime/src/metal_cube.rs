@@ -368,6 +368,7 @@ impl MetalCubeKernels {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn encode_grid(
         &self,
         command: &ProtocolObject<dyn MTLCommandBuffer>,
@@ -388,6 +389,7 @@ impl MetalCubeKernels {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn encode_degrid(
         &self,
         command: &ProtocolObject<dyn MTLCommandBuffer>,

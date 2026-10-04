@@ -321,7 +321,7 @@ impl BandWorkspace {
                 .collect();
             let mut destinations: Vec<Vec<PredictionDestination>> =
                 (0..self.model_channels.len()).map(|_| Vec::new()).collect();
-            let mut previous: Option<(&[f64], [f64; 2], Range<usize>, Option<RowStencil>)> = None;
+            let mut previous: Option<CachedRowSupport<'_>> = None;
             for row_index in 0..rows {
                 let mut row = native_rows.row(row_index);
                 let frequencies = row.frequencies_hz;
@@ -413,7 +413,7 @@ impl BandWorkspace {
                 })
             })
             .collect();
-        let mut previous: Option<(&[f64], [f64; 2], Range<usize>, Option<RowStencil>)> = None;
+        let mut previous: Option<CachedRowSupport<'_>> = None;
         for row_index in 0..rows {
             let mut row = native_rows.row(row_index);
             let frequencies = row.frequencies_hz;

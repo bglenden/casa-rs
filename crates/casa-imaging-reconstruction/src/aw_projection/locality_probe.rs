@@ -36,20 +36,18 @@ fn grid_plan_locality_preserves_normalization_and_per_cell_arithmetic() {
     let mut expected = (0..shape[0] * shape[1])
         .map(|index| Complex64::new(index as f64 / 13.0, index as f64 / 7.0))
         .collect::<Vec<_>>();
-    let mut expected_errors = vec![Complex64::new(1e-14, -1e-13); expected.len()];
     let mut actual = expected.clone();
-    let mut actual_errors = expected_errors.clone();
     for value in [
         Complex64::new(0.5, -1.5),
         Complex64::new(-1e6, 0.03),
         Complex64::new(1e-9, 9.0),
     ] {
-        compensated_taps(&mut expected, &mut expected_errors, &taps.values, value);
-        plan.grid_compensated(&mut actual, &mut actual_errors, value)
-            .unwrap();
+        for tap in &taps.values {
+            expected[tap.index] += tap.coefficient * value;
+        }
+        plan.grid(&mut actual, value).unwrap();
     }
     assert_eq!(actual, expected);
-    assert_eq!(actual_errors, expected_errors);
     assert!(
         plan.taps
             .windows(2)
@@ -68,7 +66,7 @@ fn t51_grid_plan_locality_timing() {
     let mut grids = (0..planes)
         .map(|_| vec![Complex64::default(); shape[0] * shape[1]])
         .collect::<Vec<_>>();
-    let mut errors = grids.clone();
+
     let samples = 20_000;
     let started = std::time::Instant::now();
     for index in 0..samples {
@@ -87,10 +85,9 @@ fn t51_grid_plan_locality_timing() {
         .unwrap();
         let taps = fused_taps(&kernel, shape, sample, true).unwrap();
         let plan = AwGridPlan::new(shape, taps);
-        for (plane, (grid, errors)) in grids.iter_mut().zip(&mut errors).enumerate() {
-            plan.grid_compensated(
+        for (plane, grid) in grids.iter_mut().enumerate() {
+            plan.grid(
                 grid,
-                errors,
                 Complex64::new((plane + 1) as f64 / 5.0, (index % 11) as f64 / 11.0),
             )
             .unwrap();
@@ -99,7 +96,7 @@ fn t51_grid_plan_locality_timing() {
     let seconds = started.elapsed().as_secs_f64();
     use sha2::{Digest, Sha256};
     let mut hash = Sha256::new();
-    for value in grids.iter().chain(&errors).flatten() {
+    for value in grids.iter().flatten() {
         assert!(finite(*value));
         hash.update(value.re.to_le_bytes());
         hash.update(value.im.to_le_bytes());
@@ -108,7 +105,7 @@ fn t51_grid_plan_locality_timing() {
         "t51_grid_plan_locality {}",
         serde_json::json!({
             "samples": samples, "planes": planes, "tap_count": 29 * 29,
-            "shape": shape, "seconds": seconds, "grid_and_compensation_sha256": format!("{:x}", hash.finalize()),
+            "shape": shape, "seconds": seconds, "grid_sha256": format!("{:x}", hash.finalize()),
             "scope": "synthetic hot-loop control including tap formation and plan ordering; not imaging acceptance",
         })
     );

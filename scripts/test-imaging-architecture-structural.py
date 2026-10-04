@@ -36,6 +36,23 @@ def live_metadata() -> dict:
 
 
 class ProductOwnershipTests(unittest.TestCase):
+    def test_mask_mint_moves_support_without_scanning_or_attesting_it(self) -> None:
+        source = "impl ReconstructionMask { fn mint() { Self { support: support.into_boxed_slice() } } }"
+        checker.validate_owned_mask_mint(source)
+        for scan in ("verify(&support);", "support.iter().for_each(check);"):
+            with self.assertRaisesRegex(checker.ArchitectureError, "without a content pass"):
+                checker.validate_owned_mask_mint(source.replace("Self {", scan + "Self {"))
+    def test_trusted_transport_cannot_reintroduce_content_hashing_under_new_names(self) -> None:
+        checker.validate_trusted_buffer_path()
+        for implementation in (
+            "use sha2::Sha256 as Association; fn check(bytes: &[u8]) { Association::digest(bytes); }",
+            "fn verify(bytes: &[u8]) { crc32c::crc32c(bytes); }",
+            "use std::hash::Hasher; fn bind(samples: &[f32]) {}",
+        ):
+            with self.assertRaisesRegex(checker.ArchitectureError, "trusted-buffer content hashing"):
+                checker.validate_trusted_buffer_sources({"new_transport.rs": implementation})
+        checker.validate_trusted_buffer_sources({"diagnostic.rs": "#[cfg(test)] mod tests { use sha2::Sha256; }"})
+
     def test_prepared_model_may_transfer_but_not_rescan_owned_samples(self) -> None:
         source = "fn initial_reprojected() { mint(prepared.samples.into_vec()); }"
         checker.validate_prepared_model_transfer(source)
@@ -54,10 +71,10 @@ pub trait ProductWriter {
 }
 """,
             "generation.rs": "fn generate(output: &dyn ProductOutput) {}",
-            "visibility.rs": "use sha2::Sha256;",
+            "visibility.rs": "fn generate_visibility() {}",
         }
 
-    def test_write_only_contract_and_independent_visibility_hash_are_allowed(self) -> None:
+    def test_write_only_contract_is_allowed(self) -> None:
         checker.validate_product_write_only_sources(self.sources, "")
 
     def test_hashing_under_a_different_name_is_rejected(self) -> None:
@@ -342,7 +359,6 @@ class MatrixTests(unittest.TestCase):
     def test_prepared_replay_requires_weighting_and_ordered_coverage(self) -> None:
         for method, token in (
             ("prepare_sample", "weighted_sample_from_state("),
-            ("commit_sample", "self.coverage.push(&weighted)"),
             ("commit_sample", "self.block.push(weighted)"),
         ):
             with self.subTest(method=method, token=token):
@@ -362,11 +378,13 @@ class MatrixTests(unittest.TestCase):
 
     def test_restricted_replay_cannot_change_source_or_parent(self) -> None:
         for token in (
-            "selected_generation != self.scope.proof.selected_generation",
             "sample_count != self.actual.sample_count",
             "frequency_bounds_hz != self.scope.frequency_bounds_hz",
-            "proof.selected_generation == selected_generation",
-            "proof.coverage == parent.coverage",
+            "proof.problem == problem",
+            "proof.commitment == commitment",
+            "proof.generation == parent.generation",
+            "proof.weighted_sample_count == parent.sample_count",
+            "self.actual.generation == parent.generation",
         ):
             with self.subTest(token=token):
                 sources = self.weighting_sources()

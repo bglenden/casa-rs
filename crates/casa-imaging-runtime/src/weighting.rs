@@ -11,20 +11,18 @@ use std::{
 };
 
 use casa_imaging_model::{
-    CompiledProblem, CompiledProblemId, ContinuumTransformGenerationId,
-    SelectedObservationGenerationId, SelectedObservationSampleView, SelectedSpectralContribution,
-    SelectedSpectralContributions, SequentialContinuumTransform,
+    CompiledProblem, CompiledProblemId, SelectedObservationSampleView,
+    SelectedSpectralContribution, SelectedSpectralContributions, SequentialContinuumTransform,
 };
 use casa_imaging_reconstruction::runtime_adapter::{
     SpectralOperatorInitialPhaseResidency, WeightingReplayPhase, WeightingReplayWindowSummary,
     WeightingSpectralCache,
 };
 use casa_imaging_reconstruction::{
-    FrozenWeightingCoverageProof, FusedWeightingPhase, WeightingAlgorithmState,
-    WeightingDensityPhase, WeightingError, WeightingGenerationId, WeightingPlan,
-    WeightingReplayChunk as ReconstructionWeightedBlock, WeightingReplayCoverageId,
-    WeightingReplayId, WeightingReplaySummary, WeightingResidency,
-    WeightingSampleValue as ReconstructionWeightedSample,
+    FrozenWeightingBinding, FusedWeightingPhase, WeightingAlgorithmState, WeightingDensityPhase,
+    WeightingError, WeightingGenerationId, WeightingPlan,
+    WeightingReplayChunk as ReconstructionWeightedBlock, WeightingReplayId, WeightingReplaySummary,
+    WeightingResidency, WeightingSampleValue as ReconstructionWeightedSample,
     WeightingSelectedSample as ReconstructionSelectedSample,
     WeightingSpectralValue as ReconstructionWeightedSpectralValue, begin_natural_weighting_stream,
     begin_weighting_generation, compile_spectral_stencil,
@@ -67,8 +65,10 @@ use crate::{
 };
 
 pub(crate) mod bulk_source;
+#[cfg(test)]
 mod native_preparation;
 mod replay_preparation;
+#[cfg(test)]
 pub(crate) use native_preparation::NativePreparationPlan;
 use replay_preparation::ReplayPreparation;
 pub(crate) use replay_preparation::ReplayPreparationPlan;
@@ -76,14 +76,19 @@ pub(crate) use replay_preparation::ReplayPreparationPlan;
 #[derive(Clone, Copy, Debug)]
 enum PreparationPlan {
     Replay(ReplayPreparationPlan),
+    #[cfg(test)]
     Native(NativePreparationPlan),
-    Bulk { workers: usize, heap_bytes: u64 },
+    Bulk {
+        workers: usize,
+        heap_bytes: u64,
+    },
 }
 
 impl PreparationPlan {
     fn workers(self) -> usize {
         match self {
             Self::Replay(plan) => plan.workers(),
+            #[cfg(test)]
             Self::Native(plan) => plan.workers,
             Self::Bulk { workers, .. } => workers,
         }
@@ -92,6 +97,7 @@ impl PreparationPlan {
     fn admitted_heap_bytes(self) -> Result<u64, WeightingError> {
         match self {
             Self::Replay(plan) => plan.admitted_heap_bytes(),
+            #[cfg(test)]
             Self::Native(plan) => Ok(plan.heap_bytes),
             Self::Bulk { heap_bytes, .. } => Ok(heap_bytes),
         }
@@ -1343,6 +1349,7 @@ impl<'a> WeightingPlanFragment<'a> {
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn with_native_preparation(mut self, preparation: NativePreparationPlan) -> Self {
         self.replay_preparation = Some(PreparationPlan::Native(preparation));
         self
@@ -1394,9 +1401,7 @@ impl<'a> WeightingPlanFragment<'a> {
         match self.replay_preparation {
             None => Ok(None),
             Some(PreparationPlan::Replay(plan)) => Ok(Some(plan)),
-            Some(PreparationPlan::Native(_) | PreparationPlan::Bulk { .. }) => {
-                Err(WeightingReplayError::Evidence(WeightingEvidenceError))
-            }
+            Some(_) => Err(WeightingReplayError::Evidence(WeightingEvidenceError)),
         }
     }
 
@@ -1868,10 +1873,10 @@ impl<'a> WeightingPlanFragment<'a> {
             allocations.push(allocation.logical_allocation());
             slots.push(allocation.physical_slot());
         }
-        if matches!(
-            self.replay_preparation,
-            Some(PreparationPlan::Native(_) | PreparationPlan::Bulk { .. })
-        ) {
+        if self
+            .replay_preparation
+            .is_some_and(|plan| !matches!(plan, PreparationPlan::Replay(_)))
+        {
             let obsolete = BTreeSet::from([
                 self.ids.partial_allocation.clone(),
                 self.ids.reduction_allocation.clone(),
@@ -2189,10 +2194,10 @@ impl<'a> WeightingPlanFragment<'a> {
             .allocation_specs()
             .map_err(|_| WeightingEvidenceError)?;
         let mut expected = vec![&specs[0]];
-        if !matches!(
-            self.replay_preparation,
-            Some(PreparationPlan::Native(_) | PreparationPlan::Bulk { .. })
-        ) {
+        if self
+            .replay_preparation
+            .is_none_or(|plan| matches!(plan, PreparationPlan::Replay(_)))
+        {
             expected.push(&specs[4]);
         }
         if self.initial_working_set.is_some() {
@@ -2381,7 +2386,7 @@ impl<'a> WeightingPlanFragment<'a> {
             attempt_id: context.attempt_id(),
             owner_node: self.ids.generation_node.clone(),
             lease_epoch: context.lease_epoch(),
-            source_generation: owner.generation_id(),
+
             source_sample_count: owner.sample_count(),
         })
     }
@@ -2418,7 +2423,6 @@ impl<'a> WeightingPlanFragment<'a> {
             || predecessor.owner_node() != &frozen.binding.owner_node
             || predecessor.lease_epoch() != frozen.binding.lease_epoch
             || predecessor.lease_epoch() != context.lease_epoch()
-            || owner.generation_id() != frozen.artifact.source_generation
             || owner.sample_count() != frozen.artifact.source_sample_count
         {
             return Err(WeightingEvidenceError);
@@ -2427,7 +2431,7 @@ impl<'a> WeightingPlanFragment<'a> {
             attempt_id: context.attempt_id(),
             owner_node: self.ids.replay_node.clone(),
             lease_epoch: context.lease_epoch(),
-            source_generation: owner.generation_id(),
+
             source_sample_count: owner.sample_count(),
         })
     }
@@ -2922,6 +2926,7 @@ impl WeightingExecutionState {
         self.accept_initial_stream(context, fragment, problem, binding, completed)
     }
 
+    #[cfg(test)]
     pub(crate) fn traverse_native_initial_stream<F>(
         &mut self,
         context: WorkExecutionContext<'_>,
@@ -2997,7 +3002,7 @@ impl WeightingExecutionState {
             '_,
             (WeightingAlgorithmState, WeightingReplaySummary),
         >,
-        coverage: Option<FrozenWeightingCoverageProof>,
+        coverage: Option<FrozenWeightingBinding>,
     ) -> Result<(), WeightingReplayError<E>> {
         let CompletedWeightingBlockStream {
             selected,
@@ -3015,18 +3020,17 @@ impl WeightingExecutionState {
             .checked_add(prepared_samples)
             .ok_or(WeightingReplayError::Evidence(WeightingEvidenceError))?;
         let continuum_completion = continuum
-            .map(|transform| transform.complete(owner_completion.generation_id()))
+            .map(ContinuumTransformStream::complete)
             .transpose()
             .map_err(WeightingReplayError::Transform)?;
         let binding = binding.unwrap_or_else(|| WeightingGenerationBinding {
             attempt_id: context.attempt_id(),
             owner_node: context.node().id.clone(),
             lease_epoch: context.lease_epoch(),
-            source_generation: owner_completion.generation_id(),
+
             source_sample_count: owner_completion.sample_count(),
         });
         if state.sample_count() != owner_completion.sample_count()
-            || owner_completion.generation_id() != binding.source_generation
             || owner_completion.sample_count() != binding.source_sample_count
         {
             return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
@@ -3040,28 +3044,21 @@ impl WeightingExecutionState {
         let coverage_proof = match coverage {
             Some(proof) => {
                 proof
-                    .validate_derived_replay(
-                        owner_completion.generation_id(),
-                        owner_completion.sample_count(),
-                        continuum_completion.map(ContinuumTransformCompletion::generation_id),
-                        &summary,
-                    )
+                    .validate_derived_replay(owner_completion.sample_count(), &summary)
                     .map_err(WeightingReplayError::Owner)?;
                 proof
             }
-            None => FrozenWeightingCoverageProof::seal(
+            None => FrozenWeightingBinding::bind(
                 problem,
                 &state,
                 &summary,
-                owner_completion.generation_id(),
                 owner_completion.sample_count(),
-                continuum_completion.map(ContinuumTransformCompletion::generation_id),
             )
             .map_err(WeightingReplayError::Owner)?,
         };
         let artifact = FrozenWeightingArtifact {
             state: Arc::new(state),
-            source_generation: owner_completion.generation_id(),
+
             source_sample_count: owner_completion.sample_count(),
             continuum_transform: continuum_completion,
             selected_replay_proof: Some(selected_replay_proof),
@@ -3075,7 +3072,7 @@ impl WeightingExecutionState {
                 attempt_id: binding.attempt_id,
                 owner_node: binding.owner_node.clone(),
                 lease_epoch: binding.lease_epoch,
-                source_generation: binding.source_generation,
+
                 source_sample_count: binding.source_sample_count,
             },
         };
@@ -3186,16 +3183,13 @@ impl WeightingExecutionState {
             } = completed;
             summary
                 .validate_source_completion(
-                    owner_completion.generation_id(),
                     owner_completion.sample_count(),
                     owner_completion
                         .frequency_bounds_hz()
                         .ok_or(WeightingReplayError::Evidence(WeightingEvidenceError))?,
                 )
                 .map_err(WeightingReplayError::Owner)?;
-            if owner_completion.generation_id() != pending.owner_completion.generation_id()
-                || summary.actual().weighting_generation() != pending.state.weighting_generation()
-            {
+            if summary.actual().weighting_generation() != pending.state.weighting_generation() {
                 return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
             }
             self.latest_traversal_measurements = Some(*owner_completion.measurements());
@@ -3216,15 +3210,7 @@ impl WeightingExecutionState {
         let replay = frozen
             .artifact
             .state
-            .begin_derived_replay(
-                problem,
-                fragment.plan,
-                coverage_proof,
-                frozen
-                    .artifact
-                    .continuum_transform
-                    .map(ContinuumTransformCompletion::generation_id),
-            )
+            .begin_derived_replay(problem, fragment.plan, coverage_proof)
             .map_err(WeightingReplayError::Owner)?;
         let completed = match execute_weighting_block_stream(
             problem,
@@ -3253,13 +3239,11 @@ impl WeightingExecutionState {
         self.latest_traversal_measurements = Some(*owner_completion.measurements());
         self.latest_stream_measurements = Some(measurements);
         let continuum_completion = continuum
-            .map(|transform| transform.complete(owner_completion.generation_id()))
+            .map(ContinuumTransformStream::complete)
             .transpose()
             .map_err(WeightingReplayError::Transform)?;
-        if owner_completion.generation_id() != pending.owner_completion.generation_id()
-            || owner_completion.sample_count() != pending.owner_completion.sample_count()
+        if owner_completion.sample_count() != pending.owner_completion.sample_count()
             || summary.weighting_generation() != pending.state.weighting_generation()
-            || summary.coverage() != pending.state.coverage()
             || summary.sample_count() != pending.state.sample_count()
             || summary.block_count() != pending.state.block_count()
             || continuum_completion != pending.continuum_transform
@@ -3281,23 +3265,11 @@ impl WeightingExecutionState {
         Ok(None)
     }
 
-    pub(crate) fn pending_replay_inputs(
-        &self,
-    ) -> Option<(
-        &WeightingReplaySummary,
-        SelectedObservationGenerationId,
-        Option<ContinuumTransformGenerationId>,
-    )> {
+    pub(crate) fn pending_replay_inputs(&self) -> Option<&WeightingReplaySummary> {
         let WeightingExecutionPhase::PendingReplay { pending, .. } = &self.phase else {
             return None;
         };
-        Some((
-            &pending.state,
-            pending.owner_completion.generation_id(),
-            pending
-                .continuum_transform
-                .map(ContinuumTransformCompletion::generation_id),
-        ))
+        Some(&pending.state)
     }
 
     pub(crate) fn traverse_selected_output_bounded_stream<E, F>(
@@ -3340,14 +3312,7 @@ impl WeightingExecutionState {
             .ok_or(WeightingReplayError::Evidence(WeightingEvidenceError))?;
         let replay = artifact
             .state
-            .begin_derived_replay(
-                problem,
-                fragment.plan,
-                coverage_proof,
-                artifact
-                    .continuum_transform
-                    .map(ContinuumTransformCompletion::generation_id),
-            )
+            .begin_derived_replay(problem, fragment.plan, coverage_proof)
             .map_err(WeightingReplayError::Owner)?;
         let completed = match execute_weighting_block_stream(
             problem,
@@ -3376,7 +3341,7 @@ impl WeightingExecutionState {
         self.latest_traversal_measurements = Some(*owner_completion.measurements());
         self.latest_stream_measurements = Some(measurements);
         let continuum_completion = continuum
-            .map(|transform| transform.complete(owner_completion.generation_id()))
+            .map(ContinuumTransformStream::complete)
             .transpose()
             .map_err(WeightingReplayError::Transform)?;
         artifact
@@ -3386,7 +3351,7 @@ impl WeightingExecutionState {
             attempt_id: context.attempt_id(),
             owner_node: context.node().id.clone(),
             lease_epoch: context.lease_epoch(),
-            source_generation: owner_completion.generation_id(),
+
             source_sample_count: owner_completion.sample_count(),
         };
         self.retained_observation = Some(RetainedWeightingObservation {
@@ -3402,7 +3367,7 @@ impl WeightingExecutionState {
                     attempt_id: binding.attempt_id,
                     owner_node: binding.owner_node.clone(),
                     lease_epoch: binding.lease_epoch,
-                    source_generation: binding.source_generation,
+
                     source_sample_count: binding.source_sample_count,
                 },
             },
@@ -3570,6 +3535,7 @@ impl WeightingExecutionState {
 
     /// Transfer the original completed traversal with an owned native copy of
     /// its samples. This is not a new selected-observation traversal.
+    #[cfg(test)]
     pub(crate) fn release_retaining_replay(
         &mut self,
         context: WorkExecutionContext<'_>,
@@ -4389,12 +4355,12 @@ struct FrozenWeightingGeneration {
 #[derive(Clone, Debug)]
 pub struct FrozenWeightingArtifact {
     state: Arc<WeightingAlgorithmState>,
-    source_generation: SelectedObservationGenerationId,
+
     source_sample_count: u64,
     continuum_transform: Option<ContinuumTransformCompletion>,
     selected_replay_proof: Option<SelectedObservationReplayProof>,
     selected_replay_proof_bytes: usize,
-    coverage_proof: Option<FrozenWeightingCoverageProof>,
+    coverage_proof: Option<FrozenWeightingBinding>,
     cross_plan_reservation: Option<Arc<FrozenWeightingReservation>>,
 }
 
@@ -4540,12 +4506,7 @@ impl FrozenWeightingArtifact {
         }
         self.coverage_proof
             .ok_or(WeightingError::CoverageMismatch)?
-            .validate_derived_replay(
-                authorization.generation_id(),
-                authorization.sample_count(),
-                continuum.map(ContinuumTransformCompletion::generation_id),
-                replay,
-            )
+            .validate_derived_replay(authorization.sample_count(), replay)
     }
 
     fn validate_derived_window_completion(
@@ -4558,19 +4519,13 @@ impl FrozenWeightingArtifact {
             .as_ref()
             .ok_or(WeightingError::CoverageMismatch)?;
         if !selected_proof.validates_rebound_window_completion(owner)
-            || owner.generation_id() != self.source_generation
             || self.continuum_transform.is_some()
         {
             return Err(WeightingError::CoverageMismatch);
         }
         self.coverage_proof
             .ok_or(WeightingError::CoverageMismatch)?
-            .validate_derived_replay(
-                owner.generation_id(),
-                self.source_sample_count,
-                None,
-                replay,
-            )
+            .validate_derived_replay(self.source_sample_count, replay)
     }
 
     pub(crate) fn authorize_derived_operator(
@@ -4608,7 +4563,7 @@ struct WeightingGenerationBinding {
     attempt_id: ExecutionAttemptId,
     owner_node: WorkNodeId,
     lease_epoch: u64,
-    source_generation: SelectedObservationGenerationId,
+
     source_sample_count: u64,
 }
 
@@ -4671,7 +4626,6 @@ impl FrozenWeightingGeneration {
             })
             .map_err(WeightingReplayError::Traversal)?;
         validate_replay_completion(
-            self.artifact.source_generation,
             self.artifact.source_sample_count,
             predecessor_owner,
             &owner_completion,
@@ -4761,7 +4715,6 @@ fn traverse_weighting_generation(
         return Err(WeightingGenerationError::Evidence(WeightingEvidenceError));
     }
     if !source_completion.precedes(&density_completion)
-        || density_completion.generation_id() != binding.source_generation
         || density_completion.sample_count() != binding.source_sample_count
     {
         return Err(WeightingGenerationError::Evidence(WeightingEvidenceError));
@@ -4804,7 +4757,7 @@ fn complete_weighting_generation(
         FrozenWeightingGeneration {
             artifact: FrozenWeightingArtifact {
                 state: Arc::new(pending.state),
-                source_generation: pending.density_completion.generation_id(),
+
                 source_sample_count: pending.density_completion.sample_count(),
                 continuum_transform: None,
                 selected_replay_proof: None,
@@ -4825,7 +4778,6 @@ fn validate_generation_completions(
     if !density.precedes(sum_weight)
         || density.problem_id() != sum_weight.problem_id()
         || density.commitment_id() != sum_weight.commitment_id()
-        || density.generation_id() != sum_weight.generation_id()
         || density.sample_count() != sum_weight.sample_count()
     {
         return Err(WeightingEvidenceError);
@@ -4834,18 +4786,15 @@ fn validate_generation_completions(
 }
 
 fn validate_replay_completion(
-    source_generation: SelectedObservationGenerationId,
     source_sample_count: u64,
     prior: &SelectedObservationCompletion,
     replay: &SelectedObservationCompletion,
     state: &WeightingAlgorithmState,
 ) -> Result<(), WeightingEvidenceError> {
-    if prior.generation_id() != source_generation
-        || prior.sample_count() != source_sample_count
+    if prior.sample_count() != source_sample_count
         || !prior.precedes(replay)
         || replay.problem_id() != prior.problem_id()
         || replay.commitment_id() != prior.commitment_id()
-        || replay.generation_id() != prior.generation_id()
         || replay.sample_count() != prior.sample_count()
         || replay.sample_count() != state.sample_count()
     {
@@ -4871,13 +4820,6 @@ enum ReplaySourceCompletion {
 }
 
 impl ReplaySourceCompletion {
-    fn generation_id(&self) -> SelectedObservationGenerationId {
-        match self {
-            Self::Full(owner) => owner.generation_id(),
-            Self::Window(owner) => owner.generation_id(),
-        }
-    }
-
     fn sample_count(&self) -> u64 {
         match self {
             Self::Full(owner) => owner.sample_count(),
@@ -4909,7 +4851,6 @@ impl PendingWeightingReplay {
                 WeightingEvidenceError,
             ));
         }
-        let selected_generation = self.owner_completion.generation_id();
         let problem = self.owner_completion.problem_id();
         let delivered_source_sample_count = self.owner_completion.sample_count();
         let owner_completion = match self.owner_completion {
@@ -4921,7 +4862,7 @@ impl PendingWeightingReplay {
             WeightingReplayCompletion {
                 state: self.state,
                 problem,
-                selected_generation,
+
                 delivered_source_sample_count,
                 binding: self.binding,
                 continuum_transform: self.continuum_transform,
@@ -4937,7 +4878,7 @@ impl PendingWeightingReplay {
 pub struct WeightingReplayCompletion {
     state: WeightingReplaySummary,
     problem: CompiledProblemId,
-    selected_generation: SelectedObservationGenerationId,
+
     delivered_source_sample_count: u64,
     binding: WeightingGenerationBinding,
     continuum_transform: Option<ContinuumTransformCompletion>,
@@ -4967,12 +4908,6 @@ impl WeightingReplayCompletion {
         self.state.weighting_generation()
     }
 
-    /// Return the independently traversed T17 content generation.
-    #[must_use]
-    pub const fn selected_generation(&self) -> SelectedObservationGenerationId {
-        self.selected_generation
-    }
-
     /// Return sequential continuum-transform evidence when the replay used it.
     #[must_use]
     pub const fn continuum_transform(&self) -> Option<ContinuumTransformCompletion> {
@@ -4983,12 +4918,6 @@ impl WeightingReplayCompletion {
     #[must_use]
     pub const fn spectral_support_sample_count(&self) -> u64 {
         self.spectral_support_sample_count
-    }
-
-    /// Return exact emitted weighted-sample coverage.
-    #[must_use]
-    pub const fn coverage(&self) -> WeightingReplayCoverageId {
-        self.state.coverage()
     }
 
     /// Return the exhaustive emitted sample count.

@@ -156,8 +156,8 @@ fn t51_initial_phase_residency_accepts_compiled_full_geometry_aw() {
     let phases = workload
         .initial_phase_residency()
         .expect("compiled AW geometry receives the owner certificate");
-    assert_eq!(phases.accumulation_bytes(), 4_294_967_296);
-    assert_eq!(phases.completion_bytes(), 7_381_975_089);
+    assert_eq!(phases.accumulation_bytes(), 2_147_483_648);
+    assert_eq!(phases.completion_bytes(), 5_234_491_441);
     assert_eq!(phases.retained_bytes(), 2_281_701_425);
 }
 

@@ -16,9 +16,6 @@ use casa_imaging_model::{
 };
 use num_complex::Complex32;
 
-const NATIVE_COVERAGE_DOMAIN: &[u8] = b"casa-rs-native-weighting-row-coverage";
-const NATIVE_COVERAGE_VERSION: u32 = 1;
-
 fn invalid(message: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, message)
 }
@@ -48,8 +45,6 @@ fn sum_required_bytes(plan: &WeightingPlan) -> io::Result<usize> {
 /// order; numerical sums use ordinary finite f64 reductions.
 pub struct NativeWeightingPreparation {
     sum: WeightingSumWeightPhase,
-    coverage: Sha256,
-    work: coverage::CoverageProofWork,
     previous_row: Option<u64>,
     rows: u64,
     failed: bool,
@@ -59,16 +54,9 @@ impl NativeWeightingPreparation {
     /// Begin the single natural-weighting payload traversal without allocating
     /// the historical weighted replay block.
     pub fn new(problem: &CompiledProblem, plan: &WeightingPlan) -> io::Result<Self> {
-        let mut coverage = Sha256::new();
-        coverage.update(NATIVE_COVERAGE_DOMAIN);
-        coverage.update(NATIVE_COVERAGE_VERSION.to_be_bytes());
         Ok(Self {
             sum: natural_sum(problem, plan)?,
-            coverage,
-            work: coverage::CoverageProofWork {
-                bytes: (NATIVE_COVERAGE_DOMAIN.len() + size_of::<u32>()) as u64,
-                hash_calls: 2,
-            },
+
             previous_row: None,
             rows: 0,
             failed: false,
@@ -102,7 +90,6 @@ impl NativeWeightingPreparation {
             .checked_add(sum_required_bytes(plan)?)
             .and_then(|bytes| bytes.checked_add(channels.checked_mul(size_of::<u32>())?))
             .and_then(|bytes| bytes.checked_add(size_of::<NativeLayout>()))
-            .and_then(|bytes| bytes.checked_add(maximum_rows.checked_mul(size_of::<[u8; 32]>())?))
             .and_then(|bytes| bytes.checked_add(size_of::<NativePreparationWorker>()))
             .ok_or_else(|| invalid("native preparation worker capacity overflow"))
     }
@@ -129,7 +116,7 @@ impl NativeWeightingPreparation {
         let sum = natural_sum(problem, plan)?;
         Ok(NativePreparationWorker {
             sum,
-            row_digests: Vec::with_capacity(maximum_rows),
+            completed_rows: 0,
             block,
             layout,
             maximum_rows,
@@ -139,11 +126,6 @@ impl NativeWeightingPreparation {
             output_frame: problem.geometry().spectral().output_frame(),
             taper: problem.weighting().uv_taper(),
             maximum_terms: maximum_spectral_terms(problem),
-            row_coverage: CoverageEncoder::new(),
-            work: coverage::CoverageProofWork {
-                bytes: 0,
-                hash_calls: 0,
-            },
             batch_open: false,
             batch_finished: false,
             failed: false,
@@ -176,12 +158,12 @@ impl NativeWeightingPreparation {
             return Err(invalid("unready or mismatched native preparation worker"));
         }
         let block = worker.block();
-        if block.metadata.len() != worker.row_digests.len()
+        if block.metadata.len() != worker.completed_rows
             || worker.sum.sum_sample_count != block.values.len() as u64
         {
             return Err(invalid("native preparation row or sample count mismatch"));
         }
-        for (row, digest) in block.metadata.iter().zip(&worker.row_digests) {
+        for row in &block.metadata {
             if self
                 .previous_row
                 .is_some_and(|previous| row.physical_row <= previous)
@@ -190,11 +172,6 @@ impl NativeWeightingPreparation {
                     "native preparation rows committed out of source order",
                 ));
             }
-            self.coverage.update([1]);
-            self.coverage.update(row.physical_row.to_be_bytes());
-            self.coverage.update(digest);
-            self.work.bytes += 1 + 8 + 32;
-            self.work.hash_calls += 3;
             self.previous_row = Some(row.physical_row);
             self.rows = self
                 .rows
@@ -214,25 +191,11 @@ impl NativeWeightingPreparation {
             .sum_sample_count
             .checked_add(worker.sum.sum_sample_count)
             .ok_or_else(|| invalid("native sample count overflow"))?;
-        self.work.bytes = self
-            .work
-            .bytes
-            .checked_add(worker.work.bytes)
-            .ok_or_else(|| invalid("native coverage byte count overflow"))?;
-        self.work.hash_calls = self
-            .work
-            .hash_calls
-            .checked_add(worker.work.hash_calls)
-            .ok_or_else(|| invalid("native coverage call count overflow"))?;
         worker.sum.sum_sample_count = 0;
         if let Some(rows) = &mut worker.sum.cube_rows {
             *rows = CubeWeightRows::new();
         }
-        worker.row_digests.clear();
-        worker.work = coverage::CoverageProofWork {
-            bytes: 0,
-            hash_calls: 0,
-        };
+        worker.completed_rows = 0;
         worker.batch_open = false;
         worker.batch_finished = false;
         Ok(())
@@ -248,19 +211,8 @@ impl NativeWeightingPreparation {
         let sample_count = self.sum.sum_sample_count;
         let state = self.sum.finish().map_err(io::Error::other)?;
         state.next_replay.store(1, Ordering::Relaxed);
-        self.coverage.update([2]);
-        self.coverage.update(self.rows.to_be_bytes());
-        self.coverage.update(sample_count.to_be_bytes());
-        self.coverage.update(state.generation_id.as_bytes());
-        self.work.bytes += 1 + 8 + 8 + 32;
-        self.work.hash_calls += 4;
-        let coverage = WeightingReplayCoverageId(LogicalIdentity::from_sha256(
-            self.coverage.finalize().into(),
-        ));
-        // Rows, unlike buffer batches, are canonical across worker counts.
         let block_count = self.rows;
-        let replay_id =
-            replay_identity(state.generation_id, coverage, sample_count, block_count, 0);
+        let replay_id = WeightingReplayId::new().map_err(io::Error::other)?;
         let mut residency = state.generation_residency;
         residency.weighted_block_bytes = 0;
         residency.weighted_sample_bytes = 0;
@@ -268,12 +220,11 @@ impl NativeWeightingPreparation {
         let summary = WeightingReplaySummary {
             replay_id,
             generation: state.generation_id,
-            coverage,
+
             sample_count,
             block_count,
             replay_sequence: 0,
-            coverage_proof_bytes: self.work.bytes,
-            coverage_proof_hash_calls: self.work.hash_calls,
+
             residency,
         };
         Ok((state, summary))
@@ -292,9 +243,7 @@ pub struct NativePreparationWorker {
     output_frame: FrequencyFrame,
     taper: Option<UvTaper>,
     maximum_terms: usize,
-    row_digests: Vec<[u8; 32]>,
-    row_coverage: CoverageEncoder,
-    work: coverage::CoverageProofWork,
+    completed_rows: usize,
     batch_open: bool,
     batch_finished: bool,
     failed: bool,
@@ -330,7 +279,7 @@ impl NativePreparationWorker {
                     "native preparation worker is not accepting channels",
                 ));
             }
-            let row_index = self.row_digests.len();
+            let row_index = self.completed_rows;
             if row_index == self.maximum_rows
                 || correlations.len() != self.layout.correlations.len()
                 || channel.channel_index != self.layout.channels[self.channel]
@@ -488,15 +437,6 @@ impl NativePreparationWorker {
                     add_weight(&mut self.sum.sum_weights[0], value.imaging_weight)
                         .map_err(io::Error::other)?;
                 }
-                let mut member_address = address;
-                member_address.correlation_index = sample.correlation_index;
-                member_address.correlation_type = sample.correlation_type;
-                self.row_coverage.push_parts(
-                    member_address,
-                    Some(native_geometry),
-                    output_frame_frequency_hz,
-                    spectral,
-                );
             }
             self.sum.sum_sample_count = self
                 .sum
@@ -505,12 +445,7 @@ impl NativePreparationWorker {
                 .ok_or_else(|| invalid("native sample count overflow"))?;
             self.channel += 1;
             if self.channel == self.block.channels {
-                let encoder = std::mem::replace(&mut self.row_coverage, CoverageEncoder::new());
-                let (digest, work) =
-                    encoder.finish_row((self.block.channels * self.block.correlations) as u64);
-                self.row_digests.push(digest);
-                self.work.bytes += work.bytes;
-                self.work.hash_calls += work.hash_calls;
+                self.completed_rows += 1;
                 self.channel = 0;
             }
             Ok(())
@@ -528,11 +463,11 @@ impl NativePreparationWorker {
             if let Some(rows) = &mut self.sum.cube_rows {
                 rows.cursor.finish().map_err(io::Error::other)?;
             }
-            if self.channel != 0 || self.row_digests.is_empty() {
+            if self.channel != 0 || self.completed_rows == 0 {
                 return Err(invalid("empty or incomplete native batch"));
             }
             self.block
-                .set_shape(self.row_digests.len(), self.layout.channels.len())?;
+                .set_shape(self.completed_rows, self.layout.channels.len())?;
             Ok(())
         })();
         if result.is_err() {

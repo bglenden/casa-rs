@@ -273,13 +273,6 @@ impl ModelSamples {
         }
         Ok(())
     }
-    pub(crate) fn iter(&self) -> ModelSampleReader<'_> {
-        ModelSampleReader {
-            owner: self,
-            next: 0,
-            window: Vec::new().into_iter(),
-        }
-    }
     pub(crate) fn len(&self) -> usize {
         self.storage.sample_count()
     }
@@ -554,39 +547,6 @@ mod tests {
             ModelStoragePlan::pending_update_bytes(usize::MAX, usize::MAX, 1),
             None
         );
-    }
-}
-
-pub(crate) struct ModelSampleReader<'a> {
-    owner: &'a ModelSamples,
-    next: usize,
-    window: std::vec::IntoIter<ModelSample>,
-}
-
-impl Iterator for ModelSampleReader<'_> {
-    type Item = Result<ModelSample, ModelLifecycleError>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if let Some(sample) = self.window.next() {
-            return Some(Ok(sample));
-        }
-        if self.next == self.owner.len() {
-            return None;
-        }
-        let start = self.next;
-        self.next = start
-            .saturating_add(self.owner.window_samples())
-            .min(self.owner.len());
-        match self.owner.read(start..self.next) {
-            Ok(window) => {
-                self.window = window.into_vec().into_iter();
-                self.window.next().map(Ok)
-            }
-            Err(error) => {
-                self.next = self.owner.len();
-                Some(Err(error))
-            }
-        }
     }
 }
 

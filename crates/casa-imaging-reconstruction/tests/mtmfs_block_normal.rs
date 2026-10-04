@@ -26,20 +26,19 @@ use casa_imaging_model::{
     Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
     ReconstructionControls, ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy,
     RowSelection, ScientificContract, SelectedColumns, SelectedImageDomainProjections,
-    SelectedMainRow, SelectedObservationGenerationId, SelectedObservationSample,
-    SelectedPhaseCentreProjection, SelectedPredictionTarget, SelectedRows, SelectedSampleAddress,
-    SelectedSampleCoordinates, SelectedSampleMetadata, SelectedSpectralContributions,
-    SelectedSpectralEvaluation, SelectedSpectralInterval, SelectedVisibilitySample, SkyDirection,
-    SourceGenerations, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
-    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, SpectralWindowCoordinateCatalog,
-    SpectralWindowSelection, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy,
-    TimeScale, TimeSelection, UvSelection, UvwCoordinateLaw, VisibilityColumn,
-    VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
-    compile, compile_observation,
+    SelectedMainRow, SelectedObservationSample, SelectedPhaseCentreProjection,
+    SelectedPredictionTarget, SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates,
+    SelectedSampleMetadata, SelectedSpectralContributions, SelectedSpectralEvaluation,
+    SelectedSpectralInterval, SelectedVisibilitySample, SkyDirection, SourceGenerations,
+    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSamplingLaw, SpectralWcs, SpectralWindowCoordinateCatalog, SpectralWindowSelection,
+    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection,
+    UvSelection, UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn,
+    WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
     ChannelCyclePolicy, CoupledReconstructionMask, ExecutableModelProblem, FinalNormalState,
-    FrozenWeightingCoverageProof, MajorCycleOwner, MajorCyclePreparation, MinorCycleError,
+    FrozenWeightingBinding, MajorCycleOwner, MajorCyclePreparation, MinorCycleError,
     MinorCycleProgram, ModelGeneration, ModelLifecycle, NormalStateCatalog, ReconstructionCycle,
     ReconstructionCycleError, ReconstructionMask, ReconstructionMaskPlan, SpectralChannelValidity,
     SpectralOperatorSpecification, SpectralPrimitiveCatalog, SpectralStencilValidity,
@@ -650,7 +649,7 @@ fn problem_with_shape_response_and_mosaic(
             ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
             NumericsContract::new(
                 vec![NumericPrecision::F64],
-                ReductionPolicy::Compensated,
+                ReductionPolicy::UnorderedWithinBudget,
                 FiniteValuePolicy::FlagInputRejectGenerated,
                 NumericalStage::ALL
                     .into_iter()
@@ -1084,7 +1083,7 @@ fn run_operator(
         moments
     });
 
-    let (selected_generation, selected_count) = problem
+    let selected_count = problem
         .inspect_selected_observation(samples.iter().cloned().map(Ok::<_, Infallible>), |_| {
             Ok::<_, Infallible>(())
         })
@@ -1116,7 +1115,7 @@ fn run_operator(
         );
     }
     let result = owner
-        .complete(&summary, selected_generation, None)
+        .complete(&summary)
         .expect("complete Taylor normal state");
     (result, expected, expected_publication)
 }
@@ -1255,7 +1254,6 @@ struct FrozenTaylorReplay {
     plan: WeightingPlan,
     blocks: Vec<WeightingReplayChunk>,
     summary: WeightingReplaySummary,
-    selected_generation: SelectedObservationGenerationId,
 }
 
 fn freeze_taylor_replay(
@@ -1315,7 +1313,7 @@ fn freeze_taylor_replay(
     if let Some(block) = tail {
         blocks.push(block);
     }
-    let (selected_generation, selected_count) = problem
+    let selected_count = problem
         .inspect_selected_observation(samples.iter().cloned().map(Ok::<_, Infallible>), |_| {
             Ok::<_, Infallible>(())
         })
@@ -1326,7 +1324,6 @@ fn freeze_taylor_replay(
         plan,
         blocks,
         summary,
-        selected_generation,
     }
 }
 
@@ -1334,14 +1331,12 @@ fn derive_taylor_replay_blocks(
     problem: &casa_imaging_model::CompiledProblem,
     samples: &[SelectedObservationSample],
     frozen: &FrozenTaylorReplay,
-) -> Vec<WeightingReplayChunk> {
-    let proof = FrozenWeightingCoverageProof::seal(
+) -> (Vec<WeightingReplayChunk>, WeightingReplaySummary) {
+    let proof = FrozenWeightingBinding::bind(
         problem,
         &frozen.weighting,
         &frozen.summary,
-        frozen.selected_generation,
         samples.len() as u64,
-        None,
     )
     .expect("seal encoded Taylor replay coverage");
     let stencils = samples
@@ -1350,7 +1345,7 @@ fn derive_taylor_replay_blocks(
         .collect::<Vec<_>>();
     let mut replay = frozen
         .weighting
-        .begin_derived_replay(problem, &frozen.plan, proof, None)
+        .begin_derived_replay(problem, &frozen.plan, proof)
         .expect("begin derived Taylor replay");
     let mut blocks = Vec::new();
     for (sample, stencil) in samples.iter().zip(&stencils) {
@@ -1371,19 +1366,11 @@ fn derive_taylor_replay_blocks(
         blocks.push(block);
     }
     proof
-        .validate_derived_replay(
-            frozen.selected_generation,
-            samples.len() as u64,
-            None,
-            &summary,
-        )
+        .validate_derived_replay(samples.len() as u64, &summary)
         .expect("validate derived Taylor replay");
-    assert_eq!(summary.coverage(), frozen.summary.coverage());
     assert_eq!(summary.sample_count(), frozen.summary.sample_count());
     assert_eq!(summary.block_count(), frozen.summary.block_count());
-    assert_eq!(summary.coverage_proof_bytes(), 0);
-    assert_eq!(summary.coverage_proof_hash_calls(), 0);
-    blocks
+    (blocks, summary)
 }
 
 fn complete_frozen_taylor_operator(
@@ -1438,7 +1425,7 @@ fn complete_frozen_taylor_operator_slab(
         );
     }
     owner
-        .complete(&frozen.summary, frozen.selected_generation, None)
+        .complete(&frozen.summary)
         .expect("complete frozen Taylor normal state")
 }
 
@@ -1447,6 +1434,7 @@ fn complete_derived_taylor_operator_slab(
     problem: &casa_imaging_model::CompiledProblem,
     frozen: &FrozenTaylorReplay,
     blocks: &[WeightingReplayChunk],
+    summary: &WeightingReplaySummary,
     preparation: &MajorCyclePreparation,
     pass: SpectralOperatorPass,
     prior: Option<FinalNormalState>,
@@ -1478,8 +1466,8 @@ fn complete_derived_taylor_operator_slab(
         );
     }
     owner
-        .complete(&frozen.summary, frozen.selected_generation, None)
-        .expect("complete derived Taylor normal state against canonical replay")
+        .complete(summary)
+        .expect("complete derived Taylor normal state against its replay")
 }
 
 fn initial_normal_from_frozen(
@@ -1639,10 +1627,10 @@ fn compile_compact_program(
     let timings = compiler.stage_timings();
     let _exclusive_stage_total = timings.record_key_construction
         + timings.grouping_reduction
-        + timings.encoding_checksum
+        + timings.encoding
         + timings.completion;
     let program = compiler
-        .complete(&frozen.summary, frozen.selected_generation, None)
+        .complete(&frozen.summary)
         .expect("seal v3 Taylor compact program");
     (program, blocks)
 }
@@ -1709,11 +1697,11 @@ fn execute_compact_taylor(
         .expect("begin compact Taylor apply");
     assert_eq!(
         apply
-            .two_domain_window_partition_count(blocks.iter().map(|block| (
-                block.sequence(),
-                block.encoded_bytes(),
-                None
-            )),)
+            .two_domain_window_partition_count(
+                blocks
+                    .iter()
+                    .map(|block| (block.sequence(), block.encoded_bytes())),
+            )
             .expect("prepare the complete compact window"),
         GRIDDED_NORMAL_PARTITION_COUNT
     );
@@ -1952,7 +1940,8 @@ fn t41_channel_major_supported_slab_then_zero_weight_gap_retains_completion() {
         sample.channel_flag = true;
     }
     let frozen = freeze_taylor_replay(&problem, &selected);
-    let derived_blocks = derive_taylor_replay_blocks(&problem, &selected, &frozen);
+    let (derived_blocks, derived_summary) =
+        derive_taylor_replay_blocks(&problem, &selected, &frozen);
     let preparation = nonzero_taylor_model(&problem);
     let first = complete_frozen_taylor_operator_slab(
         &problem,
@@ -1967,6 +1956,7 @@ fn t41_channel_major_supported_slab_then_zero_weight_gap_retains_completion() {
         &problem,
         &frozen,
         &derived_blocks,
+        &derived_summary,
         &preparation,
         SpectralOperatorPass::InitialMajor,
         None,
@@ -1977,6 +1967,7 @@ fn t41_channel_major_supported_slab_then_zero_weight_gap_retains_completion() {
         &problem,
         &frozen,
         &derived_blocks,
+        &derived_summary,
         &preparation,
         SpectralOperatorPass::InitialMajor,
         None,
@@ -2033,30 +2024,14 @@ fn t41_channel_major_supported_slab_then_zero_weight_gap_retains_completion() {
             derived.weighting_generation(),
             canonical.weighting_generation()
         );
-        assert_eq!(derived.replay_id(), canonical.replay_id());
-        assert_eq!(derived.coverage(), canonical.coverage());
+        assert_ne!(derived.replay_id(), canonical.replay_id());
         assert_eq!(derived.primitive_catalog(), canonical.primitive_catalog());
-        assert_eq!(
-            derived.selected_generation(),
-            canonical.selected_generation()
-        );
-        assert_eq!(
-            derived.continuum_transform_generation(),
-            canonical.continuum_transform_generation()
-        );
         assert_eq!(derived.sample_count(), canonical.sample_count());
         assert_eq!(derived.block_count(), canonical.block_count());
-        assert_eq!(derived.coverage_proof_bytes(), 0);
-        assert_eq!(derived.coverage_proof_hash_calls(), 0);
     }
-    let expected_proof_bytes = canonical.coverage_proof_bytes();
-    let expected_proof_hash_calls = canonical.coverage_proof_hash_calls();
     let expected_replay = canonical.replay_id();
-    let expected_coverage = canonical.coverage();
     let expected_samples = canonical.sample_count();
     let expected_blocks = canonical.block_count();
-    assert!(expected_proof_bytes > 0);
-    assert!(expected_proof_hash_calls > 0);
 
     let folded = CompleteDataOwnerResult::fold_channel_major_slab_prefix(first, second)
         .expect("derived supported MVC slab retains canonical completion");
@@ -2064,17 +2039,8 @@ fn t41_channel_major_supported_slab_then_zero_weight_gap_retains_completion() {
         .expect("zero-weight MVC gap is a neutral Taylor contribution");
     assert_eq!(folded.primitives().slab().core_range(), 0..3);
     assert_eq!(folded.completion().replay_id(), expected_replay);
-    assert_eq!(folded.completion().coverage(), expected_coverage);
     assert_eq!(folded.completion().sample_count(), expected_samples);
     assert_eq!(folded.completion().block_count(), expected_blocks);
-    assert_eq!(
-        folded.completion().coverage_proof_bytes(),
-        expected_proof_bytes
-    );
-    assert_eq!(
-        folded.completion().coverage_proof_hash_calls(),
-        expected_proof_hash_calls
-    );
 }
 
 #[test]
@@ -2116,13 +2082,17 @@ fn t607_channel_local_ordered_slab_fold_matches_one_window() {
         .expect("four-channel fixture window");
 
     assert_eq!(folded.primitives().slab().core_range(), 0..4);
-    assert_eq!(
-        folded.primitives().dirty().complex().unwrap(),
-        full.primitives().dirty().complex().unwrap()
+    assert!(
+        complex_nrms(
+            folded.primitives().dirty().complex().unwrap(),
+            full.primitives().dirty().complex().unwrap()
+        ) <= 1e-3
     );
-    assert_eq!(
-        folded.primitives().psf().complex().unwrap(),
-        full.primitives().psf().complex().unwrap()
+    assert!(
+        complex_nrms(
+            folded.primitives().psf().complex().unwrap(),
+            full.primitives().psf().complex().unwrap()
+        ) <= 1e-3
     );
     assert_eq!(
         folded.primitives().sensitivity().dense().unwrap(),
@@ -2140,11 +2110,7 @@ fn t607_channel_local_ordered_slab_fold_matches_one_window() {
         folded.primitives().channel_validity(),
         full.primitives().channel_validity()
     );
-    assert_eq!(
-        folded.primitives().normal_state_content_identity(),
-        full.primitives().normal_state_content_identity(),
-        "ordered slab concatenation must reproduce every bound primitive bit"
-    );
+    assert_eq!(folded.primitives().shape(), full.primitives().shape());
 
     let first = run_slab(0, 2);
     let gap = run_slab(3, 1);
@@ -2204,7 +2170,7 @@ fn t607_certified_zero_first_slab_emits_the_complete_visibility_stream() {
             .all(|sample| sample.predicted() == num_complex::Complex64::new(0.0, 0.0))
     );
     owner
-        .complete(&frozen.summary, frozen.selected_generation, None)
+        .complete(&frozen.summary)
         .expect("complete bounded channel-local owner");
 }
 
@@ -2268,7 +2234,7 @@ fn t41_channel_major_two_cycle_feedback_and_gridded_replay_stay_dual_space() {
         nrms <= 0.001,
         "channel-keyed gridded replay must match streaming feedback: NRMS={nrms:e}"
     );
-    assert_eq!(serial.residual, parallel.residual);
+    assert!(complex_nrms(&serial.residual, &parallel.residual) <= 1e-3);
     assert_eq!(serial.grid_residency, parallel.grid_residency);
 }
 
@@ -2360,7 +2326,7 @@ fn t41_primary_beam_channel_major_replays_one_model_update_with_bounded_state() 
         nrms <= 0.001,
         "primary-beam gridded replay must match streaming feedback: NRMS={nrms:e}"
     );
-    assert_eq!(serial.residual, parallel.residual);
+    assert!(complex_nrms(&serial.residual, &parallel.residual) <= 1e-3);
     assert_eq!(serial.grid_residency, parallel.grid_residency);
 }
 
@@ -2748,14 +2714,14 @@ fn t42_final_normal_state_exposes_taylor_terms_and_hankel_blocks_without_channel
 }
 
 #[test]
-fn t42_compact_replay_matches_direct_residual_and_is_worker_bitwise_stable() {
+fn t42_compact_replay_matches_direct_residual_across_workers() {
     let problem = problem();
     let samples = samples(&problem);
     let frozen = freeze_taylor_replay(&problem, &samples);
     let preparation = nonzero_taylor_model(&problem);
     let (program, blocks) = compile_compact_program(&problem, &frozen);
 
-    assert_eq!(program.schema_version(), 11);
+    assert_eq!(program.schema_version(), 12);
     assert_eq!(
         gridded_normal_operator_record_bytes(&problem).expect("Taylor record width"),
         32,
@@ -2847,14 +2813,8 @@ fn t42_compact_replay_matches_direct_residual_and_is_worker_bitwise_stable() {
         nrms <= 0.001,
         "compact Taylor dirty-Hx must match selected-sample residual refresh: NRMS={nrms:e}"
     );
-    assert_eq!(
-        serial.residual, two_workers.residual,
-        "workers=1 and workers=2 must commit bitwise-identical Taylor residuals"
-    );
-    assert_eq!(
-        serial.residual, four_workers.residual,
-        "workers=1 and workers=4 must commit bitwise-identical Taylor residuals"
-    );
+    assert!(complex_nrms(&serial.residual, &two_workers.residual) <= 1e-3);
+    assert!(complex_nrms(&serial.residual, &four_workers.residual) <= 1e-3);
 
     let expected_route_capacity = gridded_normal_route_capacity_bytes(
         usize::try_from(program.record_count()).expect("program records fit usize"),
@@ -2882,8 +2842,8 @@ fn t42_compact_replay_matches_direct_residual_and_is_worker_bitwise_stable() {
     let grid_cells = grid_shape[0] * grid_shape[1];
     assert_eq!(
         serial.grid_residency.merge_complex_values(),
-        grid_cells * 2 * 2,
-        "only T model-dependent grids plus compensation are retained for final merge"
+        grid_cells * 2,
+        "only T model-dependent grids are retained for final merge"
     );
     assert_eq!(serial.grid_residency, two_workers.grid_residency);
     assert_eq!(serial.grid_residency, four_workers.grid_residency);
@@ -2897,7 +2857,7 @@ fn t42_compact_replay_matches_direct_residual_and_is_worker_bitwise_stable() {
 }
 
 #[test]
-fn t46_joint_compact_replay_matches_direct_residual_and_is_worker_bitwise_stable() {
+fn t46_joint_compact_replay_matches_direct_residual_across_workers() {
     let problem = joint_problem();
     let selected = joint_samples(&problem);
     let frozen = freeze_taylor_replay(&problem, &selected);
@@ -2926,8 +2886,8 @@ fn t46_joint_compact_replay_matches_direct_residual_and_is_worker_bitwise_stable
         .primitives()
         .common_residual()
         .expect("joint operator retains the channel-local common residual");
-    let mut serial_residual = None;
-    let mut serial_common_residual = None;
+    let mut serial_residual: Option<Vec<num_complex::Complex64>> = None;
+    let mut serial_common_residual: Option<Vec<num_complex::Complex64>> = None;
 
     for workers in [1, 2] {
         let prior = initial_normal_from_frozen(&problem, &frozen);
@@ -2959,18 +2919,12 @@ fn t46_joint_compact_replay_matches_direct_residual_and_is_worker_bitwise_stable
             "compact joint common residual must match selected-sample refresh: NRMS={common_nrms:e}"
         );
         if let Some(serial) = &serial_residual {
-            assert_eq!(
-                &compact.residual, serial,
-                "workers=1 and workers=2 must commit bitwise-identical joint residuals"
-            );
+            assert!(complex_nrms(&compact.residual, serial) <= 1e-3);
         } else {
             serial_residual = Some(compact.residual.clone());
         }
         if let Some(serial) = &serial_common_residual {
-            assert_eq!(
-                common, serial,
-                "workers=1 and workers=2 must commit bitwise-identical common residuals"
-            );
+            assert!(complex_nrms(common, serial) <= 1e-3);
         } else {
             serial_common_residual = Some(common.to_vec());
         }

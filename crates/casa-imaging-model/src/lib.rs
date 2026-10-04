@@ -59,9 +59,9 @@ pub use model_state::{
     ModelInputCommitmentIdentity, ModelInvalidContributorPolicy, ModelLifecycleContract,
     ModelLifecycleContractId, ModelLifecycleRequirements, ModelPolarizationConversionRegistry,
     ModelReprojectedSeedProjection, ModelReprojectionPolicy, ModelSample, ModelSourceShape,
-    ModelStateEncoding, ModelSupport, ModelSupportSemantics, ModelUncoveredTargetPolicy,
-    ModelValue, model_reprojected_seed_mapping_identity, model_support_identity,
-    try_model_support_identity, validate_model_lifecycle_contract_identity,
+    ModelSourceSupportInspection, ModelStateEncoding, ModelSupport, ModelSupportSemantics,
+    ModelUncoveredTargetPolicy, ModelValue, model_reprojected_seed_mapping_identity,
+    model_support_identity, try_model_support_identity, validate_model_lifecycle_contract_identity,
     validate_model_reprojection_contract_identity,
 };
 
@@ -103,13 +103,13 @@ pub use selected_numeric::{SelectedNumericRow, SelectedNumericVisibility, Select
 
 pub use selected_observation_sample::{
     AntennaResponseClass, SelectedAntennaResponses, SelectedImageDomainProjection,
-    SelectedImageDomainProjections, SelectedInputWeightGroup, SelectedObservationGenerationId,
-    SelectedObservationRunChannel, SelectedObservationRunCorrelation, SelectedObservationRunRow,
-    SelectedObservationSample, SelectedObservationSampleView, SelectedPhaseCentreProjection,
-    SelectedPointingDirections, SelectedPredictionTarget, SelectedRowSpectralGeometry,
-    SelectedSampleAddress, SelectedSampleCoordinates, SelectedSampleMetadata,
-    SelectedSpectralContribution, SelectedSpectralContributions, SelectedSpectralEvaluation,
-    SelectedSpectralInterval, SelectedVisibilitySample,
+    SelectedImageDomainProjections, SelectedInputWeightGroup, SelectedObservationRunChannel,
+    SelectedObservationRunCorrelation, SelectedObservationRunRow, SelectedObservationSample,
+    SelectedObservationSampleView, SelectedPhaseCentreProjection, SelectedPointingDirections,
+    SelectedPredictionTarget, SelectedRowSpectralGeometry, SelectedSampleAddress,
+    SelectedSampleCoordinates, SelectedSampleMetadata, SelectedSpectralContribution,
+    SelectedSpectralContributions, SelectedSpectralEvaluation, SelectedSpectralInterval,
+    SelectedVisibilitySample,
 };
 
 pub use product_graph::{
@@ -128,6 +128,5 @@ pub use transaction::{
 
 pub use visibility_transform::{
     ContinuumChannelRole, ContinuumChannelUse, ContinuumCovariancePolicy, ContinuumFitRule,
-    ContinuumFitWeightGenerationId, ContinuumTransformContractError, ContinuumTransformContractId,
-    ContinuumTransformGenerationId, SequentialContinuumTransform,
+    ContinuumTransformContractError, ContinuumTransformContractId, SequentialContinuumTransform,
 };

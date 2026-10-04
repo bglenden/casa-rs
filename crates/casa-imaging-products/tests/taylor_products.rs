@@ -2,8 +2,6 @@
 
 //! T44 acceptance contract for Taylor-family product construction.
 
-use std::convert::Infallible;
-
 mod common;
 use common::{GeneratedMember, GeneratedProducts, MemoryProductOutput, full_window};
 
@@ -26,16 +24,15 @@ use casa_imaging_model::{
     ProductUnit, ProductValidityPolicies, ProductValidityRule, Projection, ReconstructionAlgorithm,
     ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
     ReferenceDataKind, RestFrequency, RestoringBeamPolicy, RowSelection, ScientificContract,
-    SelectedColumns, SelectedImageDomainProjections, SelectedMainRow,
-    SelectedObservationGenerationId, SelectedObservationSample, SelectedPhaseCentreProjection,
-    SelectedPredictionTarget, SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates,
-    SelectedSampleMetadata, SelectedSpectralContribution, SelectedSpectralContributions,
-    SelectedVisibilitySample, SkyDirection, SourceGenerations, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
-    SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
-    TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection, UvwCoordinateLaw,
-    VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract,
-    WeightingScheme, compile, compile_observation,
+    SelectedColumns, SelectedImageDomainProjections, SelectedMainRow, SelectedObservationSample,
+    SelectedPhaseCentreProjection, SelectedPredictionTarget, SelectedRows, SelectedSampleAddress,
+    SelectedSampleCoordinates, SelectedSampleMetadata, SelectedSpectralContribution,
+    SelectedSpectralContributions, SelectedVisibilitySample, SkyDirection, SourceGenerations,
+    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
+    TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection,
+    UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope,
+    WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_products::{
     AnalyticPrimaryBeamModel, ContinuumProductControls, ContinuumProductInputs,
@@ -316,7 +313,7 @@ fn taylor_problem_with_fraction(
             ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
             NumericsContract::new(
                 vec![NumericPrecision::F64],
-                ReductionPolicy::Compensated,
+                ReductionPolicy::UnorderedWithinBudget,
                 FiniteValuePolicy::FlagInputRejectGenerated,
                 NumericalStage::ALL
                     .into_iter()
@@ -429,7 +426,7 @@ fn joint_problem(
             ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
             NumericsContract::new(
                 vec![NumericPrecision::F64],
-                ReductionPolicy::Compensated,
+                ReductionPolicy::UnorderedWithinBudget,
                 FiniteValuePolicy::FlagInputRejectGenerated,
                 NumericalStage::ALL
                     .into_iter()
@@ -536,18 +533,6 @@ fn contributions_for(
     .expect("continuum contribution")
 }
 
-fn selected_generation(
-    problem: &casa_imaging_model::CompiledProblem,
-    samples: &[SelectedObservationSample],
-) -> SelectedObservationGenerationId {
-    problem
-        .inspect_selected_observation(samples.iter().cloned().map(Ok::<_, Infallible>), |_| {
-            Ok::<_, Infallible>(())
-        })
-        .expect("inspect selected stream")
-        .0
-}
-
 fn weighting_generation(
     problem: &casa_imaging_model::CompiledProblem,
     plan: &WeightingPlan,
@@ -631,7 +616,6 @@ fn run_round_with_terms(
     )
     .expect("weighting plan");
     let samples = samples(problem);
-    let selected = selected_generation(problem, &samples);
     let generation = weighting_generation(problem, &plan, &samples).expect("weighting generation");
     let (blocks, summary) = replay(&generation, problem, &plan, &samples);
     let run = |lifecycle: &mut ModelLifecycle,
@@ -661,9 +645,8 @@ fn run_round_with_terms(
         for block in &blocks {
             state.consume_block(block).expect("consume block");
         }
-        let evidence: CompleteDataOwnerResult = state
-            .complete(&summary, selected, None)
-            .expect("complete normal state");
+        let evidence: CompleteDataOwnerResult =
+            state.complete(&summary).expect("complete normal state");
         let mut owner = MajorCycleOwner::from_complete_data(
             {
                 let storage =

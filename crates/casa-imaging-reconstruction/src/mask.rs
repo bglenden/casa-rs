@@ -145,11 +145,12 @@ pub(crate) fn direction_world_to_pixel(
 }
 
 const MASK_DOMAIN: &[u8] = b"casa-rs-reconstruction-mask";
-const MASK_VERSION: u32 = 1;
+const MASK_VERSION: u32 = 2;
+static NEXT_MASK_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 const COUPLED_MASK_DOMAIN: &[u8] = b"casa-rs-coupled-reconstruction-mask";
 const IMAGE_DOMAIN_MASKS_DOMAIN: &[u8] = b"casa-rs-image-domain-reconstruction-masks";
 
-/// Stable identity of one immutable reconstruction-mask generation.
+/// Run-local identity of one immutable reconstruction-mask generation, not its content.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ReconstructionMaskGenerationId(LogicalIdentity);
 
@@ -958,7 +959,6 @@ impl ReconstructionMask {
             normal_state,
             coordinate,
             shape,
-            &support,
             source_kind,
             source_identity,
         );
@@ -1417,7 +1417,6 @@ fn mask_identity(
     normal: Option<FinalNormalStateCompletionId>,
     coordinate: DirectionCoordinateSpec,
     shape: [usize; 2],
-    support: &[bool],
     source_kind: u8,
     source_identity: &[u8],
 ) -> ReconstructionMaskGenerationId {
@@ -1436,9 +1435,14 @@ fn mask_identity(
     encoder.usize(shape[1]);
     encoder.u8(source_kind);
     encoder.bytes(source_identity);
-    for value in support {
-        encoder.u8(u8::from(*value));
-    }
+    let ordinal = NEXT_MASK_GENERATION
+        .fetch_update(
+            std::sync::atomic::Ordering::Relaxed,
+            std::sync::atomic::Ordering::Relaxed,
+            |ordinal| ordinal.checked_add(1),
+        )
+        .expect("mask generation event space exhausted");
+    encoder.u64(ordinal);
     ReconstructionMaskGenerationId(LogicalIdentity::from_sha256(encoder.finish()))
 }
 

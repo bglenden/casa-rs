@@ -17,18 +17,16 @@ use std::{
 
 use casa_fft::{Fft2, FftScalar};
 use casa_imaging_model::{
-    CompiledGeometryId, CompiledProblem, CompiledProblemId, ContinuumTransformGenerationId,
-    CorrelationType, FacetWindow, FiniteValuePolicy, ImageDomainRole, InstrumentModel,
-    InstrumentResponse, LogicalIdentity, MeasurementSetIdentity, ModelInputCommitment,
-    NumericPrecision, NumericsContractId, PointingCentreLaw, PolarizationCoordinate, Projection,
-    ReconstructionBasis, ReductionPolicy, SelectedAntennaResponses,
-    SelectedObservationGenerationId, SelectedPointingDirections, SelectedSampleAddress,
+    CompiledGeometryId, CompiledProblem, CompiledProblemId, CorrelationType, FacetWindow,
+    FiniteValuePolicy, ImageDomainRole, InstrumentModel, InstrumentResponse, LogicalIdentity,
+    MeasurementSetIdentity, ModelInputCommitment, NumericPrecision, NumericsContractId,
+    PointingCentreLaw, PolarizationCoordinate, Projection, ReconstructionBasis, ReductionPolicy,
+    SelectedAntennaResponses, SelectedPointingDirections, SelectedSampleAddress,
     SelectedVisibilitySample, SpectralKernel, SpectralWcs, SpectralWindowCoordinateCatalog,
     UvwCoordinateLaw, WProjectionContract, WeightingCommitmentId,
 };
 use ndarray::{Array2, ArrayBase, ArrayView2, Data, DataMut, Ix2};
 use num_complex::{Complex, Complex32, Complex64};
-use sha2::{Digest, Sha256};
 use smallvec::SmallVec;
 use thiserror::Error;
 
@@ -48,9 +46,8 @@ use crate::{
     },
     trace_complex_values,
     weighting::{
-        CoverageEncoder, FrozenWeightingCoverageProof, WeightingAlgorithmState,
-        WeightingGenerationId, WeightingReplayChunk, WeightingReplayCoverageId, WeightingReplayId,
-        WeightingReplaySummary,
+        FrozenWeightingBinding, WeightingAlgorithmState, WeightingGenerationId,
+        WeightingReplayChunk, WeightingReplayId, WeightingReplaySummary,
     },
 };
 
@@ -1335,7 +1332,7 @@ impl SpectralOperatorSpecification {
             .numerics()
             .permitted_precisions()
             .contains(&NumericPrecision::F64)
-            || problem.numerics().reduction() != ReductionPolicy::Compensated
+            || problem.numerics().reduction() != ReductionPolicy::UnorderedWithinBudget
             || !matches!(
                 problem.numerics().finite_values(),
                 FiniteValuePolicy::RejectAll | FiniteValuePolicy::FlagInputRejectGenerated
@@ -2048,7 +2045,7 @@ pub struct SpectralOperatorWorkload {
 
 /// Owner-certified grid and primitive lifetimes for one initial AW chart.
 ///
-/// This certificate covers only science grids, their compensated accumulators,
+/// This certificate covers only science grids,
 /// and local/parent primitive arrays. FFT state, prediction workspaces, models,
 /// source state, and prepared-cell pools retain their separate reservations.
 /// Density generation must finish before completion begins. The certificate is
@@ -2061,7 +2058,7 @@ pub struct SpectralOperatorInitialPhaseResidency {
 }
 
 impl SpectralOperatorInitialPhaseResidency {
-    /// Science grids and compensated accumulators retained during source replay.
+    /// Science grids retained during source replay.
     #[must_use]
     pub const fn accumulation_bytes(self) -> usize {
         self.accumulation_bytes
@@ -2246,29 +2243,19 @@ pub fn spectral_operator_workload(
     .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     let grid_planes = match pass {
         SpectralOperatorPass::InitialMajor => major_coefficient_planes
-            .checked_mul(if initial_certified_zero { 2 } else { 4 })
+            .checked_mul(if initial_certified_zero { 1 } else { 2 })
             .and_then(|values| {
-                major_normal_planes
-                    .checked_mul(2)
-                    .and_then(|moments| values.checked_add(moments))
+                values
+                    .checked_add(major_normal_planes)
                     .and_then(|planes| {
                         usize::from(specification.aw_projection.is_some())
                             .checked_mul(major_normal_planes)
-                            .and_then(|moments| moments.checked_mul(2))
                             .and_then(|sensitivity| planes.checked_add(sensitivity))
                     })
-                    .and_then(|planes| {
-                        joint_channels
-                            .checked_mul(2)
-                            .and_then(|common| planes.checked_add(common))
-                    })
+                    .and_then(|planes| planes.checked_add(joint_channels))
             }),
         SpectralOperatorPass::ResidualRefresh => {
-            major_coefficient_planes.checked_mul(2).and_then(|planes| {
-                joint_channels
-                    .checked_mul(2)
-                    .and_then(|common| planes.checked_add(common))
-            })
+            major_coefficient_planes.checked_add(joint_channels)
         }
     }
     .and_then(|planes| planes.checked_mul(polarizations))
@@ -3251,8 +3238,7 @@ pub(crate) struct ReusableNormalState {
     numerics: NumericsContractId,
     weighting_commitment: WeightingCommitmentId,
     weighting_generation: WeightingGenerationId,
-    selected_generation: SelectedObservationGenerationId,
-    continuum_transform_generation: Option<ContinuumTransformGenerationId>,
+
     shape: [usize; 2],
     slab: SpectralSlabPlan,
     basis: SpectralBasisPlan,
@@ -3283,8 +3269,7 @@ impl ReusableNormalState {
         numerics: NumericsContractId,
         weighting_commitment: WeightingCommitmentId,
         weighting_generation: WeightingGenerationId,
-        selected_generation: SelectedObservationGenerationId,
-        continuum_transform_generation: Option<ContinuumTransformGenerationId>,
+
         primitives: SpectralOperatorPrimitives,
     ) -> Result<Self, SpectralOperatorError> {
         // Compact cube refresh uses its shared invariant backing instead. Never
@@ -3316,8 +3301,7 @@ impl ReusableNormalState {
             numerics,
             weighting_commitment,
             weighting_generation,
-            selected_generation,
-            continuum_transform_generation,
+
             shape,
             slab,
             basis,
@@ -3354,15 +3338,8 @@ impl ReusableNormalState {
             && self.joint_line_term_by_channel == specification.joint_line_term_by_channel
     }
 
-    fn matches_replay(
-        &self,
-        weighting_generation: WeightingGenerationId,
-        selected_generation: SelectedObservationGenerationId,
-        continuum_transform_generation: Option<ContinuumTransformGenerationId>,
-    ) -> bool {
+    fn matches_replay(&self, weighting_generation: WeightingGenerationId) -> bool {
         self.weighting_generation == weighting_generation
-            && self.selected_generation == selected_generation
-            && self.continuum_transform_generation == continuum_transform_generation
     }
 }
 
@@ -3413,12 +3390,9 @@ pub struct CompleteDataOwnerCompletion {
     pub(crate) weighting_commitment: WeightingCommitmentId,
     pub(crate) weighting_generation: WeightingGenerationId,
     pub(crate) replay: WeightingReplayId,
-    pub(crate) coverage: WeightingReplayCoverageId,
-    pub(crate) coverage_proof_bytes: u64,
-    pub(crate) coverage_proof_hash_calls: u64,
+
     pub(crate) primitives: SpectralPrimitiveCatalog,
-    pub(crate) selected_generation: SelectedObservationGenerationId,
-    pub(crate) continuum_transform_generation: Option<ContinuumTransformGenerationId>,
+
     pub(crate) sample_count: u64,
     pub(crate) block_count: u64,
 }
@@ -3460,41 +3434,10 @@ impl CompleteDataOwnerCompletion {
         self.replay
     }
 
-    /// Return the exact T18 weighted-sample coverage.
-    #[must_use]
-    pub const fn coverage(&self) -> WeightingReplayCoverageId {
-        self.coverage
-    }
-
-    /// Return bytes handed to coverage identity hashers by this operator pass.
-    #[must_use]
-    pub const fn coverage_proof_bytes(&self) -> u64 {
-        self.coverage_proof_bytes
-    }
-
-    /// Return coverage identity hasher update calls by this operator pass.
-    #[must_use]
-    pub const fn coverage_proof_hash_calls(&self) -> u64 {
-        self.coverage_proof_hash_calls
-    }
-
     /// Return the versioned primitive set produced by the operator.
     #[must_use]
     pub const fn primitive_catalog(&self) -> SpectralPrimitiveCatalog {
         self.primitives
-    }
-
-    /// Return the exact authoritative T17 observation generation behind every
-    /// weighted sample of this replay.
-    #[must_use]
-    pub const fn selected_generation(&self) -> SelectedObservationGenerationId {
-        self.selected_generation
-    }
-
-    /// Return the transformed visibility generation, when sequential subtraction ran.
-    #[must_use]
-    pub const fn continuum_transform_generation(&self) -> Option<ContinuumTransformGenerationId> {
-        self.continuum_transform_generation
     }
 
     /// Return the exhaustive selected-sample count.
@@ -4279,9 +4222,9 @@ impl CompleteDataOwnerSlabFold {
     }
 }
 
-// Derived slab replays reuse the sealed coverage identity without repeating
-// its hashing work. Those work counters are receipts, not completion authority;
-// the ordered fold retains the encoded prefix completion and its counters.
+// Slabs may come from different traversals of the same live weighting owner.
+// Ordered, non-overlapping slab coverage is checked by the fold; its result
+// retains the prefix traversal's bookkeeping identity.
 fn same_complete_data_authority(
     left: &CompleteDataOwnerCompletion,
     right: &CompleteDataOwnerCompletion,
@@ -4291,11 +4234,7 @@ fn same_complete_data_authority(
         && left.numerics == right.numerics
         && left.weighting_commitment == right.weighting_commitment
         && left.weighting_generation == right.weighting_generation
-        && left.replay == right.replay
-        && left.coverage == right.coverage
         && left.primitives == right.primitives
-        && left.selected_generation == right.selected_generation
-        && left.continuum_transform_generation == right.continuum_transform_generation
         && left.sample_count == right.sample_count
         && left.block_count == right.block_count
 }
@@ -4459,7 +4398,7 @@ pub struct CompleteDataOwnerState {
     weighting_generation: Option<WeightingGenerationId>,
     next_block_sequence: u64,
     sample_count: u64,
-    coverage: CoverageEncoder,
+    replay_owner: Option<WeightingReplayId>,
     finite_values: FiniteValuePolicy,
     model_binding: Option<ReconstructionModelBinding>,
     emit_final_visibilities: bool,
@@ -5388,7 +5327,7 @@ impl CompleteDataOwnerState {
             weighting_generation: Some(weighting.generation_id()),
             next_block_sequence: 0,
             sample_count: 0,
-            coverage: CoverageEncoder::new(),
+            replay_owner: None,
             finite_values: specification.finite_values,
             model_binding: None,
             emit_final_visibilities: false,
@@ -5461,7 +5400,7 @@ impl CompleteDataOwnerState {
             weighting_generation: None,
             next_block_sequence: 0,
             sample_count: 0,
-            coverage: CoverageEncoder::new(),
+            replay_owner: None,
             finite_values: specification.finite_values,
             model_binding: None,
             emit_final_visibilities: false,
@@ -5484,7 +5423,7 @@ impl CompleteDataOwnerState {
     /// replay reaches the operator, including the empty-stream case.
     pub fn authorize_derived_coverage(
         &mut self,
-        proof: FrozenWeightingCoverageProof,
+        proof: FrozenWeightingBinding,
     ) -> Result<(), SpectralOperatorError> {
         if !proof.matches_streaming_operator(self.problem, self.weighting_commitment)
             || self.weighting_generation.is_some_and(|generation| {
@@ -5494,7 +5433,6 @@ impl CompleteDataOwnerState {
             return Err(SpectralOperatorError::WeightingGeneration);
         }
         self.weighting_generation = Some(proof.generation());
-        self.coverage = CoverageEncoder::derived(proof.coverage());
         Ok(())
     }
 
@@ -5632,7 +5570,13 @@ impl CompleteDataOwnerState {
         if block.sequence() != self.next_block_sequence {
             return Err(SpectralOperatorError::BlockSequence);
         }
-        self.coverage.adopt(block.coverage_checkpoint());
+        if self
+            .replay_owner
+            .is_some_and(|owner| owner != block.replay_id())
+        {
+            return Err(SpectralOperatorError::BlockSequence);
+        }
+        self.replay_owner = Some(block.replay_id());
         self.predicted_selected.clear();
         for group in block.correlation_groups() {
             if OBSERVE {
@@ -6703,7 +6647,13 @@ impl CompleteDataOwnerState {
         if block.samples().len() > self.operators[0].workload.max_replay_block_samples {
             return Err(SpectralOperatorError::IncompleteCoverage);
         }
-        self.coverage.adopt(block.coverage_checkpoint());
+        if self
+            .replay_owner
+            .is_some_and(|owner| owner != block.replay_id())
+        {
+            return Err(SpectralOperatorError::BlockSequence);
+        }
+        self.replay_owner = Some(block.replay_id());
         self.predicted_selected.clear();
         for group in block.correlation_groups() {
             let first = group.first().ok_or(SpectralOperatorError::InvalidSample)?;
@@ -6929,8 +6879,6 @@ impl CompleteDataOwnerState {
     pub fn complete(
         mut self,
         replay: &WeightingReplaySummary,
-        selected_generation: SelectedObservationGenerationId,
-        continuum_transform_generation: Option<ContinuumTransformGenerationId>,
     ) -> Result<CompleteDataOwnerResult, SpectralOperatorError> {
         if self.source_window_hz.is_some() {
             return Err(SpectralOperatorError::IncompleteCoverage);
@@ -6960,27 +6908,19 @@ impl CompleteDataOwnerState {
             })?;
         }
         self.observe_aw_block_progress(None, true);
-        let (coverage, coverage_proof_work) = self
-            .coverage
-            .finish(replay.weighting_generation(), self.sample_count);
-        if coverage != replay.coverage() {
+        if self
+            .replay_owner
+            .is_some_and(|owner| owner != replay.replay_id())
+        {
             return Err(SpectralOperatorError::IncompleteCoverage);
         }
         for operator in &self.operators {
-            operator.validate_reused_lineage(
-                replay.weighting_generation(),
-                selected_generation,
-                continuum_transform_generation,
-            )?;
+            operator.validate_reused_lineage(replay.weighting_generation())?;
         }
         if self.reusable_domains.as_ref().is_some_and(|domains| {
-            domains.iter().any(|state| {
-                !state.matches_replay(
-                    replay.weighting_generation(),
-                    selected_generation,
-                    continuum_transform_generation,
-                )
-            })
+            domains
+                .iter()
+                .any(|state| !state.matches_replay(replay.weighting_generation()))
         }) {
             return Err(SpectralOperatorError::ReusableNormalStateMismatch);
         }
@@ -7028,12 +6968,9 @@ impl CompleteDataOwnerState {
                 weighting_commitment: self.weighting_commitment,
                 weighting_generation: replay.weighting_generation(),
                 replay: replay.replay_id(),
-                coverage,
-                coverage_proof_bytes: coverage_proof_work.bytes,
-                coverage_proof_hash_calls: coverage_proof_work.hash_calls,
+
                 primitives: primitive_catalog,
-                selected_generation,
-                continuum_transform_generation,
+
                 sample_count: replay.sample_count(),
                 block_count: replay.block_count(),
             },
@@ -7048,8 +6985,6 @@ impl CompleteDataOwnerState {
     pub fn complete_initial_slab_recycled(
         mut self,
         replay: &WeightingReplaySummary,
-        selected_generation: SelectedObservationGenerationId,
-        continuum_transform_generation: Option<ContinuumTransformGenerationId>,
     ) -> Result<(CompleteDataOwnerResult, PreparedSpectralOperatorRecycle), SpectralOperatorError>
     {
         if self.source_window_hz.is_some() {
@@ -7069,18 +7004,14 @@ impl CompleteDataOwnerState {
             return Err(SpectralOperatorError::IncompleteCoverage);
         }
         self.observe_aw_block_progress(None, true);
-        let (coverage, coverage_proof_work) = self
-            .coverage
-            .finish(replay.weighting_generation(), self.sample_count);
-        if coverage != replay.coverage() {
+        if self
+            .replay_owner
+            .is_some_and(|owner| owner != replay.replay_id())
+        {
             return Err(SpectralOperatorError::IncompleteCoverage);
         }
         for operator in &self.operators {
-            operator.validate_reused_lineage(
-                replay.weighting_generation(),
-                selected_generation,
-                continuum_transform_generation,
-            )?;
+            operator.validate_reused_lineage(replay.weighting_generation())?;
         }
         if let Some(probe) = self.science_probe.take() {
             probe.finish()?;
@@ -7113,12 +7044,9 @@ impl CompleteDataOwnerState {
                     weighting_commitment: self.weighting_commitment,
                     weighting_generation: replay.weighting_generation(),
                     replay: replay.replay_id(),
-                    coverage,
-                    coverage_proof_bytes: coverage_proof_work.bytes,
-                    coverage_proof_hash_calls: coverage_proof_work.hash_calls,
+
                     primitives: primitive_catalog,
-                    selected_generation,
-                    continuum_transform_generation,
+
                     sample_count: replay.sample_count(),
                     block_count: replay.block_count(),
                 },
@@ -7139,7 +7067,6 @@ impl CompleteDataOwnerState {
         mut self,
         window: &crate::weighting::WeightingReplayWindowSummary,
         parent: &WeightingReplaySummary,
-        selected_generation: SelectedObservationGenerationId,
     ) -> Result<(CompleteDataOwnerResult, PreparedSpectralOperatorRecycle), SpectralOperatorError>
     {
         let bounds = window.frequency_bounds_hz();
@@ -7149,12 +7076,7 @@ impl CompleteDataOwnerState {
             .map(|second| (*second - frequencies[0]).abs() / 2.0)
             .ok_or(SpectralOperatorError::IncompleteCoverage)?;
         if self.source_window_hz != Some(bounds)
-            || !window.matches_parent(
-                parent,
-                self.problem,
-                self.weighting_commitment,
-                selected_generation,
-            )
+            || !window.matches_parent(parent, self.problem, self.weighting_commitment)
             || !matches!(self.specification.basis, SpectralBasisPlan::ChannelLocal)
             || self.specification.spectral_kernel != SpectralKernel::Linear
             || self.specification.aw_projection.is_some()
@@ -7172,16 +7094,10 @@ impl CompleteDataOwnerState {
         {
             return Err(SpectralOperatorError::IncompleteCoverage);
         }
-        // A source-certified empty window emits no chunks from which to adopt
-        // its scoped coverage. Its zero counts still pass the ordinary checker.
-        if self.sample_count == 0 && self.next_block_sequence == 0 {
-            self.coverage = CoverageEncoder::derived(window.actual().coverage());
-        }
         self.source_window_hz = None;
-        let (mut result, recycle) =
-            self.complete_initial_slab_recycled(window.actual(), selected_generation, None)?;
+        let (mut result, recycle) = self.complete_initial_slab_recycled(window.actual())?;
         result.completion.replay = parent.replay_id();
-        result.completion.coverage = parent.coverage();
+
         result.completion.sample_count = parent.sample_count();
         result.completion.block_count = parent.block_count();
         Ok((result, recycle))
@@ -7634,15 +7550,15 @@ pub(crate) struct SpectralSlabOperator {
     maximum_convolution_support: usize,
     fft: PreparedFft,
     dirty_grids: Option<Vec<Array2<Complex64>>>,
-    dirty_compensations: Option<Vec<Array2<Complex64>>>,
+
     psf_grids: Option<Vec<Array2<Complex64>>>,
-    psf_compensations: Option<Vec<Array2<Complex64>>>,
+
     aw_sensitivity_grids: Option<Vec<Array2<Complex64>>>,
-    aw_sensitivity_compensations: Option<Vec<Array2<Complex64>>>,
+
     residual_grids: Option<Vec<Array2<Complex64>>>,
-    residual_compensations: Option<Vec<Array2<Complex64>>>,
+
     common_residual_grids: Option<Vec<Array2<Complex64>>>,
-    common_residual_compensations: Option<Vec<Array2<Complex64>>>,
+
     reused_normal_state: Option<ReusableNormalState>,
     primary_beam: Option<PreparedPrimaryBeamPower>,
     mosaic_normal: Option<Vec<MosaicNormalAccumulator>>,
@@ -7889,20 +7805,17 @@ impl SpectralSlabOperator {
             maximum_convolution_support,
             fft,
             dirty_grids: initial.then(|| plane_grids(major_coefficient_planes)),
-            dirty_compensations: initial.then(|| plane_grids(major_coefficient_planes)),
+
             psf_grids: initial.then(|| plane_grids(major_normal_planes)),
-            psf_compensations: initial.then(|| plane_grids(major_normal_planes)),
+
             aw_sensitivity_grids: (initial && has_aw_projection)
                 .then(|| plane_grids(major_normal_planes)),
-            aw_sensitivity_compensations: (initial && has_aw_projection)
-                .then(|| plane_grids(major_normal_planes)),
+
             residual_grids: None,
-            residual_compensations: None,
+
             common_residual_grids: (initial && matches!(basis, SpectralBasisPlan::Joint { .. }))
                 .then(|| plane_grids(slab.total_channels() * polarization_count)),
-            common_residual_compensations: (initial
-                && matches!(basis, SpectralBasisPlan::Joint { .. }))
-            .then(|| plane_grids(slab.total_channels() * polarization_count)),
+
             reused_normal_state: None,
             primary_beam: instrument_model.and_then(|instrument_model| {
                 if instrument_model == InstrumentModel::CasaEvlaWidebandAwV1 {
@@ -8441,17 +8354,10 @@ impl SpectralSlabOperator {
             .dirty_grids
             .as_mut()
             .ok_or(SpectralOperatorError::ProblemMismatch)?[plane];
-        let compensation = &mut self
-            .dirty_compensations
-            .as_mut()
-            .ok_or(SpectralOperatorError::ProblemMismatch)?[plane];
-        grid_operator_compensated(
+        grid_operator(
             &self.gridder,
             &self.mosaic_projectors,
-            CompensatedGrid {
-                values: grid,
-                errors: compensation,
-            },
+            grid,
             taps,
             GridAccumulationRole::Imaging,
             value,
@@ -8475,17 +8381,10 @@ impl SpectralSlabOperator {
             .psf_grids
             .as_mut()
             .ok_or(SpectralOperatorError::ProblemMismatch)?[moment];
-        let compensation = &mut self
-            .psf_compensations
-            .as_mut()
-            .ok_or(SpectralOperatorError::ProblemMismatch)?[moment];
-        grid_operator_compensated(
+        grid_operator(
             &self.gridder,
             &self.mosaic_projectors,
-            CompensatedGrid {
-                values: grid,
-                errors: compensation,
-            },
+            grid,
             taps,
             GridAccumulationRole::Normal,
             Complex64::new(weight, 0.0),
@@ -8512,19 +8411,13 @@ impl SpectralSlabOperator {
         taps: &GridOperatorTaps,
         contribution: &ChannelMajorNormalContribution,
     ) -> Result<(), SpectralOperatorError> {
-        grid_operator_compensated(
+        grid_operator(
             &self.gridder,
             &self.mosaic_projectors,
-            CompensatedGrid {
-                values: &mut self
-                    .psf_grids
-                    .as_mut()
-                    .ok_or(SpectralOperatorError::ProblemMismatch)?[plane],
-                errors: &mut self
-                    .psf_compensations
-                    .as_mut()
-                    .ok_or(SpectralOperatorError::ProblemMismatch)?[plane],
-            },
+            &mut self
+                .psf_grids
+                .as_mut()
+                .ok_or(SpectralOperatorError::ProblemMismatch)?[plane],
             taps,
             GridAccumulationRole::Normal,
             Complex64::new(contribution.imaging_weight, 0.0),
@@ -8586,21 +8479,11 @@ impl SpectralSlabOperator {
             .aw_sensitivity_grids
             .as_mut()
             .ok_or(SpectralOperatorError::ProblemMismatch)?;
-        let compensations = self
-            .aw_sensitivity_compensations
-            .as_mut()
-            .ok_or(SpectralOperatorError::ProblemMismatch)?;
         let grid = grids
             .get_mut(moment)
             .ok_or(SpectralOperatorError::ProblemMismatch)?;
-        let compensation = compensations
-            .get_mut(moment)
-            .ok_or(SpectralOperatorError::ProblemMismatch)?;
-        plan.grid_compensated(
+        plan.grid(
             grid.as_slice_mut()
-                .ok_or(SpectralOperatorError::ProblemMismatch)?,
-            compensation
-                .as_slice_mut()
                 .ok_or(SpectralOperatorError::ProblemMismatch)?,
             Complex64::new(weight, 0.0),
         )
@@ -8802,18 +8685,8 @@ impl SpectralSlabOperator {
                 .map(|_| Array2::zeros(grid_shape))
                 .collect(),
         );
-        self.residual_compensations = Some(
-            (0..coefficient_terms)
-                .map(|_| Array2::zeros(grid_shape))
-                .collect(),
-        );
         if matches!(self.basis, SpectralBasisPlan::Joint { .. }) {
             self.common_residual_grids = Some(
-                (0..self.slab.total_channels() * self.polarization_count)
-                    .map(|_| Array2::zeros(grid_shape))
-                    .collect(),
-            );
-            self.common_residual_compensations = Some(
                 (0..self.slab.total_channels() * self.polarization_count)
                     .map(|_| Array2::zeros(grid_shape))
                     .collect(),
@@ -9408,17 +9281,10 @@ impl SpectralSlabOperator {
             .residual_grids
             .as_mut()
             .ok_or(SpectralOperatorError::MissingMajorCycleResidual)?[plane];
-        let compensation = &mut self
-            .residual_compensations
-            .as_mut()
-            .ok_or(SpectralOperatorError::MissingMajorCycleResidual)?[plane];
-        grid_operator_compensated(
+        grid_operator(
             &self.gridder,
             &self.mosaic_projectors,
-            CompensatedGrid {
-                values: grid,
-                errors: compensation,
-            },
+            grid,
             taps,
             GridAccumulationRole::Imaging,
             value,
@@ -9441,17 +9307,10 @@ impl SpectralSlabOperator {
             .common_residual_grids
             .as_mut()
             .ok_or(SpectralOperatorError::MissingMajorCycleResidual)?[output_channel];
-        let compensation = &mut self
-            .common_residual_compensations
-            .as_mut()
-            .ok_or(SpectralOperatorError::MissingMajorCycleResidual)?[output_channel];
-        grid_operator_compensated(
+        grid_operator(
             &self.gridder,
             &self.mosaic_projectors,
-            CompensatedGrid {
-                values: grid,
-                errors: compensation,
-            },
+            grid,
             taps,
             GridAccumulationRole::Imaging,
             value,
@@ -9462,18 +9321,12 @@ impl SpectralSlabOperator {
     fn validate_reused_lineage(
         &self,
         weighting_generation: WeightingGenerationId,
-        selected_generation: SelectedObservationGenerationId,
-        continuum_transform_generation: Option<ContinuumTransformGenerationId>,
     ) -> Result<(), SpectralOperatorError> {
         match (self.workload.pass, self.reused_normal_state.as_ref()) {
             (SpectralOperatorPass::InitialMajor, None) => Ok(()),
             (SpectralOperatorPass::ResidualRefresh, None) => Ok(()),
             (SpectralOperatorPass::ResidualRefresh, Some(state))
-                if state.matches_replay(
-                    weighting_generation,
-                    selected_generation,
-                    continuum_transform_generation,
-                ) =>
+                if state.matches_replay(weighting_generation) =>
             {
                 Ok(())
             }
@@ -10063,7 +9916,6 @@ impl SpectralSlabOperator {
     pub(crate) fn grid_gridded_normal_local_polarization(
         &self,
         grids: &mut [Array2<Complex64>],
-        compensations: &mut [Array2<Complex64>],
         contribution: GriddedNormalLocalContribution,
     ) -> Result<(), SpectralOperatorError> {
         let GriddedNormalLocalContribution {
@@ -10088,7 +9940,7 @@ impl SpectralSlabOperator {
             let accumulation_planes = accumulation_terms
                 .checked_mul(self.polarization_count)
                 .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-            if grids.len() != accumulation_planes || compensations.len() != accumulation_planes {
+            if grids.len() != accumulation_planes {
                 return Err(SpectralOperatorError::GriddedRecordMismatch);
             }
             let frequency = *self
@@ -10105,9 +9957,8 @@ impl SpectralSlabOperator {
                         i32::try_from(term)
                             .map_err(|_| SpectralOperatorError::GriddedRecordMismatch)?,
                     );
-                self.gridder.grid_compensated(
+                self.gridder.grid(
                     &mut grids[self.polarization_plane(term, polarization)],
-                    &mut compensations[self.polarization_plane(term, polarization)],
                     local_taps,
                     value,
                 )?;
@@ -10120,23 +9971,14 @@ impl SpectralSlabOperator {
             {
                 let term = continuum.coefficient_term_count() + line;
                 let term = self.polarization_plane(term, polarization);
-                self.gridder.grid_compensated(
-                    &mut grids[term],
-                    &mut compensations[term],
-                    local_taps,
-                    gridded,
-                )?;
+                self.gridder.grid(&mut grids[term], local_taps, gridded)?;
             }
             let common_plane = terms
                 .checked_add(output_channel)
                 .map(|plane| self.polarization_plane(plane, polarization))
                 .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-            self.gridder.grid_compensated(
-                &mut grids[common_plane],
-                &mut compensations[common_plane],
-                local_taps,
-                gridded,
-            )?;
+            self.gridder
+                .grid(&mut grids[common_plane], local_taps, gridded)?;
             return Ok(());
         }
         let plane = self
@@ -10149,19 +9991,14 @@ impl SpectralSlabOperator {
             .core_depth()
             .checked_mul(self.polarization_count)
             .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-        if grids.len() != expected || compensations.len() != expected {
+        if grids.len() != expected {
             return Err(SpectralOperatorError::GriddedRecordMismatch);
         }
         let gridded = predicted * adjoint_scale;
         if !gridded.re.is_finite() || !gridded.im.is_finite() {
             return Err(SpectralOperatorError::GeneratedNonfinite);
         }
-        self.gridder.grid_compensated(
-            &mut grids[plane],
-            &mut compensations[plane],
-            local_taps,
-            gridded,
-        )?;
+        self.gridder.grid(&mut grids[plane], local_taps, gridded)?;
         Ok(())
     }
 
@@ -10169,7 +10006,6 @@ impl SpectralSlabOperator {
     pub(crate) fn grid_gridded_normal_local_aw_polarization(
         &self,
         grids: &mut [Array2<Complex64>],
-        compensations: &mut [Array2<Complex64>],
         tile_origin: [usize; 2],
         output_channel: usize,
         polarization: usize,
@@ -10188,7 +10024,7 @@ impl SpectralSlabOperator {
             .major_coefficient_planes(self.slab)
             .checked_mul(self.polarization_count)
             .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-        if grids.len() != expected || compensations.len() != expected {
+        if grids.len() != expected {
             return Err(SpectralOperatorError::GriddedRecordMismatch);
         }
         let sample = self.aw_visibility_sample(coordinates, tile_origin, false)?;
@@ -10209,11 +10045,7 @@ impl SpectralSlabOperator {
             let grid = grids[plane]
                 .as_slice_mut()
                 .ok_or(SpectralOperatorError::ProblemMismatch)?;
-            let compensation = compensations[plane]
-                .as_slice_mut()
-                .ok_or(SpectralOperatorError::ProblemMismatch)?;
-            plan.grid_compensated(grid, compensation, gridded)
-                .map_err(Into::into)
+            plan.grid(grid, gridded).map_err(Into::into)
         };
         match self.basis {
             SpectralBasisPlan::Polynomial(basis) => {
@@ -10242,7 +10074,6 @@ impl SpectralSlabOperator {
     pub(crate) fn grid_gridded_block_normal_local(
         &self,
         grids: &mut [Array2<Complex64>],
-        compensations: &mut [Array2<Complex64>],
         local_taps: SampleTaps,
         normal_values: &[Complex64],
     ) -> Result<(), SpectralOperatorError> {
@@ -10252,7 +10083,7 @@ impl SpectralSlabOperator {
             .filter(|plan| plan.coefficient_term_count() > 1)
             .map(BlockNormalPlan::coefficient_term_count)
             .ok_or(SpectralOperatorError::GriddedRecordMismatch)?;
-        if grids.len() != terms || compensations.len() != terms || normal_values.len() != terms {
+        if grids.len() != terms || normal_values.len() != terms {
             return Err(SpectralOperatorError::GriddedRecordMismatch);
         }
         for plane in 0..terms {
@@ -10260,12 +10091,7 @@ impl SpectralSlabOperator {
             if !value.re.is_finite() || !value.im.is_finite() {
                 return Err(SpectralOperatorError::GeneratedNonfinite);
             }
-            self.gridder.grid_compensated(
-                &mut grids[plane],
-                &mut compensations[plane],
-                local_taps,
-                value,
-            )?;
+            self.gridder.grid(&mut grids[plane], local_taps, value)?;
         }
         Ok(())
     }
@@ -10302,7 +10128,6 @@ impl SpectralSlabOperator {
             .and_then(|planes| planes.checked_mul(cells))
             .ok_or(SpectralOperatorError::ResidencyOverflow)?;
         let mut output = vec![Complex64::default(); output_len];
-        let mut compensation = vec![Complex64::default(); output_len];
         let mut powers = vec![0.0; output_terms];
         // CASA removes PBc/PBbar before residual Taylor folding and reapplies it
         // while forming the Taylor sum. The response amplitude therefore
@@ -10344,10 +10169,7 @@ impl SpectralSlabOperator {
                             }
                         });
                         let value = channel_values[input_start + cell] * (power * response);
-                        let corrected = value - compensation[index];
-                        let updated = output[index] + corrected;
-                        compensation[index] = (updated - output[index]) - corrected;
-                        output[index] = updated;
+                        output[index] += value;
                     }
                 }
             }
@@ -10363,7 +10185,6 @@ impl SpectralSlabOperator {
         };
         let cells = checked_cells(self.geometry.image_shape)?;
         let mut output = vec![0.0; cells * self.polarization_count];
-        let mut compensation = vec![0.0; output.len()];
         let mut plane = vec![0.0; cells];
         for (local_channel, output_channel) in self.slab.core_range().enumerate() {
             let frequency = *self
@@ -10381,10 +10202,7 @@ impl SpectralSlabOperator {
                 for (cell, response_value) in plane.iter().copied().enumerate() {
                     let index = start + cell;
                     let value = weight * f64::from(response_value);
-                    let corrected = value - compensation[index];
-                    let updated = output[index] + corrected;
-                    compensation[index] = (updated - output[index]) - corrected;
-                    output[index] = updated;
+                    output[index] += value;
                 }
             }
         }
@@ -10607,8 +10425,7 @@ impl SpectralSlabOperator {
         if initial_empty
             && (self.workload.pass != SpectralOperatorPass::InitialMajor
                 || self.reused_normal_state.is_some()
-                || self.residual_grids.is_some()
-                || self.residual_compensations.is_some())
+                || self.residual_grids.is_some())
         {
             return Err(SpectralOperatorError::ReusableNormalStateMismatch);
         }
@@ -11146,11 +10963,6 @@ enum GridOperatorTaps {
     },
 }
 
-struct CompensatedGrid<'a> {
-    values: &'a mut Array2<Complex64>,
-    errors: &'a mut Array2<Complex64>,
-}
-
 impl GridOperatorTaps {
     fn imaging_normalization(
         &self,
@@ -11190,24 +11002,20 @@ enum GridAccumulationRole {
     Normal,
 }
 
-fn grid_operator_compensated(
+fn grid_operator(
     standard: &ConvolutionOperator,
     mosaic: &BTreeMap<MosaicProjectorKey, MosaicProjector>,
-    grid: CompensatedGrid<'_>,
+    values: &mut Array2<Complex64>,
     taps: &GridOperatorTaps,
     role: GridAccumulationRole,
     value: Complex64,
 ) -> Result<(), SpectralOperatorError> {
-    let CompensatedGrid { values, errors } = grid;
     match taps {
-        GridOperatorTaps::Standard(taps) => standard.grid_compensated(values, errors, *taps, value),
+        GridOperatorTaps::Standard(taps) => standard.grid(values, *taps, value),
         GridOperatorTaps::Aw {
             imaging, normal, ..
         } => {
             let grid = values
-                .as_slice_mut()
-                .ok_or(SpectralOperatorError::ProblemMismatch)?;
-            let compensation = errors
                 .as_slice_mut()
                 .ok_or(SpectralOperatorError::ProblemMismatch)?;
             let plan = match role {
@@ -11216,14 +11024,13 @@ fn grid_operator_compensated(
                     .as_ref()
                     .ok_or(SpectralOperatorError::ProblemMismatch)?,
             };
-            plan.grid_compensated(grid, compensation, value)
-                .map_err(Into::into)
+            plan.grid(grid, value).map_err(Into::into)
         }
         GridOperatorTaps::Mosaic { response_key, plan } => {
             mosaic
                 .get(response_key)
                 .ok_or(SpectralOperatorError::ProblemMismatch)?
-                .grid_compensated(values, errors, *plan, value);
+                .grid(values, *plan, value);
             Ok(())
         }
     }
@@ -11273,7 +11080,6 @@ pub struct WProjectionDiagnostics {
     sampling: usize,
     maximum_support: usize,
     plane_zero_normalization: f64,
-    kernel_identity: [u8; 32],
 }
 
 impl WProjectionDiagnostics {
@@ -11295,11 +11101,6 @@ impl WProjectionDiagnostics {
     #[must_use]
     pub const fn plane_zero_normalization(self) -> f64 {
         self.plane_zero_normalization
-    }
-
-    #[must_use]
-    pub const fn kernel_identity(self) -> [u8; 32] {
-        self.kernel_identity
     }
 }
 
@@ -11353,19 +11154,16 @@ impl ConvolutionOperator {
         }
     }
 
-    pub(crate) fn grid_compensated(
+    pub(crate) fn grid(
         &self,
         grid: &mut Array2<Complex64>,
-        compensation: &mut Array2<Complex64>,
         taps: SampleTaps,
         value: Complex64,
     ) -> Result<(), SpectralOperatorError> {
         self.validate_taps(taps)?;
         match self {
-            Self::Standard(operator) => operator.grid_compensated(grid, compensation, taps, value),
-            Self::WProjection(operator) => {
-                operator.grid_compensated(grid, compensation, taps, value)
-            }
+            Self::Standard(operator) => operator.grid(grid, taps, value),
+            Self::WProjection(operator) => operator.grid(grid, taps, value),
         }
         Ok(())
     }
@@ -11462,7 +11260,6 @@ pub(crate) struct WProjectionConvolution {
     w_scale: f64,
     kernels: Box<[WProjectionKernel]>,
     plane_zero_normalization: f64,
-    kernel_identity: [u8; 32],
 }
 
 fn w_projection_plane_count(
@@ -11598,22 +11395,12 @@ impl WProjectionConvolution {
         for kernel in &mut kernels {
             kernel.weights.mapv_inplace(|value| value / plane_zero_sum);
         }
-        let mut kernel_hasher = Sha256::new();
-        kernel_hasher.update((sampling as u64).to_le_bytes());
-        for kernel in &kernels {
-            kernel_hasher.update((kernel.support as u64).to_le_bytes());
-            for weight in &kernel.weights {
-                kernel_hasher.update(weight.re.to_bits().to_le_bytes());
-                kernel_hasher.update(weight.im.to_bits().to_le_bytes());
-            }
-        }
         Ok(Self {
             standard,
             sampling,
             w_scale,
             kernels: kernels.into_boxed_slice(),
             plane_zero_normalization: plane_zero_sum,
-            kernel_identity: kernel_hasher.finalize().into(),
         })
     }
 
@@ -11683,7 +11470,6 @@ impl WProjectionConvolution {
             sampling: self.sampling,
             maximum_support: self.maximum_support(),
             plane_zero_normalization: self.plane_zero_normalization,
-            kernel_identity: self.kernel_identity,
         }
     }
 
@@ -11705,13 +11491,7 @@ impl WProjectionConvolution {
         sum
     }
 
-    fn grid_compensated(
-        &self,
-        grid: &mut Array2<Complex64>,
-        compensation: &mut Array2<Complex64>,
-        taps: SampleTaps,
-        value: Complex64,
-    ) {
+    fn grid(&self, grid: &mut Array2<Complex64>, taps: SampleTaps, value: Complex64) {
         let (kernel, off_x, off_y, conjugate) = self.decoded(taps);
         let support = kernel.support as isize;
         let maximum_support = self.maximum_support() as isize;
@@ -11727,10 +11507,7 @@ impl WProjectionConvolution {
                     (taps.x.start as isize + maximum_support + ix) as usize,
                     (taps.y.start as isize + maximum_support + iy) as usize,
                 );
-                let contribution = value * weight - compensation[cell];
-                let updated = grid[cell] + contribution;
-                compensation[cell] = (updated - grid[cell]) - contribution;
-                grid[cell] = updated;
+                grid[cell] += value * weight;
             }
         }
     }
@@ -11861,33 +11638,27 @@ impl StandardConvolution {
             })
     }
 
-    pub(crate) fn grid_compensated<S: DataMut<Elem = Complex64>, C: DataMut<Elem = Complex64>>(
+    pub(crate) fn grid<S: DataMut<Elem = Complex64>>(
         &self,
         grid: &mut ArrayBase<S, Ix2>,
-        compensation: &mut ArrayBase<C, Ix2>,
         taps: SampleTaps,
         value: Complex64,
     ) {
-        self.grid_compensated_rows(grid, compensation, taps, value, 0);
+        self.grid_rows(grid, taps, value, 0);
     }
 
-    fn grid_compensated_rows<S: DataMut<Elem = Complex64>, C: DataMut<Elem = Complex64>>(
+    fn grid_rows<S: DataMut<Elem = Complex64>>(
         &self,
         grid: &mut ArrayBase<S, Ix2>,
-        compensation: &mut ArrayBase<C, Ix2>,
         taps: SampleTaps,
         value: Complex64,
         first_row: usize,
     ) {
         let end_row = first_row + grid.nrows();
-        debug_assert_eq!(grid.dim(), compensation.dim());
         let row_stride = grid.ncols();
         let grid = grid
             .as_slice_mut()
             .expect("spectral grids use standard contiguous layout");
-        let compensation = compensation
-            .as_slice_mut()
-            .expect("spectral compensation uses standard contiguous layout");
         let x_weights = self.weights[taps.x.weight_index];
         let y_weights = self.weights[taps.y.weight_index];
         for (x, x_weight) in x_weights.into_iter().enumerate() {
@@ -11897,14 +11668,8 @@ impl StandardConvolution {
             }
             let start = (row - first_row) * row_stride + taps.y.start;
             let grid_row = &mut grid[start..start + y_weights.len()];
-            let compensation_row = &mut compensation[start..start + y_weights.len()];
-            for ((grid_cell, compensation_cell), y_weight) in
-                grid_row.iter_mut().zip(compensation_row).zip(y_weights)
-            {
-                let contribution = value * x_weight * y_weight - *compensation_cell;
-                let updated = *grid_cell + contribution;
-                *compensation_cell = (updated - *grid_cell) - contribution;
-                *grid_cell = updated;
+            for (cell, y_weight) in grid_row.iter_mut().zip(y_weights) {
+                *cell += value * x_weight * y_weight;
             }
         }
     }
@@ -12254,8 +12019,8 @@ pub enum SpectralOperatorError {
     /// The current serial operator supports only centered identity-PC SIN geometry.
     #[error("spectral operator does not support this direction-coordinate geometry")]
     UnsupportedGeometry,
-    /// The current serial operator requires permitted f64 compensated arithmetic.
-    #[error("spectral operator requires f64 compensated numerical semantics")]
+    /// The operator requires f64 arithmetic with rounding-order tolerance.
+    #[error("spectral operator requires f64 unordered-within-budget numerical semantics")]
     UnsupportedNumerics,
     /// A resident-byte calculation overflowed.
     #[error("spectral operator residency cannot be represented")]
@@ -12349,6 +12114,44 @@ mod tests {
     use num_complex::{Complex32, Complex64};
     use sha2::{Digest, Sha256};
     use smallvec::SmallVec;
+
+    fn assert_complex_agreement(expected: &[Complex64], actual: &[Complex64]) {
+        assert_eq!(expected.len(), actual.len());
+        let scale = expected
+            .iter()
+            .map(|value| value.norm_sqr())
+            .sum::<f64>()
+            .sqrt();
+        let error = expected
+            .iter()
+            .zip(actual)
+            .map(|(a, b)| (*a - *b).norm_sqr())
+            .sum::<f64>()
+            .sqrt();
+        assert!(
+            error <= (1e-3 * scale).max(1e-12),
+            "error={error:e}, scale={scale:e}"
+        );
+    }
+
+    fn assert_real_agreement(expected: &[f64], actual: &[f64]) {
+        assert_eq!(expected.len(), actual.len());
+        let scale = expected
+            .iter()
+            .map(|value| value * value)
+            .sum::<f64>()
+            .sqrt();
+        let error = expected
+            .iter()
+            .zip(actual)
+            .map(|(a, b)| (a - b).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        assert!(
+            error <= (1e-3 * scale).max(1e-12),
+            "error={error:e}, scale={scale:e}"
+        );
+    }
 
     use super::{
         AwPublishedSumWeights, ConvolutionOperator, MosaicResponsePlan, MosaicResponseSelection,
@@ -12729,10 +12532,8 @@ mod tests {
         let value = Complex64::new(0.75, -0.4);
         let shape = (geometry.grid_shape[0], geometry.grid_shape[1]);
         let mut gridded = Array2::zeros(shape);
-        let mut compensation = Array2::zeros(shape);
-        operator
-            .grid_compensated(&mut gridded, &mut compensation, taps, value)
-            .unwrap();
+
+        operator.grid(&mut gridded, taps, value).unwrap();
         let data = Array2::from_shape_fn(shape, |(x, y)| {
             Complex64::new((x * 3 + y) as f64 / 97.0, (x + y * 2) as f64 / 113.0)
         });
@@ -12773,7 +12574,6 @@ mod tests {
             w_projection.maximum_support()
         );
         assert!(diagnostics.plane_zero_normalization().is_finite());
-        assert_ne!(diagnostics.kernel_identity(), [0; 32]);
         assert_eq!(w_projection.sampling, 4);
         assert_eq!(w_projection.kernels.len(), 9);
         assert!(w_projection.w_scale.is_finite() && w_projection.w_scale > 0.0);
@@ -13315,7 +13115,6 @@ mod tests {
             }
         }
         let mut replay_grids = vec![Array2::zeros((10, 10)); 2];
-        let mut replay_errors = replay_grids.clone();
         let correlations = [CorrelationType::CircularRr, CorrelationType::CircularLl];
         for frequency_hz in [0.91e9, 1.19e9] {
             for w_m in [2.0, -2.0] {
@@ -13357,7 +13156,6 @@ mod tests {
                     source
                         .grid_gridded_normal_local_aw_polarization(
                             &mut replay_grids,
-                            &mut replay_errors,
                             [0, 0],
                             0,
                             0,
@@ -13704,8 +13502,8 @@ mod tests {
         let visibility = Complex64::new(1.25, -0.75);
         let prediction = gridder.degrid(&model, taps);
         let mut adjoint = Array2::<Complex64>::zeros(shape);
-        let mut compensation = Array2::<Complex64>::zeros(shape);
-        gridder.grid_compensated(&mut adjoint, &mut compensation, taps, visibility);
+
+        gridder.grid(&mut adjoint, taps, visibility);
 
         assert_ne!(
             adjoint[(geometry.grid_shape[0] - 1, geometry.grid_shape[1] - 1)],
@@ -13750,31 +13548,21 @@ mod tests {
         ];
 
         let mut direct = Array2::<Complex64>::zeros(shape);
-        let mut direct_compensation = Array2::<Complex64>::zeros(shape);
+
         for (taps, coefficient) in scalar_records {
             let predicted = gridder.degrid(&model_grid, taps);
-            gridder.grid_compensated(
-                &mut direct,
-                &mut direct_compensation,
-                taps,
-                predicted * coefficient,
-            );
+            gridder.grid(&mut direct, taps, predicted * coefficient);
         }
 
         let mut grouped = Array2::<Complex64>::zeros(shape);
-        let mut grouped_compensation = Array2::<Complex64>::zeros(shape);
+
         let mut block_records = BTreeMap::<SampleTaps, f64>::new();
         for (taps, coefficient) in scalar_records {
             *block_records.entry(taps).or_default() += coefficient;
         }
         for (taps, coefficient) in &block_records {
             let predicted = gridder.degrid(&model_grid, *taps);
-            gridder.grid_compensated(
-                &mut grouped,
-                &mut grouped_compensation,
-                *taps,
-                predicted * *coefficient,
-            );
+            gridder.grid(&mut grouped, *taps, predicted * *coefficient);
         }
 
         let squared_error = direct
@@ -13833,7 +13621,7 @@ mod tests {
             );
         }
         let mut output = Array2::<Complex64>::zeros(shape);
-        let mut compensation = Array2::<Complex64>::zeros(shape);
+
         let mut reader = BufReader::with_capacity(8 << 20, file);
         let mut record = [0_u8; 16];
         let started = Instant::now();
@@ -13856,12 +13644,7 @@ mod tests {
                 },
             };
             let predicted = gridder.degrid(&model_grid, taps);
-            gridder.grid_compensated(
-                &mut output,
-                &mut compensation,
-                taps,
-                predicted * coefficient,
-            );
+            gridder.grid(&mut output, taps, predicted * coefficient);
         }
         let elapsed = started.elapsed();
         let mut hasher = Sha256::new();
@@ -13911,7 +13694,7 @@ mod tests {
     }
 
     #[test]
-    fn t37_slab_depths_one_two_and_full_are_bitwise_identical() {
+    fn t37_slab_depths_one_two_and_full_agree_scientifically() {
         let full = cube_primitives(0, 4);
         let run_partition = |depth: usize| {
             let mut dirty = Vec::new();
@@ -13931,26 +13714,10 @@ mod tests {
         };
         for depth in [1, 2] {
             let (dirty, psf, sensitivity, sum_weights, validity) = run_partition(depth);
-            assert_eq!(
-                dirty,
-                full.dirty().complex().unwrap(),
-                "dirty changed at slab depth {depth}"
-            );
-            assert_eq!(
-                psf,
-                full.psf().complex().unwrap(),
-                "PSF changed at slab depth {depth}"
-            );
-            assert_eq!(
-                sensitivity,
-                full.sensitivity().dense().unwrap(),
-                "sensitivity changed at slab depth {depth}"
-            );
-            assert_eq!(
-                sum_weights,
-                full.sum_weights(),
-                "sum weight changed at slab depth {depth}"
-            );
+            assert_complex_agreement(&dirty, full.dirty().complex().unwrap());
+            assert_complex_agreement(&psf, full.psf().complex().unwrap());
+            assert_real_agreement(&sensitivity, full.sensitivity().dense().unwrap());
+            assert_real_agreement(&sum_weights, full.sum_weights());
             assert_eq!(
                 validity,
                 full.channel_validity(),
@@ -14128,8 +13895,6 @@ mod tests {
         for (channel, (samples, (dirty, psf, rust_dirty, rust_psf, sum_weight))) in
             per_channel.iter().zip(&mut casa_grids).enumerate()
         {
-            let mut dirty_compensation = Array2::<Complex64>::zeros(grid_array_shape);
-            let mut psf_compensation = Array2::<Complex64>::zeros(grid_array_shape);
             for (uvw, visibility, weight) in samples {
                 let frequency_hz = OUTPUT_FREQUENCIES_HZ[channel];
                 let uv_lambda = [
@@ -14147,18 +13912,8 @@ mod tests {
                 assert_eq!(patch.sampling, OVERSAMPLING as i32);
                 let weighted_visibility = Complex64::new(visibility[0], visibility[1]) * *weight;
                 let taps = rust_gridder.taps(uv_lambda).expect("Rust convolution taps");
-                rust_gridder.grid_compensated(
-                    rust_dirty,
-                    &mut dirty_compensation,
-                    taps,
-                    weighted_visibility,
-                );
-                rust_gridder.grid_compensated(
-                    rust_psf,
-                    &mut psf_compensation,
-                    taps,
-                    Complex64::new(*weight, 0.0),
-                );
+                rust_gridder.grid(rust_dirty, taps, weighted_visibility);
+                rust_gridder.grid(rust_psf, taps, Complex64::new(*weight, 0.0));
                 for cell in patch.cells {
                     let tap = Complex64::new(f64::from(cell.re), f64::from(cell.im));
                     dirty[(cell.x, cell.y)] += weighted_visibility * tap;
@@ -14554,8 +14309,7 @@ mod tests {
             vec![Complex64::default(); 100],
         ];
         let mut observed_grids = plain_grids.clone();
-        let mut plain_errors = plain_grids.clone();
-        let mut observed_errors = plain_grids.clone();
+
         let mut snapshots = 0;
         for (index, value) in [Complex64::new(0.4, -0.7), Complex64::new(-1.2, 0.3)]
             .into_iter()
@@ -14564,21 +14318,13 @@ mod tests {
             let (imaging, normal) = plain
                 .prepare_imaging_and_normal_grid([10, 10], sample)
                 .unwrap();
-            imaging
-                .grid_compensated(&mut plain_grids[0], &mut plain_errors[0], value)
-                .unwrap();
-            normal
-                .grid_compensated(&mut plain_grids[1], &mut plain_errors[1], value)
-                .unwrap();
+            imaging.grid(&mut plain_grids[0], value).unwrap();
+            normal.grid(&mut plain_grids[1], value).unwrap();
             let (imaging, normal) = observed
                 .prepare_imaging_and_normal_grid([10, 10], sample)
                 .unwrap();
-            imaging
-                .grid_compensated(&mut observed_grids[0], &mut observed_errors[0], value)
-                .unwrap();
-            normal
-                .grid_compensated(&mut observed_grids[1], &mut observed_errors[1], value)
-                .unwrap();
+            imaging.grid(&mut observed_grids[0], value).unwrap();
+            normal.grid(&mut observed_grids[1], value).unwrap();
             let before = observed.diagnostics();
             super::AwBlockProgress::observe(&mut observer, index == 1, index as u64 + 1, |_, _| {
                 let snapshot = observed.diagnostics();
@@ -14594,13 +14340,7 @@ mod tests {
         for (plain, observed) in plain_grids
             .iter()
             .flatten()
-            .chain(plain_errors.iter().flatten())
-            .zip(
-                observed_grids
-                    .iter()
-                    .flatten()
-                    .chain(observed_errors.iter().flatten()),
-            )
+            .zip(observed_grids.iter().flatten())
         {
             assert_eq!(
                 [plain.re.to_bits(), plain.im.to_bits()],
@@ -14970,7 +14710,6 @@ mod tests {
         state.prepare_prediction_grid(&model).expect("empty model");
         let shape = (geometry().grid_shape[0], geometry().grid_shape[1]);
         state.residual_grids = Some(vec![Array2::zeros(shape)]);
-        state.residual_compensations = Some(vec![Array2::zeros(shape)]);
         for sample in values {
             state
                 .push_with_residual(sample, Complex64::default())
@@ -14996,7 +14735,6 @@ mod tests {
             .expect("explicit zero forward prediction");
         let shape = (geometry().grid_shape[0], geometry().grid_shape[1]);
         explicit.residual_grids = Some(vec![Array2::zeros(shape)]);
-        explicit.residual_compensations = Some(vec![Array2::zeros(shape)]);
         for (sample, prediction) in values.iter().copied().zip(predicted) {
             explicit
                 .push_with_residual(sample, prediction)
@@ -15077,7 +14815,7 @@ mod tests {
     fn only_empty_origin_on_the_initial_pass_is_certified_zero() {
         let generation = ModelGenerationId(LogicalIdentity::from_sha256([1; 32]));
         let source = LogicalIdentity::from_sha256([2; 32]);
-        let delta = ModelDeltaId(LogicalIdentity::from_sha256([3; 32]));
+        let delta = ModelDeltaId(3);
 
         assert_eq!(
             reconstruction_model_binding(
@@ -15136,7 +14874,6 @@ mod tests {
             .expect("prepare model");
         let shape = (geometry().grid_shape[0], geometry().grid_shape[1]);
         fused.residual_grids = Some(vec![Array2::zeros(shape)]);
-        fused.residual_compensations = Some(vec![Array2::zeros(shape)]);
         for (sample, prediction) in values.into_iter().zip(predicted) {
             fused
                 .push_with_residual(sample, prediction)

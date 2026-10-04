@@ -18,14 +18,13 @@ use std::{
 use std::time::Duration;
 
 use casa_imaging_model::{
-    CompiledGeometryId, CompiledProblem, CompiledProblemId, ContinuumTransformGenerationId,
-    ModelDeltaTerm, ModelSample, NumericsContractId, SelectedObservationGenerationId,
-    WeightingCommitmentId,
+    CompiledGeometryId, CompiledProblem, CompiledProblemId, ModelDeltaTerm, ModelSample,
+    NumericsContractId, WeightingCommitmentId,
 };
 use casa_imaging_reconstruction::{
     FinalNormalState, MajorCyclePreparation, PreparedAwProjection, SpectralChannelValidity,
     SpectralOperatorError, SpectralOperatorSpecification, SpectralPrimitiveCatalog,
-    WeightingAlgorithmState, WeightingGenerationId, WeightingReplayCoverageId, WeightingReplayId,
+    WeightingAlgorithmState, WeightingGenerationId, WeightingReplayId,
     runtime_adapter::{
         CompleteDataNormalState, CompleteDataNormalWindow, CompleteDataOwnerResult,
         CompleteDataOwnerSlabFold, CompleteDataOwnerState, GRIDDED_NORMAL_LANE_COUNT,
@@ -901,7 +900,7 @@ pub(crate) struct GriddedNormalReplayCompilation {
 pub(crate) struct GriddedNormalCompilationStageTimings {
     pub(crate) record_key_construction: Duration,
     pub(crate) grouping_reduction: Duration,
-    pub(crate) encoding_checksum: Duration,
+    pub(crate) encoding: Duration,
     pub(crate) payload_movement: Duration,
     pub(crate) artifact_writes: Duration,
     pub(crate) completion: Duration,
@@ -1073,7 +1072,7 @@ impl GriddedNormalReplayCompilation {
             let compiler = self.compiler.stage_timings();
             timings.record_key_construction += compiler.record_key_construction;
             timings.grouping_reduction += compiler.grouping_reduction;
-            timings.encoding_checksum += compiler.encoding_checksum;
+            timings.encoding += compiler.encoding;
             timings.completion += compiler.completion;
             timings
         })
@@ -1113,37 +1112,25 @@ impl GriddedNormalReplayCompilation {
         self,
         replay: &WeightingReplayCompletion,
     ) -> io::Result<FrozenGriddedNormalReplay> {
-        self.complete_parts(
-            replay.reconstruction_summary(),
-            replay.selected_generation(),
-            replay
-                .continuum_transform()
-                .map(|completion| completion.generation_id()),
-        )
+        self.complete_parts(replay.reconstruction_summary())
     }
 
     #[cfg(test)]
     pub(crate) fn complete_stage_local_probe(
         self,
         replay: &casa_imaging_reconstruction::WeightingReplaySummary,
-        selected_generation: SelectedObservationGenerationId,
     ) -> io::Result<FrozenGriddedNormalReplay> {
-        self.complete_parts(replay, selected_generation, None)
+        self.complete_parts(replay)
     }
 
     fn complete_parts(
         self,
         replay: &casa_imaging_reconstruction::WeightingReplaySummary,
-        selected_generation: SelectedObservationGenerationId,
-        continuum_transform_generation: Option<ContinuumTransformGenerationId>,
     ) -> io::Result<FrozenGriddedNormalReplay> {
         let spill = self
             .spill
             .ok_or_else(|| io::Error::other("gridded-normal writer was not sealed"))?;
-        let program = self
-            .compiler
-            .complete(replay, selected_generation, continuum_transform_generation)
-            .map_err(io::Error::other)?;
+        let program = self.compiler.complete(replay).map_err(io::Error::other)?;
         let seal = spill.seal();
         if seal.frame_count() != program.block_count()
             || seal.record_count() != program.record_count()
@@ -1189,10 +1176,9 @@ fn spill_frame_sink<'a>(
                     frame.sequence(),
                     frame.record_count(),
                     frame.encoded_bytes(),
-                    frame.payload_crc32c(),
                 )
                 .map(|measured| {
-                    timings.encoding_checksum += measured.encoding_checksum;
+                    timings.encoding += measured.encoding;
                     timings.payload_movement += measured.payload_movement;
                     timings.artifact_writes += measured.artifact_writes;
                     timings.completion += measured.completion;
@@ -1202,7 +1188,6 @@ fn spill_frame_sink<'a>(
                 frame.sequence(),
                 frame.record_count(),
                 frame.encoded_bytes(),
-                frame.payload_crc32c(),
             )
         };
         #[cfg(not(test))]
@@ -1210,7 +1195,6 @@ fn spill_frame_sink<'a>(
             frame.sequence(),
             frame.record_count(),
             frame.encoded_bytes(),
-            frame.payload_crc32c(),
         );
         result.map_err(|failure| {
             *error = Some(io::Error::other(failure));
@@ -2132,13 +2116,11 @@ impl PartitionedKernel<ManagedSpillWindowStorage> for GriddedNormalReplayKernel 
         }
         self.state
             .state
-            .two_domain_window_partition_count(storage.frames().map(|frame| {
-                (
-                    frame.sequence(),
-                    frame.payload(),
-                    Some(frame.verified_payload_crc32c()),
-                )
-            }))
+            .two_domain_window_partition_count(
+                storage
+                    .frames()
+                    .map(|frame| (frame.sequence(), frame.payload())),
+            )
             .map_err(CompleteDataOperatorError::Owner)
     }
 
@@ -3549,16 +3531,17 @@ impl CompleteDataPlanFragment {
             return Err(CompleteDataPlanError::MissingReplayNode);
         }
         if let Some(binding) = &self.initial_working_set {
+            let density_present = binding.density.bytes != 0;
             if base
                 .execution_dag()
                 .logical_allocations()
                 .get(&binding.density.id)
-                != Some(&binding.density)
+                != density_present.then_some(&binding.density)
                 || base
                     .execution_dag()
                     .physical_slots()
                     .get(&binding.density_slot.id)
-                    != Some(&binding.density_slot)
+                    != density_present.then_some(&binding.density_slot)
                 || base
                     .execution_dag()
                     .resource_alternative()
@@ -3572,7 +3555,7 @@ impl CompleteDataPlanFragment {
                             && demand.views == vec![CapacityViewId::new("host-memory")]
                     })
                     .count()
-                    != 1
+                    != usize::from(density_present)
                 || binding.allocation.release_after
                     != BTreeSet::from([WorkDependency::Work(reconciliation.clone())])
             {
@@ -4960,18 +4943,6 @@ impl CompleteDataOperatorResult {
         self.evidence.completion().replay_id()
     }
 
-    /// Return the exact T17 selected-observation generation behind every sample.
-    #[must_use]
-    pub const fn selected_generation(&self) -> SelectedObservationGenerationId {
-        self.evidence.completion().selected_generation()
-    }
-
-    /// Return exact T18 weighted-sample coverage.
-    #[must_use]
-    pub const fn coverage(&self) -> WeightingReplayCoverageId {
-        self.evidence.completion().coverage()
-    }
-
     /// Return the versioned primitive set produced by the science owner.
     #[must_use]
     pub const fn primitive_catalog(&self) -> SpectralPrimitiveCatalog {
@@ -5134,9 +5105,7 @@ impl PendingCompleteDataSlabFold {
             return Err(CompleteDataOperatorError::ExecutionBinding);
         }
         let evidence = self.evidence.finish()?;
-        if evidence.completion().replay_id() != replay.reconstruction_summary().replay_id()
-            || evidence.completion().coverage() != replay.reconstruction_summary().coverage()
-        {
+        if evidence.completion().replay_id() != replay.reconstruction_summary().replay_id() {
             return Err(CompleteDataOperatorError::ExecutionBinding);
         }
         Ok(CompleteDataOperatorResult {
@@ -5157,7 +5126,7 @@ impl PendingCompleteDataSlabFold {
 impl SpectralOperatorState {
     pub(crate) fn authorize_derived_coverage(
         &mut self,
-        proof: casa_imaging_reconstruction::FrozenWeightingCoverageProof,
+        proof: casa_imaging_reconstruction::FrozenWeightingBinding,
     ) -> Result<(), CompleteDataOperatorError> {
         self.state
             .authorize_derived_coverage(proof)
@@ -5263,13 +5232,7 @@ impl SpectralOperatorState {
         {
             return Err(CompleteDataOperatorError::ExecutionBinding);
         }
-        let evidence = self.state.complete(
-            replay.reconstruction_summary(),
-            replay.selected_generation(),
-            replay
-                .continuum_transform()
-                .map(|completion| completion.generation_id()),
-        )?;
+        let evidence = self.state.complete(replay.reconstruction_summary())?;
         Ok(CompleteDataOperatorResult {
             evidence: evidence.seal(normal_storage)?,
             attempt: self.binding.attempt,
@@ -5287,15 +5250,9 @@ impl SpectralOperatorState {
     pub(crate) fn complete_initial_slab_recycled(
         self,
         replay: &casa_imaging_reconstruction::WeightingReplaySummary,
-        selected_generation: SelectedObservationGenerationId,
-        continuum_transform_generation: Option<ContinuumTransformGenerationId>,
     ) -> Result<(CompleteDataSlabResult, PreparedSpectralOperatorRecycle), CompleteDataOperatorError>
     {
-        let (evidence, recycle) = self.state.complete_initial_slab_recycled(
-            replay,
-            selected_generation,
-            continuum_transform_generation,
-        )?;
+        let (evidence, recycle) = self.state.complete_initial_slab_recycled(replay)?;
         Ok((
             CompleteDataSlabResult {
                 evidence,
@@ -5309,12 +5266,11 @@ impl SpectralOperatorState {
         self,
         window: &casa_imaging_reconstruction::runtime_adapter::WeightingReplayWindowSummary,
         parent: &casa_imaging_reconstruction::WeightingReplaySummary,
-        selected_generation: SelectedObservationGenerationId,
     ) -> Result<(CompleteDataSlabResult, PreparedSpectralOperatorRecycle), CompleteDataOperatorError>
     {
-        let (evidence, recycle) =
-            self.state
-                .complete_initial_window_recycled(window, parent, selected_generation)?;
+        let (evidence, recycle) = self
+            .state
+            .complete_initial_window_recycled(window, parent)?;
         Ok((
             CompleteDataSlabResult {
                 evidence,
@@ -5832,7 +5788,7 @@ mod tests {
         let frames = [(3_200, 100), (32, 1), (32, 1), (32, 1), (32, 1)];
         let route_capacity = gridded_normal_route_capacity_bytes(103, 4, TEST_PREDICTION_WIDTH)
             .expect("route capacity");
-        let working_set = exact_working_set(3_272, route_capacity);
+        let working_set = exact_working_set(3_240, route_capacity);
         let plan = GriddedNormalReplayWindowPlan::for_frame_payloads(
             &frames,
             working_set,
@@ -5844,17 +5800,23 @@ mod tests {
         let route = GriddedNormalRouteResidency::from_window_plan(&plan)
             .expect("route residency from the planned windows");
 
-        assert_eq!(plan.frame_counts(), &[1, 4]);
-        assert_eq!(plan.route_slot_record_capacities(), &[100, 1, 1, 1]);
-        assert_eq!(plan.source_slot_bytes(), 3_272);
-        assert_eq!(route.maximum_window_records(), 100);
-        assert_eq!(route.maximum_frame_groups(), 100);
-        assert_eq!(route.maximum_frames(), 4);
-        assert_eq!(route.peak_bytes(), route_capacity as usize);
-        assert_eq!(plan.working_set_bytes(), working_set);
+        assert_eq!(plan.frame_counts(), &[2, 2, 1]);
+        assert_eq!(plan.route_slot_record_capacities(), &[100, 1]);
+        assert_eq!(plan.source_slot_bytes(), 3_312);
+        assert_eq!(route.maximum_window_records(), 101);
+        assert_eq!(route.maximum_frame_groups(), 101);
+        assert_eq!(route.maximum_frames(), 2);
+        let actual_route_capacity =
+            gridded_normal_route_capacity_bytes(101, 2, TEST_PREDICTION_WIDTH).unwrap();
+        assert_eq!(route.peak_bytes(), actual_route_capacity as usize);
+        assert_eq!(
+            plan.working_set_bytes(),
+            exact_working_set(3_312, actual_route_capacity)
+        );
+        assert!(plan.working_set_bytes() <= working_set);
         assert_eq!(
             plan.schedule_metadata_capacity_bytes(),
-            25 * size_of::<usize>() + 4 * size_of::<super::GriddedNormalReplayBatchSchedule>()
+            14 * size_of::<usize>() + 2 * size_of::<super::GriddedNormalReplayBatchSchedule>()
         );
     }
 
@@ -5874,13 +5836,13 @@ mod tests {
         assert_eq!(plan.maximum_frames(), 2);
         assert_eq!(plan.maximum_records(), 4);
         assert_eq!(plan.route_slot_record_capacities(), &[1, 3]);
-        assert_eq!(plan.source_slot_bytes(), 272);
+        assert_eq!(plan.source_slot_bytes(), 208);
         let route_capacity = gridded_normal_route_capacity_bytes(4, 2, TEST_PREDICTION_WIDTH)
             .expect("route capacity");
         assert_eq!(plan.route_capacity_bytes(), route_capacity);
         assert_eq!(
             plan.working_set_bytes(),
-            exact_working_set(272, route_capacity)
+            exact_working_set(208, route_capacity)
         );
         assert_eq!(
             plan.schedule_metadata_capacity_bytes(),
@@ -5935,7 +5897,7 @@ mod tests {
         let frames = [(32, 1), (32, 1), (32, 1), (32, 1), (3_200, 100)];
         let route_capacity = gridded_normal_route_capacity_bytes(103, 4, TEST_PREDICTION_WIDTH)
             .expect("route capacity");
-        let working_set = exact_working_set(3_272, route_capacity);
+        let working_set = exact_working_set(3_240, route_capacity);
         let plan = GriddedNormalReplayWindowPlan::for_frame_payloads(
             &frames,
             working_set,
@@ -5984,7 +5946,7 @@ mod tests {
         let frames = [(32, 1), (32, 1), (32, 1), (32, 1), (3_200, 100)];
         let route_capacity = gridded_normal_route_capacity_bytes(103, 4, TEST_PREDICTION_WIDTH)
             .expect("route capacity");
-        let working_set = exact_working_set(3_272, route_capacity);
+        let working_set = exact_working_set(3_240, route_capacity);
         let plan = GriddedNormalReplayWindowPlan::for_frame_payloads(
             &frames,
             working_set,

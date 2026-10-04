@@ -259,7 +259,7 @@ fn problem_with_controls(
             ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
             NumericsContract::new(
                 vec![NumericPrecision::F64],
-                ReductionPolicy::Compensated,
+                ReductionPolicy::UnorderedWithinBudget,
                 FiniteValuePolicy::FlagInputRejectGenerated,
                 NumericalStage::ALL
                     .into_iter()
@@ -460,7 +460,7 @@ fn run_operator(
         }
     }
 
-    let (selected_generation, selected_count) = problem
+    let selected_count = problem
         .inspect_selected_observation(samples.iter().cloned().map(Ok::<_, Infallible>), |_| {
             Ok::<_, Infallible>(())
         })
@@ -492,7 +492,7 @@ fn run_operator(
         );
     }
     let result = owner
-        .complete(&summary, selected_generation, None)
+        .complete(&summary)
         .expect("complete Taylor normal state");
     (result, expected)
 }

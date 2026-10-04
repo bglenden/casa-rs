@@ -80,7 +80,38 @@ struct State {
 impl BulkCubePhase {
     /// Test whether this compiled science is implemented by the direct cube kernel.
     pub fn supports(problem: &CompiledProblem) -> io::Result<bool> {
-        super::phase::InitialCube::supports(problem)
+        if problem.weighting().scheme() != casa_imaging_model::WeightingScheme::Natural
+            || !matches!(
+                problem.model_lifecycle().input(),
+                casa_imaging_model::ModelInputCommitment::Empty
+            )
+            || problem.visibility_transform().is_some()
+            || !matches!(
+                problem.reconstruction().basis(),
+                casa_imaging_model::ReconstructionBasis::ChannelLocal { .. }
+            )
+        {
+            return Ok(false);
+        }
+        let [source] = problem.selected_observation().read_set().sources() else {
+            return Ok(false);
+        };
+        let ([dd], [spw], [pol]) = (
+            source.selection().data_descriptions(),
+            source.selection().spectral_windows(),
+            source.selection().correlations(),
+        ) else {
+            return Ok(false);
+        };
+        if dd.spectral_window_id() != spw.spectral_window_id()
+            || dd.polarization_id() != pol.polarization_id()
+            || spw.channel_indices().len() < 2
+        {
+            return Ok(false);
+        }
+        let specification =
+            SpectralOperatorSpecification::for_slab(problem, 0, 1).map_err(io::Error::other)?;
+        Ok(BandPlan::supports(&specification))
     }
 
     /// Build an empty-model initial major phase with admitted shared-source waves.
@@ -678,7 +709,7 @@ impl BulkCubePhase {
                 )?
             };
             if first {
-                let (summary, generation, _) = state
+                let summary = state
                     .weighting
                     .pending_replay_inputs()
                     .ok_or_else(|| io::Error::other("bulk traversal has no pending completion"))?;
@@ -688,7 +719,6 @@ impl BulkCubePhase {
                             context,
                             &self.reconcile,
                             summary,
-                            generation,
                             self.cube_state
                                 .as_ref()
                                 .expect("cube backing")
@@ -708,7 +738,6 @@ impl BulkCubePhase {
                             })?,
                             model.final_model().generation_id(),
                             summary,
-                            generation,
                             &self
                                 .cube_state
                                 .as_ref()

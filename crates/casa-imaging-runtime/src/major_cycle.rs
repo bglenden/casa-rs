@@ -104,7 +104,6 @@ impl MajorCycleOperatorState {
             if predecessor.attempt_id() != self.attempt
                 || predecessor.owner_node() != &self.replay_node
                 || predecessor.lease_epoch() != self.lease_epoch
-                || predecessor.source_generation() != self.owner.selected_generation()
                 || Some(predecessor.delivered_sample_count()) != self.delivered_source_sample_count
             {
                 return Err(MajorCycleOperatorError::ExecutionBinding);

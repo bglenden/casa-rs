@@ -20,7 +20,6 @@ bytemuck = { version = "1.25", features = ["derive", "extern_crate_alloc"] }
 casa-fft = { path = "../casa-fft" }
 casa-imaging-model = { path = "../casa-imaging-model" }
 casa-numerics = { path = "../casa-numerics" }
-crc32c = "0.6"
 ndarray.workspace = true
 num-complex = { workspace = true, features = ["bytemuck"] }
 sha2 = "0.10"

@@ -400,7 +400,6 @@ pub struct GriddedNormalOperatorFrame<'a> {
     sequence: u64,
     record_count: u64,
     encoded: &'a [u8],
-    payload_crc32c: u32,
 }
 
 impl<'a> GriddedNormalOperatorFrame<'a> {
@@ -418,11 +417,6 @@ impl<'a> GriddedNormalOperatorFrame<'a> {
     #[must_use]
     pub const fn encoded_bytes(self) -> &'a [u8] {
         self.encoded
-    }
-    /// Return the checksum of the borrowed encoding computed by the compiler.
-    #[must_use]
-    pub const fn payload_crc32c(self) -> u32 {
-        self.payload_crc32c
     }
 }
 
@@ -465,7 +459,6 @@ struct FrameLedger {
     record_count: u64,
     frame_bytes: u64,
     sink_time: Duration,
-    checksum_time: Duration,
     observe: bool,
 }
 
@@ -502,7 +495,6 @@ impl CompilationFrames {
                 record_count: 0,
                 frame_bytes: 0,
                 sink_time: Duration::ZERO,
-                checksum_time: Duration::ZERO,
                 observe,
             },
         })
@@ -547,8 +539,7 @@ impl CompilationFrames {
     }
 
     pub(super) fn timings(&self) -> (GriddedNormalOperatorStageTimings, Duration) {
-        let mut timings = self.encoder.timings();
-        timings.encoding_checksum += self.ledger.checksum_time;
+        let timings = self.encoder.timings();
         (timings, self.ledger.sink_time)
     }
 
@@ -583,23 +574,17 @@ impl FrameLedger {
             .checked_add(record_count)
             .ok_or(SpectralOperatorError::CoverageOverflow)?;
         let started = self.observe.then(Instant::now);
-        let payload_crc32c = crc32c::crc32c(encoded);
-        if let Some(started) = started {
-            self.checksum_time += started.elapsed();
-        }
-        let started = self.observe.then(Instant::now);
         sink(GriddedNormalOperatorFrame {
             sequence: self.descriptors.length as u64,
             record_count,
             encoded,
-            payload_crc32c,
         })?;
         if let Some(started) = started {
             self.sink_time += started.elapsed();
         }
         self.descriptors.storage[self.descriptors.length] = BlockDescriptor {
             record_count,
-            payload_crc32c,
+
             accumulation_output_planes,
         };
         self.descriptors.length += 1;
@@ -615,12 +600,11 @@ mod tests {
     use std::sync::OnceLock;
 
     fn problem() -> &'static CompiledProblem {
-        &fixture().0
+        fixture()
     }
 
-    fn fixture() -> &'static (CompiledProblem, SelectedObservationGenerationId) {
-        static FIXTURE: OnceLock<(CompiledProblem, SelectedObservationGenerationId)> =
-            OnceLock::new();
+    fn fixture() -> &'static CompiledProblem {
+        static FIXTURE: OnceLock<CompiledProblem> = OnceLock::new();
         FIXTURE.get_or_init(|| {
             let cells = 512 * 512;
             let (problem, lifecycle, model, normal) =
@@ -629,9 +613,8 @@ mod tests {
                     vec![Complex64::default(); 3 * cells].into_boxed_slice(),
                     None,
                 );
-            let generation = normal.selected_generation();
             drop((lifecycle, model, normal));
-            (problem, generation)
+            problem
         })
     }
 
@@ -880,9 +863,7 @@ mod tests {
             .finish_into_stream(problem(), &weighting_plan)
             .unwrap();
         let (_, _, replay) = stream.finish().unwrap();
-        let program = compiler
-            .complete(&replay, fixture().1, None)
-            .expect("seal empty program");
+        let program = compiler.complete(&replay).expect("seal empty program");
         assert_eq!(program.block_count(), 0);
         assert_eq!(program.block_accumulation_output_plane_range(0), None);
         assert_eq!(program.block_overlaps_output_planes(0, 0..1), None);
@@ -956,7 +937,7 @@ mod tests {
             .unwrap();
         let (_, _, replay) = stream.finish().unwrap();
         assert!(matches!(
-            compiler.complete(&replay, fixture().1, None),
+            compiler.complete(&replay),
             Err(SpectralOperatorError::GriddedCompilationPoisoned)
         ));
     }

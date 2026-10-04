@@ -28,7 +28,6 @@ use crate::managed_spill::{
 
 const ROW_BYTES: usize = 7 * 8;
 const SAMPLE_BYTES: usize = 2 * 4 + 4 + 2;
-const CRC_BYTES: usize = 4;
 
 fn invalid_input(message: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, message)
@@ -63,6 +62,7 @@ impl StorePlan {
     /// Batch across source/worker callback boundaries using the selected source's
     /// I/O-buffer envelope. Reserve at least one complete native row; the parent
     /// separately admits this arena alongside the still-live selected source.
+    #[cfg(test)]
     pub(super) fn for_source_buffer(
         rows: u64,
         channels: usize,
@@ -76,9 +76,7 @@ impl StorePlan {
         let (row_bytes, encoded_per_row) = Self::row_layout(channels, correlations, tile_channels)?;
         let working_bytes = row_bytes
             .checked_add(encoded_per_row)
-            .and_then(|bytes| {
-                bytes.checked_add(size_of::<NativeBlock>() + size_of::<Vec<u8>>() + CRC_BYTES)
-            })
+            .and_then(|bytes| bytes.checked_add(size_of::<NativeBlock>() + size_of::<Vec<u8>>()))
             .ok_or_else(overflow)?
             .max(source_buffer_bytes);
         Self::new(
@@ -91,6 +89,7 @@ impl StorePlan {
         )
     }
 
+    #[cfg(test)]
     fn row_layout(
         channels: usize,
         correlations: usize,
@@ -118,6 +117,7 @@ impl StorePlan {
         Ok((row_bytes, encoded_per_row))
     }
 
+    #[cfg(test)]
     pub(super) fn new(
         rows: u64,
         channels: usize,
@@ -131,7 +131,7 @@ impl StorePlan {
         }
         let (row_bytes, encoded_per_row) = Self::row_layout(channels, correlations, tile_channels)?;
         let channel_bytes = SAMPLE_BYTES * correlations + 8;
-        let fixed_bytes = size_of::<NativeBlock>() + size_of::<Vec<u8>>() + CRC_BYTES;
+        let fixed_bytes = size_of::<NativeBlock>() + size_of::<Vec<u8>>();
         let available = working_bytes
             .checked_sub(fixed_bytes)
             .ok_or_else(overflow)?;
@@ -147,25 +147,17 @@ impl StorePlan {
         }
         let frame_bytes = block_rows
             .checked_mul(encoded_per_row)
-            .and_then(|bytes| bytes.checked_add(CRC_BYTES))
             .ok_or_else(overflow)?;
         let preparation_bytes = block_rows
             .checked_mul(row_bytes)
             .and_then(|bytes| bytes.checked_add(frame_bytes))
-            .and_then(|bytes| bytes.checked_add(fixed_bytes - CRC_BYTES))
+            .and_then(|bytes| bytes.checked_add(fixed_bytes))
             .ok_or_else(overflow)?;
         if frame_bytes > isize::MAX as usize || preparation_bytes > isize::MAX as usize {
             return Err(overflow());
         }
         let tiles = channels.div_ceil(tile_channels);
-        let blocks = rows.div_ceil(block_rows as u64);
-        let frames = blocks
-            .checked_mul((tiles as u64).checked_add(1).ok_or_else(overflow)?)
-            .ok_or_else(overflow)?;
-        let artifact_bytes = rows
-            .checked_mul(row_bytes as u64)
-            .and_then(|bytes| bytes.checked_add(frames.checked_mul(CRC_BYTES as u64)?))
-            .ok_or_else(overflow)?;
+        let artifact_bytes = rows.checked_mul(row_bytes as u64).ok_or_else(overflow)?;
         if artifact_bytes > storage_bytes {
             return Err(invalid_input("native store exceeds admitted storage"));
         }
@@ -196,6 +188,7 @@ impl StorePlan {
 
     /// Writer-owned bytes when native row arrays are admitted separately in
     /// worker-local blocks. No full native block is included in this charge.
+    #[cfg(test)]
     pub(super) fn writer_residency(self) -> io::Result<u64> {
         (size_of::<NativeStoreWriter>() as u64)
             .checked_add(self.frame_bytes as u64)
@@ -267,21 +260,19 @@ impl StorePlan {
 
     fn frame(self, block: u64, tile: Option<usize>) -> io::Result<(u64, u64, usize)> {
         let rows = self.rows_in(block)?;
-        let block_bytes = (self.block_rows as u64 * self.row_bytes as u64)
-            + (self.tiles as u64 + 1) * CRC_BYTES as u64;
+        let block_bytes = self.block_rows as u64 * self.row_bytes as u64;
         let offset = block * block_bytes;
         let ordinal = block * (self.tiles as u64 + 1);
         match tile {
-            None => Ok((ordinal, offset, rows * ROW_BYTES + CRC_BYTES)),
+            None => Ok((ordinal, offset, rows * ROW_BYTES)),
             Some(tile) if tile < self.tiles => {
                 let channels = self.tile(tile);
                 Ok((
                     ordinal + tile as u64 + 1,
                     offset
-                        + (rows * ROW_BYTES + CRC_BYTES) as u64
-                        + rows as u64 * channels.start as u64 * self.channel_bytes as u64
-                        + tile as u64 * CRC_BYTES as u64,
-                    rows * channels.len() * self.channel_bytes + CRC_BYTES,
+                        + (rows * ROW_BYTES) as u64
+                        + rows as u64 * channels.start as u64 * self.channel_bytes as u64,
+                    rows * channels.len() * self.channel_bytes,
                 ))
             }
             _ => Err(invalid_input("native channel tile out of range")),
@@ -294,11 +285,9 @@ pub(super) struct StoreIo {
     pub(super) bytes: u64,
     /// Successful frame transfers, not an OS syscall count.
     pub(super) operations: u64,
-    pub(super) checksum_bytes: u64,
     pub(super) cache_hits: u64,
     cache_operations: u64,
     read_nanos: u128,
-    crc_nanos: u128,
     cache_release_nanos: u128,
 }
 
@@ -404,12 +393,10 @@ impl NativeStoreWriter {
     }
 
     fn write_frame(&mut self, tile: Option<usize>) -> io::Result<()> {
-        let (ordinal, offset, bytes) = self.plan.frame(self.next_block, tile)?;
-        if offset != self.io.bytes || self.encoded.len() + CRC_BYTES != bytes {
+        let (_, offset, bytes) = self.plan.frame(self.next_block, tile)?;
+        if offset != self.io.bytes || self.encoded.len() != bytes {
             return Err(io::Error::other("native store encoder/offset mismatch"));
         }
-        let crc = frame_crc(ordinal, &self.encoded);
-        self.encoded.extend_from_slice(&crc.to_le_bytes());
         self.file.as_file_mut().write_all(&self.encoded)?;
         release_page_cache(
             self.file.as_file(),
@@ -421,7 +408,7 @@ impl NativeStoreWriter {
         .map_err(io::Error::other)?;
         self.io.bytes += bytes as u64;
         self.io.operations += 1;
-        self.io.checksum_bytes += (bytes - CRC_BYTES + size_of::<u64>()) as u64;
+
         Ok(())
     }
 
@@ -514,31 +501,20 @@ impl NativeStoreReader<'_> {
                 .0
         });
         let start = slot * self.store.plan.frame_bytes;
-        let payload_bytes = bytes - CRC_BYTES;
+        let payload_bytes = bytes;
         if hit.is_some() {
             self.frames[slot].used = self.clock;
             self.io.cache_hits = self.io.cache_hits.checked_add(1).ok_or_else(overflow)?;
             return Ok(&self.encoded[start..start + payload_bytes]);
         }
         // Failed reads/checks must not leave the evicted identity on overwritten
-        // bytes. A valid entry is installed only after CRC and cache release.
+        // bytes. A valid entry is installed only after read and cache release.
         self.frames[slot] = CachedFrame::default();
         let encoded = &mut self.encoded[start..start + bytes];
         let started = self.profile.then(Instant::now);
         self.store.file.as_file().read_exact_at(encoded, offset)?;
         if let Some(started) = started {
             self.io.read_nanos += started.elapsed().as_nanos();
-        }
-        let started = self.profile.then(Instant::now);
-        let expected = u32::from_le_bytes(encoded[payload_bytes..].try_into().unwrap());
-        if frame_crc(ordinal, &encoded[..payload_bytes]) != expected {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "native store frame checksum mismatch",
-            ));
-        }
-        if let Some(started) = started {
-            self.io.crc_nanos += started.elapsed().as_nanos();
         }
         let started = self.profile.then(Instant::now);
         release_page_cache(
@@ -554,7 +530,7 @@ impl NativeStoreReader<'_> {
         }
         self.io.bytes += bytes as u64;
         self.io.operations += 1;
-        self.io.checksum_bytes += (payload_bytes + size_of::<u64>()) as u64;
+
         self.frames[slot] = CachedFrame {
             ordinal: Some(ordinal),
             used: self.clock,
@@ -765,12 +741,6 @@ fn decode_flag(byte: u8) -> io::Result<bool> {
             "invalid native store flag",
         )),
     }
-}
-
-/// The ordinal detects misplaced frames. CRC is solely a scratch-file integrity
-/// check, consumed on actual reads; it is never used to authorize publication.
-fn frame_crc(ordinal: u64, payload: &[u8]) -> u32 {
-    crc32c::crc32c_append(crc32c::crc32c(&ordinal.to_le_bytes()), payload)
 }
 
 #[cfg(test)]

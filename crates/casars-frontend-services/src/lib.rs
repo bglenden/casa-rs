@@ -10075,7 +10075,7 @@ mod tests {
             invocation.protocol_name.as_deref(),
             Some("casa_imager_task")
         );
-        assert_eq!(invocation.protocol_version, Some(8));
+        assert_eq!(invocation.protocol_version, Some(9));
         assert!(invocation.unsupported_reasons.is_empty());
         let request: serde_json::Value =
             serde_json::from_str(invocation.stdin.as_deref().expect("stdin JSON")).unwrap();
@@ -10165,7 +10165,7 @@ mod tests {
             invocation.protocol_name.as_deref(),
             Some("casa_imager_task")
         );
-        assert_eq!(invocation.protocol_version, Some(8));
+        assert_eq!(invocation.protocol_version, Some(9));
         let reasons = invocation
             .unsupported_reasons
             .iter()

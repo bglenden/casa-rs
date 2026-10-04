@@ -1,6 +1,12 @@
 # Trusted in-process ownership and bounded operational telemetry
 
-Status: Accepted by explicit user direction, 2026-09-18.
+Status: accepted
+Authority: explicit user direction, 2026-09-18
+
+Supersession note (2026-10-03): ADR-0015 supersedes the private same-run spill
+checksum exemptions below and extends ownership-only association to trusted
+imaging input/replay and reprojection targets. Those exemptions are historical,
+not normative. All other product/publication rules remain active.
 
 Trusted in-process scientific product generation must not hash product content
 or reread complete arrays solely to authorize publication. Product attestation

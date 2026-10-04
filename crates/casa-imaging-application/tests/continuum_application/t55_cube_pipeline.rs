@@ -400,7 +400,7 @@ fn t55_per_channel_density_request_is_bound_into_the_executed_cube() {
 }
 
 #[test]
-fn t55_clark_cube_products_and_repeated_cycles_are_exact_across_worker_counts() {
+fn t55_clark_cube_products_and_repeated_cycles_agree_across_worker_counts() {
     compare_clark_cube_cases(
         &[(1, None), (2, None), (4, None)],
         false,
@@ -409,13 +409,13 @@ fn t55_clark_cube_products_and_repeated_cycles_are_exact_across_worker_counts() 
 }
 
 #[test]
-fn t55_clark_cube_products_and_repeated_cycles_are_exact_across_channel_windows() {
+fn t55_clark_cube_products_and_repeated_cycles_agree_across_channel_windows() {
     compare_clark_cube_cases(
         &[
             (1, None),
+            (1, Some((8 << 20) + (512 << 10))),
             (1, Some((9 << 20) + (128 << 10))),
             (1, Some((10 << 20) + (128 << 10))),
-            (1, Some(11 << 20)),
         ],
         true,
         &[ContinuumWeighting::Briggs(0.5)],
@@ -554,7 +554,7 @@ fn compare_clark_cube_cases(
                     .get_slice(&[0; 4], &shape)
                     .expect("read complete product")
                     .iter()
-                    .map(|value| value.to_bits())
+                    .copied()
                     .collect::<Vec<_>>();
                 let mask = product
                     .get_mask_slice(&[0; 4], &shape, &[1; 4])
@@ -620,12 +620,25 @@ fn compare_clark_cube_cases(
                 result.actual_minor_iterations,
                 result.outcome.output.major_cycle_count,
             );
-            match &baseline {
-                Some(baseline) => assert_eq!(
-                    baseline, &evidence,
-                    "physical partition changed scientific products"
-                ),
-                None => baseline = Some(evidence),
+            if let Some((products, model, residual, weights, iterations, majors)) =
+                baseline.replace(evidence)
+            {
+                let evidence = baseline.as_ref().unwrap();
+                for (expected, actual) in products.iter().zip(&evidence.0) {
+                    assert_eq!(expected.0, actual.0);
+                    assert_eq!(expected.1, actual.1);
+                    assert_real_agreement(&expected.2, &actual.2);
+                    assert_eq!(expected.3, actual.3);
+                    assert_eq!(expected.4, actual.4);
+                    assert_eq!(expected.5, actual.5);
+                    assert_eq!(expected.6, actual.6);
+                }
+                assert_model_agreement(&model, &evidence.1);
+                assert_complex_agreement(&residual, &evidence.2);
+                assert_real_agreement(&weights, &evidence.3);
+                assert_eq!(iterations, evidence.4);
+                assert_eq!(majors, evidence.5);
+                baseline = Some((products, model, residual, weights, iterations, majors));
             }
         }
         if require_window_variation {

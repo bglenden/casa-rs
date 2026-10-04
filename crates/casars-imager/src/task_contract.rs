@@ -2944,21 +2944,13 @@ pub struct ImagerRunReport {
     pub elapsed_ns: u64,
 }
 
-/// Machine-readable projection of the final visibility-product authority.
+/// Final visibility stream's run association and completed sample count.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ImagerVisibilityProductDiagnostic {
     /// Compiled imaging-problem identity.
     pub problem_id: String,
     /// Exact final model generation used for prediction.
     pub final_model_generation: String,
-    /// Exact selected-observation generation traversed by the final replay.
-    pub selected_generation: String,
-    /// Exact weighting generation paired with the final replay.
-    pub weighting_generation: String,
-    /// Content identity of the model-visibility stream.
-    pub model_product: String,
-    /// Content identity of the observed-minus-model visibility stream.
-    pub residual_product: String,
     /// Number of canonically selected visibility samples.
     pub sample_count: u64,
 }

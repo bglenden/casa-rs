@@ -63,6 +63,46 @@ const HOST_MEMORY_BYTES: u64 = 16 << 20;
 const STORAGE_BYTES: u64 = 16 << 20;
 const IMAGE_PIXELS: usize = 16 * 16;
 
+fn assert_complex_agreement(expected: &[Complex64], actual: &[Complex64], label: &str) {
+    assert_eq!(expected.len(), actual.len(), "{label} shape");
+    let scale = expected
+        .iter()
+        .map(|value| value.norm_sqr())
+        .sum::<f64>()
+        .sqrt();
+    let error = expected
+        .iter()
+        .zip(actual)
+        .map(|(a, b)| (*a - *b).norm_sqr())
+        .sum::<f64>()
+        .sqrt();
+    assert!(
+        error <= (1e-3 * scale).max(1e-12),
+        "{label}: error={error:e}, scale={scale:e}"
+    );
+}
+
+fn assert_model_agreement(
+    expected: &[casa_imaging_model::ModelSample],
+    actual: &[casa_imaging_model::ModelSample],
+) {
+    assert_eq!(expected.len(), actual.len());
+    for (expected, actual) in expected.iter().zip(actual) {
+        assert_eq!(expected.support(), actual.support());
+    }
+    assert_complex_agreement(
+        &expected
+            .iter()
+            .map(|value| Complex64::new(value.value().value(), 0.0))
+            .collect::<Vec<_>>(),
+        &actual
+            .iter()
+            .map(|value| Complex64::new(value.value().value(), 0.0))
+            .collect::<Vec<_>>(),
+        "model",
+    );
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct StreamSummary {
     planned_workers: u64,
@@ -351,21 +391,30 @@ fn t51_source_allocation_is_checked_before_deferred_open() {
 }
 
 #[test]
-fn complete_data_mfs_products_and_identities_are_exact_for_one_two_and_four_workers() {
+fn complete_data_mfs_products_and_identities_agree_for_one_two_and_four_workers() {
     let runs = [1, 2, 4].map(execute_complete_data_mfs);
     let serial = &runs[0];
 
     for (workers, run) in [(2, &runs[1]), (4, &runs[2])] {
-        assert_eq!(serial.dirty, run.dirty, "{workers}-worker dirty changed");
-        assert_eq!(serial.psf, run.psf, "{workers}-worker PSF changed");
-        assert_eq!(
-            serial.residual, run.residual,
-            "{workers}-worker residual changed"
+        assert_complex_agreement(&serial.dirty, &run.dirty, "dirty");
+        assert_complex_agreement(&serial.psf, &run.psf, "PSF");
+        assert_complex_agreement(
+            &serial.residual,
+            &run.residual,
+            &format!("{workers}-worker residual changed"),
         );
-        assert_eq!(serial.model, run.model, "{workers}-worker model changed");
-        assert_eq!(
-            serial.sum_weights, run.sum_weights,
-            "{workers}-worker sum weight changed"
+        assert_model_agreement(&serial.model, &run.model);
+        assert_complex_agreement(
+            &serial
+                .sum_weights
+                .iter()
+                .map(|&v| Complex64::new(v, 0.0))
+                .collect::<Vec<_>>(),
+            &run.sum_weights
+                .iter()
+                .map(|&v| Complex64::new(v, 0.0))
+                .collect::<Vec<_>>(),
+            "sum weights",
         );
 
         assert_worker_independent_stream(&serial.initial_stream, &run.initial_stream, "initial");
@@ -404,20 +453,30 @@ fn complete_data_mfs_products_and_identities_are_exact_for_one_two_and_four_work
 }
 
 #[test]
-fn faceted_complete_data_products_are_exact_across_distinct_admitted_plans() {
+fn faceted_complete_data_products_agree_across_distinct_admitted_plans() {
     let serial = execute_faceted_complete_data_mfs(1);
     let parallel = execute_faceted_complete_data_mfs(2);
 
-    assert_eq!(serial.dirty, parallel.dirty, "faceted dirty changed");
-    assert_eq!(serial.psf, parallel.psf, "faceted PSF changed");
-    assert_eq!(serial.model, parallel.model, "faceted model changed");
-    assert_eq!(
-        serial.residual, parallel.residual,
-        "faceted residual changed"
+    assert_complex_agreement(&serial.dirty, &parallel.dirty, "faceted dirty");
+    assert_complex_agreement(&serial.psf, &parallel.psf, "faceted PSF");
+    assert_model_agreement(&serial.model, &parallel.model);
+    assert_complex_agreement(
+        &serial.residual,
+        &parallel.residual,
+        "faceted residual changed",
     );
-    assert_eq!(
-        serial.sum_weights, parallel.sum_weights,
-        "faceted sum weights changed"
+    assert_complex_agreement(
+        &serial
+            .sum_weights
+            .iter()
+            .map(|&v| Complex64::new(v, 0.0))
+            .collect::<Vec<_>>(),
+        &parallel
+            .sum_weights
+            .iter()
+            .map(|&v| Complex64::new(v, 0.0))
+            .collect::<Vec<_>>(),
+        "faceted sum weights",
     );
     assert_worker_independent_stream(&serial.initial_stream, &parallel.initial_stream, "initial");
     assert_worker_independent_stream(&serial.final_stream, &parallel.final_stream, "replay");
@@ -1112,7 +1171,7 @@ fn problem_specification_with_reconstruction(
 ) -> ProblemSpecification {
     let numerics = NumericsContract::new(
         vec![NumericPrecision::F64],
-        ReductionPolicy::Compensated,
+        ReductionPolicy::UnorderedWithinBudget,
         FiniteValuePolicy::FlagInputRejectGenerated,
         NumericalStage::ALL
             .into_iter()

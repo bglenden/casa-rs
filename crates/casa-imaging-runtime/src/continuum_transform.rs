@@ -5,17 +5,14 @@
 use std::{collections::BTreeMap, mem::size_of};
 
 use casa_imaging_model::{
-    CompiledProblem, ContinuumChannelUse, ContinuumFitWeightGenerationId,
-    ContinuumTransformContractId, ContinuumTransformGenerationId, SelectedInputWeightGroup,
-    SelectedObservationGenerationId, SelectedObservationSample, SelectedObservationSampleView,
-    SelectedSpectralEvaluation, SelectedVisibilitySample, SequentialContinuumTransform,
+    CompiledProblem, ContinuumChannelUse, ContinuumTransformContractId, SelectedInputWeightGroup,
+    SelectedObservationSample, SelectedObservationSampleView, SelectedSpectralEvaluation,
+    SelectedVisibilitySample, SequentialContinuumTransform,
 };
 use casa_imaging_reconstruction::{
-    ContinuumFitError, ContinuumFitStatus, ContinuumRowInput, ContinuumSample,
-    fit_and_subtract_continuum,
+    ContinuumFitError, ContinuumRowInput, ContinuumSample, fit_and_subtract_continuum,
 };
 use num_complex::Complex64;
-use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 /// One transformed sample retaining its source spectral evaluation and role.
@@ -66,10 +63,8 @@ impl ContinuumTransformedSample {
 /// Terminal evidence for one exhaustive transformed stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ContinuumTransformCompletion {
-    generation: ContinuumTransformGenerationId,
     contract: ContinuumTransformContractId,
-    source_generation: SelectedObservationGenerationId,
-    fit_weight_generation: ContinuumFitWeightGenerationId,
+
     sample_count: u64,
     output_sample_count: u64,
     row_count: u64,
@@ -78,28 +73,10 @@ pub struct ContinuumTransformCompletion {
 }
 
 impl ContinuumTransformCompletion {
-    /// Return the transformed-stream generation.
-    #[must_use]
-    pub const fn generation_id(self) -> ContinuumTransformGenerationId {
-        self.generation
-    }
-
     /// Return the canonical transform contract.
     #[must_use]
     pub const fn contract_id(self) -> ContinuumTransformContractId {
         self.contract
-    }
-
-    /// Return the raw T17 selected-observation generation.
-    #[must_use]
-    pub const fn source_generation(self) -> SelectedObservationGenerationId {
-        self.source_generation
-    }
-
-    /// Return the ordered fit-role, flag, and effective-weight generation.
-    #[must_use]
-    pub const fn fit_weight_generation(self) -> ContinuumFitWeightGenerationId {
-        self.fit_weight_generation
     }
 
     /// Return exhaustive transformed sample count.
@@ -219,8 +196,7 @@ pub struct ContinuumTransformStream<'a> {
     contract: &'a SequentialContinuumTransform,
     pending_row: Option<(casa_imaging_model::MeasurementSetIdentity, u64)>,
     pending: Vec<PendingSample>,
-    digest: Sha256,
-    fit_weight_digest: Sha256,
+
     sample_count: u64,
     output_sample_count: u64,
     row_count: u64,
@@ -237,20 +213,10 @@ impl<'a> ContinuumTransformStream<'a> {
         if plan.contract != contract.contract_id() {
             return Err(ContinuumTransformError::ContractMismatch);
         }
-        let mut digest = Sha256::new();
-        digest.update(b"casa-rs-continuum-transform-generation");
-        digest.update(1_u32.to_le_bytes());
-        digest.update(contract.contract_id().as_bytes());
-        let mut fit_weight_digest = Sha256::new();
-        fit_weight_digest.update(b"casa-rs-continuum-fit-weight-generation");
-        fit_weight_digest.update(1_u32.to_le_bytes());
-        fit_weight_digest.update(contract.contract_id().as_bytes());
         Ok(Self {
             contract,
             pending_row: None,
             pending: Vec::with_capacity(plan.maximum_samples),
-            digest,
-            fit_weight_digest,
             sample_count: 0,
             output_sample_count: 0,
             row_count: 0,
@@ -304,28 +270,14 @@ impl<'a> ContinuumTransformStream<'a> {
         self.flush_row()
     }
 
-    /// Bind the transformed content to the authoritative raw traversal generation.
-    pub fn complete(
-        mut self,
-        source_generation: SelectedObservationGenerationId,
-    ) -> Result<ContinuumTransformCompletion, ContinuumTransformError> {
+    /// Finish the owned transform after the raw traversal has exhausted successfully.
+    pub fn complete(self) -> Result<ContinuumTransformCompletion, ContinuumTransformError> {
         if !self.pending.is_empty() || self.pending_row.is_some() {
             return Err(ContinuumTransformError::UnflushedRow);
         }
-        self.digest.update(source_generation.as_bytes());
-        self.fit_weight_digest.update(source_generation.as_bytes());
-        self.digest.update(self.sample_count.to_le_bytes());
-        self.digest.update(self.output_sample_count.to_le_bytes());
-        self.digest.update(self.row_count.to_le_bytes());
         Ok(ContinuumTransformCompletion {
-            generation: ContinuumTransformGenerationId::from_owner_digest(
-                self.digest.finalize().into(),
-            ),
             contract: self.contract.contract_id(),
-            source_generation,
-            fit_weight_generation: ContinuumFitWeightGenerationId::from_owner_digest(
-                self.fit_weight_digest.finalize().into(),
-            ),
+
             sample_count: self.sample_count,
             output_sample_count: self.output_sample_count,
             row_count: self.row_count,
@@ -401,7 +353,6 @@ impl<'a> ContinuumTransformStream<'a> {
                     &samples,
                     rule.requested_order(),
                 ))?;
-                encode_fit_weights(&mut self.fit_weight_digest, &samples);
                 for (offset, &index) in indices.iter().enumerate() {
                     transformed[index].selected.visibility = residual_visibility(
                         transformed[index].selected.visibility,
@@ -410,16 +361,7 @@ impl<'a> ContinuumTransformStream<'a> {
                     transformed[index].use_role = samples[offset].use_role();
                     transformed[index].prediction = result.prediction()[offset];
                 }
-                encode_fit(
-                    &mut self.digest,
-                    result.status(),
-                    result.coefficients(),
-                    result.chi_squared(),
-                );
             }
-        }
-        for output in &transformed {
-            encode_output(&mut self.digest, output);
         }
         self.output_sample_count = self
             .output_sample_count
@@ -497,59 +439,6 @@ fn residual_visibility(
             SelectedVisibilitySample::Complex32([value.re as f32, value.im as f32])
         }
     }
-}
-
-fn encode_fit(
-    digest: &mut Sha256,
-    status: ContinuumFitStatus,
-    coefficients: &[Complex64],
-    chi_squared: [f64; 2],
-) {
-    match status {
-        ContinuumFitStatus::Fitted { effective_order } => digest.update([0, effective_order]),
-        ContinuumFitStatus::NoValidFitSamples => digest.update([1, 0]),
-    }
-    digest.update((coefficients.len() as u64).to_le_bytes());
-    for coefficient in coefficients {
-        digest.update(coefficient.re.to_bits().to_le_bytes());
-        digest.update(coefficient.im.to_bits().to_le_bytes());
-    }
-    for value in chi_squared {
-        digest.update(value.to_bits().to_le_bytes());
-    }
-}
-
-fn encode_fit_weights(digest: &mut Sha256, samples: &[ContinuumSample]) {
-    digest.update((samples.len() as u64).to_le_bytes());
-    for sample in samples {
-        digest.update([sample.flag().into()]);
-        digest.update(sample.weight().to_bits().to_le_bytes());
-        digest.update([match sample.use_role() {
-            ContinuumChannelUse::FitOnly => 0,
-            ContinuumChannelUse::ApplyOnly => 1,
-            ContinuumChannelUse::FitAndApply => 2,
-        }]);
-    }
-}
-
-fn encode_output(digest: &mut Sha256, output: &ContinuumTransformedSample) {
-    digest.update(output.selected.address.physical_row.to_le_bytes());
-    digest.update(output.selected.address.channel_index.to_le_bytes());
-    digest.update(output.selected.address.correlation_index.to_le_bytes());
-    digest.update([match output.use_role {
-        ContinuumChannelUse::FitOnly => 0,
-        ContinuumChannelUse::ApplyOnly => 1,
-        ContinuumChannelUse::FitAndApply => 2,
-    }]);
-    match output.selected.visibility {
-        SelectedVisibilitySample::Float32(value) => digest.update(value.to_bits().to_le_bytes()),
-        SelectedVisibilitySample::Complex32([real, imaginary]) => {
-            digest.update(real.to_bits().to_le_bytes());
-            digest.update(imaginary.to_bits().to_le_bytes());
-        }
-    }
-    digest.update(output.prediction.re.to_bits().to_le_bytes());
-    digest.update(output.prediction.im.to_bits().to_le_bytes());
 }
 
 #[cfg(test)]

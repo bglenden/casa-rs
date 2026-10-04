@@ -3,11 +3,10 @@
 use casa_imaging_model::{
     CompiledGeometryId, CompiledProblem, CompiledProblemId, LogicalIdentity,
     MeasurementSetIdentity, ObservationProvenanceId, ObservationSnapshotId, ObservationSourceState,
-    SelectedInputWeightGroup, SelectedObservationCommitmentId, SelectedObservationGenerationId,
-    SelectedObservationInspection, SelectedObservationInspectionError,
-    SelectedObservationPassError, SelectedObservationRunChannel, SelectedObservationRunCorrelation,
-    SelectedObservationRunRow, SelectedObservationSample, SelectedObservationSampleView,
-    SelectedSpectralEvaluation,
+    SelectedInputWeightGroup, SelectedObservationCommitmentId, SelectedObservationInspection,
+    SelectedObservationInspectionError, SelectedObservationPassError,
+    SelectedObservationRunChannel, SelectedObservationRunCorrelation, SelectedObservationRunRow,
+    SelectedObservationSample, SelectedObservationSampleView, SelectedSpectralEvaluation,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -95,7 +94,7 @@ pub struct SelectedObservationReplayProof {
 struct SelectedObservationReplayProofInner {
     identity: BoundSelectedObservationIdentity,
     sources: Vec<SelectedObservationReplaySource>,
-    generation_id: SelectedObservationGenerationId,
+
     sample_count: u64,
 }
 
@@ -108,7 +107,7 @@ impl SelectedObservationReplayProof {
     fn mint(
         identity: BoundSelectedObservationIdentity,
         sources: &[BoundObservationSource],
-        generation_id: SelectedObservationGenerationId,
+
         sample_count: u64,
     ) -> Self {
         Self {
@@ -120,7 +119,7 @@ impl SelectedObservationReplayProof {
                         state: source.selected_read_state().clone(),
                     })
                     .collect(),
-                generation_id,
+
                 sample_count,
             }),
         }
@@ -137,10 +136,6 @@ impl SelectedObservationReplayProof {
 
     fn matches_problem(&self, problem: &CompiledProblem) -> bool {
         self.inner.identity.matches(problem)
-    }
-
-    fn generation_id(&self) -> SelectedObservationGenerationId {
-        self.inner.generation_id
     }
 
     fn sample_count(&self) -> u64 {
@@ -195,21 +190,14 @@ impl SelectedObservationReplayProof {
     }
 }
 
-/// Current selected generation and count authorized only by a freshly rebound
+/// Selected sample count authorized only by a freshly rebound
 /// exhaustive completion.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SelectedObservationReplayAuthorization {
-    generation_id: SelectedObservationGenerationId,
     sample_count: u64,
 }
 
 impl SelectedObservationReplayAuthorization {
-    /// Return the freshly rebound selected generation.
-    #[must_use]
-    pub const fn generation_id(self) -> SelectedObservationGenerationId {
-        self.generation_id
-    }
-
     /// Return the freshly rebound exhaustive selected sample count.
     #[must_use]
     pub const fn sample_count(self) -> u64 {
@@ -973,43 +961,40 @@ impl BoundSelectedObservation {
                     .map_err(TraversalPassError::Source)
             })
         });
-        let (generation_id, sample_count) =
-            match problem.inspect_selected_observation(selected, |sample| {
-                let input_weight_group = pending_weight_group
-                    .take()
-                    .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)
-                    .map_err(TraversalPassError::Source)?;
-                let source = sources
-                    .iter()
-                    .find(|source| source.source_identity() == sample.address.measurement_set)
-                    .ok_or(BoundObservationSourceError::ProblemSourceMismatch)
-                    .map_err(TraversalPassError::Source)?;
-                let projected = spectral_evaluator
-                    .project(
-                        problem,
-                        sample.as_view().with_input_weight_group(input_weight_group),
-                        source.geometry_engine(),
-                        pending_spectral_selection
-                            .take()
-                            .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)
-                            .map_err(TraversalPassError::Source)?,
-                    )
-                    .map_err(TraversalPassError::Source)?;
-                consume(projected).map_err(TraversalPassError::Consumer)
-            }) {
-                Ok(completion) => completion,
-                Err(SelectedObservationPassError::Inspection(error)) => {
-                    return Err(SelectedObservationTraversalError::Inspection(error));
-                }
-                Err(SelectedObservationPassError::External(TraversalPassError::Source(error))) => {
-                    return Err(SelectedObservationTraversalError::Source(error));
-                }
-                Err(SelectedObservationPassError::External(TraversalPassError::Consumer(
-                    error,
-                ))) => {
-                    return Err(SelectedObservationTraversalError::Consumer(error));
-                }
-            };
+        let sample_count = match problem.inspect_selected_observation(selected, |sample| {
+            let input_weight_group = pending_weight_group
+                .take()
+                .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)
+                .map_err(TraversalPassError::Source)?;
+            let source = sources
+                .iter()
+                .find(|source| source.source_identity() == sample.address.measurement_set)
+                .ok_or(BoundObservationSourceError::ProblemSourceMismatch)
+                .map_err(TraversalPassError::Source)?;
+            let projected = spectral_evaluator
+                .project(
+                    problem,
+                    sample.as_view().with_input_weight_group(input_weight_group),
+                    source.geometry_engine(),
+                    pending_spectral_selection
+                        .take()
+                        .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)
+                        .map_err(TraversalPassError::Source)?,
+                )
+                .map_err(TraversalPassError::Source)?;
+            consume(projected).map_err(TraversalPassError::Consumer)
+        }) {
+            Ok(completion) => completion,
+            Err(SelectedObservationPassError::Inspection(error)) => {
+                return Err(SelectedObservationTraversalError::Inspection(error));
+            }
+            Err(SelectedObservationPassError::External(TraversalPassError::Source(error))) => {
+                return Err(SelectedObservationTraversalError::Source(error));
+            }
+            Err(SelectedObservationPassError::External(TraversalPassError::Consumer(error))) => {
+                return Err(SelectedObservationTraversalError::Consumer(error));
+            }
+        };
         let measurements = measurements
             .borrow()
             .finish(sample_count)
@@ -1020,13 +1005,12 @@ impl BoundSelectedObservation {
                 Some(SelectedObservationReplayProof::mint(
                     self.identity,
                     &self.sources,
-                    generation_id,
                     sample_count,
                 )),
                 false,
             ),
             SelectedObservationReplayMode::Rebound(proof) => {
-                if proof.generation_id() != generation_id || proof.sample_count() != sample_count {
+                if proof.sample_count() != sample_count {
                     return Err(SelectedObservationTraversalError::Binding(
                         BoundSelectedObservationError::ReplayProofMismatch,
                     ));
@@ -1040,7 +1024,7 @@ impl BoundSelectedObservation {
             observation_snapshot_id: problem.inputs().observation_snapshot().snapshot_id(),
             observation_provenance_id: problem.inputs().observation_snapshot().provenance_id(),
             commitment_id: problem.selected_observation().commitment_id(),
-            generation_id,
+
             sample_count,
             measurements,
             access_binding,
@@ -1358,9 +1342,6 @@ impl SelectedObservationBlockConsumer<'_> {
                 inspection
                     .push_numeric_row(numeric)
                     .map_err(SelectedObservationTraversalError::Inspection)?;
-                self.peak_scratch_current_bytes = self
-                    .peak_scratch_current_bytes
-                    .max(inspection.generation_scratch_bytes().0);
             }
             samples = samples
                 .checked_add((numeric.channels.len() * numeric.correlations.len()) as u64)
@@ -1492,24 +1473,6 @@ impl SelectedObservationBlockConsumer<'_> {
         Ok(())
     }
 
-    /// Return bytes handed to the selected-generation hasher so far.
-    #[must_use]
-    pub const fn generation_proof_bytes(&self) -> u64 {
-        match &self.inspection {
-            Some(inspection) => inspection.generation_proof_bytes(),
-            None => 0,
-        }
-    }
-
-    /// Return selected-generation hasher update calls so far.
-    #[must_use]
-    pub const fn generation_proof_hash_calls(&self) -> u64 {
-        match &self.inspection {
-            Some(inspection) => inspection.generation_proof_hash_calls(),
-            None => 0,
-        }
-    }
-
     /// Validate and consume every row/channel run in one opaque block.
     pub fn consume<E: Error + 'static>(
         &mut self,
@@ -1609,22 +1572,15 @@ impl SelectedObservationBlockConsumer<'_> {
                     .and_then(|evaluations| bytes.checked_add(evaluations))
             })
             .and_then(|bytes| bytes.checked_add(size_of::<SelectedInputWeightGroup>()))
-            .and_then(|bytes| {
-                bytes.checked_add(
-                    self.inspection
-                        .as_ref()
-                        .map_or(0, |inspection| inspection.generation_scratch_bytes().1),
-                )
-            })
             .ok_or(SelectedObservationTraversalError::MeasurementOverflow)?;
         let peak_scratch_current_bytes = self.peak_scratch_current_bytes;
         let rebound_sample_count = self.rebound_sample_count;
-        let (generation_id, sample_count) = match (self.inspection, self.rebound.as_ref()) {
+        let sample_count = match (self.inspection, self.rebound.as_ref()) {
             (Some(inspection), None) => inspection
                 .finish()
                 .map_err(SelectedObservationTraversalError::Inspection)?,
             (None, Some(proof)) if rebound_sample_count == proof.sample_count() => {
-                (proof.generation_id(), rebound_sample_count)
+                rebound_sample_count
             }
             _ => {
                 return Err(SelectedObservationTraversalError::Binding(
@@ -1653,14 +1609,12 @@ impl SelectedObservationBlockConsumer<'_> {
                 Some(SelectedObservationReplayProof::mint(
                     terminal.identity,
                     &terminal.sources,
-                    generation_id,
                     sample_count,
                 )),
                 false,
             ),
             SelectedObservationReplayMode::Rebound(proof)
-                if proof.generation_id() == generation_id
-                    && proof.sample_count() == sample_count
+                if proof.sample_count() == sample_count
                     && self
                         .rebound
                         .as_ref()
@@ -1679,7 +1633,7 @@ impl SelectedObservationBlockConsumer<'_> {
             observation_snapshot_id: terminal.identity.observation_snapshot_id,
             observation_provenance_id: terminal.identity.observation_provenance_id,
             commitment_id: terminal.identity.commitment_id,
-            generation_id,
+
             sample_count,
             measurements,
             access_binding: terminal.access_binding,
@@ -1738,18 +1692,14 @@ impl SelectedObservationBlockConsumer<'_> {
                 BoundSelectedObservationError::ReplayProofMismatch,
             ));
         }
-        let terminal_proof = match &terminal.replay_mode {
+        if !matches!(&terminal.replay_mode,
             SelectedObservationReplayMode::Rebound(terminal_proof)
-                if Arc::ptr_eq(&terminal_proof.inner, &proof.inner) =>
-            {
-                terminal_proof
-            }
-            _ => {
-                return Err(SelectedObservationTraversalError::Binding(
-                    BoundSelectedObservationError::ReplayProofMismatch,
-                ));
-            }
-        };
+                if Arc::ptr_eq(&terminal_proof.inner, &proof.inner))
+        {
+            return Err(SelectedObservationTraversalError::Binding(
+                BoundSelectedObservationError::ReplayProofMismatch,
+            ));
+        }
         let scratch_capacity_bytes = self
             .correlations
             .capacity()
@@ -1778,10 +1728,9 @@ impl SelectedObservationBlockConsumer<'_> {
         if self.bulk_started {
             measurements.selected_sample_handoff_bytes = 0;
         }
-        let generation_id = terminal_proof.generation_id();
         let completion = SelectedObservationWindowCompletion {
             identity: terminal.identity,
-            generation_id,
+
             sample_count,
             window,
             measurements,
@@ -1839,7 +1788,7 @@ pub(super) fn consume_validated_stream<E>(
     problem: &CompiledProblem,
     samples: impl Iterator<Item = Result<SelectedObservationSample, BoundObservationSourceError>>,
     mut consume: impl FnMut(SelectedObservationSample) -> Result<(), E>,
-) -> Result<(SelectedObservationGenerationId, u64), SelectedObservationTraversalError<E>>
+) -> Result<u64, SelectedObservationTraversalError<E>>
 where
     E: Error + 'static,
 {
@@ -1852,7 +1801,7 @@ fn consume_projected_validated_stream<E, T>(
     samples: impl Iterator<Item = Result<SelectedObservationSample, BoundObservationSourceError>>,
     mut project: impl FnMut(SelectedObservationSample) -> Result<T, BoundObservationSourceError>,
     mut consume: impl FnMut(T) -> Result<(), E>,
-) -> Result<(SelectedObservationGenerationId, u64), SelectedObservationTraversalError<E>>
+) -> Result<u64, SelectedObservationTraversalError<E>>
 where
     E: Error + 'static,
 {
@@ -2289,7 +2238,7 @@ pub struct SelectedObservationCompletion {
     observation_snapshot_id: ObservationSnapshotId,
     observation_provenance_id: ObservationProvenanceId,
     commitment_id: SelectedObservationCommitmentId,
-    generation_id: SelectedObservationGenerationId,
+
     sample_count: u64,
     measurements: SelectedObservationTraversalMeasurements,
     access_binding: u64,
@@ -2300,13 +2249,13 @@ pub struct SelectedObservationCompletion {
 
 /// Truthful completion for one bounded output-frequency window.
 ///
-/// The generation identity is inherited from the retained exhaustive proof;
+/// The source owner is inherited from the retained exhaustive proof;
 /// `sample_count` is only the count actually emitted by this window and never
 /// authorizes it as a replacement for the full replay proof.
 #[derive(Debug)]
 pub struct SelectedObservationWindowCompletion {
     identity: BoundSelectedObservationIdentity,
-    generation_id: SelectedObservationGenerationId,
+
     sample_count: u64,
     window: SelectedSourceWindow,
     measurements: SelectedObservationTraversalMeasurements,
@@ -2336,12 +2285,6 @@ impl SelectedObservationWindowCompletion {
     #[must_use]
     pub const fn commitment_id(&self) -> SelectedObservationCommitmentId {
         self.identity.commitment_id
-    }
-
-    /// Return the retained exhaustive generation identity.
-    #[must_use]
-    pub const fn generation_id(&self) -> SelectedObservationGenerationId {
-        self.generation_id
     }
 
     /// Return the number of validated samples emitted by this window.
@@ -2399,12 +2342,6 @@ impl SelectedObservationCompletion {
         self.commitment_id
     }
 
-    /// Return the content-derived identity of the canonical selected values.
-    #[must_use]
-    pub const fn generation_id(&self) -> SelectedObservationGenerationId {
-        self.generation_id
-    }
-
     /// Return the exact number of validated and consumed samples.
     #[must_use]
     pub const fn sample_count(&self) -> u64 {
@@ -2438,7 +2375,7 @@ impl SelectedObservationCompletion {
 }
 
 impl SelectedObservationReplayProof {
-    /// Authorize the current generation and count only after this same proof
+    /// Authorize the consumed count only after this same proof
     /// completed a freshly rebound exhaustive traversal.
     #[must_use]
     pub fn authorize_rebound_completion(
@@ -2455,10 +2392,8 @@ impl SelectedObservationReplayProof {
             && completion.observation_provenance_id
                 == self.inner.identity.observation_provenance_id
             && completion.commitment_id == self.inner.identity.commitment_id
-            && completion.generation_id == self.inner.generation_id
             && completion.sample_count == self.inner.sample_count;
         rebound.then_some(SelectedObservationReplayAuthorization {
-            generation_id: completion.generation_id,
             sample_count: completion.sample_count,
         })
     }
@@ -2472,7 +2407,6 @@ impl SelectedObservationReplayProof {
     ) -> bool {
         Arc::ptr_eq(&self.inner, &completion.replay_proof.inner)
             && completion.identity == self.inner.identity
-            && completion.generation_id == self.inner.generation_id
             && completion.sample_count <= self.inner.sample_count
             && matches!(
                 &completion.window,

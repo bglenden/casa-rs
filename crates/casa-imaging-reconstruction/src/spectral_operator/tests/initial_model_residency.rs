@@ -72,7 +72,7 @@ fn t51_initial_empty_projection_omits_only_absent_residual_planes() {
     let image_cells = 512 * 512;
     assert_eq!(initial.coefficient_terms(), 2);
     assert_eq!(initial.normal_moments(), 3);
-    assert_eq!(initial.grid_complex_values(), grid_cells * (2 * 2 + 2 * 3));
+    assert_eq!(initial.grid_complex_values(), grid_cells * (2 + 3));
     assert_eq!(
         initial.primitive_complex_values(),
         image_cells * 2 * (2 * 2 + 3)
@@ -81,7 +81,7 @@ fn t51_initial_empty_projection_omits_only_absent_residual_planes() {
         initial.fold_accumulator_complex_values(),
         image_cells * (2 * 2 + 3)
     );
-    assert_eq!(refresh.grid_complex_values(), grid_cells * 2 * 2);
+    assert_eq!(refresh.grid_complex_values(), grid_cells * 2);
     assert_eq!(
         refresh.primitive_complex_values(),
         image_cells * (2 * 2 + 3 + 2)
@@ -95,10 +95,7 @@ fn t51_initial_empty_projection_omits_only_absent_residual_planes() {
         SpectralOperatorPass::InitialMajor,
     )
     .unwrap();
-    assert_eq!(
-        evaluated.grid_complex_values(),
-        grid_cells * (4 * 2 + 2 * 3)
-    );
+    assert_eq!(evaluated.grid_complex_values(), grid_cells * (2 * 2 + 3));
     assert_eq!(
         evaluated.primitive_complex_values(),
         image_cells * 2 * (3 * 2 + 3)
@@ -152,19 +149,7 @@ fn t51_initial_empty_projection_rejects_delta_before_model_allocation() {
                 .map(Array2::len)
                 .sum::<usize>()
                 + operator
-                    .dirty_compensations
-                    .iter()
-                    .flatten()
-                    .map(Array2::len)
-                    .sum::<usize>()
-                + operator
                     .psf_grids
-                    .iter()
-                    .flatten()
-                    .map(Array2::len)
-                    .sum::<usize>()
-                + operator
-                    .psf_compensations
                     .iter()
                     .flatten()
                     .map(Array2::len)
@@ -182,8 +167,7 @@ fn t51_initial_empty_projection_rejects_delta_before_model_allocation() {
         owner
             .operators
             .iter()
-            .all(|operator| operator.residual_grids.is_none()
-                && operator.residual_compensations.is_none())
+            .all(|operator| operator.residual_grids.is_none())
     );
     drop(owner);
 
@@ -210,8 +194,7 @@ fn t51_initial_empty_projection_rejects_delta_before_model_allocation() {
         owner
             .operators
             .iter()
-            .all(|operator| operator.residual_grids.is_none()
-                && operator.residual_compensations.is_none())
+            .all(|operator| operator.residual_grids.is_none())
     );
     drop(owner);
 
@@ -227,7 +210,6 @@ fn t51_initial_empty_projection_rejects_delta_before_model_allocation() {
         owner
             .operators
             .iter()
-            .all(|operator| operator.residual_grids.is_some()
-                && operator.residual_compensations.is_some())
+            .all(|operator| operator.residual_grids.is_some())
     );
 }
