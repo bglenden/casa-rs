@@ -214,17 +214,7 @@ impl DeviceNormalApply {
         {
             return Err(SpectralOperatorError::IncompleteCoverage);
         }
-        let values = normal
-            .iter()
-            .map(|v| {
-                if !v.iter().all(|n| n.is_finite()) {
-                    return Err(SpectralOperatorError::GeneratedNonfinite);
-                }
-                Ok(Complex64::new(v[0] as f64, v[1] as f64))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let grid = Array2::from_shape_vec((shape[0], shape[1]), values)
-            .map_err(|_| SpectralOperatorError::UnsupportedGeometry)?;
+        let grid = self.operator.take_device_normal_grid(normal)?;
         let (update, fft) = self
             .operator
             .finish_gridded_normal_from_grids(self.model_generation, vec![grid])?;

@@ -10321,6 +10321,32 @@ impl SpectralSlabOperator {
         Ok(())
     }
 
+    /// After device completion, the forward model is dead: reuse its allocation
+    /// for the normal grid rather than keeping both complex planes live.
+    pub(crate) fn take_device_normal_grid(
+        &mut self,
+        normal: &[[f32; 2]],
+    ) -> Result<Array2<Complex64>, SpectralOperatorError> {
+        if self.forward_grids.len() != 1
+            || self.forward_grids[0].dim()
+                != (self.geometry.grid_shape[0], self.geometry.grid_shape[1])
+            || normal.len() != self.forward_grids[0].len()
+        {
+            return Err(SpectralOperatorError::GriddedRecordMismatch);
+        }
+        let mut grid = self.forward_grids.pop().expect("single model grid");
+        let values = grid
+            .as_slice_mut()
+            .ok_or(SpectralOperatorError::UnsupportedGeometry)?;
+        for (target, source) in values.iter_mut().zip(normal) {
+            if !source.iter().all(|value| value.is_finite()) {
+                return Err(SpectralOperatorError::GeneratedNonfinite);
+            }
+            *target = Complex64::new(f64::from(source[0]), f64::from(source[1]));
+        }
+        Ok(grid)
+    }
+
     pub(crate) fn finish_gridded_normal_from_grids(
         mut self,
         residual_model: ModelGenerationId,
@@ -14737,6 +14763,42 @@ mod tests {
             primitives.major_cycle_residual.as_deref(),
             Some(primitives.dirty().complex().unwrap()),
             "an empty model must reproduce the data-side adjoint bit exactly"
+        );
+    }
+
+    #[test]
+    fn gridded_normal_device_import_transfers_model_buffer_and_checks_values() {
+        let shape = (geometry().grid_shape[0], geometry().grid_shape[1]);
+        let normal = (0..shape.0 * shape.1)
+            .map(|index| [index as f32 * 0.125, -(index as f32) * 0.25])
+            .collect::<Vec<_>>();
+        let mut state = operator();
+        state.forward_grids = vec![Array2::from_elem(shape, Complex64::new(7.0, -9.0))];
+        let allocation = state.forward_grids[0].as_ptr();
+        let grid = state.take_device_normal_grid(&normal).unwrap();
+        assert_eq!(
+            grid.as_ptr(),
+            allocation,
+            "transfer the existing allocation"
+        );
+        assert!(state.forward_grids.is_empty());
+        for (actual, source) in grid.iter().zip(&normal) {
+            assert_eq!(
+                *actual,
+                Complex64::new(f64::from(source[0]), f64::from(source[1]))
+            );
+        }
+        let mut state = operator();
+        state.forward_grids = vec![Array2::zeros(shape)];
+        assert_eq!(
+            state.take_device_normal_grid(&normal[..normal.len() - 1]),
+            Err(SpectralOperatorError::GriddedRecordMismatch)
+        );
+        let mut invalid = normal;
+        invalid[3][1] = f32::NAN;
+        assert_eq!(
+            state.take_device_normal_grid(&invalid),
+            Err(SpectralOperatorError::GeneratedNonfinite)
         );
     }
 
