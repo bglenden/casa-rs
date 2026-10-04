@@ -39,11 +39,13 @@ impl MetalNormalPlan {
             .checked_mul(shape[1])
             .and_then(|n| n.checked_mul(8))
             .ok_or_else(|| io::Error::other("device normal grid overflow"))?;
-        // Reuse the admitted route envelope to select substantial device batches,
-        // with whole source frames as the minimum, rather than synchronizing at
-        // every small artifact frame. The added arena is priced independently.
+        // GPU dispatches need not follow the CPU route's small source windows.
+        // Bound both staging slots together by one grid (or the larger route
+        // envelope), then price that arena in the ordinary phase admission.
+        // Whole source frames remain indivisible.
         let per_record = size_of::<DeviceNormalRecord>() + size_of::<DeviceNormalGroup>() + 8;
-        let capacity = (window.route_capacity_bytes() as usize / (2 * per_record))
+        let staging_budget = (window.route_capacity_bytes() as usize).max(grid_bytes);
+        let capacity = (staging_budget / (2 * per_record))
             .max(window.maximum_records())
             .min(program.record_count() as usize)
             .max(1);
