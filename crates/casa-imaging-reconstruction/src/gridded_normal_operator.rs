@@ -63,7 +63,7 @@ const GROUP_END_BIT: u64 = 1_u64 << (TAP_KEY_BITS + CHANNEL_KEY_BITS);
 const RECORD_ROLE_SHIFT: u32 = TAP_KEY_BITS + CHANNEL_KEY_BITS + 1;
 const RECORD_KEY_MASK: u64 = (1_u64 << (RECORD_ROLE_SHIFT + 2)) - 1;
 const GRIDDED_NORMAL_TAPS_PER_RECORD: u64 = ((SUPPORT * 2 + 1) * (SUPPORT * 2 + 1)) as u64;
-const GRIDDED_NORMAL_TILE_EDGE: usize = 32;
+pub(crate) const GRIDDED_NORMAL_TILE_EDGE: usize = 32;
 const GRIDDED_NORMAL_HOT_TILE_DUPLICATES: usize = GRIDDED_NORMAL_LANE_COUNT - 1;
 
 /// Width of an opaque scalar gridded normal-operator record.

@@ -36,7 +36,9 @@ use crate::{
     ScienceTraceDigest,
     aw_projection::{AwGridPlan, AwScienceProbePair},
     block_normal::BlockNormalPlan,
-    canonical_f64_bits, imaging_science_trace_enabled,
+    canonical_f64_bits,
+    gridded_normal_operator::GRIDDED_NORMAL_TILE_EDGE,
+    imaging_science_trace_enabled,
     mosaic::{MOSAIC_OVERSAMPLING, MosaicNormalAccumulator, MosaicProjector, MosaicSamplePlan},
     polarization_operator::{MuellerMatrix, PolarizationOperator},
     primary_beam::PreparedPrimaryBeamPower,
@@ -8811,52 +8813,61 @@ impl SpectralSlabOperator {
                 let plane = self.polarization_plane(resident, polarization);
                 let grid = &mut self.forward_grids[plane];
                 grid.fill(Complex64::default());
-                for y in 0..height {
-                    let row_start = generation
-                        .shape()
-                        .flat_index(casa_imaging_model::ModelCell::new(
-                            self.domain_ordinal,
-                            coefficient,
-                            polarization,
-                            [origin[0], origin[1] + y],
-                        ))
-                        .ok_or(SpectralOperatorError::ModelShape)?;
-                    // Validate the entire row before using canonical contiguous indices.
-                    generation
-                        .shape()
-                        .flat_index(casa_imaging_model::ModelCell::new(
-                            self.domain_ordinal,
-                            coefficient,
-                            polarization,
-                            [origin[0] + width - 1, origin[1] + y],
-                        ))
-                        .ok_or(SpectralOperatorError::ModelShape)?;
-                    for x in 0..width {
-                        let sample = generation
-                            .sample(row_start + x)
-                            .ok_or(SpectralOperatorError::ModelShape)?;
-                        if sample.support() == ModelSupport::Invalid {
-                            continue;
+                let plane_start = generation
+                    .shape()
+                    .flat_index(casa_imaging_model::ModelCell::new(
+                        domain_ordinal,
+                        coefficient,
+                        polarization,
+                        origin,
+                    ))
+                    .ok_or(SpectralOperatorError::ModelShape)?;
+                generation
+                    .shape()
+                    .flat_index(casa_imaging_model::ModelCell::new(
+                        domain_ordinal,
+                        coefficient,
+                        polarization,
+                        [origin[0] + width - 1, origin[1] + height - 1],
+                    ))
+                    .ok_or(SpectralOperatorError::ModelShape)?;
+                let row_stride = generation.shape().domains()[domain_ordinal].pixels()[0];
+                // The model is x-fast and the FFT grid is y-fast. Tiles retain
+                // both sides' cache lines without a transposed staging buffer.
+                for tile_y in (0..height).step_by(GRIDDED_NORMAL_TILE_EDGE) {
+                    let end_y = (tile_y + GRIDDED_NORMAL_TILE_EDGE).min(height);
+                    for tile_x in (0..width).step_by(GRIDDED_NORMAL_TILE_EDGE) {
+                        let end_x = (tile_x + GRIDDED_NORMAL_TILE_EDGE).min(width);
+                        for y in tile_y..end_y {
+                            let row_start = plane_start + y * row_stride;
+                            for x in tile_x..end_x {
+                                let sample = generation
+                                    .sample(row_start + x)
+                                    .ok_or(SpectralOperatorError::ModelShape)?;
+                                if sample.support() == ModelSupport::Invalid {
+                                    continue;
+                                }
+                                if pixel_has_later_domain_owner(
+                                    specification,
+                                    domain_ordinal,
+                                    [origin[0] + x, origin[1] + y],
+                                )? {
+                                    continue;
+                                }
+                                let correction = if aw_projection {
+                                    1.0
+                                } else if mosaic {
+                                    self.gridder
+                                        .sinc_image_correction(x, y, MOSAIC_OVERSAMPLING)
+                                } else {
+                                    self.gridder.model_correction(x, y)
+                                };
+                                grid[(
+                                    self.geometry.image_blc[0] + x,
+                                    self.geometry.image_blc[1] + y,
+                                )] = Complex64::new(sample.value().value(), 0.0) * correction;
+                            }
                         }
-                        if pixel_has_later_domain_owner(
-                            specification,
-                            domain_ordinal,
-                            [origin[0] + x, origin[1] + y],
-                        )? {
-                            continue;
-                        }
-                        let correction = if aw_projection {
-                            1.0
-                        } else if mosaic {
-                            self.gridder
-                                .sinc_image_correction(x, y, MOSAIC_OVERSAMPLING)
-                        } else {
-                            self.gridder.model_correction(x, y)
-                        };
-                        grid[(
-                            self.geometry.image_blc[0] + x,
-                            self.geometry.image_blc[1] + y,
-                        )] = Complex64::new(sample.value().value(), 0.0) * correction;
                     }
                 }
                 self.fft.transform(grid, false);
