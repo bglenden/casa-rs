@@ -95,20 +95,40 @@ kernel void normal_predict(
     device atomic_float *normal [[buffer(5)]],
     device atomic_uint *status [[buffer(6)]],
     constant uint4 &shape [[buffer(7)]],
-    uint index [[thread_position_in_grid]]) {
-    if (index >= shape.y) return;
-    NormalGroup group = groups[index];
+    uint index [[thread_position_in_grid]],
+    uint simd_lane [[thread_index_in_simdgroup]]) {
+    uint group_index = index / 8, lane = index % 8;
+    if (group_index >= shape.y) return;
+    NormalGroup group = groups[group_index];
     float2 result = float2(0.0);
     if (group.start >= group.end || group.end > shape.x) {
         atomic_fetch_or_explicit(status, 1u, memory_order_relaxed); return;
     }
     for (uint i = group.start; i < group.end; ++i) {
         NormalRecord record = records[i];
-        if (record.role != 2) result += multiply_complex(
-            spatial_degrid(record.tap, weights, model, shape.w), record.tap.value);
+        if (record.role == 2) continue;
+        float2 row = float2(0.0);
+        if (lane < 7) {
+            float2 even = float2(0.0), odd = float2(0.0);
+            for (uint y = 0; y < 7; ++y) {
+                float2 value = model[(record.tap.x + lane) * shape.w + record.tap.y + y]
+                    * weights[record.tap.y_weights * 7 + y];
+                if ((y & 1) == 0) even += value; else odd += value;
+            }
+            row = (even + odd) * weights[record.tap.x_weights * 7 + lane];
+        }
+        float2 estimate = float2(0.0);
+        // All eight lanes participate; the writer retains the original x order.
+        for (uint x = 0; x < 7; ++x) {
+            float2 contribution = simd_shuffle(row, (simd_lane & ~7u) + x);
+            if (lane == 0) estimate += contribution;
+        }
+        if (lane == 0) result += multiply_complex(estimate, record.tap.value);
     }
-    if (!all(isfinite(result))) atomic_fetch_or_explicit(status, 2u, memory_order_relaxed);
-    predicted[index] = result;
+    if (lane == 0) {
+        if (!all(isfinite(result))) atomic_fetch_or_explicit(status, 2u, memory_order_relaxed);
+        predicted[group_index] = result;
+    }
 }
 
 kernel void normal_accumulate(
@@ -417,12 +437,16 @@ impl MetalCubeKernels {
                 .newComputePipelineStateWithFunction_error(&function)
                 .map_err(|error| error.localizedDescription().to_string())
         };
+        let normal_prediction = pipeline("normal_predict")?;
+        if !normal_prediction.threadExecutionWidth().is_multiple_of(8) {
+            return Err("Metal normal prediction requires complete eight-lane SIMD groups".into());
+        }
         Ok(Self {
             grid: pipeline("cube_grid_taps")?,
             degrid: pipeline("cube_degrid_taps")?,
             unique_prediction: pipeline("cube_predict_unique")?,
             residual: pipeline("cube_residual_connected")?,
-            normal_prediction: pipeline("normal_predict")?,
+            normal_prediction,
             normal_accumulation: pipeline("normal_accumulate")?,
             stage_profiler: std::env::var_os("CASA_RS_PROFILE_METAL_STAGES")
                 .map(|_| MetalStageProfiler::new(device))
@@ -495,7 +519,7 @@ impl MetalCubeKernels {
             &parameters,
             shape,
             [&self.unique_prediction, &self.residual],
-            [shape[0], shape[1]],
+            [shape[0] as usize, shape[1] as usize],
         )
     }
 
@@ -511,7 +535,7 @@ impl MetalCubeKernels {
             &shape,
             [shape[1], shape[0], 0, 0, shape[2], shape[3], 1, 0],
             [&self.normal_prediction, &self.normal_accumulation],
-            [shape[1], shape[0]],
+            [shape[1] as usize * 8, shape[0] as usize],
         )
     }
 
@@ -522,7 +546,7 @@ impl MetalCubeKernels {
         parameters: &T,
         shape: [u32; 8],
         pipelines: [&ProtocolObject<dyn MTLComputePipelineState>; 2],
-        counts: [u32; 2],
+        counts: [usize; 2],
     ) -> Result<Option<MetalStageProfile>, String> {
         let profile = self
             .stage_profiler
@@ -555,7 +579,7 @@ impl MetalCubeKernels {
             unsafe { encoder.setBytes_length_atIndex(pointer, size_of::<T>(), buffers.len()) };
             encoder.dispatchThreads_threadsPerThreadgroup(
                 MTLSize {
-                    width: count as usize,
+                    width: count,
                     height: 1,
                     depth: 1,
                 },
