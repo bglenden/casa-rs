@@ -8,7 +8,7 @@ mod bulk_wave;
 mod execute;
 #[cfg(test)]
 mod input;
-mod metal_plan;
+pub(crate) mod metal_plan;
 mod metal_wave;
 #[cfg(test)]
 mod phase;

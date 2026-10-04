@@ -366,13 +366,17 @@ pub fn validate_installed_implementation(
             .into_iter()
             .filter(|requirement| {
                 if *requirement == TaskRequirement::MetalGridder {
-                    return !supports_task(*requirement)
-                        || problem.geometry().spectral().output_channels() < 2
-                        || !casa_imaging_runtime::CubePhase::supports(problem).unwrap_or(false)
-                        || !matches!(
+                    let cube = problem.geometry().spectral().output_channels() >= 2
+                        && casa_imaging_runtime::CubePhase::supports(problem).unwrap_or(false)
+                        && matches!(
                             problem.reconstruction().basis(),
                             ReconstructionBasis::ChannelLocal { .. }
                         );
+                    let scalar = matches!(
+                        problem.reconstruction().basis(),
+                        ReconstructionBasis::Constant
+                    ) && casa_imaging_runtime::supports_metal_normal(problem);
+                    return !supports_task(*requirement) || !(cube || scalar);
                 }
                 !supports_task(*requirement)
             })

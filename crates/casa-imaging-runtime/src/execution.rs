@@ -3613,7 +3613,8 @@ fn validate_domain(node: &WorkNode) -> Result<(), ExecutionError> {
         .collect::<Vec<_>>();
     if let Some(demand_id) = metal {
         let supported = matches!(node.domain, WorkDomain::Metal { .. })
-            || (node.domain == WorkDomain::Io && node.kind.reads_observation());
+            || (node.domain == WorkDomain::Io
+                && (node.kind.reads_observation() || node.kind == WorkKind::Spill));
         if !supported
             || demand_id.is_empty()
             || accelerator_claims.len() != 1
@@ -3624,7 +3625,7 @@ fn validate_domain(node: &WorkNode) -> Result<(), ExecutionError> {
                 LeaseResource::AcceleratorCommandQueue { demand_id: id } if id == demand_id)
         {
             return Err(ExecutionError::invalid_plan(format!(
-                "work node {} requires one matching accelerator and command-queue claim in Metal or observation I/O work",
+                "work node {} requires one matching accelerator and command-queue claim in Metal or streamed I/O work",
                 node.id.as_str()
             )));
         }

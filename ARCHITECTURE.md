@@ -75,10 +75,12 @@ inputs at the execution and receipt boundary; runtime does not own or invoke
 reprojection algorithms. Its Metal module binds only plan-selected physical
 facts under a scheduler-issued lease authority, materializes only admitted live
 GPU-visible slots, and retires them at the allocation ledger's release events.
-An observation I/O node may explicitly claim accelerator participation while
+An observation or managed-replay I/O node may explicitly claim accelerator participation while
 retaining I/O-depth admission and both I/O/device terminal fences; CPU-only
-buffers do not become Metal allocations. Bounded synchronous command batches
-reuse residency within the stage without completing either terminal fence.
+buffers do not become Metal allocations. Bounded command batches reuse residency
+within the stage without completing either terminal fence. Pending commands own
+their device dependencies; batch-scoped autorelease pools release framework
+temporaries without relying on a Cocoa event loop on Rust worker threads.
 The runtime owns command queues, device fences, cancellation drain,
 and canonical work measurements; implementation registries retain kernel and
 Numerics Contract ownership, and unavailable Metal work fails typed without CPU
@@ -768,10 +770,16 @@ retained-state reservations. The existing CLEAN controller remains authoritative
 across major cycles; a wave that cannot fit even one output band fails instead
 of exceeding its budget.
 
-Metal gridding is not installed at the application boundary. Runtime Metal
-resource and receipt types define a future execution contract; they do not
-constitute a production imaging route. All production FFTs use FFTW; there is
-no application-level FFT backend selector or fallback.
+Explicit Metal spatial execution is installed for supported standard channel-local
+cubes and single-chart Stokes-I, constant-basis MFS residual refresh. Both use the
+same admitted device/queue/residency/fence runtime and seven-tap spatial primitives.
+MFS keeps model and normal grids resident across bounded replay batches, using
+two reusable staging slots and a single final normal-grid import. Model FFTs,
+normalization, CLEAN and publication remain authoritative shared machinery;
+initial MFS imaging remains CPU work. Unsupported device geometry fails rather
+than falling back. All production FFTs use FFTW; there is no application-level
+FFT backend selector or fallback. Performance evidence for capped CLEAN is not
+full scientific acceptance.
 
 W-projection is installed as an explicit paired measurement transform. The
 model binds the selected projected-|W| envelope and optional plane count;

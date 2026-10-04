@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Declare the cube spatial arena on the existing observation-read stage.
+//! Declare a shared spatial arena on an existing observation or replay stage.
 
 use crate::*;
 use std::{collections::BTreeSet, io};
@@ -11,7 +11,7 @@ const DRIVER_BYTES: u64 = 96 << 20;
 const JIT_BYTES: u64 = 32 << 20;
 const COMMAND_BYTES: u64 = 16 << 20;
 
-pub(super) fn compose(
+pub(crate) fn compose(
     base: PhysicalWorkBinding,
     authority: &ResourceAuthority,
     read: &WorkNodeId,
@@ -38,7 +38,7 @@ pub(super) fn compose(
         .find(|v| v.kind == MemoryViewKind::Host && v.domain == metal.domain)
         .ok_or_else(|| io::Error::other("Metal cube requires unified host/device memory"))?;
     let mut alternative = base.execution_dag().resource_alternative().clone();
-    let demand_id = format!("{}-cube-metal", read.as_str());
+    let demand_id = format!("{}-spatial-metal", read.as_str());
     alternative.demand.accelerators.push(AcceleratorDemand {
         demand_id: demand_id.clone(),
         accelerator: accelerator.id.clone(),
@@ -55,7 +55,7 @@ pub(super) fn compose(
         views: BTreeSet::from([host.id.clone(), metal.id.clone()]),
         alignment_bytes: 64,
         storage_mode: StorageMode::MetalShared,
-        layout: AllocationLayout::new("cube-spatial-arena"),
+        layout: AllocationLayout::new("spatial-arena"),
         initialization: InitializationPolicy::OverwriteBeforeRead,
         access: AllocationAccess::ReadWrite,
     };

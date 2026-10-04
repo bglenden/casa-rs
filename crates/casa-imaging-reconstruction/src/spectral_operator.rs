@@ -9712,6 +9712,23 @@ impl SpectralSlabOperator {
         Ok(predicted)
     }
 
+    pub(crate) fn device_normal_model(
+        &self,
+    ) -> Result<(&[Complex64], Vec<[f32; 7]>), SpectralOperatorError> {
+        let ConvolutionOperator::Standard(convolution) = &self.gridder else {
+            return Err(SpectralOperatorError::UnsupportedGriddedReplay);
+        };
+        if self.forward_grids.len() != 1 {
+            return Err(SpectralOperatorError::UnsupportedGriddedReplay);
+        }
+        Ok((
+            self.forward_grids[0]
+                .as_slice()
+                .ok_or(SpectralOperatorError::UnsupportedGeometry)?,
+            convolution.float_weights(),
+        ))
+    }
+
     fn aw_visibility_sample(
         &self,
         coordinates: AwReplayCoordinates,

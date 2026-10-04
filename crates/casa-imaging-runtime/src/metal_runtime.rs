@@ -187,6 +187,7 @@ impl MetalExecutionDecision {
                     | WorkKind::Compute
                     | WorkKind::ObservationRead
                     | WorkKind::ObservationReadWriteback
+                    | WorkKind::Spill
             ) {
                 return Err(MetalRuntimeError::InvalidPlan(format!(
                     "Metal node {} has runtime-incompatible work kind {:?}",
@@ -568,11 +569,12 @@ impl MetalBatchAccess<'_> {
                 "failed Metal node cannot dispatch".into(),
             ));
         }
-        drain_cube_commands(&self.runtime.decision, &mut inner, None)?;
+        metal_call(|| drain_cube_commands(&self.runtime.decision, &mut inner, None))?;
         let before = inner.nodes[&self.node].stats;
-        let ticket =
-            submit_platform_batch(&self.runtime.decision, &mut inner, &self.node, dispatches)?;
-        drain_cube_commands(&self.runtime.decision, &mut inner, Some(ticket))?;
+        let ticket = metal_call(|| {
+            submit_platform_batch(&self.runtime.decision, &mut inner, &self.node, dispatches)
+        })?;
+        metal_call(|| drain_cube_commands(&self.runtime.decision, &mut inner, Some(ticket)))?;
         let after = inner.nodes[&self.node].stats;
         Ok(MetalBatchStats {
             batches: after.batches - before.batches,
@@ -597,7 +599,9 @@ impl MetalBatchAccess<'_> {
                 "failed Metal node cannot dispatch".into(),
             ));
         }
-        submit_platform_batch(&self.runtime.decision, &mut inner, &self.node, dispatches)
+        metal_call(|| {
+            submit_platform_batch(&self.runtime.decision, &mut inner, &self.node, dispatches)
+        })
     }
 
     /// Submit two connected passes without returning predictions to the host.
@@ -612,17 +616,46 @@ impl MetalBatchAccess<'_> {
                 "failed Metal node cannot dispatch".into(),
             ));
         }
-        submit_cube_residual(&self.runtime.decision, &mut inner, &self.node, dispatch)
+        metal_call(|| {
+            submit_cube_residual(&self.runtime.decision, &mut inner, &self.node, dispatch)
+        })
+    }
+
+    pub(crate) fn submit_normal(
+        &self,
+        dispatch: NormalDispatch<'_>,
+    ) -> Result<u64, MetalRuntimeError> {
+        let mut inner = self.lock()?;
+        if inner.nodes[&self.node].failed {
+            return Err(MetalRuntimeError::InvalidPlan(
+                "failed Metal node cannot dispatch".into(),
+            ));
+        }
+        metal_call(|| submit_normal(&self.runtime.decision, &mut inner, &self.node, dispatch))
     }
 
     pub(crate) fn wait(&self, ticket: u64) -> Result<(), MetalRuntimeError> {
         let mut inner = self.lock()?;
-        drain_cube_commands(&self.runtime.decision, &mut inner, Some(ticket))
+        metal_call(|| drain_cube_commands(&self.runtime.decision, &mut inner, Some(ticket)))
     }
 
     pub(crate) fn drain(&self) -> Result<(), MetalRuntimeError> {
         let mut inner = self.lock()?;
-        drain_cube_commands(&self.runtime.decision, &mut inner, None)
+        metal_call(|| drain_cube_commands(&self.runtime.decision, &mut inner, None))
+    }
+}
+
+// Metal also returns autoreleased encoder, command and profiling objects. Rust
+// worker threads have no Cocoa event loop to drain them. Owned pending commands
+// retain their dependencies across this boundary; completed temporaries do not.
+fn metal_call<R>(operation: impl FnOnce() -> R) -> R {
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    {
+        objc2::rc::autoreleasepool(|_| operation())
+    }
+    #[cfg(not(all(target_os = "macos", not(coverage))))]
+    {
+        operation()
     }
 }
 
@@ -682,6 +715,14 @@ pub(crate) struct CubeResidualDispatch<'a> {
     /// grid width/height, residual planes, convolution table rows.
     pub shape: [u32; 8],
     pub correlations: casa_imaging_reconstruction::runtime_adapter::DeviceCorrelations,
+}
+
+/// Packed records, groups, table, model, predictions, normal accumulation, status.
+#[derive(Clone, Copy)]
+pub(crate) struct NormalDispatch<'a> {
+    pub regions: [MetalBufferRegion<'a>; 7],
+    /// Record count, group count, grid width, grid height.
+    pub shape: [u32; 4],
 }
 
 impl fmt::Debug for MetalExecutionState {
@@ -794,7 +835,7 @@ impl MetalExecutionState {
         context: WorkExecutionContext<'_>,
     ) -> Result<(), MetalRuntimeError> {
         let mut inner = self.lock_for_work(context)?;
-        prepare_platform(&self.decision, &mut inner, &context.node().id)?;
+        metal_call(|| prepare_platform(&self.decision, &mut inner, &context.node().id))?;
         inner
             .nodes
             .entry(context.node().id.clone())
@@ -823,7 +864,7 @@ impl MetalExecutionState {
         {
             return Err(MetalRuntimeError::LeaseMismatch);
         }
-        drain_cube_commands(&self.decision, &mut inner, None)?;
+        metal_call(|| drain_cube_commands(&self.decision, &mut inner, None))?;
         let progress = inner
             .nodes
             .get_mut(&context.node().id)
@@ -869,8 +910,8 @@ impl MetalExecutionState {
             .inner
             .lock()
             .map_err(|_| MetalRuntimeError::RuntimeStatePoisoned)?;
-        drain_cube_commands(&self.decision, &mut inner, None)?;
-        close_platform(&mut inner)?;
+        metal_call(|| drain_cube_commands(&self.decision, &mut inner, None))?;
+        metal_call(|| close_platform(&mut inner))?;
         inner.closed = true;
         Ok(())
     }
@@ -888,7 +929,7 @@ impl MetalExecutionState {
             .inner
             .lock()
             .map_err(|_| MetalRuntimeError::RuntimeStatePoisoned)?;
-        drain_cube_commands(&self.decision, &mut inner, None)?;
+        metal_call(|| drain_cube_commands(&self.decision, &mut inner, None))?;
         #[cfg(all(target_os = "macos", not(coverage)))]
         if let Some(platform) = inner.platform.as_mut() {
             platform.buffers.remove(slot);
@@ -1569,6 +1610,109 @@ fn submit_cube_residual(
     Err(MetalRuntimeError::UnsupportedPlatform)
 }
 
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn submit_normal(
+    decision: &MetalExecutionDecision,
+    inner: &mut MetalExecutionInner,
+    node: &WorkNodeId,
+    dispatch: NormalDispatch<'_>,
+) -> Result<u64, MetalRuntimeError> {
+    use casa_imaging_reconstruction::runtime_adapter::{DeviceNormalGroup, DeviceNormalRecord};
+    let [records, groups, width, height] = dispatch.shape.map(|n| n as usize);
+    let invalid =
+        || MetalRuntimeError::InvalidPlan("invalid device normal shape or regions".into());
+    let cells = width
+        .checked_mul(height)
+        .filter(|&n| n <= u32::MAX as usize)
+        .ok_or_else(invalid)?;
+    if records == 0 || groups == 0 || groups > records || width < 7 || height < 7 {
+        return Err(invalid());
+    }
+    let sizes = [
+        records.checked_mul(size_of::<DeviceNormalRecord>()),
+        groups.checked_mul(size_of::<DeviceNormalGroup>()),
+        Some(casa_imaging_reconstruction::runtime_adapter::BandPlan::spatial_weight_bytes()),
+        cells.checked_mul(8),
+        groups.checked_mul(8),
+        cells.checked_mul(8),
+        Some(4),
+    ];
+    for (&region, bytes) in dispatch.regions.iter().zip(sizes) {
+        if region.offset % 8 != 0 || bytes.is_none_or(|n| n > region.bytes) {
+            return Err(invalid());
+        }
+    }
+    for (index, &output) in dispatch.regions.iter().enumerate().skip(4) {
+        if dispatch
+            .regions
+            .iter()
+            .enumerate()
+            .any(|(other, &r)| other != index && r.overlaps(output))
+        {
+            return Err(invalid());
+        }
+    }
+    let platform = inner.platform.as_mut().expect("prepared platform");
+    let buffers = dispatch
+        .regions
+        .iter()
+        .map(|&r| buffer_region(decision, platform, node, r))
+        .collect::<Result<Vec<_>, _>>()?;
+    let command = platform
+        .queue
+        .commandBuffer()
+        .ok_or(MetalRuntimeError::CommandQueueUnavailable)?;
+    let stage_profile = platform
+        .kernels
+        .as_ref()
+        .expect("prepared kernels")
+        .encode_normal(&command, &buffers, dispatch.shape)
+        .map_err(MetalRuntimeError::Encoding)?;
+    let ticket = platform.next_ticket;
+    platform.next_ticket = ticket
+        .checked_add(1)
+        .ok_or(MetalRuntimeError::Overflow("command ticket"))?;
+    let started = Instant::now();
+    command.commit();
+    let status = dispatch.regions[6];
+    platform.pending.insert(
+        ticket,
+        PendingCubeCommand {
+            command,
+            node: node.clone(),
+            regions: dispatch
+                .regions
+                .iter()
+                .map(|r| (r.allocation.clone(), r.offset, r.bytes))
+                .collect(),
+            status: Some(MetalBufferRegionOwned {
+                allocation: status.allocation.clone(),
+                offset: status.offset,
+                bytes: status.bytes,
+            }),
+            stats: MetalBatchStats {
+                batches: 1,
+                grid_samples: records as u64,
+                degrid_samples: groups as u64,
+                submit_wait_seconds: started.elapsed().as_secs_f64(),
+                ..Default::default()
+            },
+            stage_profile,
+        },
+    );
+    Ok(ticket)
+}
+
+#[cfg(not(all(target_os = "macos", not(coverage))))]
+fn submit_normal(
+    _: &MetalExecutionDecision,
+    _: &mut MetalExecutionInner,
+    _: &WorkNodeId,
+    _: NormalDispatch<'_>,
+) -> Result<u64, MetalRuntimeError> {
+    Err(MetalRuntimeError::UnsupportedPlatform)
+}
+
 /// Drain every selected ticket even if one fails. Mutable access is released only
 /// after the command fence; failure never permits retry into partly filled grids.
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -1877,6 +2021,48 @@ mod tests {
                 SchedulerAction::Complete(_)
             ));
         }
+    }
+
+    #[test]
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn batch_pool_releases_temporaries_without_releasing_owned_pending_work() {
+        let (weak, pending) = metal_call(|| {
+            let temporary = objc2::runtime::NSObject::new();
+            let weak = objc2::rc::Weak::from_retained(&temporary);
+            let pending = temporary.clone();
+            let _ = Retained::autorelease_ptr(temporary);
+            (weak, pending)
+        });
+        assert!(
+            weak.load().is_some(),
+            "pending owner survives the batch pool"
+        );
+        drop(pending);
+        assert!(
+            weak.load().is_none(),
+            "no autoreleased reference survives the batch"
+        );
+    }
+
+    #[test]
+    fn managed_spill_binds_declared_device_work_without_observation_identity() {
+        let (mut spec, topology) = mixed_specification();
+        let node = &mut spec.nodes[0];
+        node.kind = WorkKind::Spill;
+        node.claims
+            .retain(|claim| !matches!(claim.resource, LeaseResource::MeasurementSetLock { .. }));
+        let plan = ExecutionDag::new(spec).expect("managed spill DAG");
+        let decision = MetalExecutionDecision::bind(&plan, &topology).expect("spill decision");
+        assert_eq!(decision.nodes().len(), 1);
+        let authority = authority(topology);
+        let mut scheduler =
+            ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &authority, None)
+                .expect("spill admission");
+        let SchedulerAction::Work(work) = scheduler.next_action().expect("spill") else {
+            panic!("spill work");
+        };
+        assert!(work.metal_execution().is_some());
+        assert_eq!(work.for_fence(FenceKind::Device).allocations().len(), 2);
     }
 
     #[test]

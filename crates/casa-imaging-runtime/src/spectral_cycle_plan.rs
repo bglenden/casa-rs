@@ -128,8 +128,10 @@ pub struct SpectralCycleExecutionPolicy {
 }
 
 impl SpectralCycleExecutionPolicy {
-    /// Require the native cube's admitted Metal spatial operators. An unavailable
-    /// device or unsupported geometry fails the run without changing execution.
+    /// Require admitted native Metal spatial operators: cube initial/residual
+    /// imaging and scalar MFS residual refresh. Other phases remain their shared
+    /// CPU implementations. Unavailable devices or unsupported geometry fail
+    /// without backend substitution.
     #[must_use]
     pub fn with_metal_cube(mut self, enabled: bool) -> Self {
         self.metal_cube = enabled;
@@ -799,6 +801,34 @@ impl SpectralCyclePlan {
                         },
                     )?,
                 };
+                if policy.metal_cube && pass.phase() == SpectralPassPhase::FinalMajor {
+                    let replay = gridded_replay
+                        .as_ref()
+                        .ok_or(SpectralCyclePlanError::InvalidGriddedNormalReplay)?;
+                    let window = candidate
+                        .window
+                        .as_ref()
+                        .ok_or(SpectralCyclePlanError::InvalidGriddedNormalReplay)?;
+                    let binding = replay
+                        .metal_plan(window, candidate.complete_data.replay_node())
+                        .map_err(SpectralCyclePlanError::CubeStorage)?;
+                    let reconcile = candidate
+                        .physical
+                        .observation_transaction()
+                        .post_replay_reconciliation()
+                        .ok_or(SpectralCyclePlanError::Overflow)?
+                        .clone();
+                    candidate.physical = crate::streaming_cube::metal_plan::compose(
+                        candidate.physical,
+                        &policy.authority,
+                        candidate.complete_data.replay_node(),
+                        &reconcile,
+                        &binding.allocation,
+                        binding.bytes as u64,
+                    )
+                    .map_err(SpectralCyclePlanError::CubeStorage)?;
+                    candidate.complete_data.metal_normal = Some(binding);
+                }
                 if !bounded_channels || depth == 1 || fits(&candidate)? {
                     if strategy == GriddedNormalStrategy::CreateManagedSpill
                         && bounded_channels

@@ -83,15 +83,16 @@ pub use spectral_operator::{
 #[doc(hidden)]
 pub mod runtime_adapter {
     pub use crate::gridded_normal_operator::{
-        GRIDDED_NORMAL_LANE_COUNT, GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
-        GRIDDED_NORMAL_PARTITION_COUNT, GriddedNormalCompilationMeasurements,
-        GriddedNormalCompilationPlan, GriddedNormalExecutionResidency, GriddedNormalFrameSelection,
-        GriddedNormalOperatorApply, GriddedNormalOperatorCompiler, GriddedNormalOperatorFrame,
-        GriddedNormalOperatorProgram, GriddedNormalOperatorStageTimings, GriddedNormalPartial,
-        GriddedNormalReplaySource, GriddedNormalRoutingMeasurements,
-        GriddedNormalSourceCardinality, GriddedNormalStorageLayout, GriddedNormalStoragePlan,
-        GriddedNormalWork, SourceCardinalityObservation, gridded_normal_operator_record_bytes,
-        gridded_normal_route_capacity_bytes, standard_convolution_support,
+        DeviceNormalApply, DeviceNormalGroup, DeviceNormalRecord, GRIDDED_NORMAL_LANE_COUNT,
+        GRIDDED_NORMAL_OPERATOR_RECORD_BYTES, GRIDDED_NORMAL_PARTITION_COUNT,
+        GriddedNormalCompilationMeasurements, GriddedNormalCompilationPlan,
+        GriddedNormalExecutionResidency, GriddedNormalFrameSelection, GriddedNormalOperatorApply,
+        GriddedNormalOperatorCompiler, GriddedNormalOperatorFrame, GriddedNormalOperatorProgram,
+        GriddedNormalOperatorStageTimings, GriddedNormalPartial, GriddedNormalReplaySource,
+        GriddedNormalRoutingMeasurements, GriddedNormalSourceCardinality,
+        GriddedNormalStorageLayout, GriddedNormalStoragePlan, GriddedNormalWork,
+        SourceCardinalityObservation, gridded_normal_operator_record_bytes,
+        gridded_normal_route_capacity_bytes, standard_convolution_support, supports_device_normal,
     };
     pub use crate::major_cycle::CubeNormalRefresh;
     pub use crate::reconstruction_cycle::{

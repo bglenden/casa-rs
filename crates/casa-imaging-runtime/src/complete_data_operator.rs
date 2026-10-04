@@ -68,6 +68,8 @@ use crate::managed_spill::{
 };
 
 const GRIDDED_NORMAL_SOURCE_SLOTS: u64 = 2;
+mod metal_normal;
+pub(crate) use metal_normal::MetalNormalPlan;
 
 #[path = "streaming_cube/completion.rs"]
 mod streaming_completion;
@@ -1345,6 +1347,13 @@ fn gridded_buffer_claim_satisfies(
 }
 
 impl FrozenGriddedNormalReplay {
+    pub(crate) fn metal_plan(
+        &self,
+        window: &GriddedNormalReplayWindowPlan,
+        node: &WorkNodeId,
+    ) -> io::Result<MetalNormalPlan> {
+        MetalNormalPlan::new(&self.backing.program, window, node)
+    }
     pub(crate) fn bind_prior(
         &self,
         prior: FinalNormalState,
@@ -1763,7 +1772,7 @@ impl FrozenGriddedNormalReplay {
         &mut self,
         context: WorkExecutionContext<'_>,
         pass_ordinal: u32,
-        state: GriddedNormalOperatorState,
+        state: GriddedNormalReplayState,
         route_capacity_bytes: u64,
     ) -> io::Result<(CompleteDataSlabResult, PreparedSpectralOperatorRecycle)> {
         let budget = self.backing.spill.budget();
@@ -1887,16 +1896,30 @@ impl FrozenGriddedNormalReplay {
             .checked_add(1)
             .ok_or_else(|| io::Error::other("gridded-normal pass count overflow"))?;
         self.failed_window = true;
-        let outcome = execute_bounded(
-            plan,
-            pass_ordinal,
-            source,
-            GriddedNormalReplayKernel {
-                state,
-                record_bytes,
-                timings: GriddedNormalReplayTimings::new(pass_ordinal, workers),
-            },
-        );
+        let outcome = match state {
+            GriddedNormalReplayState::Cpu(state) => execute_bounded(
+                plan,
+                pass_ordinal,
+                source,
+                GriddedNormalReplayKernel {
+                    state,
+                    record_bytes,
+                    timings: GriddedNormalReplayTimings::new(pass_ordinal, workers),
+                },
+            ),
+            GriddedNormalReplayState::Metal(state, binding) => {
+                let runtime = context.metal_execution().map_err(io::Error::other)?;
+                let access = runtime.batch_access(context).map_err(io::Error::other)?;
+                if self.backing.program.record_count() == 0 {
+                    runtime
+                        .complete_empty_source(context)
+                        .map_err(io::Error::other)?;
+                }
+                let kernel = metal_normal::MetalNormalReplayKernel::new(state, access, &binding)
+                    .map_err(io::Error::other)?;
+                execute_bounded(plan, pass_ordinal, source, kernel)
+            }
+        };
         let outcome = match outcome {
             Ok(outcome) => outcome,
             Err(failure) => {
@@ -2643,6 +2666,7 @@ pub struct CompleteDataPlanFragment {
     aw_reader: Option<PreparedArtifactReaderPlan>,
     initial_working_set: Option<InitialPhaseWorkingSetBinding>,
     pub(crate) cube_state: Option<Arc<crate::cube_state_plan::CubeStatePlan>>,
+    pub(crate) metal_normal: Option<MetalNormalPlan>,
 }
 
 #[derive(Debug, Clone)]
@@ -2866,6 +2890,7 @@ impl CompleteDataPlanFragment {
             aw_reader: None,
             initial_working_set: None,
             cube_state: None,
+            metal_normal: None,
         })
     }
 
@@ -2984,6 +3009,7 @@ impl CompleteDataPlanFragment {
             aw_reader: None,
             initial_working_set: None,
             cube_state: None,
+            metal_normal: None,
         })
     }
 
@@ -3279,7 +3305,7 @@ impl CompleteDataPlanFragment {
         prior: &mut GriddedNormalPrior,
         prepared: CompleteDataPreparedState,
         artifact: &FrozenGriddedNormalReplay,
-    ) -> Result<GriddedNormalOperatorState, CompleteDataPlanError> {
+    ) -> Result<GriddedNormalReplayState, CompleteDataPlanError> {
         if context.node().id != self.replay_node
             || self.workload.pass() != SpectralOperatorPass::ResidualRefresh
             || self.execution_role != CompleteDataExecutionRole::GriddedArtifact
@@ -4744,7 +4770,7 @@ impl CompleteDataPreparedState {
         prior: &mut GriddedNormalPrior,
         artifact: &FrozenGriddedNormalReplay,
         fragment: &CompleteDataPlanFragment,
-    ) -> Result<GriddedNormalOperatorState, CompleteDataPlanError> {
+    ) -> Result<GriddedNormalReplayState, CompleteDataPlanError> {
         if self.problem != problem.problem_id()
             || self.attempt != context.attempt_id()
             || self.preparation_node != fragment.preparation_node
@@ -4758,6 +4784,31 @@ impl CompleteDataPreparedState {
         let reconciliation_node = self
             .reconciliation_node
             .ok_or(CompleteDataPlanError::MissingReconciliationNode)?;
+        let binding = CompleteDataExecutionBinding {
+            problem: problem.problem_id(),
+            attempt: context.attempt_id(),
+            replay_node: context.node().id.clone(),
+            reconciliation_node,
+            lease_epoch: context.lease_epoch(),
+            observation_predecessor_required: false,
+        };
+        if let Some(plan) = &fragment.metal_normal {
+            let state = artifact
+                .backing
+                .program
+                .begin_device_normal(problem, preparation.final_model(), prior, self.owner)
+                .map_err(|error| {
+                    CompleteDataPlanError::Operator(CompleteDataOperatorError::Owner(error))
+                })?;
+            return Ok(GriddedNormalReplayState::Metal(
+                metal_normal::DeviceNormalOperatorState {
+                    state,
+                    backing: Arc::clone(&artifact.backing),
+                    binding,
+                },
+                plan.clone(),
+            ));
+        }
         let window_plan = artifact
             .window_plan()
             .ok_or(CompleteDataPlanError::PlanMismatch)?;
@@ -4802,18 +4853,11 @@ impl CompleteDataPreparedState {
         .map_err(|error| {
             CompleteDataPlanError::Operator(CompleteDataOperatorError::Owner(error))
         })?;
-        Ok(GriddedNormalOperatorState {
+        Ok(GriddedNormalReplayState::Cpu(GriddedNormalOperatorState {
             state,
             backing: Arc::clone(&artifact.backing),
-            binding: CompleteDataExecutionBinding {
-                problem: problem.problem_id(),
-                attempt: context.attempt_id(),
-                replay_node: context.node().id.clone(),
-                reconciliation_node,
-                lease_epoch: context.lease_epoch(),
-                observation_predecessor_required: false,
-            },
-        })
+            binding,
+        }))
     }
 }
 
@@ -4821,6 +4865,11 @@ pub(crate) struct GriddedNormalOperatorState {
     state: GriddedNormalOperatorApply,
     backing: Arc<RetainedGriddedBacking>,
     binding: CompleteDataExecutionBinding,
+}
+
+pub(crate) enum GriddedNormalReplayState {
+    Cpu(GriddedNormalOperatorState),
+    Metal(metal_normal::DeviceNormalOperatorState, MetalNormalPlan),
 }
 
 impl GriddedNormalOperatorState {

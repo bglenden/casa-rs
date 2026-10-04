@@ -23,7 +23,11 @@ pub use compilation::{
 use spectral_records::StandardRecordScratch;
 #[cfg(test)]
 use std::collections::{BTreeMap, btree_map::Entry};
+mod device;
 mod two_domain;
+pub use device::{
+    DeviceNormalApply, DeviceNormalGroup, DeviceNormalRecord, supports_device_normal,
+};
 use two_domain::{
     GriddedNormalClassification, GriddedNormalDomainTileCatalogs, GriddedNormalGroupSpan,
     GriddedNormalRoute, GriddedNormalTileAccumulator, PreparedGriddedNormalTwoDomainWindow,
@@ -1912,46 +1916,9 @@ impl GriddedNormalOperatorProgram {
         {
             return Err(SpectralOperatorError::GriddedRecordMismatch);
         }
-        let (prepared_specification, workload, mut ffts, aw_projection) = prepared.into_parts();
-        if prepared_specification.aw_projection().is_some() != aw_projection.is_some() {
-            return Err(SpectralOperatorError::GriddedRecordMismatch);
-        }
+        let (prepared_specification, recycle, operators, reusable_domains, model_generation) =
+            self.prepare_apply_model(problem, model, prior, prepared)?;
         let slab = prepared_specification.slab();
-        if prior.program != self.identity()
-            || problem.problem_id() != self.manifest.specification.problem_id()
-            || prepared_specification
-                != self.specification_for_slab(
-                    problem,
-                    slab.core_range().start,
-                    slab.core_depth(),
-                )?
-            || workload.pass() != SpectralOperatorPass::ResidualRefresh
-        {
-            return Err(SpectralOperatorError::GriddedRecordMismatch);
-        }
-        if ffts.len() != prepared_specification.chart_count() {
-            return Err(SpectralOperatorError::GriddedRecordMismatch);
-        }
-        let model_generation = model.generation_id();
-        let reusable_domains = prior.take_window(slab.core_range())?;
-        if reusable_domains.len() != prepared_specification.domain_count() {
-            return Err(SpectralOperatorError::ReusableNormalStateMismatch);
-        }
-        let prepared_specification = Arc::new(prepared_specification);
-        let mut operators = Vec::with_capacity(prepared_specification.chart_count());
-        for (chart, fft) in prepared_specification.charts().iter().zip(ffts.drain(..)) {
-            let mut operator = SpectralSlabOperator::new_chart(
-                Arc::clone(&prepared_specification),
-                chart,
-                workload,
-                fft,
-                0,
-                aw_projection.clone(),
-            )?;
-            operator
-                .prepare_gridded_normal_model(model, &reusable_domains[chart.domain_ordinal()])?;
-            operators.push(operator);
-        }
         let core_depth = self
             .manifest
             .record_layout
@@ -1999,10 +1966,7 @@ impl GriddedNormalOperatorProgram {
         Ok(GriddedNormalOperatorApply {
             program: self.clone(),
             specification: prepared_specification,
-            recycle: PreparedSpectralOperatorRecycle {
-                ffts,
-                aw_projection,
-            },
+            recycle,
             operators,
             reusable_domains,
             model_generation,
@@ -2014,7 +1978,6 @@ impl GriddedNormalOperatorProgram {
             tile_catalogs,
             tile_accumulators,
             normal_grids: domain_planes(),
-
             science_prediction_trace: imaging_science_trace_enabled().then(ScienceTraceDigest::new),
             #[cfg(test)]
             next_sector_commit: 0,
@@ -2032,7 +1995,75 @@ impl GriddedNormalOperatorProgram {
             }),
         })
     }
+
+    fn prepare_apply_model(
+        &self,
+        problem: &CompiledProblem,
+        model: &ModelGeneration,
+        prior: &mut GriddedNormalReplaySource,
+        prepared: PreparedSpectralOperator,
+    ) -> Result<GriddedNormalModelPreparation, SpectralOperatorError> {
+        require_supported_basis(&problem.reconstruction().basis())?;
+        let (prepared_specification, workload, mut ffts, aw_projection) = prepared.into_parts();
+        if prepared_specification.aw_projection().is_some() != aw_projection.is_some() {
+            return Err(SpectralOperatorError::GriddedRecordMismatch);
+        }
+        let slab = prepared_specification.slab();
+        if prior.program != self.identity()
+            || problem.problem_id() != self.manifest.specification.problem_id()
+            || prepared_specification
+                != self.specification_for_slab(
+                    problem,
+                    slab.core_range().start,
+                    slab.core_depth(),
+                )?
+            || workload.pass() != SpectralOperatorPass::ResidualRefresh
+        {
+            return Err(SpectralOperatorError::GriddedRecordMismatch);
+        }
+        if ffts.len() != prepared_specification.chart_count() {
+            return Err(SpectralOperatorError::GriddedRecordMismatch);
+        }
+        let model_generation = model.generation_id();
+        let reusable_domains = prior.take_window(slab.core_range())?;
+        if reusable_domains.len() != prepared_specification.domain_count() {
+            return Err(SpectralOperatorError::ReusableNormalStateMismatch);
+        }
+        let prepared_specification = Arc::new(prepared_specification);
+        let mut operators = Vec::with_capacity(prepared_specification.chart_count());
+        for (chart, fft) in prepared_specification.charts().iter().zip(ffts.drain(..)) {
+            let mut operator = SpectralSlabOperator::new_chart(
+                Arc::clone(&prepared_specification),
+                chart,
+                workload,
+                fft,
+                0,
+                aw_projection.clone(),
+            )?;
+            operator
+                .prepare_gridded_normal_model(model, &reusable_domains[chart.domain_ordinal()])?;
+            operators.push(operator);
+        }
+        Ok((
+            prepared_specification,
+            PreparedSpectralOperatorRecycle {
+                ffts,
+                aw_projection,
+            },
+            operators,
+            reusable_domains,
+            model_generation,
+        ))
+    }
 }
+
+type GriddedNormalModelPreparation = (
+    Arc<SpectralOperatorSpecification>,
+    PreparedSpectralOperatorRecycle,
+    Vec<SpectralSlabOperator>,
+    Vec<ReusableNormalState>,
+    crate::ModelGenerationId,
+);
 
 /// Immutable program-minted physical frame coverage for one output core.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -2120,6 +2120,16 @@ impl SpectralCycleExecutor {
             let (window, recycle) =
                 replay.execute_bounded(context, stream_ordinal, operator, route_capacity_bytes)?;
             log_imaging_stage_timing("gridded_execute_and_finish", self.pass, started);
+            if self.complete_data.metal_normal.is_some() {
+                let runtime = context.metal_execution().map_err(io::Error::other)?;
+                eprintln!(
+                    "imaging_metal_normal_gpu ordinal={} stats={:?}",
+                    self.pass.ordinal(),
+                    runtime
+                        .batch_stats(self.complete_data.replay_node())
+                        .map_err(io::Error::other)?,
+                );
+            }
             let started = imaging_stage_timing_started();
             fold = Some(
                 match fold.take() {
@@ -3114,6 +3124,15 @@ impl WorkImplementation for SpectralCycleExecutor {
         context: WorkExecutionContext<'_>,
         fence: FenceKind,
     ) -> Result<WorkMeasurements, Self::Error> {
+        if fence == FenceKind::Device
+            && self.complete_data.metal_normal.is_some()
+            && context.node().id == *self.complete_data.replay_node()
+        {
+            context
+                .metal_execution()
+                .and_then(|runtime| runtime.finish(context))
+                .map_err(io::Error::other)?;
+        }
         if let Some(reader) = &self.prepared_artifact_reader
             && context.node().id == *reader.plan().node()
         {

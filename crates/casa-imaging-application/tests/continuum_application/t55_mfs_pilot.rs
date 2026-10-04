@@ -8,6 +8,76 @@ use casa_imaging_runtime::{CapacityDomainId, ResourceOverride, ResourcePolicy};
 use std::{collections::BTreeMap, fs};
 
 #[test]
+#[cfg(target_os = "macos")]
+#[ignore = "requires an actual Metal device and the guarded integration qualification"]
+fn metal_mfs_clean_refresh_and_publication_matches_cpu() {
+    let _execution_guard = EXECUTION_LOCK.lock().unwrap();
+    set_production_io_environment();
+    let root = tempfile::tempdir().unwrap();
+    let ms = spectral_line_measurement_set(root.path());
+    let mut baseline: Option<Vec<Vec<f32>>> = None;
+    for metal in [false, true] {
+        let prefix = root.path().join(if metal { "metal" } else { "cpu" });
+        let mut imaging = request(ms.clone(), prefix.clone(), ContinuumAlgorithm::Clark);
+        imaging.image_size = 64;
+        imaging.weighting = ContinuumWeighting::Natural;
+        imaging.spectral_window = Some("0:0~3".into());
+        imaging.channel_start = None;
+        imaging.channel_count = None;
+        imaging.iterations = 3;
+        imaging.cycle_iterations = 1;
+        imaging.maximum_major_cycles = Some(3);
+        imaging.gain = 0.37;
+        imaging.threshold_jy = 1e-12;
+        imaging.noise_sigma = Some(1e-12);
+        if metal {
+            imaging
+                .task_requirements
+                .push(TaskRequirement::MetalGridder);
+        }
+        imaging.resource_policy = ResourcePolicy::Explicit(ResourceOverride {
+            workers: Some(2),
+            memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 4 << 30)]),
+            ..ResourceOverride::default()
+        });
+        let result = execute_continuum(imaging).expect("connected MFS normal backend");
+        assert_standard_products(&prefix, &result.product_names);
+        assert!(result.outcome.output.major_cycle_count >= 2);
+        let receipt = result.outcome.output.final_major_receipt.as_ref().unwrap();
+        assert_eq!(receipt.status(), ReceiptStatus::Completed);
+        assert_eq!(
+            !receipt
+                .selected_alternative_projection()
+                .demand
+                .accelerators
+                .is_empty(),
+            metal
+        );
+        let products = PRODUCT_SUFFIXES
+            .iter()
+            .map(|suffix| {
+                let image =
+                    PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", prefix.display())))
+                        .unwrap();
+                image
+                    .get_slice(&[0; 4], image.shape())
+                    .unwrap()
+                    .iter()
+                    .copied()
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        if let Some(expected) = &baseline {
+            for (actual, expected) in products.iter().zip(expected) {
+                assert_real_agreement(expected, actual);
+            }
+        } else {
+            baseline = Some(products);
+        }
+    }
+}
+
+#[test]
 #[ignore = "requires the external A+C MFS pilot, durable outputs and a 16-GiB RSS guard"]
 fn full_field_application() {
     let _execution_guard = EXECUTION_LOCK.lock().unwrap();
@@ -66,6 +136,12 @@ fn full_field_application() {
     if workers == 1 {
         imaging.task_requirements.push(TaskRequirement::SerialCpu);
     }
+    let metal = std::env::var_os("CASA_RS_MFS_METAL").is_some();
+    if metal {
+        imaging
+            .task_requirements
+            .push(TaskRequirement::MetalGridder);
+    }
     imaging.resource_policy = ResourcePolicy::Explicit(ResourceOverride {
         workers: Some(workers),
         memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 16 << 30)]),
@@ -100,6 +176,7 @@ fn full_field_application() {
     );
     let summary = serde_json::json!({
         "seconds": seconds, "workers": workers, "terms": terms,
+        "residual_backend": if metal { "metal_normal" } else { "cpu" },
         "initial_admitted_workers": output.initial_receipt.selected_alternative_projection().demand.workers.hard(),
         "final_major_admitted_workers": output.final_major_receipt.as_ref().map(|receipt| receipt.selected_alternative_projection().demand.workers.hard()),
         "worker_count_scope": "workers is the request; admitted counts are phase reservations, not measured concurrent grid workers; see stream/replay measurements for execution",

@@ -39,6 +39,12 @@ mod streaming_cube;
 /// Native streaming-cube phases composed by the imaging application.
 #[doc(hidden)]
 pub use streaming_cube::{CubePhase, NativeReplay};
+
+/// Whether the shared device normal operator supports this compiled MFS problem.
+#[doc(hidden)]
+pub fn supports_metal_normal(problem: &casa_imaging_model::CompiledProblem) -> bool {
+    casa_imaging_reconstruction::runtime_adapter::supports_device_normal(problem)
+}
 mod weighting;
 
 pub use execution_bindings::{

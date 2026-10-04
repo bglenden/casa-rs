@@ -28,6 +28,21 @@ struct CubeTap {
     float2 value;
 };
 
+float2 spatial_degrid(CubeTap sample, device const float *weights,
+                      device const float2 *grid, uint height) {
+    float2 result = float2(0.0);
+    for (uint x = 0; x < 7; ++x) {
+        float2 even = float2(0.0), odd = float2(0.0);
+        for (uint y = 0; y < 7; ++y) {
+            float2 value = grid[(sample.x + x) * height + sample.y + y]
+                           * weights[sample.y_weights * 7 + y];
+            if ((y & 1) == 0) even += value; else odd += value;
+        }
+        result += (even + odd) * weights[sample.x_weights * 7 + x];
+    }
+    return result;
+}
+
 kernel void cube_grid_taps(
     device const CubeTap *samples [[buffer(0)]],
     device const float *weights [[buffer(1)]],
@@ -56,19 +71,7 @@ kernel void cube_degrid_taps(
     uint sample_index [[thread_position_in_grid]]) {
     if (sample_index >= shape.x) return;
     CubeTap sample = samples[sample_index];
-    float2 result = float2(0.0);
-    for (uint x = 0; x < 7; ++x) {
-        float2 row_even = float2(0.0);
-        float2 row_odd = float2(0.0);
-        for (uint y = 0; y < 7; ++y) {
-            uint cell = (sample.x + x) * shape.z + sample.y + y;
-            float2 contribution = grid[cell] * weights[sample.y_weights * 7 + y];
-            if ((y & 1) == 0) row_even += contribution;
-            else row_odd += contribution;
-        }
-        result += (row_even + row_odd) * weights[sample.x_weights * 7 + x];
-    }
-    predicted[sample_index] = result;
+    predicted[sample_index] = spatial_degrid(sample, weights, grid, shape.z);
 }
 
 struct Prediction { CubeTap tap; uint plane; uint padding; };
@@ -78,6 +81,61 @@ struct ResidualParameters { uint shape[8]; float2 coefficients[4]; uint correlat
 
 float2 multiply_complex(float2 a, float2 b) {
     return float2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
+}
+
+struct NormalRecord { CubeTap tap; float weight; uint group; uint role; uint padding; };
+struct NormalGroup { uint start; uint end; };
+
+kernel void normal_predict(
+    device const NormalRecord *records [[buffer(0)]],
+    device const NormalGroup *groups [[buffer(1)]],
+    device const float *weights [[buffer(2)]],
+    device const float2 *model [[buffer(3)]],
+    device float2 *predicted [[buffer(4)]],
+    device atomic_float *normal [[buffer(5)]],
+    device atomic_uint *status [[buffer(6)]],
+    constant uint4 &shape [[buffer(7)]],
+    uint index [[thread_position_in_grid]]) {
+    if (index >= shape.y) return;
+    NormalGroup group = groups[index];
+    float2 result = float2(0.0);
+    if (group.start >= group.end || group.end > shape.x) {
+        atomic_fetch_or_explicit(status, 1u, memory_order_relaxed); return;
+    }
+    for (uint i = group.start; i < group.end; ++i) {
+        NormalRecord record = records[i];
+        if (record.role != 2) result += multiply_complex(
+            spatial_degrid(record.tap, weights, model, shape.w), record.tap.value);
+    }
+    if (!all(isfinite(result))) atomic_fetch_or_explicit(status, 2u, memory_order_relaxed);
+    predicted[index] = result;
+}
+
+kernel void normal_accumulate(
+    device const NormalRecord *records [[buffer(0)]],
+    device const NormalGroup *groups [[buffer(1)]],
+    device const float *weights [[buffer(2)]],
+    device const float2 *model [[buffer(3)]],
+    device const float2 *predicted [[buffer(4)]],
+    device atomic_float *normal [[buffer(5)]],
+    device atomic_uint *status [[buffer(6)]],
+    constant uint4 &shape [[buffer(7)]],
+    uint index [[thread_position_in_grid]]) {
+    if (index >= shape.x) return;
+    NormalRecord record = records[index];
+    if (record.role == 1) return;
+    if (record.group >= shape.y) { atomic_fetch_or_explicit(status, 1u, memory_order_relaxed); return; }
+    float2 value = multiply_complex(predicted[record.group], record.tap.value * float2(1.0, -1.0)) * record.weight;
+    if (!all(isfinite(value))) { atomic_fetch_or_explicit(status, 2u, memory_order_relaxed); return; }
+    for (uint x = 0; x < 7; ++x) {
+        float x_weight = weights[record.tap.x_weights * 7 + x];
+        for (uint y = 0; y < 7; ++y) {
+            uint cell = (record.tap.x + x) * shape.w + record.tap.y + y;
+            float2 contribution = value * x_weight * weights[record.tap.y_weights * 7 + y];
+            atomic_fetch_add_explicit(&normal[2 * cell], contribution.x, memory_order_relaxed);
+            atomic_fetch_add_explicit(&normal[2 * cell + 1], contribution.y, memory_order_relaxed);
+        }
+    }
 }
 
 kernel void cube_predict_unique(
@@ -217,6 +275,8 @@ pub(super) struct MetalCubeKernels {
     degrid: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     unique_prediction: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     residual: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    normal_prediction: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    normal_accumulation: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     stage_profiler: Option<MetalStageProfiler>,
 }
 
@@ -362,6 +422,8 @@ impl MetalCubeKernels {
             degrid: pipeline("cube_degrid_taps")?,
             unique_prediction: pipeline("cube_predict_unique")?,
             residual: pipeline("cube_residual_connected")?,
+            normal_prediction: pipeline("normal_predict")?,
+            normal_accumulation: pipeline("normal_accumulate")?,
             stage_profiler: std::env::var_os("CASA_RS_PROFILE_METAL_STAGES")
                 .map(|_| MetalStageProfiler::new(device))
                 .transpose()?,
@@ -427,18 +489,47 @@ impl MetalCubeKernels {
             shape,
             correlations,
         };
+        self.encode_connected(
+            command,
+            buffers,
+            &parameters,
+            shape,
+            [&self.unique_prediction, &self.residual],
+            [shape[0], shape[1]],
+        )
+    }
+
+    pub(super) fn encode_normal(
+        &self,
+        command: &ProtocolObject<dyn MTLCommandBuffer>,
+        buffers: &[(&ProtocolObject<dyn MTLBuffer>, usize)],
+        shape: [u32; 4],
+    ) -> Result<Option<MetalStageProfile>, String> {
+        self.encode_connected(
+            command,
+            buffers,
+            &shape,
+            [shape[1], shape[0], 0, 0, shape[2], shape[3], 1, 0],
+            [&self.normal_prediction, &self.normal_accumulation],
+            [shape[1], shape[0]],
+        )
+    }
+
+    fn encode_connected<T>(
+        &self,
+        command: &ProtocolObject<dyn MTLCommandBuffer>,
+        buffers: &[(&ProtocolObject<dyn MTLBuffer>, usize)],
+        parameters: &T,
+        shape: [u32; 8],
+        pipelines: [&ProtocolObject<dyn MTLComputePipelineState>; 2],
+        counts: [u32; 2],
+    ) -> Result<Option<MetalStageProfile>, String> {
         let profile = self
             .stage_profiler
             .as_ref()
             .map(|profiler| profiler.begin(shape))
             .transpose()?;
-        for (stage, (pipeline, count)) in [
-            (&self.unique_prediction, shape[0]),
-            (&self.residual, shape[1]),
-        ]
-        .into_iter()
-        .enumerate()
-        {
+        for (stage, (pipeline, count)) in pipelines.into_iter().zip(counts).enumerate() {
             if count == 0 {
                 continue;
             }
@@ -460,8 +551,8 @@ impl MetalCubeKernels {
             for (index, (buffer, offset)) in buffers.iter().enumerate() {
                 unsafe { encoder.setBuffer_offset_atIndex(Some(buffer), *offset, index) };
             }
-            let pointer = NonNull::from(&parameters).cast::<c_void>();
-            unsafe { encoder.setBytes_length_atIndex(pointer, size_of::<Parameters>(), 11) };
+            let pointer = NonNull::from(parameters).cast::<c_void>();
+            unsafe { encoder.setBytes_length_atIndex(pointer, size_of::<T>(), buffers.len()) };
             encoder.dispatchThreads_threadsPerThreadgroup(
                 MTLSize {
                     width: count as usize,
@@ -576,6 +667,131 @@ mod tests {
                 size_of_val(values),
             );
         }
+    }
+
+    #[test]
+    #[ignore = "requires a process-accessible Apple Metal device"]
+    fn grouped_normal_preserves_complex_adjoint_roles_and_resident_accumulation() {
+        use casa_imaging_reconstruction::runtime_adapter::{DeviceNormalGroup, DeviceNormalRecord};
+        use num_complex::Complex64;
+        let device = MTLCreateSystemDefaultDevice().expect("actual Metal device");
+        let queue = device.newCommandQueue().unwrap();
+        let kernels = MetalCubeKernels::compile(&device).unwrap();
+        let weights = [
+            0.01_f32, 0.04, 0.12, 0.26, 0.12, 0.04, 0.01, 0.02, 0.05, 0.16, 0.31, 0.16, 0.05, 0.02,
+        ];
+        let model = (0..32 * 32)
+            .map(|i| {
+                [
+                    (i % 41) as f32 * 0.03125 - 0.5,
+                    (i % 37) as f32 * -0.015625 + 0.25,
+                ]
+            })
+            .collect::<Vec<_>>();
+        let mut records = Vec::new();
+        let mut groups = Vec::new();
+        for group in 0..137_u32 {
+            let start = records.len() as u32;
+            for role in 0..3_u32 {
+                records.push(DeviceNormalRecord {
+                    x: group % 26,
+                    y: (group * 11 + role) % 26,
+                    x_weights: group % 2,
+                    y_weights: (group + 1) % 2,
+                    scale: [0.75 + role as f32 * 0.125, -0.25],
+                    weight: 0.3,
+                    group,
+                    role,
+                    padding: 0,
+                });
+            }
+            groups.push(DeviceNormalGroup {
+                start,
+                end: records.len() as u32,
+            });
+        }
+        let complex = |v: [f32; 2]| Complex64::new(v[0] as f64, v[1] as f64);
+        let mut reference = vec![Complex64::default(); model.len()];
+        for group in &groups {
+            let members = &records[group.start as usize..group.end as usize];
+            let mut prediction = Complex64::default();
+            for record in members.iter().filter(|r| r.role != 2) {
+                let mut value = Complex64::default();
+                for x in 0..7 {
+                    for y in 0..7 {
+                        let cell = (record.x as usize + x) * 32 + record.y as usize + y;
+                        value += complex(model[cell])
+                            * weights[record.x_weights as usize * 7 + x] as f64
+                            * weights[record.y_weights as usize * 7 + y] as f64;
+                    }
+                }
+                prediction += value * complex(record.scale);
+            }
+            for record in members.iter().filter(|r| r.role != 1) {
+                let value = prediction * complex(record.scale).conj() * record.weight as f64;
+                for x in 0..7 {
+                    for y in 0..7 {
+                        let cell = (record.x as usize + x) * 32 + record.y as usize + y;
+                        reference[cell] += value
+                            * weights[record.x_weights as usize * 7 + x] as f64
+                            * weights[record.y_weights as usize * 7 + y] as f64;
+                    }
+                }
+            }
+        }
+        let buffers = [
+            shared_buffer(&device, size_of_val(records.as_slice())),
+            shared_buffer(&device, size_of_val(groups.as_slice())),
+            shared_buffer(&device, size_of_val(&weights)),
+            shared_buffer(&device, size_of_val(model.as_slice())),
+            shared_buffer(&device, groups.len() * 8),
+            shared_buffer(&device, model.len() * 8),
+            shared_buffer(&device, 4),
+        ];
+        upload(&buffers[0], &records);
+        upload(&buffers[1], &groups);
+        upload(&buffers[2], &weights);
+        upload(&buffers[3], &model);
+        upload(&buffers[5], &vec![[0.0_f32; 2]; model.len()]);
+        upload(&buffers[6], &[0_u32]);
+        let bindings = buffers.iter().map(|b| (b.as_ref(), 0)).collect::<Vec<_>>();
+        // Two ordered commands accumulate into the same resident grid, without
+        // CPU prediction readback or re-uploading/zeroing the grid between them.
+        let commands = (0..2)
+            .map(|_| {
+                let command = queue.commandBuffer().unwrap();
+                kernels
+                    .encode_normal(
+                        &command,
+                        &bindings,
+                        [records.len() as u32, groups.len() as u32, 32, 32],
+                    )
+                    .unwrap();
+                command.commit();
+                command
+            })
+            .collect::<Vec<_>>();
+        for command in &commands {
+            command.waitUntilCompleted();
+            assert_eq!(command.status(), MTLCommandBufferStatus::Completed);
+        }
+        let status = unsafe { *buffers[6].contents().as_ptr().cast::<u32>() };
+        assert_eq!(status, 0);
+        let actual = unsafe {
+            std::slice::from_raw_parts(
+                buffers[5].contents().as_ptr().cast::<[f32; 2]>(),
+                model.len(),
+            )
+        };
+        let error = actual
+            .iter()
+            .zip(&reference)
+            .map(|(&a, &r)| (complex(a) - r * 2.0).norm_sqr())
+            .sum::<f64>();
+        let norm = reference.iter().map(|r| (r * 2.0).norm_sqr()).sum::<f64>();
+        let relative = (error / norm).sqrt();
+        eprintln!("metal_normal_primitive_relative_l2={relative:.9e}");
+        assert!(relative <= 1e-3, "relative L2 {relative}");
     }
 
     #[test]
