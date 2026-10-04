@@ -74,19 +74,7 @@ fn native_fft_pool_stack_bytes(
     let workers = policy
         .authority
         .planning_worker_capacity(&policy.resource_policy)?;
-    let array_stacks = if clark_pool {
-        workers
-            .saturating_sub(1)
-            .checked_mul(
-                casa_imaging_reconstruction::runtime_adapter::CLARK_ARRAY_WORKER_STACK_BYTES as u64,
-            )
-            .ok_or(SpectralCyclePlanError::Overflow)?
-    } else {
-        0
-    };
     // FFTW single- and double-precision workers have separate persistent pools.
-    // Clark's bounded array workers run while those native threads are idle,
-    // but both sets of stacks can be resident at the same time.
     crate::reconstruction_executor::native_fft_stack_bytes(
         usize::try_from(workers).map_err(|_| SpectralCyclePlanError::Overflow)?,
     )
@@ -94,7 +82,6 @@ fn native_fft_pool_stack_bytes(
     .and_then(|bytes| {
         bytes
             .checked_mul(pools)
-            .and_then(|bytes| bytes.checked_add(array_stacks))
             .ok_or(SpectralCyclePlanError::Overflow)
     })
 }

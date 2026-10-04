@@ -74,9 +74,6 @@ pub(crate) struct MinorCycleWorkspace {
     pub(crate) maximum_recorded_components: u64,
 }
 
-#[doc(hidden)]
-pub const CLARK_ARRAY_WORKER_STACK_BYTES: usize = clark::ARRAY_WORKER_STACK_BYTES;
-
 pub(crate) fn minor_cycle_workspace(
     shape: [usize; 2],
     polarizations: usize,
@@ -1314,9 +1311,6 @@ pub enum MinorCycleError {
     /// Solver arithmetic produced a non-finite value.
     #[error("minor-cycle arithmetic generated a non-finite value")]
     GeneratedNonfinite,
-    /// An admitted Clark array worker could not start or complete.
-    #[error("Clark refresh array worker failed: {0}")]
-    ParallelRefresh(String),
     /// The model lifecycle owner rejected delta validation or minting.
     #[error(transparent)]
     Lifecycle(#[from] crate::ModelLifecycleError),

@@ -94,7 +94,6 @@ pub mod runtime_adapter {
         gridded_normal_route_capacity_bytes, standard_convolution_support,
     };
     pub use crate::major_cycle::CubeNormalRefresh;
-    pub use crate::minor_cycle::CLARK_ARRAY_WORKER_STACK_BYTES;
     pub use crate::reconstruction_cycle::{
         ReconstructionPlaneInput, ReconstructionPlanePartial, ReconstructionPlaneStatistics,
         ReconstructionPlaneWork, ReconstructionPlaneWorkspace,
