@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use super::super::{
-    InitialModelClassification, PreparedSpectralOperatorRecycle, SpectralOperatorSpecification,
-    combine_initial_chart_primitives, prepare_spectral_operator, reprepare_spectral_operator,
-    spectral_operator_workload,
+    InitialModelClassification, SpectralOperatorSpecification, combine_initial_chart_primitives,
+    prepare_spectral_operator, spectral_operator_workload,
 };
 use super::*;
 use casa_imaging_model::{AwProjectionContract, InstrumentModel};
@@ -24,7 +23,7 @@ fn fixture() -> (
 }
 
 #[test]
-fn ordinary_mfs_measures_repeated_refresh_ffts_without_changing_initial_or_cube_policy() {
+fn ordinary_mfs_estimates_fft_plans_without_changing_cube_policy() {
     let (problem, _, _) = fixture();
     let mut specification = SpectralOperatorSpecification::new(&problem).unwrap();
     specification.basis = SpectralBasisPlan::Polynomial(BlockNormalPlan::constant(1e9).unwrap());
@@ -37,33 +36,14 @@ fn ordinary_mfs_measures_repeated_refresh_ffts_without_changing_initial_or_cube_
         for threads in [1, 4, 8] {
             let prepared =
                 prepare_spectral_operator(specification.clone(), workload, threads).unwrap();
-            assert!(prepared.ffts.iter().all(|fft| fft.estimated
-                == (pass == SpectralOperatorPass::InitialMajor)
-                && fft.threads == threads));
+            assert!(
+                prepared
+                    .ffts
+                    .iter()
+                    .all(|fft| fft.estimated && fft.threads == threads)
+            );
         }
     }
-    let initial =
-        spectral_operator_workload(&specification, 3, SpectralOperatorPass::InitialMajor).unwrap();
-    let refresh =
-        spectral_operator_workload(&specification, 3, SpectralOperatorPass::ResidualRefresh)
-            .unwrap();
-    let prepared = prepare_spectral_operator(specification.clone(), initial, 4).unwrap();
-    let (_, _, ffts, aw_projection) = prepared.into_parts();
-    let prepared = reprepare_spectral_operator(
-        specification.clone(),
-        refresh,
-        PreparedSpectralOperatorRecycle {
-            ffts,
-            aw_projection,
-        },
-    )
-    .unwrap();
-    assert!(
-        prepared
-            .ffts
-            .iter()
-            .all(|fft| !fft.estimated && fft.threads == 4)
-    );
     specification.basis = SpectralBasisPlan::ChannelLocal;
     assert_eq!(specification.initial_mfs_region_count(), 0);
     let workload =

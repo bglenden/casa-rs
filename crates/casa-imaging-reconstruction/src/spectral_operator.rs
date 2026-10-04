@@ -2824,11 +2824,8 @@ pub fn prepare_spectral_operator(
                 fft_resident_complex_values_for_shape(chart.geometry.grid_shape)?,
                 fft_threads,
             )?;
-            if specification.supports_bulk_mfs()
-                && workload.pass == SpectralOperatorPass::InitialMajor
-            {
-                // Initial imaging is short; subsequent residual refreshes reuse
-                // measured plans across the major-cycle loop.
+            if specification.supports_bulk_mfs() {
+                // One MFS plane performs few transforms, unlike a channel cube.
                 fft.fft = fft.fft.with_estimated_plan();
                 fft.estimated = true;
             }
@@ -2848,7 +2845,7 @@ pub fn prepare_spectral_operator(
 pub fn reprepare_spectral_operator(
     specification: SpectralOperatorSpecification,
     workload: SpectralOperatorWorkload,
-    mut recycle: PreparedSpectralOperatorRecycle,
+    recycle: PreparedSpectralOperatorRecycle,
 ) -> Result<PreparedSpectralOperator, SpectralOperatorError> {
     if workload
         != spectral_operator_workload(
@@ -2859,17 +2856,6 @@ pub fn reprepare_spectral_operator(
         || recycle.ffts.len() != specification.chart_count()
     {
         return Err(SpectralOperatorError::ProblemMismatch);
-    }
-    if specification.supports_bulk_mfs() && workload.pass == SpectralOperatorPass::ResidualRefresh {
-        for fft in &mut recycle.ffts {
-            if fft.estimated {
-                *fft = PreparedFft::new(
-                    fft.shape(),
-                    fft_resident_complex_values_for_shape(fft.shape())?,
-                    fft.threads,
-                )?;
-            }
-        }
     }
     Ok(PreparedSpectralOperator {
         specification,
