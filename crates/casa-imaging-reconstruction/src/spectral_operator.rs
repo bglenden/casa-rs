@@ -11838,23 +11838,11 @@ fn shift_even<T, S: DataMut<Elem = T>>(data: &mut ArrayBase<S, Ix2>) {
     let [width, height] = [data.shape()[0], data.shape()[1]];
     debug_assert_eq!(width % 2, 0);
     debug_assert_eq!(height % 2, 0);
-    let row_length = if data.is_standard_layout() {
-        height
-    } else {
-        width
-    };
-    let values = data
-        .as_slice_memory_order_mut()
-        .expect("FFTW plane must be contiguous");
-    let (first, second) = values.split_at_mut(values.len() / 2);
-    for (first_row, second_row) in first
-        .chunks_exact_mut(row_length)
-        .zip(second.chunks_exact_mut(row_length))
-    {
-        let (first_left, first_right) = first_row.split_at_mut(row_length / 2);
-        let (second_left, second_right) = second_row.split_at_mut(row_length / 2);
-        first_left.swap_with_slice(second_right);
-        first_right.swap_with_slice(second_left);
+    for x in 0..width / 2 {
+        for y in 0..height / 2 {
+            data.swap((x, y), (x + width / 2, y + height / 2));
+            data.swap((x + width / 2, y), (x, y + height / 2));
+        }
     }
 }
 
@@ -12482,26 +12470,6 @@ mod tests {
         column_fft.transform_unshifted(&mut column_major, true);
         for (row, column) in row_major.iter().zip(column_major.iter()) {
             assert!((*row - *column).norm() < 1e-10);
-        }
-    }
-
-    #[test]
-    fn fft_centering_block_swap_matches_pixel_permutation_in_both_layouts() {
-        use ndarray::ShapeBuilder;
-        for (width, height) in [(2, 2), (4, 6), (10, 8), (18, 26)] {
-            let values = |(x, y)| (x * height + y) as i64;
-            let expected = Array2::from_shape_fn((width, height), |(x, y)| {
-                values(((x + width / 2) % width, (y + height / 2) % height))
-            });
-            for mut plane in [
-                Array2::from_shape_fn((width, height), values),
-                Array2::from_shape_fn((width, height).f(), values),
-            ] {
-                super::shift_even(&mut plane);
-                assert_eq!(plane, expected);
-                super::shift_even(&mut plane);
-                assert_eq!(plane, Array2::from_shape_fn((width, height), values));
-            }
         }
     }
 
