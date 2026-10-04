@@ -121,20 +121,20 @@ kernel void normal_accumulate(
     device atomic_uint *status [[buffer(6)]],
     constant uint4 &shape [[buffer(7)]],
     uint index [[thread_position_in_grid]]) {
-    if (index >= shape.x) return;
-    NormalRecord record = records[index];
+    uint record_index = index / 7;
+    if (record_index >= shape.x) return;
+    NormalRecord record = records[record_index];
     if (record.role == 1) return;
     if (record.group >= shape.y) { atomic_fetch_or_explicit(status, 1u, memory_order_relaxed); return; }
     float2 value = multiply_complex(predicted[record.group], record.tap.value * float2(1.0, -1.0)) * record.weight;
     if (!all(isfinite(value))) { atomic_fetch_or_explicit(status, 2u, memory_order_relaxed); return; }
-    for (uint x = 0; x < 7; ++x) {
-        float x_weight = weights[record.tap.x_weights * 7 + x];
-        for (uint y = 0; y < 7; ++y) {
-            uint cell = (record.tap.x + x) * shape.w + record.tap.y + y;
-            float2 contribution = value * x_weight * weights[record.tap.y_weights * 7 + y];
-            atomic_fetch_add_explicit(&normal[2 * cell], contribution.x, memory_order_relaxed);
-            atomic_fetch_add_explicit(&normal[2 * cell + 1], contribution.y, memory_order_relaxed);
-        }
+    uint x = index % 7;
+    float x_weight = weights[record.tap.x_weights * 7 + x];
+    for (uint y = 0; y < 7; ++y) {
+        uint cell = (record.tap.x + x) * shape.w + record.tap.y + y;
+        float2 contribution = value * x_weight * weights[record.tap.y_weights * 7 + y];
+        atomic_fetch_add_explicit(&normal[2 * cell], contribution.x, memory_order_relaxed);
+        atomic_fetch_add_explicit(&normal[2 * cell + 1], contribution.y, memory_order_relaxed);
     }
 }
 
@@ -495,7 +495,7 @@ impl MetalCubeKernels {
             &parameters,
             shape,
             [&self.unique_prediction, &self.residual],
-            [shape[0], shape[1]],
+            [shape[0] as usize, shape[1] as usize],
         )
     }
 
@@ -511,7 +511,7 @@ impl MetalCubeKernels {
             &shape,
             [shape[1], shape[0], 0, 0, shape[2], shape[3], 1, 0],
             [&self.normal_prediction, &self.normal_accumulation],
-            [shape[1], shape[0]],
+            [shape[1] as usize, shape[0] as usize * 7],
         )
     }
 
@@ -522,7 +522,7 @@ impl MetalCubeKernels {
         parameters: &T,
         shape: [u32; 8],
         pipelines: [&ProtocolObject<dyn MTLComputePipelineState>; 2],
-        counts: [u32; 2],
+        counts: [usize; 2],
     ) -> Result<Option<MetalStageProfile>, String> {
         let profile = self
             .stage_profiler
