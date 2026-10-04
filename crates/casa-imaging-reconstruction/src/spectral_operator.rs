@@ -11855,24 +11855,11 @@ fn shift_even<T, S: DataMut<Elem = T>>(data: &mut ArrayBase<S, Ix2>) {
     let [width, height] = [data.shape()[0], data.shape()[1]];
     debug_assert_eq!(width % 2, 0);
     debug_assert_eq!(height % 2, 0);
-    let row_length = if data.strides() == [1, width as isize] {
-        width
-    } else {
-        height
-    };
-    let values = data
-        .as_slice_memory_order_mut()
-        .expect("FFTW plane must be contiguous");
-    let half = values.len() / 2;
-    let (first, second) = values.split_at_mut(half);
-    for (first, second) in first
-        .chunks_exact_mut(row_length)
-        .zip(second.chunks_exact_mut(row_length))
-    {
-        let (first_left, first_right) = first.split_at_mut(row_length / 2);
-        let (second_left, second_right) = second.split_at_mut(row_length / 2);
-        first_left.swap_with_slice(second_right);
-        first_right.swap_with_slice(second_left);
+    for x in 0..width / 2 {
+        for y in 0..height / 2 {
+            data.swap((x, y), (x + width / 2, y + height / 2));
+            data.swap((x + width / 2, y), (x, y + height / 2));
+        }
     }
 }
 
@@ -12501,71 +12488,6 @@ mod tests {
         for (row, column) in row_major.iter().zip(column_major.iter()) {
             assert!((*row - *column).norm() < 1e-10);
         }
-    }
-
-    fn scalar_shift_reference<T>(data: &mut Array2<T>) {
-        let [width, height] = [data.shape()[0], data.shape()[1]];
-        for x in 0..width / 2 {
-            for y in 0..height / 2 {
-                data.swap((x, y), (x + width / 2, y + height / 2));
-                data.swap((x + width / 2, y), (x, y + height / 2));
-            }
-        }
-    }
-
-    #[test]
-    fn bulk_shift_matches_scalar_for_both_contiguous_layouts() {
-        use ndarray::ShapeBuilder;
-
-        for shape in [(2, 2), (2, 6), (6, 2), (8, 12), (12, 8)] {
-            for column_major in [false, true] {
-                let layout = shape.set_f(column_major);
-                let original = Array2::from_shape_fn(layout, |(x, y)| x * shape.1 + y);
-                let mut expected = original.clone();
-                scalar_shift_reference(&mut expected);
-                let mut actual = original.clone();
-                super::shift_even(&mut actual);
-                assert_eq!(actual, expected);
-                super::shift_even(&mut actual);
-                assert_eq!(actual, original);
-            }
-        }
-    }
-
-    #[test]
-    #[ignore = "full-size grid-shift performance diagnostic"]
-    fn bulk_shift_full5000_work_comparison() {
-        use std::hint::black_box;
-        use std::time::Instant;
-
-        let mut plane = Array2::from_shape_fn((5000, 5000), |(x, y)| {
-            Complex64::new((x + y) as f64, (x * 3 + y) as f64)
-        });
-        // Even counts restore the identical input between each observation.
-        let mut scalar = 0.0;
-        let mut bulk = 0.0;
-        for reverse in [false, true] {
-            for use_bulk in [reverse, !reverse] {
-                let started = Instant::now();
-                for _ in 0..8 {
-                    if use_bulk {
-                        super::shift_even(black_box(&mut plane));
-                    } else {
-                        scalar_shift_reference(black_box(&mut plane));
-                    }
-                }
-                let seconds = started.elapsed().as_secs_f64();
-                if use_bulk {
-                    bulk += seconds;
-                } else {
-                    scalar += seconds;
-                }
-            }
-        }
-        eprintln!(
-            "grid_shift_comparison cells={} calls=16 scalar_seconds={scalar} bulk_seconds={bulk}",
-            plane.len()
-        );
     }
 
     #[test]
