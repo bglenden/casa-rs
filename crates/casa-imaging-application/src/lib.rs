@@ -427,43 +427,6 @@ where
         .observation
         .with_content_budget(initial_access.source_binding().content_budget());
     let minor_cycle_requested = problem.reconstruction().controls().max_minor_iterations() > 0;
-    // Private experiment selection is bound once at deployment, never chosen
-    // by a failure. Normal requests continue to use the explicit CPU backend.
-    let clark_refresh = match std::env::var_os("CASA_RS_EXPERIMENTAL_CLARK_METAL") {
-        None => None,
-        Some(value) if value == "1" => {
-            if !minor_cycle_requested
-                || !matches!(
-                    problem.reconstruction().basis(),
-                    casa_imaging_model::ReconstructionBasis::Constant
-                )
-                || !matches!(
-                    problem.reconstruction().algorithm(),
-                    casa_imaging_model::ReconstructionAlgorithm::Clark
-                )
-                || problem.geometry().domains().len() != 1
-                || problem.model_lifecycle().target().polarizations() != 1
-                || problem.reconstruction().polarization().coordinates()
-                    != [casa_imaging_model::PolarizationCoordinate::StokesI]
-                || problem
-                    .science()
-                    .measurement_equation()
-                    .w_projection()
-                    .is_some()
-                || aw_preparation.is_some()
-            {
-                return Err(boxed(
-                    "Metal Clark experiment requires single-domain constant-basis Stokes-I Clark",
-                ));
-            }
-            Some(casa_imaging_runtime::MetalClarkRefresh::acquire(
-                &runtime.authority,
-                runtime.resource_policy.clone(),
-                problem.model_lifecycle().target().domains()[0].pixels(),
-            )?)
-        }
-        Some(_) => return Err(boxed("invalid Metal Clark experiment selection")),
-    };
     let prepared_aw = aw_preparation
         .map(|deployment| prepared_aw_phase::prepare_aw_projection(problem, deployment, &runtime))
         .transpose()?;
@@ -479,8 +442,7 @@ where
     let planning_registry =
         PlanningRegistry::new(runtime.registry, runtime.implementation.clone(), problem);
     let mut policy = execution_policy(&runtime, residency.clone(), initial_aw.as_ref())
-        .with_metal_cube(input.metal_cube)
-        .with_external_clark_refresh(clark_refresh.is_some());
+        .with_metal_cube(input.metal_cube);
     if initial_write {
         policy = policy
             .with_visibility_write(initial_access.selected_visibility_storage_plan(write_targets)?);
@@ -498,7 +460,6 @@ where
             registry: &planning_registry,
             policy,
             minor,
-            clark_refresh: clark_refresh.clone(),
         },
         initial_access,
         initial_aw,
@@ -685,8 +646,7 @@ where
                     .map(prepared_aw_phase::PreparedAwPhase::bind_plan)
                     .transpose()?;
                 let final_policy = execution_policy(&runtime, residency.clone(), final_aw.as_ref())
-                    .with_metal_cube(input.metal_cube)
-                    .with_external_clark_refresh(clark_refresh.is_some());
+                    .with_metal_cube(input.metal_cube);
                 let ordinal =
                     u32::try_from(cycle).map_err(|_| boxed("major-cycle ordinal exceeds u32"))?;
                 let minor_program = continue_cleaning
@@ -710,7 +670,6 @@ where
                         registry: &planning_registry,
                         policy: final_policy,
                         minor: minor_program,
-                        clark_refresh: clark_refresh.clone(),
                     },
                     final_input,
                     ordinal,

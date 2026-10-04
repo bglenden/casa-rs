@@ -3,10 +3,6 @@
 //! Plan-bound imaging execution, process resource arbitration, and leases.
 
 mod bounded_stream;
-mod clark_refresh;
-/// Run-scoped library convolution owner; internal application composition only.
-#[doc(hidden)]
-pub use clark_refresh::MetalClarkRefresh;
 mod complete_data_operator;
 #[cfg(test)]
 mod complete_data_parallel_mfs_tests;

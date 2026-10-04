@@ -35,15 +35,7 @@ casa-types = { path = "../casa-types" }
 
 [target.'cfg(all(target_os = "macos", not(coverage)))'.dependencies]
 objc2 = "0.6.4"
-block2 = "0.6.2"
-objc2-metal-performance-shaders = { version = "0.3.2", default-features = false, features = ["std", "MPSCoreTypes"] }
-objc2-metal-performance-shaders-graph = { version = "0.3.2", default-features = false, features = [
-    "std", "block2", "objc2-metal-performance-shaders", "MPSGraph", "MPSGraphCore",
-    "MPSGraphDevice", "MPSGraphExecutable", "MPSGraphFourierTransformOps",
-    "MPSGraphArithmeticOps", "MPSGraphOperation", "MPSGraphTensor",
-    "MPSGraphTensorData", "MPSGraphTensorShapeOps", "MPSGraphMemoryOps",
-] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSString", "NSError", "NSArray", "NSDictionary", "NSValue"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSString", "NSError"] }
 objc2-metal = { version = "0.3.2", default-features = false, features = [
     "objc2-core-foundation",
     "MTLAllocation",

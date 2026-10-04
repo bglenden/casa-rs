@@ -125,17 +125,9 @@ pub struct SpectralCycleExecutionPolicy {
     pub(crate) aw_projection: Option<PreparedAwProjection>,
     pub(crate) aw_reader: Option<PreparedArtifactReaderPlan>,
     pub(crate) metal_cube: bool,
-    pub(crate) external_clark_refresh: bool,
 }
 
 impl SpectralCycleExecutionPolicy {
-    /// Internal library-workspace binding; a separate run lease pays residency.
-    #[doc(hidden)]
-    #[must_use]
-    pub fn with_external_clark_refresh(mut self, enabled: bool) -> Self {
-        self.external_clark_refresh = enabled;
-        self
-    }
     /// Require the native cube's admitted Metal spatial operators. An unavailable
     /// device or unsupported geometry fails the run without changing execution.
     #[must_use]
@@ -167,7 +159,6 @@ impl SpectralCycleExecutionPolicy {
             aw_projection: None,
             aw_reader: None,
             metal_cube: false,
-            external_clark_refresh: false,
         }
     }
 
@@ -3573,11 +3564,6 @@ impl MinorCycleResources {
                 heap_bytes: policy.limits.minor_cycle_bytes,
                 stack_bytes: 0,
             });
-        };
-        let workspace = if policy.external_clark_refresh {
-            workspace.with_external_clark_refresh()
-        } else {
-            workspace
         };
         let plan = crate::reconstruction_executor::PlaneExecutionPlan::new(
             workspace,

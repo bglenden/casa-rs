@@ -918,7 +918,6 @@ impl WorkImplementation for InitialCube {
                 context,
                 self.pass.ordinal(),
                 &mut measurements,
-                None,
             )?;
             if let Some(measurements) = measurements {
                 eprintln!(

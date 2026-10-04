@@ -1112,7 +1112,6 @@ struct ReconstructionCycleExecution {
     node: crate::WorkNodeId,
     masks: ImageDomainReconstructionMaskPlans,
     program: MinorCycleProgram,
-    refresh: Option<Arc<crate::MetalClarkRefresh>>,
 }
 
 impl SpectralCycleExecutor {
@@ -1437,19 +1436,7 @@ impl SpectralCycleExecutor {
             node,
             masks,
             program,
-            refresh: None,
         });
-        self
-    }
-
-    /// Borrow the run's admitted library convolution without changing CLEAN.
-    #[doc(hidden)]
-    #[must_use]
-    pub fn with_clark_refresh(mut self, refresh: Option<Arc<crate::MetalClarkRefresh>>) -> Self {
-        self.reconstruction_cycle
-            .as_mut()
-            .expect("bound reconstruction cycle")
-            .refresh = refresh;
         self
     }
 
@@ -3040,9 +3027,6 @@ impl WorkImplementation for SpectralCycleExecutor {
                     context,
                     self.pass.ordinal(),
                     &mut measurements,
-                    cycle.refresh.as_deref().map(|p| {
-                        p as &dyn casa_imaging_reconstruction::runtime_adapter::ClarkRefreshProvider
-                    }),
                 );
                 state.reconstruction_measurements = measurements;
                 if let Some(measurements) = &state.reconstruction_measurements {
@@ -3359,7 +3343,6 @@ impl MajorCycleOperatorResult {
         context: WorkExecutionContext<'_>,
         pass: u32,
         measurements: &mut Option<crate::bounded_stream::BoundedStreamMeasurements>,
-        refresh: Option<&dyn casa_imaging_reconstruction::runtime_adapter::ClarkRefreshProvider>,
     ) -> Result<ReconstructionCyclePhaseCompletion, io::Error> {
         let completion = self.into_completion();
         let (normal_state, continuation) = completion.into_continuation();
@@ -3372,65 +3355,64 @@ impl MajorCycleOperatorResult {
         } else {
             ChannelCyclePolicy::Independent
         };
-        let (masks, auto_masks, cycle) = if normal_state.catalog()
-            == NormalStateCatalog::UnnormalizedJointBlockV1
-        {
-            if mask_plans.len() != 1 {
-                return Err(io::Error::other(ReconstructionCycleError::Minor(
-                    casa_imaging_reconstruction::MinorCycleError::Mask(
-                        casa_imaging_reconstruction::MaskError::DomainCardinalityMismatch,
-                    ),
-                )));
-            }
-            let (masks, auto_masks) = mask_plans
-                .primary()
-                .materialize_coupled(continuation.generation(), &normal_state)
-                .map_err(io::Error::other)?;
-            let cycle = ReconstructionCycle::new(policy, program)
-                .run_coupled(lifecycle, continuation.generation(), &normal_state, &masks)
-                .map_err(io::Error::other)?;
-            (
-                ReconstructionMaskSet::Coupled(Box::new(masks)),
-                auto_masks
-                    .into_iter()
-                    .collect::<Vec<_>>()
-                    .into_boxed_slice(),
-                cycle,
-            )
-        } else {
-            let (masks, auto_masks) = mask_plans
-                .materialize(continuation.generation(), &normal_state)
-                .map_err(io::Error::other)?
-                .into_parts();
-            let cycle = if normal_state.catalog() == NormalStateCatalog::UnnormalizedPlaneV1
-                && normal_state.domain_count() > 1
-            {
-                ReconstructionCycle::new(policy, program)
-                    .run_domains(lifecycle, continuation.generation(), &normal_state, &masks)
-                    .map_err(io::Error::other)?
-            } else if policy == ChannelCyclePolicy::Independent {
-                let cycle = ReconstructionCycle::new(policy, program);
-                let work = cycle
-                    .prepare_independent(
-                        lifecycle,
-                        continuation.generation(),
-                        &normal_state,
-                        masks.primary(),
-                    )
+        let (masks, auto_masks, cycle) =
+            if normal_state.catalog() == NormalStateCatalog::UnnormalizedJointBlockV1 {
+                if mask_plans.len() != 1 {
+                    return Err(io::Error::other(ReconstructionCycleError::Minor(
+                        casa_imaging_reconstruction::MinorCycleError::Mask(
+                            casa_imaging_reconstruction::MaskError::DomainCardinalityMismatch,
+                        ),
+                    )));
+                }
+                let (masks, auto_masks) = mask_plans
+                    .primary()
+                    .materialize_coupled(continuation.generation(), &normal_state)
                     .map_err(io::Error::other)?;
-                crate::reconstruction_executor::execute(work, context, pass, measurements, refresh)?
+                let cycle = ReconstructionCycle::new(policy, program)
+                    .run_coupled(lifecycle, continuation.generation(), &normal_state, &masks)
+                    .map_err(io::Error::other)?;
+                (
+                    ReconstructionMaskSet::Coupled(Box::new(masks)),
+                    auto_masks
+                        .into_iter()
+                        .collect::<Vec<_>>()
+                        .into_boxed_slice(),
+                    cycle,
+                )
             } else {
-                ReconstructionCycle::new(policy, program)
-                    .run(
-                        lifecycle,
-                        continuation.generation(),
-                        &normal_state,
-                        masks.primary(),
-                    )
+                let (masks, auto_masks) = mask_plans
+                    .materialize(continuation.generation(), &normal_state)
                     .map_err(io::Error::other)?
+                    .into_parts();
+                let cycle = if normal_state.catalog() == NormalStateCatalog::UnnormalizedPlaneV1
+                    && normal_state.domain_count() > 1
+                {
+                    ReconstructionCycle::new(policy, program)
+                        .run_domains(lifecycle, continuation.generation(), &normal_state, &masks)
+                        .map_err(io::Error::other)?
+                } else if policy == ChannelCyclePolicy::Independent {
+                    let cycle = ReconstructionCycle::new(policy, program);
+                    let work = cycle
+                        .prepare_independent(
+                            lifecycle,
+                            continuation.generation(),
+                            &normal_state,
+                            masks.primary(),
+                        )
+                        .map_err(io::Error::other)?;
+                    crate::reconstruction_executor::execute(work, context, pass, measurements)?
+                } else {
+                    ReconstructionCycle::new(policy, program)
+                        .run(
+                            lifecycle,
+                            continuation.generation(),
+                            &normal_state,
+                            masks.primary(),
+                        )
+                        .map_err(io::Error::other)?
+                };
+                (ReconstructionMaskSet::Domains(masks), auto_masks, cycle)
             };
-            (ReconstructionMaskSet::Domains(masks), auto_masks, cycle)
-        };
         let (delta, evidence) = cycle.into_parts();
         Ok(ReconstructionCyclePhaseCompletion {
             normal_state,
