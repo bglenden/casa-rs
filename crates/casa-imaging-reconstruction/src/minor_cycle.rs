@@ -175,6 +175,7 @@ pub(crate) fn minor_cycle_workspace(
             .saturating_mul(sat_u64(shape[1]).saturating_add(1));
         cells
             .saturating_mul(size_of_u64::<clark::ClarkActivePixel>())
+            .saturating_add(cells.saturating_mul(size_of_u64::<usize>()))
             .saturating_add(
                 half_spectrum.saturating_mul(2 * size_of_u64::<num_complex::Complex32>()),
             )
@@ -4990,8 +4991,10 @@ mod tests {
         assert!(hogbom > 16 * (shape[0] * shape[1]) as u64);
         let half_spectrum_planes =
             2 * (2 * shape[0] * (shape[1] + 1)) as u64 * size_of::<num_complex::Complex32>() as u64;
-        let active_pixels =
-            (shape[0] * shape[1] * size_of::<super::clark::ClarkActivePixel>()) as u64;
+        let active_pixels = (shape[0]
+            * shape[1]
+            * (size_of::<super::clark::ClarkActivePixel>() + size_of::<usize>()))
+            as u64;
         let retained_fft_allowance =
             crate::spectral_operator::fft_resident_complex_values_for_shape([
                 shape[0] * 2,

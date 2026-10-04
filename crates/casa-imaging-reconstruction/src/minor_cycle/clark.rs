@@ -12,6 +12,7 @@ use crate::spectral_operator::SpectralOperatorError;
 pub(super) struct ClarkActivePixel {
     index: usize,
     value: f64,
+    peak_position: usize,
 }
 
 struct LinearRefresh {
@@ -135,6 +136,7 @@ pub(super) struct ClarkWorkState {
     subcycles: usize,
     refreshes: usize,
     active: Vec<ClarkActivePixel>,
+    peak_order: Vec<usize>,
     convolution: LinearRefresh,
     measurements: Option<ClarkMeasurements>,
 }
@@ -202,6 +204,7 @@ impl ClarkWorkState {
             subcycles: 0,
             refreshes: 0,
             active: Vec::new(),
+            peak_order: Vec::new(),
             convolution,
             measurements: started.map(|started| ClarkMeasurements {
                 setup_nanos: started.elapsed().as_nanos(),
@@ -227,18 +230,29 @@ impl ClarkWorkState {
                 let pixel = [x, y];
                 let index = x * self.shape[1] + y;
                 if value.abs() > cutoff && accept(pixel) {
-                    self.active.push(ClarkActivePixel { index, value });
+                    if self.active.len() == self.active.capacity() {
+                        self.active.reserve_exact(
+                            self.active
+                                .capacity()
+                                .max(1)
+                                .min(residual.len() - self.active.len()),
+                        );
+                    }
+                    self.active.push(ClarkActivePixel {
+                        index,
+                        value,
+                        peak_position: self.active.len(),
+                    });
                 }
             }
         }
-        // Sort only compact active pixels to retain casacore's x-fastest tie order.
-        self.active.sort_unstable_by_key(|pixel| {
-            (pixel.index % self.shape[1], pixel.index / self.shape[1])
-        });
-        let peak = self
-            .active
-            .iter()
-            .fold(0.0_f64, |best, pixel| best.max(pixel.value.abs()));
+        self.peak_order.clear();
+        self.peak_order.reserve_exact(self.active.len());
+        self.peak_order.extend(0..self.active.len());
+        for position in (0..self.peak_order.len() / 2).rev() {
+            self.sift_down(position);
+        }
+        let peak = self.peak().map_or(0.0, |pixel| pixel.value.abs());
         self.fac = if self.flux_limit > 0.0 {
             peak / self.flux_limit
         } else {
@@ -253,6 +267,65 @@ impl ClarkWorkState {
         }
     }
 
+    fn peak(&self) -> Option<&ClarkActivePixel> {
+        self.peak_order.first().map(|&index| &self.active[index])
+    }
+
+    fn stronger(&self, left: usize, right: usize) -> bool {
+        let left = &self.active[left];
+        let right = &self.active[right];
+        let magnitude = left.value.abs();
+        let other = right.value.abs();
+        magnitude > other
+            || (magnitude == other
+                && (left.index % self.shape[1], left.index / self.shape[1])
+                    < (right.index % self.shape[1], right.index / self.shape[1]))
+    }
+
+    fn swap_peak_positions(&mut self, left: usize, right: usize) {
+        self.peak_order.swap(left, right);
+        self.active[self.peak_order[left]].peak_position = left;
+        self.active[self.peak_order[right]].peak_position = right;
+    }
+
+    fn sift_down(&mut self, mut position: usize) {
+        loop {
+            let left = 2 * position + 1;
+            if left >= self.peak_order.len() {
+                break;
+            }
+            let right = left + 1;
+            let child = if right < self.peak_order.len()
+                && self.stronger(self.peak_order[right], self.peak_order[left])
+            {
+                right
+            } else {
+                left
+            };
+            if !self.stronger(self.peak_order[child], self.peak_order[position]) {
+                break;
+            }
+            self.swap_peak_positions(position, child);
+            position = child;
+        }
+    }
+
+    fn adjust_peak(&mut self, active_index: usize) {
+        let mut position = self.active[active_index].peak_position;
+        if position > 0 && self.stronger(active_index, self.peak_order[(position - 1) / 2]) {
+            while position > 0 {
+                let parent = (position - 1) / 2;
+                if !self.stronger(active_index, self.peak_order[parent]) {
+                    break;
+                }
+                self.swap_peak_positions(position, parent);
+                position = parent;
+            }
+        } else {
+            self.sift_down(position);
+        }
+    }
+
     pub(super) fn candidate(
         &mut self,
         residual: &mut [f64],
@@ -260,25 +333,16 @@ impl ClarkWorkState {
     ) -> Result<Option<(usize, f64)>, MinorCycleError> {
         loop {
             let started = self.measurements.as_ref().map(|_| Instant::now());
-            let peak = self
-                .active
-                .iter()
-                .fold(None::<&ClarkActivePixel>, |best, pixel| {
-                    if best.is_none_or(|current| pixel.value.abs() > current.value.abs()) {
-                        Some(pixel)
-                    } else {
-                        best
-                    }
-                });
+            let peak = self.peak().map(|pixel| (pixel.index, pixel.value));
             if let (Some(measurements), Some(started)) = (&mut self.measurements, started) {
                 measurements.peak_nanos += started.elapsed().as_nanos();
-                measurements.peak_visits += self.active.len() as u64;
+                measurements.peak_visits += u64::from(peak.is_some());
             }
             if self.subcycle_iterations < self.maximum_subcycle_iterations
-                && let Some(pixel) = peak
-                && pixel.value.abs() > self.iteration_flux_limit
+                && let Some((index, value)) = peak
+                && value.abs() > self.iteration_flux_limit
             {
-                return Ok(Some((pixel.index, pixel.value)));
+                return Ok(Some((index, value)));
             }
             if self.subcycle_iterations == 0 {
                 return Ok(None);
@@ -301,36 +365,60 @@ impl ClarkWorkState {
         let started = self.measurements.as_ref().map(|_| Instant::now());
         self.convolution.add(index, flux);
         let peak = [index / self.shape[1], index % self.shape[1]];
-        for pixel in &mut self.active {
-            let target = [pixel.index / self.shape[1], pixel.index % self.shape[1]];
-            let relative = [
-                target[0] as isize - peak[0] as isize,
-                target[1] as isize - peak[1] as isize,
-            ];
-            if relative[0] < -(self.approximation.radius[0] as isize)
-                || relative[0]
-                    >= (self.approximation.patch_size[0] - self.approximation.radius[0]) as isize
-                || relative[1] < -(self.approximation.radius[1] as isize)
-                || relative[1]
-                    >= (self.approximation.patch_size[1] - self.approximation.radius[1]) as isize
-            {
-                continue;
-            }
-            let source = [
-                self.psf_peak[0] as isize + relative[0],
-                self.psf_peak[1] as isize + relative[1],
-            ];
-            if source[0] < 0
-                || source[1] < 0
-                || source[0] >= self.shape[0] as isize
-                || source[1] >= self.shape[1] as isize
-            {
-                continue;
-            }
-            pixel.value -=
-                flux * psf_real_at(source[0] as usize * self.shape[1] + source[1] as usize);
-            if !pixel.value.is_finite() {
-                return Err(MinorCycleError::GeneratedNonfinite);
+        let x_start = peak[0].saturating_sub(self.approximation.radius[0]);
+        let x_end = peak[0]
+            .saturating_add(self.approximation.patch_size[0] - self.approximation.radius[0])
+            .min(self.shape[0]);
+        let y_start = peak[1].saturating_sub(self.approximation.radius[1]);
+        let y_end = peak[1]
+            .saturating_add(self.approximation.patch_size[1] - self.approximation.radius[1])
+            .min(self.shape[1]);
+        let mut visits = 0;
+        // The compact list is row-major, so two bounds find only active pixels
+        // in each PSF-patch row without a full-plane coordinate lookup buffer.
+        for x in x_start..x_end {
+            let start = self
+                .active
+                .partition_point(|pixel| pixel.index < x * self.shape[1] + y_start);
+            let end = self
+                .active
+                .partition_point(|pixel| pixel.index < x * self.shape[1] + y_end);
+            for active_index in start..end {
+                let pixel = &mut self.active[active_index];
+                visits += 1;
+                let target = [pixel.index / self.shape[1], pixel.index % self.shape[1]];
+                let relative = [
+                    target[0] as isize - peak[0] as isize,
+                    target[1] as isize - peak[1] as isize,
+                ];
+                if relative[0] < -(self.approximation.radius[0] as isize)
+                    || relative[0]
+                        >= (self.approximation.patch_size[0] - self.approximation.radius[0])
+                            as isize
+                    || relative[1] < -(self.approximation.radius[1] as isize)
+                    || relative[1]
+                        >= (self.approximation.patch_size[1] - self.approximation.radius[1])
+                            as isize
+                {
+                    continue;
+                }
+                let source = [
+                    self.psf_peak[0] as isize + relative[0],
+                    self.psf_peak[1] as isize + relative[1],
+                ];
+                if source[0] < 0
+                    || source[1] < 0
+                    || source[0] >= self.shape[0] as isize
+                    || source[1] >= self.shape[1] as isize
+                {
+                    continue;
+                }
+                pixel.value -=
+                    flux * psf_real_at(source[0] as usize * self.shape[1] + source[1] as usize);
+                if !pixel.value.is_finite() {
+                    return Err(MinorCycleError::GeneratedNonfinite);
+                }
+                self.adjust_peak(active_index);
             }
         }
         self.subcycle_iterations += 1;
@@ -338,7 +426,7 @@ impl ClarkWorkState {
         self.iteration_flux_limit = (self.flux_limit * self.fmn).max(self.threshold);
         if let (Some(measurements), Some(started)) = (&mut self.measurements, started) {
             measurements.update_nanos += started.elapsed().as_nanos();
-            measurements.update_visits += self.active.len() as u64;
+            measurements.update_visits += visits;
         }
         Ok(())
     }
@@ -346,10 +434,7 @@ impl ClarkWorkState {
     fn refresh_pending(&mut self, residual: &mut [f64]) -> Result<(), MinorCycleError> {
         let started = self.measurements.as_ref().map(|_| Instant::now());
         let previous = self.max_residual;
-        self.max_residual = self
-            .active
-            .iter()
-            .fold(0.0_f64, |peak, pixel| peak.max(pixel.value.abs()));
+        self.max_residual = self.peak().map_or(0.0, |pixel| pixel.value.abs());
         self.convolution.refresh(residual)?;
         self.refreshes += 1;
         self.subcycles += 1;
@@ -400,7 +485,7 @@ mod tests {
     use std::time::Instant;
 
     #[test]
-    fn contiguous_active_scan_preserves_x_fastest_ties_and_support() {
+    fn row_major_active_index_preserves_x_fastest_ties_and_support() {
         let shape = [4, 6];
         let center = [2, 3];
         let mut psf = vec![0.0; shape[0] * shape[1]];
@@ -433,12 +518,101 @@ mod tests {
                 .iter()
                 .map(|pixel| pixel.index)
                 .collect::<Vec<_>>(),
-            [18, 3]
+            [3, 18]
         );
         assert_eq!(
             state.candidate(&mut residual, accept).unwrap(),
             Some((18, 1.0))
         );
+    }
+
+    #[test]
+    fn indexed_patch_updates_and_peak_match_full_active_scan() {
+        let shape = [7, 9];
+        let center = [1, 4];
+        let psf = (0..shape[0] * shape[1])
+            .map(|index| {
+                if index == center[0] * shape[1] + center[1] {
+                    1.0
+                } else {
+                    0.3 * (index as f32 * 0.71).sin()
+                }
+            })
+            .collect::<Vec<_>>();
+        let residual = (0..psf.len())
+            .map(|index| ((index * 17 % 23) as f64 - 11.0) / 10.0)
+            .collect::<Vec<_>>();
+        let mut state = ClarkWorkState::new(
+            &residual,
+            &psf,
+            shape,
+            center,
+            1.0,
+            ClarkApproximation {
+                radius: [2, 3],
+                patch_size: [5, 7],
+                maximum_exterior_sidelobe: 0.01,
+            },
+            0.01,
+            1,
+            |pixel| pixel[1] % 3 != 0,
+        )
+        .unwrap();
+        let mut expected = state
+            .active
+            .iter()
+            .map(|p| (p.index, p.value))
+            .collect::<Vec<_>>();
+        for iteration in 1..=128 {
+            let best = expected
+                .iter()
+                .min_by(|left, right| {
+                    right.1.abs().total_cmp(&left.1.abs()).then_with(|| {
+                        (left.0 % shape[1], left.0 / shape[1])
+                            .cmp(&(right.0 % shape[1], right.0 / shape[1]))
+                    })
+                })
+                .unwrap();
+            let index = best.0;
+            let flux = best.1 * 0.37;
+            assert_eq!(state.peak().map(|p| (p.index, p.value)), Some(*best));
+            state
+                .accept(index, flux, iteration, |i| f64::from(psf[i]))
+                .unwrap();
+            let peak = [index / shape[1], index % shape[1]];
+            for (target, value) in &mut expected {
+                let relative = [
+                    (*target / shape[1]) as isize - peak[0] as isize,
+                    (*target % shape[1]) as isize - peak[1] as isize,
+                ];
+                let source = [
+                    center[0] as isize + relative[0],
+                    center[1] as isize + relative[1],
+                ];
+                if (-2..3).contains(&relative[0])
+                    && (-3..4).contains(&relative[1])
+                    && (0..shape[0] as isize).contains(&source[0])
+                    && (0..shape[1] as isize).contains(&source[1])
+                {
+                    *value -=
+                        flux * f64::from(psf[source[0] as usize * shape[1] + source[1] as usize]);
+                }
+            }
+            for (actual, &(index, value)) in state.active.iter().zip(&expected) {
+                assert_eq!(actual.index, index);
+                assert!((actual.value - value).abs() < 1e-14);
+                assert_eq!(
+                    state.peak_order[actual.peak_position],
+                    state.active.partition_point(|p| p.index < index)
+                );
+            }
+        }
+        assert!(state.active.capacity() <= residual.len());
+        assert!(state.peak_order.capacity() <= residual.len());
+        state.begin(&residual, |_| true);
+        assert_eq!(state.peak_order.len(), state.active.len());
+        assert!(state.active.capacity() <= residual.len());
+        assert!(state.peak_order.capacity() <= residual.len());
     }
 
     #[test]
