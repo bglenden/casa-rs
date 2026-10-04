@@ -4,6 +4,7 @@
 
 use casa_fft::RealFft2;
 use num_complex::Complex32;
+use std::time::Instant;
 
 use super::{ClarkApproximation, MinorCycleError};
 use crate::spectral_operator::SpectralOperatorError;
@@ -138,6 +139,19 @@ pub(super) struct ClarkWorkState {
     refreshes: usize,
     active: Vec<ClarkActivePixel>,
     convolution: LinearRefresh,
+    measurements: Option<ClarkMeasurements>,
+}
+
+#[derive(Default)]
+struct ClarkMeasurements {
+    setup_nanos: u128,
+    build_nanos: u128,
+    peak_nanos: u128,
+    update_nanos: u128,
+    refresh_nanos: u128,
+    peak_visits: u64,
+    update_visits: u64,
+    maximum_active: usize,
 }
 
 impl ClarkWorkState {
@@ -153,6 +167,9 @@ impl ClarkWorkState {
         fft_threads: usize,
         accept: impl Fn([usize; 2]) -> bool,
     ) -> Result<Self, MinorCycleError> {
+        let started = std::env::var_os("CASA_RS_TRACE_CLARK_TIMING")
+            .is_some()
+            .then(Instant::now);
         let mut max_residual = 0.0_f64;
         for (x, row) in residual.chunks_exact(shape[1]).enumerate() {
             for (y, value) in row.iter().enumerate() {
@@ -189,12 +206,17 @@ impl ClarkWorkState {
             refreshes: 0,
             active: Vec::new(),
             convolution,
+            measurements: started.map(|started| ClarkMeasurements {
+                setup_nanos: started.elapsed().as_nanos(),
+                ..ClarkMeasurements::default()
+            }),
         };
         state.begin(residual, accept);
         Ok(state)
     }
 
     fn begin(&mut self, residual: &[f64], accept: impl Fn([usize; 2]) -> bool) {
+        let started = self.measurements.as_ref().map(|_| Instant::now());
         self.flux_limit = self.max_residual * self.approximation.maximum_exterior_sidelobe
             / self.normalization
             * self.factor;
@@ -228,6 +250,10 @@ impl ClarkWorkState {
         self.fmn = 0.0;
         self.iteration_flux_limit = cutoff;
         self.subcycle_iterations = 0;
+        if let (Some(measurements), Some(started)) = (&mut self.measurements, started) {
+            measurements.build_nanos += started.elapsed().as_nanos();
+            measurements.maximum_active = measurements.maximum_active.max(self.active.len());
+        }
     }
 
     pub(super) fn candidate(
@@ -236,6 +262,7 @@ impl ClarkWorkState {
         accept: impl Fn([usize; 2]) -> bool,
     ) -> Result<Option<(usize, f64)>, MinorCycleError> {
         loop {
+            let started = self.measurements.as_ref().map(|_| Instant::now());
             let peak = self
                 .active
                 .iter()
@@ -246,6 +273,10 @@ impl ClarkWorkState {
                         best
                     }
                 });
+            if let (Some(measurements), Some(started)) = (&mut self.measurements, started) {
+                measurements.peak_nanos += started.elapsed().as_nanos();
+                measurements.peak_visits += self.active.len() as u64;
+            }
             if self.subcycle_iterations < self.maximum_subcycle_iterations
                 && let Some(pixel) = peak
                 && pixel.value.abs() > self.iteration_flux_limit
@@ -270,6 +301,7 @@ impl ClarkWorkState {
         global_iterations: usize,
         psf_real_at: impl Fn(usize) -> f64,
     ) -> Result<(), MinorCycleError> {
+        let started = self.measurements.as_ref().map(|_| Instant::now());
         self.convolution.add(index, flux);
         let peak = [index / self.shape[1], index % self.shape[1]];
         for pixel in &mut self.active {
@@ -307,10 +339,15 @@ impl ClarkWorkState {
         self.subcycle_iterations += 1;
         self.fmn += self.fac / global_iterations as f64;
         self.iteration_flux_limit = (self.flux_limit * self.fmn).max(self.threshold);
+        if let (Some(measurements), Some(started)) = (&mut self.measurements, started) {
+            measurements.update_nanos += started.elapsed().as_nanos();
+            measurements.update_visits += self.active.len() as u64;
+        }
         Ok(())
     }
 
     fn refresh_pending(&mut self, residual: &mut [f64]) -> Result<(), MinorCycleError> {
+        let started = self.measurements.as_ref().map(|_| Instant::now());
         let previous = self.max_residual;
         self.max_residual = self
             .active
@@ -324,12 +361,29 @@ impl ClarkWorkState {
             self.factor *= 3.0;
             self.maximum_subcycle_iterations = 10;
         }
+        if let (Some(measurements), Some(started)) = (&mut self.measurements, started) {
+            measurements.refresh_nanos += started.elapsed().as_nanos();
+        }
         Ok(())
     }
 
     pub(super) fn finish(&mut self, residual: &mut [f64]) -> Result<(), MinorCycleError> {
         if self.subcycle_iterations > 0 {
             self.refresh_pending(residual)?;
+        }
+        if let Some(measurements) = &self.measurements {
+            eprintln!(
+                "imaging_clark_cost setup_nanos={} build_nanos={} peak_nanos={} update_nanos={} refresh_nanos={} peak_visits={} update_visits={} maximum_active={} refreshes={}",
+                measurements.setup_nanos,
+                measurements.build_nanos,
+                measurements.peak_nanos,
+                measurements.update_nanos,
+                measurements.refresh_nanos,
+                measurements.peak_visits,
+                measurements.update_visits,
+                measurements.maximum_active,
+                self.refreshes,
+            );
         }
         Ok(())
     }
