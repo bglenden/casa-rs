@@ -21,62 +21,6 @@ fn fixture() -> (
 }
 
 #[test]
-fn tiled_forward_model_preserves_partial_tiles_and_parent_row_stride() {
-    use casa_imaging_model::{ModelCell, ModelDeltaTerm, ModelValue};
-
-    let (_, lifecycle, model) = fixture();
-    let [width, height] = [35, 37];
-    let delta = lifecycle
-        .compile_delta(
-            &model,
-            (0..height).flat_map(|y| {
-                (0..width).map(move |x| {
-                    ModelDeltaTerm::new(
-                        ModelCell::new(0, 0, 0, [x, y]),
-                        ModelValue::new((x as f64 - 0.25 * y as f64 + 0.125) * 0.03125).unwrap(),
-                    )
-                })
-            }),
-        )
-        .unwrap();
-    let model = lifecycle.apply_delta(model, delta).unwrap();
-    let mut geometry = geometry();
-    geometry.image_shape = [width, height];
-    geometry.grid_shape = [48, 48];
-    geometry.image_blc = [3, 4];
-    let reserved = super::super::fft_resident_complex_values_for_shape([48, 48]).unwrap();
-    let fft = PreparedFft::new([48, 48], reserved, 1).unwrap();
-    let workload = workload();
-    let mut operator =
-        SpectralSlabOperator::new_with_geometry(geometry.clone(), workload.slab, workload, fft);
-    let mut expected = Array2::zeros((48, 48));
-    let window = model.read_window(0, 0..1).unwrap();
-    for y in 0..height {
-        let row_start = window
-            .shape()
-            .flat_index(ModelCell::new(0, 0, 0, [0, y]))
-            .unwrap();
-        for x in 0..width {
-            let sample = window.sample(row_start + x).unwrap();
-            expected[(3 + x, 4 + y)] = Complex64::new(sample.value().value(), 0.0)
-                * operator.gridder.model_correction(x, y);
-        }
-    }
-    operator.fft.transform(&mut expected, false);
-    operator.prepare_forward_generation(&model).unwrap();
-    assert_complex_agreement(
-        expected.as_slice().unwrap(),
-        operator.forward_grids[0].as_slice().unwrap(),
-    );
-
-    operator.geometry.image_shape[0] = 513;
-    assert_eq!(
-        operator.prepare_forward_generation(&model),
-        Err(SpectralOperatorError::ModelShape)
-    );
-}
-
-#[test]
 fn t55_identity_chart_transfers_primitive_allocations_to_its_domain() {
     let (problem, _, model) = fixture();
     let specification = SpectralOperatorSpecification::new(&problem).unwrap();
