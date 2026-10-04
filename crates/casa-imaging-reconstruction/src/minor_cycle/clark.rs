@@ -4,6 +4,7 @@
 
 use casa_fft::RealFft2;
 use num_complex::Complex32;
+use smallvec::SmallVec;
 use std::time::Instant;
 
 use super::{ClarkApproximation, MinorCycleError};
@@ -14,17 +15,28 @@ pub(super) struct ClarkActivePixel {
     value: f64,
 }
 
-struct LinearRefresh {
+// The inline tracking limit bounds sparse bookkeeping; the work estimate below
+// chooses the numerical strategy. Larger batches use the existing FFT buffer.
+const SPARSE_COMPONENT_CAPACITY: usize = 64;
+
+struct LinearRefresh<'psf> {
     shape: [usize; 2],
     padded: [usize; 2],
+    psf: &'psf [f32],
+    center: [usize; 2],
+    threads: usize,
+    sparse_indices: SmallVec<[usize; SPARSE_COMPONENT_CAPACITY]>,
+    dense_batch: bool,
+    sparse_refreshes: usize,
+    fft_refreshes: usize,
     psf_spectrum: Vec<Complex32>,
     components: Vec<Complex32>,
     fft: RealFft2<f32>,
 }
 
-impl LinearRefresh {
+impl<'psf> LinearRefresh<'psf> {
     fn new(
-        psf: &[f32],
+        psf: &'psf [f32],
         shape: [usize; 2],
         center: [usize; 2],
         threads: usize,
@@ -53,7 +65,7 @@ impl LinearRefresh {
     }
 
     fn with_padded(
-        psf: &[f32],
+        psf: &'psf [f32],
         shape: [usize; 2],
         center: [usize; 2],
         padded: [usize; 2],
@@ -79,6 +91,13 @@ impl LinearRefresh {
         Ok(Self {
             shape,
             padded,
+            psf,
+            center,
+            threads,
+            sparse_indices: SmallVec::new(),
+            dense_batch: false,
+            sparse_refreshes: 0,
+            fft_refreshes: 0,
             psf_spectrum,
             components,
             fft,
@@ -86,12 +105,67 @@ impl LinearRefresh {
     }
 
     fn add(&mut self, index: usize, flux: f64) {
+        if !self.dense_batch && !self.sparse_indices.contains(&index) {
+            if self.sparse_indices.len() == SPARSE_COMPONENT_CAPACITY {
+                self.dense_batch = true;
+            } else {
+                self.sparse_indices.push(index);
+            }
+        }
         let pixel = [index / self.shape[1], index % self.shape[1]];
         let real: &mut [f32] = bytemuck::cast_slice_mut(&mut self.components);
         real[pixel[0] * self.fft.real_row_stride() + pixel[1]] += flux as f32;
     }
 
     fn refresh(&mut self, residual: &mut [f64]) -> Result<(), MinorCycleError> {
+        if !self.dense_batch {
+            let row_stride = self.fft.real_row_stride();
+            let real: &[f32] = bytemuck::cast_slice(&self.components);
+            let components = self
+                .sparse_indices
+                .iter()
+                .map(|&index| {
+                    (
+                        index,
+                        real[index / self.shape[1] * row_stride + index % self.shape[1]],
+                    )
+                })
+                .filter(|(_, flux)| *flux != 0.0)
+                .collect::<SmallVec<[(usize, f32); SPARSE_COMPONENT_CAPACITY]>>();
+            if components.is_empty() {
+                self.sparse_indices.clear();
+                return Ok(());
+            }
+            // Count clipped direct multiply-adds against the butterfly work of
+            // two real transforms. This scales with shape and batch support,
+            // not a workload-specific component-count crossover.
+            let direct_work = components.iter().fold(0_u128, |work, &(index, _)| {
+                let source = [index / self.shape[1], index % self.shape[1]];
+                let overlap =
+                    |axis: usize| self.shape[axis] - source[axis].abs_diff(self.center[axis]);
+                work + overlap(0) as u128 * overlap(1) as u128
+            });
+            let fft_work = self.padded[0] as u128
+                * self.padded[1] as u128
+                * u128::from(self.padded[0].ilog2() + self.padded[1].ilog2());
+            if direct_work <= fft_work {
+                sparse_refresh(
+                    self.psf,
+                    self.shape,
+                    self.center,
+                    &components,
+                    self.threads,
+                    residual,
+                )?;
+                let real: &mut [f32] = bytemuck::cast_slice_mut(&mut self.components);
+                for &index in &self.sparse_indices {
+                    real[index / self.shape[1] * row_stride + index % self.shape[1]] = 0.0;
+                }
+                self.sparse_indices.clear();
+                self.sparse_refreshes += 1;
+                return Ok(());
+            }
+        }
         self.fft
             .forward(&mut self.components)
             .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
@@ -114,11 +188,94 @@ impl LinearRefresh {
             }
         }
         self.components.fill(Complex32::default());
+        self.sparse_indices.clear();
+        self.dense_batch = false;
+        self.fft_refreshes += 1;
         Ok(())
     }
 }
 
-pub(super) struct ClarkWorkState {
+fn sparse_refresh(
+    psf: &[f32],
+    shape: [usize; 2],
+    center: [usize; 2],
+    components: &[(usize, f32)],
+    threads: usize,
+    residual: &mut [f64],
+) -> Result<(), MinorCycleError> {
+    let threads = threads.min(shape[0]).max(1);
+    if threads == 1 {
+        return sparse_refresh_rows(psf, shape, center, components, 0, residual);
+    }
+    let rows = shape[0].div_ceil(threads);
+    std::thread::scope(|scope| {
+        let (caller, remaining) = residual.split_at_mut(rows * shape[1]);
+        let mut handles = Vec::with_capacity(threads - 1);
+        for (ordinal, tile) in remaining.chunks_mut(rows * shape[1]).enumerate() {
+            handles.push(
+                std::thread::Builder::new()
+                    .stack_size(super::CLARK_ROW_STACK_BYTES)
+                    .spawn_scoped(scope, move || {
+                        sparse_refresh_rows(
+                            psf,
+                            shape,
+                            center,
+                            components,
+                            (ordinal + 1) * rows,
+                            tile,
+                        )
+                    })
+                    .map_err(|error| SpectralOperatorError::SpatialExecution(error.to_string()))?,
+            );
+        }
+        let mut result = sparse_refresh_rows(psf, shape, center, components, 0, caller);
+        for handle in handles {
+            let completed = match handle.join() {
+                Ok(completed) => completed,
+                Err(_) => Err(SpectralOperatorError::SpatialExecution(
+                    "Clark row worker panicked".into(),
+                )
+                .into()),
+            };
+            result = result.and(completed);
+        }
+        result
+    })
+}
+
+fn sparse_refresh_rows(
+    psf: &[f32],
+    shape: [usize; 2],
+    center: [usize; 2],
+    components: &[(usize, f32)],
+    first_row: usize,
+    residual: &mut [f64],
+) -> Result<(), MinorCycleError> {
+    let width = shape[1];
+    for (local_x, row) in residual.chunks_exact_mut(width).enumerate() {
+        let x = first_row + local_x;
+        for &(index, flux) in components {
+            let source = [index / width, index % width];
+            let psf_x = center[0] as isize + x as isize - source[0] as isize;
+            if !(0..shape[0] as isize).contains(&psf_x) {
+                continue;
+            }
+            let begin = source[1].saturating_sub(center[1]);
+            let end = (source[1] + width - center[1]).min(width);
+            let kernel_begin = psf_x as usize * width + center[1] + begin - source[1];
+            let kernel = &psf[kernel_begin..kernel_begin + end - begin];
+            for (value, &coefficient) in row[begin..end].iter_mut().zip(kernel) {
+                *value -= f64::from(flux) * f64::from(coefficient);
+            }
+        }
+        if row.iter().any(|value| !value.is_finite()) {
+            return Err(MinorCycleError::GeneratedNonfinite);
+        }
+    }
+    Ok(())
+}
+
+pub(super) struct ClarkWorkState<'psf> {
     shape: [usize; 2],
     psf_peak: [usize; 2],
     approximation: ClarkApproximation,
@@ -135,7 +292,7 @@ pub(super) struct ClarkWorkState {
     subcycles: usize,
     refreshes: usize,
     active: Vec<ClarkActivePixel>,
-    convolution: LinearRefresh,
+    convolution: LinearRefresh<'psf>,
     measurements: Option<ClarkMeasurements>,
 }
 
@@ -151,11 +308,11 @@ struct ClarkMeasurements {
     maximum_active: usize,
 }
 
-impl ClarkWorkState {
+impl<'psf> ClarkWorkState<'psf> {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         residual: &[f64],
-        psf: &[f32],
+        psf: &'psf [f32],
         shape: [usize; 2],
         psf_peak: [usize; 2],
         normalization: f64,
@@ -370,7 +527,7 @@ impl ClarkWorkState {
         }
         if let Some(measurements) = &self.measurements {
             eprintln!(
-                "imaging_clark_cost setup_nanos={} build_nanos={} peak_nanos={} update_nanos={} refresh_nanos={} peak_visits={} update_visits={} maximum_active={} refreshes={}",
+                "imaging_clark_cost setup_nanos={} build_nanos={} peak_nanos={} update_nanos={} refresh_nanos={} peak_visits={} update_visits={} maximum_active={} refreshes={} sparse_refreshes={} fft_refreshes={}",
                 measurements.setup_nanos,
                 measurements.build_nanos,
                 measurements.peak_nanos,
@@ -380,6 +537,8 @@ impl ClarkWorkState {
                 measurements.update_visits,
                 measurements.maximum_active,
                 self.refreshes,
+                self.convolution.sparse_refreshes,
+                self.convolution.fft_refreshes,
             );
         }
         Ok(())
@@ -398,6 +557,93 @@ impl ClarkWorkState {
 mod tests {
     use super::*;
     use std::time::Instant;
+
+    #[test]
+    #[ignore = "actual persisted PSF/model sparse-convolution crossover; guarded diagnostic"]
+    fn compare_actual_sparse_clark_refresh() {
+        use casa_images::PagedImage;
+        let image = |name| {
+            let path = std::env::var_os(name).expect("durable actual application product");
+            let image = PagedImage::<f32>::open(std::path::PathBuf::from(path)).unwrap();
+            let shape = image.shape().to_vec();
+            assert_eq!(shape.len(), 4);
+            assert_eq!(&shape[2..], &[1, 1]);
+            let pixels = image
+                .get_slice(&[0; 4], &shape)
+                .unwrap()
+                .iter()
+                .copied()
+                .collect::<Vec<_>>();
+            ([shape[0], shape[1]], pixels)
+        };
+        let (shape, psf) = image("CASA_RS_CLARK_PROBE_PSF");
+        let (model_shape, model) = image("CASA_RS_CLARK_PROBE_MODEL");
+        assert_eq!(shape, model_shape);
+        let origin = psf
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.total_cmp(b))
+            .unwrap()
+            .0;
+        let center = [origin / shape[1], origin % shape[1]];
+        let mut components = model
+            .into_iter()
+            .enumerate()
+            .filter(|(_, flux)| *flux != 0.0)
+            .collect::<Vec<_>>();
+        assert!(components.iter().all(|(_, flux)| flux.is_finite()));
+        components.sort_unstable_by(|(_, a), (_, b)| b.abs().total_cmp(&a.abs()));
+        assert!(components.len() >= 64);
+        let mut fft = LinearRefresh::new(&psf, shape, center, 4).unwrap();
+        println!(
+            "clark_sparse_probe shape={shape:?} padded={:?} actual_components={}",
+            fft.padded,
+            components.len()
+        );
+        for count in [1, 4, 8, 16, 64] {
+            let selected = &components[..count];
+            let mut expected = vec![0.0; psf.len()];
+            for &(index, flux) in selected {
+                fft.add(index, f64::from(flux));
+            }
+            fft.dense_batch = true;
+            let start = Instant::now();
+            fft.refresh(&mut expected).unwrap();
+            let fft_seconds = start.elapsed().as_secs_f64();
+            for workers in [1, 4] {
+                let psf = psf.as_slice();
+                let mut actual = vec![0.0; psf.len()];
+                let rows = shape[0].div_ceil(workers);
+                let start = Instant::now();
+                std::thread::scope(|scope| {
+                    let mut handles = Vec::new();
+                    for (ordinal, tile) in actual.chunks_mut(rows * shape[1]).enumerate() {
+                        handles.push(scope.spawn(move || {
+                            sparse_refresh_rows(psf, shape, center, selected, ordinal * rows, tile)
+                        }));
+                    }
+                    for handle in handles {
+                        handle.join().unwrap().unwrap();
+                    }
+                });
+                let direct_seconds = start.elapsed().as_secs_f64();
+                let (mut error, mut norm, mut maximum, mut peak) =
+                    (0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64);
+                for (&actual, &expected) in actual.iter().zip(&expected) {
+                    error += (actual - expected).powi(2);
+                    norm += expected.powi(2);
+                    maximum = maximum.max((actual - expected).abs());
+                    peak = peak.max(expected.abs());
+                }
+                let relative_l2 = (error / norm).sqrt();
+                let peak_normalized_error = maximum / peak;
+                assert!(relative_l2 <= 1e-3 && peak_normalized_error <= 1e-3);
+                println!(
+                    "clark_sparse_probe components={count} workers={workers} fft_seconds={fft_seconds:.9} direct_seconds={direct_seconds:.9} relative_l2={relative_l2:.9e} peak_normalized_error={peak_normalized_error:.9e}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn contiguous_active_scan_preserves_x_fastest_ties_and_support() {
@@ -494,6 +740,7 @@ mod tests {
             }
             let mut actual = vec![0.5; psf.len()];
             refresh.refresh(&mut actual).unwrap();
+            assert_eq!(refresh.sparse_refreshes, 1);
             for (&actual, &expected) in actual.iter().zip(&expected) {
                 assert!(
                     (actual - expected).abs() < 1e-5,
@@ -522,6 +769,7 @@ mod tests {
                         for source_y in [0, shape[1] - 1] {
                             let mut refresh = LinearRefresh::new(&psf, shape, center, 1).unwrap();
                             refresh.add(source_x * shape[1] + source_y, 0.625);
+                            refresh.dense_batch = true;
                             let mut actual = vec![0.0; psf.len()];
                             refresh.refresh(&mut actual).unwrap();
                             for x in 0..shape[0] {
@@ -555,6 +803,79 @@ mod tests {
     }
 
     #[test]
+    fn sparse_batches_share_f32_accumulation_and_reset_after_dense_overflow() {
+        let shape = [16, 16];
+        let center = [8, 8];
+        let psf = (0..shape[0] * shape[1])
+            .map(|index| (index as f32 * 0.37).sin())
+            .collect::<Vec<_>>();
+        for threads in [1, 4, 8] {
+            let mut actual = LinearRefresh::new(&psf, shape, center, threads).unwrap();
+            let mut reference = LinearRefresh::new(&psf, shape, center, threads).unwrap();
+            let batches = [
+                vec![(0, 0.1), (0, 0.2), (17, 0.625), (17, -0.625), (255, -0.375)],
+                (0..SPARSE_COMPONENT_CAPACITY + 1)
+                    .map(|index| (index, (index as f64 * 0.7).cos()))
+                    .collect(),
+                vec![(17, 0.5), (17, -0.5)],
+                vec![(7, 0.25)],
+            ];
+            let mut residual = vec![0.5; psf.len()];
+            let mut expected = residual.clone();
+            for (ordinal, batch) in batches.into_iter().enumerate() {
+                for (index, flux) in batch {
+                    actual.add(index, flux);
+                    reference.add(index, flux);
+                }
+                assert_eq!(actual.dense_batch, ordinal == 1);
+                assert!(!actual.sparse_indices.spilled());
+                reference.dense_batch = true;
+                actual.refresh(&mut residual).unwrap();
+                reference.refresh(&mut expected).unwrap();
+                for (&value, &reference) in residual.iter().zip(&expected) {
+                    assert!((value - reference).abs() < 1e-5);
+                }
+                assert!(actual.sparse_indices.is_empty());
+                assert!(!actual.dense_batch);
+                let completed = residual.clone();
+                actual.refresh(&mut residual).unwrap();
+                assert_eq!(residual, completed);
+            }
+            assert_eq!(actual.sparse_refreshes, 2);
+            assert_eq!(actual.fft_refreshes, 1);
+        }
+    }
+
+    #[test]
+    fn sparse_tracking_uses_fft_when_clipped_work_exceeds_transform_work() {
+        let shape = [32, 32];
+        let psf = vec![1.0; shape[0] * shape[1]];
+        let mut refresh = LinearRefresh::new(&psf, shape, [16, 16], 1).unwrap();
+        for index in 0..40 {
+            refresh.add((14 + index / 8) * shape[1] + 12 + index % 8, 0.25);
+        }
+        assert!(!refresh.dense_batch);
+        refresh.refresh(&mut vec![0.0; psf.len()]).unwrap();
+        assert_eq!(refresh.sparse_refreshes, 0);
+        assert_eq!(refresh.fft_refreshes, 1);
+    }
+
+    #[test]
+    fn sparse_refresh_propagates_nonfinite_worker_output() {
+        let shape = [16, 16];
+        let center = [8, 8];
+        let psf = vec![1.0; shape[0] * shape[1]];
+        for threads in [1, 4, 8] {
+            let mut refresh = LinearRefresh::new(&psf, shape, center, threads).unwrap();
+            refresh.add(8 * shape[1] + 8, f64::NAN);
+            assert_eq!(
+                refresh.refresh(&mut vec![0.0; psf.len()]),
+                Err(MinorCycleError::GeneratedNonfinite)
+            );
+        }
+    }
+
+    #[test]
     #[ignore = "bounded manual cost comparison; run with --release --ignored --nocapture"]
     fn compare_cropped_and_full_clark_transform_cost() {
         let shape = [512, 512];
@@ -573,6 +894,7 @@ mod tests {
             for index in [0, shape[1] - 1, psf.len() / 2, psf.len() - 1] {
                 refresh.add(index, 0.25);
             }
+            refresh.dense_batch = true;
             let mut residual = vec![1.0; psf.len()];
             let start = Instant::now();
             refresh.refresh(&mut residual).unwrap();

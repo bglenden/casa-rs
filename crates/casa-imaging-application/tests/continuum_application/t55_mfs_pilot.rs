@@ -16,8 +16,12 @@ fn metal_mfs_clean_refresh_and_publication_matches_cpu() {
     let root = tempfile::tempdir().unwrap();
     let ms = spectral_line_measurement_set(root.path());
     let mut baseline: Option<Vec<Vec<f32>>> = None;
-    for metal in [false, true] {
-        let prefix = root.path().join(if metal { "metal" } else { "cpu" });
+    for (metal, cache, label) in [
+        (false, false, "cpu"),
+        (true, true, "metal"),
+        (true, false, "metal-streaming"),
+    ] {
+        let prefix = root.path().join(label);
         let mut imaging = request(ms.clone(), prefix.clone(), ContinuumAlgorithm::Clark);
         imaging.image_size = 64;
         imaging.weighting = ContinuumWeighting::Natural;
@@ -37,6 +41,7 @@ fn metal_mfs_clean_refresh_and_publication_matches_cpu() {
         }
         imaging.resource_policy = ResourcePolicy::Explicit(ResourceOverride {
             workers: Some(2),
+            cache_bytes: (!cache).then_some(0),
             memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 4 << 30)]),
             ..ResourceOverride::default()
         });

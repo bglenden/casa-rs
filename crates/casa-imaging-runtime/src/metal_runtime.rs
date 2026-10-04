@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 #[cfg(all(target_os = "macos", not(coverage)))]
 use std::time::Instant;
 
@@ -473,6 +473,62 @@ struct PendingCubeCommand {
     status: Option<MetalBufferRegionOwned>,
     stats: MetalBatchStats,
     stage_profile: Option<crate::metal_cube::MetalStageProfile>,
+    // Immutable replay memory remains charged through the GPU fence, including
+    // error unwinding after its application owner has been dropped.
+    _normal_replay: Option<Arc<MetalReplayBuffer>>,
+}
+
+/// Run-owned shared storage. Mutable access requires unique ownership; after
+/// publication through Arc, commands can only borrow immutable regions.
+pub(crate) struct MetalReplayBuffer {
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    device: u64,
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    bytes: usize,
+    _reservation: crate::ResourceLease,
+}
+
+// SAFETY: Metal buffers have no thread affinity. Mutable CPU access requires
+// &mut self, before shared publication. GPU users receive read-only regions and
+// retain the buffer and its memory lease until their command fence completes.
+#[cfg(all(target_os = "macos", not(coverage)))]
+unsafe impl Send for MetalReplayBuffer {}
+#[cfg(all(target_os = "macos", not(coverage)))]
+unsafe impl Sync for MetalReplayBuffer {}
+
+impl MetalReplayBuffer {
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    pub(crate) fn with_bytes_mut<R>(
+        &mut self,
+        offset: usize,
+        bytes: usize,
+        use_bytes: impl FnOnce(&mut [u8]) -> R,
+    ) -> Result<R, MetalRuntimeError> {
+        if offset.checked_add(bytes).is_none_or(|end| end > self.bytes) {
+            return Err(MetalRuntimeError::InvalidPlan(
+                "replay region overflow".into(),
+            ));
+        }
+        let bytes = unsafe {
+            std::slice::from_raw_parts_mut(
+                self.buffer.contents().as_ptr().cast::<u8>().add(offset),
+                bytes,
+            )
+        };
+        Ok(use_bytes(bytes))
+    }
+
+    #[cfg(not(all(target_os = "macos", not(coverage))))]
+    pub(crate) fn with_bytes_mut<R>(
+        &mut self,
+        _: usize,
+        _: usize,
+        _: impl FnOnce(&mut [u8]) -> R,
+    ) -> Result<R, MetalRuntimeError> {
+        Err(MetalRuntimeError::UnsupportedPlatform)
+    }
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -500,6 +556,51 @@ pub(crate) struct MetalBatchAccess<'a> {
 }
 
 impl MetalBatchAccess<'_> {
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    pub(crate) fn allocate_replay(
+        &self,
+        reservation: crate::ResourceLease,
+        bytes: usize,
+    ) -> Result<Option<MetalReplayBuffer>, MetalRuntimeError> {
+        let inner = self.lock()?;
+        let platform = inner.platform.as_ref().expect("prepared platform");
+        if bytes == 0 || bytes as u64 > reservation.demand().caches.hard_resident_bytes {
+            return Err(MetalRuntimeError::InvalidPlan(
+                "unadmitted replay buffer".into(),
+            ));
+        }
+        let resident: usize = platform.buffers.values().map(|b| b.length()).sum();
+        if bytes > platform.device.maxBufferLength()
+            || resident
+                .checked_add(bytes)
+                .is_none_or(|n| n as u64 > platform.device.recommendedMaxWorkingSetSize())
+        {
+            return Ok(None);
+        }
+        let buffer = platform
+            .device
+            .newBufferWithLength_options(bytes, MTLResourceOptions::StorageModeShared)
+            .ok_or_else(|| MetalRuntimeError::AllocationFailed {
+                slot: PhysicalSlotId::new("run-metal-normal-replay"),
+                bytes: bytes as u64,
+            })?;
+        Ok(Some(MetalReplayBuffer {
+            buffer,
+            device: platform.device.registryID(),
+            bytes,
+            _reservation: reservation,
+        }))
+    }
+
+    #[cfg(not(all(target_os = "macos", not(coverage))))]
+    pub(crate) fn allocate_replay(
+        &self,
+        _: crate::ResourceLease,
+        _: usize,
+    ) -> Result<Option<MetalReplayBuffer>, MetalRuntimeError> {
+        Err(MetalRuntimeError::UnsupportedPlatform)
+    }
+
     fn lock(&self) -> Result<MutexGuard<'_, MetalExecutionInner>, MetalRuntimeError> {
         let inner = self
             .runtime
@@ -675,12 +776,14 @@ pub(crate) struct MetalBatchStats {
 /// A bounded region of a plan-owned shared allocation. Multiple plane regions
 /// can occupy one wave allocation without separate device allocations.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(not(all(target_os = "macos", not(coverage))), allow(dead_code))]
 pub(crate) struct MetalBufferRegion<'a> {
     pub allocation: &'a AllocationId,
     pub offset: usize,
     pub bytes: usize,
 }
 
+#[cfg_attr(not(all(target_os = "macos", not(coverage))), allow(dead_code))]
 impl MetalBufferRegion<'_> {
     fn overlaps(self, other: Self) -> bool {
         self.allocation == other.allocation
@@ -690,12 +793,14 @@ impl MetalBufferRegion<'_> {
 }
 
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(not(all(target_os = "macos", not(coverage))), allow(dead_code))]
 pub(crate) enum CubeDispatchKind<'a> {
     Grid,
     Degrid { predicted: MetalBufferRegion<'a> },
 }
 
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(not(all(target_os = "macos", not(coverage))), allow(dead_code))]
 pub(crate) struct CubeDispatch<'a> {
     pub kind: CubeDispatchKind<'a>,
     pub samples: MetalBufferRegion<'a>,
@@ -709,6 +814,7 @@ pub(crate) struct CubeDispatch<'a> {
 /// Regions are prediction descriptors, native mapping, fine descriptors, native
 /// values/weights/flags, convolution table, models, predictions, residual, status.
 #[derive(Clone, Copy)]
+#[cfg_attr(not(all(target_os = "macos", not(coverage))), allow(dead_code))]
 pub(crate) struct CubeResidualDispatch<'a> {
     pub regions: [MetalBufferRegion<'a>; 11],
     /// Requested gathers, fine samples, native endpoints, model planes,
@@ -719,10 +825,14 @@ pub(crate) struct CubeResidualDispatch<'a> {
 
 /// Packed records, groups, table, model, predictions, normal accumulation, status.
 #[derive(Clone, Copy)]
+#[cfg_attr(not(all(target_os = "macos", not(coverage))), allow(dead_code))]
 pub(crate) struct NormalDispatch<'a> {
     pub regions: [MetalBufferRegion<'a>; 7],
     /// Record count, group count, grid width, grid height.
     pub shape: [u32; 4],
+    /// If present, immutable records/groups/table live in this run-owned cache.
+    /// The three offsets replace regions 0..3; mutable regions remain plan-owned.
+    pub replay: Option<(&'a Arc<MetalReplayBuffer>, [usize; 3])>,
 }
 
 impl fmt::Debug for MetalExecutionState {
@@ -1465,6 +1575,7 @@ fn submit_platform_batch(
             status: None,
             stats,
             stage_profile: None,
+            _normal_replay: None,
         },
     );
     Ok(ticket)
@@ -1595,6 +1706,7 @@ fn submit_cube_residual(
                 ..MetalBatchStats::default()
             },
             stage_profile,
+            _normal_replay: None,
         },
     );
     Ok(ticket)
@@ -1653,11 +1765,27 @@ fn submit_normal(
         }
     }
     let platform = inner.platform.as_mut().expect("prepared platform");
-    let buffers = dispatch
+    let mut buffers = dispatch
         .regions
         .iter()
         .map(|&r| buffer_region(decision, platform, node, r))
         .collect::<Result<Vec<_>, _>>()?;
+    if let Some((replay, offsets)) = dispatch.replay {
+        if replay.device != platform.device.registryID() {
+            return Err(invalid());
+        }
+        for index in 0..3 {
+            let bytes = sizes[index].ok_or_else(invalid)?;
+            if offsets[index] % 8 != 0
+                || offsets[index]
+                    .checked_add(bytes)
+                    .is_none_or(|n| n > replay.bytes)
+            {
+                return Err(invalid());
+            }
+            buffers[index] = (&replay.buffer, offsets[index]);
+        }
+    }
     let command = platform
         .queue
         .commandBuffer()
@@ -1698,6 +1826,7 @@ fn submit_normal(
                 ..Default::default()
             },
             stage_profile,
+            _normal_replay: dispatch.replay.map(|(buffer, _)| Arc::clone(buffer)),
         },
     );
     Ok(ticket)
@@ -2463,6 +2592,157 @@ mod tests {
                 SchedulerAction::Complete(_)
             ));
         }
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    #[ignore = "requires an actual Metal device; checks immutable replay reuse and GPU-fence memory ownership"]
+    fn prepared_normal_reuses_shared_bytes_and_pins_cache_lease_until_gpu_fence() {
+        use casa_imaging_reconstruction::runtime_adapter::{
+            BandPlan, DeviceNormalGroup, DeviceNormalRecord,
+        };
+        let weights_bytes = BandPlan::spatial_weight_bytes();
+        let grid_bytes = 16 * 16 * 8;
+        let arena_bytes = (weights_bytes + 2 * grid_bytes + 1023) & !63;
+        let cache_bytes = weights_bytes + 64;
+        let (mut spec, mut topology) = mixed_specification();
+        spec.logical_allocations[0].bytes = arena_bytes as u64;
+        spec.physical_slots[0].capacity_bytes = arena_bytes as u64;
+        spec.resource_alternative.demand.memory[0].hard_bytes = arena_bytes as u64;
+        spec.resource_alternative.demand.memory[0].preferred_bytes = arena_bytes as u64;
+        topology.memory_domains[0].capacity_bytes = (4 * arena_bytes + cache_bytes) as u64;
+        topology.cache_capacity_bytes =
+            cache_bytes as u64 + spec.resource_alternative.demand.caches.hard_resident_bytes;
+        let plan = ExecutionDag::new(spec).unwrap();
+        let authority = authority(topology);
+        let policy = ResourcePolicy::Exclusive;
+        let mut scheduler = ExecutionScheduler::start(&plan, &policy, &authority, None).unwrap();
+        let SchedulerAction::Work(work) = scheduler.next_action().unwrap() else {
+            panic!("Metal work");
+        };
+        let problem = crate::execution::tests::compiled_problem();
+        let completed = BTreeMap::new();
+        let prediction = crate::StagePrediction::new(work.node().id.clone(), 1);
+        let context = WorkExecutionContext::for_test(
+            ExecutionAttemptId::from_sha256([1; 32]),
+            crate::execution_bindings::WorkExecutionTestBindings::new(
+                &problem,
+                crate::ImplementationRegistryId::from_sha256([1; 32]),
+                &completed,
+            ),
+            &work,
+            &[],
+            &prediction,
+            plan.resource_alternative(),
+        );
+        let runtime = work.metal_execution().unwrap();
+        runtime.prepare(context).unwrap();
+        let access = runtime.batch_access(context).unwrap();
+        let before = authority
+            .remaining_selected_source_memory_bytes(&policy)
+            .unwrap();
+        let reservation = authority
+            .reserve_host_cache(policy.clone(), "test-device-replay", cache_bytes as u64)
+            .unwrap();
+        let mut buffer = access
+            .allocate_replay(reservation, cache_bytes)
+            .unwrap()
+            .unwrap();
+        buffer
+            .with_bytes_mut(0, cache_bytes, |bytes| {
+                bytes.fill(0);
+                bytes[..40].copy_from_slice(bytemuck::bytes_of(&DeviceNormalRecord {
+                    x: 3,
+                    y: 4,
+                    scale: [1.0, 0.0],
+                    weight: 1.0,
+                    ..Default::default()
+                }));
+                bytes[40..48]
+                    .copy_from_slice(bytemuck::bytes_of(&DeviceNormalGroup { start: 0, end: 1 }));
+                for weight in bytes[64..64 + weights_bytes].chunks_exact_mut(4) {
+                    weight.copy_from_slice(&1.0_f32.to_ne_bytes());
+                }
+            })
+            .unwrap();
+        let prepared = Arc::new(buffer);
+        let allocation = AllocationId::new("allocation-0");
+        let region = |offset, bytes| MetalBufferRegion {
+            allocation: &allocation,
+            offset,
+            bytes,
+        };
+        let model = (weights_bytes + 7) & !7;
+        let normal = model + grid_bytes;
+        let predictions = normal + grid_bytes;
+        let status = predictions + 8;
+        let dispatch = NormalDispatch {
+            regions: [
+                region(0, 40),
+                region(40, 8),
+                region(0, weights_bytes),
+                region(model, grid_bytes),
+                region(predictions, 8),
+                region(normal, grid_bytes),
+                region(status, 4),
+            ],
+            shape: [1, 1, 16, 16],
+            replay: Some((&prepared, [0, 40, 64])),
+        };
+        for value in [1.0_f32, 2.0] {
+            access
+                .with_bytes(region(model, grid_bytes), |bytes| {
+                    for cell in bytemuck::cast_slice_mut::<u8, [f32; 2]>(bytes) {
+                        *cell = [value, 0.0];
+                    }
+                })
+                .unwrap();
+            access
+                .with_bytes(region(normal, grid_bytes), |bytes| bytes.fill(0))
+                .unwrap();
+            access
+                .with_bytes(region(status, 4), |bytes| bytes.fill(0))
+                .unwrap();
+            let ticket = access.submit_normal(dispatch).unwrap();
+            assert!(Arc::strong_count(&prepared) >= 2);
+            access.wait(ticket).unwrap();
+            access
+                .with_bytes(region(normal, grid_bytes), |bytes| {
+                    let grid: &[[f32; 2]] = bytemuck::cast_slice(bytes);
+                    assert_eq!(
+                        grid.iter()
+                            .filter(|cell| cell[0] == 49.0 * value && cell[1] == 0.0)
+                            .count(),
+                        49
+                    );
+                })
+                .unwrap();
+        }
+        access
+            .with_bytes(region(status, 4), |bytes| bytes.fill(0))
+            .unwrap();
+        let ticket = access.submit_normal(dispatch).unwrap();
+        let weak = Arc::downgrade(&prepared);
+        drop(prepared);
+        assert!(
+            weak.upgrade().is_some(),
+            "pending command pins the immutable buffer"
+        );
+        assert_eq!(
+            authority
+                .remaining_selected_source_memory_bytes(&policy)
+                .unwrap(),
+            before - cache_bytes as u64
+        );
+        access.wait(ticket).unwrap();
+        assert!(weak.upgrade().is_none());
+        assert_eq!(
+            authority
+                .remaining_selected_source_memory_bytes(&policy)
+                .unwrap(),
+            before
+        );
+        runtime.close().unwrap();
     }
 
     fn metal_plan_with_nodes(

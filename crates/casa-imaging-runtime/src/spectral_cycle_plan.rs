@@ -1018,6 +1018,7 @@ impl SpectralCyclePlan {
                     authority,
                     policy,
                     candidate.physical.execution_dag().resource_alternative(),
+                    candidate.complete_data.metal_normal.as_ref(),
                 )?;
             }
             replay.bind_window_plan(window)?;

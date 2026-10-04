@@ -22,7 +22,7 @@ pub(crate) const ALLOCATION: &str = "spectral-cycle-minor-cycle";
 pub(crate) struct PlaneExecutionPlan {
     kernel: BoundedKernelPlan,
     pub(crate) heap_bytes: u64,
-    /// Bounded outer plane-worker stacks; native FFT stacks are reserved as
+    /// Bounded outer plane and inner direct-convolution worker stacks; native FFT stacks are reserved as
     /// process-lifetime external-library overhead by the cycle planner.
     pub(crate) stack_bytes: u64,
     pub(crate) workers: usize,
@@ -91,15 +91,20 @@ impl PlaneExecutionPlan {
                 .checked_mul(BOUNDED_WORKER_STACK_BYTES as u64)
                 .ok_or_else(|| io::Error::other("plane worker stack overflow"))?
         };
+        let (convolution_heap_bytes, convolution_stack_bytes) =
+            workspace.parallel_convolution_overhead(fft_threads);
         let heap_bytes = kernel
             .capacity_bytes()
             .checked_sub(plane_stack_bytes)
             .and_then(|bytes| bytes.checked_add(workspace.retained_bytes()))
+            .and_then(|bytes| bytes.checked_add(convolution_heap_bytes))
             .ok_or_else(|| io::Error::other("plane collection workspace overflow"))?;
         Ok(Self {
             kernel,
             heap_bytes,
-            stack_bytes: plane_stack_bytes,
+            stack_bytes: plane_stack_bytes
+                .checked_add(convolution_stack_bytes)
+                .ok_or_else(|| io::Error::other("convolution worker stack overflow"))?,
             workers: if workspace.parallel_fft() {
                 workers
             } else {
@@ -421,15 +426,27 @@ mod tests {
 
             assert_eq!(plan.workers, workers);
             assert_eq!(plan.fft_threads, workers);
-            assert_eq!(plan.heap_bytes, serial.heap_bytes);
+            let (row_heap, row_stacks) = workspace.parallel_convolution_overhead(workers);
+            assert_eq!(row_stacks, (workers as u64 - 1) * 128 * 1024);
+            assert_eq!(
+                row_heap,
+                (workers as u64 - 1)
+                    * std::mem::size_of::<
+                        std::thread::ScopedJoinHandle<
+                            'static,
+                            Result<(), casa_imaging_reconstruction::MinorCycleError>,
+                        >,
+                    >() as u64
+            );
+            assert_eq!(plan.heap_bytes, serial.heap_bytes + row_heap);
             assert_eq!(
                 native_fft_stack_bytes(workers).unwrap(),
                 expected_native_stack
             );
             // The cycle alternative reserves these native stacks under
             // ExternalLibrary. Do not duplicate them in this node's ThreadStack
-            // claim, which covers only bounded outer plane workers.
-            assert_eq!(plan.stack_bytes, 0);
+            // claim, which covers outer plane workers and transient row workers.
+            assert_eq!(plan.stack_bytes, row_stacks);
         }
     }
 

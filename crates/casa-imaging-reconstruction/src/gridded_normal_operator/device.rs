@@ -5,6 +5,7 @@
 //! alongside the device accumulation grids.
 
 use super::*;
+use crate::spectral_operator::shifted_plane_values;
 
 /// Standard Stokes-I single-chart MFS uses the scalar shared normal operator.
 pub fn supports_device_normal(problem: &CompiledProblem) -> bool {
@@ -59,7 +60,46 @@ pub struct DeviceNormalApply {
     groups: u64,
 }
 
+/// A position in a trusted in-process packing operation, not a content digest.
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct DeviceNormalPosition {
+    program: GriddedNormalOperatorProgram,
+    frame: u64,
+    records: u64,
+    groups: u64,
+}
+
+/// Ordered coverage produced by successful packing of one immutable batch.
+#[doc(hidden)]
+pub struct DeviceNormalPreparedBatch {
+    start: DeviceNormalPosition,
+    end: DeviceNormalPosition,
+}
+
+impl DeviceNormalPreparedBatch {
+    /// Number of complete source frames packed into this batch.
+    pub fn frames(&self) -> u64 {
+        self.end.frame - self.start.frame
+    }
+
+    /// Device record and prediction-group counts, with batch-local indices.
+    pub fn counts(&self) -> (usize, usize) {
+        (
+            (self.end.records - self.start.records) as usize,
+            (self.end.groups - self.start.groups) as usize,
+        )
+    }
+}
+
 impl GriddedNormalOperatorProgram {
+    /// Ordered frame sizes used to retain the existing whole-frame GPU batches.
+    pub fn device_normal_frame_records(&self) -> impl Iterator<Item = usize> + '_ {
+        self.manifest
+            .descriptors
+            .iter()
+            .map(|frame| frame.record_count as usize)
+    }
     /// Fail closed unless the compiled operator is one standard scalar plane.
     pub fn device_normal_shape(&self) -> Result<[usize; 2], SpectralOperatorError> {
         let spec = &self.manifest.specification;
@@ -84,7 +124,7 @@ impl GriddedNormalOperatorProgram {
     ) -> Result<DeviceNormalApply, SpectralOperatorError> {
         self.device_normal_shape()?;
         let (specification, recycle, mut operators, reusable_domains, model_generation) =
-            self.prepare_apply_model(problem, model, prior, prepared)?;
+            self.prepare_apply_model(problem, model, prior, prepared, FftGridOrder::Origin)?;
         if operators.len() != 1 {
             return Err(SpectralOperatorError::UnsupportedGriddedReplay);
         }
@@ -105,9 +145,72 @@ impl GriddedNormalOperatorProgram {
 }
 
 impl DeviceNormalApply {
-    /// Borrow the shared FFT's model grid and canonical convolution table.
-    pub fn model(&self) -> Result<(&[Complex64], Vec<[f32; 7]>), SpectralOperatorError> {
-        self.operator.device_normal_model()
+    /// Capture structural coverage before packing an immutable batch.
+    pub fn position(&self) -> DeviceNormalPosition {
+        DeviceNormalPosition {
+            program: self.program.clone(),
+            frame: self.next_frame,
+            records: self.records,
+            groups: self.groups,
+        }
+    }
+
+    /// Bind a batch to the live program that produced it. No content reread is
+    /// needed when the immutable packed owner survives to the next application.
+    pub fn prepared_since(
+        &self,
+        start: DeviceNormalPosition,
+    ) -> Result<DeviceNormalPreparedBatch, SpectralOperatorError> {
+        if !Arc::ptr_eq(&start.program.manifest, &self.program.manifest)
+            || start.frame >= self.next_frame
+            || start.records >= self.records
+            || start.groups >= self.groups
+        {
+            return Err(SpectralOperatorError::BlockSequence);
+        }
+        Ok(DeviceNormalPreparedBatch {
+            start,
+            end: self.position(),
+        })
+    }
+
+    /// Consume exactly the next immutable batch from this same live program.
+    pub fn accept_prepared(
+        &mut self,
+        batch: &DeviceNormalPreparedBatch,
+    ) -> Result<(), SpectralOperatorError> {
+        if !Arc::ptr_eq(&batch.start.program.manifest, &self.program.manifest)
+            || batch.start.frame != self.next_frame
+            || batch.start.records != self.records
+            || batch.start.groups != self.groups
+        {
+            return Err(SpectralOperatorError::BlockSequence);
+        }
+        self.next_frame = batch.end.frame;
+        self.records = batch.end.records;
+        self.groups = batch.end.groups;
+        Ok(())
+    }
+
+    /// Convert the shared FFT's model directly into the centered device grid,
+    /// returning the canonical convolution table. Centering is fused with the
+    /// required precision conversion, not another full-grid pass.
+    pub fn pack_model(
+        &self,
+        output: &mut [[f32; 2]],
+    ) -> Result<Vec<[f32; 7]>, SpectralOperatorError> {
+        let (model, weights) = self.operator.device_normal_model()?;
+        if output.len() != model.len() {
+            return Err(SpectralOperatorError::IncompleteCoverage);
+        }
+        let shape = self.program.device_normal_shape()?;
+        for (source, target) in shifted_plane_values(model, shape).zip(output) {
+            *target = [source.re as f32, source.im as f32];
+            if !target.iter().all(|n| n.is_finite()) {
+                return Err(SpectralOperatorError::GeneratedNonfinite);
+            }
+        }
+        Ok(weights)
     }
 
     /// Decode an ordered whole frame directly into reusable shared staging.
@@ -214,20 +317,20 @@ impl DeviceNormalApply {
         {
             return Err(SpectralOperatorError::IncompleteCoverage);
         }
-        let values = normal
-            .iter()
-            .map(|v| {
-                if !v.iter().all(|n| n.is_finite()) {
-                    return Err(SpectralOperatorError::GeneratedNonfinite);
-                }
-                Ok(Complex64::new(v[0] as f64, v[1] as f64))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut values = Vec::with_capacity(normal.len());
+        for v in shifted_plane_values(normal, shape) {
+            if !v.iter().all(|n| n.is_finite()) {
+                return Err(SpectralOperatorError::GeneratedNonfinite);
+            }
+            values.push(Complex64::new(v[0] as f64, v[1] as f64));
+        }
         let grid = Array2::from_shape_vec((shape[0], shape[1]), values)
             .map_err(|_| SpectralOperatorError::UnsupportedGeometry)?;
-        let (update, fft) = self
-            .operator
-            .finish_gridded_normal_from_grids(self.model_generation, vec![grid])?;
+        let (update, fft) = self.operator.finish_gridded_normal_from_grids(
+            self.model_generation,
+            vec![grid],
+            FftGridOrder::Origin,
+        )?;
         self.recycle.ffts.push(fft);
         let domains = combine_chart_updates(
             &self.specification,

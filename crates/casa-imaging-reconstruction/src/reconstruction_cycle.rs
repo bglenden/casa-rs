@@ -732,11 +732,28 @@ impl ReconstructionPlaneWorkspace {
         self.planes
     }
 
-    /// A single Clark solve may spend its worker budget inside the native FFT.
+    /// A single Clark solve may spend its worker budget inside FFTW or a
+    /// disjoint-row direct convolution, never both concurrently.
     /// Unix exposes the default pthread stack envelope needed for admission.
     #[doc(hidden)]
     pub const fn parallel_fft(self) -> bool {
         self.parallel_fft
+    }
+
+    /// Transient heap and stack bytes for Clark's direct row workers.
+    /// FFTW's persistent native worker stacks remain a separate reservation.
+    #[doc(hidden)]
+    pub const fn parallel_convolution_overhead(self, workers: usize) -> (u64, u64) {
+        if !self.parallel_fft {
+            return (0, 0);
+        }
+        let spawned = workers.saturating_sub(1) as u64;
+        (
+            spawned.saturating_mul(size_of::<
+                std::thread::ScopedJoinHandle<'static, Result<(), MinorCycleError>>,
+            >() as u64),
+            spawned.saturating_mul(crate::minor_cycle::CLARK_ROW_STACK_BYTES as u64),
+        )
     }
 
     /// Heap envelope for each concurrently executing or pending plane partial.

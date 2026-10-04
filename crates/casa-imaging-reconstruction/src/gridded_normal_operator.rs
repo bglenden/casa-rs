@@ -26,7 +26,8 @@ use std::collections::{BTreeMap, btree_map::Entry};
 mod device;
 mod two_domain;
 pub use device::{
-    DeviceNormalApply, DeviceNormalGroup, DeviceNormalRecord, supports_device_normal,
+    DeviceNormalApply, DeviceNormalGroup, DeviceNormalPosition, DeviceNormalPreparedBatch,
+    DeviceNormalRecord, supports_device_normal,
 };
 use two_domain::{
     GriddedNormalClassification, GriddedNormalDomainTileCatalogs, GriddedNormalGroupSpan,
@@ -39,7 +40,7 @@ use crate::{
     polarization_operator::{MuellerMatrix, PolarizationOperator},
     spectral_operator::{
         AwReplayCoordinates, CasaLinearRowResampler, CasaResampledGroup,
-        CompleteDataOwnerCompletion, CompleteDataOwnerResult, ConvolutionOperator,
+        CompleteDataOwnerCompletion, CompleteDataOwnerResult, ConvolutionOperator, FftGridOrder,
         NativeSpectralGroup, PreparedSpectralOperator, PreparedSpectralOperatorRecycle,
         ReusableNormalState, SPEED_OF_LIGHT_M_PER_S, SUPPORT, SampleTaps, SpectralOperatorError,
         SpectralOperatorPass, SpectralOperatorSpecification, SpectralPrimitiveCatalog,
@@ -1917,7 +1918,7 @@ impl GriddedNormalOperatorProgram {
             return Err(SpectralOperatorError::GriddedRecordMismatch);
         }
         let (prepared_specification, recycle, operators, reusable_domains, model_generation) =
-            self.prepare_apply_model(problem, model, prior, prepared)?;
+            self.prepare_apply_model(problem, model, prior, prepared, FftGridOrder::Centered)?;
         let slab = prepared_specification.slab();
         let core_depth = self
             .manifest
@@ -2002,6 +2003,7 @@ impl GriddedNormalOperatorProgram {
         model: &ModelGeneration,
         prior: &mut GriddedNormalReplaySource,
         prepared: PreparedSpectralOperator,
+        forward_order: FftGridOrder,
     ) -> Result<GriddedNormalModelPreparation, SpectralOperatorError> {
         require_supported_basis(&problem.reconstruction().basis())?;
         let (prepared_specification, workload, mut ffts, aw_projection) = prepared.into_parts();
@@ -2040,8 +2042,11 @@ impl GriddedNormalOperatorProgram {
                 0,
                 aw_projection.clone(),
             )?;
-            operator
-                .prepare_gridded_normal_model(model, &reusable_domains[chart.domain_ordinal()])?;
+            operator.prepare_gridded_normal_model(
+                model,
+                &reusable_domains[chart.domain_ordinal()],
+                forward_order,
+            )?;
             operators.push(operator);
         }
         Ok((
@@ -3154,8 +3159,11 @@ impl GriddedNormalOperatorApply {
                 .into_iter()
                 .zip(normal_grids)
                 .map(|(operator, grids)| {
-                    let (update, fft) =
-                        operator.finish_gridded_normal_from_grids(model_generation, grids)?;
+                    let (update, fft) = operator.finish_gridded_normal_from_grids(
+                        model_generation,
+                        grids,
+                        FftGridOrder::Centered,
+                    )?;
                     recycle.ffts.push(fft);
                     Ok(update)
                 }),

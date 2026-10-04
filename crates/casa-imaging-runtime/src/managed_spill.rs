@@ -329,6 +329,24 @@ pub(crate) struct ManagedSpillMeasurements {
 }
 
 impl ManagedSpillMeasurements {
+    /// Logical coverage from a retained, trusted device representation. There
+    /// was no spill read, payload copy or source-buffer allocation this pass.
+    pub(crate) fn retained_device(artifact: ManagedSpillSeal) -> Self {
+        Self {
+            direction: ManagedSpillIoDirection::Read,
+            artifact_bytes: artifact.artifact_bytes(),
+            payload_bytes: artifact.payload_bytes(),
+            frame_count: artifact.frame_count(),
+            record_count: artifact.record_count(),
+            transferred_bytes: 0,
+            operations: 0,
+            peak_buffer_bytes: 0,
+            payload_copy_bytes: 0,
+            payload_copy_operations: 0,
+            buffer_allocations: 0,
+            buffer_reuses: 0,
+        }
+    }
     /// Include a one-time cache fill without counting its logical coverage twice.
     pub(crate) fn with_initial_load(mut self, load: Self) -> Result<Self, ManagedSpillError> {
         if self.direction != ManagedSpillIoDirection::Read

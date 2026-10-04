@@ -765,6 +765,8 @@ pub struct FrozenGriddedNormalReplay {
     latest_cache_resident_bytes: Option<u64>,
     resident_source: Option<ManagedSpillRetainedBlockSource>,
     pending_resident_memory: Option<crate::ResourceLease>,
+    metal_source: Option<Arc<metal_normal::PreparedMetalNormalReplay>>,
+    pending_metal_memory: Option<crate::ResourceLease>,
 }
 
 struct RetainedGriddedBacking {
@@ -1165,6 +1167,8 @@ impl GriddedNormalReplayCompilation {
             latest_cache_resident_bytes: None,
             resident_source: None,
             pending_resident_memory: None,
+            metal_source: None,
+            pending_metal_memory: None,
         })
     }
 }
@@ -1460,13 +1464,18 @@ impl FrozenGriddedNormalReplay {
     }
 
     pub(crate) fn has_resident_source(&self) -> bool {
-        self.resident_source.is_some() || self.pending_resident_memory.is_some()
+        self.resident_source.is_some()
+            || self.pending_resident_memory.is_some()
+            || self.metal_source.is_some()
+            || self.pending_metal_memory.is_some()
     }
 
     pub(crate) fn evict_resident_source(&mut self) {
         assert!(self.window_plan.is_none() && self.prepared_source.is_none());
         self.resident_source = None;
         self.pending_resident_memory = None;
+        self.metal_source = None;
+        self.pending_metal_memory = None;
     }
 
     pub(crate) fn reserve_resident_source(
@@ -1474,7 +1483,39 @@ impl FrozenGriddedNormalReplay {
         authority: &crate::ResourceAuthority,
         policy: &crate::ResourcePolicy,
         alternative: &crate::DemandAlternative,
+        metal: Option<&MetalNormalPlan>,
     ) -> Result<(), crate::ResourceError> {
+        if let Some(metal) = metal {
+            if self
+                .metal_source
+                .as_ref()
+                .is_some_and(|cache| !cache.matches(metal))
+            {
+                self.evict_resident_source();
+            }
+            if self.metal_source.is_some() || self.pending_metal_memory.is_some() {
+                return Ok(());
+            }
+            // Retain the device-ready representation instead of a second raw
+            // payload. Both views charge this same host/unified-memory domain.
+            self.resident_source = None;
+            self.pending_resident_memory = None;
+            let bytes = metal
+                .replay_capacity_bytes(&self.backing.program)
+                .map_err(|_| crate::ResourceError::Overflow("Metal replay capacity"))?;
+            if authority.remaining_planning_memory_bytes(policy, alternative)? >= bytes {
+                self.pending_metal_memory = match authority.reserve_host_cache(
+                    policy.clone(),
+                    "run-metal-normal-records",
+                    bytes,
+                ) {
+                    Ok(lease) => Some(lease),
+                    Err(crate::ResourceError::NoFeasibleAlternative(_)) => None,
+                    Err(error) => return Err(error),
+                };
+            }
+            return Ok(());
+        }
         if self.has_resident_source() {
             return Ok(());
         }
@@ -1499,7 +1540,7 @@ impl FrozenGriddedNormalReplay {
     pub(crate) fn release_completed_window_plan(&mut self) -> Result<(), CompleteDataPlanError> {
         if self.window_plan.is_none()
             || self.prepared_batch_size.is_none()
-            || self.prepared_source.is_none()
+            || (self.prepared_source.is_none() && self.metal_source.is_none())
             || self.latest_read.is_none()
             || self.latest_stream.is_none()
             || self.window_plan.as_ref().is_some_and(|plan| {
@@ -1750,6 +1791,11 @@ impl FrozenGriddedNormalReplay {
             .as_ref()
             .ok_or_else(|| io::Error::other("gridded-normal replay lacks its window plan"))?;
         let schedule = window_plan.batch_schedule(batch_size)?;
+        if let Some(cache) = &self.metal_source {
+            self.latest_cache_resident_bytes = Some(cache.resident_bytes());
+            self.prepared_batch_size = Some(batch_size);
+            return Ok(());
+        }
         let minimum_buffer_bytes = window_plan
             .source_slot_bytes()
             .checked_mul(GRIDDED_NORMAL_SOURCE_SLOTS)
@@ -1772,7 +1818,9 @@ impl FrozenGriddedNormalReplay {
                 "gridded-normal prefetch lacks its complete planned resources",
             ));
         }
-        let source = if !window_plan.has_selected_windows() && self.has_resident_source() {
+        let source = if !window_plan.has_selected_windows()
+            && (self.resident_source.is_some() || self.pending_resident_memory.is_some())
+        {
             if self.resident_source.is_none() {
                 let reservation = self
                     .pending_resident_memory
@@ -1963,6 +2011,50 @@ impl FrozenGriddedNormalReplay {
                 "gridded-normal route capacity disagrees with the window plan",
             ));
         }
+        if let Some(prepared) = self.metal_source.as_ref().map(Arc::clone) {
+            let GriddedNormalReplayState::Metal(state, binding) = state else {
+                return Err(io::Error::other("device replay cannot bind a CPU operator"));
+            };
+            if !prepared.matches(&binding) || window_plan.has_selected_windows() {
+                return Err(io::Error::other("device replay batch binding changed"));
+            }
+            let runtime = context.metal_execution().map_err(io::Error::other)?;
+            let access = runtime.batch_access(context).map_err(io::Error::other)?;
+            if self.backing.program.record_count() == 0 {
+                runtime
+                    .complete_empty_source(context)
+                    .map_err(io::Error::other)?;
+            }
+            let kernel = metal_normal::MetalNormalReplayKernel::new(
+                state,
+                access,
+                &binding,
+                None,
+                Some(Arc::clone(&prepared)),
+            )
+            .map_err(io::Error::other)?;
+            self.artifact_pass_count += 1;
+            self.failed_window = true;
+            let started = Instant::now();
+            let (result, routing, recycle, _) = kernel
+                .run_prepared(Arc::clone(&prepared))
+                .map_err(io::Error::other)?;
+            // No bounded source traversal was executed on this resident pass.
+            // Its GPU work is measured by the Metal runtime and routing counts.
+            let measurements = BoundedStreamMeasurements {
+                maximum_logical_units_per_block: maximum_frames_per_block,
+                wall_nanos: started.elapsed().as_nanos(),
+                ..BoundedStreamMeasurements::default()
+            };
+            return self.record_completed_replay(
+                pass_ordinal,
+                prepared.read,
+                measurements,
+                result,
+                routing,
+                recycle,
+            );
+        }
         let source = self
             .prepared_source
             .take()
@@ -1992,9 +2084,26 @@ impl FrozenGriddedNormalReplay {
                         .complete_empty_source(context)
                         .map_err(io::Error::other)?;
                 }
-                let kernel = metal_normal::MetalNormalReplayKernel::new(state, access, &binding)
-                    .map_err(io::Error::other)?;
-                execute_bounded(plan, pass_ordinal, source, kernel)
+                let kernel = metal_normal::MetalNormalReplayKernel::new(
+                    state,
+                    access,
+                    &binding,
+                    self.pending_metal_memory.take(),
+                    None,
+                )
+                .map_err(io::Error::other)?;
+                execute_bounded(plan, pass_ordinal, source, kernel).map(|outcome| {
+                    let (result, routing, recycle, cache) = outcome.kernel_completion;
+                    if let Some(cache) = cache {
+                        self.latest_cache_resident_bytes = Some(cache.resident_bytes());
+                        self.metal_source = Some(cache);
+                    }
+                    crate::bounded_stream::BoundedStreamOutcome {
+                        source_completion: outcome.source_completion,
+                        kernel_completion: (result, routing, recycle),
+                        measurements: outcome.measurements,
+                    }
+                })
             }
         };
         let outcome = match outcome {
@@ -2067,6 +2176,26 @@ impl FrozenGriddedNormalReplay {
         };
         let stream_measurements = outcome.measurements;
         let (result, routing, recycle) = outcome.kernel_completion;
+        self.prepared_source = Some(source);
+        self.record_completed_replay(
+            pass_ordinal,
+            read_measurements,
+            stream_measurements,
+            result,
+            routing,
+            recycle,
+        )
+    }
+
+    fn record_completed_replay(
+        &mut self,
+        pass_ordinal: u32,
+        read_measurements: ManagedSpillMeasurements,
+        stream_measurements: BoundedStreamMeasurements,
+        result: CompleteDataSlabResult,
+        routing: GriddedNormalRoutingMeasurements,
+        recycle: PreparedSpectralOperatorRecycle,
+    ) -> io::Result<(CompleteDataSlabResult, PreparedSpectralOperatorRecycle)> {
         self.aggregate_read = ManagedSpillMeasurements::aggregate_window(
             self.aggregate_read.take(),
             read_measurements,
@@ -2085,7 +2214,6 @@ impl FrozenGriddedNormalReplay {
                 .ok_or_else(|| io::Error::other("gridded-normal routing measurement overflow"))?,
         );
         self.latest_read = Some(read_measurements);
-        self.prepared_source = Some(source);
         self.latest_stream = Some(stream_measurements);
         self.latest_routing = Some(routing);
         self.failed_window = false;

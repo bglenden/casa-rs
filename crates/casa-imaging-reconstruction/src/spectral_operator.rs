@@ -8670,7 +8670,8 @@ impl SpectralSlabOperator {
         generation: &ModelGeneration,
         reused_normal_state: Option<ReusableNormalState>,
     ) -> Result<ReconstructionModelBinding, SpectralOperatorError> {
-        let binding = self.bind_residual_model(generation, reused_normal_state)?;
+        let binding =
+            self.bind_residual_model(generation, reused_normal_state, FftGridOrder::Centered)?;
         if !binding.is_evaluated() {
             return Ok(binding);
         }
@@ -8700,9 +8701,13 @@ impl SpectralSlabOperator {
         &mut self,
         generation: &ModelGeneration,
         prior: &ReusableNormalState,
+        forward_order: FftGridOrder,
     ) -> Result<(), SpectralOperatorError> {
         self.prepare_primary_beam_replay(prior)?;
-        if !self.bind_residual_model(generation, None)?.is_evaluated() {
+        if !self
+            .bind_residual_model(generation, None, forward_order)?
+            .is_evaluated()
+        {
             return Err(SpectralOperatorError::ReusableNormalStateMismatch);
         }
         Ok(())
@@ -8712,6 +8717,7 @@ impl SpectralSlabOperator {
         &mut self,
         generation: &ModelGeneration,
         reused_normal_state: Option<ReusableNormalState>,
+        forward_order: FftGridOrder,
     ) -> Result<ReconstructionModelBinding, SpectralOperatorError> {
         self.validate_model_generation(generation)?;
         if self.specification.as_ref().is_some_and(|specification| {
@@ -8740,7 +8746,7 @@ impl SpectralSlabOperator {
             generation.origin(),
         );
         if binding.is_evaluated() {
-            self.prepare_forward_generation(generation)?;
+            self.prepare_forward_generation(generation, forward_order)?;
         }
         Ok(binding)
     }
@@ -8751,7 +8757,7 @@ impl SpectralSlabOperator {
     ) -> Result<(), SpectralOperatorError> {
         self.validate_model_generation(generation)?;
         self.reused_normal_state = None;
-        self.prepare_forward_generation(generation)
+        self.prepare_forward_generation(generation, FftGridOrder::Centered)
     }
 
     fn validate_model_generation(
@@ -8784,6 +8790,7 @@ impl SpectralSlabOperator {
     fn prepare_forward_generation(
         &mut self,
         generation: &ModelGeneration,
+        output_order: FftGridOrder,
     ) -> Result<(), SpectralOperatorError> {
         if self.primary_beam.is_some() && self.basis.channel_major_taylor().is_some() {
             return self.prepare_primary_beam_forward_generation(generation);
@@ -8812,6 +8819,8 @@ impl SpectralSlabOperator {
                 let grid = &mut self.forward_grids[plane];
                 grid.fill(Complex64::default());
                 for y in 0..height {
+                    let grid_y =
+                        shifted_index(self.geometry.image_blc[1] + y, self.geometry.grid_shape[1]);
                     let row_start = generation
                         .shape()
                         .flat_index(casa_imaging_model::ModelCell::new(
@@ -8854,12 +8863,18 @@ impl SpectralSlabOperator {
                             self.gridder.model_correction(x, y)
                         };
                         grid[(
-                            self.geometry.image_blc[0] + x,
-                            self.geometry.image_blc[1] + y,
+                            shifted_index(
+                                self.geometry.image_blc[0] + x,
+                                self.geometry.grid_shape[0],
+                            ),
+                            grid_y,
                         )] = Complex64::new(sample.value().value(), 0.0) * correction;
                     }
                 }
-                self.fft.transform(grid, false);
+                self.fft.transform_unshifted(grid, false);
+                if output_order == FftGridOrder::Centered {
+                    shift_even(grid);
+                }
                 #[cfg(test)]
                 record_measurement(&mut self.measurements.forward_fft_planes, 1);
             }
@@ -10325,6 +10340,7 @@ impl SpectralSlabOperator {
         mut self,
         residual_model: ModelGenerationId,
         normal_grids: Vec<Array2<Complex64>>,
+        input_order: FftGridOrder,
     ) -> Result<(SpectralChartUpdate, PreparedFft), SpectralOperatorError> {
         let expected_shape = (self.geometry.grid_shape[0], self.geometry.grid_shape[1]);
         let expected_planes = self
@@ -10351,7 +10367,7 @@ impl SpectralSlabOperator {
             );
         }
         self.residual_grids = Some(normal_grids);
-        let update = self.finish_chart_update(residual_model, true)?;
+        let update = self.finish_chart_update(residual_model, true, input_order)?;
         Ok((update, self.fft))
     }
 
@@ -10359,13 +10375,14 @@ impl SpectralSlabOperator {
         mut self,
         residual_model: ModelGenerationId,
     ) -> Result<SpectralChartUpdate, SpectralOperatorError> {
-        self.finish_chart_update(residual_model, false)
+        self.finish_chart_update(residual_model, false, FftGridOrder::Centered)
     }
 
     fn finish_chart_update(
         &mut self,
         residual_model: ModelGenerationId,
         normal: bool,
+        input_order: FftGridOrder,
     ) -> Result<SpectralChartUpdate, SpectralOperatorError> {
         if self.workload.pass != SpectralOperatorPass::ResidualRefresh {
             return Err(SpectralOperatorError::UnsupportedGriddedReplay);
@@ -10375,18 +10392,25 @@ impl SpectralSlabOperator {
             .take()
             .ok_or(SpectralOperatorError::MissingMajorCycleResidual)?;
         for grid in &mut grids {
-            self.fft.transform(grid, true);
+            if input_order == FftGridOrder::Centered {
+                shift_even(grid);
+            }
+            self.fft.transform_unshifted(grid, true);
         }
         if let Some(common) = self.common_residual_grids.as_mut() {
             for grid in common {
-                self.fft.transform(grid, true);
+                if input_order == FftGridOrder::Centered {
+                    shift_even(grid);
+                }
+                self.fft.transform_unshifted(grid, true);
             }
         }
-        let values = collect_image_planes(
+        let values = collect_image_planes_in_order(
             Some(&grids),
             &self.geometry,
             &self.gridder,
             self.image_correction_oversampling,
+            FftGridOrder::Origin,
         )?
         .ok_or(SpectralOperatorError::MissingMajorCycleResidual)?;
         let values = if self.basis.channel_major_taylor().is_some() {
@@ -10402,11 +10426,12 @@ impl SpectralSlabOperator {
             _ => return Err(SpectralOperatorError::ReusableNormalStateMismatch),
         }
         trace_complex_values("final_replay_residual", &values);
-        let common_values = collect_image_planes(
+        let common_values = collect_image_planes_in_order(
             self.common_residual_grids.as_deref(),
             &self.geometry,
             &self.gridder,
             self.image_correction_oversampling,
+            FftGridOrder::Origin,
         )?
         .map(Vec::into_boxed_slice);
         Ok(SpectralChartUpdate {
@@ -10854,6 +10879,22 @@ fn collect_image_planes(
     gridder: &ConvolutionOperator,
     sinc_oversampling: Option<usize>,
 ) -> Result<Option<Vec<Complex64>>, SpectralOperatorError> {
+    collect_image_planes_in_order(
+        grids,
+        geometry,
+        gridder,
+        sinc_oversampling,
+        FftGridOrder::Centered,
+    )
+}
+
+fn collect_image_planes_in_order(
+    grids: Option<&[Array2<Complex64>]>,
+    geometry: &SpectralOperatorGeometry,
+    gridder: &ConvolutionOperator,
+    sinc_oversampling: Option<usize>,
+    order: FftGridOrder,
+) -> Result<Option<Vec<Complex64>>, SpectralOperatorError> {
     let Some(grids) = grids else {
         return Ok(None);
     };
@@ -10874,6 +10915,7 @@ fn collect_image_planes(
                 )
             },
             sinc_oversampling.is_some(),
+            order,
         )?;
     }
     Ok(Some(values))
@@ -10887,11 +10929,14 @@ pub(crate) fn append_image_plane(
     values: &mut Vec<Complex64>,
     correction: impl Fn(usize, usize) -> f64,
     casa_float_correction: bool,
+    order: FftGridOrder,
 ) -> Result<(), SpectralOperatorError> {
     for x in 0..geometry.image_shape[0] {
+        let grid_x = order.index(geometry.image_blc[0] + x, geometry.grid_shape[0]);
         for y in 0..geometry.image_shape[1] {
             let correction = correction(x, y);
-            let value = grid[(geometry.image_blc[0] + x, geometry.image_blc[1] + y)];
+            let grid_y = order.index(geometry.image_blc[1] + y, geometry.grid_shape[1]);
+            let value = grid[(grid_x, grid_y)];
             let value = if casa_float_correction {
                 // MosaicFT/AWProjectFT convert DComplex to Complex before Float correction.
                 let corrected =
@@ -11863,6 +11908,44 @@ fn shift_even<T, S: DataMut<Elem = T>>(data: &mut ArrayBase<S, Ix2>) {
     }
 }
 
+/// Storage origin of an even-sized FFT plane, independent of its physical coordinates.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FftGridOrder {
+    Centered,
+    Origin,
+}
+
+impl FftGridOrder {
+    fn index(self, index: usize, extent: usize) -> usize {
+        match self {
+            Self::Centered => index,
+            Self::Origin => shifted_index(index, extent),
+        }
+    }
+}
+
+fn shifted_index(index: usize, extent: usize) -> usize {
+    debug_assert_eq!(extent % 2, 0);
+    let half = extent / 2;
+    if index < half {
+        index + half
+    } else {
+        index - half
+    }
+}
+
+/// Read a row-major plane in half-period-shifted order, as contiguous half rows.
+pub(crate) fn shifted_plane_values<T>(values: &[T], shape: [usize; 2]) -> impl Iterator<Item = &T> {
+    assert_eq!(values.len(), shape[0] * shape[1]);
+    debug_assert_eq!(shape[0] % 2, 0);
+    debug_assert_eq!(shape[1] % 2, 0);
+    (0..shape[0]).flat_map(move |x| {
+        let x = shifted_index(x, shape[0]);
+        let row = &values[x * shape[1]..(x + 1) * shape[1]];
+        row[shape[1] / 2..].iter().chain(&row[..shape[1] / 2])
+    })
+}
+
 fn build_normalized_tap_weights() -> Box<[[f64; TAP_COUNT]]> {
     let half = OVERSAMPLING as isize / 2;
     (-half..=half)
@@ -12461,6 +12544,126 @@ mod tests {
         let expected_corner = f64::from((Complex32::new(3.0, 4.0) * (1.0 / (sinc * sinc))).norm());
         assert_eq!(sensitivity[0], expected_corner);
         assert_ne!(sensitivity[0], sensitivity[centre]);
+    }
+
+    #[test]
+    #[ignore = "full padded-plane allocation and import timing diagnostic"]
+    fn fused_centering_import_cost() {
+        let shape = [5000, 5000];
+        let source = vec![[0.25_f32, -0.5]; shape[0] * shape[1]];
+        let convert = |v: &[f32; 2]| {
+            if !v.iter().all(|n| n.is_finite()) {
+                return Err(SpectralOperatorError::GeneratedNonfinite);
+            }
+            Ok(Complex64::new(v[0] as f64, v[1] as f64))
+        };
+        let started = std::time::Instant::now();
+        let baseline = source
+            .iter()
+            .map(convert)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        std::hint::black_box(&baseline);
+        eprintln!(
+            "centering_import baseline_seconds={} capacity={}",
+            started.elapsed().as_secs_f64(),
+            baseline.capacity()
+        );
+        drop(baseline);
+        let started = std::time::Instant::now();
+        let reordered = super::shifted_plane_values(&source, shape)
+            .map(convert)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        std::hint::black_box(&reordered);
+        eprintln!(
+            "centering_import reordered_seconds={} capacity={}",
+            started.elapsed().as_secs_f64(),
+            reordered.capacity()
+        );
+        drop(reordered);
+        let started = std::time::Instant::now();
+        let mut reserved = Vec::with_capacity(source.len());
+        for value in super::shifted_plane_values(&source, shape) {
+            reserved.push(convert(value).unwrap());
+        }
+        std::hint::black_box(&reserved);
+        eprintln!(
+            "centering_import reserved_seconds={} capacity={}",
+            started.elapsed().as_secs_f64(),
+            reserved.capacity()
+        );
+        assert_eq!(reserved.len(), source.len());
+    }
+
+    #[test]
+    fn fused_fft_centering_matches_explicit_swaps_and_crop() {
+        use ndarray::ShapeBuilder;
+
+        for shape in [[4, 6], [6, 10], [8, 8]] {
+            for column_major in [false, true] {
+                let layout = (shape[0], shape[1]).set_f(column_major);
+                let source = Array2::from_shape_fn(layout, |(x, y)| {
+                    Complex64::new((x * 7 + y) as f64 / 11.0, (x + y) as f64 / 5.0)
+                });
+                let reserved = super::fft_resident_complex_values_for_shape(shape).unwrap();
+                let mut fft = PreparedFft::new(shape, reserved, 1).unwrap();
+                for inverse in [false, true] {
+                    let mut expected = source.clone();
+                    fft.transform(&mut expected, inverse);
+                    let mut fused = Array2::from_shape_fn(layout, |(x, y)| {
+                        source[(
+                            super::shifted_index(x, shape[0]),
+                            super::shifted_index(y, shape[1]),
+                        )]
+                    });
+                    fft.transform_unshifted(&mut fused, inverse);
+                    for x in 0..shape[0] {
+                        for y in 0..shape[1] {
+                            let actual = fused[(
+                                super::shifted_index(x, shape[0]),
+                                super::shifted_index(y, shape[1]),
+                            )];
+                            assert!((actual - expected[(x, y)]).norm() < 1e-11);
+                        }
+                    }
+                    let mut geometry = geometry();
+                    geometry.grid_shape = shape;
+                    geometry.image_shape = [shape[0] - 2, shape[1] - 2];
+                    geometry.image_blc = [1, 1];
+                    for float_correction in [false, true] {
+                        let mut centered_values = Vec::new();
+                        let mut fused_values = Vec::new();
+                        let correction = |x: usize, y: usize| 1.0 + (x + 3 * y) as f64 / 17.0;
+                        super::append_image_plane(
+                            expected.view(),
+                            &geometry,
+                            &mut centered_values,
+                            correction,
+                            float_correction,
+                            super::FftGridOrder::Centered,
+                        )
+                        .unwrap();
+                        super::append_image_plane(
+                            fused.view(),
+                            &geometry,
+                            &mut fused_values,
+                            correction,
+                            float_correction,
+                            super::FftGridOrder::Origin,
+                        )
+                        .unwrap();
+                        assert_complex_agreement(&centered_values, &fused_values);
+                    }
+                    if !column_major {
+                        let packed = super::shifted_plane_values(fused.as_slice().unwrap(), shape)
+                            .copied()
+                            .collect::<Vec<_>>();
+                        assert_complex_agreement(expected.as_slice().unwrap(), &packed);
+                    }
+                }
+            }
+        }
     }
 
     #[test]

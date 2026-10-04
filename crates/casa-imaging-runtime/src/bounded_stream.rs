@@ -502,7 +502,7 @@ pub(crate) struct BoundedStreamMeasurements {
     pub(crate) maximum_logical_units_per_block: usize,
     pub(crate) worker_threads_started: u64,
     #[cfg(test)]
-    external_pool_installs: u64,
+    pub(crate) external_pool_installs: u64,
     pub(crate) dispatch_waves: u64,
     pub(crate) planned_source_capacity_bytes: u64,
     pub(crate) maximum_partitions_per_block: usize,

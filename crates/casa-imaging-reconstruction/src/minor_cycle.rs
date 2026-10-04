@@ -40,6 +40,7 @@ use crate::{
 const MINOR_CYCLE_EVIDENCE_DOMAIN: &[u8] = b"casa-rs-minor-cycle-evidence";
 const MINOR_CYCLE_EVIDENCE_VERSION: u32 = 12;
 const TAYLOR_PSF_PEAK_TIE_RELATIVE_TOLERANCE: f64 = 1.0e-12;
+pub(crate) const CLARK_ROW_STACK_BYTES: usize = 128 * 1024;
 
 /// Return the hard resident-memory envelope for one solver-owned Minor Cycle.
 ///
@@ -175,6 +176,7 @@ pub(crate) fn minor_cycle_workspace(
             .saturating_mul(sat_u64(shape[1]).saturating_add(1));
         cells
             .saturating_mul(size_of_u64::<clark::ClarkActivePixel>())
+            .saturating_add(size_of_u64::<clark::ClarkWorkState<'_>>())
             .saturating_add(
                 half_spectrum.saturating_mul(2 * size_of_u64::<num_complex::Complex32>()),
             )
@@ -5001,7 +5003,10 @@ mod tests {
                 * size_of::<num_complex::Complex32>() as u64;
         assert_eq!(
             clark - hogbom,
-            half_spectrum_planes + active_pixels + retained_fft_allowance
+            half_spectrum_planes
+                + active_pixels
+                + retained_fft_allowance
+                + size_of::<super::clark::ClarkWorkState<'_>>() as u64
         );
         assert!(clark - hogbom < 16 << 20);
         assert!(bytes(&ReconstructionAlgorithm::Clark, 16, 0) > clark);
