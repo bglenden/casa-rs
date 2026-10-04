@@ -376,6 +376,12 @@ impl GriddedNormalStorageLayout {
             metadata_bytes: slots
                 .checked_mul(self.slot_metadata_bytes)
                 .and_then(|bytes| bytes.checked_add(self.fixed_metadata_bytes))
+                .and_then(|bytes| {
+                    self.tile_count
+                        .min(maximum_window_records)
+                        .checked_mul(size_of::<u32>())
+                        .and_then(|active_tiles| bytes.checked_add(active_tiles))
+                })
                 .ok_or(SpectralOperatorError::ResidencyOverflow)?,
         })
     }

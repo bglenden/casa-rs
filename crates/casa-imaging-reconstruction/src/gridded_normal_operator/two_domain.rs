@@ -353,13 +353,7 @@ pub(super) fn storage_layout_for_projection(
         })
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     let routing_bytes = tile_count
-        .checked_mul(size_of::<u32>() * 2)
-        .and_then(|bytes| {
-            tile_count
-                .checked_add(1)
-                .and_then(|count| count.checked_mul(size_of::<u32>()))
-                .and_then(|offsets| bytes.checked_add(offsets))
-        })
+        .checked_mul(size_of::<u32>() * 3)
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     let slot_metadata_bytes = coefficient_terms
         .checked_mul(size_of::<Array2<Complex64>>())
@@ -682,6 +676,7 @@ pub(super) struct PreparedGriddedNormalTwoDomainWindow {
     tile_counts: Vec<u32>,
     tile_cursors: Vec<u32>,
     tile_offsets: Vec<u32>,
+    active_tiles: Vec<u32>,
     tasks: Vec<GriddedNormalTileTask>,
     maximum_records: usize,
     lane_record_counts: [u64; GRIDDED_NORMAL_LANE_COUNT],
@@ -745,10 +740,10 @@ impl PreparedGriddedNormalTwoDomainWindow {
         let frame_count = record_capacities.len();
         let mut tile_counts = planned_vec::<u32>(tile_count)?;
         let mut tile_cursors = planned_vec::<u32>(tile_count)?;
-        let mut tile_offsets = planned_vec::<u32>(tile_count + 1)?;
+        let mut tile_offsets = planned_vec::<u32>(tile_count)?;
         tile_counts.resize(tile_count, 0);
         tile_cursors.resize(tile_count, 0);
-        tile_offsets.resize(tile_count + 1, 0);
+        tile_offsets.resize(tile_count, 0);
         let predictions = [
             planned_prediction_lane(prediction_capacity, record_layout)?,
             planned_prediction_lane(prediction_capacity, record_layout)?,
@@ -770,6 +765,7 @@ impl PreparedGriddedNormalTwoDomainWindow {
             tile_counts,
             tile_cursors,
             tile_offsets,
+            active_tiles: planned_vec(tile_count.min(maximum_records))?,
             tasks: planned_vec(task_capacity(tile_count, maximum_records)?)?,
             lane_record_counts: [0; GRIDDED_NORMAL_LANE_COUNT],
             lane_tap_visit_counts: [0; GRIDDED_NORMAL_LANE_COUNT],
@@ -810,9 +806,7 @@ impl PreparedGriddedNormalTwoDomainWindow {
         self.classifications.clear();
         self.routes.clear();
         self.tasks.clear();
-        self.tile_counts.fill(0);
-        self.tile_cursors.fill(0);
-        self.tile_offsets.fill(0);
+        debug_assert!(self.active_tiles.is_empty());
         self.lane_record_counts.fill(0);
         self.lane_tap_visit_counts.fill(0);
         self.prediction_record_count = 0;
@@ -929,9 +923,7 @@ impl PreparedGriddedNormalTwoDomainWindow {
                                     )
                                     .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
                                 });
-                                self.tile_counts[tile_ordinal] = self.tile_counts[tile_ordinal]
-                                    .checked_add(1)
-                                    .ok_or(SpectralOperatorError::CoverageOverflow)?;
+                                self.count_tile_record(tile_ordinal)?;
                             }
                             if record.group_end {
                                 if group_needed {
@@ -994,9 +986,7 @@ impl PreparedGriddedNormalTwoDomainWindow {
                                 tap_count: u32::try_from(GRIDDED_NORMAL_TAPS_PER_RECORD)
                                     .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
                             });
-                            self.tile_counts[tile_ordinal] = self.tile_counts[tile_ordinal]
-                                .checked_add(1)
-                                .ok_or(SpectralOperatorError::CoverageOverflow)?;
+                            self.count_tile_record(tile_ordinal)?;
                             self.groups.push(GriddedNormalGroupSpan {
                                 frame_ordinal: frame_ordinal_u32,
                                 prediction_needed: true,
@@ -1108,19 +1098,36 @@ impl PreparedGriddedNormalTwoDomainWindow {
         Ok(())
     }
 
+    fn count_tile_record(&mut self, tile: usize) -> Result<(), SpectralOperatorError> {
+        if self.tile_counts[tile] == 0 {
+            if self.active_tiles.len() == self.active_tiles.capacity() {
+                return Err(SpectralOperatorError::ResidencyOverflow);
+            }
+            self.active_tiles
+                .push(u32::try_from(tile).map_err(|_| SpectralOperatorError::CoverageOverflow)?);
+        }
+        self.tile_counts[tile] = self.tile_counts[tile]
+            .checked_add(1)
+            .ok_or(SpectralOperatorError::CoverageOverflow)?;
+        Ok(())
+    }
+
     fn prepare_tile_routes(&mut self) -> Result<(), SpectralOperatorError> {
         if self.classifications.len() > self.maximum_records {
             return Err(SpectralOperatorError::ResidencyOverflow);
         }
-        for tile in 0..self.tile_counts.len() {
-            self.tile_offsets[tile + 1] = self.tile_offsets[tile]
+        self.active_tiles.sort_unstable();
+        let mut offset = 0_u32;
+        for &tile in &self.active_tiles {
+            let tile = tile as usize;
+            self.tile_offsets[tile] = offset;
+            self.tile_cursors[tile] = offset;
+            offset = offset
                 .checked_add(self.tile_counts[tile])
                 .ok_or(SpectralOperatorError::CoverageOverflow)?;
-            self.tile_cursors[tile] = self.tile_offsets[tile];
         }
         let record_count = self.classifications.len();
-        if usize::try_from(self.tile_offsets[self.tile_counts.len()])
-            .map_err(|_| SpectralOperatorError::CoverageOverflow)?
+        if usize::try_from(offset).map_err(|_| SpectralOperatorError::CoverageOverflow)?
             != record_count
         {
             return Err(SpectralOperatorError::IncompleteCoverage);
@@ -1146,15 +1153,13 @@ impl PreparedGriddedNormalTwoDomainWindow {
 
         let target = record_count.div_ceil(GRIDDED_NORMAL_LANE_COUNT).max(1);
         let mut duplicate = 0usize;
-        for tile in 0..self.tile_counts.len() {
+        for &tile in &self.active_tiles {
+            let tile = tile as usize;
             let start = usize::try_from(self.tile_offsets[tile])
                 .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
-            let end = usize::try_from(self.tile_offsets[tile + 1])
+            let end = usize::try_from(self.tile_offsets[tile] + self.tile_counts[tile])
                 .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
             let count = end - start;
-            if count == 0 {
-                continue;
-            }
             let shards = count.div_ceil(target).clamp(1, GRIDDED_NORMAL_LANE_COUNT);
             let chunk = count.div_ceil(shards);
             for (shard, route_start) in (start..end).step_by(chunk).enumerate() {
@@ -1240,9 +1245,9 @@ impl PreparedGriddedNormalTwoDomainWindow {
         self.classifications.clear();
         self.routes.clear();
         self.tasks.clear();
-        self.tile_counts.fill(0);
-        self.tile_cursors.fill(0);
-        self.tile_offsets.fill(0);
+        for tile in self.active_tiles.drain(..) {
+            self.tile_counts[tile as usize] = 0;
+        }
         self.lane_record_counts.fill(0);
         self.lane_tap_visit_counts.fill(0);
         self.active_frames = 0;
@@ -2281,6 +2286,85 @@ mod tests {
     }
 
     #[test]
+    fn sparse_tile_routes_preserve_order_and_reuse_only_active_scratch() {
+        let mut prepared = PreparedGriddedNormalTwoDomainWindow::with_record_capacities(
+            &[5],
+            24_964,
+            GriddedNormalRecordLayout::Scalar,
+        )
+        .unwrap();
+        let untouched = 1234;
+        prepared.tile_offsets[untouched] = u32::MAX;
+        prepared.tile_cursors[untouched] = u32::MAX;
+        let capacity = prepared.active_tiles.capacity();
+        for (record, tile) in [24_963, 0, 9000, 0, 24_963].into_iter().enumerate() {
+            prepared.count_tile_record(tile).unwrap();
+            prepared.classifications.push(GriddedNormalClassification {
+                tile_ordinal: tile as u32,
+                group_ordinal: record as u32,
+                frame_ordinal: 0,
+                record_ordinal: record as u32,
+                tap_count: GRIDDED_NORMAL_TAPS_PER_RECORD as u32,
+            });
+        }
+        prepared.prepare_tile_routes().unwrap();
+        assert_eq!(prepared.active_tiles, [0, 9000, 24_963]);
+        assert_eq!(
+            prepared
+                .routes
+                .iter()
+                .map(|route| route.record_ordinal)
+                .collect::<Vec<_>>(),
+            [1, 3, 2, 0, 4]
+        );
+        assert_eq!(prepared.tasks.len(), 3);
+        assert_eq!(prepared.tile_offsets[untouched], u32::MAX);
+        assert_eq!(prepared.tile_cursors[untouched], u32::MAX);
+
+        prepared.reset_active().unwrap();
+        assert!(prepared.active_tiles.is_empty());
+        assert_eq!(prepared.active_tiles.capacity(), capacity);
+        assert!(prepared.tile_counts.iter().all(|&count| count == 0));
+        assert_eq!(prepared.tile_offsets[untouched], u32::MAX);
+        assert_eq!(prepared.tile_cursors[untouched], u32::MAX);
+
+        prepared.count_tile_record(9000).unwrap();
+        prepared.classifications.push(GriddedNormalClassification {
+            tile_ordinal: 9000,
+            tap_count: GRIDDED_NORMAL_TAPS_PER_RECORD as u32,
+            ..GriddedNormalClassification::default()
+        });
+        prepared.prepare_tile_routes().unwrap();
+        assert_eq!(prepared.active_tiles, [9000]);
+        assert_eq!(prepared.tasks.len(), 1);
+        assert_eq!(prepared.tasks[0].routes, 0..1);
+        assert_eq!(prepared.tile_offsets[9000], 0);
+    }
+
+    #[test]
+    fn sparse_active_tile_capacity_is_bounded_and_reset_after_failure() {
+        let mut prepared = PreparedGriddedNormalTwoDomainWindow::with_record_capacities(
+            &[2],
+            100,
+            GriddedNormalRecordLayout::Scalar,
+        )
+        .unwrap();
+        assert_eq!(prepared.active_tiles.capacity(), 2);
+        prepared.count_tile_record(99).unwrap();
+        prepared.count_tile_record(0).unwrap();
+        assert!(matches!(
+            prepared.count_tile_record(50),
+            Err(SpectralOperatorError::ResidencyOverflow)
+        ));
+        assert_eq!(prepared.tile_counts[50], 0);
+        prepared.reset_active().unwrap();
+        assert_eq!(prepared.tile_counts[0], 0);
+        assert_eq!(prepared.tile_counts[99], 0);
+        prepared.count_tile_record(50).unwrap();
+        assert_eq!(prepared.active_tiles, [50]);
+    }
+
+    #[test]
     fn replay_tasks_partition_records_in_canonical_order() {
         for distribution in 0_usize..625 {
             let mut encoded = distribution;
@@ -2298,8 +2382,8 @@ mod tests {
             .unwrap();
             let mut record = 0;
             for (tile, count) in counts.into_iter().enumerate() {
-                prepared.tile_counts[tile] = count as u32;
                 for _ in 0..count {
+                    prepared.count_tile_record(tile).unwrap();
                     prepared.classifications.push(GriddedNormalClassification {
                         tile_ordinal: tile as u32,
                         group_ordinal: record,
@@ -2346,7 +2430,9 @@ mod tests {
                 record_ordinal: record,
                 tap_count: GRIDDED_NORMAL_TAPS_PER_RECORD as u32,
             }));
-        prepared.tile_counts[tile] = 100;
+        for _ in 0..100 {
+            prepared.count_tile_record(tile).unwrap();
+        }
         prepared.prepare_tile_routes().unwrap();
         assert_eq!(prepared.tasks.len(), 4);
         assert_eq!(prepared.lane_record_counts, [25, 25, 25, 25]);
@@ -2505,6 +2591,7 @@ mod tests {
                 + prepared.tile_counts.capacity() * size_of::<u32>()
                 + prepared.tile_cursors.capacity() * size_of::<u32>()
                 + prepared.tile_offsets.capacity() * size_of::<u32>()
+                + prepared.active_tiles.capacity() * size_of::<u32>()
                 + prepared.tasks.capacity() * size_of::<GriddedNormalTileTask>()
                 + accumulators.capacity() * size_of::<Mutex<GriddedNormalTileAccumulator>>()
                 + tile_plane_descriptors
