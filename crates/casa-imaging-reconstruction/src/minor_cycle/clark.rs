@@ -61,9 +61,6 @@ impl LinearRefresh {
     ) -> Result<Self, MinorCycleError> {
         let mut fft = RealFft2::with_threads(padded, threads)
             .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
-        if threads > 1 {
-            fft = fft.with_estimated_plan();
-        }
         let mut psf_spectrum = vec![Complex32::default(); fft.storage_len()];
         let real_psf: &mut [f32] = bytemuck::cast_slice_mut(&mut psf_spectrum);
         let row_stride = fft.real_row_stride();
