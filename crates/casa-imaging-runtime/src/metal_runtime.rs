@@ -472,7 +472,7 @@ struct PendingCubeCommand {
     regions: Vec<(AllocationId, usize, usize)>,
     status: Option<MetalBufferRegionOwned>,
     stats: MetalBatchStats,
-    stage_profile: Option<crate::metal_cube::MetalStageProfile>,
+    stage_profiles: Vec<crate::metal_cube::MetalStageProfile>,
     // Immutable replay memory remains charged through the GPU fence, including
     // error unwinding after its application owner has been dropped.
     _normal_replay: Option<Arc<MetalReplayBuffer>>,
@@ -724,7 +724,7 @@ impl MetalBatchAccess<'_> {
 
     pub(crate) fn submit_normal(
         &self,
-        dispatch: NormalDispatch<'_>,
+        dispatches: &[NormalDispatch<'_>],
     ) -> Result<u64, MetalRuntimeError> {
         let mut inner = self.lock()?;
         if inner.nodes[&self.node].failed {
@@ -732,7 +732,7 @@ impl MetalBatchAccess<'_> {
                 "failed Metal node cannot dispatch".into(),
             ));
         }
-        metal_call(|| submit_normal(&self.runtime.decision, &mut inner, &self.node, dispatch))
+        metal_call(|| submit_normal(&self.runtime.decision, &mut inner, &self.node, dispatches))
     }
 
     pub(crate) fn wait(&self, ticket: u64) -> Result<(), MetalRuntimeError> {
@@ -834,6 +834,9 @@ pub(crate) struct NormalDispatch<'a> {
     /// The three offsets replace regions 0..3; mutable regions remain plan-owned.
     pub replay: Option<(&'a Arc<MetalReplayBuffer>, [usize; 3])>,
 }
+
+/// Bound host encoder metadata and fence latency without changing replay batches.
+pub(crate) const NORMAL_BATCHES_PER_COMMAND: usize = 32;
 
 impl fmt::Debug for MetalExecutionState {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1574,7 +1577,7 @@ fn submit_platform_batch(
             regions: owned,
             status: None,
             stats,
-            stage_profile: None,
+            stage_profiles: Vec::new(),
             _normal_replay: None,
         },
     );
@@ -1705,7 +1708,7 @@ fn submit_cube_residual(
                 submit_wait_seconds: started.elapsed().as_secs_f64(),
                 ..MetalBatchStats::default()
             },
-            stage_profile,
+            stage_profiles: stage_profile.into_iter().collect(),
             _normal_replay: None,
         },
     );
@@ -1727,88 +1730,127 @@ fn submit_normal(
     decision: &MetalExecutionDecision,
     inner: &mut MetalExecutionInner,
     node: &WorkNodeId,
-    dispatch: NormalDispatch<'_>,
+    dispatches: &[NormalDispatch<'_>],
 ) -> Result<u64, MetalRuntimeError> {
     use casa_imaging_reconstruction::runtime_adapter::{DeviceNormalGroup, DeviceNormalRecord};
-    let [records, groups, width, height] = dispatch.shape.map(|n| n as usize);
     let invalid =
         || MetalRuntimeError::InvalidPlan("invalid device normal shape or regions".into());
+    let Some(&first) = dispatches.first() else {
+        return Err(invalid());
+    };
+    if dispatches.len() > NORMAL_BATCHES_PER_COMMAND {
+        return Err(invalid());
+    }
+    let [_, _, width, height] = first.shape.map(|n| n as usize);
     let cells = width
         .checked_mul(height)
         .filter(|&n| n <= u32::MAX as usize)
         .ok_or_else(invalid)?;
-    if records == 0 || groups == 0 || groups > records || width < 7 || height < 7 {
-        return Err(invalid());
-    }
-    let sizes = [
-        records.checked_mul(size_of::<DeviceNormalRecord>()),
-        groups.checked_mul(size_of::<DeviceNormalGroup>()),
-        Some(casa_imaging_reconstruction::runtime_adapter::BandPlan::spatial_weight_bytes()),
-        cells.checked_mul(8),
-        groups.checked_mul(8),
-        cells.checked_mul(8),
-        Some(4),
-    ];
-    for (&region, bytes) in dispatch.regions.iter().zip(sizes) {
-        if region.offset % 8 != 0 || bytes.is_none_or(|n| n > region.bytes) {
-            return Err(invalid());
-        }
-    }
-    for (index, &output) in dispatch.regions.iter().enumerate().skip(4) {
-        if dispatch
-            .regions
-            .iter()
-            .enumerate()
-            .any(|(other, &r)| other != index && r.overlaps(output))
-        {
-            return Err(invalid());
-        }
-    }
     let platform = inner.platform.as_mut().expect("prepared platform");
-    let mut buffers = dispatch
-        .regions
-        .iter()
-        .map(|&r| buffer_region(decision, platform, node, r))
-        .collect::<Result<Vec<_>, _>>()?;
-    if let Some((replay, offsets)) = dispatch.replay {
-        if replay.device != platform.device.registryID() {
-            return Err(invalid());
-        }
-        for index in 0..3 {
-            let bytes = sizes[index].ok_or_else(invalid)?;
-            if offsets[index] % 8 != 0
-                || offsets[index]
-                    .checked_add(bytes)
-                    .is_none_or(|n| n > replay.bytes)
-            {
-                return Err(invalid());
-            }
-            buffers[index] = (&replay.buffer, offsets[index]);
-        }
-    }
     let command = platform
         .queue
         .commandBuffer()
         .ok_or(MetalRuntimeError::CommandQueueUnavailable)?;
-    let stage_profile = platform
+    let mut profiles = Vec::with_capacity(dispatches.len());
+    let mut samples = platform
         .kernels
         .as_ref()
         .expect("prepared kernels")
-        .encode_normal(&command, &buffers, dispatch.shape)
-        .map_err(MetalRuntimeError::Encoding)?;
+        .normal_profiles(dispatches.len())
+        .map_err(MetalRuntimeError::Encoding)?
+        .into_iter();
+    let mut stats = MetalBatchStats {
+        batches: dispatches.len() as u64,
+        ..Default::default()
+    };
+    for &dispatch in dispatches {
+        let [records, groups, w, h] = dispatch.shape.map(|n| n as usize);
+        if records == 0
+            || groups == 0
+            || groups > records
+            || width < 7
+            || height < 7
+            || w != width
+            || h != height
+            || dispatch.regions.iter().zip(first.regions).any(|(a, b)| {
+                a.allocation != b.allocation || a.offset != b.offset || a.bytes != b.bytes
+            })
+            || match (dispatch.replay, first.replay) {
+                (Some((a, _)), Some((b, _))) => !Arc::ptr_eq(a, b),
+                (None, None) => dispatches.len() != 1,
+                _ => true,
+            }
+        {
+            return Err(invalid());
+        }
+        let sizes = [
+            records.checked_mul(size_of::<DeviceNormalRecord>()),
+            groups.checked_mul(size_of::<DeviceNormalGroup>()),
+            Some(casa_imaging_reconstruction::runtime_adapter::BandPlan::spatial_weight_bytes()),
+            cells.checked_mul(8),
+            groups.checked_mul(8),
+            cells.checked_mul(8),
+            Some(4),
+        ];
+        for (&region, bytes) in dispatch.regions.iter().zip(sizes) {
+            if region.offset % 8 != 0 || bytes.is_none_or(|n| n > region.bytes) {
+                return Err(invalid());
+            }
+        }
+        for (index, &output) in dispatch.regions.iter().enumerate().skip(4) {
+            if dispatch
+                .regions
+                .iter()
+                .enumerate()
+                .any(|(other, &r)| other != index && r.overlaps(output))
+            {
+                return Err(invalid());
+            }
+        }
+        let mut buffers = dispatch
+            .regions
+            .iter()
+            .map(|&r| buffer_region(decision, platform, node, r))
+            .collect::<Result<Vec<_>, _>>()?;
+        if let Some((replay, offsets)) = dispatch.replay {
+            if replay.device != platform.device.registryID() {
+                return Err(invalid());
+            }
+            for index in 0..3 {
+                let bytes = sizes[index].ok_or_else(invalid)?;
+                if offsets[index] % 8 != 0
+                    || offsets[index]
+                        .checked_add(bytes)
+                        .is_none_or(|n| n > replay.bytes)
+                {
+                    return Err(invalid());
+                }
+                buffers[index] = (&replay.buffer, offsets[index]);
+            }
+        }
+        let stage_profile = platform
+            .kernels
+            .as_ref()
+            .expect("prepared kernels")
+            .encode_normal(&command, &buffers, dispatch.shape, samples.next())
+            .map_err(MetalRuntimeError::Encoding)?;
+        profiles.extend(stage_profile);
+        stats.grid_samples += records as u64;
+        stats.degrid_samples += groups as u64;
+    }
     let ticket = platform.next_ticket;
     platform.next_ticket = ticket
         .checked_add(1)
         .ok_or(MetalRuntimeError::Overflow("command ticket"))?;
     let started = Instant::now();
     command.commit();
-    let status = dispatch.regions[6];
+    let status = first.regions[6];
     platform.pending.insert(
         ticket,
         PendingCubeCommand {
             command,
             node: node.clone(),
-            regions: dispatch
+            regions: first
                 .regions
                 .iter()
                 .map(|r| (r.allocation.clone(), r.offset, r.bytes))
@@ -1819,14 +1861,11 @@ fn submit_normal(
                 bytes: status.bytes,
             }),
             stats: MetalBatchStats {
-                batches: 1,
-                grid_samples: records as u64,
-                degrid_samples: groups as u64,
                 submit_wait_seconds: started.elapsed().as_secs_f64(),
-                ..Default::default()
+                ..stats
             },
-            stage_profile,
-            _normal_replay: dispatch.replay.map(|(buffer, _)| Arc::clone(buffer)),
+            stage_profiles: profiles,
+            _normal_replay: first.replay.map(|(buffer, _)| Arc::clone(buffer)),
         },
     );
     Ok(ticket)
@@ -1837,7 +1876,7 @@ fn submit_normal(
     _: &MetalExecutionDecision,
     _: &mut MetalExecutionInner,
     _: &WorkNodeId,
-    _: NormalDispatch<'_>,
+    _: &[NormalDispatch<'_>],
 ) -> Result<u64, MetalRuntimeError> {
     Err(MetalRuntimeError::UnsupportedPlatform)
 }
@@ -1904,16 +1943,18 @@ fn drain_cube_commands(
         }
         pending.stats.gpu_seconds =
             (pending.command.GPUEndTime() - pending.command.GPUStartTime()).max(0.0);
-        if !failed && let Some(profile) = pending.stage_profile {
-            match profile.seconds() {
-                Ok([prediction, residual]) => {
-                    pending.stats.profiled_batches = 1;
-                    pending.stats.prediction_gpu_seconds = prediction;
-                    pending.stats.residual_gpu_seconds = residual;
-                }
-                Err(message) => {
-                    failed = true;
-                    error.get_or_insert(MetalRuntimeError::Encoding(message));
+        if !failed {
+            for profile in pending.stage_profiles {
+                match profile.seconds() {
+                    Ok([prediction, residual]) => {
+                        pending.stats.profiled_batches += 1;
+                        pending.stats.prediction_gpu_seconds += prediction;
+                        pending.stats.residual_gpu_seconds += residual;
+                    }
+                    Err(message) => {
+                        failed = true;
+                        error.get_or_insert(MetalRuntimeError::Encoding(message));
+                    }
                 }
             }
         }
@@ -2703,7 +2744,7 @@ mod tests {
             access
                 .with_bytes(region(status, 4), |bytes| bytes.fill(0))
                 .unwrap();
-            let ticket = access.submit_normal(dispatch).unwrap();
+            let ticket = access.submit_normal(&[dispatch; 2]).unwrap();
             assert!(Arc::strong_count(&prepared) >= 2);
             access.wait(ticket).unwrap();
             access
@@ -2711,7 +2752,7 @@ mod tests {
                     let grid: &[[f32; 2]] = bytemuck::cast_slice(bytes);
                     assert_eq!(
                         grid.iter()
-                            .filter(|cell| cell[0] == 49.0 * value && cell[1] == 0.0)
+                            .filter(|cell| cell[0] == 98.0 * value && cell[1] == 0.0)
                             .count(),
                         49
                     );
@@ -2721,7 +2762,7 @@ mod tests {
         access
             .with_bytes(region(status, 4), |bytes| bytes.fill(0))
             .unwrap();
-        let ticket = access.submit_normal(dispatch).unwrap();
+        let ticket = access.submit_normal(&[dispatch]).unwrap();
         let weak = Arc::downgrade(&prepared);
         drop(prepared);
         assert!(
