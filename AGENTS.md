@@ -28,7 +28,7 @@ repo-wide behavior here. Use the closest authoritative source for details:
 1. Code, tests, CI, and interoperability behavior.
 2. Accepted ADRs.
 3. `ARCHITECTURE.md` and `TESTING.md`.
-4. GitHub issues and board state.
+4. GitHub issues and pull requests.
 5. `docs/Planning/` is historical unless a file says otherwise.
 
 ## Essential Commands
@@ -141,18 +141,15 @@ unrelated personal data, or non-public external datasets.
 - Issue-driven pull requests include `Work issue: #N`. Automation or gate
   repairs without a real issue include `Work source: automation <name>`. Use
   `Closes #N` only when merge should close that issue.
-- The GitHub Project `Status` field is the only board state: `Todo` means queued
-  but not active, `In Progress` means implementation or review is active, and
-  `Done` means the authoritative issue is closed with its evidence recorded.
-  Opening or reopening an issue moves it to `Todo`; a linked open pull request
-  moves it to `In Progress`; closing that pull request without merge returns it
-  to `Todo` unless another linked pull request remains open; closing the issue
-  moves it to `Done`. Draft/readiness and review state live on the pull request,
-  not in another board field. A merge does not mean `Done` until the issue closes.
+- Work state is read from issues and pull requests; there is no separate board
+  state. An open issue without a linked open pull request is queued; an issue
+  with a linked open pull request is active; an issue is done only when it is
+  closed with its evidence recorded. Draft/readiness and review state live on
+  the pull request. A merge does not mean done until the issue closes.
 
 For programme #486, the direct ticket closure policy in
 `docs/imaging-architecture/lessons-and-next-tranche.md` supersedes the generic
-state rule above. A ticket is `In Progress` only with a linked open pull request
+state rule above. A ticket is active only with a linked open pull request
 containing a material code or acceptance-test commit, or while an issue-named
 gate is running. Worktrees, assignments, plans, reading, delegated agents, and
 intent are not activity. Normally one implementation ticket is active; a

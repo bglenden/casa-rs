@@ -131,7 +131,7 @@ Decision:
 Rationale:
 
 - The repo already has tutorial-parity work using numbered waves, including
-  active Wave 6 work. GUI issue names must stay distinct on the project board.
+  active Wave 6 work. GUI issue names must stay distinct from those waves.
 
 Status: accepted for planning
 

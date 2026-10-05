@@ -5,8 +5,8 @@ Last reality check: 2026-05-02
 Verification: just docs-check
 
 This directory contains stable reference artifacts for the CASA Guide tutorial
-parity program. GitHub Issues and the casa-rs project board remain the active
-planning and wave-status surface.
+parity program. GitHub issues and pull requests remain the active planning and
+wave-status surface.
 
 Wave 0 is the expansion-readiness audit. It maps what needs to be understood
 or tightened before implementing ALMA, VLA, and Simulation tutorial
