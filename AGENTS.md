@@ -29,7 +29,6 @@ repo-wide behavior here. Use the closest authoritative source for details:
 2. Accepted ADRs.
 3. `ARCHITECTURE.md` and `TESTING.md`.
 4. GitHub issues and pull requests.
-5. `docs/Planning/` is historical unless a file says otherwise.
 
 ## Essential Commands
 
