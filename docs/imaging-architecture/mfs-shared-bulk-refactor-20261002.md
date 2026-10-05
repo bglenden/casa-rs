@@ -2,6 +2,43 @@
 
 Truth class: engineering evidence, not full T55 acceptance
 
+## Representative qualification and full-input preparation — 2026-10-04
+
+Source `7fe5c598239b659d32a3e9ec01058faa3ad4185d` passes the architecture gate
+after a mechanical source-binding update to revision 92. Scientific contracts,
+issue outcomes and migration scope are unchanged. The fresh production-path
+binary passes the existing four-SPW, 90-integration/configuration, 4096²,
+5-mJy/10,000-ceiling qualification against the matching retained CASA reference:
+
+| Complete application | Seconds | Sampled aggregate peak, decimal GB |
+| --- | ---: | ---: |
+| CASA serial, retained reference | 52.8241 | See retained reference receipt |
+| CPU W1 | 29.8016 | 4.8228 |
+| CPU W4 | 15.8242 | 4.8275 |
+| Metal normal W4 / CPU Clark | 14.7979 | 4.3293 |
+
+These are single observations, preparation through publication. Every native
+run completes 668 components and four major phases. All seven products pass
+the unchanged nine checks; maximum normalized product L2 is 1.815e-6 for CPU
+and 6.117e-5 for Metal. All three panels were inspected. This does not erase
+the separate 30,000-capped/deeper comparison's numerical alerts.
+
+The planned full A+C observation (360 separate 2-second integrations/config,
+32 SPWs × 64 channels, 8,087,040 rows) has not yet been generated. The existing
+90-integration MS is 2,021,760 rows / approximately 4.1 GB, not that full input.
+Owner authorization now includes full-size qualification, repairs, commit and
+push; the unattended checkpoint is 2026-10-05 13:00 UTC. Generation is staged
+by verified completed SPWs, using unchanged CASA simulator prediction, after
+a split-versus-whole prediction preflight. No incomplete MS may become an
+imaging reference. A new matched full CASA reference is required. Center-sampled
+simulation is an idealized application comparison, not intrinsic-sky truth.
+
+Durable job, guard, source, receipts, pending full-input state and restart entry:
+`/Users/brianglendenning/SoftwareProjects/casa-rs-evidence/t55/imaging-ownership-simplification-20261003/mfs-qualification-20261004/`.
+The task guard enforces 16-GiB native/8-GiB checks, two Cargo jobs and the approved
+checkpoint. An attached quiet heartbeat handles terminal outcomes. Full-input
+qualification, wider modes, full verify/CI and final acceptance remain pending.
+
 ## Later PSF-workspace checkpoint — 2026-10-04
 
 The constant-basis single-plane application now reuses Clark's immutable PSF

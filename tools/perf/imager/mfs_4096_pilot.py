@@ -471,7 +471,7 @@ def image_pilot(args):
         niter=args.niter,
         cycleniter=1000,
         gain=0.1,
-        threshold="0.005Jy",
+        threshold=f"{args.threshold_jy:.12g}Jy",
         pblimit=-0.2,
         normtype="flatnoise",
         usemask="user",
@@ -652,7 +652,8 @@ def compare(args):
                     )
     fig.suptitle(
         f"4096-square, SPWs {args.spw}, {args.integrations} times/config — "
-        f"{args.terms} Taylor term(s), niter ceiling {args.niter}; idealized comparison"
+        f"{args.terms} Taylor term(s), niter ceiling {args.niter}, "
+        f"threshold {args.threshold_jy * 1000:g} mJy; idealized comparison"
     )
     fig.savefig(target / "dirty-comparison.png", dpi=160)
     plt.close(fig)
@@ -696,12 +697,14 @@ if __name__ == "__main__":
         "--gridder", choices=("standard", "wproject"), default="standard"
     )
     parser.add_argument("--niter", type=int, default=0)
+    parser.add_argument("--threshold-jy", type=float, default=0.005)
     parser.add_argument("--label", default="casa-dirty-v1")
     parser.add_argument("--native", type=Path)
     parser.add_argument("--reference", type=Path)
     parser.add_argument("--candidate-label", default="casa-rs")
     parser.add_argument("--reference-label", default="CASA")
     arguments = parser.parse_args()
+    assert math.isfinite(arguments.threshold_jy) and arguments.threshold_jy > 0
     {
         "geometry": geometry,
         "finish-geometry": finish_geometry,
