@@ -3422,6 +3422,106 @@ fn prepare_reconciliation_reusing(
 }
 
 #[test]
+fn blocked_generation_prediction_matches_scalar_layout_with_partial_tiles() {
+    use casa_imaging_model::{ModelSample, ModelValue};
+    use num_complex::Complex64;
+
+    for width in [8, 34] {
+        let seed = identity(111, 1);
+        let mut samples = Vec::with_capacity(width * width);
+        let mut scalar_model = vec![Complex64::default(); width * width];
+        for y in 0..width {
+            for x in 0..width {
+                let sample = if (x + 5 * y) % 17 == 0 {
+                    ModelSample::invalid()
+                } else {
+                    let value = (x as f64 - 2.0 * y as f64) / 100.0;
+                    scalar_model[x * width + y] = Complex64::new(value, 0.0);
+                    ModelSample::valid(ModelValue::new(value).unwrap())
+                };
+                samples.push(sample);
+            }
+        }
+        let problem = reconstruction_problem_with_sampling_and_model(
+            source(111),
+            width,
+            1,
+            ReconstructionBasis::Constant,
+            ReconstructionAlgorithm::Dirty,
+            ReconstructionControls::new(0, 1.0, 0.0),
+            (
+                SpectralSamplingLaw::IDENTITY,
+                ModelStateIdentity::Seed(seed),
+                ModelInputCommitment::AlignedSeed {
+                    source: seed,
+                    support: casa_imaging_reconstruction::model_support_identity(
+                        samples.iter().map(|sample| sample.support()),
+                    ),
+                },
+            ),
+        );
+        let lifecycle = bind_lifecycle(&problem, attempt(112));
+        let generation = lifecycle
+            .ingest_aligned(
+                seed,
+                lifecycle.contract().target(),
+                samples.into_iter().map(Ok::<_, Infallible>),
+            )
+            .unwrap()
+            .unwrap();
+        let preparation = MajorCyclePreparation::prepare(&lifecycle, generation, None).unwrap();
+        let selected = fixture_samples(&problem);
+        let plan = plan_weighting(&problem, WeightingExecutionLimits::new(1, 1).unwrap()).unwrap();
+        let weighting = freeze_weighting_generation(&problem, &plan, &selected).unwrap();
+        let (blocks, _) = replay(&weighting, &problem, &plan, &selected);
+        let specification = SpectralOperatorSpecification::new(&problem).unwrap();
+        let workload = spectral_operator_workload(
+            &specification,
+            plan.limits().max_block_samples(),
+            SpectralOperatorPass::InitialMajor,
+        )
+        .unwrap();
+        let mut bound = prepare_spectral_operator(specification.clone(), workload, 1)
+            .unwrap()
+            .begin(&problem, &weighting)
+            .unwrap();
+        let mut scalar = prepare_spectral_operator(specification, workload, 1)
+            .unwrap()
+            .begin(&problem, &weighting)
+            .unwrap();
+        bound
+            .bind_major_cycle_model(preparation.final_model(), None)
+            .unwrap();
+        bound.enable_final_visibility_samples();
+        for block in &blocks {
+            let expected = scalar.predict_block(&scalar_model, block).unwrap();
+            let actual = bound.consume_block(block).unwrap();
+            // The sink also emits zero for samples outside the owned output plane.
+            if expected.is_empty() {
+                assert!(!actual.is_empty());
+                assert!(
+                    actual
+                        .iter()
+                        .all(|sample| sample.predicted() == Complex64::default())
+                );
+                continue;
+            }
+            assert_eq!(actual.len(), expected.len());
+            for (actual, expected) in actual.iter().zip(expected) {
+                // Final visibility samples use CASA's persisted Complex32 boundary.
+                let expected =
+                    Complex64::new(f64::from(expected.re as f32), f64::from(expected.im as f32));
+                assert!(
+                    (actual.predicted() - expected).norm() <= 1e-12 * expected.norm().max(1.0),
+                    "width={width}, actual={:?}, expected={expected:?}",
+                    actual.predicted()
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn bound_major_cycle_model_cannot_be_replaced_by_diagnostic_prediction() {
     let problem = t19_compatible_problem(37);
     let lifecycle = bind_lifecycle(&problem, attempt(38));
