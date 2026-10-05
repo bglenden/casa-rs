@@ -45,7 +45,6 @@ Contributor/developer policy is in `AGENTS.md`.
 - `TESTING.md` defines the test strategy and done gate.
 - `docs/adr/` holds accepted architecture decisions.
 - GitHub issues and pull requests are the authoritative work record.
-- `docs/Planning/` is retained as historical or program-reference material only.
 
 ## Documentation
 
@@ -133,9 +132,7 @@ Status legend:
 | `mirlib` | Deferred/Not planned | Out of scope for this Rust implementation. |
 
 Active planning and work status live in GitHub issues and pull requests.
-The `docs/Planning/Phase */` tree is retained for historical context and
-program reference, including the imaging parity material that still describes
-current proof boundaries.
+Retired phase plans and finished-wave evidence are available from git history.
 
 ## Install on macOS
 
