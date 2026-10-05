@@ -295,10 +295,10 @@ impl Table {
                 undefined = Some(undefined_columns_for_row(&row, schema));
             }
             self.inner.add_row(row)?;
-            if let Some(undefined) = undefined {
-                if let Some(set) = self.inner.undefined_for_row_mut(self.row_count() - 1)? {
-                    *set = undefined;
-                }
+            if let Some(undefined) = undefined
+                && let Some(set) = self.inner.undefined_for_row_mut(self.row_count() - 1)?
+            {
+                *set = undefined;
             }
             Ok(())
         })();
@@ -615,10 +615,9 @@ impl Table {
             .undefined_cells()?
             .get(row_index)
             .map(|set| set.contains(column))
+            && undefined
         {
-            if undefined {
-                return Ok(false);
-            }
+            return Ok(false);
         }
         if self.cell(row_index, column)?.is_some() {
             return Ok(true);
@@ -1688,11 +1687,12 @@ impl<'a> PreparedTableRowMut<'a> {
     /// values and do not need a materialized row buffer.
     pub fn set_value_at(&mut self, slot_index: usize, value: Value) -> Result<(), TableError> {
         let row_index = current_prepared_row_index(self.row_index)?;
-        if self.dirty && self.row_materialized {
-            if let Some(field) = self.row.fields_mut().get_mut(slot_index) {
-                field.value = value;
-                return Ok(());
-            }
+        if self.dirty
+            && self.row_materialized
+            && let Some(field) = self.row.fields_mut().get_mut(slot_index)
+        {
+            field.value = value;
+            return Ok(());
         }
         let slot = self
             .slots

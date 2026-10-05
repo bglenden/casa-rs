@@ -524,8 +524,8 @@ fn matching_gaincurve(
     band: Option<&str>,
     antenna_key: &str,
 ) -> Result<Vec<f32>, GencalError> {
-    if let Some(band) = band {
-        if let Some(gain) = matching_gaincurve_from_rows(
+    if let Some(band) = band
+        && let Some(gain) = matching_gaincurve_from_rows(
             table,
             time_seconds,
             |row| {
@@ -534,9 +534,9 @@ fn matching_gaincurve(
                     .unwrap_or(false)
             },
             antenna_key,
-        )? {
-            return Ok(gain);
-        }
+        )?
+    {
+        return Ok(gain);
     }
     matching_gaincurve_from_rows(
         table,

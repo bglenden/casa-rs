@@ -3926,13 +3926,13 @@ fn build_generic_visibility_scatter(
             ("WEIGHT_SPECTRUM", weight_spectrum_grid.as_ref()),
             ("SIGMA_SPECTRUM", sigma_spectrum_grid.as_ref()),
         ] {
-            if let Some(grid) = grid {
-                if grid.corr_count != corr_count || grid.chan_count != chan_count {
-                    return Err(format!(
-                        "{column_name} shape [{}, {}] does not match data shape [{corr_count}, {chan_count}]",
-                        grid.corr_count, grid.chan_count
-                    ));
-                }
+            if let Some(grid) = grid
+                && (grid.corr_count != corr_count || grid.chan_count != chan_count)
+            {
+                return Err(format!(
+                    "{column_name} shape [{}, {}] does not match data shape [{corr_count}, {chan_count}]",
+                    grid.corr_count, grid.chan_count
+                ));
             }
         }
         if let Some(started) = row_arrays_started {

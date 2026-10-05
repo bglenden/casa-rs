@@ -3533,8 +3533,10 @@ impl ExactF32Grid {
         }
         Ok(self
             .limbs
-            .chunks_exact(F32_SUPERACCUMULATOR_LIMBS)
-            .map(exact_f32_accumulator_value)
+            .as_chunks::<F32_SUPERACCUMULATOR_LIMBS>()
+            .0
+            .iter()
+            .map(|limbs| exact_f32_accumulator_value(limbs))
             .collect::<Vec<_>>()
             .into_boxed_slice())
     }

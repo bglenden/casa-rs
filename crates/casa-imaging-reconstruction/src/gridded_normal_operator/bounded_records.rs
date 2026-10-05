@@ -572,8 +572,13 @@ impl BoundedRecordEncoder {
                     let started = self.observe_timings.then(Instant::now);
                     let encoded = self.frames[0].append_record();
                     encoded[..8].copy_from_slice(&taps.to_le_bytes());
-                    for (bytes, sum) in encoded[8..].chunks_exact_mut(8).zip(sums.iter()) {
-                        bytes.copy_from_slice(&canonical_zero_bits(*sum).to_le_bytes());
+                    for (bytes, sum) in encoded[8..]
+                        .as_chunks_mut::<8>()
+                        .0
+                        .iter_mut()
+                        .zip(sums.iter())
+                    {
+                        *bytes = canonical_zero_bits(*sum).to_le_bytes();
                     }
                     if let Some(started) = started {
                         self.timings.encoding_checksum += started.elapsed();
@@ -632,7 +637,7 @@ fn encode_record(
             | (u64::from(record.chart_ordinal) << TAP_KEY_BITS)
             | (u64::from(aw.mueller_element) << AW_MUELLER_SHIFT)
             | if group_end { AW_GROUP_END_BIT } else { 0 };
-        for (bytes, value) in encoded.chunks_exact_mut(8).zip([
+        for (bytes, value) in encoded.as_chunks_mut::<8>().0.iter_mut().zip([
             key,
             coordinates.frequency_hz.to_bits(),
             coordinates.uvw_m[0].to_bits(),
@@ -646,7 +651,7 @@ fn encode_record(
             record.forward_imaginary,
             imaging_weight.to_bits(),
         ]) {
-            bytes.copy_from_slice(&value.to_le_bytes());
+            *bytes = value.to_le_bytes();
         }
     } else {
         if record.aw.is_some() {
@@ -658,14 +663,14 @@ fn encode_record(
             | ((record.role as u64) << RECORD_ROLE_SHIFT)
             | if group_end { GROUP_END_BIT } else { 0 };
         let route = u64::from(record.chart_ordinal) | ((record.taps >> 24) << 24);
-        for (bytes, value) in encoded.chunks_exact_mut(8).zip([
+        for (bytes, value) in encoded.as_chunks_mut::<8>().0.iter_mut().zip([
             key,
             route,
             record.forward_real,
             record.forward_imaginary,
             imaging_weight.to_bits(),
         ]) {
-            bytes.copy_from_slice(&value.to_le_bytes());
+            *bytes = value.to_le_bytes();
         }
     }
     Ok(())

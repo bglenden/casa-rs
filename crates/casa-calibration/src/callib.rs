@@ -174,25 +174,27 @@ fn parse_callib_line(line: &str, base_dir: &Path) -> Result<ApplyCalibrationTabl
             .transpose()?
             .unwrap_or_default(),
     };
-    if let Some(intent) = values.remove("intent") {
-        if !strip_quotes(&intent).is_empty() {
-            return Err("intent= is not supported in this callibrary slice".to_string());
-        }
+    if let Some(intent) = values.remove("intent")
+        && !strip_quotes(&intent).is_empty()
+    {
+        return Err("intent= is not supported in this callibrary slice".to_string());
     }
-    if let Some(reach) = values.remove("reach") {
-        if !strip_quotes(&reach).is_empty() {
-            return Err("reach= is not supported in this callibrary slice".to_string());
-        }
+    if let Some(reach) = values.remove("reach")
+        && !strip_quotes(&reach).is_empty()
+    {
+        return Err("reach= is not supported in this callibrary slice".to_string());
     }
-    if let Some(obsmap) = values.remove("obsmap") {
-        if !strip_quotes(&obsmap).is_empty() && strip_quotes(&obsmap) != "[]" {
-            return Err("obsmap= is not supported in this callibrary slice".to_string());
-        }
+    if let Some(obsmap) = values.remove("obsmap")
+        && !strip_quotes(&obsmap).is_empty()
+        && strip_quotes(&obsmap) != "[]"
+    {
+        return Err("obsmap= is not supported in this callibrary slice".to_string());
     }
-    if let Some(antmap) = values.remove("antmap") {
-        if !strip_quotes(&antmap).is_empty() && strip_quotes(&antmap) != "[]" {
-            return Err("antmap= is not supported in this callibrary slice".to_string());
-        }
+    if let Some(antmap) = values.remove("antmap")
+        && !strip_quotes(&antmap).is_empty()
+        && strip_quotes(&antmap) != "[]"
+    {
+        return Err("antmap= is not supported in this callibrary slice".to_string());
     }
 
     let gainfield = values

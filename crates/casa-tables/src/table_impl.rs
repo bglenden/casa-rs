@@ -1743,17 +1743,17 @@ impl TableImpl {
             return Ok(Some(value));
         }
 
-        if let Some(cached_column) = self.loaded_array_columns.get_mut(column) {
-            if cached_column.get().is_some() {
-                let column_values = cached_column
-                    .get_mut()
-                    .expect("array column initialized before mutable access");
-                if let Some(cell) = column_values.get_mut(row_index) {
-                    *cell = Some(value);
-                    return Ok(None);
-                }
-                return Ok(Some(value));
+        if let Some(cached_column) = self.loaded_array_columns.get_mut(column)
+            && cached_column.get().is_some()
+        {
+            let column_values = cached_column
+                .get_mut()
+                .expect("array column initialized before mutable access");
+            if let Some(cell) = column_values.get_mut(row_index) {
+                *cell = Some(value);
+                return Ok(None);
             }
+            return Ok(Some(value));
         }
         self.pending_array_cells
             .by_column

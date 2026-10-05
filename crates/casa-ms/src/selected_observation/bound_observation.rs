@@ -753,7 +753,7 @@ impl BoundSelectedObservation {
         }
         measures.verify_state()?;
         let access_binding = NEXT_ACCESS_BINDING
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
                 value.checked_add(1)
             })
             .map_err(|_| BoundSelectedObservationError::AccessIdentityExhausted)?;
@@ -853,7 +853,7 @@ impl BoundSelectedObservation {
         }
         measures.verify_state()?;
         let access_binding = NEXT_ACCESS_BINDING
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
                 value.checked_add(1)
             })
             .map_err(|_| BoundSelectedObservationError::AccessIdentityExhausted)?;

@@ -180,15 +180,15 @@ pub fn validate_columns(
             }
             Some(col_schema) => {
                 // Check data type
-                if let Some(expected_type) = col_schema.data_type() {
-                    if expected_type != col_def.data_type {
-                        issues.push(ValidationIssue::WrongColumnType {
-                            table_name: table_name.to_string(),
-                            column_name: col_def.name.to_string(),
-                            expected: format!("{:?}", col_def.data_type),
-                            found: format!("{expected_type:?}"),
-                        });
-                    }
+                if let Some(expected_type) = col_schema.data_type()
+                    && expected_type != col_def.data_type
+                {
+                    issues.push(ValidationIssue::WrongColumnType {
+                        table_name: table_name.to_string(),
+                        column_name: col_def.name.to_string(),
+                        expected: format!("{:?}", col_def.data_type),
+                        found: format!("{expected_type:?}"),
+                    });
                 }
             }
         }

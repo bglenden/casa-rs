@@ -2705,11 +2705,11 @@ mod tests {
         for hour in 0..24 {
             let time = (59000.0 + hour as f64 / 24.0) * 86400.0;
             let result = engine.azel(time, 0, 0);
-            if let Ok((_az, el)) = result {
-                if el > 0.0 {
-                    found_visible = true;
-                    break;
-                }
+            if let Ok((_az, el)) = result
+                && el > 0.0
+            {
+                found_visible = true;
+                break;
             }
         }
         assert!(
@@ -2725,11 +2725,11 @@ mod tests {
         for hour in 0..24 {
             let time = (59000.0 + hour as f64 / 24.0) * 86400.0;
             let result = engine.azel_observatory(time, 0);
-            if let Ok((_az, el)) = result {
-                if el > 0.0 {
-                    found_visible = true;
-                    break;
-                }
+            if let Ok((_az, el)) = result
+                && el > 0.0
+            {
+                found_visible = true;
+                break;
             }
         }
         assert!(

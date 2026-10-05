@@ -3590,7 +3590,7 @@ fn taylor_psf_peak_index(
 fn taylor_psf_support(shape: [usize; 2], maximum_scale_px: f64) -> usize {
     let mut support = ((16.0 + maximum_scale_px * maximum_scale_px).sqrt() * 20.0) as usize;
     support = support.max(80).min(shape[0]).min(shape[1]);
-    if support % 2 != 0 {
+    if !support.is_multiple_of(2) {
         support -= 1;
     }
     support
@@ -4360,8 +4360,10 @@ mod tests {
             let bytes = std::fs::read(directory.join(name)).expect("native float plane");
             assert_eq!(bytes.len(), cells * 4, "native plane shape: {name}");
             bytes
-                .chunks_exact(4)
-                .map(|bytes| f64::from(f32::from_le_bytes(bytes.try_into().unwrap())))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|bytes| f64::from(f32::from_le_bytes(*bytes)))
                 .inspect(|value| assert!(value.is_finite(), "finite native plane: {name}"))
                 .collect::<Vec<_>>()
         };
@@ -4607,8 +4609,10 @@ mod tests {
                             .unwrap();
                     assert_eq!(bytes.len(), cells * 4);
                     bytes
-                        .chunks_exact(4)
-                        .map(|bytes| f64::from(f32::from_le_bytes(bytes.try_into().unwrap())))
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .map(|bytes| f64::from(f32::from_le_bytes(*bytes)))
                         .collect()
                 } else {
                     load(&format!("native_{kind}{term}.f32le"))

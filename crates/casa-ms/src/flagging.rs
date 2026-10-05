@@ -1127,11 +1127,11 @@ where
         let Some(flags) = updates.get_mut(&sample.row) else {
             continue;
         };
-        if let Some(value) = flags.get_mut(IxDyn(&[sample.corr, sample.chan])) {
-            if *value != new_flag {
-                *value = new_flag;
-                changed.changed_samples += 1;
-            }
+        if let Some(value) = flags.get_mut(IxDyn(&[sample.corr, sample.chan]))
+            && *value != new_flag
+        {
+            *value = new_flag;
+            changed.changed_samples += 1;
         }
     }
     write_flag_updates(ms, updates, &mut changed)?;
@@ -1149,12 +1149,12 @@ fn apply_flag_set_with_preloaded(
         let Some(flags) = updates.get_mut(&row) else {
             continue;
         };
-        if let Some(value) = flags.get_mut(IxDyn(&[corr, chan])) {
-            if !*value {
-                *value = true;
-                changed.changed_samples += 1;
-                touched_rows.insert(row);
-            }
+        if let Some(value) = flags.get_mut(IxDyn(&[corr, chan]))
+            && !*value
+        {
+            *value = true;
+            changed.changed_samples += 1;
+            touched_rows.insert(row);
         }
     }
     write_touched_flag_updates(ms, updates, touched_rows, &mut changed)?;
@@ -1176,12 +1176,12 @@ fn apply_flag_mask_with_preloaded(
         let Some(flags) = updates.get_mut(&sample.row) else {
             continue;
         };
-        if let Some(value) = flags.get_mut(IxDyn(&[sample.corr, sample.chan])) {
-            if !*value {
-                *value = true;
-                changed.changed_samples += 1;
-                touched_rows.insert(sample.row);
-            }
+        if let Some(value) = flags.get_mut(IxDyn(&[sample.corr, sample.chan]))
+            && !*value
+        {
+            *value = true;
+            changed.changed_samples += 1;
+            touched_rows.insert(sample.row);
         }
     }
     write_touched_flag_updates(ms, updates, touched_rows, &mut changed)?;
@@ -1891,11 +1891,11 @@ fn tfcrop_fit_base_and_flag(
         let mut count = 0usize;
         for key1 in &axis1 {
             let (row, chan) = tfcrop_row_chan(direction, *key0, *key1);
-            if let Some(sample) = by_row_chan.get(&(row, chan)) {
-                if !sample_is_modified(sample, modified) {
-                    sum += tfcrop_value(sample);
-                    count += 1;
-                }
+            if let Some(sample) = by_row_chan.get(&(row, chan))
+                && !sample_is_modified(sample, modified)
+            {
+                sum += tfcrop_value(sample);
+                count += 1;
             }
         }
         if count > 0 {
@@ -1951,11 +1951,11 @@ fn tfcrop_fit_base_and_flag(
                 continue;
             }
             let (row, chan) = tfcrop_row_chan(direction, *key0, *key1);
-            if let Some(sample) = by_row_chan.get(&(row, chan)) {
-                if !modified[sample.index] {
-                    modified[sample.index] = true;
-                    direction_flags[sample.index] = true;
-                }
+            if let Some(sample) = by_row_chan.get(&(row, chan))
+                && !modified[sample.index]
+            {
+                modified[sample.index] = true;
+                direction_flags[sample.index] = true;
             }
         }
     }
@@ -2204,7 +2204,7 @@ fn median_in_place(values: &mut [f64]) -> f64 {
     }
     values.sort_by(f64::total_cmp);
     let mid = values.len() / 2;
-    if values.len() % 2 == 0 {
+    if values.len().is_multiple_of(2) {
         (values[mid - 1] + values[mid]) / 2.0
     } else {
         values[mid]

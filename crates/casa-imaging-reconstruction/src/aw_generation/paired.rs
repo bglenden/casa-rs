@@ -580,7 +580,7 @@ mod tests {
         let mut reference_peak = 0.0_f64;
         // The T51 exporter writes its canonical last-axis-contiguous
         // representation; native numerical workspaces are x-contiguous.
-        for (index, bytes) in bytes.chunks_exact(8).enumerate() {
+        for (index, bytes) in bytes.as_chunks::<8>().0.iter().enumerate() {
             let value = plane.values[index / plane.size + plane.size * (index % plane.size)];
             let reference = Complex32::new(
                 f32::from_le_bytes(bytes[..4].try_into().unwrap()),

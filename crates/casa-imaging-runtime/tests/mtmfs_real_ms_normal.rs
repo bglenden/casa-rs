@@ -189,10 +189,10 @@ fn t42_real_ms_mtmfs_normal_matches_casa_oracle_inputs() -> Result<(), Box<dyn E
     }
 
     let (tail, _weighting_state, summary) = weighting.finish()?;
-    if let Some(block) = tail {
-        if !owner.consume_block(&block)?.is_empty() {
-            return Err("empty model emitted final visibilities".into());
-        }
+    if let Some(block) = tail
+        && !owner.consume_block(&block)?.is_empty()
+    {
+        return Err("empty model emitted final visibilities".into());
     }
     let complete_data = owner.complete(&summary, completion.generation_id(), None)?;
     let joined = MajorCycleOwner::from_complete_data(

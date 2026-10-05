@@ -248,16 +248,16 @@ fn upsert_value(values: &mut Vec<StartupPrefill>, id: String, value: StartupValu
 }
 
 fn append_csv_value(values: &mut Vec<StartupPrefill>, id: String, value: String) {
-    if let Some(existing) = values.iter_mut().find(|entry| entry.id == id) {
-        if let StartupValue::Text(existing_text) = &mut existing.value {
-            if existing_text.is_empty() {
-                *existing_text = value;
-            } else if !value.is_empty() {
-                existing_text.push(',');
-                existing_text.push_str(&value);
-            }
-            return;
+    if let Some(existing) = values.iter_mut().find(|entry| entry.id == id)
+        && let StartupValue::Text(existing_text) = &mut existing.value
+    {
+        if existing_text.is_empty() {
+            *existing_text = value;
+        } else if !value.is_empty() {
+            existing_text.push(',');
+            existing_text.push_str(&value);
         }
+        return;
     }
     values.push(StartupPrefill {
         id,

@@ -1443,7 +1443,9 @@ pub(crate) fn load_uvw_column(table: &Table, rows: &[usize]) -> MsResult<Vec<[f6
         }
         return Ok(values
             .into_values()
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|uvw| [uvw[0], uvw[1], uvw[2]])
             .collect());
     }

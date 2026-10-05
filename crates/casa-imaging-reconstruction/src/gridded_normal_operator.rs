@@ -584,13 +584,9 @@ impl DecodedTaylorRecord<'_> {
         }
         for (value, bytes) in moments
             .iter_mut()
-            .zip(self.moment_bytes.chunks_exact(size_of::<f64>()))
+            .zip(self.moment_bytes.as_chunks::<{ size_of::<f64>() }>().0)
         {
-            *value = f64::from_le_bytes(
-                bytes
-                    .try_into()
-                    .map_err(|_| SpectralOperatorError::InvalidGriddedRecord)?,
-            );
+            *value = f64::from_le_bytes(*bytes);
             if !value.is_finite() {
                 return Err(SpectralOperatorError::InvalidGriddedRecord);
             }
@@ -2303,7 +2299,10 @@ impl PreparedGriddedNormalBlock {
         if self.sequence.is_some() {
             return Err(SpectralOperatorError::BlockSequence);
         }
-        if encoded.len() % GRIDDED_NORMAL_OPERATOR_RECORD_BYTES != 0 {
+        if !encoded
+            .len()
+            .is_multiple_of(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
+        {
             return Err(SpectralOperatorError::InvalidGriddedRecord);
         }
         let record_count = encoded.len() / GRIDDED_NORMAL_OPERATOR_RECORD_BYTES;
@@ -2324,7 +2323,11 @@ impl PreparedGriddedNormalBlock {
             let mut prediction = Complex64::default();
             let mut group_open = false;
             let mut sector_counts = [0_u32; GRIDDED_NORMAL_SECTOR_COUNT];
-            for bytes in encoded.chunks_exact(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES) {
+            for bytes in encoded
+                .as_chunks::<GRIDDED_NORMAL_OPERATOR_RECORD_BYTES>()
+                .0
+                .iter()
+            {
                 let record = decode_record(bytes, grid_shape, output_channels)?;
                 let group_ordinal = u32::try_from(self.predictions.len())
                     .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
@@ -2510,7 +2513,7 @@ impl GriddedNormalSectorGeometry {
             return Err(SpectralOperatorError::UnsupportedGeometry);
         }
         let split = [grid_shape[0] / 2, grid_shape[1] / 2];
-        let upper = [sector_id / 2 != 0, sector_id % 2 != 0];
+        let upper = [sector_id / 2 != 0, !sector_id.is_multiple_of(2)];
         let core_start = [
             if upper[0] { split[0] } else { 0 },
             if upper[1] { split[1] } else { 0 },
@@ -3192,7 +3195,9 @@ where
     A: FnMut(DecodedRecord, Complex64) -> Result<(), SpectralOperatorError>,
 {
     if sector_id >= GRIDDED_NORMAL_SECTOR_COUNT
-        || encoded.len() % GRIDDED_NORMAL_OPERATOR_RECORD_BYTES != 0
+        || !encoded
+            .len()
+            .is_multiple_of(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
     {
         return Err(SpectralOperatorError::InvalidGriddedRecord);
     }
@@ -4015,12 +4020,8 @@ pub(super) fn decode_taylor_record(
             .map_err(|_| SpectralOperatorError::InvalidGriddedRecord)?,
     );
     let moment_bytes = &encoded[8..];
-    for bytes in moment_bytes.chunks_exact(size_of::<f64>()) {
-        let value = f64::from_le_bytes(
-            bytes
-                .try_into()
-                .map_err(|_| SpectralOperatorError::InvalidGriddedRecord)?,
-        );
+    for bytes in moment_bytes.as_chunks::<{ size_of::<f64>() }>().0 {
+        let value = f64::from_le_bytes(*bytes);
         if !value.is_finite() {
             return Err(SpectralOperatorError::InvalidGriddedRecord);
         }
@@ -4163,7 +4164,9 @@ mod tests {
         assert_eq!(RECORD_VERSION, 11);
         assert_eq!(encoded.len(), 3 * GRIDDED_NORMAL_OPERATOR_RECORD_BYTES);
         for (index, bytes) in encoded
-            .chunks_exact(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
+            .as_chunks::<GRIDDED_NORMAL_OPERATOR_RECORD_BYTES>()
+            .0
+            .iter()
             .enumerate()
         {
             let decoded = decode_record(bytes, [10, 10], 1).unwrap();
@@ -4317,7 +4320,9 @@ mod tests {
 
         assert_eq!(encoded.len(), 2 * AW_GRIDDED_NORMAL_OPERATOR_RECORD_BYTES);
         let decoded = encoded
-            .chunks_exact(AW_GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
+            .as_chunks::<AW_GRIDDED_NORMAL_OPERATOR_RECORD_BYTES>()
+            .0
+            .iter()
             .map(|record| decode_aw_record(record, 4).expect("decode AW replay record"))
             .collect::<Vec<_>>();
         assert_eq!(decoded[0].chart_ordinal, 2);
@@ -4509,7 +4514,9 @@ mod tests {
         let catalogs = GriddedNormalDomainTileCatalogs::new([[10, 10], [10, 10]], SUPPORT)
             .expect("two domain catalogs");
         let decoded = encoded
-            .chunks_exact(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
+            .as_chunks::<GRIDDED_NORMAL_OPERATOR_RECORD_BYTES>()
+            .0
+            .iter()
             .map(|record| decode_domain_record(record, &catalogs, 1).expect("decode domain record"))
             .collect::<Vec<_>>();
         assert_eq!(
@@ -4694,7 +4701,11 @@ mod tests {
             encode_reduced::<false>(scalar_groups(contributions)).expect("reduce records");
         let mut grouped = Array2::<Complex64>::zeros(shape);
         let mut grouped_compensation = Array2::<Complex64>::zeros(shape);
-        for record in encoded.chunks_exact(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES) {
+        for record in encoded
+            .as_chunks::<GRIDDED_NORMAL_OPERATOR_RECORD_BYTES>()
+            .0
+            .iter()
+        {
             let record = decode_record(record, geometry.grid_shape, 1).expect("decode record");
             let predicted = gridder.degrid(&model_grid, record.taps) * record.forward_scale;
             gridder.grid_compensated(
@@ -4792,7 +4803,9 @@ mod tests {
                 }
             }
             let records = encoded[group_start..group_end]
-                .chunks_exact(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
+                .as_chunks::<GRIDDED_NORMAL_OPERATOR_RECORD_BYTES>()
+                .0
+                .iter()
                 .map(|bytes| decode_record(bytes, geometry.grid_shape, 1).expect("decode record"))
                 .collect::<Vec<_>>();
             let predicted = records.iter().fold(Complex64::default(), |sum, record| {

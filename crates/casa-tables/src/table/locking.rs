@@ -176,28 +176,27 @@ impl Table {
                         path: state.path.display().to_string(),
                         message: e.to_string(),
                     })?
+                && state.sync_data.needs_reload(&new_sync)
             {
-                if state.sync_data.needs_reload(&new_sync) {
-                    // Another process modified the table — reload.
-                    let storage = CompositeStorage;
-                    let snapshot = storage
-                        .load_with_row_hint(&state.path, Some(new_sync.nrrow))
-                        .map_err(|e| TableError::LockIo {
-                            path: state.path.display().to_string(),
-                            message: e.to_string(),
-                        })?;
-                    self.virtual_columns = snapshot.virtual_columns;
-                    self.inner.replace_from_snapshot(
-                        snapshot.rows,
-                        snapshot.undefined_cells,
-                        snapshot.keywords,
-                        snapshot.column_keywords,
-                        snapshot.schema,
-                    );
-                    // Update our stored sync data.
-                    if let Some(s) = self.lock_state.as_mut() {
-                        s.sync_data = new_sync;
-                    }
+                // Another process modified the table — reload.
+                let storage = CompositeStorage;
+                let snapshot = storage
+                    .load_with_row_hint(&state.path, Some(new_sync.nrrow))
+                    .map_err(|e| TableError::LockIo {
+                        path: state.path.display().to_string(),
+                        message: e.to_string(),
+                    })?;
+                self.virtual_columns = snapshot.virtual_columns;
+                self.inner.replace_from_snapshot(
+                    snapshot.rows,
+                    snapshot.undefined_cells,
+                    snapshot.keywords,
+                    snapshot.column_keywords,
+                    snapshot.schema,
+                );
+                // Update our stored sync data.
+                if let Some(s) = self.lock_state.as_mut() {
+                    s.sync_data = new_sync;
                 }
             }
         }
