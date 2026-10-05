@@ -31,6 +31,8 @@ pub mod product_publication;
 mod publication_layout;
 mod receipt;
 mod reconstruction_executor;
+#[doc(hidden)]
+pub use reconstruction_executor::ClarkWorkspaceReservation;
 mod resource_authority;
 mod serial_product_publication;
 mod spectral_cycle;

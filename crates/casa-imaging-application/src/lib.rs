@@ -427,6 +427,12 @@ where
         .observation
         .with_content_budget(initial_access.source_binding().content_budget());
     let minor_cycle_requested = problem.reconstruction().controls().max_minor_iterations() > 0;
+    let clark_workspace = casa_imaging_runtime::ClarkWorkspaceReservation::acquire(
+        problem,
+        &runtime.authority,
+        runtime.resource_policy.clone(),
+    )?;
+    let clark_reuse_bytes = clark_workspace.as_ref().map_or(0, |owner| owner.bytes());
     let prepared_aw = aw_preparation
         .map(|deployment| prepared_aw_phase::prepare_aw_projection(problem, deployment, &runtime))
         .transpose()?;
@@ -449,8 +455,14 @@ where
     }
     let minor = minor_cycle_requested
         .then(|| {
-            streaming_cube::minor_program(problem, input.minor_cycle_image_response, None)
-                .map(|program| (input.masks.clone(), program))
+            streaming_cube::minor_program(problem, input.minor_cycle_image_response, None).map(
+                |program| {
+                    (
+                        input.masks.clone(),
+                        program.with_clark_workspace_reuse(clark_reuse_bytes),
+                    )
+                },
+            )
         })
         .transpose()?;
     let (initial_plan, executor, initial_terminal_replay) = P::initial(
@@ -660,7 +672,12 @@ where
                                     .saturating_sub(total_iterations),
                             ),
                         )
-                        .map(|program| (next_masks.clone(), program))
+                        .map(|program| {
+                            (
+                                next_masks.clone(),
+                                program.with_clark_workspace_reuse(clark_reuse_bytes),
+                            )
+                        })
                     })
                     .transpose()?;
                 let (final_plan, executor) = P::refresh(

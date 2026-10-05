@@ -2,6 +2,27 @@
 
 Truth class: engineering evidence, not full T55 acceptance
 
+## Later PSF-workspace checkpoint — 2026-10-04
+
+The constant-basis single-plane application now reuses Clark's immutable PSF
+half-spectrum and component buffer with the exact PSF owner across major cycles.
+An explicit `ClarkWorkspaceReservation` prices the cross-cycle lifetime; the
+per-solve execution envelope excludes those vectors. Controller/active residual
+state remains fresh, failed solves do not return dirty scratch, and the shared
+batched Clark mathematics is unchanged. This is not a cache per cube channel.
+The static minor-phase quote remains conservative; no lower-memory admission
+claim is made. There is no content fingerprint or alternate cleaner.
+
+On the larger capped Metal MFS case, a current parent/candidate pair measured
+86.940 / 81.101 s with 40 majors each. Input-read drift accounts for 3.865 s;
+the supported reconstruction saving is about 2.1 s, not the entire observed
+6.7% application difference. Peak RSS stays 6.224 decimal GB. Focused checks
+and unchanged seven-product comparisons pass their performance guards; the
+known capped-CLEAN numerical alerts remain, not scientific acceptance.
+Detailed source, commands, logs and panels are in
+`/Users/brianglendenning/SoftwareProjects/casa-rs-evidence/t55/imaging-ownership-simplification-20261003/mfs-clark-reuse-20261004/REPORT.md`.
+The earlier measurements below retain their original workload and boundary.
+
 ## Outcome and scope
 
 The final integrated candidate is faster than matching CASA serial and materially

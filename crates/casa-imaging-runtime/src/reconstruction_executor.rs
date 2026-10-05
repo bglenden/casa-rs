@@ -18,6 +18,39 @@ use crate::{LeaseResource, RuntimeOverheadKind, WorkExecutionContext};
 
 pub(crate) const ALLOCATION: &str = "spectral-cycle-minor-cycle";
 
+/// Run-lifetime reservation for one immutable PSF's Clark refresh buffers.
+/// Retain this owner until all major cycles and their normal states are dropped.
+#[doc(hidden)]
+pub struct ClarkWorkspaceReservation {
+    _lease: crate::ResourceLease,
+    bytes: u64,
+}
+
+impl ClarkWorkspaceReservation {
+    /// Reserve only the single-plane constant-basis Clark case; other modes
+    /// continue to use their bounded per-solve workspace.
+    pub fn acquire(
+        problem: &casa_imaging_model::CompiledProblem,
+        authority: &crate::ResourceAuthority,
+        policy: crate::ResourcePolicy,
+    ) -> Result<Option<Self>, crate::ResourceError> {
+        let bytes = ReconstructionPlaneWorkspace::clark_reuse_bytes(problem);
+        if bytes == 0 {
+            return Ok(None);
+        }
+        let lease = authority.reserve_host_memory(policy, "cross-plan-clark-workspace", bytes)?;
+        Ok(Some(Self {
+            _lease: lease,
+            bytes,
+        }))
+    }
+
+    /// Resident ceiling priced before the first major plan is admitted.
+    pub const fn bytes(&self) -> u64 {
+        self.bytes
+    }
+}
+
 /// One owner-derived envelope, shared by admission and execution validation.
 pub(crate) struct PlaneExecutionPlan {
     kernel: BoundedKernelPlan,
@@ -303,6 +336,18 @@ mod tests {
 
     use super::model_fixture;
     use crate::complete_data_parallel_mfs_tests::geometry_with_facets;
+
+    #[test]
+    fn persistent_clark_bound_is_one_constant_plane_not_a_cube_cache() {
+        let clark = compiled_problem(1, ReconstructionAlgorithm::Clark);
+        assert!(ReconstructionPlaneWorkspace::clark_reuse_bytes(&clark) > 0);
+        for problem in [
+            compiled_problem(1, ReconstructionAlgorithm::Hogbom),
+            compiled_problem(8, ReconstructionAlgorithm::Clark),
+        ] {
+            assert_eq!(ReconstructionPlaneWorkspace::clark_reuse_bytes(&problem), 0);
+        }
+    }
 
     fn compiled_problem(channels: usize, algorithm: ReconstructionAlgorithm) -> CompiledProblem {
         let geometry =

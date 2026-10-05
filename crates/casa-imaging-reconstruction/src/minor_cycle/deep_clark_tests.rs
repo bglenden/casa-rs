@@ -145,7 +145,7 @@ fn deep_clark_batches_patch_updates_and_refreshes_the_linear_residual() {
         .record_component_sequence(iterations)
         .unwrap();
         POINT_PSF_WORK.with(|work| work.set(Some((0, 0, iterations))));
-        let actual = run_minor_cycle(&lifecycle, &base, &normal, &mask, controls)
+        let actual = run_minor_cycle(&lifecycle, &base, &normal, &mask, controls.clone())
             .expect("complete deep Clark minor cycle");
         let (passes, pixels, _) = POINT_PSF_WORK.with(|work| work.take().unwrap());
         let accepted = actual.evidence().iterations();
@@ -154,6 +154,30 @@ fn deep_clark_batches_patch_updates_and_refreshes_the_linear_residual() {
         assert!(actual.evidence().clark_refreshes() <= 10);
         assert_eq!(passes, 0, "Clark components must not use full PSF updates");
         assert_eq!(pixels, 0);
+
+        let reused_controls =
+            controls.with_clark_workspace_reuse(ClarkRefreshWorkspace::maximum_bytes([EDGE, EDGE]));
+        for _ in 0..2 {
+            let reused =
+                run_minor_cycle(&lifecycle, &base, &normal, &mask, reused_controls.clone())
+                    .expect("PSF-owned reuse must keep the same batched Clark solve");
+            assert_eq!(reused.evidence().iterations(), accepted);
+            assert_eq!(
+                reused.evidence().clark_refreshes(),
+                actual.evidence().clark_refreshes()
+            );
+            assert!(
+                (reused.evidence().final_peak_flux() - actual.evidence().final_peak_flux()).abs()
+                    < 1e-6
+            );
+            let expected = actual.evidence().recorded_component_sequence().unwrap();
+            let components = reused.evidence().recorded_component_sequence().unwrap();
+            assert_eq!(components.len(), expected.len());
+            for (component, expected) in components.iter().zip(expected) {
+                assert_eq!(component.cell(), expected.cell());
+                assert!((component.flux() - expected.flux()).abs() < 1e-6);
+            }
+        }
 
         // Reconstruct the terminal residual independently with clipped direct
         // PSF updates. The production batch refresh uses a linear FFT.

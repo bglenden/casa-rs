@@ -122,6 +122,16 @@ pub struct FinalNormalState {
 }
 
 impl FinalNormalState {
+    pub(crate) fn clark_workspace(
+        &self,
+    ) -> Option<&std::sync::Mutex<Option<crate::minor_cycle::ClarkRefreshWorkspace>>> {
+        let NormalStatePrimitives::Coupled(domains) = &self.primitives else {
+            return None;
+        };
+        let psf = domains.primary();
+        (domains.len() == 1 && psf.psf().len() == psf.shape()[0] * psf.shape()[1])
+            .then_some(&psf.clark_workspace)
+    }
     /// Release a superseded channel-local residual epoch after its successor
     /// has completed. Shared invariant fields remain with that successor.
     #[doc(hidden)]

@@ -639,6 +639,29 @@ pub struct ReconstructionPlaneWorkspace {
 }
 
 impl ReconstructionPlaneWorkspace {
+    /// Persistent two-buffer bound for a single constant-basis Clark PSF.
+    /// Cubes and coupled families do not retain a plane-indexed cache.
+    #[doc(hidden)]
+    pub fn clark_reuse_bytes(problem: &casa_imaging_model::CompiledProblem) -> u64 {
+        use casa_imaging_model::{ReconstructionAlgorithm, ReconstructionBasis};
+        let target = problem.model_lifecycle().target();
+        if problem.geometry().domains().len() != 1
+            || target.polarizations() != 1
+            || !matches!(
+                problem.reconstruction().basis(),
+                ReconstructionBasis::Constant
+            )
+            || !matches!(
+                problem.reconstruction().algorithm(),
+                ReconstructionAlgorithm::Clark
+            )
+            || problem.reconstruction().controls().max_minor_iterations() == 0
+        {
+            return 0;
+        }
+        let shape = target.domains()[0].pixels();
+        crate::minor_cycle::ClarkRefreshWorkspace::maximum_bytes(shape)
+    }
     /// Derive the largest legal independent-plane work from compiled controls.
     /// Coupled, multi-domain, and dirty work have different execution shapes.
     pub fn for_problem(
@@ -791,7 +814,7 @@ impl<'a> ReconstructionPlaneWork<'a> {
     /// Envelope for these exact controls and the full pending cycle collection.
     #[must_use]
     pub fn workspace(&self) -> ReconstructionPlaneWorkspace {
-        ReconstructionPlaneWorkspace::new(
+        let mut workspace = ReconstructionPlaneWorkspace::new(
             self.binding.normal.shape(),
             self.binding.base.shape().polarizations(),
             self.plane_count,
@@ -802,7 +825,16 @@ impl<'a> ReconstructionPlaneWork<'a> {
                 .component_sequence_limit()
                 .unwrap_or(0),
             self.binding.lifecycle.contract().bounds().max_delta_terms(),
-        )
+        );
+        if self.binding.cycle.program.clark_reuse_bytes() != 0 {
+            let shape = self.binding.normal.shape();
+            let buffers = (shape[0] as u64)
+                .saturating_mul(2)
+                .saturating_mul((shape[1] as u64).saturating_add(1))
+                .saturating_mul(2 * size_of::<num_complex::Complex32>() as u64);
+            workspace.worker_bytes = workspace.worker_bytes.saturating_sub(buffers);
+        }
+        workspace
     }
     /// Number of canonical plane slots, including explicit blank/unmapped slots.
     #[must_use]

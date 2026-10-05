@@ -33,14 +33,15 @@ use crate::{
     CoupledReconstructionMask, Encoder, FinalNormalState, FinalNormalStateCompletionId,
     ImageDomainReconstructionMasks, ModelDelta, ModelGeneration, ModelGenerationId,
     ModelGenerationWindow, ModelLifecycle, ModelLifecycleError, ReconstructionMask,
-    ReconstructionMaskGenerationId, ScienceTraceDigest, imaging_science_trace_enabled,
-    major_cycle::FinalNormalStatePlane, trace_real_values,
+    ReconstructionMaskGenerationId, ScienceTraceDigest, SpectralOperatorError,
+    imaging_science_trace_enabled, major_cycle::FinalNormalStatePlane, trace_real_values,
 };
 
 const MINOR_CYCLE_EVIDENCE_DOMAIN: &[u8] = b"casa-rs-minor-cycle-evidence";
 const MINOR_CYCLE_EVIDENCE_VERSION: u32 = 12;
 const TAYLOR_PSF_PEAK_TIE_RELATIVE_TOLERANCE: f64 = 1.0e-12;
 pub(crate) const CLARK_ROW_STACK_BYTES: usize = 128 * 1024;
+pub(crate) use clark::ClarkRefreshWorkspace;
 
 /// Return the hard resident-memory envelope for one solver-owned Minor Cycle.
 ///
@@ -293,6 +294,7 @@ pub struct MinorCycleProgram {
     image_response: Option<crate::MinorCycleImageResponse>,
     requires_image_response: bool,
     fft_threads: usize,
+    clark_reuse_bytes: u64,
 }
 
 /// Validity of the reconstruction-owned normal-state view used by one solve.
@@ -541,6 +543,7 @@ impl MinorCycleProgram {
             image_response: None,
             requires_image_response: false,
             fft_threads: 1,
+            clark_reuse_bytes: 0,
         })
     }
 
@@ -553,6 +556,18 @@ impl MinorCycleProgram {
     pub(crate) const fn with_fft_threads(mut self, threads: usize) -> Self {
         self.fft_threads = threads;
         self
+    }
+
+    /// Enable one single-plane PSF-owned workspace under a live cross-cycle
+    /// memory reservation. The caller must retain that reservation for the run.
+    #[doc(hidden)]
+    pub const fn with_clark_workspace_reuse(mut self, reserved_bytes: u64) -> Self {
+        self.clark_reuse_bytes = reserved_bytes;
+        self
+    }
+
+    pub(crate) const fn clark_reuse_bytes(&self) -> u64 {
+        self.clark_reuse_bytes
     }
 
     /// Select the typed model plane updated by this shared solver loop.
@@ -2656,6 +2671,24 @@ pub(crate) fn run_minor_cycle_plane(
     let effective_threshold = cycle_threshold.map_or(global_threshold, |threshold| {
         global_threshold.max(threshold)
     });
+    let clark_cache = if controls.clark_reuse_bytes != 0 {
+        if clark.is_none()
+            || ClarkRefreshWorkspace::maximum_bytes(shape) > controls.clark_reuse_bytes
+        {
+            return Err(SpectralOperatorError::ResidencyOverflow.into());
+        }
+        Some(
+            view.clark_workspace()
+                .ok_or(MinorCycleError::ModelShapeMismatch)?,
+        )
+    } else {
+        None
+    };
+    let workspace = clark_cache
+        .map(|cache| cache.lock().map(|mut cache| cache.take()))
+        .transpose()
+        .map_err(|_| SpectralOperatorError::ResidencyOverflow)?
+        .flatten();
     let mut clark_state = clark
         .map(|approximation| {
             clark::ClarkWorkState::new(
@@ -2667,6 +2700,7 @@ pub(crate) fn run_minor_cycle_plane(
                 approximation,
                 effective_threshold,
                 controls.fft_threads,
+                workspace,
                 |pixel| mask.contains(pixel) && valid_support(base, shape, model_plane, pixel),
             )
         })
@@ -2839,6 +2873,17 @@ pub(crate) fn run_minor_cycle_plane(
     let clark_refreshes = clark_state
         .as_ref()
         .map_or(0, clark::ClarkWorkState::refreshes);
+    if let Some(cache) = clark_cache
+        && let Some(state) = clark_state.take()
+    {
+        let workspace = state.into_workspace();
+        if workspace.owned_bytes() > controls.clark_reuse_bytes {
+            return Err(SpectralOperatorError::ResidencyOverflow.into());
+        }
+        *cache
+            .lock()
+            .map_err(|_| SpectralOperatorError::ResidencyOverflow)? = Some(workspace);
+    }
     if multiscale.is_some() && !terms.is_empty() {
         // MatrixCleaner uses finite subregions while selecting a bounded
         // multiscale component sequence, then finalizes the cycle with its

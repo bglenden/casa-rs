@@ -171,6 +171,7 @@ impl SpectralOperatorPrimitives {
         };
         Ok(Self {
             shape,
+            clark_workspace: std::sync::Mutex::new(None),
             slab: SpectralSlabPlan {
                 total_channels,
                 core_start: core.start,

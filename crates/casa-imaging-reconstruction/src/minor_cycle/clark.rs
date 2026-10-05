@@ -19,6 +19,33 @@ pub(super) struct ClarkActivePixel {
 // chooses the numerical strategy. Larger batches use the existing FFT buffer.
 const SPARSE_COMPONENT_CAPACITY: usize = 64;
 
+/// One PSF owner's reusable buffers, never residual or CLEAN controller state.
+#[derive(Debug)]
+pub(crate) struct ClarkRefreshWorkspace {
+    shape: [usize; 2],
+    center: [usize; 2],
+    padded: [usize; 2],
+    psf_spectrum: Vec<Complex32>,
+    components: Vec<Complex32>,
+    fft: RealFft2<f32>,
+}
+
+impl ClarkRefreshWorkspace {
+    pub(crate) fn maximum_bytes(shape: [usize; 2]) -> u64 {
+        (shape[0] as u64)
+            .saturating_mul(2)
+            .saturating_mul((shape[1] as u64).saturating_add(1))
+            .saturating_mul(2 * std::mem::size_of::<Complex32>() as u64)
+            .saturating_add(std::mem::size_of::<Self>() as u64)
+    }
+
+    pub(crate) fn owned_bytes(&self) -> u64 {
+        (std::mem::size_of::<Self>()
+            + (self.psf_spectrum.capacity() + self.components.capacity())
+                * std::mem::size_of::<Complex32>()) as u64
+    }
+}
+
 struct LinearRefresh<'psf> {
     shape: [usize; 2],
     padded: [usize; 2],
@@ -29,9 +56,7 @@ struct LinearRefresh<'psf> {
     dense_batch: bool,
     sparse_refreshes: usize,
     fft_refreshes: usize,
-    psf_spectrum: Vec<Complex32>,
-    components: Vec<Complex32>,
-    fft: RealFft2<f32>,
+    workspace: ClarkRefreshWorkspace,
 }
 
 impl<'psf> LinearRefresh<'psf> {
@@ -98,9 +123,40 @@ impl<'psf> LinearRefresh<'psf> {
             dense_batch: false,
             sparse_refreshes: 0,
             fft_refreshes: 0,
-            psf_spectrum,
-            components,
-            fft,
+            workspace: ClarkRefreshWorkspace {
+                shape,
+                center,
+                padded,
+                psf_spectrum,
+                components,
+                fft,
+            },
+        })
+    }
+
+    fn reuse(
+        psf: &'psf [f32],
+        shape: [usize; 2],
+        center: [usize; 2],
+        threads: usize,
+        mut workspace: ClarkRefreshWorkspace,
+    ) -> Result<Self, MinorCycleError> {
+        if workspace.shape != shape || workspace.center != center {
+            return Err(MinorCycleError::ModelShapeMismatch);
+        }
+        workspace.fft = RealFft2::with_threads(workspace.padded, threads)
+            .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
+        Ok(Self {
+            shape,
+            padded: workspace.padded,
+            psf,
+            center,
+            threads,
+            sparse_indices: SmallVec::new(),
+            dense_batch: false,
+            sparse_refreshes: 0,
+            fft_refreshes: 0,
+            workspace,
         })
     }
 
@@ -113,14 +169,14 @@ impl<'psf> LinearRefresh<'psf> {
             }
         }
         let pixel = [index / self.shape[1], index % self.shape[1]];
-        let real: &mut [f32] = bytemuck::cast_slice_mut(&mut self.components);
-        real[pixel[0] * self.fft.real_row_stride() + pixel[1]] += flux as f32;
+        let real: &mut [f32] = bytemuck::cast_slice_mut(&mut self.workspace.components);
+        real[pixel[0] * self.workspace.fft.real_row_stride() + pixel[1]] += flux as f32;
     }
 
     fn refresh(&mut self, residual: &mut [f64]) -> Result<(), MinorCycleError> {
         if !self.dense_batch {
-            let row_stride = self.fft.real_row_stride();
-            let real: &[f32] = bytemuck::cast_slice(&self.components);
+            let row_stride = self.workspace.fft.real_row_stride();
+            let real: &[f32] = bytemuck::cast_slice(&self.workspace.components);
             let components = self
                 .sparse_indices
                 .iter()
@@ -157,7 +213,7 @@ impl<'psf> LinearRefresh<'psf> {
                     self.threads,
                     residual,
                 )?;
-                let real: &mut [f32] = bytemuck::cast_slice_mut(&mut self.components);
+                let real: &mut [f32] = bytemuck::cast_slice_mut(&mut self.workspace.components);
                 for &index in &self.sparse_indices {
                     real[index / self.shape[1] * row_stride + index % self.shape[1]] = 0.0;
                 }
@@ -166,18 +222,25 @@ impl<'psf> LinearRefresh<'psf> {
                 return Ok(());
             }
         }
-        self.fft
-            .forward(&mut self.components)
+        self.workspace
+            .fft
+            .forward(&mut self.workspace.components)
             .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
-        for (value, kernel) in self.components.iter_mut().zip(self.psf_spectrum.iter()) {
+        for (value, kernel) in self
+            .workspace
+            .components
+            .iter_mut()
+            .zip(self.workspace.psf_spectrum.iter())
+        {
             *value *= kernel;
         }
-        self.fft
-            .inverse(&mut self.components)
+        self.workspace
+            .fft
+            .inverse(&mut self.workspace.components)
             .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
         let normalization = (self.padded[0] * self.padded[1]) as f64;
-        let real: &[f32] = bytemuck::cast_slice(&self.components);
-        let row_stride = self.fft.real_row_stride();
+        let real: &[f32] = bytemuck::cast_slice(&self.workspace.components);
+        let row_stride = self.workspace.fft.real_row_stride();
         for x in 0..self.shape[0] {
             for y in 0..self.shape[1] {
                 let index = x * self.shape[1] + y;
@@ -187,7 +250,7 @@ impl<'psf> LinearRefresh<'psf> {
                 }
             }
         }
-        self.components.fill(Complex32::default());
+        self.workspace.components.fill(Complex32::default());
         self.sparse_indices.clear();
         self.dense_batch = false;
         self.fft_refreshes += 1;
@@ -306,6 +369,7 @@ struct ClarkMeasurements {
     peak_visits: u64,
     update_visits: u64,
     maximum_active: usize,
+    workspace_reused: bool,
 }
 
 impl<'psf> ClarkWorkState<'psf> {
@@ -319,6 +383,7 @@ impl<'psf> ClarkWorkState<'psf> {
         approximation: ClarkApproximation,
         threshold: f64,
         fft_threads: usize,
+        workspace: Option<ClarkRefreshWorkspace>,
         accept: impl Fn([usize; 2]) -> bool,
     ) -> Result<Self, MinorCycleError> {
         let started = std::env::var_os("CASA_RS_TRACE_CLARK_TIMING")
@@ -341,7 +406,11 @@ impl<'psf> ClarkWorkState<'psf> {
         } else {
             usize::MAX
         };
-        let convolution = LinearRefresh::new(psf, shape, psf_peak, fft_threads)?;
+        let workspace_reused = workspace.is_some();
+        let convolution = match workspace {
+            Some(workspace) => LinearRefresh::reuse(psf, shape, psf_peak, fft_threads, workspace)?,
+            None => LinearRefresh::new(psf, shape, psf_peak, fft_threads)?,
+        };
         let mut state = Self {
             shape,
             psf_peak,
@@ -362,11 +431,16 @@ impl<'psf> ClarkWorkState<'psf> {
             convolution,
             measurements: started.map(|started| ClarkMeasurements {
                 setup_nanos: started.elapsed().as_nanos(),
+                workspace_reused,
                 ..ClarkMeasurements::default()
             }),
         };
         state.begin(residual, accept);
         Ok(state)
+    }
+
+    pub(super) fn into_workspace(self) -> ClarkRefreshWorkspace {
+        self.convolution.workspace
     }
 
     fn begin(&mut self, residual: &[f64], accept: impl Fn([usize; 2]) -> bool) {
@@ -527,7 +601,7 @@ impl<'psf> ClarkWorkState<'psf> {
         }
         if let Some(measurements) = &self.measurements {
             eprintln!(
-                "imaging_clark_cost setup_nanos={} build_nanos={} peak_nanos={} update_nanos={} refresh_nanos={} peak_visits={} update_visits={} maximum_active={} refreshes={} sparse_refreshes={} fft_refreshes={}",
+                "imaging_clark_cost setup_nanos={} build_nanos={} peak_nanos={} update_nanos={} refresh_nanos={} peak_visits={} update_visits={} maximum_active={} refreshes={} sparse_refreshes={} fft_refreshes={} workspace_reused={} workspace_bytes={}",
                 measurements.setup_nanos,
                 measurements.build_nanos,
                 measurements.peak_nanos,
@@ -539,6 +613,8 @@ impl<'psf> ClarkWorkState<'psf> {
                 self.refreshes,
                 self.convolution.sparse_refreshes,
                 self.convolution.fft_refreshes,
+                measurements.workspace_reused,
+                self.convolution.workspace.owned_bytes(),
             );
         }
         Ok(())
@@ -555,6 +631,56 @@ impl<'psf> ClarkWorkState<'psf> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn reuse_keeps_allocations_but_resets_sparse_and_fft_batches() {
+        let shape = [12, 10];
+        let center = [6, 5];
+        let psf = (0..120)
+            .map(|i| {
+                let x = (i / 10) as f32 - 6.0;
+                let y = (i % 10) as f32 - 5.0;
+                (-(x * x + y * y) / 3.0).exp()
+            })
+            .collect::<Vec<_>>();
+        let mut refresh = super::LinearRefresh::new(&psf, shape, center, 1).unwrap();
+        let spectrum_pointer = refresh.workspace.psf_spectrum.as_ptr();
+        let components_pointer = refresh.workspace.components.as_ptr();
+        for dense in [false, true, false, true] {
+            refresh.add(15, 0.3);
+            refresh.add(76, -0.07);
+            refresh.dense_batch = dense;
+            let mut actual = vec![1.0; 120];
+            refresh.refresh(&mut actual).unwrap();
+            let mut fresh = super::LinearRefresh::new(&psf, shape, center, 1).unwrap();
+            fresh.add(15, 0.3);
+            fresh.add(76, -0.07);
+            fresh.dense_batch = dense;
+            let mut expected = vec![1.0; 120];
+            fresh.refresh(&mut expected).unwrap();
+            assert!(
+                actual
+                    .iter()
+                    .zip(expected)
+                    .all(|(a, b)| (a - b).abs() < 1e-6)
+            );
+            assert!(
+                refresh
+                    .workspace
+                    .components
+                    .iter()
+                    .all(|value| *value == num_complex::Complex32::default())
+            );
+            let workspace = refresh.workspace;
+            assert!(workspace.owned_bytes() <= super::ClarkRefreshWorkspace::maximum_bytes(shape));
+            refresh = super::LinearRefresh::reuse(&psf, shape, center, 1, workspace).unwrap();
+            assert_eq!(refresh.workspace.psf_spectrum.as_ptr(), spectrum_pointer);
+            assert_eq!(refresh.workspace.components.as_ptr(), components_pointer);
+            assert_eq!((refresh.sparse_refreshes, refresh.fft_refreshes), (0, 0));
+            assert!(!refresh.dense_batch);
+        }
+        assert!(super::LinearRefresh::reuse(&psf, shape, [5, 5], 1, refresh.workspace).is_err());
+    }
+
     use super::*;
     use std::time::Instant;
 
@@ -669,6 +795,7 @@ mod tests {
             },
             0.1,
             1,
+            None,
             accept,
         )
         .unwrap();
@@ -707,8 +834,8 @@ mod tests {
                 .collect::<Vec<_>>();
             let mut refresh = LinearRefresh::new(&psf, shape, center, threads).unwrap();
             let half_cells = refresh.padded[0] * (refresh.padded[1] / 2 + 1);
-            assert_eq!(refresh.psf_spectrum.len(), half_cells);
-            assert_eq!(refresh.components.len(), half_cells);
+            assert_eq!(refresh.workspace.psf_spectrum.len(), half_cells);
+            assert_eq!(refresh.workspace.components.len(), half_cells);
             for axis in 0..2 {
                 assert_eq!(
                     refresh.padded[axis],

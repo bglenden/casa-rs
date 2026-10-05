@@ -198,6 +198,7 @@ mod tests {
                 common_residual: None,
                 invariant_common_dirty: None,
                 psf: complex(-0.125),
+                clark_workspace: std::sync::Mutex::new(None),
                 sensitivity: values.clone().map(|i| i as f64 * 0.25).collect(),
                 primary_beam_weighted_sum: None,
                 sum_weights: planes.clone().map(|i| (i + 1) as f64).collect(),
@@ -2128,6 +2129,7 @@ impl StoredChannelNormalDomain {
             self.role.clone(),
             SpectralOperatorPrimitives {
                 shape: self.shape,
+                clark_workspace: std::sync::Mutex::new(None),
                 slab: SpectralSlabPlan {
                     total_channels: self.total_channels,
                     core_start: range.start,
