@@ -5,12 +5,12 @@ serial execution reports zero, and a poisoned executor returns <code>None</code>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.new" class="method"><a class="src rightside" href="../src/casa_imaging_runtime/spectral_cycle.rs.html#1193-1254">Source</a><h4 class="code-header">pub fn <a href="#method.new" class="fn">new</a>(
     id: <a class="struct" href="struct.WorkImplementationId.html" title="struct casa_imaging_runtime::WorkImplementationId">WorkImplementationId</a>,
     problem: CompiledProblem,
-    weighting_plan: <a class="struct" href="../casa_imaging_reconstruction/weighting/struct.WeightingPlan.html" title="struct casa_imaging_reconstruction::weighting::WeightingPlan">WeightingPlan</a>,
+    weighting_plan: WeightingPlan,
     source_resources: <a class="struct" href="struct.SelectedObservationSourceResources.html" title="struct casa_imaging_runtime::SelectedObservationSourceResources">SelectedObservationSourceResources</a>,
     pass: <a class="struct" href="struct.SpectralPassIdentity.html" title="struct casa_imaging_runtime::SpectralPassIdentity">SpectralPassIdentity</a>,
     complete_data: <a class="struct" href="struct.CompleteDataPlanFragment.html" title="struct casa_imaging_runtime::CompleteDataPlanFragment">CompleteDataPlanFragment</a>,
     selected: <a class="struct" href="../casa_ms/selected_observation/bound_observation/struct.DeferredSelectedObservationAccess.html" title="struct casa_ms::selected_observation::bound_observation::DeferredSelectedObservationAccess">DeferredSelectedObservationAccess</a>,
-    executable: <a class="struct" href="../casa_imaging_reconstruction/struct.ExecutableModelProblem.html" title="struct casa_imaging_reconstruction::ExecutableModelProblem">ExecutableModelProblem</a>,
+    executable: ExecutableModelProblem,
     pass_input: <a class="enum" href="enum.SpectralCyclePassInput.html" title="enum casa_imaging_runtime::SpectralCyclePassInput">SpectralCyclePassInput</a>,
 ) -&gt; Self</h4></section></summary><div class="docblock"><p>Bind unopened selected-observation and model owners to a composed pass.
 The admitted source-read node validates the source allocation before
@@ -18,10 +18,10 @@ opening the deferred access; construction acquires no source buffers.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.new_gridded" class="method"><a class="src rightside" href="../src/casa_imaging_runtime/spectral_cycle.rs.html#1259-1331">Source</a><h4 class="code-header">pub fn <a href="#method.new_gridded" class="fn">new_gridded</a>(
     id: <a class="struct" href="struct.WorkImplementationId.html" title="struct casa_imaging_runtime::WorkImplementationId">WorkImplementationId</a>,
     problem: CompiledProblem,
-    weighting_plan: <a class="struct" href="../casa_imaging_reconstruction/weighting/struct.WeightingPlan.html" title="struct casa_imaging_reconstruction::weighting::WeightingPlan">WeightingPlan</a>,
+    weighting_plan: WeightingPlan,
     pass: <a class="struct" href="struct.SpectralPassIdentity.html" title="struct casa_imaging_runtime::SpectralPassIdentity">SpectralPassIdentity</a>,
     complete_data: <a class="struct" href="struct.CompleteDataPlanFragment.html" title="struct casa_imaging_runtime::CompleteDataPlanFragment">CompleteDataPlanFragment</a>,
-    executable: <a class="struct" href="../casa_imaging_reconstruction/struct.ExecutableModelProblem.html" title="struct casa_imaging_reconstruction::ExecutableModelProblem">ExecutableModelProblem</a>,
+    executable: ExecutableModelProblem,
     pass_input: <a class="enum" href="enum.SpectralCyclePassInput.html" title="enum casa_imaging_runtime::SpectralCyclePassInput">SpectralCyclePassInput</a>,
     planned_gridded_normal: <a class="struct" href="struct.PlannedGriddedNormalBinding.html" title="struct casa_imaging_runtime::PlannedGriddedNormalBinding">PlannedGriddedNormalBinding</a>,
 ) -&gt; <a class="type" href="https://doc.rust-lang.org/1.99.0/core/io/error/type.Result.html" title="type core::io::error::Result">Result</a>&lt;Self&gt;</h4></section></summary><div class="docblock"><p>Bind a later major to the sealed gridded-normal capability, without a
@@ -29,12 +29,12 @@ selected-observation owner or source resource surface.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.new_selected_output" class="method"><a class="src rightside" href="../src/casa_imaging_runtime/spectral_cycle.rs.html#1338-1390">Source</a><h4 class="code-header">pub fn <a href="#method.new_selected_output" class="fn">new_selected_output</a>(
     id: <a class="struct" href="struct.WorkImplementationId.html" title="struct casa_imaging_runtime::WorkImplementationId">WorkImplementationId</a>,
     problem: CompiledProblem,
-    weighting_plan: <a class="struct" href="../casa_imaging_reconstruction/weighting/struct.WeightingPlan.html" title="struct casa_imaging_reconstruction::weighting::WeightingPlan">WeightingPlan</a>,
+    weighting_plan: WeightingPlan,
     source_resources: <a class="struct" href="struct.SelectedObservationSourceResources.html" title="struct casa_imaging_runtime::SelectedObservationSourceResources">SelectedObservationSourceResources</a>,
     pass: <a class="struct" href="struct.SpectralPassIdentity.html" title="struct casa_imaging_runtime::SpectralPassIdentity">SpectralPassIdentity</a>,
     complete_data: <a class="struct" href="struct.CompleteDataPlanFragment.html" title="struct casa_imaging_runtime::CompleteDataPlanFragment">CompleteDataPlanFragment</a>,
     selected: <a class="struct" href="../casa_ms/selected_observation/bound_observation/struct.DeferredSelectedObservationAccess.html" title="struct casa_ms::selected_observation::bound_observation::DeferredSelectedObservationAccess">DeferredSelectedObservationAccess</a>,
-    completion: <a class="struct" href="../casa_imaging_reconstruction/major_cycle/struct.MajorCycleCompletion.html" title="struct casa_imaging_reconstruction::major_cycle::MajorCycleCompletion">MajorCycleCompletion</a>,
+    completion: MajorCycleCompletion,
     frozen_weighting: <a class="struct" href="struct.FrozenWeightingArtifact.html" title="struct casa_imaging_runtime::FrozenWeightingArtifact">FrozenWeightingArtifact</a>,
 ) -&gt; Self</h4></section></summary><div class="docblock"><p>Bind a terminal selected-output traversal. This mode may predict and
 write selected visibilities, but cannot accumulate residual science.
@@ -50,8 +50,8 @@ The frozen proof is rebound only at the admitted source-read node.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.with_reconstruction_cycle" class="method"><a class="src rightside" href="../src/casa_imaging_runtime/spectral_cycle.rs.html#1435-1447">Source</a><h4 class="code-header">pub fn <a href="#method.with_reconstruction_cycle" class="fn">with_reconstruction_cycle</a>(
     self,
     node: <a class="struct" href="struct.WorkNodeId.html" title="struct casa_imaging_runtime::WorkNodeId">WorkNodeId</a>,
-    masks: <a class="struct" href="../casa_imaging_reconstruction/mask/struct.ImageDomainReconstructionMaskPlans.html" title="struct casa_imaging_reconstruction::mask::ImageDomainReconstructionMaskPlans">ImageDomainReconstructionMaskPlans</a>,
-    program: <a class="struct" href="../casa_imaging_reconstruction/minor_cycle/struct.MinorCycleProgram.html" title="struct casa_imaging_reconstruction::minor_cycle::MinorCycleProgram">MinorCycleProgram</a>,
+    masks: ImageDomainReconstructionMaskPlans,
+    program: MinorCycleProgram,
 ) -&gt; Self</h4></section></summary><div class="docblock"><p>Attach one resource-accounted shared reconstruction cycle to an initial-major plan.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.with_final_visibility_sink" class="method"><a class="src rightside" href="../src/casa_imaging_runtime/spectral_cycle.rs.html#1451-1454">Source</a><h4 class="code-header">pub fn <a href="#method.with_final_visibility_sink" class="fn">with_final_visibility_sink</a>(
     self,
@@ -64,7 +64,7 @@ The frozen proof is rebound only at the admitted source-read node.</p>
 ) -&gt; Self</h4></section></summary><div class="docblock"><p>Attach the Resource Authority reservation spanning later major plans.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.take_frozen_weighting" class="method"><a class="src rightside" href="../src/casa_imaging_runtime/spectral_cycle.rs.html#1480-1482">Source</a><h4 class="code-header">pub fn <a href="#method.take_frozen_weighting" class="fn">take_frozen_weighting</a>(&amp;self) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="struct.FrozenWeightingArtifact.html" title="struct casa_imaging_runtime::FrozenWeightingArtifact">FrozenWeightingArtifact</a>&gt;</h4></section></summary><div class="docblock"><p>Consume immutable weighting retained after a successful major pass.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.take_gridded_normal_replay" class="method"><a class="src rightside" href="../src/casa_imaging_runtime/spectral_cycle.rs.html#1485-1487">Source</a><h4 class="code-header">pub fn <a href="#method.take_gridded_normal_replay" class="fn">take_gridded_normal_replay</a>(&amp;self) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="struct.FrozenGriddedNormalReplay.html" title="struct casa_imaging_runtime::FrozenGriddedNormalReplay">FrozenGriddedNormalReplay</a>&gt;</h4></section></summary><div class="docblock"><p>Consume the sealed normal-operator capability after a successful pass.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.take_selected_output_completion" class="method"><a class="src rightside" href="../src/casa_imaging_runtime/spectral_cycle.rs.html#1490-1492">Source</a><h4 class="code-header">pub fn <a href="#method.take_selected_output_completion" class="fn">take_selected_output_completion</a>(&amp;self) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="../casa_imaging_reconstruction/major_cycle/struct.MajorCycleCompletion.html" title="struct casa_imaging_reconstruction::major_cycle::MajorCycleCompletion">MajorCycleCompletion</a>&gt;</h4></section></summary><div class="docblock"><p>Consume the unchanged scientific completion after selected-output traversal.</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="method.take_selected_output_completion" class="method"><a class="src rightside" href="../src/casa_imaging_runtime/spectral_cycle.rs.html#1490-1492">Source</a><h4 class="code-header">pub fn <a href="#method.take_selected_output_completion" class="fn">take_selected_output_completion</a>(&amp;self) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;MajorCycleCompletion&gt;</h4></section></summary><div class="docblock"><p>Consume the unchanged scientific completion after selected-output traversal.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.take_completion" class="method"><a class="src rightside" href="../src/casa_imaging_runtime/spectral_cycle.rs.html#1654-1656">Source</a><h4 class="code-header">pub fn <a href="#method.take_completion" class="fn">take_completion</a>(&amp;self) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="struct.MajorCycleOperatorResult.html" title="struct casa_imaging_runtime::MajorCycleOperatorResult">MajorCycleOperatorResult</a>&gt;</h4></section></summary><div class="docblock"><p>Consume the authoritative phase result after run success.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.take_reconstruction_cycle_completion" class="method"><a class="src rightside" href="../src/casa_imaging_runtime/spectral_cycle.rs.html#1659-1667">Source</a><h4 class="code-header">pub fn <a href="#method.take_reconstruction_cycle_completion" class="fn">take_reconstruction_cycle_completion</a>(
     &amp;self,
