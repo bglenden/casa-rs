@@ -16,13 +16,19 @@ fn standard_clark_initial_memory() {
         .parse()
         .unwrap();
     assert!([1, 4].contains(&workers));
+    let cell_arcsec = std::env::var("CASA_RS_MFS_CELL_ARCSEC")
+        .unwrap_or_else(|_| "0.05".into())
+        .parse::<f64>()
+        .unwrap();
+    assert!(cell_arcsec.is_finite() && cell_arcsec > 0.0);
+    let spectral_window = std::env::var("CASA_RS_MFS_SPW").unwrap_or_else(|_| "0~31".into());
     std::fs::create_dir(&root).expect("fresh durable directory");
     let request = ContinuumImagingRequest {
         measurement_set: input,
         image_name: root.join("image"),
         image_size: 4096,
         facets: 1,
-        cell_arcsec: 0.05,
+        cell_arcsec,
         phase_center_field: None,
         phase_center: None,
         outlier_file: None,
@@ -30,7 +36,7 @@ fn standard_clark_initial_memory() {
         uv_range: None,
         intent: None,
         data_description: None,
-        spectral_window: Some("0~31".into()),
+        spectral_window: Some(spectral_window.clone()),
         channel_start: None,
         channel_count: None,
         spectral_mode: SpectralImagingMode::Continuum,
@@ -102,6 +108,26 @@ fn standard_clark_initial_memory() {
         crate::PlanningRegistry::new(runtime.registry, runtime.implementation.clone(), &problem);
     let policy = crate::execution_policy(&runtime, residency, None);
     let plan = SpectralCyclePlan::initial(&problem, &registry, policy).unwrap();
+    let _frozen = casa_imaging_runtime::FrozenWeightingReservation::acquire(
+        &runtime.authority,
+        runtime.resource_policy.clone(),
+        plan.weighting_plan().planned_residency(),
+        access.replay_proof_retained_heap_bytes(&problem).unwrap(),
+    )
+    .unwrap();
+    let admitted = casa_imaging_runtime::plan(
+        &problem,
+        casa_imaging_runtime::PlanningBindings::new(
+            runtime.registry,
+            runtime.resource_policy.clone(),
+            runtime.cost_model,
+        ),
+        &runtime.authority,
+        &registry,
+        &runtime.receipts,
+        |_, _| Ok::<_, std::convert::Infallible>(plan.physical_candidates()),
+    )
+    .expect("production admission, including live weighting and temporary storage");
     let candidates = plan
         .physical_candidates()
         .into_iter()
@@ -116,6 +142,10 @@ fn standard_clark_initial_memory() {
                 "overhead": format!("{:?}", alternative.demand.overhead),
                 "cache_bytes": alternative.demand.caches.hard_resident_bytes,
                 "headroom_bytes": alternative.headroom.memory_bytes.values().sum::<u64>(),
+                "storage": alternative.demand.storage.iter().map(|claim| serde_json::json!({
+                    "allocation": claim.demand_id, "temporary_bytes": claim.temporary_bytes,
+                    "staged_output_bytes": claim.staged_output_bytes, "final_output_bytes": claim.final_output_bytes,
+                })).collect::<Vec<_>>(),
             })
         })
         .collect::<Vec<_>>();
@@ -123,6 +153,8 @@ fn standard_clark_initial_memory() {
     let result = serde_json::json!({
         "scope": "production initial physical-plan reservations, not measured imaging RSS; no imaging or publication",
         "requested_workers": workers, "native_planning_bytes": 16_u64 << 30,
+        "cell_arcsec": cell_arcsec, "spectral_window": spectral_window,
+        "admitted_alternative": admitted.execution_dag().resource_alternative().id.as_str(),
         "selected_rows": problem.inputs().observation_snapshot().sources()[0].selection().rows().selected_row_count(),
         "minor_workspace_bytes": runtime.minor_cycle_bytes,
         "candidates": candidates,

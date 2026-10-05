@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Opt-in 4096-square application smoke on the CASA-generated A+C MFS pilot.
+//! Opt-in 4096-square application observations on caller-selected MFS inputs.
 //! The caller provides durable inputs/outputs and the sampled 16-GiB RSS guard.
 
 use super::*;
@@ -83,7 +83,7 @@ fn metal_mfs_clean_refresh_and_publication_matches_cpu() {
 }
 
 #[test]
-#[ignore = "requires the external A+C MFS pilot, durable outputs and a 16-GiB RSS guard"]
+#[ignore = "requires a caller-selected MFS input, durable outputs and a 16-GiB RSS guard"]
 fn full_field_application() {
     let _execution_guard = EXECUTION_LOCK.lock().unwrap();
     let input = PathBuf::from(std::env::var_os("CASA_RS_MFS_MS").expect("pilot MS"));
@@ -99,6 +99,11 @@ fn full_field_application() {
         .parse()
         .unwrap();
     assert!(threshold_jy.is_finite() && threshold_jy > 0.0);
+    let cell_arcsec: f64 = std::env::var("CASA_RS_MFS_CELL_ARCSEC")
+        .unwrap_or_else(|_| "0.05".into())
+        .parse()
+        .unwrap();
+    assert!(cell_arcsec.is_finite() && cell_arcsec > 0.0);
     let gridder = std::env::var("CASA_RS_MFS_GRIDDER").unwrap_or_else(|_| "standard".into());
     let spectral_window = std::env::var("CASA_RS_MFS_SPW").unwrap_or_else(|_| "0~31".into());
     assert!(["standard", "wproject"].contains(&gridder.as_str()));
@@ -117,7 +122,7 @@ fn full_field_application() {
     };
     let mut imaging = request(input, prefix.clone(), algorithm);
     imaging.image_size = 4096;
-    imaging.cell_arcsec = 0.05;
+    imaging.cell_arcsec = cell_arcsec;
     imaging.data_description = None;
     imaging.spectral_window = Some(spectral_window.clone());
     imaging.channel_start = None;
@@ -185,14 +190,14 @@ fn full_field_application() {
         "initial_admitted_workers": output.initial_receipt.selected_alternative_projection().demand.workers.hard(),
         "final_major_admitted_workers": output.final_major_receipt.as_ref().map(|receipt| receipt.selected_alternative_projection().demand.workers.hard()),
         "worker_count_scope": "workers is the request; admitted counts are phase reservations, not measured concurrent grid workers; see stream/replay measurements for execution",
-        "native_memory_bytes": 16_u64 << 30, "image_size": 4096, "cell_arcsec": 0.05,
+        "native_memory_bytes": 16_u64 << 30, "image_size": 4096, "cell_arcsec": cell_arcsec,
         "iterations": result.actual_minor_iterations,
         "iteration_limit": iterations, "threshold_jy": threshold_jy,
         "majors": output.major_cycle_count, "products": result.product_names,
         "prefix": prefix, "weighting": "uniform", "gridder": gridder,
         "spectral_window": spectral_window,
         "wplanes": (gridder == "wproject").then_some(32),
-        "scope": "application smoke; not full-workload performance or sky-model acceptance",
+        "scope": "application observation; workload identity supplied by caller; not intrinsic-sky or full T55 acceptance",
         "timing_boundary": "execute_continuum: input preparation through publication"
     });
     fs::write(

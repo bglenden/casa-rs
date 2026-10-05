@@ -429,9 +429,9 @@ fn complete_data_mfs_products_and_identities_agree_for_one_two_and_four_workers(
             run.final_stream.grid_resident_bytes, run.expected_replay_grid_bytes,
             "the admitted grid allocation must cover resident tile/shard plus merge grids",
         );
-        // The Stokes-I fixture now replays three encoded records in two frames,
+        // The Stokes-I fixture replays three encoded records in three frames,
         // so the route reserves exactly that window.
-        let expected_route = gridded_normal_route_capacity_bytes(3, 2, 1).unwrap();
+        let expected_route = gridded_normal_route_capacity_bytes(3, 3, 1).unwrap();
         assert_eq!(
             run.final_stream.planned_gridded_route_capacity_bytes, expected_route,
             "the plan reserves the encoded replay window",
@@ -488,10 +488,10 @@ fn faceted_complete_data_products_agree_across_distinct_admitted_plans() {
         "the two-worker plan must admit a larger kernel/worker resource envelope",
     );
     for run in [&serial, &parallel] {
-        // The faceted Stokes-I fixture routes eight encoded records in one frame.
+        // The faceted Stokes-I fixture routes eight encoded records in two frames.
         assert_eq!(
             run.final_stream.peak_physical_route_capacity_bytes,
-            gridded_normal_route_capacity_bytes(8, 1, 1).unwrap(),
+            gridded_normal_route_capacity_bytes(8, 2, 1).unwrap(),
         );
         assert!(
             run.final_stream.peak_kernel_window_capacity_bytes
@@ -539,8 +539,8 @@ fn faceted_replay_budget_covers_every_physical_chart_in_one_source_block() {
 
     assert_eq!(
         budget.maximum_frame_payload_bytes(),
-        3 * 2 * 4 * record_bytes,
-        "an indivisible atom admits distinct prediction and accumulation terms in every physical chart",
+        3 * 4 * record_bytes,
+        "scalar MFS admits one combined normal term in every physical chart per correlation group",
     );
 }
 

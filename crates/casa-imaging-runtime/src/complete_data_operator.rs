@@ -2597,18 +2597,24 @@ pub(crate) fn project_gridded_normal_compilation_banded(
         .max(1);
     let atom =
         GriddedNormalCompilationPlan::maximum_atom_records(problem).map_err(io::Error::other)?;
+    let record_capacity = GriddedNormalCompilationPlan::source_record_capacity(problem)
+        .map_err(io::Error::other)?
+        .max(atom as u64);
     let width = gridded_normal_operator_record_bytes(problem).map_err(io::Error::other)?;
-    let frame_records = usize::try_from(maximum_samples.min(block_samples).max(1))
-        .ok()
-        .and_then(|samples| samples.checked_mul(atom))
-        .ok_or_else(|| io::Error::other("gridded compiler record capacity overflow"))?;
+    let frame_records = usize::try_from(
+        maximum_samples
+            .min(block_samples)
+            .max(1)
+            .checked_mul(atom as u64)
+            .ok_or_else(|| io::Error::other("gridded compiler record capacity overflow"))?
+            .min(record_capacity),
+    )
+    .map_err(|_| io::Error::other("gridded compiler record capacity overflow"))?;
     let frame_bytes = frame_records
         .checked_mul(width)
         .ok_or_else(|| io::Error::other("gridded compiler frame capacity overflow"))?;
-    let payload_capacity = maximum_samples
-        .max(1)
-        .checked_mul(atom as u64)
-        .and_then(|records| records.checked_mul(width as u64))
+    let payload_capacity = record_capacity
+        .checked_mul(width as u64)
         .ok_or_else(|| io::Error::other("gridded compiler artifact capacity overflow"))?;
     // This input-sized policy is a reservation choice, not an emission bound.
     // Actual frame packing is governed by the independent U/R capacities below.

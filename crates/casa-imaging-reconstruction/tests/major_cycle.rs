@@ -69,6 +69,18 @@ fn source(seed: u8) -> ObservationSourceInput {
 }
 
 fn source_with_channels(seed: u8, channels: [Vec<u32>; 2]) -> ObservationSourceInput {
+    source_with_channels_and_correlations(
+        seed,
+        channels,
+        vec![CorrelationProduct::new(0, CorrelationType::StokesI)],
+    )
+}
+
+fn source_with_channels_and_correlations(
+    seed: u8,
+    channels: [Vec<u32>; 2],
+    correlations: Vec<CorrelationProduct>,
+) -> ObservationSourceInput {
     let columns = [
         MsColumnKind::Data,
         MsColumnKind::Flag,
@@ -140,10 +152,7 @@ fn source_with_channels(seed: u8, channels: [Vec<u32>; 2]) -> ObservationSourceI
                 .enumerate()
                 .map(|(spw, channels)| SpectralWindowSelection::new(spw as u32, channels))
                 .collect(),
-            vec![CorrelationSelection::new(
-                0,
-                vec![CorrelationProduct::new(0, CorrelationType::StokesI)],
-            )],
+            vec![CorrelationSelection::new(0, correlations)],
         ),
         SourceGenerations::new(
             ConsistencyToken::new(identity(seed, 3)),
@@ -938,6 +947,78 @@ fn mfs_initial_batch_spans_input_blocks_and_finishes_partial_tail() {
             reference = Some(actual);
         }
     }
+}
+
+#[test]
+fn scalar_mfs_compiler_emits_one_record_per_dual_correlation_group() {
+    let problem = reconstruction_problem_with_sampling_and_model(
+        source_with_channels_and_correlations(
+            249,
+            [vec![0], vec![1]],
+            vec![
+                CorrelationProduct::new(0, CorrelationType::CircularRr),
+                CorrelationProduct::new(1, CorrelationType::CircularLl),
+            ],
+        ),
+        8,
+        1,
+        ReconstructionBasis::Constant,
+        ReconstructionAlgorithm::Dirty,
+        ReconstructionControls::new(0, 1.0, 0.0),
+        (
+            SpectralSamplingLaw::IDENTITY,
+            ModelStateIdentity::Empty,
+            ModelInputCommitment::Empty,
+        ),
+    );
+    let samples = fixture_samples(&problem)
+        .into_iter()
+        .flat_map(|mut rr| {
+            rr.address.correlation_type = CorrelationType::CircularRr;
+            let mut ll = rr.clone();
+            ll.address.correlation_index = 1;
+            ll.address.correlation_type = CorrelationType::CircularLl;
+            [rr, ll]
+        })
+        .collect::<Vec<_>>();
+    let plan = plan_weighting(&problem, WeightingExecutionLimits::new(4, 1).unwrap()).unwrap();
+    let generation =
+        freeze_weighting_generation_with(&problem, &plan, &samples, constant_basis_contributions)
+            .unwrap();
+    let (blocks, summary) = replay_with(
+        &generation,
+        &problem,
+        &plan,
+        &samples,
+        constant_basis_contributions,
+    );
+    let compilation = GriddedNormalCompilationPlan::new(&problem, 4, 1, 1, 224, 40)
+        .expect("one combined record is sufficient for a complete dual-correlation atom");
+    let mut compiler = GriddedNormalOperatorCompiler::new(
+        &problem,
+        compilation,
+        SourceCardinalityObservation::Enabled,
+    )
+    .unwrap();
+    let mut frames = Vec::<RecordedFrame>::new();
+    let mut sink = |frame: GriddedNormalOperatorFrame<'_>| {
+        frames.push(RecordedFrame::from(frame));
+        Ok(())
+    };
+    for block in &blocks {
+        compiler.consume_source(block, &mut sink).unwrap();
+    }
+    let measured = compiler.finish_rows_and_frames(&mut sink).unwrap();
+    let program = compiler.complete(&summary).unwrap();
+    assert_eq!(measured.source_samples, 4);
+    assert_eq!(measured.source_cardinality.unwrap().groups, 2);
+    assert_eq!(program.record_count(), 2);
+    assert_eq!(frames.len(), 2);
+    assert!(
+        frames
+            .iter()
+            .all(|frame| frame.record_count() == 1 && frame.encoded_bytes().len() == 40)
+    );
 }
 
 #[test]
@@ -3162,13 +3243,28 @@ fn selected_row_spectral_view<'a>(
     samples: &[SelectedObservationSample],
     sample: &'a SelectedObservationSample,
 ) -> casa_imaging_model::SelectedObservationSampleView<'a> {
-    let view = sample.as_view();
+    let address = sample.address;
+    let mut members = samples.iter().filter(|candidate| {
+        candidate.address.measurement_set == address.measurement_set
+            && candidate.address.physical_row == address.physical_row
+            && candidate.address.channel_index == address.channel_index
+    });
+    let first = members.next().expect("fixture correlation group");
+    let (count, last) = members.fold((1, first), |(count, _), member| (count + 1, member));
+    let view = sample.as_view().with_input_weight_group(
+        casa_imaging_model::SelectedInputWeightGroup::correlation_run(
+            first.input_weight,
+            last.input_weight,
+            count,
+        )
+        .with_density_owner(address.correlation_index == first.address.correlation_index)
+        .with_terminal_member(address.correlation_index == last.address.correlation_index),
+    );
     if problem.science().spectral().sampling().kernel()
         != casa_imaging_model::SpectralKernel::Linear
     {
         return view;
     }
-    let address = sample.address;
     let selection = problem
         .inputs()
         .observation_snapshot()

@@ -254,6 +254,51 @@ impl GriddedNormalCompilationPlan {
         Ok(compilation_dimensions(problem, &specification)?.3)
     }
 
+    /// Return the input-sized record capacity in the compiler's emission units.
+    ///
+    /// Scalar Stokes-I MFS combines all correlations of a row/channel into one
+    /// normal atom, with one shared prediction/accumulation record per chart.
+    /// Its capacity is therefore independent of the selected correlation count.
+    /// Other layouts retain the per-correlation capacity policy; exceeding that
+    /// finite capacity remains a typed compilation failure, not unbounded growth.
+    pub fn source_record_capacity(problem: &CompiledProblem) -> Result<u64, SpectralOperatorError> {
+        let specification = SpectralOperatorSpecification::new(problem)?;
+        let atom = compilation_dimensions(problem, &specification)?.3 as u64;
+        let combined = scalar_correlation_preaggregation(&specification);
+        problem
+            .inputs()
+            .observation_snapshot()
+            .sources()
+            .iter()
+            .try_fold(0_u64, |total, source| {
+                let selection = source.selection();
+                let channels = selection
+                    .spectral_windows()
+                    .iter()
+                    .map(|window| window.channel_indices().len())
+                    .max()
+                    .unwrap_or(0) as u64;
+                let correlations = if combined {
+                    1
+                } else {
+                    selection
+                        .correlations()
+                        .iter()
+                        .map(|selection| selection.products().len())
+                        .max()
+                        .unwrap_or(0) as u64
+                };
+                selection
+                    .rows()
+                    .selected_row_count()
+                    .checked_mul(channels)
+                    .and_then(|groups| groups.checked_mul(correlations))
+                    .and_then(|groups| groups.checked_mul(atom))
+                    .and_then(|records| total.checked_add(records))
+                    .ok_or(SpectralOperatorError::ResidencyOverflow)
+            })
+    }
+
     /// Return simultaneous compiler-owned heap and inline storage, excluding the writer.
     #[must_use]
     pub const fn workspace_bytes(self) -> usize {
@@ -364,7 +409,9 @@ fn compilation_dimensions(
         .checked_mul(specification.chart_count())
         .and_then(|terms| terms.checked_mul(specification.polarization_count()))
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    let atom = if specification.aw_projection().is_some() {
+    let atom = if scalar_correlation_preaggregation(specification)
+        || specification.aw_projection().is_some()
+    {
         specification.chart_count()
     } else if matches!(
         GriddedNormalRecordLayout::for_specification(specification),
@@ -391,6 +438,17 @@ fn compilation_dimensions(
         return Err(SpectralOperatorError::ResidencyOverflow);
     }
     Ok((correlations, spectral, native, atom))
+}
+
+fn scalar_correlation_preaggregation(specification: &SpectralOperatorSpecification) -> bool {
+    specification.aw_projection().is_none()
+        && matches!(
+            GriddedNormalRecordLayout::for_specification(specification),
+            GriddedNormalRecordLayout::Scalar
+        )
+        && specification.polarization_coordinates()
+            == [casa_imaging_model::PolarizationCoordinate::StokesI]
+        && specification.slab().total_channels() == 1
 }
 
 /// A complete frame borrowed only for the duration of one synchronous sink call.
