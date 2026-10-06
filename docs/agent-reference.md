@@ -70,6 +70,12 @@ Follow the storage rules in `AGENTS.md`. Current locations:
   at `/Volumes/home/casa-rs-glendenning-preserve/GLENDENNING/` (see
   `/Volumes/GLENDENNING/README.md` for the path mapping).
 
+Keep an MS or large output only when it will be reused and would take hours to
+regenerate: a fixed timing input, or a long CASA run used as a correctness
+reference, kept with the exact MS it ran on. Record its generator, parameters
+and timings in a manifest beside the archive. T55's manifest is
+`/Volumes/home/casa-rs-glendenning-preserve/GLENDENNING/casa-rs-evidence/t55/GOLDEN-DATASETS.md`.
+
 Delete development artifacts once the code has moved past them. For a long
 benchmark campaign that must survive restarts, keep one current Markdown record
 (source revision, commands, results, next step) next to its evidence on the NAS
