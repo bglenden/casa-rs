@@ -2449,7 +2449,12 @@ final class CasarsMacUITests: XCTestCase {
             try accessibilityValue("tutorialPrototype.failure.details.\(datasetID)"),
             "collapsed"
         )
-        try clickIdentified("tutorialPrototype.dataset.retry.\(datasetID)")
+        // On macOS 26 XCTest reports this visible, unobstructed Retry button as
+        // not hittable, so click its center and let the recovered state below
+        // prove the click landed.
+        let retry = try require("tutorialPrototype.dataset.retry.\(datasetID)")
+        print("Retry hittable according to XCTest: \(retry.isHittable)")
+        retry.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
         XCTAssertTrue(
             waitForAccessibilityValue(
                 "tutorialPrototype.dataset.status.\(datasetID)",
