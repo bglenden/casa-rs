@@ -80,12 +80,14 @@ The internal disk is small. Do not fill it.
 
 - Issues and pull requests are the work record. PRs say `Work issue: #N` (or
   `Work source: <reason>`); use `Closes #N` only when merge should close it.
-- One PR per outcome, not per edit. Iterate as a draft; mark it ready once.
+- One PR per outcome, not per edit. Iterate as a draft; mark it ready once
+  (see Merging: ready means merge when green).
 - Do not commit directly to `main`, except docs-only changes that pass
   `just docs-check`.
 - Merge `main` into long-lived branches regularly.
 - Remove the worktrees and branches you create once their work is merged or
-  pushed.
+  pushed. `just tidy` lists leftovers already merged into `main`;
+  `just tidy --apply` removes them.
 - The repository is public; copying its source to any host is fine. Never copy
   credentials, secrets, or non-public datasets.
 
@@ -103,12 +105,16 @@ The internal disk is small. Do not fill it.
 
 ## Merging
 
-- Merges need the user's go-ahead and green CI (or a local `just quick` where
-  CI cannot cover the change).
-- Science, persistence, and interoperability changes also need an independent
-  review by a separate agent or person. Docs, tests, and tooling merge on green.
-- "Merge as-is" from the user waives the review and check gates for that PR;
-  record the waiver on the PR.
+- Marking a PR ready for review is the go-ahead to merge. Mark it ready only
+  with the user's go-ahead, then immediately run `gh pr merge --auto --merge`;
+  GitHub merges it once the required CI checks on `main` pass.
+- Science, persistence, and interoperability changes need an independent
+  review by a separate agent or person before they are marked ready. Docs,
+  tests, and tooling need only green CI.
+- If CI fails after a PR is marked ready, auto-merge waits; fix it on the
+  branch, or convert the PR back to a draft if the fix is not quick.
+- "Merge as-is" from the user waives the review and check gates for that PR:
+  merge with `gh pr merge --admin --merge` and record the waiver on the PR.
 
 ## Verification And Done
 

@@ -699,8 +699,9 @@ Work is not complete until:
 - reviewers checked for shallow or tautological tests on medium/high-risk work
 - docs or ADRs were updated if reality changed
 - any approved-scope deferral records explicit user signoff
-- merges have explicit user authorization, and science, persistence, and
-  interoperability changes also have an independent review
+- the PR was marked ready with the user's go-ahead (which enables auto-merge
+  on green CI), and science, persistence, and interoperability changes also
+  have an independent review
 
 A user's "merge as-is" for a pull request waives its review and check gates.
 Record the waiver on the pull request; do not describe waived evidence as
