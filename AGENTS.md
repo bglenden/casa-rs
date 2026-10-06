@@ -39,7 +39,8 @@ When sources disagree: code/tests/CI > ADRs > ARCHITECTURE/TESTING > issues.
 ## Commands And Toolchain
 
 - Rust 1.99 or newer (`rustup update stable`); set `CARGO_INCREMENTAL=0` for
-  raw cargo.
+  raw cargo. Install `cargo-nextest` (`brew install cargo-nextest`) so tests run
+  in parallel; without it `scripts/test-workspace.sh` runs them serially.
 - `just quick` is the normal gate; `just verify` is for milestones and
   releases; `just --list` shows everything else.
 - Swift tests: `cargo build -p casars-frontend-services --lib`, then
