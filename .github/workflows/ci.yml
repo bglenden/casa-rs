@@ -19,15 +19,11 @@ env:
 jobs:
   lint_test:
     runs-on: ubuntu-latest
+    env:
+      # Line tables keep file:line in panic backtraces while avoiding full
+      # debug info in ~130 linked test binaries.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
-      - name: Free runner disk space
-        # The debug test build needs more room than the image leaves free.
-        # Remove preinstalled toolchains this workflow never uses, rather than
-        # `cargo clean`, which would discard the restored Rust cache.
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
-          df -h /
-
       - name: Checkout
         uses: actions/checkout@v5
 
