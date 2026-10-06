@@ -44,9 +44,7 @@ Contributor/developer policy is in `AGENTS.md`.
 - `ARCHITECTURE.md` is the current workspace map and boundary summary.
 - `TESTING.md` defines the test strategy and done gate.
 - `docs/adr/` holds accepted architecture decisions.
-- GitHub issues and pull requests are the authoritative work record; the
-  Project `Status` field is a derived planning view.
-- `docs/Planning/` is retained as historical or program-reference material only.
+- GitHub issues and pull requests are the authoritative work record.
 
 ## Documentation
 
@@ -133,11 +131,8 @@ Status legend:
 | `python`, `python3` | Deferred until needed | No current parity target for casacore Python converters/bindings. |
 | `mirlib` | Deferred/Not planned | Out of scope for this Rust implementation. |
 
-Active planning and work status live in GitHub issues, pull requests, and the
-Project `Status` view.
-The `docs/Planning/Phase */` tree is retained for historical context and
-program reference, including the imaging parity material that still describes
-current proof boundaries.
+Active planning and work status live in GitHub issues and pull requests.
+Retired phase plans and finished-wave evidence are available from git history.
 
 ## Install on macOS
 

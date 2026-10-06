@@ -238,12 +238,12 @@ pub(crate) fn validate_sort_column(table: &Table, col_name: &str) -> Result<(), 
             });
         }
 
-        if let Some(dt) = col.data_type() {
-            if matches!(dt, PrimitiveType::Complex32 | PrimitiveType::Complex64) {
-                return Err(TableError::SortKeyUnsortable {
-                    column: col_name.to_string(),
-                });
-            }
+        if let Some(dt) = col.data_type()
+            && matches!(dt, PrimitiveType::Complex32 | PrimitiveType::Complex64)
+        {
+            return Err(TableError::SortKeyUnsortable {
+                column: col_name.to_string(),
+            });
         }
 
         return Ok(());

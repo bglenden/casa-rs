@@ -18,6 +18,15 @@ pub(crate) fn production_measures_provider()
         .map_err(|error| crate::MsError::MeasuresRuntime(error.to_string()))
 }
 
+pub(crate) fn production_measures_runtime_at(
+    root: impl Into<std::path::PathBuf>,
+) -> Result<
+    std::sync::Arc<casa_measures_data::MeasuresRuntime>,
+    casa_measures_data::MeasuresDataError,
+> {
+    casa_measures_data::MeasuresRuntime::open(root, Default::default()).map(std::sync::Arc::new)
+}
+
 /// Create a default Value for a main-table column, given its name.
 ///
 /// Looks up the column definition in the required/optional column lists

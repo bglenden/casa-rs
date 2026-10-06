@@ -7,6 +7,11 @@ Delivery 1 work issue: #540
 Delivery 2 source issue: #541, with the MFS production slice to be extracted
 Verification: issue-named focused gates; `just docs-check`; `just arch-check`
 
+The run authorizations and numerical candidate-admission thresholds below belong
+to the named #540/#541 campaign. They are not global prerequisites for local
+experiments on other tickets; use the current imaging-performance skill for
+general iteration guidance.
+
 ## Decision
 
 Imaging execution gains one shared bounded streaming Module inside
@@ -915,25 +920,37 @@ The proposed cutover is one shared seam:
 
 The artifact is sealed only after exhaustive first-pass completion and exact
 identity/count validation. Later major cycles traverse the bounded artifact,
-not the MS. A missing, truncated, corrupt, or mismatched artifact fails the
-run; there is no compatibility fallback. The format is private and run-scoped,
-not a persisted public cache contract. The vertical serial slice uses one
-scientific grid and bounded buffers—never one full grid per worker—and must
-delete the displaced later-major route in the same cutover.
+not the MS. A missing, truncated, mismatched artifact or corrupt consumed frame
+fails the run; there is no compatibility fallback. Channel-local replay may
+select complete frames using compiler-owned accumulation bounds and a bounded,
+writer-owned in-memory directory. Each selected session checks file identity,
+length, envelope/footer, original selected frame headers and payload CRCs, and
+exact exhaustion of its required physical sequence list. Its completion reports
+only those selected frames and encoded records; it does not claim to have read
+or verified omitted payloads or recomputed the complete header transcript.
+Whole prediction groups remain intact, including support outside the core.
+The full reader retains its complete header-transcript and payload checks.
+The format is private and run-scoped,
+not a persisted public cache contract, and uses versioned framing with
+non-cryptographic CRC32C payload and header-transcript checksums (ADR-0013).
+The vertical serial slice uses one scientific grid and bounded buffers—never
+one full grid per worker—and must delete the displaced later-major route in
+the same cutover.
 
-This MFS artifact deliberately remains a deletion-owning named temporary file:
-the accepted plan closes the writer descriptor at seal and opens one bounded
-reader descriptor per later-major plan, which cannot be combined with an
+This private replay artifact deliberately remains a deletion-owning named
+temporary file: the accepted plan closes the writer descriptor at seal and opens
+at most one bounded reader descriptor at a time during each later-major plan,
+which cannot be combined with an
 unlinked file on macOS. `TempPath` removes the private name when the final
 artifact owner drops it, and every reopen verifies the sealed device and inode
-before checking length, framing, and hashes. The initial plan marks its one
+before checking length, framing, and checksums (ADR-0013). The initial plan marks its one
 temporary-storage claim as artifact-retained; after successful seal and
 evidence, the scheduler transfers that exact permit from the plan's admitted
 lease into the sealed replay. Later plans bind the retained artifact by
 identity, storage domain, and ceiling, and therefore charge only their direct
 read rate, queue, descriptor, and bounded-buffer resources. The application
 moves the opaque artifact and never acquires a second lease. This is distinct
-from the still-open, unlinked AWProject spill described in `ARCHITECTURE.md`.
+from the bounded prepared-cell AWProject boundary described in `ARCHITECTURE.md`.
 
 Production retention still requires measured full-artifact bytes and peak
 residency, exact MS/artifact pass counts, the complete 32 GiB workload,

@@ -2,7 +2,7 @@
 format = 1
 surface = "imager"
 kind = "task"
-contract = 15
+contract = 16
 
 [parameters]
 vis = ["VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms"]

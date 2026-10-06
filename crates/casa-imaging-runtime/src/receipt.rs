@@ -7,7 +7,7 @@ use std::{
     fs::{self, File},
     io::Write,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, MutexGuard, OnceLock, Weak},
+    sync::{Arc, Mutex, OnceLock, Weak},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -53,7 +53,7 @@ use crate::{
 };
 
 const RECEIPT_SCHEMA: &str = "casa-rs-imaging-execution-receipt";
-const RECEIPT_SCHEMA_VERSION: u32 = 22;
+const RECEIPT_SCHEMA_VERSION: u32 = 24;
 const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 11;
 const RECEIPT_SUFFIX: &str = ".receipt.json";
 const RECEIPT_STAGING_PREFIX: &str = ".casa-rs-receipt-staging-";
@@ -160,9 +160,6 @@ pub enum ReceiptStatus {
     Planned,
     /// The attempt or work item is active.
     Running,
-    /// All work is settled and durable prepared evidence exists, but external
-    /// publication visibility is indeterminate until a terminal receipt exists.
-    PublicationPrepared,
     /// A terminal attempt ended before this plan item could start.
     /// Plan-declared conditional work also retains this state while its route
     /// is inactive.
@@ -183,10 +180,7 @@ pub enum ReceiptStatus {
 
 impl ReceiptStatus {
     fn is_terminal(self) -> bool {
-        !matches!(
-            self,
-            Self::Planned | Self::Running | Self::PublicationPrepared
-        )
+        !matches!(self, Self::Planned | Self::Running)
     }
 }
 
@@ -1089,7 +1083,15 @@ impl ExecutionReceipt {
     }
 }
 
-/// Local, bounded owner of atomic imaging Execution Receipts.
+/// Local, bounded owner of final imaging Execution Receipts.
+///
+/// Active attempts reserve capacity with a fixed-size marker; node and fence
+/// progress remains in memory. A durable final receipt ends the reservation;
+/// its marker is removed together with that receipt during retention eviction.
+/// Interrupted-process markers without final receipts remain reserved on reopen
+/// and require explicit operator handling rather than resumable recovery.
+/// After final-write I/O failure, any final document is unconfirmed: reporting
+/// the failure takes precedence and replacing that summary is best effort.
 #[derive(Clone, Debug)]
 pub struct ExecutionReceiptStore {
     root: PathBuf,
@@ -1218,35 +1220,8 @@ impl ExecutionReceiptStore {
         }
     }
 
-    /// Return every stored attempt identity in ascending order.
-    ///
-    /// Identities come from receipt filenames; reopening still validates each
-    /// document's integrity.
-    pub(crate) fn attempts(&self) -> Result<Vec<ExecutionAttemptId>, ReceiptError> {
-        let mut attempts = Vec::new();
-        for entry in fs::read_dir(&self.root).map_err(|source| ReceiptError::Io {
-            action: "list execution receipts",
-            source,
-        })? {
-            let name = entry
-                .map_err(|source| ReceiptError::Io {
-                    action: "read execution receipt entry",
-                    source,
-                })?
-                .file_name();
-            let name = name.to_string_lossy();
-            let Some(stem) = name.strip_suffix(RECEIPT_SUFFIX) else {
-                continue;
-            };
-            if stem.len() == 64 && stem.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-                attempts.push(ExecutionAttemptId::from_sha256(parse_digest(stem)));
-            }
-        }
-        attempts.sort();
-        Ok(attempts)
-    }
-
-    /// Reopen and integrity-check one receipt by its caller-owned attempt identity.
+    /// Reopen and integrity-check one final receipt by its caller-owned attempt identity.
+    /// An active attempt has no receipt document yet.
     pub fn open(&self, attempt: ExecutionAttemptId) -> Result<ExecutionReceipt, ReceiptError> {
         let path = self.receipt_path(attempt);
         let bytes = fs::read(&path).map_err(|source| ReceiptError::Io {
@@ -1270,7 +1245,44 @@ impl ExecutionReceiptStore {
         plan: &ExecutionPlan,
     ) -> Result<ReceiptRecorder<'store>, ReceiptError> {
         let body = ReceiptBody::new(provenance, problem, plan)?;
-        self.persist(&body, true)?;
+        let reservation = worst_case_receipt_bytes(&body)?
+            .checked_add(8)
+            .ok_or(ReceiptError::RetentionExceeded)?;
+        let _mutation = self
+            .state
+            .mutation
+            .lock()
+            .map_err(|_| ReceiptError::InvalidStore)?;
+        if self.receipt_path(body.attempt()).exists() || self.active_path(body.attempt()).exists() {
+            return Err(ReceiptError::AttemptAlreadyExists);
+        }
+        self.make_room(&body, reservation)?;
+        atomic_create(
+            &self.active_path(body.attempt()),
+            &reservation.to_le_bytes(),
+        )?;
+        let node_indices = body
+            .plan
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(i, node)| (node.node_id.clone(), i))
+            .collect();
+        let fence_indices = body
+            .plan
+            .fences
+            .iter()
+            .enumerate()
+            .map(|(i, fence)| ((fence.node_id.clone(), fence.kind.clone()), i))
+            .collect();
+        let mut artifact_indices = body
+            .plan
+            .artifacts
+            .iter()
+            .enumerate()
+            .map(|(i, artifact)| (artifact.artifact_identity.clone(), i))
+            .collect::<Vec<_>>();
+        artifact_indices.sort_unstable_by(|left, right| left.0.cmp(&right.0));
         Ok(ReceiptRecorder {
             store: self,
             body,
@@ -1278,11 +1290,18 @@ impl ExecutionReceiptStore {
             active_fences: BTreeMap::new(),
             pending_publications: BTreeSet::new(),
             terminal: false,
+            node_indices,
+            fence_indices,
+            artifact_indices,
         })
     }
 
     fn receipt_path(&self, attempt: ExecutionAttemptId) -> PathBuf {
         self.root.join(format!("{attempt}{RECEIPT_SUFFIX}"))
+    }
+
+    fn active_path(&self, attempt: ExecutionAttemptId) -> PathBuf {
+        self.root.join(format!("{attempt}.active"))
     }
 
     fn remove_orphaned_staging_files(&self) -> Result<(), ReceiptError> {
@@ -1311,7 +1330,7 @@ impl ExecutionReceiptStore {
         sync_directory(&self.root)
     }
 
-    fn persist(&self, body: &ReceiptBody, is_new: bool) -> Result<(), ReceiptError> {
+    fn persist(&self, body: &ReceiptBody) -> Result<(), ReceiptError> {
         let _mutation = self
             .state
             .mutation
@@ -1319,85 +1338,23 @@ impl ExecutionReceiptStore {
             .map_err(|_| ReceiptError::InvalidStore)?;
         let bytes = encode_document(body)?;
         let actual_bytes = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
-        let reserved_bytes = if body.status.is_terminal() {
-            actual_bytes
-        } else {
-            actual_bytes.max(worst_case_receipt_bytes(body)?)
-        };
-        // `begin` reserves the non-terminal receipt's worst-case terminal size.
-        // Later revisions remain inside that reservation, so repeating the
-        // directory-wide retention admission would add no safety.
-        if is_new {
-            self.make_room(body, reserved_bytes)?;
+        let active = self.active_path(body.attempt());
+        if actual_bytes.saturating_add(8) > read_reservation(&active)? {
+            return Err(ReceiptError::RetentionExceeded);
         }
         let path = self.receipt_path(body.attempt());
-        if is_new {
-            atomic_create(&path, &bytes)
-        } else {
-            atomic_write(&path, &bytes)
-        }
-    }
-
-    fn persist_checkpoint(&self, body: &ReceiptBody) -> Result<(), ReceiptError> {
-        let _mutation = self
-            .state
-            .mutation
-            .lock()
-            .map_err(|_| ReceiptError::InvalidStore)?;
-        let bytes = encode_document(body)?;
-        atomic_write_checkpoint(&self.receipt_path(body.attempt()), &bytes)
-    }
-
-    fn prepare_publication<'store>(
-        &'store self,
-        prepared: &ReceiptBody,
-        completed: ReceiptBody,
-    ) -> Result<PreparedPublicationReceipt<'store>, ReceiptError> {
-        let mutation = self
-            .state
-            .mutation
-            .lock()
-            .map_err(|_| ReceiptError::InvalidStore)?;
-        let prepared_bytes = encode_document(prepared)?;
-        let completed_bytes = encode_document(&completed)?;
-        let reserved_bytes = prepared_publication_bytes(
-            prepared_bytes.len(),
-            completed_bytes.len(),
-            worst_case_receipt_bytes(prepared)?,
-        )?;
-        self.make_room(prepared, reserved_bytes)?;
-        let path = self.receipt_path(prepared.attempt());
-        let (parent, terminal) = staged_receipt(&path, &completed_bytes)?;
-        atomic_write(&path, &prepared_bytes)?;
-        Ok(PreparedPublicationReceipt {
-            parent: parent.to_owned(),
-            path,
-            terminal,
-            completed,
-            _mutation: mutation,
-        })
-    }
-
-    fn complete_publication(
-        &self,
-        prepared: PreparedPublicationReceipt,
-    ) -> Result<ReceiptBody, ReceiptError> {
-        let PreparedPublicationReceipt {
-            parent,
-            path,
-            terminal,
-            completed,
-            _mutation,
-        } = prepared;
-        terminal.persist(&path).map_err(|error| ReceiptError::Io {
-            action: "promote completed execution receipt",
-            source: error.error,
-        })?;
-        sync_directory(&parent)?;
-        Ok(completed)
+        // This write and directory sync are the commit point. No fallible
+        // marker cleanup follows a successfully committed final receipt.
+        atomic_write(&path, &bytes)
     }
 
     fn make_room(&self, body: &ReceiptBody, incoming_bytes: u64) -> Result<(), ReceiptError> {
+        if boundary_probe_enabled() {
+            eprintln!(
+                "t51_receipt_history boundary=retention attempt={}",
+                body.attempt()
+            );
+        }
         if incoming_bytes > self.state.retention.max_bytes {
             return Err(ReceiptError::RetentionExceeded);
         }
@@ -1413,40 +1370,47 @@ impl ExecutionReceiptStore {
                 source,
             })?;
             let path = entry.path();
-            if path == current_path || !is_receipt_path(&path) {
+            let active = receipt_attempt(&path, ".active");
+            if path == current_path || (active.is_none() && !is_receipt_path(&path)) {
                 continue;
             }
-            let file_bytes = entry
-                .metadata()
-                .map_err(|source| ReceiptError::Io {
-                    action: "inspect execution receipt",
-                    source,
-                })?
-                .len();
-            let receipt = read_receipt_body(&path)?;
-            let bytes = if receipt.status.is_terminal() {
-                file_bytes
+            if active.is_some_and(|attempt| self.receipt_path(attempt).is_file()) {
+                continue;
+            }
+            let metadata = entry.metadata().map_err(|source| ReceiptError::Io {
+                action: "inspect receipt retention metadata",
+                source,
+            })?;
+            if !metadata.is_file() {
+                return Err(ReceiptError::InvalidStore);
+            }
+            let marker = receipt_attempt(&path, RECEIPT_SUFFIX)
+                .map(|attempt| self.active_path(attempt))
+                .filter(|path| path.exists());
+            let bytes = if active.is_some() {
+                read_reservation(&path)?
             } else {
-                file_bytes.max(worst_case_receipt_bytes(&receipt)?)
+                metadata
+                    .len()
+                    .saturating_add(if marker.is_some() { 8 } else { 0 })
             };
             total_bytes = total_bytes.saturating_add(bytes);
             retained.push((
                 path,
                 bytes,
-                receipt.status.is_terminal(),
-                receipt
-                    .finished_unix_millis
-                    .unwrap_or(receipt.started_unix_millis),
-                receipt.attempt_identity,
+                active.is_none(),
+                metadata.modified().map_err(|source| ReceiptError::Io {
+                    action: "inspect receipt age",
+                    source,
+                })?,
+                marker,
             ));
         }
-        retained.sort_unstable_by(|left, right| {
-            (left.3, left.4.as_str()).cmp(&(right.3, right.4.as_str()))
-        });
+        retained.sort_unstable_by(|left, right| (&left.3, &left.0).cmp(&(&right.3, &right.0)));
         let mut count = retained.len() + 1;
         let mut bytes = total_bytes.saturating_add(incoming_bytes);
         let mut prune = Vec::new();
-        for (path, file_bytes, terminal, _, _) in retained {
+        for (path, file_bytes, terminal, _, marker) in retained {
             if count <= self.state.retention.max_receipts && bytes <= self.state.retention.max_bytes
             {
                 break;
@@ -1454,7 +1418,7 @@ impl ExecutionReceiptStore {
             if !terminal {
                 continue;
             }
-            prune.push(path);
+            prune.push((path, marker));
             count -= 1;
             bytes = bytes.saturating_sub(file_bytes);
         }
@@ -1462,8 +1426,14 @@ impl ExecutionReceiptStore {
             return Err(ReceiptError::RetentionExceeded);
         }
         let pruned = !prune.is_empty();
-        for path in prune {
-            fs::remove_file(path).map_err(|source| ReceiptError::Io {
+        for (path, marker) in prune {
+            if let Some(marker) = marker {
+                fs::remove_file(marker).map_err(|source| ReceiptError::Io {
+                    action: "prune terminal receipt reservation",
+                    source,
+                })?;
+            }
+            fs::remove_file(&path).map_err(|source| ReceiptError::Io {
                 action: "prune retained execution receipt",
                 source,
             })?;
@@ -1707,9 +1677,6 @@ impl ReceiptFailure {
                         required: *required,
                         available: *available,
                     },
-                    crate::AlternativeRejectionReason::RecordedFailure { .. } => unreachable!(
-                        "recorded planning constraints are not persisted as execution failures"
-                    ),
                 }
             }
             crate::ResourceError::Infeasible {
@@ -2481,7 +2448,7 @@ impl PlanProjection {
 enum ObservationTransactionPublicationScopeProjection {
     ReconstructionOnly,
     ProductPublication,
-    SealedProductPublication,
+    GeneratedProductPublication,
 }
 
 impl ObservationTransactionPublicationScopeProjection {
@@ -2493,8 +2460,8 @@ impl ObservationTransactionPublicationScopeProjection {
             crate::ObservationTransactionPublicationScope::ProductPublication => {
                 Self::ProductPublication
             }
-            crate::ObservationTransactionPublicationScope::SealedProductPublication => {
-                Self::SealedProductPublication
+            crate::ObservationTransactionPublicationScope::GeneratedProductPublication => {
+                Self::GeneratedProductPublication
             }
         }
     }
@@ -2507,8 +2474,8 @@ impl ObservationTransactionPublicationScopeProjection {
             Self::ProductPublication => {
                 crate::ObservationTransactionPublicationScope::ProductPublication
             }
-            Self::SealedProductPublication => {
-                crate::ObservationTransactionPublicationScope::SealedProductPublication
+            Self::GeneratedProductPublication => {
+                crate::ObservationTransactionPublicationScope::GeneratedProductPublication
             }
         }
     }
@@ -3527,6 +3494,76 @@ impl ArtifactProjection {
     }
 }
 
+/// Incremental receipt workspace introduced by a catalog's listed artifacts.
+/// The fixed problem/node projection is unchanged by catalog size. Encoding a
+/// worst-case terminal for admission retains two projections and no encoding.
+/// Final persistence retains one projection, its index, and two compact byte
+/// buffers. Charge the larger phase, conservatively including per-item framing.
+pub(crate) fn artifact_workspace_bytes(
+    artifacts: impl IntoIterator<Item = crate::PlannedArtifact>,
+) -> Result<u64, ReceiptError> {
+    #[derive(Serialize)]
+    struct ArtifactList<'a> {
+        artifacts: [&'a ArtifactProjection; 1],
+    }
+    #[derive(Serialize)]
+    struct Plan<'a> {
+        plan: ArtifactList<'a>,
+    }
+    #[derive(Serialize)]
+    struct Document<'a> {
+        receipt: Plan<'a>,
+    }
+
+    let mut total = 0_u64;
+    for artifact in artifacts {
+        let mut projection = ArtifactProjection::new(&artifact);
+        projection.observed_identity = Some("f".repeat(64));
+        projection.disposition = Some(ArtifactDispositionProjection::RejectedStale);
+        projection.actual_bytes = Some(u64::MAX);
+        projection.path_identity = Some("f".repeat(64));
+        let encoded = serde_json::to_vec(&Document {
+            receipt: Plan {
+                plan: ArtifactList {
+                    artifacts: [&projection],
+                },
+            },
+        })
+        .map_err(|source| ReceiptError::Json { source })?;
+        let owned = [
+            Some(&projection.artifact_identity),
+            Some(&projection.node_id),
+            Some(&projection.role),
+            projection.cache_identity.as_ref(),
+            projection.observed_identity.as_ref(),
+            projection.path_identity.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        .try_fold(std::mem::size_of::<ArtifactProjection>(), |bytes, text| {
+            bytes
+                .checked_add(text.capacity())
+                .ok_or(ReceiptError::RetentionExceeded)
+        })?;
+        let index = std::mem::size_of::<(String, usize)>()
+            .checked_add(projection.artifact_identity.capacity())
+            .ok_or(ReceiptError::RetentionExceeded)?;
+        let final_buffers = encoded
+            .capacity()
+            .checked_mul(2)
+            .and_then(|bytes| bytes.checked_add(index))
+            .ok_or(ReceiptError::RetentionExceeded)?;
+        let bytes = owned
+            .checked_add(owned.max(final_buffers))
+            .and_then(|bytes| u64::try_from(bytes).ok())
+            .ok_or(ReceiptError::RetentionExceeded)?;
+        total = total
+            .checked_add(bytes)
+            .ok_or(ReceiptError::RetentionExceeded)?;
+    }
+    Ok(total)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum ArtifactDispositionProjection {
@@ -3535,10 +3572,7 @@ enum ArtifactDispositionProjection {
     Reused,
     RejectedStale,
     Staged,
-    PublicationPrepared,
     Published,
-    PublicationFailed,
-    PublicationUncertain,
 }
 
 impl From<ArtifactDisposition> for ArtifactDispositionProjection {
@@ -3549,10 +3583,7 @@ impl From<ArtifactDisposition> for ArtifactDispositionProjection {
             ArtifactDisposition::Reused => Self::Reused,
             ArtifactDisposition::RejectedStale => Self::RejectedStale,
             ArtifactDisposition::Staged => Self::Staged,
-            ArtifactDisposition::PublicationPrepared => Self::PublicationPrepared,
             ArtifactDisposition::Published => Self::Published,
-            ArtifactDisposition::PublicationFailed => Self::PublicationFailed,
-            ArtifactDisposition::PublicationUncertain => Self::PublicationUncertain,
         }
     }
 }
@@ -3565,10 +3596,7 @@ impl From<ArtifactDispositionProjection> for ArtifactDisposition {
             ArtifactDispositionProjection::Reused => Self::Reused,
             ArtifactDispositionProjection::RejectedStale => Self::RejectedStale,
             ArtifactDispositionProjection::Staged => Self::Staged,
-            ArtifactDispositionProjection::PublicationPrepared => Self::PublicationPrepared,
             ArtifactDispositionProjection::Published => Self::Published,
-            ArtifactDispositionProjection::PublicationFailed => Self::PublicationFailed,
-            ArtifactDispositionProjection::PublicationUncertain => Self::PublicationUncertain,
         }
     }
 }
@@ -3581,7 +3609,39 @@ struct AllocationProjection {
     physical_slot: String,
     acquire_at: String,
     release_after: Vec<String>,
+    disposition: AllocationDispositionProjection,
     compatibility: CompatibilityProjection,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum AllocationDispositionProjection {
+    Release,
+    ExportImmutableArtifact { owner_node: String },
+}
+
+impl AllocationDispositionProjection {
+    fn new(disposition: &crate::AllocationDisposition) -> Self {
+        match disposition {
+            crate::AllocationDisposition::Release => Self::Release,
+            crate::AllocationDisposition::ExportImmutableArtifact { owner_node } => {
+                Self::ExportImmutableArtifact {
+                    owner_node: stable_text(owner_node.as_str()),
+                }
+            }
+        }
+    }
+
+    fn to_runtime(&self) -> crate::AllocationDisposition {
+        match self {
+            Self::Release => crate::AllocationDisposition::Release,
+            Self::ExportImmutableArtifact { owner_node } => {
+                crate::AllocationDisposition::ExportImmutableArtifact {
+                    owner_node: WorkNodeId::new(owner_node.clone()),
+                }
+            }
+        }
+    }
 }
 
 impl AllocationProjection {
@@ -3601,6 +3661,7 @@ impl AllocationProjection {
                 .iter()
                 .map(dependency)
                 .collect(),
+            disposition: AllocationDispositionProjection::new(&allocation.lifetime.disposition),
             compatibility: CompatibilityProjection::new(&allocation.compatibility),
         }
     }
@@ -3781,14 +3842,9 @@ pub(crate) struct ReceiptRecorder<'store> {
     active_fences: BTreeMap<(String, String), Instant>,
     pending_publications: BTreeSet<String>,
     terminal: bool,
-}
-
-pub(crate) struct PreparedPublicationReceipt<'store> {
-    parent: PathBuf,
-    path: PathBuf,
-    terminal: NamedTempFile,
-    completed: ReceiptBody,
-    _mutation: MutexGuard<'store, ()>,
+    node_indices: BTreeMap<String, usize>,
+    fence_indices: BTreeMap<(String, String), usize>,
+    artifact_indices: Vec<(String, usize)>,
 }
 
 impl<'store> ReceiptRecorder<'store> {
@@ -3798,13 +3854,11 @@ impl<'store> ReceiptRecorder<'store> {
 
     pub(crate) fn work_started(&mut self, node: &WorkNodeId) -> Result<(), ReceiptError> {
         let node_id = stable_text(node.as_str());
-        let item = self
-            .body
-            .plan
-            .nodes
-            .iter_mut()
-            .find(|item| item.node_id == node_id)
+        let index = *self
+            .node_indices
+            .get(&node_id)
             .ok_or(ReceiptError::UnlistedPlanEvidence { kind: "work node" })?;
+        let item = &mut self.body.plan.nodes[index];
         if item.status != ReceiptStatus::Planned {
             return Err(ReceiptError::UnlistedPlanEvidence {
                 kind: "work node state",
@@ -3812,7 +3866,8 @@ impl<'store> ReceiptRecorder<'store> {
         }
         item.status = ReceiptStatus::Running;
         self.active_nodes.insert(node_id, Instant::now());
-        self.checkpoint()
+        self.body.revision = self.body.revision.saturating_add(1);
+        Ok(())
     }
 
     pub(crate) fn work_completed(
@@ -3822,12 +3877,14 @@ impl<'store> ReceiptRecorder<'store> {
     ) -> Result<(), ReceiptError> {
         self.record_measurements(node, measurements)?;
         self.finish_node(node, ReceiptStatus::Completed)?;
-        self.checkpoint()
+        self.body.revision = self.body.revision.saturating_add(1);
+        Ok(())
     }
 
     pub(crate) fn work_failed(&mut self, node: &WorkNodeId) -> Result<(), ReceiptError> {
         self.finish_node(node, ReceiptStatus::Failed)?;
-        self.checkpoint()
+        self.body.revision = self.body.revision.saturating_add(1);
+        Ok(())
     }
 
     pub(crate) fn work_failed_with_measurements(
@@ -3837,55 +3894,55 @@ impl<'store> ReceiptRecorder<'store> {
     ) -> Result<(), ReceiptError> {
         self.record_measurements(node, measurements)?;
         self.finish_node(node, ReceiptStatus::Failed)?;
-        self.checkpoint()
+        self.body.revision = self.body.revision.saturating_add(1);
+        Ok(())
+    }
+
+    pub(crate) fn work_cancelled_with_measurements(
+        &mut self,
+        node: &WorkNodeId,
+        measurements: &WorkMeasurements,
+    ) -> Result<(), ReceiptError> {
+        self.record_measurements(node, measurements)?;
+        self.finish_node(node, ReceiptStatus::Cancelled)?;
+        self.body.revision = self.body.revision.saturating_add(1);
+        Ok(())
     }
 
     pub(crate) fn fences_launched(&mut self, node: &WorkNodeId) -> Result<(), ReceiptError> {
         let node_id = stable_text(node.as_str());
-        let expected_fences = self
-            .body
-            .plan
-            .nodes
+        let node_index = *self
+            .node_indices
+            .get(&node_id)
+            .ok_or(ReceiptError::UnlistedPlanEvidence { kind: "work node" })?;
+        let fences = &self.body.plan.nodes[node_index].fences;
+        let indices = fences
             .iter()
-            .find(|item| item.node_id == node_id)
-            .ok_or(ReceiptError::UnlistedPlanEvidence { kind: "work node" })?
-            .fences
-            .len();
-        let projected_fences = self
-            .body
-            .plan
-            .fences
+            .map(|kind| {
+                self.fence_indices
+                    .get(&(node_id.clone(), kind.clone()))
+                    .copied()
+                    .ok_or(ReceiptError::UnlistedPlanEvidence {
+                        kind: "asynchronous fence",
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if indices
             .iter()
-            .filter(|fence| fence.node_id == node_id)
-            .collect::<Vec<_>>();
-        if projected_fences.len() != expected_fences
-            || projected_fences
-                .iter()
-                .any(|fence| fence.status != ReceiptStatus::Planned)
+            .any(|index| self.body.plan.fences[*index].status != ReceiptStatus::Planned)
         {
             return Err(ReceiptError::UnlistedPlanEvidence {
                 kind: "asynchronous fence state",
             });
         }
-        let mut launched = 0;
-        for fence in self
-            .body
-            .plan
-            .fences
-            .iter_mut()
-            .filter(|fence| fence.node_id == node_id)
-        {
+        for index in indices {
+            let fence = &mut self.body.plan.fences[index];
             fence.status = ReceiptStatus::Running;
             self.active_fences
                 .insert((fence.node_id.clone(), fence.kind.clone()), Instant::now());
-            launched += 1;
         }
-        if launched != expected_fences {
-            return Err(ReceiptError::UnlistedPlanEvidence {
-                kind: "asynchronous fence",
-            });
-        }
-        self.checkpoint()
+        self.body.revision = self.body.revision.saturating_add(1);
+        Ok(())
     }
 
     pub(crate) fn fence_completed_with_measurements(
@@ -3895,12 +3952,14 @@ impl<'store> ReceiptRecorder<'store> {
     ) -> Result<(), ReceiptError> {
         self.record_measurements(fence.node(), measurements)?;
         self.finish_fence(fence, ReceiptStatus::Completed)?;
-        self.checkpoint()
+        self.body.revision = self.body.revision.saturating_add(1);
+        Ok(())
     }
 
     pub(crate) fn fence_failed(&mut self, fence: &FenceId) -> Result<(), ReceiptError> {
         self.finish_fence(fence, ReceiptStatus::Failed)?;
-        self.checkpoint()
+        self.body.revision = self.body.revision.saturating_add(1);
+        Ok(())
     }
 
     pub(crate) fn adaptation_applied(
@@ -3991,7 +4050,8 @@ impl<'store> ReceiptRecorder<'store> {
         }
         self.body.plan.adaptations[index].applied_revision =
             Some(self.body.revision.saturating_add(1));
-        self.checkpoint()
+        self.body.revision = self.body.revision.saturating_add(1);
+        Ok(())
     }
 
     pub(crate) fn finish(
@@ -4014,14 +4074,12 @@ impl<'store> ReceiptRecorder<'store> {
         self.body.failure = failure.map(ReceiptFailure::projection);
         self.body.finished_unix_millis = Some(now_millis());
         self.body.revision = self.body.revision.saturating_add(1);
-        self.store.persist(&self.body, false)?;
+        self.store.persist(&self.body)?;
         self.terminal = true;
         Ok(())
     }
 
-    pub(crate) fn prepare_publication(
-        &mut self,
-    ) -> Result<PreparedPublicationReceipt<'store>, ReceiptError> {
+    pub(crate) fn prepare_publication(&self) -> Result<(), ReceiptError> {
         let projection_complete = self.body.plan.successful_projection_is_complete()?;
         if self.body.status != ReceiptStatus::Running
             || !self.active_nodes.is_empty()
@@ -4046,10 +4104,7 @@ impl<'store> ReceiptRecorder<'store> {
             .filter(|artifact| {
                 matches!(
                     artifact.disposition,
-                    Some(
-                        ArtifactDispositionProjection::Staged
-                            | ArtifactDispositionProjection::PublicationPrepared
-                    )
+                    Some(ArtifactDispositionProjection::Staged)
                 )
             })
             .map(|artifact| artifact.artifact_identity.clone())
@@ -4060,94 +4115,35 @@ impl<'store> ReceiptRecorder<'store> {
             return Err(ReceiptError::IncompleteSuccess);
         }
 
-        let mut prepared = self.body.clone();
-        prepared.status = ReceiptStatus::PublicationPrepared;
-        prepared.failure = None;
-        prepared.finished_unix_millis = None;
-        prepared.revision = prepared.revision.saturating_add(1);
-
-        let mut completed = prepared.clone();
-        completed.status = ReceiptStatus::Completed;
-        completed.finished_unix_millis = Some(now_millis());
-        completed.revision = completed.revision.saturating_add(1);
-        for artifact in completed
-            .plan
-            .artifacts
-            .iter_mut()
-            .filter(|artifact| expected_publications.contains(&artifact.artifact_identity))
-        {
-            artifact.disposition = Some(ArtifactDispositionProjection::Published);
-        }
-
-        let publication = self.store.prepare_publication(&prepared, completed)?;
-        self.body = prepared;
-        Ok(publication)
+        Ok(())
     }
 
-    pub(crate) fn prepare_independent_product_publication(&mut self) -> Result<(), ReceiptError> {
-        let projection_complete = self.body.plan.successful_projection_is_complete()?;
-        if self.body.status != ReceiptStatus::Running
-            || !self.active_nodes.is_empty()
-            || !self.active_fences.is_empty()
-            || !projection_complete
-        {
-            return Err(ReceiptError::IncompleteSuccess);
+    pub(crate) fn complete_publication(&mut self) -> Result<(), ReceiptError> {
+        for artifact in &mut self.body.plan.artifacts {
+            if artifact.role == "output" {
+                artifact.disposition = Some(ArtifactDispositionProjection::Published);
+            }
         }
-        let expected = self
-            .body
-            .plan
-            .artifacts
-            .iter()
-            .filter(|artifact| artifact.role == "output")
-            .map(|artifact| artifact.artifact_identity.clone())
-            .collect::<BTreeSet<_>>();
-        let prepared = self
-            .body
-            .plan
-            .artifacts
-            .iter()
-            .filter(|artifact| {
-                artifact.disposition == Some(ArtifactDispositionProjection::PublicationPrepared)
-            })
-            .map(|artifact| artifact.artifact_identity.clone())
-            .collect::<BTreeSet<_>>();
-        if self.pending_publications != expected || prepared != expected {
-            return Err(ReceiptError::IncompleteSuccess);
-        }
-        self.body.status = ReceiptStatus::PublicationPrepared;
-        self.body.failure = None;
-        self.body.finished_unix_millis = None;
-        self.checkpoint()
-    }
-
-    pub(crate) fn complete_independent_product_publication(&mut self) -> Result<(), ReceiptError> {
-        if self.body.status != ReceiptStatus::PublicationPrepared
-            || !self.pending_publications.is_empty()
-            || self.body.plan.artifacts.iter().any(|artifact| {
-                artifact.role == "output"
-                    && artifact.disposition != Some(ArtifactDispositionProjection::Published)
-            })
-        {
-            return Err(ReceiptError::IncompleteSuccess);
-        }
-        self.finish(ReceiptStatus::Completed, None)
-    }
-
-    pub(crate) fn complete_publication(&mut self, prepared: PreparedPublicationReceipt<'store>) {
-        self.terminal = true;
-        if let Ok(completed) = self.store.complete_publication(prepared) {
-            self.body = completed;
+        let result = self.finish(ReceiptStatus::Completed, None);
+        if result.is_ok() {
             self.pending_publications.clear();
+        } else {
+            // Publication may have succeeded, but no durable completed summary
+            // exists. A later failure summary must not promise a complete set.
+            for artifact in &mut self.body.plan.artifacts {
+                if artifact.role == "output" {
+                    artifact.disposition = None;
+                    artifact.observed_identity = None;
+                    artifact.actual_bytes = None;
+                    artifact.path_identity = None;
+                }
+            }
         }
+        result
     }
 
     pub(crate) const fn is_terminal(&self) -> bool {
         self.terminal
-    }
-
-    fn checkpoint(&mut self) -> Result<(), ReceiptError> {
-        self.body.revision = self.body.revision.saturating_add(1);
-        self.store.persist_checkpoint(&self.body)
     }
 
     fn finish_node(
@@ -4160,13 +4156,11 @@ impl<'store> ReceiptRecorder<'store> {
             .active_nodes
             .remove(&node_id)
             .map(|started| elapsed_nanos(started.elapsed()));
-        let item = self
-            .body
-            .plan
-            .nodes
-            .iter_mut()
-            .find(|item| item.node_id == node_id)
+        let index = *self
+            .node_indices
+            .get(&node_id)
             .ok_or(ReceiptError::UnlistedPlanEvidence { kind: "work node" })?;
+        let item = &mut self.body.plan.nodes[index];
         item.status = status;
         if elapsed.is_some() {
             item.actual_elapsed_nanos = elapsed;
@@ -4181,13 +4175,11 @@ impl<'store> ReceiptRecorder<'store> {
     ) -> Result<(), ReceiptError> {
         let node_id = stable_text(node.as_str());
         {
-            let item = self
-                .body
-                .plan
-                .nodes
-                .iter_mut()
-                .find(|item| item.node_id == node_id)
+            let index = *self
+                .node_indices
+                .get(&node_id)
                 .ok_or(ReceiptError::UnlistedPlanEvidence { kind: "work node" })?;
+            let item = &mut self.body.plan.nodes[index];
             for measurement in measurements.resources() {
                 let resource = lease_resource(measurement.resource());
                 let lifetime = claim_lifetime(measurement.lifetime());
@@ -4232,20 +4224,16 @@ impl<'store> ReceiptRecorder<'store> {
 
     fn record_artifact(&mut self, measurement: ArtifactMeasurement) -> Result<(), ReceiptError> {
         let planned = hex(&measurement.planned_identity().as_bytes());
-        let artifact = self
-            .body
-            .plan
-            .artifacts
-            .iter_mut()
-            .find(|artifact| artifact.artifact_identity == planned)
-            .ok_or(ReceiptError::UnlistedPlanEvidence { kind: "artifact" })?;
+        let index = self
+            .artifact_indices
+            .binary_search_by(|(identity, _)| identity.cmp(&planned))
+            .map(|slot| self.artifact_indices[slot].1)
+            .map_err(|_| ReceiptError::UnlistedPlanEvidence { kind: "artifact" })?;
+        let artifact = &mut self.body.plan.artifacts[index];
         artifact.observed_identity = measurement
             .observed_identity()
             .map(|identity| hex(&identity.as_bytes()));
-        if matches!(
-            measurement.disposition(),
-            ArtifactDisposition::Staged | ArtifactDisposition::PublicationPrepared
-        ) {
+        if matches!(measurement.disposition(), ArtifactDisposition::Staged) {
             artifact.disposition = Some(measurement.disposition().into());
             self.pending_publications.insert(planned);
         } else {
@@ -4257,19 +4245,6 @@ impl<'store> ReceiptRecorder<'store> {
         Ok(())
     }
 
-    pub(crate) fn record_publication_measurements(
-        &mut self,
-        measurements: &WorkMeasurements,
-    ) -> Result<(), ReceiptError> {
-        if self.body.status != ReceiptStatus::PublicationPrepared {
-            return Err(ReceiptError::IncompleteSuccess);
-        }
-        for measurement in measurements.artifacts() {
-            self.record_artifact(*measurement)?;
-        }
-        self.checkpoint()
-    }
-
     fn finish_fence(&mut self, fence: &FenceId, status: ReceiptStatus) -> Result<(), ReceiptError> {
         let node_id = stable_text(fence.node().as_str());
         let kind = fence_kind(fence.kind()).to_string();
@@ -4278,15 +4253,13 @@ impl<'store> ReceiptRecorder<'store> {
             .active_fences
             .remove(&key)
             .map(|started| elapsed_nanos(started.elapsed()));
-        let item = self
-            .body
-            .plan
-            .fences
-            .iter_mut()
-            .find(|item| item.node_id == node_id && item.kind == kind)
+        let index = *self
+            .fence_indices
+            .get(&key)
             .ok_or(ReceiptError::UnlistedPlanEvidence {
                 kind: "asynchronous fence",
             })?;
+        let item = &mut self.body.plan.fences[index];
         item.status = status;
         item.actual_elapsed_nanos = elapsed;
         Ok(())
@@ -4324,7 +4297,6 @@ fn terminal_item_status(
         (ReceiptStatus::Completed, ReceiptStatus::Completed) => Ok(current),
         (ReceiptStatus::Completed, ReceiptStatus::NotStarted) => Ok(current),
         (ReceiptStatus::Completed, _) => Err(ReceiptError::IncompleteSuccess),
-        (ReceiptStatus::PublicationPrepared, _) => Err(ReceiptError::IncompleteSuccess),
         (ReceiptStatus::Cancelled, ReceiptStatus::Planned | ReceiptStatus::Running) => {
             Ok(ReceiptStatus::Cancelled)
         }
@@ -4528,7 +4500,7 @@ fn validate_body(body: &ReceiptBody) -> Result<(), ReceiptError> {
         }))?;
     }
     match body.status {
-        ReceiptStatus::Completed | ReceiptStatus::PublicationPrepared => {
+        ReceiptStatus::Completed => {
             require_integrity(body.failure.is_none())?;
             require_integrity(body.plan.successful_projection_is_complete()?)?;
         }
@@ -4572,68 +4544,10 @@ fn validate_body(body: &ReceiptBody) -> Result<(), ReceiptError> {
         .filter(|artifact| artifact.disposition == Some(ArtifactDispositionProjection::Staged))
         .map(|artifact| artifact.artifact_identity.as_str())
         .collect::<BTreeSet<_>>();
-    let member_prepared = body
-        .plan
-        .artifacts
-        .iter()
-        .filter(|artifact| {
-            artifact.disposition == Some(ArtifactDispositionProjection::PublicationPrepared)
-        })
-        .map(|artifact| artifact.artifact_identity.as_str())
-        .collect::<BTreeSet<_>>();
-    let publication_failed = body
-        .plan
-        .artifacts
-        .iter()
-        .filter(|artifact| {
-            artifact.disposition == Some(ArtifactDispositionProjection::PublicationFailed)
-        })
-        .map(|artifact| artifact.artifact_identity.as_str())
-        .collect::<BTreeSet<_>>();
-    let publication_uncertain = body
-        .plan
-        .artifacts
-        .iter()
-        .filter(|artifact| {
-            artifact.disposition == Some(ArtifactDispositionProjection::PublicationUncertain)
-        })
-        .map(|artifact| artifact.artifact_identity.as_str())
-        .collect::<BTreeSet<_>>();
-    match body.status {
-        ReceiptStatus::Completed => {
-            require_integrity(
-                published == expected_publications
-                    && staged.is_empty()
-                    && member_prepared.is_empty()
-                    && publication_failed.is_empty()
-                    && publication_uncertain.is_empty(),
-            )?;
-        }
-        ReceiptStatus::PublicationPrepared => {
-            let observed = staged
-                .union(&member_prepared)
-                .copied()
-                .collect::<BTreeSet<_>>()
-                .union(&published)
-                .copied()
-                .collect::<BTreeSet<_>>()
-                .union(&publication_failed)
-                .copied()
-                .collect::<BTreeSet<_>>()
-                .union(&publication_uncertain)
-                .copied()
-                .collect::<BTreeSet<_>>();
-            require_integrity(observed == expected_publications)?;
-        }
-        _ => {
-            require_integrity(
-                staged.is_subset(&expected_publications)
-                    && member_prepared.is_subset(&expected_publications)
-                    && published.is_subset(&expected_publications)
-                    && publication_failed.is_subset(&expected_publications)
-                    && publication_uncertain.is_subset(&expected_publications),
-            )?;
-        }
+    if body.status == ReceiptStatus::Completed {
+        require_integrity(published == expected_publications && staged.is_empty())?;
+    } else {
+        require_integrity(staged.is_subset(&expected_publications) && published.is_empty())?;
     }
     if let Some(failure) = &body.failure {
         if let Some(node) = &failure.node_id {
@@ -4906,6 +4820,12 @@ fn validate_plan_projection(
                 && allocation_purpose_is_valid(&allocation.purpose)
                 && slot_ids.contains(allocation.physical_slot.as_str())
                 && node_ids.contains(allocation.acquire_at.as_str())
+                && match &allocation.disposition {
+                    AllocationDispositionProjection::Release => true,
+                    AllocationDispositionProjection::ExportImmutableArtifact { owner_node } => {
+                        is_redacted_text(owner_node) && node_ids.contains(owner_node.as_str())
+                    }
+                }
                 && !allocation.release_after.is_empty()
                 && allocation
                     .release_after
@@ -4983,7 +4903,7 @@ fn validate_plan_projection(
             require_integrity(product_participants.is_empty())?;
         }
         ObservationTransactionPublicationScopeProjection::ProductPublication
-        | ObservationTransactionPublicationScopeProjection::SealedProductPublication => {
+        | ObservationTransactionPublicationScopeProjection::GeneratedProductPublication => {
             require_integrity(product_participants.as_slice() == publication_members)?;
         }
     }
@@ -5135,6 +5055,7 @@ fn receipt_execution_dag(plan: &PlanProjection) -> Result<ExecutionDag, ReceiptE
                     .ok_or(ReceiptError::IntegrityMismatch)?,
                 physical_slot: PhysicalSlotId::new(allocation.physical_slot.clone()),
                 lifetime: AllocationLifetime {
+                    disposition: allocation.disposition.to_runtime(),
                     acquire_at: WorkNodeId::new(allocation.acquire_at.clone()),
                     release_after: allocation
                         .release_after
@@ -5690,47 +5611,83 @@ fn decode_document(bytes: &[u8]) -> Result<ReceiptDocument, ReceiptError> {
 }
 
 fn encode_document(body: &ReceiptBody) -> Result<Vec<u8>, ReceiptError> {
+    if boundary_probe_enabled() {
+        eprintln!("t51_receipt_encode attempt={}", body.attempt());
+    }
     let payload = serde_json::to_vec(body).map_err(|source| ReceiptError::Json { source })?;
-    let document = ReceiptDocument {
-        schema: ReceiptSchema {
-            name: RECEIPT_SCHEMA.to_string(),
-            version: RECEIPT_SCHEMA_VERSION,
-        },
-        payload_sha256: sha256(&payload),
-        receipt: body.clone(),
-    };
-    serde_json::to_vec_pretty(&document).map_err(|source| ReceiptError::Json { source })
+    let mut document = receipt_header(&sha256(&payload))?;
+    document.reserve(payload.len() + 1);
+    document.extend_from_slice(&payload);
+    document.push(b'}');
+    Ok(document)
+}
+
+fn receipt_header(digest: &str) -> Result<Vec<u8>, ReceiptError> {
+    let mut header = serde_json::to_vec(&serde_json::json!({
+        "schema": { "name": RECEIPT_SCHEMA, "version": RECEIPT_SCHEMA_VERSION },
+        "payload_sha256": digest,
+    }))
+    .map_err(|source| ReceiptError::Json { source })?;
+    header.pop();
+    header.extend_from_slice(b",\"receipt\":");
+    Ok(header)
+}
+
+fn boundary_probe_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("CASA_RS_T51_RECEIPT_BOUNDARY_PROBE").is_some())
 }
 
 fn worst_case_receipt_bytes(body: &ReceiptBody) -> Result<u64, ReceiptError> {
-    let bytes = encode_document(&body.worst_case_terminal())?;
-    Ok(u64::try_from(bytes.len()).unwrap_or(u64::MAX))
+    struct ByteCount(u64);
+    impl Write for ByteCount {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 = self.0.saturating_add(bytes.len() as u64);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut count = ByteCount(receipt_header(&"0".repeat(64))?.len() as u64 + 1);
+    serde_json::to_writer(&mut count, &body.worst_case_terminal())
+        .map_err(|source| ReceiptError::Json { source })?;
+    Ok(count.0)
 }
 
-fn prepared_publication_bytes(
-    prepared_bytes: usize,
-    completed_bytes: usize,
-    worst_case_prepared_bytes: u64,
-) -> Result<u64, ReceiptError> {
-    u64::try_from(prepared_bytes)
-        .unwrap_or(u64::MAX)
-        .max(worst_case_prepared_bytes)
-        .checked_add(u64::try_from(completed_bytes).unwrap_or(u64::MAX))
-        .ok_or(ReceiptError::RetentionExceeded)
-}
-
-fn read_receipt_body(path: &Path) -> Result<ReceiptBody, ReceiptError> {
-    let bytes = fs::read(path).map_err(|source| ReceiptError::Io {
-        action: "read retained execution receipt",
+fn read_reservation(path: &Path) -> Result<u64, ReceiptError> {
+    use std::io::Read;
+    let mut bytes = [0; 8];
+    let mut file = File::open(path).map_err(|source| ReceiptError::Io {
+        action: "open receipt reservation",
         source,
     })?;
-    Ok(decode_document(&bytes)?.receipt)
+    if file
+        .metadata()
+        .map_err(|source| ReceiptError::Io {
+            action: "inspect receipt reservation",
+            source,
+        })?
+        .len()
+        != 8
+    {
+        return Err(ReceiptError::IntegrityMismatch);
+    }
+    file.read_exact(&mut bytes)
+        .map_err(|source| ReceiptError::Io {
+            action: "read receipt reservation",
+            source,
+        })?;
+    Ok(u64::from_le_bytes(bytes))
 }
 
 fn is_receipt_path(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.ends_with(RECEIPT_SUFFIX))
+    receipt_attempt(path, RECEIPT_SUFFIX).is_some()
+}
+
+fn receipt_attempt(path: &Path, suffix: &str) -> Option<ExecutionAttemptId> {
+    let stem = path.file_name()?.to_str()?.strip_suffix(suffix)?;
+    is_digest(stem).then(|| ExecutionAttemptId::from_sha256(parse_digest(stem)))
 }
 
 fn is_receipt_staging_path(path: &Path) -> bool {
@@ -5748,33 +5705,6 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), ReceiptError> {
         source: error.error,
     })?;
     sync_directory(parent)
-}
-
-/// Publish an observable in-progress checkpoint without forcing it through
-/// stable storage. The initial, terminal, and publication-prepared receipts
-/// retain the durable write path; node/fence progress is telemetry and is
-/// superseded by the terminal receipt in the ordinary successful case.
-fn atomic_write_checkpoint(path: &Path, bytes: &[u8]) -> Result<(), ReceiptError> {
-    let parent = path.parent().ok_or(ReceiptError::InvalidStore)?;
-    let mut temporary = tempfile::Builder::new()
-        .prefix(RECEIPT_STAGING_PREFIX)
-        .suffix(RECEIPT_STAGING_SUFFIX)
-        .tempfile_in(parent)
-        .map_err(|source| ReceiptError::Io {
-            action: "create receipt checkpoint staging file",
-            source,
-        })?;
-    temporary
-        .write_all(bytes)
-        .map_err(|source| ReceiptError::Io {
-            action: "write receipt checkpoint staging file",
-            source,
-        })?;
-    temporary.persist(path).map_err(|error| ReceiptError::Io {
-        action: "publish execution receipt checkpoint",
-        source: error.error,
-    })?;
-    Ok(())
 }
 
 fn atomic_create(path: &Path, bytes: &[u8]) -> Result<(), ReceiptError> {
@@ -5989,6 +5919,37 @@ fn project_science(fields: &mut BTreeMap<String, String>, problem: &CompiledProb
                     evidence_field(fields, format!("{prefix}.planes"), planes.get());
                 }
             }
+            PairedMeasurementTransform::AwProjection { contract } => {
+                evidence_field(
+                    fields,
+                    format!("{prefix}.maximum_abs_w_lambda"),
+                    contract.maximum_abs_w_lambda(),
+                );
+                evidence_field(fields, format!("{prefix}.planes"), contract.planes().get());
+                evidence_field(fields, format!("{prefix}.a_term"), contract.a_term());
+                evidence_field(fields, format!("{prefix}.ps_term"), contract.ps_term());
+                evidence_field(fields, format!("{prefix}.wideband"), contract.wideband());
+                evidence_field(
+                    fields,
+                    format!("{prefix}.conjugate_beams"),
+                    contract.conjugate_beams(),
+                );
+                evidence_field(
+                    fields,
+                    format!("{prefix}.use_pointing"),
+                    contract.use_pointing(),
+                );
+                evidence_field(
+                    fields,
+                    format!("{prefix}.compute_pa_step_deg"),
+                    contract.compute_pa_step_deg(),
+                );
+                evidence_field(
+                    fields,
+                    format!("{prefix}.rotate_pa_step_deg"),
+                    contract.rotate_pa_step_deg(),
+                );
+            }
             PairedMeasurementTransform::PolarizationMapping
             | PairedMeasurementTransform::FeedResponse => {}
         }
@@ -6175,6 +6136,13 @@ fn project_weighting(fields: &mut BTreeMap<String, String>, problem: &CompiledPr
         "weighting.density_scope",
         weight_density_scope(weighting.density_scope()),
     );
+    if let Some(padding) = weighting.casa_cube_density_padding() {
+        evidence_field(
+            fields,
+            "weighting.casa_cube_density_padding",
+            padding.to_string(),
+        );
+    }
     match weighting.uv_taper() {
         None => evidence_field(fields, "weighting.uv_taper.kind", "none"),
         Some(taper) => {
@@ -7509,6 +7477,7 @@ const fn instrument_model_name(value: InstrumentModel) -> &'static str {
         InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1 => {
             "casa-alma-aca-heterogeneous-interferometric-response-v1"
         }
+        InstrumentModel::CasaEvlaWidebandAwV1 => "casa-evla-wideband-aw-v1",
     }
 }
 
@@ -7534,6 +7503,7 @@ fn paired_transform_kind(value: PairedTransformKind) -> &'static str {
         PairedTransformKind::SpectralResampling => "spectral_resampling",
         PairedTransformKind::ChannelIntegration => "channel_integration",
         PairedTransformKind::WProjection => "w_projection",
+        PairedTransformKind::AwProjection => "aw_projection",
     }
 }
 
@@ -7701,7 +7671,7 @@ fn product_support_comparison(value: ProductSupportComparison) -> &'static str {
 
 fn product_blanking(value: ProductBlankingPolicy) -> &'static str {
     match value {
-        ProductBlankingPolicy::ZeroAndFalseMask => "zero_and_false_mask",
+        ProductBlankingPolicy::Zero => "zero_and_false_mask",
     }
 }
 
@@ -7815,6 +7785,7 @@ fn required_capability(value: RequiredCapability) -> String {
         RequiredCapability::MultiDomainGeometry => "multi_domain_geometry".to_string(),
         RequiredCapability::FacetedGeometry => "faceted_geometry".to_string(),
         RequiredCapability::WProjection => "w_projection".to_string(),
+        RequiredCapability::AwProjection => "aw_projection".to_string(),
         RequiredCapability::SpectralFrameTransform => "spectral_frame_transform".to_string(),
         RequiredCapability::SpectralResampling => "spectral_resampling".to_string(),
         RequiredCapability::SequentialContinuumTransform => {
@@ -8430,8 +8401,33 @@ mod tests {
 
     use super::{
         ExecutionReceiptStore, ReceiptError, ReceiptRetention, maximum_json_serialized_text,
-        prepared_publication_bytes, stable_float, staged_receipt,
+        stable_float, staged_receipt,
     };
+
+    #[test]
+    fn t55_artifact_disposition_survives_receipt_serialization_without_a_release_default() {
+        for disposition in [
+            crate::AllocationDisposition::Release,
+            crate::AllocationDisposition::ExportImmutableArtifact {
+                owner_node: crate::WorkNodeId::new("sealed-replay"),
+            },
+        ] {
+            let projection = super::AllocationDispositionProjection::new(&disposition);
+            let bytes = serde_json::to_vec(&projection).unwrap();
+            let reopened: super::AllocationDispositionProjection =
+                serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(reopened.to_runtime(), disposition);
+        }
+        for invalid in [
+            r#"{}"#,
+            r#"{"kind":"export_immutable_artifact"}"#,
+            r#"{"kind":"unknown"}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<super::AllocationDispositionProjection>(invalid).is_err()
+            );
+        }
+    }
 
     #[test]
     fn stable_float_canonicalizes_only_signed_zero() {
@@ -8501,20 +8497,40 @@ mod tests {
     }
 
     #[test]
-    fn prepared_and_terminal_bytes_cross_their_joint_retention_boundary() {
-        let prepared_bytes = 11;
-        let terminal_bytes = 13;
-        let worst_case_prepared_bytes = 12;
-        let ceiling_between_max_and_sum = 20_u64;
+    fn catalog_receipt_workspace_grows_linearly_and_covers_actual_terminal_buffers() {
+        use super::{ArtifactDispositionProjection, ArtifactProjection, artifact_workspace_bytes};
+        use crate::{ArtifactIdentity, ArtifactRole, CacheIdentity, PlannedArtifact, WorkNodeId};
 
-        assert!(
-            u64::try_from(prepared_bytes.max(terminal_bytes)).expect("test byte count")
-                <= ceiling_between_max_and_sum
+        let artifact = PlannedArtifact::new(
+            ArtifactIdentity::from_owner_digest([1; 32]),
+            WorkNodeId::new("catalog-\"escaped\"-node"),
+            ArtifactRole::Prepared,
+            Some(CacheIdentity::from_owner_digest([2; 32])),
         );
-        assert!(
-            prepared_publication_bytes(prepared_bytes, terminal_bytes, worst_case_prepared_bytes,)
-                .expect("checked joint reservation")
-                > ceiling_between_max_and_sum
-        );
+        let one = artifact_workspace_bytes([artifact.clone()]).expect("one artifact workspace");
+        for count in [1, 32, 1024] {
+            let reserved = artifact_workspace_bytes(std::iter::repeat_n(artifact.clone(), count))
+                .expect("catalog receipt workspace");
+            assert_eq!(reserved, one * count as u64);
+            let projections = (0..count)
+                .map(|_| {
+                    let mut projection = ArtifactProjection::new(&artifact);
+                    projection.observed_identity = Some("f".repeat(64));
+                    projection.disposition = Some(ArtifactDispositionProjection::RejectedStale);
+                    projection.actual_bytes = Some(u64::MAX);
+                    projection.path_identity = Some("f".repeat(64));
+                    projection
+                })
+                .collect::<Vec<_>>();
+            let encoded = serde_json::to_vec(
+                &serde_json::json!({"receipt": {"plan": {"artifacts": projections}}}),
+            )
+            .expect("actual terminal encoding");
+            assert!(
+                reserved
+                    >= (2 * encoded.capacity() + count * std::mem::size_of::<ArtifactProjection>())
+                        as u64
+            );
+        }
     }
 }

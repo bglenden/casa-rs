@@ -8,6 +8,7 @@ mod complete_data_operator;
 mod complete_data_parallel_mfs_tests;
 mod continuum_transform;
 mod cost_model;
+mod cube_state_plan;
 mod execution;
 mod execution_bindings;
 mod major_cycle;
@@ -15,14 +16,20 @@ mod major_cycle;
 mod managed_spill;
 mod metal_runtime;
 mod observation_transaction;
+mod paged_cube_state;
 mod prepared_artifact;
 pub mod product_publication;
 mod publication_layout;
 mod receipt;
+mod reconstruction_executor;
 mod resource_authority;
 mod serial_product_publication;
 mod spectral_cycle;
 mod spectral_cycle_plan;
+mod streaming_cube;
+/// Native streaming-cube phases composed by the imaging application.
+#[doc(hidden)]
+pub use streaming_cube::{CubePhase, NativeReplay};
 mod weighting;
 
 pub use execution_bindings::{
@@ -33,10 +40,10 @@ pub use execution_bindings::{
     ImplementationRegistryId, IoMeasurement, IoPrediction, ObservationCompletionBindingError,
     ObservationReadCompletionContext, PhysicalWorkBinding, PhysicalWorkBindingError,
     PhysicalWorkId, PlanError, PlanPrediction, PlannedArtifact, PlannerCostModelProfileId,
-    PlanningBindings, PredictionConfidence, PredictionUncertainty, ProductMemberPublicationFailure,
-    PublicationResources, RedactedPath, ResourceMeasurement, ResourcePolicyId, RunBindings,
-    RunController, RunDirective, RunError, RunToCompletion, StagePrediction, WorkExecutionContext,
-    WorkImplementation, WorkMeasurements, plan, run,
+    PlanningBindings, PredictionConfidence, PredictionUncertainty, PublicationResources,
+    RedactedPath, ResourceMeasurement, ResourcePolicyId, RunBindings, RunController, RunDirective,
+    RunError, RunToCompletion, StagePrediction, WorkExecutionContext, WorkImplementation,
+    WorkMeasurements, plan, run,
 };
 
 pub use casa_imaging_model::{ContinuumFitWeightGenerationId, ContinuumTransformGenerationId};
@@ -55,10 +62,10 @@ pub use cost_model::{
     ProfilePromotionError, ProfileReview, open_cost_model_profile, promote_cost_model_profile,
 };
 pub use execution::{
-    AdaptationId, AdaptationTransition, AllocationAccess, AllocationId, AllocationLayout,
-    AllocationLifetime, AllocationPurpose, AllocationUse, ClaimLifetime, ExecutionDag,
-    ExecutionDagSpecification, ExecutionError, ExecutionKnobs, ExecutionOutcome, FenceId,
-    FenceKind, InitializationPolicy, LogicalAllocation, PhysicalSlot, PhysicalSlotId,
+    AdaptationId, AdaptationTransition, AllocationAccess, AllocationDisposition, AllocationId,
+    AllocationLayout, AllocationLifetime, AllocationPurpose, AllocationUse, ClaimLifetime,
+    ExecutionDag, ExecutionDagSpecification, ExecutionError, ExecutionKnobs, ExecutionOutcome,
+    FenceId, FenceKind, InitializationPolicy, LogicalAllocation, PhysicalSlot, PhysicalSlotId,
     ResourceClaim, RetainedArtifactPermit, SlotCompatibility, StorageMode,
     WorkAllocationCapability, WorkDependency, WorkDomain, WorkImplementationId, WorkKind, WorkNode,
     WorkNodeId, WorkResourceCapability,
@@ -72,18 +79,27 @@ pub use observation_transaction::{
     BoundObservationTransaction, ObservationTransactionPlanError,
     ObservationTransactionPublicationScope, ObservationTransactionWork,
 };
+pub use prepared_artifact::reload_probe;
 pub use prepared_artifact::{
-    PreparedArtifact, PreparedArtifactBudget, PreparedArtifactDescriptor, PreparedArtifactError,
-    PreparedArtifactGenerator, PreparedArtifactKind, PreparedArtifactLoadSource,
-    PreparedArtifactOperation, PreparedArtifactOrder, PreparedArtifactPlanError,
-    PreparedArtifactPlanFragment, PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision,
-    PreparedArtifactRegistration, PreparedArtifactRejection, PreparedArtifactReservation,
+    PreparedArtifact, PreparedArtifactBudget, PreparedArtifactCatalogEntryOutcome,
+    PreparedArtifactCatalogPlanFragment, PreparedArtifactCatalogReuseOutcome,
+    PreparedArtifactConsumer, PreparedArtifactDescriptor, PreparedArtifactError,
+    PreparedArtifactExecutionBinding, PreparedArtifactGenerator, PreparedArtifactImportSegment,
+    PreparedArtifactImportSource, PreparedArtifactImporter, PreparedArtifactKind,
+    PreparedArtifactLoadSource, PreparedArtifactNativeCatalogOutcome,
+    PreparedArtifactNativeEntryOutcome, PreparedArtifactNativeGenerator,
+    PreparedArtifactNativeLayout, PreparedArtifactNativeOperation,
+    PreparedArtifactNativePlanFragment, PreparedArtifactNativePlaneLayout,
+    PreparedArtifactNativeRequest, PreparedArtifactOperation, PreparedArtifactOrder,
+    PreparedArtifactPlanError, PreparedArtifactPlanFragment, PreparedArtifactPlaneDescriptor,
+    PreparedArtifactPrecision, PreparedArtifactReader, PreparedArtifactReaderFactory,
+    PreparedArtifactReaderPlan, PreparedArtifactReaderResidency, PreparedArtifactRegistration,
+    PreparedArtifactRejection, PreparedArtifactReservation, PreparedArtifactResidencyMeasurements,
     PreparedArtifactReuseOutcome, PreparedArtifactSegmentDescriptor, PreparedArtifactSourceSegment,
     PreparedArtifactStore, PreparedArtifactUvAffine,
 };
 pub use product_publication::{
-    AuthorizedProductPublicationEntry, ProductPublicationAuthorization, ProductPublicationEntry,
-    ProductPublicationError, ProductPublicationPlan,
+    ProductPublicationEntry, ProductPublicationError, ProductPublicationPlan,
 };
 pub use publication_layout::{
     PhysicalLayoutId, PublicationBoundKind, PublicationLayoutError, PublicationLayoutLedger,
@@ -113,13 +129,13 @@ pub use resource_authority::{
     TransferLink, TransferLinkId,
 };
 pub use serial_product_publication::{
-    MemberPromotionFailure, MemberPromotionFailureKind, SerialProductPublicationCompletion,
+    ProductSinkResidency, SerialProductPublicationCompletion,
     SerialProductPublicationExecutionError, SerialProductPublicationExecutor,
     SerialProductPublicationPlan, SerialProductPublicationPlanError,
     SerialProductPublicationPolicy, SerialProductPublicationRegistry, SerialProductPublicationSink,
 };
 pub use spectral_cycle::{
-    FinalMajorPhaseInput, FinalVisibilityReplay, FinalVisibilitySink, InitialMajorPhaseCompletion,
+    FinalMajorPhaseInput, FinalVisibilityReplay, FinalVisibilitySink,
     ReconstructionCyclePhaseCompletion, ReconstructionCyclePhaseEvidence, SpectralCycleExecutor,
     SpectralCyclePassInput, SpectralCycleRegistry,
 };

@@ -10763,19 +10763,17 @@ impl AppState {
                                 if let Some(parameters) = self
                                     .browser_session()
                                     .and_then(BrowserSession::image_parameters)
-                                {
-                                    if let Err(error) =
+                                    && let Err(error) =
                                         self.sync_accepted_image_window_parameters(&parameters)
-                                    {
-                                        if let Some(session) = self.browser_session.take() {
-                                            let _ = session.cancel();
-                                        }
-                                        self.report_browser_error(
-                                            "Failed to record accepted imexplore startup parameters.",
-                                            format!("{error}\n"),
-                                        );
-                                        return;
+                                {
+                                    if let Some(session) = self.browser_session.take() {
+                                        let _ = session.cancel();
                                     }
+                                    self.report_browser_error(
+                                        "Failed to record accepted imexplore startup parameters.",
+                                        format!("{error}\n"),
+                                    );
+                                    return;
                                 }
                                 self.record_session_opened();
                                 self.keep_active_image_plane_selection_visible();
@@ -11357,10 +11355,8 @@ impl AppState {
                 if keep_session {
                     self.stop_image_movie(false, format!("browser request failed: {error}"));
                 }
-                if !keep_session {
-                    if let Some(session) = self.browser_session.take() {
-                        let _ = session.cancel();
-                    }
+                if !keep_session && let Some(session) = self.browser_session.take() {
+                    let _ = session.cancel();
                 }
                 let mut details = if stderr.trim().is_empty() {
                     format!("{error}\n")
@@ -19137,10 +19133,10 @@ fn expand_tilde_path_with_home(raw: &str, home: Option<&Path>) -> PathBuf {
             .map(Path::to_path_buf)
             .unwrap_or_else(|| PathBuf::from(raw));
     }
-    if let Some(rest) = raw.strip_prefix("~/") {
-        if let Some(home) = home {
-            return home.join(rest);
-        }
+    if let Some(rest) = raw.strip_prefix("~/")
+        && let Some(home) = home
+    {
+        return home.join(rest);
     }
     PathBuf::from(raw)
 }

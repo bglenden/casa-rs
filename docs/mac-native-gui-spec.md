@@ -871,7 +871,7 @@ current `casars` TUI cannot?"
 
 Before implementation, this spec should become a shaped issue or wave with:
 
-- GUI-specific issue title and board naming, such as `GUI-Wave-1`, to avoid
+- GUI-specific issue title naming, such as `GUI-Wave-1`, to avoid
   collision with tutorial-parity wave numbers
 - explicit first task choice
 - explicit write-safety boundary

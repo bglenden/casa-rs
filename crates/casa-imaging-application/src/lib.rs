@@ -8,14 +8,24 @@
 //! submit requests here; they do not compose native execution stages directly.
 
 mod availability;
+mod aw_cache;
 mod casa_product_sink;
 mod continuum_domains;
 mod continuum_request;
+mod major_cycle;
+mod prepared_aw_phase;
+mod streaming_cube;
+
+use major_cycle::{MajorCyclePhase, PhaseContext};
 
 pub use availability::{
     ImagingCapabilityCatalogEntry, ImagingCapabilityRequirement, ImplementationUnavailable,
     TaskRequirement, UnsupportedRequirement, installed_imaging_capability_catalog,
     validate_installed_implementation,
+};
+pub use aw_cache::{
+    CasaAwCache, CasaAwCacheError, CasaAwCacheInventory, CasaAwCellImporter, PreparedAwCell,
+    PreparedAwCellProvider,
 };
 pub use casa_imaging_model::{
     HogbomIterationAccounting, ImagingRequestVersion, PolarizationCoordinate, ProductNormalization,
@@ -23,40 +33,42 @@ pub use casa_imaging_model::{
 pub use casa_imaging_runtime::{ResourceOverride, ResourcePolicy};
 pub use casa_product_sink::{CasaImageDomainOutput, CasaImageProductSink};
 pub use continuum_request::{
-    ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
-    ContinuumImagingResult, ContinuumMask, ContinuumMaskBox, ContinuumStopReason,
-    ContinuumWeighting, SpectralImagingMode, VisibilityContinuumSubtraction, execute_continuum,
+    ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumAwCfSource, ContinuumAwProjection,
+    ContinuumBeamPolicy, ContinuumImagingRequest, ContinuumImagingResult, ContinuumMask,
+    ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting, NativeAwCachePolicy,
+    NativeEvlaAwCache, SpectralImagingMode, VisibilityContinuumSubtraction, execute_continuum,
     resource_policy_for_task_requirements,
 };
 
-use std::{error::Error, fmt, io, sync::Arc};
+use std::{error::Error, fmt, io, path::PathBuf, sync::Arc};
 
 use casa_imaging_model::{
     CompileProblemError, CompiledProblem, GeometryInput, ImagingRequest,
     ModelLifecycleRequirements, ObservationSelection, ProblemInputIdentities, ProblemSpecification,
-    ReconstructionAlgorithm, SpectralWindowSelection, compile, compile_observation,
+    SpectralWindowSelection, compile, compile_observation,
 };
 use casa_imaging_products::{
-    ContinuumProductControls, ContinuumProductInputs, ContinuumSourceCatalog,
-    PlannedContinuumGeneration, ProductGenerationAuthority, PublishedContinuumGeneration,
-    VisibilityProductCompletion,
+    ContinuumProductControls, ContinuumProductInputs, PlannedContinuumGeneration,
+    PublishedContinuumGeneration, VisibilityProductCompletion,
 };
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, ImageDomainReconstructionMaskPlans, MajorCycleCompletion,
-    MinorCycleProgram, MinorCycleStopReason, ReconstructionMaskSet, WeightingExecutionLimits,
+    MinorCycleImageResponse, MinorCycleProgram, MinorCycleStopReason, ReconstructionMaskSet,
+    WeightingExecutionLimits,
 };
 use casa_imaging_runtime::{
     AttemptBoundObservationCompletion, BuildIdentity, ExecutionAttemptId, ExecutionProvenance,
     ExecutionReceipt, ExecutionReceiptStore, ExecutionStatus, FenceKind, FinalVisibilityReplay,
     FrozenWeightingReservation, ImplementationContractMetadata, ImplementationRegistry,
     ImplementationRegistryId, ManagedSpillStorage, ObservationReadCompletionContext,
-    PlannerCostModelProfileBootstrap, PlanningBindings, ResourceAuthority, RunBindings,
-    RunController, RunDirective, SerialProductPublicationExecutor, SerialProductPublicationPlan,
-    SerialProductPublicationPolicy, SerialProductPublicationRegistry, SerialProductPublicationSink,
-    SpectralCycleExecutionPolicy, SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan,
-    SpectralCyclePlanParts, SpectralCyclePlanningLimits, SpectralCycleRegistry,
-    StorageIoResourceBinding, WorkExecutionContext, WorkImplementation, WorkImplementationId,
-    WorkMeasurements, plan, run,
+    PlannerCostModelProfileBootstrap, PlanningBindings, PreparedArtifactRegistration,
+    ResourceAuthority, RunBindings, RunController, RunDirective,
+    SelectedObservationSourceResources, SerialProductPublicationExecutor,
+    SerialProductPublicationPlan, SerialProductPublicationPolicy, SerialProductPublicationRegistry,
+    SerialProductPublicationSink, SpectralCycleExecutionPolicy, SpectralCycleExecutor,
+    SpectralCyclePassInput, SpectralCyclePlan, SpectralCyclePlanParts, SpectralCyclePlanningLimits,
+    SpectralCycleRegistry, StorageIoResourceBinding, WorkExecutionContext, WorkImplementation,
+    WorkImplementationId, WorkMeasurements, plan, run,
 };
 use casa_ms::{
     ResolvedSelectedObservationAccess, SelectedObservationResolutionRequest,
@@ -111,6 +123,8 @@ pub struct ApplicationRequest<S> {
     pub model_lifecycle: ModelLifecycleRequirements,
     /// Deferred reconstruction-mask owner input.
     pub masks: ImageDomainReconstructionMaskPlans,
+    /// Scientific image-coordinate normalization bound independently of output selection.
+    pub minor_cycle_image_response: Option<MinorCycleImageResponse>,
     /// Storage-owner request for the single selected MeasurementSet.
     pub observation: SelectedObservationResolutionRequest,
     /// Whether final paired-operator predictions are committed to `MODEL_DATA`.
@@ -131,6 +145,28 @@ pub struct ApplicationNative<S> {
     pub runtime: ApplicationRuntime,
     /// Product-generation and independently atomic publication configuration.
     pub publication: ApplicationPublication<S>,
+    /// Optional validated AW cache and private prepared-store deployment input.
+    pub aw_preparation: Option<ApplicationAwPreparation>,
+}
+
+/// Deployment-only inputs for the AW prepared-artifact pre-phase.
+#[derive(Clone)]
+pub struct ApplicationAwPreparation {
+    source: ApplicationAwSource,
+    private_root: PathBuf,
+    storage_domain: casa_imaging_runtime::StorageDomain,
+    resident_bytes: usize,
+    conjugate_beams: bool,
+}
+
+#[derive(Clone)]
+enum ApplicationAwSource {
+    CasaImport(PathBuf),
+    NativeEvla {
+        input: Box<casa_imaging_model::NativeAwRequestInput>,
+        policy: NativeAwCachePolicy,
+        cache_bytes: u64,
+    },
 }
 
 /// Product-generation controls, deployment resources, and sole storage sink.
@@ -143,6 +179,8 @@ pub struct ApplicationPublication<S> {
 
 /// Typed native result retained with every ordinary execution receipt.
 pub struct NativeApplicationOutcome {
+    /// Ordered warm-probe, optional cold-import, and consume receipts for AW preparation.
+    pub aw_preparation_receipts: Vec<ExecutionReceipt>,
     /// Initial-major receipt (also the final scientific pass for dirty imaging).
     pub initial_receipt: ExecutionReceipt,
     /// Mandatory post-minor final-major receipt for Högbom imaging.
@@ -316,6 +354,7 @@ where
         write_model_column: request.write_model_column,
         write_corrected_data: request.write_corrected_data,
         masks: request.masks,
+        minor_cycle_image_response: request.minor_cycle_image_response,
         native: request.native,
     };
     let output = run_native(&problem, input).map_err(ApplicationDispatchError::Native)?;
@@ -330,6 +369,7 @@ struct NativeInput<S> {
     write_model_column: bool,
     write_corrected_data: bool,
     masks: ImageDomainReconstructionMaskPlans,
+    minor_cycle_image_response: Option<MinorCycleImageResponse>,
     native: Result<ApplicationNative<S>, ApplicationError>,
 }
 
@@ -341,115 +381,87 @@ where
     S: SerialProductPublicationSink + Send + 'static,
     S::Error: Send + Sync,
 {
+    if !input.write_model_column
+        && !input.write_corrected_data
+        && casa_imaging_runtime::CubePhase::supports(problem)?
+    {
+        run_native_phases::<casa_imaging_runtime::CubePhase, S>(problem, input)
+    } else {
+        run_native_phases::<SpectralCycleExecutor, S>(problem, input)
+    }
+}
+
+fn run_native_phases<P, S>(
+    problem: &CompiledProblem,
+    mut input: NativeInput<S>,
+) -> Result<NativeApplicationOutcome, ApplicationError>
+where
+    P: MajorCyclePhase,
+    P::Error: Send + Sync,
+    S: SerialProductPublicationSink + Send + 'static,
+    S::Error: Send + Sync,
+{
     let ApplicationNative {
         runtime,
         publication,
+        aw_preparation,
     } = input.native?;
-    let algorithm = problem.reconstruction().algorithm().clone();
-    let initial_access = input.initial_access;
+    publication.controls.validate_for_problem(problem)?;
+    let initial_access = SelectedObservationSourceResources::finalize_access(
+        problem,
+        input.initial_access,
+        &runtime.authority,
+        &runtime.resource_policy,
+    )?;
+    input.observation = input
+        .observation
+        .with_content_budget(initial_access.source_binding().content_budget());
+    let minor_cycle_requested = problem.reconstruction().controls().max_minor_iterations() > 0;
+    let prepared_aw = aw_preparation
+        .map(|deployment| prepared_aw_phase::prepare_aw_projection(problem, deployment, &runtime))
+        .transpose()?;
+    let initial_aw = prepared_aw
+        .as_ref()
+        .map(prepared_aw_phase::PreparedAwPhase::bind_plan)
+        .transpose()?;
     let residency = initial_access.certify_residency(problem)?;
     let write_targets =
         SelectedVisibilityWriteTargets::new(input.write_model_column, input.write_corrected_data);
     let visibility_write_requested = write_targets.model_data() || write_targets.corrected_data();
-    let initial_write =
-        matches!(algorithm, ReconstructionAlgorithm::Dirty) && visibility_write_requested;
+    let initial_write = !minor_cycle_requested && visibility_write_requested;
     let planning_registry =
         PlanningRegistry::new(runtime.registry, runtime.implementation.clone(), problem);
-    let mut policy = execution_policy(&runtime, residency.clone());
+    let mut policy = execution_policy(&runtime, residency.clone(), initial_aw.as_ref());
     if initial_write {
         policy = policy
             .with_visibility_write(initial_access.selected_visibility_storage_plan(write_targets)?);
     }
-    let planned = match algorithm {
-        ReconstructionAlgorithm::Dirty => {
-            SpectralCyclePlan::dirty(problem, &planning_registry, policy)?
-        }
-        ReconstructionAlgorithm::Hogbom
-        | ReconstructionAlgorithm::Clark
-        | ReconstructionAlgorithm::Multiscale { .. }
-        | ReconstructionAlgorithm::Mtmfs { .. }
-        | ReconstructionAlgorithm::JointContinuumLine { .. } => {
-            SpectralCyclePlan::initial(problem, &planning_registry, policy)?
-        }
-    };
-    let minor_node = planned.minor_cycle_node().cloned();
-    let SpectralCyclePlanParts {
-        physical,
-        weighting,
-        complete_data: complete,
-        source_resources: resources,
-        pass,
-        gridded_normal: planned_gridded_normal,
-        ..
-    } = planned.into_parts();
-    let replay_proof_bytes = initial_access.replay_proof_retained_heap_bytes(problem)?;
-    let frozen_reservation = (!matches!(algorithm, ReconstructionAlgorithm::Dirty))
+    let minor = minor_cycle_requested
         .then(|| {
-            FrozenWeightingReservation::acquire(
-                &runtime.authority,
-                runtime.resource_policy.clone(),
-                weighting.planned_residency(),
-                replay_proof_bytes,
-            )
+            streaming_cube::minor_program(problem, input.minor_cycle_image_response, None)
+                .map(|program| (input.masks.clone(), program))
         })
         .transpose()?;
-    let initial_source_state = initial_access.source_state().clone();
-    let selected = initial_access.open(problem)?;
-    let mut executor = SpectralCycleExecutor::new(
-        runtime.implementation.clone(),
-        problem.clone(),
-        weighting,
-        resources,
-        pass,
-        complete,
-        selected,
-        ExecutableModelProblem::from_compiled(problem.clone())?,
-        SpectralCyclePassInput::Initial,
-    );
-    if !matches!(algorithm, ReconstructionAlgorithm::Dirty) {
-        executor = executor.with_frozen_weighting_reservation(
-            frozen_reservation.expect("non-dirty execution reserves frozen weighting"),
-        );
-        executor = executor.with_planned_gridded_normal_binding(
-            planned_gridded_normal
-                .ok_or_else(|| boxed("clean initial plan omitted gridded replay binding"))?,
-        )?;
-        let program = MinorCycleProgram::for_problem(problem)?.record_component_sequence(64)?;
-        executor = executor.with_reconstruction_cycle(
-            minor_node.ok_or_else(|| boxed("initial plan omitted its minor-cycle node"))?,
-            input.masks.clone(),
-            program,
-        );
-    }
-    let mut initial_terminal_replay = None;
-    if initial_write {
-        let (replay, sink) = FinalVisibilityReplay::with_visibility_write(
-            std::path::PathBuf::from(input.observation.locator()),
-            initial_source_state,
-            visibility_write_selection(problem, input.observation.selection())?,
-            write_targets,
-        )?;
-        executor = executor.with_final_visibility_sink(sink);
-        initial_terminal_replay = Some(replay);
-    }
+    let (initial_plan, executor, initial_terminal_replay) = P::initial(
+        PhaseContext {
+            problem,
+            runtime: &runtime,
+            registry: &planning_registry,
+            policy,
+            minor,
+        },
+        initial_access,
+        initial_aw,
+        initial_write,
+        write_targets,
+        &input.observation,
+    )?;
     let registry = SpectralCycleRegistry::new(
         runtime.registry,
         runtime.implementation.clone(),
         problem,
         executor,
     );
-    let initial_plan = plan(
-        problem,
-        PlanningBindings::new(
-            runtime.registry,
-            runtime.resource_policy.clone(),
-            runtime.cost_model,
-        ),
-        &runtime.authority,
-        &registry,
-        &runtime.receipts,
-        move |_, _| Ok::<_, std::convert::Infallible>(vec![physical]),
-    )?;
     run_phase(
         problem,
         &initial_plan,
@@ -470,12 +482,12 @@ where
         visibility_products,
         visibility_replay,
         visibility_output_receipt,
-    ) = match algorithm {
-        ReconstructionAlgorithm::Dirty => {
+    ) = match minor_cycle_requested {
+        false => {
             let result = registry
                 .implementation()
                 .take_completion()
-                .ok_or_else(|| boxed("dirty execution omitted final major-cycle evidence"))?;
+                .ok_or_else(|| boxed("no-minor execution omitted final major-cycle evidence"))?;
             let visibility_products = initial_terminal_replay
                 .as_ref()
                 .map(FinalVisibilityReplay::completion)
@@ -493,19 +505,8 @@ where
                 None,
             )
         }
-        ReconstructionAlgorithm::Hogbom
-        | ReconstructionAlgorithm::Clark
-        | ReconstructionAlgorithm::Multiscale { .. }
-        | ReconstructionAlgorithm::Mtmfs { .. }
-        | ReconstructionAlgorithm::JointContinuumLine { .. } => {
-            let mut frozen_weighting = registry
-                .implementation()
-                .take_frozen_weighting()
-                .ok_or_else(|| boxed("initial major omitted frozen weighting"))?;
-            let mut gridded_replay = registry
-                .implementation()
-                .take_gridded_normal_replay()
-                .ok_or_else(|| boxed("initial major omitted sealed gridded-normal replay"))?;
+        true => {
+            let mut replay = registry.implementation().take_replay()?;
             let mut minor = registry
                 .implementation()
                 .take_reconstruction_cycle_completion()
@@ -625,92 +626,54 @@ where
                     }
                 };
                 minor_outcomes.push(minor_outcome);
+                let terminal_refresh_started = (!continue_cleaning
+                    && std::env::var_os("CASA_RS_TRACE_MAJOR_CYCLE_ENVELOPES").is_some())
+                .then(std::time::Instant::now);
                 let final_input = minor.into_final_major_input();
-                let final_policy = execution_policy(&runtime, residency.clone());
+                let final_aw = prepared_aw
+                    .as_ref()
+                    .map(prepared_aw_phase::PreparedAwPhase::bind_plan)
+                    .transpose()?;
+                let final_policy = execution_policy(&runtime, residency.clone(), final_aw.as_ref());
                 let ordinal =
                     u32::try_from(cycle).map_err(|_| boxed("major-cycle ordinal exceeds u32"))?;
-                let final_planned = if continue_cleaning {
-                    SpectralCyclePlan::continuing_major(
+                let minor_program = continue_cleaning
+                    .then(|| {
+                        streaming_cube::minor_program(
+                            problem,
+                            input.minor_cycle_image_response,
+                            Some(
+                                controls
+                                    .max_minor_iterations()
+                                    .saturating_sub(total_iterations),
+                            ),
+                        )
+                        .map(|program| (next_masks.clone(), program))
+                    })
+                    .transpose()?;
+                let (final_plan, executor) = P::refresh(
+                    PhaseContext {
                         problem,
-                        &planning_registry,
-                        final_policy,
-                        &final_input,
-                        ordinal,
-                        gridded_replay,
-                    )?
-                } else {
-                    SpectralCyclePlan::final_major_at(
-                        problem,
-                        &planning_registry,
-                        final_policy,
-                        &final_input,
-                        ordinal,
-                        gridded_replay,
-                    )?
-                };
-                let SpectralCyclePlanParts {
-                    physical,
-                    weighting,
-                    complete_data: complete,
-                    pass,
-                    minor_cycle_node: minor_node,
-                    gridded_normal: planned_gridded_normal,
-                    ..
-                } = final_planned.into_parts();
-                let mut executor = SpectralCycleExecutor::new_gridded(
-                    runtime.implementation.clone(),
-                    problem.clone(),
-                    weighting,
-                    pass,
-                    complete,
-                    ExecutableModelProblem::from_compiled(problem.clone())?,
-                    SpectralCyclePassInput::FinalMajor(final_input),
-                    planned_gridded_normal
-                        .ok_or_else(|| boxed("later-major plan omitted gridded replay binding"))?,
-                )?
-                .with_frozen_weighting(frozen_weighting);
-                if continue_cleaning {
-                    let remaining = controls
-                        .max_minor_iterations()
-                        .saturating_sub(total_iterations);
-                    let program = MinorCycleProgram::for_problem(problem)?
-                        .record_component_sequence(64)?
-                        .limit_iterations(remaining)?;
-                    executor = executor.with_reconstruction_cycle(
-                        minor_node.ok_or_else(|| boxed("continuing plan omitted minor node"))?,
-                        next_masks.clone(),
-                        program,
-                    );
-                }
+                        runtime: &runtime,
+                        registry: &planning_registry,
+                        policy: final_policy,
+                        minor: minor_program,
+                    },
+                    final_input,
+                    ordinal,
+                    replay,
+                    final_aw,
+                )?;
                 let registry = SpectralCycleRegistry::new(
                     runtime.registry,
                     runtime.implementation.clone(),
                     problem,
                     executor,
                 );
-                let final_plan = plan(
-                    problem,
-                    PlanningBindings::new(
-                        runtime.registry,
-                        runtime.resource_policy.clone(),
-                        runtime.cost_model,
-                    ),
-                    &runtime.authority,
-                    &registry,
-                    &runtime.receipts,
-                    move |_, _| Ok::<_, std::convert::Infallible>(vec![physical]),
-                )?;
                 let attempt = major_cycle_attempt(runtime.attempts[1], ordinal);
                 run_phase(problem, &final_plan, &registry, &runtime, attempt)?;
                 let receipt = runtime.receipts.open(attempt)?;
-                frozen_weighting = registry
-                    .implementation()
-                    .take_frozen_weighting()
-                    .ok_or_else(|| boxed("later major omitted reusable frozen weighting"))?;
-                gridded_replay = registry
-                    .implementation()
-                    .take_gridded_normal_replay()
-                    .ok_or_else(|| boxed("later major omitted reusable gridded-normal replay"))?;
+                replay = registry.implementation().take_replay()?;
                 if continue_cleaning {
                     minor = registry
                         .implementation()
@@ -725,6 +688,13 @@ where
                     .take_completion()
                     .ok_or_else(|| boxed("final-major execution omitted scientific evidence"))?
                     .into_completion();
+                if let Some(started) = terminal_refresh_started {
+                    eprintln!(
+                        "imaging_terminal_refresh_envelope ordinal={ordinal} model_generation={} elapsed_nanos={} includes=handoff,planning,phase_run,reconciliation,receipt_recovery excludes=minor_cycle,product_normalization,restoration,publication",
+                        completion.final_model().generation_id(),
+                        started.elapsed().as_nanos(),
+                    );
+                }
                 if !visibility_write_requested {
                     break (
                         completion,
@@ -739,88 +709,103 @@ where
                         None,
                     );
                 }
-                let resolved = resolve_selected_observation(input.observation.clone())?;
-                let (_, access) = resolved.into_parts();
-                let output_residency = access.certify_residency(problem)?;
-                let source_state = access.source_state().clone();
-                let output_policy = execution_policy(&runtime, output_residency)
-                    .with_visibility_write(access.selected_visibility_storage_plan(write_targets)?);
-                let output_planned = SpectralCyclePlan::selected_output(
-                    problem,
-                    &planning_registry,
-                    output_policy,
-                    ordinal,
-                )?;
-                let SpectralCyclePlanParts {
-                    physical: output_physical,
-                    weighting: output_weighting,
-                    complete_data: output_complete,
-                    source_resources: output_resources,
-                    pass: output_pass,
-                    ..
-                } = output_planned.into_parts();
-                let selected = frozen_weighting.rebind_selected(access, problem)?;
-                let (visibility_replay, sink) = FinalVisibilityReplay::with_visibility_write(
-                    std::path::PathBuf::from(input.observation.locator()),
-                    source_state,
-                    visibility_write_selection(problem, input.observation.selection())?,
-                    write_targets,
-                )?;
-                let output_executor = SpectralCycleExecutor::new_selected_output(
-                    runtime.implementation.clone(),
-                    problem.clone(),
-                    output_weighting,
-                    output_resources,
-                    output_pass,
-                    output_complete,
-                    selected,
-                    completion,
-                    frozen_weighting,
-                )
-                .with_final_visibility_sink(sink);
-                let output_registry = SpectralCycleRegistry::new(
-                    runtime.registry,
-                    runtime.implementation.clone(),
-                    problem,
-                    output_executor,
-                );
-                let output_plan = plan(
-                    problem,
-                    PlanningBindings::new(
+                {
+                    let resolved = resolve_selected_observation(input.observation.clone())?;
+                    let (_, access) = resolved.into_parts();
+                    let output_residency = access.certify_residency(problem)?;
+                    let source_state = access.source_state().clone();
+                    let output_aw = prepared_aw
+                        .as_ref()
+                        .map(prepared_aw_phase::PreparedAwPhase::bind_plan)
+                        .transpose()?;
+                    let output_policy =
+                        execution_policy(&runtime, output_residency, output_aw.as_ref())
+                            .with_visibility_write(
+                                access.selected_visibility_storage_plan(write_targets)?,
+                            );
+                    let output_planned = SpectralCyclePlan::selected_output(
+                        problem,
+                        &planning_registry,
+                        output_policy,
+                        ordinal,
+                    )?;
+                    let output_plan = plan(
+                        problem,
+                        PlanningBindings::new(
+                            runtime.registry,
+                            runtime.resource_policy.clone(),
+                            runtime.cost_model,
+                        ),
+                        &runtime.authority,
+                        &planning_registry,
+                        &runtime.receipts,
+                        |_, _| {
+                            Ok::<_, std::convert::Infallible>(output_planned.physical_candidates())
+                        },
+                    )?;
+                    let SpectralCyclePlanParts {
+                        weighting: output_weighting,
+                        complete_data: output_complete,
+                        source_resources: output_resources,
+                        pass: output_pass,
+                        ..
+                    } = output_planned.into_parts(&output_plan)?;
+                    let (visibility_replay, sink) = FinalVisibilityReplay::with_visibility_write(
+                        std::path::PathBuf::from(input.observation.locator()),
+                        source_state,
+                        visibility_write_selection(problem, input.observation.selection())?,
+                        write_targets,
+                    )?;
+                    let mut output_executor = SpectralCycleExecutor::new_selected_output(
+                        runtime.implementation.clone(),
+                        problem.clone(),
+                        output_weighting,
+                        output_resources,
+                        output_pass,
+                        output_complete,
+                        access.into_deferred(),
+                        completion,
+                        P::visibility_weighting(replay)?,
+                    )
+                    .with_final_visibility_sink(sink);
+                    if let Some(binding) = output_aw {
+                        output_executor =
+                            output_executor.with_prepared_artifact_reader(binding.execution)?;
+                    }
+                    let output_registry = SpectralCycleRegistry::new(
                         runtime.registry,
-                        runtime.resource_policy.clone(),
-                        runtime.cost_model,
-                    ),
-                    &runtime.authority,
-                    &output_registry,
-                    &runtime.receipts,
-                    move |_, _| Ok::<_, std::convert::Infallible>(vec![output_physical]),
-                )?;
-                let output_attempt = selected_output_attempt(attempt);
-                run_phase(
-                    problem,
-                    &output_plan,
-                    &output_registry,
-                    &runtime,
-                    output_attempt,
-                )?;
-                let output_receipt = runtime.receipts.open(output_attempt)?;
-                let completion = output_registry
-                    .implementation()
-                    .take_selected_output_completion()
-                    .ok_or_else(|| boxed("selected-output traversal omitted scientific state"))?;
-                break (
-                    completion,
-                    Some(applied_masks),
-                    Some(receipt),
-                    minor_outcomes,
-                    cycle + 1,
-                    total_iterations,
-                    total_actual_iterations,
-                    Some(visibility_replay.completion()?),
-                    Some(visibility_replay),
-                    Some(output_receipt),
-                );
+                        runtime.implementation.clone(),
+                        problem,
+                        output_executor,
+                    );
+                    let output_attempt = selected_output_attempt(attempt);
+                    run_phase(
+                        problem,
+                        &output_plan,
+                        &output_registry,
+                        &runtime,
+                        output_attempt,
+                    )?;
+                    let output_receipt = runtime.receipts.open(output_attempt)?;
+                    let completion = output_registry
+                        .implementation()
+                        .take_selected_output_completion()
+                        .ok_or_else(|| {
+                            boxed("selected-output traversal omitted scientific state")
+                        })?;
+                    break (
+                        completion,
+                        Some(applied_masks),
+                        Some(receipt),
+                        minor_outcomes,
+                        cycle + 1,
+                        total_iterations,
+                        total_actual_iterations,
+                        Some(visibility_replay.completion()?),
+                        Some(visibility_replay),
+                        Some(output_receipt),
+                    );
+                }
             }
         }
     };
@@ -832,6 +817,8 @@ where
         runtime,
         publication,
         PriorPhaseOutcome {
+            aw_preparation_receipts: prepared_aw
+                .map_or_else(Vec::new, |prepared| prepared.receipts),
             initial_receipt,
             final_major_receipt,
             minor_cycles,
@@ -890,6 +877,7 @@ fn visibility_write_selection(
 }
 
 struct PriorPhaseOutcome {
+    aw_preparation_receipts: Vec<ExecutionReceipt>,
     initial_receipt: ExecutionReceipt,
     final_major_receipt: Option<ExecutionReceipt>,
     minor_cycles: Vec<NativeMinorCycleOutcome>,
@@ -904,8 +892,9 @@ struct PriorPhaseOutcome {
 fn execution_policy(
     runtime: &ApplicationRuntime,
     residency: casa_ms::SelectedObservationResidencyCertificate,
+    aw: Option<&prepared_aw_phase::PreparedAwPlanBinding>,
 ) -> SpectralCycleExecutionPolicy {
-    SpectralCycleExecutionPolicy::new(
+    let policy = SpectralCycleExecutionPolicy::new(
         runtime.implementation.clone(),
         runtime.weighting_limits,
         residency,
@@ -918,7 +907,13 @@ fn execution_policy(
         runtime.authority.clone(),
         runtime.resource_policy.clone(),
     )
-    .with_gridded_normal_storage(runtime.gridded_normal_storage.clone())
+    .with_gridded_normal_storage(runtime.gridded_normal_storage.clone());
+    match aw {
+        Some(binding) => policy
+            .with_aw_projection(binding.projection.clone())
+            .with_prepared_artifact_reader(binding.execution.plan().clone()),
+        None => policy,
+    }
 }
 
 enum ApplicationRunController {
@@ -948,13 +943,16 @@ fn application_controller(runtime: &ApplicationRuntime) -> ApplicationRunControl
     }
 }
 
-fn run_phase(
+fn run_phase<I: WorkImplementation>(
     problem: &CompiledProblem,
     execution_plan: &casa_imaging_runtime::ExecutionPlan,
-    registry: &SpectralCycleRegistry<SpectralCycleExecutor>,
+    registry: &SpectralCycleRegistry<I>,
     runtime: &ApplicationRuntime,
     attempt: ExecutionAttemptId,
-) -> Result<(), ApplicationError> {
+) -> Result<(), ApplicationError>
+where
+    I::Error: Send + Sync,
+{
     let executable = ExecutableModelProblem::from_compiled(problem.clone())?;
     let current = RunBindings::new(
         problem.inputs().clone(),
@@ -1006,25 +1004,14 @@ where
     S: SerialProductPublicationSink + Send + 'static,
     S::Error: Send + Sync,
 {
-    let sources = match reconstruction_masks.as_ref() {
-        Some(ReconstructionMaskSet::Shared(mask)) => {
-            ContinuumSourceCatalog::from_major_cycle_with_mask(problem, &scientific, Some(mask))?
-        }
-        Some(ReconstructionMaskSet::Coupled(masks)) => {
-            ContinuumSourceCatalog::from_major_cycle_with_coupled_masks(
-                problem,
-                &scientific,
-                masks,
-            )?
-        }
-        Some(ReconstructionMaskSet::Domains(masks)) => {
-            ContinuumSourceCatalog::from_major_cycle_with_domain_masks(problem, &scientific, masks)?
-        }
-        None => ContinuumSourceCatalog::from_major_cycle(problem, &scientific)?,
-    };
-    let authority = ProductGenerationAuthority::bind(problem);
-    let planned_products = authority.plan(&sources, &publication_config.controls)?;
-    let generation_demand = {
+    let (planned_products, generation_demand) = {
+        let requested_workers = match &runtime.resource_policy {
+            ResourcePolicy::Explicit(policy) => policy
+                .workers
+                .unwrap_or_else(|| prior.initial_receipt.initial_execution_knobs().workers),
+            _ => prior.initial_receipt.initial_execution_knobs().workers,
+        };
+        let requested_workers = usize::try_from(requested_workers)?;
         let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific)?;
         if let Some(masks) = reconstruction_masks.as_ref() {
             inputs = match masks {
@@ -1037,11 +1024,16 @@ where
                 }
             };
         }
-        planned_products.demand(&inputs)?
+        let planned = PlannedContinuumGeneration::new(&inputs, &publication_config.controls)?;
+        let demand = planned.demand(
+            &inputs,
+            casa_imaging_products::ProductStoragePlan::new(1, requested_workers)?,
+        )?;
+        (planned, demand)
     };
     let staging_residency_bytes = publication_config
         .sink
-        .staging_residency_bytes(&planned_products, &generation_demand)?;
+        .residency(&planned_products, &generation_demand)?;
 
     let visibility_write_receipt = prior
         .visibility_replay
@@ -1056,9 +1048,6 @@ where
         });
     let planning_registry =
         PlanningRegistry::new(runtime.registry, runtime.implementation.clone(), problem);
-    // The ordinary publication plan is deliberately constructed before member
-    // production and sealing; the executor later presents the completed
-    // projection to the runtime for authorization at the commit gate.
     let publication_plan = SerialProductPublicationPlan::new(
         problem,
         &planned_products,
@@ -1072,9 +1061,8 @@ where
             runtime.confidence_parts_per_million,
         ),
     )?;
-    let (physical, publication) = publication_plan.into_parts();
-    // Admission covers production, validity, sealing overlap, and staging.
-    // Obtain it before allocating any product payload.
+    let (physical, publication, window) = publication_plan.into_parts();
+    // Admit the generation windows and direct writer before opening output images.
     let execution_plan = plan(
         problem,
         PlanningBindings::new(
@@ -1095,6 +1083,7 @@ where
         scientific,
         reconstruction_masks,
         publication_config.sink,
+        window,
     )?;
     let registry = SerialProductPublicationRegistry::new(
         runtime.registry,
@@ -1127,6 +1116,7 @@ where
         .ok_or_else(|| boxed("publication execution omitted its product completion"))?;
     let (planned_products, scientific, products) = completion.into_parts();
     Ok(NativeApplicationOutcome {
+        aw_preparation_receipts: prior.aw_preparation_receipts,
         initial_receipt: prior.initial_receipt,
         final_major_receipt: prior.final_major_receipt,
         minor_cycles: prior.minor_cycles,
@@ -1147,6 +1137,7 @@ struct PlanningRegistry {
     implementation_id: WorkImplementationId,
     metadata: ImplementationContractMetadata,
     implementation: PlanningImplementation,
+    prepared_artifact: PreparedArtifactRegistration,
 }
 
 impl PlanningRegistry {
@@ -1158,6 +1149,7 @@ impl PlanningRegistry {
         Self {
             id,
             implementation: PlanningImplementation(implementation_id.clone()),
+            prepared_artifact: prepared_aw_registration(implementation_id.clone()),
             implementation_id,
             metadata: ImplementationContractMetadata::new(
                 problem.problem_id(),
@@ -1185,6 +1177,23 @@ impl ImplementationRegistry for PlanningRegistry {
     ) -> Option<ImplementationContractMetadata> {
         (id == &self.implementation_id).then(|| self.metadata.clone())
     }
+
+    fn prepared_artifact_registration(
+        &self,
+        implementation: &WorkImplementationId,
+    ) -> Option<&PreparedArtifactRegistration> {
+        (implementation == &self.implementation_id).then_some(&self.prepared_artifact)
+    }
+}
+
+fn prepared_aw_registration(implementation: WorkImplementationId) -> PreparedArtifactRegistration {
+    PreparedArtifactRegistration::new(
+        "casa-rs-imaging-v1",
+        "native-awproject",
+        env!("CARGO_PKG_VERSION"),
+        implementation,
+    )
+    .expect("static AW preparation registration is valid")
 }
 
 struct PlanningImplementation(WorkImplementationId);

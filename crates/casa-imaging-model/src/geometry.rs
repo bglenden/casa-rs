@@ -675,7 +675,7 @@ pub enum UvwCoordinateLaw {
     /// MeasurementSet MAIN UVW in metres: `u` east, `v` north, and `w` toward
     /// the phase-tracking centre, with prediction phase `exp(-i 2πν delay)`.
     PhaseTrackingCentre,
-    /// CASA MosaicFT `girarUVW` projection from each observation field to the
+    /// CASA MosaicFT/AWProjectFT `girarUVW` projection from each observation field to the
     /// compiled image centre, paired with the reconstruction phase convention.
     MosaicPhaseTrackingCentre,
 }
@@ -1427,7 +1427,7 @@ fn compile_facets(
     if columns == 0 || rows == 0 {
         return Err(CompileGeometryError::EmptyFacetLayout);
     }
-    if shape.width % columns != 0 || shape.height % rows != 0 {
+    if !shape.width.is_multiple_of(columns) || !shape.height.is_multiple_of(rows) {
         return Err(CompileGeometryError::NonDivisibleFacetLayout {
             width: shape.width,
             height: shape.height,

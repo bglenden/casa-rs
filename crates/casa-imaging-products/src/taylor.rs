@@ -51,14 +51,25 @@ fn normalize_channel_major_sum_weight(
 fn normalize_taylor_plane(
     values: &[f32],
     normalization: ProductNormalization,
-    principal_sum_weight: f64,
+    normal_sum_weight: f64,
+    residual_sum_weight: f64,
     mosaic_sensitivity: Option<MosaicSensitivity<'_>>,
 ) -> Result<Vec<f32>, ProductsError> {
     match (mosaic_sensitivity, normalization) {
         (Some(sensitivity), ProductNormalization::FlatNoise | ProductNormalization::FlatSky) => {
-            sensitivity.normalize(values, normalization)
+            let mut normalized = sensitivity.normalize(values, normalization)?;
+            // CASA normalizes weight by the normal sum and residual by the
+            // publication sum before applying the PB denominator.
+            let scale = normal_sum_weight / residual_sum_weight;
+            for value in &mut normalized {
+                *value = (f64::from(*value) * scale) as f32;
+                if !value.is_finite() {
+                    return Err(ProductsError::GeneratedNonfinite);
+                }
+            }
+            Ok(normalized)
         }
-        _ => normalize_plane(values, normalization, principal_sum_weight),
+        _ => normalize_plane(values, normalization, residual_sum_weight),
     }
 }
 
@@ -129,7 +140,11 @@ impl TaylorProducts {
         psf_cutoff: f32,
         primary_beam_model: Option<AnalyticPrimaryBeamModel>,
     ) -> Result<Self, ProductsError> {
+        let envelope_started = std::env::var_os("CASA_RS_TRACE_MAJOR_CYCLE_ENVELOPES")
+            .is_some()
+            .then(std::time::Instant::now);
         let state = inputs.normal_state();
+        let state = &state.read_window(state.slab().core_range())?;
         if state.domain_count() != 1 || inputs.final_model().shape().domains().len() != 1 {
             return Err(ProductsError::SourceLineageMismatch);
         }
@@ -155,6 +170,12 @@ impl TaylorProducts {
             return Err(ProductsError::SourceLineageMismatch);
         }
         let normalization = inputs.problem().products().normalization();
+        let aw_projection = inputs
+            .problem()
+            .science()
+            .measurement_equation()
+            .aw_projection()
+            .is_some();
         let mosaic_sensitivity =
             if primary_beam_model == Some(AnalyticPrimaryBeamModel::MosaicSensitivity) {
                 Some(MosaicSensitivity::new(principal_normal.sensitivity())?)
@@ -174,6 +195,20 @@ impl TaylorProducts {
         if channel_major_publication && published_sum_weights.len() != moments {
             return Err(ProductsError::SourceLineageMismatch);
         }
+        // Direct CASA AW Taylor completion keeps two principal sums: the
+        // WTCF normal sum scales PSF/sensitivity products, while the CFS
+        // publication sum scales dirty/residual image products. They are
+        // equal for non-AW direct Taylor reconstruction.
+        let residual_sum_weight = if channel_major_publication {
+            principal_sum_weight
+        } else {
+            published_sum_weights
+                .first()
+                .copied()
+                .filter(|value| value.is_finite() && *value > 0.0)
+                .ok_or(ProductsError::SourceLineageMismatch)?
+        };
+        let preparation_nanos = envelope_started.map(|started| started.elapsed().as_nanos());
         let mut psf = Vec::with_capacity(moments);
         let mut weight: Vec<Vec<f32>> = Vec::with_capacity(moments);
         let mut sum_weights = Vec::with_capacity(moments);
@@ -213,18 +248,38 @@ impl TaylorProducts {
                     principal_sum_weight,
                 )?
             } else {
-                source.sum_weight()
+                published_sum_weight.ok_or(ProductsError::SourceLineageMismatch)?
             };
             if !sum_weight.is_finite() {
                 return Err(ProductsError::GeneratedNonfinite);
             }
             sum_weights.push(sum_weight as f32);
         }
+        let normalization_started = envelope_started.map(|_| std::time::Instant::now());
         let residual = (0..terms)
             .map(|term| {
                 let source = state
                     .coefficient_term(term)
                     .ok_or(ProductsError::SourceLineageMismatch)?;
+                if aw_projection {
+                    let response = mosaic_sensitivity
+                        .ok_or(ProductsError::SourceLineageMismatch)?
+                        .with_normal_sum_weight(principal_sum_weight)?;
+                    return source
+                        .residual()
+                        .iter()
+                        .enumerate()
+                        .map(|(index, value)| {
+                            Ok(response.normalize_weighted_residual_sample(
+                                value.re,
+                                index,
+                                normalization,
+                                residual_sum_weight,
+                                inputs.problem().products().validity().primary_beam(),
+                            )? as f32)
+                        })
+                        .collect::<Result<Vec<_>, ProductsError>>();
+                }
                 normalize_taylor_plane(
                     &source
                         .residual()
@@ -233,14 +288,39 @@ impl TaylorProducts {
                         .collect::<Vec<_>>(),
                     normalization,
                     principal_sum_weight,
+                    residual_sum_weight,
                     mosaic_sensitivity,
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let model = (0..terms)
+        let mut model = (0..terms)
             .map(|term| model_term(inputs, term, shape))
             .collect::<Result<Vec<_>, _>>()?;
+        if aw_projection {
+            let response = mosaic_sensitivity
+                .ok_or(ProductsError::SourceLineageMismatch)?
+                .with_normal_sum_weight(principal_sum_weight)?;
+            let policy = inputs.problem().products().validity().primary_beam();
+            for plane in &mut model {
+                for (index, value) in plane.iter_mut().enumerate() {
+                    *value = response.physical_to_apparent(
+                        f64::from(*value),
+                        index,
+                        normalization,
+                        policy,
+                    )? as f32;
+                }
+            }
+        }
 
+        if let Some(started) = normalization_started {
+            eprintln!(
+                "imaging_taylor_normalization_envelope model_generation={} aw_projection={aw_projection} preparation_nanos={} residual_model_nanos={} normal_sum_weight={principal_sum_weight} residual_sum_weight={residual_sum_weight} excludes=psf_weight_products,restoration,publication",
+                inputs.final_model().generation_id(),
+                preparation_nanos.expect("normalization timer follows preparation timer"),
+                started.elapsed().as_nanos(),
+            );
+        }
         let peak = psf[0]
             .iter()
             .enumerate()
@@ -344,10 +424,19 @@ impl TaylorProducts {
                 analytic_alma_airy_primary_beam(inputs, domain_role, shape, 0, 6.25)?
             }
             Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => {
-                primary_beam_from_weight(&weight[0])?
+                if aw_projection {
+                    mosaic_sensitivity
+                        .ok_or(ProductsError::SourceLineageMismatch)?
+                        .with_normal_sum_weight(principal_sum_weight)?
+                        .weighted_primary_beam(
+                            inputs.problem().products().validity().primary_beam(),
+                        )?
+                } else {
+                    MosaicSensitivity::primary_beam_from_weight(&weight[0])?
+                }
             }
             None if requests_primary_beam => return Err(ProductsError::UnsupportedProblem),
-            None => primary_beam_from_weight(&weight[0])?,
+            None => MosaicSensitivity::primary_beam_from_weight(&weight[0])?,
         };
         let mut primary_beam = vec![vec![0.0; cells]; terms];
         primary_beam[0] = pb0.clone();
@@ -355,7 +444,7 @@ impl TaylorProducts {
         let validity = inputs.problem().products().validity();
         let pb_policy = validity.primary_beam();
         if pb_policy.comparison() != ProductSupportComparison::StrictlyGreater
-            || pb_policy.blanking() != ProductBlankingPolicy::ZeroAndFalseMask
+            || pb_policy.blanking() != ProductBlankingPolicy::Zero
         {
             return Err(ProductsError::UnsupportedProblem);
         }
@@ -379,7 +468,7 @@ impl TaylorProducts {
         if taylor_policy.reference()
             != TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum
             || taylor_policy.comparison() != ProductSupportComparison::StrictlyGreater
-            || taylor_policy.blanking() != ProductBlankingPolicy::ZeroAndFalseMask
+            || taylor_policy.blanking() != ProductBlankingPolicy::Zero
         {
             return Err(ProductsError::UnsupportedProblem);
         }
@@ -416,16 +505,8 @@ impl TaylorProducts {
         } else {
             vec![0.0; cells]
         };
-        let clean_mask = weight[0]
-            .iter()
-            .enumerate()
-            .map(|(index, value)| {
-                let selected = inputs
-                    .reconstruction_mask()
-                    .is_none_or(|mask| mask.support()[index]);
-                (selected && value.is_finite() && *value > 0.0) as u8 as f32
-            })
-            .collect();
+        let clean_mask =
+            crate::generation::reconstruction_support_plane(inputs, domain_role, cells)?;
 
         Ok(Self {
             shape,
@@ -550,19 +631,6 @@ fn taylor_alpha_products(
         validity[cell] = true;
     }
     (alpha, alpha_error, validity)
-}
-
-fn primary_beam_from_weight(weight: &[f32]) -> Result<Vec<f32>, ProductsError> {
-    // Retained only for product graphs that do not publish PB: CASA
-    // SIImageStore::makePBFromWeight normalizes the principal weight image.
-    let scale = weight.iter().copied().fold(0.0_f32, f32::max).sqrt();
-    if !(scale.is_finite() && scale > 0.0) {
-        return Err(ProductsError::GeneratedNonfinite);
-    }
-    Ok(weight
-        .iter()
-        .map(|value| value.max(0.0).sqrt() / scale)
-        .collect())
 }
 
 pub(crate) fn analytic_evla_primary_beam(
@@ -722,14 +790,34 @@ fn evla_common_power_pattern(radius_rad: f64, frequency_hz: f64, coefficients: [
 }
 
 fn vla_band_voltage_table(frequency_hz: f64) -> Result<AnnularApertureVoltageTable, ProductsError> {
-    // CASA PBMath::whichCommonPBtoUse() selects VLA_Q only inside the open
-    // 35--55 GHz interval. Other legacy-VLA bands remain unsupported until
-    // their distinct CASA models are implemented; never substitute the
-    // generic PBMath::VLA polynomial for telescope-driven selection.
-    if frequency_hz.is_finite() && frequency_hz > 35.0e9 && frequency_hz < 55.0e9 {
+    // CASA selects VLA_L and VLA_Q in these open intervals. Both use this
+    // aperture; SIMapper::addPB applies BeamSquint::NONE for PB images.
+    // Other legacy-VLA bands retain their explicit unsupported boundary.
+    if vla_band_supported(frequency_hz) {
         Ok(AnnularApertureVoltageTable::new(25.0, 2.36, 0.8564 * 60.0))
     } else {
         Err(ProductsError::UnsupportedProblem)
+    }
+}
+
+fn vla_band_supported(frequency_hz: f64) -> bool {
+    frequency_hz.is_finite()
+        && ((frequency_hz > 1.0e9 && frequency_hz < 2.0e9)
+            || (frequency_hz > 35.0e9 && frequency_hz < 55.0e9))
+}
+
+pub(crate) fn primary_beam_frequency_supported(
+    model: AnalyticPrimaryBeamModel,
+    frequency_hz: f64,
+) -> bool {
+    match model {
+        AnalyticPrimaryBeamModel::CasaVlaBand => vla_band_supported(frequency_hz),
+        AnalyticPrimaryBeamModel::CasaEvlaCommon => {
+            nearest_evla_common_coefficients(frequency_hz * 1.0e-6).is_some()
+        }
+        AnalyticPrimaryBeamModel::CasaAlma12mAiry
+        | AnalyticPrimaryBeamModel::CasaAca7mAiry
+        | AnalyticPrimaryBeamModel::MosaicSensitivity => true,
     }
 }
 
@@ -843,8 +931,6 @@ fn model_term(
     coefficient: usize,
     shape: [usize; 2],
 ) -> Result<Vec<f32>, ProductsError> {
-    use casa_imaging_model::ModelCell;
-
     let model = inputs.final_model();
     if model.shape().domains().len() != 1
         || model.shape().polarizations() != 1
@@ -858,13 +944,10 @@ fn model_term(
         return Err(ProductsError::SourceLineageMismatch);
     }
     let mut plane = vec![0.0; shape[0] * shape[1]];
+    let samples = model.read_plane(0, coefficient, 0)?;
     for y in 0..shape[1] {
         for x in 0..shape[0] {
-            let index = model
-                .shape()
-                .flat_index(ModelCell::new(0, coefficient, 0, [x, y]))
-                .ok_or(ProductsError::SourceLineageMismatch)?;
-            plane[x * shape[1] + y] = model.samples()[index].value().value() as f32;
+            plane[x * shape[1] + y] = samples[y * shape[0] + x].value().value() as f32;
         }
     }
     Ok(plane)
@@ -875,8 +958,37 @@ mod tests {
     use casa_imaging_model::ProductNormalization;
 
     #[test]
+    fn beam_coverage_preserves_the_existing_open_band_boundaries() {
+        use crate::AnalyticPrimaryBeamModel::{CasaEvlaCommon, CasaVlaBand};
+        for (model, frequency_hz, supported) in [
+            (CasaVlaBand, 1.0e9, false),
+            (CasaVlaBand, 1.4e9, true),
+            (CasaVlaBand, 2.0e9, false),
+            (CasaVlaBand, 8.0e9, false),
+            (CasaVlaBand, 35.0e9, false),
+            (CasaVlaBand, 44.0e9, true),
+            (CasaVlaBand, 45.022e9, true),
+            (CasaVlaBand, 54.880e9, true),
+            (CasaVlaBand, 55.0e9, false),
+            (CasaVlaBand, 55.008e9, false),
+            (CasaEvlaCommon, 0.9e9, false),
+            (CasaEvlaCommon, 1.4e9, true),
+            (CasaEvlaCommon, 3.0e9, true),
+            (CasaEvlaCommon, 6.0e9, true),
+            (CasaEvlaCommon, 8.001e9, false),
+            (CasaEvlaCommon, 44.0e9, false),
+        ] {
+            assert_eq!(
+                super::primary_beam_frequency_supported(model, frequency_hz),
+                supported,
+                "{model:?} at {frequency_hz}"
+            );
+        }
+    }
+
+    #[test]
     fn mosaic_primary_beam_excludes_negative_fft_ringing() {
-        let beam = super::primary_beam_from_weight(&[-0.25, 0.0, 1.0, 0.25])
+        let beam = super::MosaicSensitivity::primary_beam_from_weight(&[-0.25, 0.0, 1.0, 0.25])
             .expect("positive mosaic support");
         assert_eq!(beam, vec![0.0, 0.0, 1.0, 0.5]);
     }
@@ -891,6 +1003,7 @@ mod tests {
                 &raw,
                 ProductNormalization::FlatNoise,
                 8.0,
+                8.0,
                 Some(sensitivity),
             )
             .expect("flat-noise Taylor normalization"),
@@ -901,11 +1014,48 @@ mod tests {
                 &raw,
                 ProductNormalization::FlatSky,
                 8.0,
+                8.0,
                 Some(sensitivity),
             )
             .expect("flat-sky Taylor normalization"),
             [2.0, 4.0, 8.0, 0.0]
         );
+    }
+
+    #[test]
+    fn aw_taylor_normalization_keeps_residual_and_sensitivity_sum_weights_distinct() {
+        let sensitivity =
+            crate::MosaicSensitivity::new(&[16.0, 4.0, 1.0, 0.0]).expect("AW sensitivity");
+        let raw = [32.0, 16.0, 8.0, 4.0];
+        // CASA divides residuals by CFS sumwt=4, then uses weight=S/WTCF_sumwt
+        // with WTCF_sumwt=8 for its direction-dependent denominator.
+        for (normalization, expected) in [
+            (ProductNormalization::FlatNoise, [4.0, 4.0, 4.0, 0.0]),
+            (ProductNormalization::FlatSky, [4.0, 8.0, 16.0, 0.0]),
+            (ProductNormalization::UnitResponse, [8.0, 4.0, 2.0, 1.0]),
+        ] {
+            assert_eq!(
+                super::normalize_taylor_plane(&raw, normalization, 8.0, 4.0, Some(sensitivity))
+                    .expect("separate AW normalization sums"),
+                expected,
+                "{normalization:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn aw_taylor_normalization_rejects_nonfinite_scaled_products() {
+        let sensitivity = crate::MosaicSensitivity::new(&[1.0]).expect("AW sensitivity");
+        assert!(matches!(
+            super::normalize_taylor_plane(
+                &[1.0],
+                ProductNormalization::FlatNoise,
+                1.0e100,
+                1.0,
+                Some(sensitivity),
+            ),
+            Err(crate::ProductsError::GeneratedNonfinite)
+        ));
     }
 
     #[test]
@@ -979,7 +1129,7 @@ mod tests {
     }
 
     #[test]
-    fn vla_q_band_uses_casa_annular_airy_lookup_and_other_bands_fail_closed() {
+    fn vla_l_and_q_bands_use_casa_annular_airy_lookup_and_other_bands_fail_closed() {
         let frequency_hz = 45_469_370_205.156_37;
         let table = super::vla_band_voltage_table(frequency_hz)
             .expect("issue #607 representative frequency is in VLA Q band");
@@ -988,15 +1138,25 @@ mod tests {
         let voltage = table.evaluate(29.919_033_706_45);
         assert_eq!((voltage * voltage).to_bits(), 0x3e6d_1a6e);
 
+        // The L band shares the same CASA annular aperture inside its open
+        // 1--2 GHz interval.
+        let l_band = super::vla_band_voltage_table(1.5e9).expect("VLA L band is supported");
+        assert_eq!(l_band.maximum_radius(), table.maximum_radius());
+        assert_eq!(
+            l_band.evaluate(29.919_033_706_45).to_bits(),
+            table.evaluate(29.919_033_706_45).to_bits()
+        );
+
         for unsupported_hz in [
             f64::NAN,
-            35.0e9,
             55.0e9,
+            35.0e9,
             25.0e9,
             15.0e9,
             9.0e9,
             5.0e9,
-            1.5e9,
+            2.0e9,
+            1.0e9,
             0.3e9,
             0.05e9,
         ] {

@@ -705,7 +705,7 @@ fn baseline_median(values: &[f64]) -> f64 {
     sorted.sort_by(|a, b| a.partial_cmp(b).expect("no NaNs in benchmark data"));
     let n = sorted.len();
     let n2 = (n - 1) / 2;
-    if n % 2 == 0 {
+    if n.is_multiple_of(2) {
         (sorted[n2] + sorted[n2 + 1]) / 2.0
     } else {
         sorted[n2]

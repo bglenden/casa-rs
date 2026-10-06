@@ -3,6 +3,9 @@ import CasarsFrontendServices
 import XCTest
 @testable import CasarsMacCore
 
+/// Mirrors `IMAGER_TASK_PROTOCOL_VERSION` in `crates/casars-imager/src/task_contract.rs`.
+private let imagerTaskProtocolVersion: UInt32 = 8
+
 final class WorkbenchStoreTests: XCTestCase {
     func testAssistantContextsUseEachTaskTabSessionAndPreserveUserSelection() throws {
         let parameters = RecordingSurfaceParameterClient()
@@ -1325,9 +1328,9 @@ final class WorkbenchStoreTests: XCTestCase {
         let invocation = try client.providerInvocation(surfaceID: "imager", values: activeValues)
         XCTAssertEqual(invocation.args, ["--managed-output", "true", "--json-run", "-"])
         XCTAssertEqual(invocation.protocolName, "casa_imager_task")
-        XCTAssertEqual(invocation.protocolVersion, 7)
+        XCTAssertEqual(invocation.protocolVersion, imagerTaskProtocolVersion)
         let unsupported = Set(invocation.unsupportedReasons.map(\.id))
-        XCTAssertEqual(unsupported, Set(["task.aw_projection", "task.memory_target"]))
+        XCTAssertEqual(unsupported, Set(["task.memory_target"]))
 
         let stdin = try XCTUnwrap(invocation.stdin)
         let envelope = try XCTUnwrap(
@@ -1344,7 +1347,9 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(request["w_project_planes"] as? Int, 32)
         XCTAssertEqual(request["use_pointing"] as? Bool, true)
         let awProject = try XCTUnwrap(request["aw_project"] as? [String: Any])
-        XCTAssertEqual(awProject["cf_cache"] as? String, "cf-cache/vlass-spw2-17")
+        let cfSource = try XCTUnwrap(awProject["source"] as? [String: Any])
+        XCTAssertEqual(cfSource["kind"] as? String, "casa-import")
+        XCTAssertEqual(cfSource["cf_cache"] as? String, "cf-cache/vlass-spw2-17")
         XCTAssertEqual(awProject["cf_resident_mb"] as? Int, 384)
         XCTAssertEqual(awProject["a_term"] as? Bool, true)
         XCTAssertEqual(awProject["ps_term"] as? Bool, false)
@@ -1372,10 +1377,9 @@ final class WorkbenchStoreTests: XCTestCase {
         let blockedReadiness = blockedStore.taskLaunchReadiness(taskID: "imager", instanceID: "tab-imager")
         XCTAssertEqual(blockedReadiness.status, .infeasible)
         XCTAssertEqual(blockedReadiness.protocolName, "casa_imager_task")
-        XCTAssertEqual(blockedReadiness.protocolVersion, 7)
+        XCTAssertEqual(blockedReadiness.protocolVersion, imagerTaskProtocolVersion)
         let blockedReasons = Set(blockedReadiness.unsupportedReasons.map(\.id))
-        XCTAssertTrue(blockedReasons.contains("task.aw_projection"))
-        XCTAssertTrue(blockedReasons.contains("task.memory_target"))
+        XCTAssertEqual(blockedReasons, Set(["task.memory_target"]))
 
         blockedStore.setGenericTaskConfirmation(
             taskID: "imager",
@@ -1386,7 +1390,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertTrue(blockedTaskClient.requests.isEmpty)
         XCTAssertEqual(blockedStore.state.taskRun.state, .failed)
         XCTAssertTrue(
-            blockedStore.state.taskRun.diagnostics.contains { $0.hasSuffix(": task.aw_projection") },
+            blockedStore.state.taskRun.diagnostics.contains { $0.hasSuffix(": task.memory_target") },
             "\(blockedStore.state.taskRun.diagnostics)"
         )
 
@@ -5072,7 +5076,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(taskClient.requests.count, 1)
         let request = try XCTUnwrap(taskClient.requests.first)
         XCTAssertEqual(request.providerInvocation.protocolName, "casa_imager_task")
-        XCTAssertEqual(request.providerInvocation.protocolVersion, 7)
+        XCTAssertEqual(request.providerInvocation.protocolVersion, imagerTaskProtocolVersion)
         XCTAssertEqual(request.providerInvocation.args, ["--managed-output", "true", "--json-run", "-"])
         XCTAssertNotNil(request.providerInvocation.stdin)
         waitFor("imager completion") {
@@ -5376,7 +5380,7 @@ final class WorkbenchStoreTests: XCTestCase {
         format = 1
         surface = "imager"
         kind = "task"
-        contract = 15
+        contract = 16
 
         [parameters]
         vis = "twhya_calibrated.ms"
@@ -6241,7 +6245,18 @@ private struct StubProjectProbeClient: ProjectProbeClient {
     var probedPaths: [String: DatasetSummary] = [:]
 
     func probeProject(path: String) throws -> ProjectFixtureProbe {
-        result
+        var snapshot = result
+        if snapshot.entries.isEmpty,
+           let disk = try? UniFFIProjectProbeClient().probeProject(path: path) {
+            snapshot.entries = disk.entries.map { entry in
+                var entry = entry
+                if FileManager.default.fileExists(atPath: URL(fileURLWithPath: entry.path).appendingPathComponent("table.dat").path) {
+                    entry.dataset = probedPaths[entry.path] ?? entry.dataset
+                }
+                return entry
+            }
+        }
+        return snapshot
     }
 
     func probePath(path: String) throws -> DatasetSummary? {

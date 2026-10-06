@@ -263,7 +263,7 @@ fn request(
         gain: 0.1,
         threshold_jy: 0.0,
         psf_cutoff: 0.35,
-        primary_beam_cutoff: 0.2,
+        primary_beam_limit: 0.2,
         normalization: casa_imaging_model::ProductNormalization::UnitResponse,
         beam_policy: ContinuumBeamPolicy::PerPlane,
         mask: ContinuumMask::FullPlane,
@@ -272,6 +272,7 @@ fn request(
         write_primary_beam: false,
         pbcor: false,
         w_projection_planes: None,
+        aw_projection: None,
         task_requirements: vec![TaskRequirement::SerialCpu, TaskRequirement::FixedTileCpu],
         resource_policy: casa_imaging_runtime::ResourcePolicy::Balanced,
     }

@@ -147,18 +147,21 @@ pub use schema::SubtableId;
 pub use schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
 pub use selected_observation::{
     BoundObservationSourceError, BoundSelectedObservation, BoundSelectedObservationError,
-    ObservationSourceBinding, SelectedObservationBlock, SelectedObservationBlockConsumer,
-    SelectedObservationBlockSource, SelectedObservationCompletion,
-    SelectedObservationContentBudget, SelectedObservationMeasures,
-    SelectedObservationMeasuresError, SelectedObservationReferenceDataBudget,
-    SelectedObservationReplayAuthorization, SelectedObservationReplayProof,
-    SelectedObservationResidencyCertificate, SelectedObservationRow,
-    SelectedObservationRowSelection, SelectedObservationSpectralEnvelope,
+    DeferredSelectedObservationAccess, ObservationSourceBinding, SelectedObservationBlock,
+    SelectedObservationBlockConsumer, SelectedObservationBlockIndex,
+    SelectedObservationBlockIndexPlan, SelectedObservationBlockSource,
+    SelectedObservationCompletion, SelectedObservationContentBudget,
+    SelectedObservationContentPlan, SelectedObservationContentPlanError,
+    SelectedObservationContentRequirements, SelectedObservationIndexedBlock,
+    SelectedObservationMeasures, SelectedObservationMeasuresError, SelectedObservationProjector,
+    SelectedObservationReferenceDataBudget, SelectedObservationReplayAuthorization,
+    SelectedObservationReplayProof, SelectedObservationResidencyCertificate,
+    SelectedObservationRow, SelectedObservationRowSelection, SelectedObservationSpectralEnvelope,
     SelectedObservationSpectralEnvelopeReducer, SelectedObservationSpectralRange,
     SelectedObservationSpectralRangeMeasurements, SelectedObservationSpectralWindow,
     SelectedObservationTerminal, SelectedObservationTraversalError,
     SelectedObservationTraversalMeasurements, SelectedObservationTraversalRun,
-    SelectedObservationTraversalSample,
+    SelectedObservationTraversalSample, SelectedObservationWindowCompletion,
 };
 pub(crate) use selected_observation_buffer::{
     SelectedObservationBuffer, SelectedObservationBufferRequest, SelectedStoredSample,
@@ -166,6 +169,8 @@ pub(crate) use selected_observation_buffer::{
 };
 pub(crate) use selected_pointing::{
     PointingDirectionBracket, PointingDirectionColumn, PointingDirectionQuery, PointingReadPlan,
+    PreparedSelectedPointingCatalog, SelectedPointingCatalogMeasurements,
+    SelectedPointingQueryDomain,
 };
 pub use selection::syntax::{
     ChannelSelection, ChannelSelectionSegment, SpwSelector, parse_numeric_id_selector,

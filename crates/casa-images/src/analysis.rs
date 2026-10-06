@@ -3869,10 +3869,10 @@ where
                     continue;
                 }
                 let value = value.into();
-                if let Some([min, max]) = includepix {
-                    if value < min || value > max {
-                        continue;
-                    }
+                if let Some([min, max]) = includepix
+                    && (value < min || value > max)
+                {
+                    continue;
                 }
                 samples.push((value, *coord));
             }
@@ -3880,10 +3880,10 @@ where
         None => {
             for (value, coord) in values.into_iter().zip(coords.iter()) {
                 let value = value.into();
-                if let Some([min, max]) = includepix {
-                    if value < min || value > max {
-                        continue;
-                    }
+                if let Some([min, max]) = includepix
+                    && (value < min || value > max)
+                {
+                    continue;
                 }
                 samples.push((value, *coord));
             }
@@ -3981,19 +3981,19 @@ where
         for (chan, coord) in coords.iter().enumerate().take(input.shape()[axis]) {
             let mut full_index = out_index.clone();
             full_index.insert(axis, chan);
-            if let Some(mask) = mask {
-                if !mask[IxDyn(&full_index)] {
-                    continue;
-                }
+            if let Some(mask) = mask
+                && !mask[IxDyn(&full_index)]
+            {
+                continue;
             }
             let value = (*input.get(IxDyn(&full_index)).ok_or_else(|| {
                 ImageError::InvalidMetadata("moment index out of bounds".to_string())
             })?)
             .into();
-            if let Some([min, max]) = includepix {
-                if value < min || value > max {
-                    continue;
-                }
+            if let Some([min, max]) = includepix
+                && (value < min || value > max)
+            {
+                continue;
             }
             samples.push((value, *coord));
         }
@@ -4216,15 +4216,15 @@ where
         hdu.write_key(&mut fits, "OBJECT", info.object_name.as_str())
             .map_err(|error| ImageError::Io(error.to_string()))?;
     }
-    if let Some(beam) = info.beam_set.single_beam() {
-        if !beam.is_null() {
-            hdu.write_key(&mut fits, "BMAJ", beam.major_in("deg")?)
-                .map_err(|error| ImageError::Io(error.to_string()))?;
-            hdu.write_key(&mut fits, "BMIN", beam.minor_in("deg")?)
-                .map_err(|error| ImageError::Io(error.to_string()))?;
-            hdu.write_key(&mut fits, "BPA", beam.position_angle_in("deg")?)
-                .map_err(|error| ImageError::Io(error.to_string()))?;
-        }
+    if let Some(beam) = info.beam_set.single_beam()
+        && !beam.is_null()
+    {
+        hdu.write_key(&mut fits, "BMAJ", beam.major_in("deg")?)
+            .map_err(|error| ImageError::Io(error.to_string()))?;
+        hdu.write_key(&mut fits, "BMIN", beam.minor_in("deg")?)
+            .map_err(|error| ImageError::Io(error.to_string()))?;
+        hdu.write_key(&mut fits, "BPA", beam.position_angle_in("deg")?)
+            .map_err(|error| ImageError::Io(error.to_string()))?;
     }
     Ok(FitsExportSummary {
         imagename: imagename.display().to_string(),

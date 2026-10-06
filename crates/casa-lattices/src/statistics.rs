@@ -1348,7 +1348,7 @@ pub(crate) fn casacore_median(values: &[f64]) -> f64 {
     sorted.sort_by(nan_safe_cmp);
     let n = sorted.len();
     let n2 = (n - 1) / 2;
-    if n % 2 == 0 {
+    if n.is_multiple_of(2) {
         (sorted[n2] + sorted[n2 + 1]) / 2.0
     } else {
         sorted[n2]
@@ -1371,7 +1371,7 @@ pub(crate) fn casacore_madfm(values: &[f64]) -> f64 {
     devs.sort_by(nan_safe_cmp);
     let n = devs.len();
     let n2 = (n - 1) / 2;
-    if n % 2 == 0 {
+    if n.is_multiple_of(2) {
         (devs[n2] + devs[n2 + 1]) / 2.0
     } else {
         devs[n2]

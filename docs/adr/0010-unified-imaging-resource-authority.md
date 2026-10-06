@@ -8,6 +8,11 @@ Superseded by:
 
 ## Context
 
+ADR-0014 supersedes any requirement to allocate or schedule product attestation,
+its intermediate backing arrays, rereads or verification-only phases. Resource
+admission still covers actual bounded generation, CASA writing and publication
+lifetimes; unrelated preparation and persistence integrity are unchanged.
+
 Imaging performance is constrained jointly by processor capacity, memory,
 accelerators, storage, transfers, queues, caches, synchronization, and I/O
 buffers. Current authority is fragmented across planners, application
@@ -111,8 +116,10 @@ counted as planned capacity.
 
 A legal plan exposes prediction confidence, dominant uncertainty terms, and a
 machine-readable infeasibility certificate when no alternative fits. Failed and
-aborted executions are receipted and may constrain feasibility even when they
-are not promoted into the performance cost model.
+aborted executions retain useful final summaries. ADR-0014 supersedes historical
+receipt constraints: current resource admission alone governs feasibility;
+planning does not scan historical receipts, and routine progress does not rewrite
+whole receipts. Explicit cost-model promotion remains a separate decision.
 
 ### Leases and adaptation
 

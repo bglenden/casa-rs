@@ -121,14 +121,14 @@ fn product_validity() -> ProductValidityPolicies {
         PrimaryBeamValidityPolicy::new(
             0.2,
             ProductSupportComparison::StrictlyGreater,
-            ProductBlankingPolicy::ZeroAndFalseMask,
+            ProductBlankingPolicy::Zero,
         )
         .expect("valid primary-beam support"),
         TaylorValidityPolicy::new(
             TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
             0.1,
             ProductSupportComparison::StrictlyGreater,
-            ProductBlankingPolicy::ZeroAndFalseMask,
+            ProductBlankingPolicy::Zero,
         )
         .expect("valid Taylor support"),
     )
@@ -394,6 +394,333 @@ fn weighting() -> WeightingContract {
     )
 }
 
+#[test]
+fn t52_native_aw_identity_covers_every_resolved_scientific_input() {
+    use casa_imaging_model::{
+        EvlaDishSurface, NativeAwFrequencyGroup, NativeAwGrid, NativeAwRequest,
+        NativeAwRequestInput, NativeAwTerms,
+    };
+    let problem = compile_request(specification(false), inputs(false)).unwrap();
+    let surface = EvlaDishSurface::new(
+        (0..=1250)
+            .map(|n| {
+                let r = n as f64 / 100.0;
+                [r, 0.028 * r * r, 0.056 * r]
+            })
+            .collect(),
+    )
+    .unwrap();
+    let input = NativeAwRequestInput {
+        surface,
+        antenna_diameter_m: 25.0,
+        frequencies: vec![
+            NativeAwFrequencyGroup {
+                spectral_window: 2,
+                channel_frequencies_hz: vec![2.0e9, 2.1e9],
+                cf_frequency_hz: 2.05e9,
+            },
+            NativeAwFrequencyGroup {
+                spectral_window: 7,
+                channel_frequencies_hz: vec![3.2e9, 3.3e9],
+                cf_frequency_hz: 3.25e9,
+            },
+        ],
+        w_values: vec![0.0, 100.0],
+        w_increment: 0.01,
+        pa_values: vec![0.3, 0.9],
+        mueller_elements: vec![0, 15],
+        reference_frequency_hz: 2.9e9,
+        grid: NativeAwGrid {
+            size: 128,
+            sky_increment_rad: [-0.001, 0.001],
+            oversampling: 4,
+        },
+        terms: NativeAwTerms {
+            aperture: true,
+            w_term: true,
+            prolate_spheroidal: true,
+            wideband: true,
+            conjugate_beams: true,
+        },
+        maximum_cells: 32,
+    };
+    let baseline = NativeAwRequest::new(problem.geometry().geometry_id(), input.clone()).unwrap();
+    assert_eq!(baseline.cell_count(), 16);
+    let first = baseline.cell(0).unwrap();
+    assert_eq!(first.0.conjugate_frequency_hz, 3.25e9);
+    assert_eq!(first.0.mueller, 0);
+    assert_eq!(baseline.cell(1).unwrap().0.mueller, 15);
+    assert_eq!(baseline.cell(4).unwrap().0.w_wavelengths, 100.0);
+    assert!(baseline.cell(16).is_none());
+    let repeated = NativeAwRequest::new(problem.geometry().geometry_id(), input.clone()).unwrap();
+    for index in 0..baseline.cell_count() {
+        assert_eq!(baseline.cell(index), repeated.cell(index));
+    }
+    let changes: &[fn(&mut NativeAwRequestInput)] = &[
+        |i| i.grid.size = 256,
+        |i| i.grid.sky_increment_rad = [-0.002, 0.002],
+        |i| i.grid.oversampling = 8,
+        |i| i.frequencies[0].spectral_window = 3,
+        |i| i.frequencies[0].channel_frequencies_hz[0] += 1e6,
+        |i| i.frequencies[0].cf_frequency_hz += 1e6,
+        |i| i.w_values[1] += 1.0,
+        |i| i.w_increment *= 2.0,
+        |i| i.pa_values[1] += 0.1,
+        |i| i.mueller_elements = vec![0],
+        |i| i.reference_frequency_hz += 1e6,
+        |i| i.terms.aperture = false,
+        |i| {
+            i.terms.w_term = false;
+            i.w_values = vec![0.0];
+        },
+        |i| i.terms.prolate_spheroidal = false,
+        |i| {
+            i.terms.wideband = false;
+            i.frequencies.truncate(1);
+            i.frequencies[0].cf_frequency_hz = i.reference_frequency_hz;
+        },
+        |i| i.terms.conjugate_beams = false,
+        |i| {
+            let mut s = i.surface.samples().to_vec();
+            s[20][1] += 1e-6;
+            i.surface = EvlaDishSurface::new(s).unwrap();
+        },
+    ];
+    for (index, change) in changes.iter().enumerate() {
+        let mut changed = input.clone();
+        change(&mut changed);
+        let changed = NativeAwRequest::new(problem.geometry().geometry_id(), changed).unwrap();
+        assert_ne!(
+            first.1,
+            changed.cell(0).unwrap().1,
+            "scientific mutation {index}"
+        );
+    }
+    let mut bounded = input.clone();
+    bounded.maximum_cells = 15;
+    assert!(NativeAwRequest::new(problem.geometry().geometry_id(), bounded).is_err());
+    let mut diameter = input.clone();
+    diameter.antenna_diameter_m = 24.0;
+    assert!(NativeAwRequest::new(problem.geometry().geometry_id(), diameter).is_err());
+    let mut duplicate = input.clone();
+    duplicate.frequencies[1].spectral_window = 2;
+    assert!(NativeAwRequest::new(problem.geometry().geometry_id(), duplicate).is_err());
+    let mut resource_only = input;
+    resource_only.maximum_cells = 64;
+    assert_eq!(
+        first.1,
+        NativeAwRequest::new(problem.geometry().geometry_id(), resource_only)
+            .unwrap()
+            .cell(0)
+            .unwrap()
+            .1
+    );
+}
+
+#[test]
+fn prepared_cf_dependencies_exclude_solve_controls_but_retain_operator_science() {
+    use casa_imaging_model::PreparedArtifactScientificKind::{
+        ConvolutionFunction, Kernel, SpectralMap,
+    };
+
+    let make = |reconstruction, science, weighting, products, numerics, inputs| {
+        compile_request(
+            ProblemSpecification::new(
+                science,
+                reconstruction,
+                weighting,
+                products,
+                read_only_transaction(),
+                numerics,
+            ),
+            inputs,
+        )
+        .expect("prepared dependency fixture")
+    };
+    let baseline = make(
+        reconstruction(),
+        science(),
+        weighting(),
+        products(false),
+        numerics(false),
+        inputs(false),
+    );
+    let dependency = baseline.prepared_artifact_dependency_id(ConvolutionFunction);
+    for (algorithm, controls) in [
+        (
+            ReconstructionAlgorithm::Mtmfs {
+                scales_px: vec![0.0],
+                small_scale_bias: 0.0,
+            },
+            ReconstructionControls::new(0, 0.1, 0.0),
+        ),
+        (
+            ReconstructionAlgorithm::Mtmfs {
+                scales_px: vec![0.0],
+                small_scale_bias: 0.0,
+            },
+            ReconstructionControls::new(30, 0.2, 0.001),
+        ),
+    ] {
+        let other = make(
+            ReconstructionContract::new(
+                ReconstructionBasis::Taylor { terms: 2 },
+                algorithm,
+                controls,
+                PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+            ),
+            science(),
+            weighting(),
+            products(false),
+            numerics(false),
+            inputs(false),
+        );
+        assert_ne!(baseline.problem_id(), other.problem_id());
+        assert_eq!(
+            dependency,
+            other.prepared_artifact_dependency_id(ConvolutionFunction)
+        );
+        for kind in [SpectralMap, Kernel] {
+            assert_ne!(
+                baseline.prepared_artifact_dependency_id(kind),
+                other.prepared_artifact_dependency_id(kind)
+            );
+        }
+    }
+    let selected_products = ProductRequirements::new(
+        vec![ProductKind::Psf],
+        ProductNormalization::UnitResponse,
+        RestoringBeamPolicy::None,
+        product_validity(),
+    );
+    let publication = make(
+        reconstruction(),
+        science(),
+        weighting(),
+        selected_products,
+        numerics(false),
+        inputs(false),
+    );
+    assert_ne!(baseline.problem_id(), publication.problem_id());
+    assert_eq!(
+        dependency,
+        publication.prepared_artifact_dependency_id(ConvolutionFunction)
+    );
+
+    let variants = [
+        make(
+            reconstruction(),
+            ScientificContract::new(
+                SpectralContract::new(SpectralSamplingLaw::LINEAR, SpectralCoupling::Independent),
+                MeasurementEquationContract::new(InstrumentResponse::Scalar, inner_products()),
+            ),
+            weighting(),
+            products(false),
+            numerics(false),
+            inputs(false),
+        ),
+        make(
+            reconstruction(),
+            science(),
+            WeightingContract::new(
+                WeightingScheme::Briggs { robust: -0.5 },
+                WeightDensityScope::GlobalSelection,
+            ),
+            products(false),
+            numerics(false),
+            inputs(false),
+        ),
+        make(
+            reconstruction(),
+            science(),
+            weighting(),
+            products(false),
+            NumericsContract::new(
+                vec![NumericPrecision::F32, NumericPrecision::F64],
+                ReductionPolicy::Compensated,
+                FiniteValuePolicy::FlagInputRejectGenerated,
+                NumericalStage::ALL
+                    .into_iter()
+                    .map(|stage| (stage, StageErrorBudget::new(2.0e-7, 1.0e-3)))
+                    .collect(),
+            ),
+            inputs(false),
+        ),
+        make(
+            reconstruction(),
+            science(),
+            weighting(),
+            products(false),
+            numerics(false),
+            problem_inputs(
+                2,
+                vec![
+                    (ReferenceDataKind::Measures, identity(3)),
+                    (ReferenceDataKind::Ephemeris, identity(4)),
+                ],
+                ModelStateIdentity::Seed(identity(5)),
+            ),
+        ),
+        make(
+            reconstruction(),
+            science(),
+            weighting(),
+            products(false),
+            numerics(false),
+            problem_inputs(
+                1,
+                vec![
+                    (ReferenceDataKind::Measures, identity(8)),
+                    (ReferenceDataKind::Ephemeris, identity(4)),
+                ],
+                ModelStateIdentity::Seed(identity(5)),
+            ),
+        ),
+        compile_with_geometry(
+            specification(false),
+            geometry().with_domains(vec![geometry().domains()[0].clone().with_facets(
+                FacetLayout::Regular {
+                    columns: 2,
+                    rows: 2,
+                },
+            )]),
+            inputs(false),
+        )
+        .expect("changed geometry"),
+    ];
+    for other in variants {
+        assert_ne!(
+            dependency,
+            other.prepared_artifact_dependency_id(ConvolutionFunction)
+        );
+    }
+    let model = make(
+        reconstruction(),
+        science(),
+        weighting(),
+        products(false),
+        numerics(false),
+        problem_inputs(
+            1,
+            vec![
+                (ReferenceDataKind::Measures, identity(3)),
+                (ReferenceDataKind::Ephemeris, identity(4)),
+            ],
+            ModelStateIdentity::Seed(identity(9)),
+        ),
+    );
+    assert_ne!(baseline.problem_id(), model.problem_id());
+    assert_ne!(
+        baseline.inputs().observation(),
+        model.inputs().observation()
+    );
+    assert_ne!(
+        dependency,
+        model.prepared_artifact_dependency_id(ConvolutionFunction),
+        "the retained observation snapshot includes its initial model generation"
+    );
+}
+
 fn inputs(reverse: bool) -> ProblemInputIdentities {
     let mut references = vec![
         (ReferenceDataKind::Measures, identity(3)),
@@ -484,7 +811,7 @@ fn compiler_owns_the_exact_product_graph_and_atomic_publication_contract() {
     let reordered = compile_request(specification(true), inputs(true)).expect("compile reordered");
 
     assert_eq!(graph.graph_id(), reordered.product_graph().graph_id());
-    assert_eq!(graph.schema_version(), 3);
+    assert_eq!(graph.schema_version(), 4);
     assert_eq!(
         graph
             .nodes()
@@ -586,31 +913,40 @@ fn compiler_owns_the_exact_product_graph_and_atomic_publication_contract() {
 }
 
 #[test]
-fn unit_response_primary_beam_validity_is_explicit_request_semantics() {
+fn uncorrected_mask_is_separate_from_numeric_support_and_binds_publication_identity() {
     let validity = product_validity()
-        .with_unit_response(casa_imaging_model::UnitResponseValidityPolicy::PrimaryBeam);
-    let compiled = compile_request(
-        ProblemSpecification::new(
-            science(),
-            reconstruction(),
-            weighting(),
-            ProductRequirements::new(
-                vec![
-                    ProductKind::Residual,
-                    ProductKind::Model,
-                    ProductKind::RestoredImage,
-                    ProductKind::PrimaryBeam,
-                ],
-                ProductNormalization::UnitResponse,
-                RestoringBeamPolicy::PerPlane,
-                validity,
+        .with_uncorrected_mask(casa_imaging_model::UncorrectedImageMaskPolicy::PrimaryBeam);
+    let compile_with_policy = |validity| {
+        compile_request(
+            ProblemSpecification::new(
+                science(),
+                reconstruction(),
+                weighting(),
+                ProductRequirements::new(
+                    vec![
+                        ProductKind::Residual,
+                        ProductKind::Model,
+                        ProductKind::RestoredImage,
+                        ProductKind::PrimaryBeam,
+                    ],
+                    ProductNormalization::UnitResponse,
+                    RestoringBeamPolicy::PerPlane,
+                    validity,
+                ),
+                read_only_transaction(),
+                numerics(false),
             ),
-            read_only_transaction(),
-            numerics(false),
-        ),
-        inputs(false),
-    )
-    .expect("compile explicit primary-beam validity");
+            inputs(false),
+        )
+        .expect("compile explicit primary-beam mask policy")
+    };
+    let compiled = compile_with_policy(validity);
+    let absent = compile_with_policy(product_validity());
+    assert_ne!(compiled.problem_id(), absent.problem_id());
+    assert_ne!(
+        compiled.product_graph().graph_id(),
+        absent.product_graph().graph_id()
+    );
 
     for role in [
         ProductRole::Residual(ProductTerm::Taylor(0)),
@@ -622,8 +958,165 @@ fn unit_response_primary_beam_validity_is_explicit_request_semantics() {
                 .node(role)
                 .expect("uncorrected product")
                 .validity(),
-            ProductValidityRule::PrimaryBeam(validity.primary_beam()),
+            ProductValidityRule::FinalNormalState,
         );
+        assert_eq!(
+            compiled
+                .product_graph()
+                .node(role)
+                .unwrap()
+                .storage()
+                .pixel_mask(),
+            casa_imaging_model::ProductPixelMask::Explicit(ProductValidityRule::PrimaryBeam(
+                validity.primary_beam()
+            )),
+        );
+        assert_eq!(
+            absent
+                .product_graph()
+                .node(role)
+                .unwrap()
+                .storage()
+                .pixel_mask(),
+            casa_imaging_model::ProductPixelMask::Absent
+        );
+    }
+}
+
+#[test]
+fn single_and_taylor_storage_contracts_preserve_science_and_exact_casa_metadata() {
+    use casa_imaging_model::{ProductPixelMask, UncorrectedImageMaskPolicy};
+    for taylor in [false, true] {
+        for mask in [
+            UncorrectedImageMaskPolicy::None,
+            UncorrectedImageMaskPolicy::PrimaryBeam,
+        ] {
+            let validity = product_validity().with_uncorrected_mask(mask);
+            let mut requested = vec![
+                ProductKind::Psf,
+                ProductKind::Residual,
+                ProductKind::Model,
+                ProductKind::RestoredImage,
+                ProductKind::PrimaryBeam,
+                ProductKind::PbCorrectedImage,
+            ];
+            if taylor {
+                requested.extend([
+                    ProductKind::TaylorTerms,
+                    ProductKind::SpectralIndex,
+                    ProductKind::SpectralIndexError,
+                    ProductKind::PbCorrectedSpectralIndex,
+                ]);
+            }
+            let reconstruction = if taylor {
+                reconstruction()
+            } else {
+                ReconstructionContract::new(
+                    ReconstructionBasis::Constant,
+                    ReconstructionAlgorithm::Hogbom,
+                    ReconstructionControls::new(100, 0.1, 0.0),
+                    PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+                )
+            };
+            let compiled = compile_request(
+                ProblemSpecification::new(
+                    science(),
+                    reconstruction,
+                    weighting(),
+                    ProductRequirements::new(
+                        requested,
+                        ProductNormalization::UnitResponse,
+                        RestoringBeamPolicy::PerPlane,
+                        validity,
+                    ),
+                    read_only_transaction(),
+                    numerics(false),
+                ),
+                inputs(false),
+            )
+            .expect("storage contract matrix");
+            let graph = compiled.product_graph();
+            let terms = if taylor {
+                vec![ProductTerm::Taylor(0), ProductTerm::Taylor(1)]
+            } else {
+                vec![ProductTerm::Single]
+            };
+            let pb_mask = ProductPixelMask::Explicit(ProductValidityRule::PrimaryBeam(
+                validity.primary_beam(),
+            ));
+            for term in terms {
+                let psf = graph.node(ProductRole::Psf(term)).unwrap();
+                assert_eq!(psf.unit(), ProductUnit::JyPerBeam);
+                assert_eq!(psf.storage().unit(), None);
+                assert_eq!(psf.storage().pixel_mask(), ProductPixelMask::Absent);
+                let residual = graph.node(ProductRole::Residual(term)).unwrap();
+                assert_eq!(residual.unit(), ProductUnit::JyPerBeam);
+                assert_eq!(residual.storage().unit(), None);
+                assert!(!residual.storage().attach_beam());
+                assert_eq!(residual.validity(), ProductValidityRule::FinalNormalState);
+                let image = graph.node(ProductRole::RestoredImage(term)).unwrap();
+                assert_eq!(image.storage().unit(), Some(ProductUnit::JyPerBeam));
+                assert!(image.storage().attach_beam());
+                for member in [residual, image] {
+                    assert_eq!(
+                        member.storage().pixel_mask(),
+                        if mask == UncorrectedImageMaskPolicy::PrimaryBeam {
+                            pb_mask
+                        } else {
+                            ProductPixelMask::Absent
+                        }
+                    );
+                }
+                assert_eq!(
+                    graph
+                        .node(ProductRole::PbCorrectedImage(term))
+                        .unwrap()
+                        .storage()
+                        .pixel_mask(),
+                    pb_mask
+                );
+            }
+            let response_term = if taylor {
+                ProductTerm::Taylor(0)
+            } else {
+                ProductTerm::Single
+            };
+            assert_eq!(
+                graph
+                    .node(ProductRole::PrimaryBeam(response_term))
+                    .unwrap()
+                    .storage()
+                    .pixel_mask(),
+                pb_mask
+            );
+            if taylor {
+                assert_eq!(
+                    graph
+                        .node(ProductRole::PrimaryBeam(ProductTerm::Taylor(1)))
+                        .unwrap()
+                        .storage()
+                        .pixel_mask(),
+                    ProductPixelMask::Absent
+                );
+                for role in [ProductRole::SpectralIndex, ProductRole::SpectralIndexError] {
+                    assert_eq!(
+                        graph.node(role).unwrap().storage().pixel_mask(),
+                        ProductPixelMask::Explicit(ProductValidityRule::Taylor(validity.taylor()))
+                    );
+                }
+                assert_eq!(
+                    graph
+                        .node(ProductRole::PbCorrectedSpectralIndex)
+                        .unwrap()
+                        .storage()
+                        .pixel_mask(),
+                    ProductPixelMask::Explicit(ProductValidityRule::TaylorAndPrimaryBeam {
+                        taylor: validity.taylor(),
+                        primary_beam: validity.primary_beam(),
+                    })
+                );
+            }
+        }
     }
 }
 
@@ -719,8 +1212,8 @@ fn product_graph_identity_is_content_derived_and_stable_across_unrelated_problem
     assert_eq!(
         first.product_graph().graph_id().as_bytes(),
         [
-            139, 130, 57, 178, 38, 63, 150, 135, 182, 215, 213, 237, 156, 152, 40, 187, 235, 26,
-            221, 172, 147, 63, 210, 224, 10, 236, 117, 22, 5, 151, 235, 95,
+            226, 86, 70, 9, 128, 137, 8, 177, 64, 235, 56, 129, 92, 254, 223, 99, 204, 213, 226,
+            23, 33, 81, 13, 186, 217, 0, 75, 136, 230, 104, 29, 122,
         ]
     );
 }
@@ -1349,7 +1842,7 @@ fn canonical_identity_normalizes_signed_zero_but_changes_with_science() {
         positive_zero.weighting().commitment_id()
     );
     assert_ne!(positive_zero.problem_id(), changed.problem_id());
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 21);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 25);
 }
 
 #[test]
@@ -1661,6 +2154,14 @@ fn sequential_continuum_transform_is_a_compiled_capability_and_identity_input() 
             .contains(&RequiredCapability::SequentialContinuumTransform)
     );
     assert_ne!(plain.problem_id(), transformed.problem_id());
+    assert_ne!(
+        plain.prepared_artifact_dependency_id(
+            casa_imaging_model::PreparedArtifactScientificKind::ConvolutionFunction
+        ),
+        transformed.prepared_artifact_dependency_id(
+            casa_imaging_model::PreparedArtifactScientificKind::ConvolutionFunction
+        ),
+    );
 }
 
 #[test]
@@ -1805,13 +2306,13 @@ fn invalid_polarization_is_a_reconstruction_contract_error() {
 }
 
 #[test]
-fn compiled_problem_identity_has_a_pinned_schema_twenty_digest() {
+fn compiled_problem_identity_has_a_pinned_schema_twenty_five_digest() {
     let compiled = compile_request(specification(false), inputs(false)).expect("compile problem");
 
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 21);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 25);
     assert_eq!(
         compiled.problem_id().to_string(),
-        "8a660e2eaeef8cb12d4f3a19ad35016e53f670e627dc412a8f603bf935300548"
+        "8abd9c3a057e097d4c392f33b0e553f0306a206c4b5dcd64bcdfbadbc0d731d6"
     );
     let lifecycle = casa_imaging_model::LogicalIdentity::from_sha256(
         compiled.model_lifecycle().contract_id().as_bytes(),

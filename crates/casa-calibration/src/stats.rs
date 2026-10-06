@@ -604,7 +604,7 @@ fn median_of_sorted(values: &[f64]) -> f64 {
         return 0.0;
     }
     let mid = values.len() / 2;
-    if values.len() % 2 == 0 {
+    if values.len().is_multiple_of(2) {
         (values[mid - 1] + values[mid]) / 2.0
     } else {
         values[mid]

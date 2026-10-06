@@ -3,16 +3,26 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
-use std::path::PathBuf;
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Write};
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex, OnceLock};
-
-use crate::{ExecutionAttemptId, ReceiptStatus};
+use std::time::Instant;
 
 use casa_imaging_model::MeasurementSetIdentity;
 use sha2::{Digest, Sha256};
+use tempfile::Builder;
 
 static PRODUCTION_AUTHORITY: OnceLock<Result<ResourceAuthority, ResourceError>> = OnceLock::new();
+static STORAGE_OPERATIONS_CALIBRATIONS: OnceLock<
+    Mutex<BTreeMap<StorageOperationsCalibrationKey, StorageOperationsCalibration>>,
+> = OnceLock::new();
+
+const STORAGE_OPERATIONS_PROBE_VERSION: u32 = 1;
+const STORAGE_OPERATIONS_PROBE_BYTES: usize = 4096;
+const STORAGE_OPERATIONS_RATE_DOMAIN: &[u8] = b"casa-rs/storage-operations-rate/v1\0";
 
 /// Stable identity of one physical memory-capacity domain.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -385,7 +395,21 @@ pub struct ProductionStorageProfile {
     domain: StorageDomainId,
     read_rate: RateResourceId,
     write_rate: RateResourceId,
+    operations_rate: RateResourceId,
     queue: QueueResourceId,
+    operations_calibration: Option<StorageOperationsCalibration>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct StorageOperationsCalibrationKey {
+    filesystem_root: PathBuf,
+    device: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct StorageOperationsCalibration {
+    operations_per_second: u64,
+    evidence: [u8; 32],
 }
 
 impl ProductionStorageProfile {
@@ -431,8 +455,76 @@ impl ProductionStorageProfile {
             domain: StorageDomainId::new(format!("production-output-{suffix}")),
             read_rate: RateResourceId::new(format!("production-output-read-{suffix}")),
             write_rate: RateResourceId::new(format!("production-output-write-{suffix}")),
+            operations_rate: RateResourceId::new(format!(
+                "production-output-operations-v{STORAGE_OPERATIONS_PROBE_VERSION}-{suffix}"
+            )),
             queue: QueueResourceId::new(format!("production-output-queue-{suffix}")),
+            operations_calibration: None,
         })
+    }
+
+    /// Measure a bounded direct-filesystem operations rate at the exact writable domain.
+    ///
+    /// The probe protocol is runtime-owned and exposes no raw rate setter. The
+    /// first successful measurement for a canonical filesystem root/device is
+    /// retained for the process, so repeated construction reuses identical
+    /// calibration evidence rather than treating timing jitter as new topology.
+    pub fn with_measured_operations_rate(
+        mut self,
+        writable_directory: impl AsRef<Path>,
+    ) -> Result<Self, ResourceError> {
+        let filesystem_root = self
+            .filesystem_root
+            .canonicalize()
+            .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+        let writable_directory = writable_directory
+            .as_ref()
+            .canonicalize()
+            .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+        let root_metadata = filesystem_root
+            .metadata()
+            .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+        let directory_metadata = writable_directory
+            .metadata()
+            .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+        if !writable_directory.starts_with(&filesystem_root)
+            || !directory_metadata.file_type().is_dir()
+            || root_metadata.dev() != directory_metadata.dev()
+        {
+            return Err(ResourceError::StorageOperationsCalibration(
+                "probe directory is not on the configured filesystem".to_string(),
+            ));
+        }
+        let key = StorageOperationsCalibrationKey {
+            filesystem_root,
+            device: directory_metadata.dev(),
+        };
+        let calibrations = STORAGE_OPERATIONS_CALIBRATIONS.get_or_init(Default::default);
+        let mut calibrations = calibrations
+            .lock()
+            .map_err(|_| ResourceError::AuthorityPoisoned)?;
+        let calibration = if let Some(calibration) = calibrations.get(&key) {
+            calibration.clone()
+        } else {
+            let calibration = measure_storage_operations(&key, &writable_directory)?;
+            calibrations.insert(key, calibration.clone());
+            calibration
+        };
+        self.operations_calibration = Some(calibration);
+        let calibration = self
+            .operations_calibration
+            .as_ref()
+            .expect("calibration was just installed");
+        let evidence = calibration
+            .evidence
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        self.operations_rate = RateResourceId::new(format!(
+            "production-output-operations-v{STORAGE_OPERATIONS_PROBE_VERSION}-{}-{evidence}",
+            calibration.operations_per_second
+        ));
+        Ok(self)
     }
 
     /// Return the path-free storage-domain identity.
@@ -453,6 +545,14 @@ impl ProductionStorageProfile {
         &self.write_rate
     }
 
+    /// Return the measured operations-rate identity when this profile was calibrated.
+    #[must_use]
+    pub fn operations_rate_id(&self) -> Option<&RateResourceId> {
+        self.operations_calibration
+            .as_ref()
+            .map(|_| &self.operations_rate)
+    }
+
     /// Return the bounded output queue identity.
     #[must_use]
     pub const fn queue_id(&self) -> &QueueResourceId {
@@ -470,14 +570,128 @@ impl ProductionStorageProfile {
         )
     }
 
+    /// Return the exact filesystem-backed storage domain registered by this profile.
+    #[must_use]
+    pub fn storage_domain(&self) -> StorageDomain {
+        StorageDomain {
+            id: self.domain.clone(),
+            root: self.filesystem_root.clone(),
+            capacity_bytes: self.capacity_bytes,
+            read_rate: self.read_rate.clone(),
+            write_rate: self.write_rate.clone(),
+            operations_rate: self
+                .operations_calibration
+                .as_ref()
+                .map(|_| self.operations_rate.clone()),
+            queue: self.queue.clone(),
+        }
+    }
+
     fn same_calibration(&self, other: &Self) -> bool {
         self.filesystem_root == other.filesystem_root
             && self.capacity_bytes == other.capacity_bytes
             && self.read_bytes_per_second == other.read_bytes_per_second
             && self.write_bytes_per_second == other.write_bytes_per_second
+            && self.operations_calibration == other.operations_calibration
             && self.queue_slots == other.queue_slots
             && self.table_lock_slots == other.table_lock_slots
     }
+}
+
+fn measure_storage_operations(
+    key: &StorageOperationsCalibrationKey,
+    writable_directory: &Path,
+) -> Result<StorageOperationsCalibration, ResourceError> {
+    let temporary = Builder::new()
+        .prefix(".casa-rs-storage-operations-")
+        .tempdir_in(writable_directory)
+        .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+    let initial = temporary.path().join("probe-initial");
+    let renamed = temporary.path().join("probe-renamed");
+    let payload = [0xA5_u8; STORAGE_OPERATIONS_PROBE_BYTES];
+    let mut operations = 0_u64;
+    let started = Instant::now();
+
+    operations += 1;
+    let mut output = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&initial)
+        .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+    operations += 1;
+    output
+        .write_all(&payload)
+        .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+    operations += 1;
+    output
+        .sync_all()
+        .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+    drop(output);
+
+    operations += 1;
+    std::fs::rename(&initial, &renamed)
+        .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+    operations += 1;
+    let directory = File::open(temporary.path())
+        .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+    operations += 1;
+    directory
+        .sync_all()
+        .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+
+    operations += 1;
+    let mut input = File::open(&renamed)
+        .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+    let mut observed = [0_u8; STORAGE_OPERATIONS_PROBE_BYTES];
+    operations += 1;
+    input
+        .read_exact(&mut observed)
+        .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+    if observed != payload {
+        return Err(ResourceError::StorageOperationsCalibration(
+            "probe read did not reproduce the synchronized bytes".to_string(),
+        ));
+    }
+    drop(input);
+
+    operations += 1;
+    std::fs::remove_file(&renamed)
+        .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+    operations += 1;
+    directory
+        .sync_all()
+        .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+    drop(directory);
+    operations += 1;
+    temporary
+        .close()
+        .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+
+    let elapsed_nanos = started.elapsed().as_nanos();
+    let numerator = u128::from(operations)
+        .checked_mul(1_000_000_000)
+        .ok_or(ResourceError::Overflow("storage operations calibration"))?;
+    let operations_per_second = numerator
+        .checked_div(elapsed_nanos)
+        .and_then(|rate| u64::try_from(rate).ok())
+        .filter(|rate| *rate > 0)
+        .ok_or_else(|| {
+            ResourceError::StorageOperationsCalibration(
+                "probe produced no bounded nonzero operations rate".to_string(),
+            )
+        })?;
+    let mut hasher = Sha256::new();
+    hasher.update(STORAGE_OPERATIONS_RATE_DOMAIN);
+    hasher.update(STORAGE_OPERATIONS_PROBE_VERSION.to_le_bytes());
+    hasher.update(key.filesystem_root.as_os_str().as_encoded_bytes());
+    hasher.update(key.device.to_le_bytes());
+    hasher.update(operations.to_le_bytes());
+    hasher.update(elapsed_nanos.to_le_bytes());
+    hasher.update(operations_per_second.to_le_bytes());
+    Ok(StorageOperationsCalibration {
+        operations_per_second,
+        evidence: hasher.finalize().into(),
+    })
 }
 
 impl HostInventory {
@@ -502,6 +716,12 @@ impl HostInventory {
             .pressure
             .rate_available_per_second
             .insert(profile.write_rate.clone(), profile.write_bytes_per_second);
+        if let Some(calibration) = &profile.operations_calibration {
+            inventory.pressure.rate_available_per_second.insert(
+                profile.operations_rate.clone(),
+                calibration.operations_per_second,
+            );
+        }
         inventory
             .pressure
             .queue_available_slots
@@ -512,7 +732,10 @@ impl HostInventory {
             capacity_bytes: profile.capacity_bytes,
             read_rate: profile.read_rate.clone(),
             write_rate: profile.write_rate.clone(),
-            operations_rate: None,
+            operations_rate: profile
+                .operations_calibration
+                .as_ref()
+                .map(|_| profile.operations_rate.clone()),
             queue: profile.queue.clone(),
         });
         inventory.topology.rate_resources.extend([
@@ -527,6 +750,13 @@ impl HostInventory {
                 profile.write_bytes_per_second,
             ),
         ]);
+        if let Some(calibration) = &profile.operations_calibration {
+            inventory.topology.rate_resources.push(RateResource::new(
+                profile.operations_rate.clone(),
+                RateUnit::OperationsPerSecond,
+                calibration.operations_per_second,
+            ));
+        }
         inventory.topology.queue_resources.push(QueueResource::new(
             profile.queue.clone(),
             profile.queue_slots,
@@ -1052,31 +1282,6 @@ pub struct DemandAlternatives {
     pub alternatives: Vec<DemandAlternative>,
 }
 
-/// One integrity-checked quantitative receipt constraint supplied to Resource
-/// Authority during planning.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct RecordedAdmissionConstraint {
-    pub(crate) alternative: AlternativeId,
-    pub(crate) resource: ResourceIdentity,
-    pub(crate) required: u64,
-    pub(crate) available: u64,
-    pub(crate) attempt: ExecutionAttemptId,
-    pub(crate) status: ReceiptStatus,
-}
-
-impl RecordedAdmissionConstraint {
-    fn current_available(
-        &self,
-        alternative: &AlternativeId,
-        available: &ResourceGrant,
-    ) -> Result<Option<u64>, ResourceError> {
-        if self.alternative != *alternative {
-            return Ok(None);
-        }
-        resource_available(available, &self.resource).map(Some)
-    }
-}
-
 /// Named runtime-overhead category owned by a lease.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RuntimeOverheadKind {
@@ -1370,6 +1575,8 @@ pub enum ResourceError {
     Overflow(&'static str),
     /// Production host detection failed.
     Detection(String),
+    /// The runtime-owned direct-filesystem operations probe failed.
+    StorageOperationsCalibration(String),
     /// The process production authority was already initialized.
     ProductionAlreadyInitialized,
     /// The process authority was initialized with another storage profile.
@@ -1464,16 +1671,6 @@ pub enum AlternativeRejectionReason {
         /// Amount available after policy, pressure, and active leases.
         available: u64,
     },
-    /// Resource Authority applied an explicit prior terminal receipt constraint
-    /// for the same quantitative pressure region. A later admission with
-    /// recovered capacity is retried normally. This is an admission input,
-    /// not cost-model learning.
-    RecordedFailure {
-        /// Attempt whose terminal receipt recorded the failure.
-        attempt: ExecutionAttemptId,
-        /// Terminal status retained by that receipt.
-        status: ReceiptStatus,
-    },
 }
 
 /// Machine-readable refusal evidence for one named demand alternative.
@@ -1532,8 +1729,7 @@ impl AdmissionInfeasibilityCertificate {
                     available,
                     ..
                 } => Some((*required, *available)),
-                AlternativeRejectionReason::NoCapableAlternative
-                | AlternativeRejectionReason::RecordedFailure { .. } => None,
+                AlternativeRejectionReason::NoCapableAlternative => None,
             })
     }
 }
@@ -1557,10 +1753,6 @@ impl fmt::Display for AdmissionInfeasibilityCertificate {
                     formatter,
                     "{alternative} requires {required} {resource}, but only {available} is available"
                 )?,
-                AlternativeRejectionReason::RecordedFailure { attempt, status } => write!(
-                    formatter,
-                    "{alternative} was recorded terminally {status:?} by attempt {attempt}"
-                )?,
             }
         }
         Ok(())
@@ -1573,6 +1765,12 @@ impl fmt::Display for ResourceError {
             Self::Invalid(message) => write!(formatter, "invalid resource declaration: {message}"),
             Self::Overflow(category) => write!(formatter, "{category} arithmetic overflowed"),
             Self::Detection(message) => write!(formatter, "resource detection failed: {message}"),
+            Self::StorageOperationsCalibration(message) => {
+                write!(
+                    formatter,
+                    "storage operations calibration failed: {message}"
+                )
+            }
             Self::ProductionAlreadyInitialized => {
                 formatter.write_str("production resource authority is already initialized")
             }
@@ -1637,6 +1835,14 @@ struct LeaseRecord {
     consumed: BTreeMap<LeaseResource, u64>,
     outstanding_fences: u64,
     release_requested: bool,
+    artifact_retention: bool,
+}
+
+#[derive(Clone, Debug)]
+enum ArtifactCapacity {
+    Memory(Box<[CapacityDomainId]>),
+    Storage(StorageDomainId),
+    FileDescriptors,
 }
 
 #[derive(Debug)]
@@ -1784,6 +1990,12 @@ impl ResourceAuthority {
         pressure
             .rate_available_per_second
             .insert(profile.write_rate.clone(), profile.write_bytes_per_second);
+        if let Some(calibration) = &profile.operations_calibration {
+            pressure.rate_available_per_second.insert(
+                profile.operations_rate.clone(),
+                calibration.operations_per_second,
+            );
+        }
         pressure
             .queue_available_slots
             .insert(profile.queue.clone(), profile.queue_slots);
@@ -1873,20 +2085,65 @@ impl ResourceAuthority {
             &base.demand.host_memory_view,
         )?;
         add_grant(&mut reserved, &headroom)?;
+        self.remaining_memory_bytes(policy, &base.demand.host_memory_view, reserved)
+    }
+
+    /// Quote current host capacity for an unopened selected source, preserving
+    /// policy reserves and active leases including their headroom. This is
+    /// source-only feasibility: the complete plan's demand and additional
+    /// headroom are checked by its later admission, not reserved by this quote.
+    pub(crate) fn remaining_selected_source_memory_bytes(
+        &self,
+        policy: &ResourcePolicy,
+    ) -> Result<u64, ResourceError> {
+        validate_policy(&self.inner.topology, policy)?;
+        let host_view = self
+            .inner
+            .topology
+            .memory_views
+            .iter()
+            .find(|view| view.kind == MemoryViewKind::Host)
+            .ok_or_else(|| ResourceError::Invalid("host memory view is missing".to_string()))?;
+        self.remaining_memory_bytes(policy, &host_view.id, ResourceGrant::default())
+    }
+
+    pub(crate) fn planning_worker_capacity(
+        &self,
+        policy: &ResourcePolicy,
+    ) -> Result<u64, ResourceError> {
+        validate_policy(&self.inner.topology, policy)?;
+        let state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| ResourceError::AuthorityPoisoned)?;
+        let pressured = capacity_under_pressure(&self.inner.topology, &state);
+        let policy_capacity =
+            apply_concurrent_policies(&self.inner.topology, &state, policy, &pressured);
+        Ok(available_after_active_leases(&state, policy_capacity)?
+            .hard
+            .workers)
+    }
+
+    fn remaining_memory_bytes(
+        &self,
+        policy: &ResourcePolicy,
+        host_memory_view: &CapacityViewId,
+        reserved: ResourceGrant,
+    ) -> Result<u64, ResourceError> {
         let domain = self
             .inner
             .topology
             .memory_views
             .iter()
             .find(|candidate| {
-                candidate.id == base.demand.host_memory_view
-                    && candidate.kind == MemoryViewKind::Host
+                candidate.id == *host_memory_view && candidate.kind == MemoryViewKind::Host
             })
             .map(|candidate| candidate.domain.clone())
             .ok_or_else(|| {
                 ResourceError::Invalid(format!(
                     "planning memory view {} is not host-visible",
-                    base.demand.host_memory_view.as_str()
+                    host_memory_view.as_str()
                 ))
             })?;
         let state = self
@@ -1897,12 +2154,27 @@ impl ResourceAuthority {
         let pressured = capacity_under_pressure(&self.inner.topology, &state);
         let policy_capacity =
             apply_concurrent_policies(&self.inner.topology, &state, policy, &pressured);
+        let policy_memory = policy_capacity.hard.memory_bytes(&domain);
         let available = available_after_active_leases(&state, policy_capacity)?;
         let reservation = ResourceTotals {
             hard: reserved.clone(),
             preferred: reserved.clone(),
         };
         admit_totals(&reservation, &available)?;
+        if std::env::var_os("CASA_RS_TRACE_IMAGING_STAGE_TIMING").is_some() {
+            eprintln!(
+                "planning_memory domain={} pressured_bytes={} policy_bytes={} after_leases_bytes={} reserved_bytes={} remaining_bytes={}",
+                domain.as_str(),
+                pressured.memory_bytes(&domain),
+                policy_memory,
+                available.hard.memory_bytes(&domain),
+                reserved.memory_bytes(&domain),
+                available
+                    .hard
+                    .memory_bytes(&domain)
+                    .saturating_sub(reserved.memory_bytes(&domain)),
+            );
+        }
         Ok(available
             .hard
             .memory_bytes(&domain)
@@ -1914,19 +2186,6 @@ impl ResourceAuthority {
         &self,
         policy: ResourcePolicy,
         alternatives: DemandAlternatives,
-    ) -> Result<ResourceLease, ResourceError> {
-        self.acquire_with_recorded_constraints(policy, alternatives, &[])
-    }
-
-    /// Atomically selects, admits, and reserves one demand alternative while
-    /// applying explicit integrity-checked receipt constraints. Receipt
-    /// evidence is an admission input owned by this authority; it is never a
-    /// planner-side candidate filter or a cost-model update.
-    pub(crate) fn acquire_with_recorded_constraints(
-        &self,
-        policy: ResourcePolicy,
-        alternatives: DemandAlternatives,
-        recorded_constraints: &[RecordedAdmissionConstraint],
     ) -> Result<ResourceLease, ResourceError> {
         validate_policy(&self.inner.topology, &policy)?;
         if alternatives.alternatives.is_empty() {
@@ -1978,36 +2237,6 @@ impl ResourceAuthority {
                 hard: reserved.clone(),
                 preferred: reserved.clone(),
             };
-            let mut recorded = None;
-            for constraint in recorded_constraints {
-                let Some(current_available) =
-                    constraint.current_available(&alternative.id, &policy_available.hard)?
-                else {
-                    continue;
-                };
-                // A receipt constrains only the pressure region it observed.
-                // Any increase above that recorded availability reopens the
-                // candidate for normal current admission.
-                if current_available <= constraint.available
-                    && recorded.as_ref().is_none_or(
-                        |(current, _): &(&RecordedAdmissionConstraint, u64)| {
-                            constraint.available > current.available
-                        },
-                    )
-                {
-                    recorded = Some((constraint, current_available));
-                }
-            }
-            if let Some((constraint, _current_available)) = recorded {
-                rejections.push(AlternativeRejection::new(
-                    alternative.id.clone(),
-                    AlternativeRejectionReason::RecordedFailure {
-                        attempt: constraint.attempt,
-                        status: constraint.status,
-                    },
-                ));
-                continue;
-            }
             if let Err(ResourceError::Infeasible {
                 resource,
                 required,
@@ -2054,6 +2283,7 @@ impl ResourceAuthority {
                 consumed: BTreeMap::new(),
                 outstanding_fences: 0,
                 release_requested: false,
+                artifact_retention: false,
             },
         );
         Ok(ResourceLease {
@@ -2331,6 +2561,7 @@ impl ResourceLease {
             resource,
             accounting_resource,
             amount,
+            artifact_capacity: None,
             released: false,
         })
     }
@@ -2367,10 +2598,86 @@ impl ResourceLease {
         Ok(LeaseRelease { released })
     }
 
-    /// Release the execution lease while retaining only consumed temporary
-    /// storage transferred to a sealed artifact.
-    pub(crate) fn release_retaining_artifact_storage(
+    /// Bind an exported permit to its exact physical capacity provenance.
+    /// The scheduler prepares each permit before transferring artifact ownership.
+    pub(crate) fn prepare_artifact_retention(
+        &self,
+        mut permit: ResourcePermit,
+    ) -> Result<ResourcePermit, ResourceError> {
+        if permit.released
+            || permit.lease_id != self.lease_id
+            || !Arc::ptr_eq(&permit.inner, &self.inner)
+            || permit.artifact_capacity.is_some()
+        {
+            return Err(ResourceError::Invalid(
+                "artifact preparation requires an unprepared live permit from this lease"
+                    .to_string(),
+            ));
+        }
+        let state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| ResourceError::AuthorityPoisoned)?;
+        let record = state.leases.get(&self.lease_id).ok_or_else(|| {
+            ResourceError::Invalid(
+                "cannot prepare an artifact from an absent resource lease".to_string(),
+            )
+        })?;
+        if record.release_requested {
+            return Err(ResourceError::Invalid(
+                "cannot prepare an artifact after lease release was requested".to_string(),
+            ));
+        }
+        permit.artifact_capacity = Some(self.artifact_capacity(&permit.resource)?);
+        Ok(permit)
+    }
+
+    fn artifact_capacity(
+        &self,
+        resource: &LeaseResource,
+    ) -> Result<ArtifactCapacity, ResourceError> {
+        match resource {
+            LeaseResource::Memory { allocation_id } => {
+                let memory = self.alternative.demand.memory.iter()
+                    .find(|memory| &memory.allocation_id == allocation_id)
+                    .ok_or_else(|| ResourceError::Invalid(
+                        "artifact allocation is absent from the admitted memory demand".to_string(),
+                    ))?;
+                let mut domains = memory.views.iter().map(|view_id| {
+                    self.inner.topology.memory_views.iter()
+                        .find(|view| &view.id == view_id)
+                        .map(|view| view.domain.clone())
+                        .ok_or_else(|| ResourceError::Invalid(
+                            "artifact allocation references an unknown memory view".to_string(),
+                        ))
+                }).collect::<Result<Vec<_>, _>>()?;
+                domains.sort_unstable();
+                domains.dedup();
+                Ok(ArtifactCapacity::Memory(domains.into_boxed_slice()))
+            }
+            LeaseResource::Storage { demand_id, use_kind: StorageUseKind::Temporary } => {
+                self.alternative.demand.storage.iter()
+                    .find(|demand| &demand.demand_id == demand_id)
+                    .map(|demand| ArtifactCapacity::Storage(demand.domain.clone()))
+                    .ok_or_else(|| ResourceError::Invalid(format!(
+                        "artifact storage permit references unknown demand {demand_id}",
+                    )))
+            }
+            LeaseResource::FileDescriptors => Ok(ArtifactCapacity::FileDescriptors),
+            _ => Err(ResourceError::Invalid(
+                "artifact retention may keep only temporary storage, file descriptors, and scheduler-exported immutable memory".to_string(),
+            )),
+        }
+    }
+
+    /// Release execution resources while preserving live temporary storage,
+    /// dedicated immutable memory allocations, and file-descriptor permits
+    /// exported by the scheduler.
+    /// Artifacts dropped before finalization leave no retained reservation.
+    pub(crate) fn release_retaining_artifact_resources(
         mut self,
+        exported_resources: &BTreeSet<LeaseResource>,
     ) -> Result<LeaseRelease, ResourceError> {
         let mut state = self
             .inner
@@ -2380,41 +2687,58 @@ impl ResourceLease {
         let record = state.leases.get_mut(&self.lease_id).ok_or_else(|| {
             ResourceError::Invalid("cannot narrow an absent resource lease".to_string())
         })?;
-        if record.outstanding_fences != 0 || record.consumed.is_empty() {
+        if record.outstanding_fences != 0 {
             return Err(ResourceError::Invalid(
-                "artifact retention requires settled work and a consumed storage permit"
-                    .to_string(),
+                "artifact retention requires every execution fence to settle".to_string(),
             ));
+        }
+        if record.consumed.is_empty() {
+            state.leases.remove(&self.lease_id);
+            self.release_requested = true;
+            return Ok(LeaseRelease { released: true });
         }
         let mut retained = ResourceGrant::default();
         for (resource, amount) in &record.consumed {
-            let LeaseResource::Storage {
-                demand_id,
-                use_kind: StorageUseKind::Temporary,
-            } = resource
-            else {
+            if !exported_resources.contains(resource) {
                 return Err(ResourceError::Invalid(
-                    "artifact retention may keep only temporary storage".to_string(),
+                    "artifact retention requires a scheduler-exported immutable memory or temporary-storage permit".to_string(),
                 ));
-            };
-            let domain = self
-                .alternative
-                .demand
-                .storage
-                .iter()
-                .find(|demand| &demand.demand_id == demand_id)
-                .map(|demand| demand.domain.clone())
-                .ok_or_else(|| {
-                    ResourceError::Invalid(format!(
-                        "artifact storage permit references unknown demand {demand_id}"
-                    ))
-                })?;
-            let retained_bytes = retained.storage_bytes.entry(domain).or_default();
-            *retained_bytes = retained_bytes
-                .checked_add(*amount)
-                .ok_or(ResourceError::Overflow("artifact-retained storage"))?;
+            }
+            match self.artifact_capacity(resource)? {
+                ArtifactCapacity::Memory(domains) => {
+                    if record.limits.get(resource) != Some(amount) {
+                        return Err(ResourceError::Invalid(
+                            "artifact allocation must retain its exact admitted physical capacity"
+                                .to_string(),
+                        ));
+                    }
+                    for domain in &domains {
+                        add_map_bytes(
+                            &mut retained.memory_bytes,
+                            domain.clone(),
+                            *amount,
+                            "artifact-retained memory",
+                        )?;
+                    }
+                }
+                ArtifactCapacity::Storage(domain) => {
+                    add_resource_amount(
+                        &mut retained.storage_bytes,
+                        domain,
+                        *amount,
+                        "artifact-retained storage",
+                    )?;
+                }
+                ArtifactCapacity::FileDescriptors => {
+                    retained.file_descriptors =
+                        retained.file_descriptors.checked_add(*amount).ok_or(
+                            ResourceError::Overflow("artifact-retained file descriptors"),
+                        )?;
+                }
+            }
         }
         record.reserved = retained;
+        record.artifact_retention = true;
         record.release_requested = true;
         self.release_requested = true;
         Ok(LeaseRelease { released: false })
@@ -2560,10 +2884,32 @@ pub struct ResourcePermit {
     resource: LeaseResource,
     accounting_resource: LeaseResource,
     amount: u64,
+    artifact_capacity: Option<ArtifactCapacity>,
     released: bool,
 }
 
 impl ResourcePermit {
+    /// Additional prepared-permit heap for production's single physical host domain.
+    /// Multiple views of that domain share one capacity entry; inline provenance
+    /// is already included in the permit allocation itself.
+    pub(crate) fn artifact_retention_heap_bytes(
+        resource: &LeaseResource,
+        memory_domain: &str,
+        storage_domain: &str,
+    ) -> Option<usize> {
+        match resource {
+            LeaseResource::Memory { .. } => {
+                std::mem::size_of::<CapacityDomainId>().checked_add(memory_domain.len())
+            }
+            LeaseResource::Storage {
+                use_kind: StorageUseKind::Temporary,
+                ..
+            } => Some(storage_domain.len()),
+            LeaseResource::FileDescriptors => Some(0),
+            _ => None,
+        }
+    }
+
     /// Returns the named resource owned by this permit.
     pub const fn resource(&self) -> &LeaseResource {
         &self.resource
@@ -2607,6 +2953,7 @@ impl ResourcePermit {
             &self.resource,
             &self.accounting_resource,
             returned,
+            self.artifact_capacity.as_ref(),
         )?;
         self.amount = amount;
         Ok(())
@@ -2620,6 +2967,7 @@ impl ResourcePermit {
             &self.resource,
             &self.accounting_resource,
             self.amount,
+            self.artifact_capacity.as_ref(),
         )?;
         self.released = true;
         Ok(LeaseRelease { released })
@@ -2635,6 +2983,7 @@ impl Drop for ResourcePermit {
                 &self.resource,
                 &self.accounting_resource,
                 self.amount,
+                self.artifact_capacity.as_ref(),
             );
         }
     }
@@ -2708,17 +3057,18 @@ fn release_permit(
     resource: &LeaseResource,
     accounting_resource: &LeaseResource,
     amount: u64,
+    artifact_capacity: Option<&ArtifactCapacity>,
 ) -> Result<bool, ResourceError> {
     let mut state = inner
         .state
         .lock()
         .map_err(|_| ResourceError::AuthorityPoisoned)?;
-    if let LeaseResource::MeasurementSetLock { measurement_set } = resource {
-        if state.active_measurement_set_locks.get(measurement_set) != Some(&lease_id) {
-            return Err(ResourceError::Invalid(
-                "exact MeasurementSet lock ownership is absent".to_string(),
-            ));
-        }
+    if let LeaseResource::MeasurementSetLock { measurement_set } = resource
+        && state.active_measurement_set_locks.get(measurement_set) != Some(&lease_id)
+    {
+        return Err(ResourceError::Invalid(
+            "exact MeasurementSet lock ownership is absent".to_string(),
+        ));
     }
     let released = {
         let record = state.leases.get_mut(&lease_id).ok_or_else(|| {
@@ -2734,6 +3084,62 @@ fn release_permit(
         let remaining = consumed.checked_sub(amount).ok_or_else(|| {
             ResourceError::Invalid("lease permit consumption underflowed".to_string())
         })?;
+        if record.artifact_retention {
+            let capacity = artifact_capacity.ok_or_else(|| {
+                ResourceError::Invalid(
+                    "retained artifact permit has no prepared capacity provenance".to_string(),
+                )
+            })?;
+            match capacity {
+                ArtifactCapacity::Memory(domains) => {
+                    for domain in domains {
+                        let reserved =
+                            record
+                                .reserved
+                                .memory_bytes
+                                .get_mut(domain)
+                                .ok_or_else(|| {
+                                    ResourceError::Invalid(
+                                        "artifact memory reservation is absent".to_string(),
+                                    )
+                                })?;
+                        *reserved = reserved.checked_sub(amount).ok_or_else(|| {
+                            ResourceError::Invalid(
+                                "artifact memory reservation underflowed".to_string(),
+                            )
+                        })?;
+                    }
+                }
+                ArtifactCapacity::Storage(domain) => {
+                    let reserved =
+                        record
+                            .reserved
+                            .storage_bytes
+                            .get_mut(domain)
+                            .ok_or_else(|| {
+                                ResourceError::Invalid(
+                                    "artifact storage reservation is absent".to_string(),
+                                )
+                            })?;
+                    *reserved = reserved.checked_sub(amount).ok_or_else(|| {
+                        ResourceError::Invalid(
+                            "artifact storage reservation underflowed".to_string(),
+                        )
+                    })?;
+                }
+                ArtifactCapacity::FileDescriptors => {
+                    record.reserved.file_descriptors = record
+                        .reserved
+                        .file_descriptors
+                        .checked_sub(amount)
+                        .ok_or_else(|| {
+                            ResourceError::Invalid(
+                                "artifact file descriptor reservation underflowed".to_string(),
+                            )
+                        })?;
+                }
+            }
+        }
         if remaining == 0 {
             record.consumed.remove(accounting_resource);
         } else {
@@ -2959,47 +3365,6 @@ fn admit_totals(
         &available.preferred.accelerator_slots,
     )?;
     Ok(GrantedTotals { hard, preferred })
-}
-
-fn resource_available(
-    available: &ResourceGrant,
-    resource: &ResourceIdentity,
-) -> Result<u64, ResourceError> {
-    let identity = resource.as_str();
-    let scalar = match identity {
-        "workers" => Some(available.workers),
-        "cache-bytes" => Some(available.cache_bytes),
-        "locks" => Some(available.locks),
-        "file-descriptors" => Some(available.file_descriptors),
-        _ => None,
-    };
-    scalar
-        .or_else(|| {
-            available.memory_bytes.iter().find_map(|(id, amount)| {
-                (identity
-                    == ResourceIdentity::new(format!("memory-domain:{}", id.as_str())).as_str())
-                .then_some(*amount)
-            })
-        })
-        .or_else(|| resource_map_available("storage-domain", &available.storage_bytes, identity))
-        .or_else(|| resource_map_available("rate-resource", &available.rates_per_second, identity))
-        .or_else(|| resource_map_available("queue-resource", &available.queue_slots, identity))
-        .or_else(|| resource_map_available("accelerator", &available.accelerator_slots, identity))
-        .ok_or_else(|| {
-            ResourceError::Invalid(format!(
-                "recorded receipt names unknown resource identity {identity}"
-            ))
-        })
-}
-
-fn resource_map_available<Id: fmt::Debug>(
-    kind: &str,
-    available: &BTreeMap<Id, u64>,
-    identity: &str,
-) -> Option<u64> {
-    available.iter().find_map(|(id, amount)| {
-        (identity == ResourceIdentity::new(format!("{kind}:{id:?}")).as_str()).then_some(*amount)
-    })
 }
 
 fn admit_resource_map<Id: Clone + Ord + fmt::Debug>(
@@ -3890,12 +4255,12 @@ fn validate_inventory(inventory: &HostInventory) -> Result<(), ResourceError> {
             "logical CPU topology must be nonzero".to_string(),
         ));
     }
-    if let CpuClassCapacity::Known(performance_cpu_cores) = topology.performance_cpu_cores {
-        if performance_cpu_cores == 0 || performance_cpu_cores > topology.logical_cpu_threads {
-            return Err(ResourceError::Invalid(
-                "known performance CPU topology must be within logical CPU capacity".to_string(),
-            ));
-        }
+    if let CpuClassCapacity::Known(performance_cpu_cores) = topology.performance_cpu_cores
+        && (performance_cpu_cores == 0 || performance_cpu_cores > topology.logical_cpu_threads)
+    {
+        return Err(ResourceError::Invalid(
+            "known performance CPU topology must be within logical CPU capacity".to_string(),
+        ));
     }
     let mut domains = BTreeMap::new();
     for domain in &topology.memory_domains {

@@ -1871,10 +1871,10 @@ impl ImageBrowserSession {
 
     fn rename_region_definition(&mut self, name: &str, new_name: &str) -> Result<(), ImageError> {
         let renamed = self.view.rename_saved_region(name, new_name)?;
-        if let Some(region) = self.region.as_mut() {
-            if self.active_region_definition_name.as_deref() == Some(name) {
-                region.label = renamed.clone();
-            }
+        if let Some(region) = self.region.as_mut()
+            && self.active_region_definition_name.as_deref() == Some(name)
+        {
+            region.label = renamed.clone();
         }
         if self.active_region_definition_name.as_deref() == Some(name) {
             self.active_region_definition_name = Some(renamed);
@@ -2640,7 +2640,9 @@ fn crtf_poly_region_shape(text: &str) -> Result<Vec<[CrtfRegionCoordinate; 2]>, 
         )));
     }
     parts
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             Ok([
                 parse_crtf_region_coordinate(&pair[0])?,

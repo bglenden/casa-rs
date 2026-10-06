@@ -103,7 +103,7 @@ This cell makes that intent explicit with `niter = 0` and `dirty_only = true`.
 format = 1
 surface = "imager"
 kind = "task"
-contract = 15
+contract = 16
 
 [parameters]
 vis = "data/twhya_calibrated.ms"
@@ -144,7 +144,7 @@ iteration limit.
 format = 1
 surface = "imager"
 kind = "task"
-contract = 15
+contract = 16
 
 [parameters]
 vis = "data/twhya_calibrated.ms"
@@ -187,7 +187,7 @@ discarding useful continuum information.
 format = 1
 surface = "split"
 kind = "task"
-contract = 1
+contract = 3
 
 [parameters]
 vis = "data/twhya_calibrated.ms"
@@ -220,7 +220,7 @@ resolution against sensitivity.
 format = 1
 surface = "imager"
 kind = "task"
-contract = 15
+contract = 16
 
 [parameters]
 vis = "data/twhya_smoothed.ms"
@@ -260,7 +260,7 @@ science-ready intensity image:
 format = 1
 surface = "impbcor"
 kind = "task"
-contract = 1
+contract = 3
 
 [parameters]
 imagename = "products/twhya-continuum.image"

@@ -15,26 +15,27 @@ use casa_imaging_model::{
     MeasurementSetIdentity, MetadataGeneration, MetadataTableKind, MissingPointingPolicy,
     ModelBounds, ModelCell, ModelColumnState, ModelColumnWrite, ModelDeltaTerm,
     ModelExecutionAttemptId, ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements,
-    ModelStateIdentity, ModelValue, MsColumnKind, NumericPrecision, NumericalStage,
-    NumericsContract, ObservationPointingLaw, ObservationSelection, ObservationSnapshotInput,
-    ObservationSourceInput, ObservationSourceProvenance, ObservationTransactionRequirements,
-    PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
-    PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
-    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInputIdentities,
-    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
-    ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
-    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
-    ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy, RowSelection,
-    ScientificContract, SelectedColumns, SelectedImageDomainProjections, SelectedMainRow,
-    SelectedObservationGenerationId, SelectedObservationSample, SelectedPhaseCentreProjection,
-    SelectedPredictionTarget, SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates,
-    SelectedSampleMetadata, SelectedSpectralContributions, SelectedSpectralEvaluation,
-    SelectedSpectralInterval, SelectedVisibilitySample, SkyDirection, SourceGenerations,
-    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSamplingLaw, SpectralWcs, SpectralWindowCoordinateCatalog, SpectralWindowSelection,
-    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection,
-    UvSelection, UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn,
-    WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
+    ModelSample, ModelStateIdentity, ModelSupport, ModelValue, MsColumnKind, NumericPrecision,
+    NumericalStage, NumericsContract, ObservationPointingLaw, ObservationSelection,
+    ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance,
+    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
+    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
+    PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
+    ProblemInputIdentities, ProblemSpecification, ProductBlankingPolicy, ProductKind,
+    ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
+    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
+    ReconstructionControls, ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy,
+    RowSelection, ScientificContract, SelectedColumns, SelectedImageDomainProjections,
+    SelectedMainRow, SelectedObservationGenerationId, SelectedObservationSample,
+    SelectedPhaseCentreProjection, SelectedPredictionTarget, SelectedRows, SelectedSampleAddress,
+    SelectedSampleCoordinates, SelectedSampleMetadata, SelectedSpectralContributions,
+    SelectedSpectralEvaluation, SelectedSpectralInterval, SelectedVisibilitySample, SkyDirection,
+    SourceGenerations, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
+    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, SpectralWindowCoordinateCatalog,
+    SpectralWindowSelection, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy,
+    TimeScale, TimeSelection, UvSelection, UvwCoordinateLaw, VisibilityColumn,
+    VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
+    compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
     ChannelCyclePolicy, CoupledReconstructionMask, ExecutableModelProblem, FinalNormalState,
@@ -43,17 +44,21 @@ use casa_imaging_reconstruction::{
     ReconstructionCycleError, ReconstructionMask, ReconstructionMaskPlan, SpectralChannelValidity,
     SpectralOperatorSpecification, SpectralPrimitiveCatalog, SpectralStencilValidity,
     WeightingAlgorithmState, WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk,
-    WeightingReplaySummary, begin_weighting_generation, compile_spectral_stencil, plan_weighting,
+    WeightingReplaySummary, begin_weighting_generation, compile_spectral_stencil,
+    model_support_identity, plan_weighting,
     runtime_adapter::{
         CompleteDataOwnerResult, CompleteDataOwnerSlabFold, GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
         GRIDDED_NORMAL_PARTITION_COUNT, GriddedNormalExecutionResidency,
-        GriddedNormalOperatorBlock, GriddedNormalOperatorCompiler, GriddedNormalOperatorProgram,
+        GriddedNormalOperatorCompiler, GriddedNormalOperatorFrame, GriddedNormalOperatorProgram,
         GriddedNormalRoutingMeasurements, SourceCardinalityObservation, SpectralOperatorPass,
-        gridded_normal_execution_residency, gridded_normal_operator_record_bytes,
-        gridded_normal_route_capacity_bytes, prepare_spectral_operator, spectral_operator_workload,
-        standard_convolution_support,
+        gridded_normal_operator_record_bytes, gridded_normal_route_capacity_bytes,
+        prepare_spectral_operator, spectral_operator_workload, standard_convolution_support,
     },
 };
+
+#[path = "support/gridded_frames.rs"]
+mod gridded_frames;
+use gridded_frames::{RecordedFrame, compilation_plan};
 
 const REFERENCE_FREQUENCY_HZ: f64 = 1.0e9;
 const IMAGE_WIDTH: usize = 8;
@@ -426,14 +431,14 @@ fn validity() -> ProductValidityPolicies {
         PrimaryBeamValidityPolicy::new(
             0.2,
             ProductSupportComparison::StrictlyGreater,
-            ProductBlankingPolicy::ZeroAndFalseMask,
+            ProductBlankingPolicy::Zero,
         )
         .expect("valid primary-beam policy"),
         TaylorValidityPolicy::new(
             TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
             0.1,
             ProductSupportComparison::StrictlyGreater,
-            ProductBlankingPolicy::ZeroAndFalseMask,
+            ProductBlankingPolicy::Zero,
         )
         .expect("valid Taylor policy"),
     )
@@ -470,6 +475,7 @@ fn problem_with_shape_and_response(
         image_shape,
         primary_beam,
         false,
+        ModelInputCommitment::Empty,
     )
 }
 
@@ -479,6 +485,7 @@ fn problem_with_shape_response_and_mosaic(
     image_shape: ImageShape,
     primary_beam: bool,
     mosaic: bool,
+    model_input: ModelInputCommitment,
 ) -> casa_imaging_model::CompiledProblem {
     let is_joint = matches!(
         reconstruction.basis(),
@@ -516,11 +523,16 @@ fn problem_with_shape_response_and_mosaic(
         product_kinds.push(ProductKind::TaylorTerms);
     }
     let [width, height] = image_shape.pixels();
+    let increment_rad = if mosaic {
+        [-1.0e-4, 1.0e-4]
+    } else {
+        [-1.0e-6, 1.0e-6]
+    };
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
         [width as f64 / 2.0, height as f64 / 2.0],
-        [-1.0e-6, 1.0e-6],
+        increment_rad,
         [[1.0, 0.0], [0.0, 1.0]],
         [180.0, 0.0],
     );
@@ -589,7 +601,11 @@ fn problem_with_shape_response_and_mosaic(
         .into_iter()
         .flatten()
         .collect(),
-        ModelStateIdentity::Empty,
+        match &model_input {
+            ModelInputCommitment::Empty => ModelStateIdentity::Empty,
+            ModelInputCommitment::AlignedSeed { source, .. } => ModelStateIdentity::Seed(*source),
+            _ => panic!("this fixture requires an empty or aligned seed"),
+        },
     ))
     .expect("compile T42 observation");
     let mut science = ScientificContract::new(
@@ -607,9 +623,11 @@ fn problem_with_shape_response_and_mosaic(
         ),
     );
     if primary_beam {
-        science = science.with_instrument_model(
-            InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1,
-        );
+        science = science.with_instrument_model(if mosaic {
+            InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1
+        } else {
+            InstrumentModel::CasaAca7mInterferometricDirectPbV1
+        });
     }
     compile(ImagingRequest::new(
         ProblemSpecification::new(
@@ -653,7 +671,7 @@ fn problem_with_shape_response_and_mosaic(
             )
             .expect("T42 model bounds"),
             NumericPrecision::F64,
-            ModelInputCommitment::Empty,
+            model_input,
         ),
     ))
     .expect("compile T42 MT-MFS problem")
@@ -689,6 +707,7 @@ fn mosaic_taylor_problem() -> casa_imaging_model::CompiledProblem {
         ImageShape::new(128, 128),
         true,
         true,
+        ModelInputCommitment::Empty,
     )
 }
 
@@ -712,7 +731,33 @@ fn channel_major_problem_with_shape(
     channels: usize,
     image_shape: ImageShape,
 ) -> casa_imaging_model::CompiledProblem {
-    problem_with_shape(
+    channel_major_problem_with_input(channels, image_shape, ModelInputCommitment::Empty)
+}
+
+fn seeded_channel_major_problem(
+    channels: usize,
+    image_shape: ImageShape,
+) -> casa_imaging_model::CompiledProblem {
+    let [width, height] = image_shape.pixels();
+    channel_major_problem_with_input(
+        channels,
+        image_shape,
+        ModelInputCommitment::AlignedSeed {
+            source: identity(42, 124),
+            support: model_support_identity(std::iter::repeat_n(
+                ModelSupport::Valid,
+                width * height * 2,
+            )),
+        },
+    )
+}
+
+fn channel_major_problem_with_input(
+    channels: usize,
+    image_shape: ImageShape,
+    model_input: ModelInputCommitment,
+) -> casa_imaging_model::CompiledProblem {
+    problem_with_shape_response_and_mosaic(
         ReconstructionContract::new(
             ReconstructionBasis::TaylorViaChannelMajor { terms: 2, channels },
             ReconstructionAlgorithm::Mtmfs {
@@ -724,6 +769,9 @@ fn channel_major_problem_with_shape(
         ),
         channels,
         image_shape,
+        false,
+        false,
+        model_input,
     )
 }
 
@@ -788,6 +836,11 @@ fn mosaic_samples(problem: &casa_imaging_model::CompiledProblem) -> [SelectedObs
     let mut selected = samples(problem);
     for sample in &mut selected {
         sample.coordinates.uvw_law = UvwCoordinateLaw::MosaicPhaseTrackingCentre;
+        sample.metadata.antenna_responses = Some(casa_imaging_model::SelectedAntennaResponses {
+            antenna1: casa_imaging_model::AntennaResponseClass::CasaAca7m,
+            antenna2: casa_imaging_model::AntennaResponseClass::CasaAca7m,
+            family_envelope: casa_imaging_model::AntennaResponseClass::CasaAca7m,
+        });
     }
     selected
 }
@@ -1095,16 +1148,30 @@ fn run_final_normal_state(
         executable,
         ModelExecutionAttemptId::new(identity(42, 120)),
         1,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("bind Taylor model lifecycle");
     let initial = lifecycle.initial_empty().expect("empty Taylor model");
     let preparation =
         MajorCyclePreparation::prepare(&lifecycle, initial, None).expect("prepare Taylor model");
     let (complete_data, expected, _) = run_operator(problem, samples, 1, 1, Some(&preparation));
-    let completion = MajorCycleOwner::from_complete_data(complete_data, preparation)
-        .expect("join Taylor complete-data evidence")
-        .reconcile(&mut lifecycle)
-        .expect("reconcile Taylor normal state");
+    let completion = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    complete_data.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            complete_data
+                .seal(&storage)
+                .expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .expect("join Taylor complete-data evidence")
+    .reconcile(&mut lifecycle)
+    .expect("reconcile Taylor normal state");
     let (normal, model_completion, final_model) = completion.into_parts();
     assert_eq!(
         normal.input_model_generation(),
@@ -1129,16 +1196,30 @@ fn run_joint_final_normal_state(
         executable,
         ModelExecutionAttemptId::new(identity(46, 120)),
         1,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("bind joint model lifecycle");
     let initial = lifecycle.initial_empty().expect("empty joint model");
     let preparation =
         MajorCyclePreparation::prepare(&lifecycle, initial, None).expect("prepare joint model");
     let (complete_data, _, _) = run_operator(problem, selected, 1, 1, Some(&preparation));
-    let completion = MajorCycleOwner::from_complete_data(complete_data, preparation)
-        .expect("join joint complete-data evidence")
-        .reconcile(&mut lifecycle)
-        .expect("reconcile joint normal state");
+    let completion = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    complete_data.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            complete_data
+                .seal(&storage)
+                .expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .expect("join joint complete-data evidence")
+    .reconcile(&mut lifecycle)
+    .expect("reconcile joint normal state");
     let (normal, _, model) = completion.into_parts();
     (lifecycle, normal, model)
 }
@@ -1313,6 +1394,9 @@ fn complete_frozen_taylor_operator(
 ) -> CompleteDataOwnerResult {
     let channels = match problem.reconstruction().basis() {
         ReconstructionBasis::TaylorViaChannelMajor { channels, .. } => channels,
+        ReconstructionBasis::JointContinuumLine { .. } => {
+            problem.geometry().spectral().output_channels()
+        }
         _ => 1,
     };
     complete_frozen_taylor_operator_slab(problem, frozen, preparation, pass, prior, 0, channels)
@@ -1404,6 +1488,8 @@ fn initial_normal_from_frozen(
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable Taylor problem"),
         ModelExecutionAttemptId::new(identity(42, 121)),
         1,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("bind compact initial lifecycle");
     let initial = lifecycle.initial_empty().expect("empty compact model");
@@ -1416,12 +1502,22 @@ fn initial_normal_from_frozen(
         SpectralOperatorPass::InitialMajor,
         None,
     );
-    MajorCycleOwner::from_complete_data(complete, preparation)
-        .expect("join compact initial evidence")
-        .reconcile(&mut lifecycle)
-        .expect("reconcile compact initial state")
-        .into_parts()
-        .0
+    MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    complete.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            complete.seal(&storage).expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .expect("join compact initial evidence")
+    .reconcile(&mut lifecycle)
+    .expect("reconcile compact initial state")
+    .into_parts()
+    .0
 }
 
 fn nonzero_taylor_model(problem: &casa_imaging_model::CompiledProblem) -> MajorCyclePreparation {
@@ -1429,11 +1525,26 @@ fn nonzero_taylor_model(problem: &casa_imaging_model::CompiledProblem) -> MajorC
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable Taylor problem"),
         ModelExecutionAttemptId::new(identity(42, 122)),
         2,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("bind compact residual lifecycle");
-    let initial = lifecycle
-        .initial_empty()
-        .expect("empty compact source model");
+    let initial = match lifecycle.contract().input() {
+        ModelInputCommitment::AlignedSeed { source, .. } => lifecycle
+            .ingest_aligned(
+                *source,
+                lifecycle.contract().target(),
+                std::iter::repeat_n(
+                    Ok::<_, Infallible>(ModelSample::valid(ModelValue::new(0.0).unwrap())),
+                    lifecycle.contract().target().sample_count(),
+                ),
+            )
+            .expect("read aligned model seed")
+            .expect("ingest aligned model seed"),
+        _ => lifecycle
+            .initial_empty()
+            .expect("empty compact source model"),
+    };
     let delta = lifecycle
         .compile_delta(
             &initial,
@@ -1458,6 +1569,8 @@ fn empty_model(problem: &casa_imaging_model::CompiledProblem) -> MajorCyclePrepa
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable cube problem"),
         ModelExecutionAttemptId::new(identity(42, 123)),
         1,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("bind compact cube lifecycle");
     let initial = lifecycle.initial_empty().expect("empty compact cube model");
@@ -1467,43 +1580,65 @@ fn empty_model(problem: &casa_imaging_model::CompiledProblem) -> MajorCyclePrepa
 fn compile_compact_program(
     problem: &casa_imaging_model::CompiledProblem,
     frozen: &FrozenTaylorReplay,
-) -> (
-    GriddedNormalOperatorProgram,
-    Vec<GriddedNormalOperatorBlock>,
-) {
+) -> (GriddedNormalOperatorProgram, Vec<RecordedFrame>) {
     let record_bytes = gridded_normal_operator_record_bytes(problem)
         .expect("problem-derived compact record width");
-    let mut compiler =
-        GriddedNormalOperatorCompiler::new(problem, SourceCardinalityObservation::Enabled)
-            .expect("begin Taylor compact compiler");
-    let blocks =
+    let compilation = compilation_plan(
+        problem,
+        frozen.plan.limits().max_block_samples(),
         frozen
             .blocks
             .iter()
-            .map(|block| {
-                let (compiled, timings) = compiler
-                    .compile_block_observed(block)
-                    .expect("compile observed Taylor compact block");
-                let measurements = compiled.measurements();
-                assert_eq!(
-                measurements.source_cardinality,
-                Some(casa_imaging_reconstruction::runtime_adapter::GriddedNormalSourceCardinality {
-                    groups: block.samples().len() as u64,
-                    records: block.samples().len() as u64,
-                })
-            );
-                assert_eq!(
-                    measurements.encoded_buffer_bytes,
-                    compiled.record_count() * record_bytes as u64
-                );
-                assert_eq!(measurements.encoded_buffer_allocations, 1);
-                let _exclusive_stage_total = timings.record_key_construction
-                    + timings.grouping_reduction
-                    + timings.encoding_checksum
-                    + timings.completion;
-                compiled
-            })
-            .collect::<Vec<_>>();
+            .map(|block| block.samples().len())
+            .sum(),
+    );
+    let mut compiler = GriddedNormalOperatorCompiler::new(
+        problem,
+        compilation,
+        SourceCardinalityObservation::Enabled,
+    )
+    .expect("begin Taylor compact compiler");
+    let mut blocks = Vec::<RecordedFrame>::new();
+    let mut sink = |frame: GriddedNormalOperatorFrame<'_>| {
+        let recorded = RecordedFrame::from(frame);
+        assert_eq!(
+            recorded.encoded_bytes().len() as u64,
+            recorded.record_count() * record_bytes as u64
+        );
+        blocks.push(recorded);
+        Ok(())
+    };
+    let mut source_samples = 0;
+    for (index, block) in frozen.blocks.iter().enumerate() {
+        let measurements = compiler
+            .consume_source(block, &mut sink)
+            .expect("compile observed Taylor source block");
+        source_samples += block.samples().len() as u64;
+        assert_eq!(measurements.source_blocks, index as u64 + 1);
+        assert_eq!(measurements.source_samples, source_samples);
+        assert_eq!(
+            measurements.source_cardinality,
+            Some(
+                casa_imaging_reconstruction::runtime_adapter::GriddedNormalSourceCardinality {
+                    groups: source_samples,
+                    records: source_samples,
+                }
+            )
+        );
+    }
+    let measurements = compiler
+        .finish_rows_and_frames(&mut sink)
+        .expect("finish Taylor frames");
+    assert_eq!(measurements.frames, blocks.len() as u64);
+    assert_eq!(
+        measurements.reduced_records,
+        blocks.iter().map(RecordedFrame::record_count).sum()
+    );
+    let timings = compiler.stage_timings();
+    let _exclusive_stage_total = timings.record_key_construction
+        + timings.grouping_reduction
+        + timings.encoding_checksum
+        + timings.completion;
     let program = compiler
         .complete(&frozen.summary, frozen.selected_generation, None)
         .expect("seal v3 Taylor compact program");
@@ -1521,18 +1656,27 @@ fn execute_compact_taylor(
     problem: &casa_imaging_model::CompiledProblem,
     frozen: &FrozenTaylorReplay,
     program: &GriddedNormalOperatorProgram,
-    blocks: &[GriddedNormalOperatorBlock],
+    blocks: &[RecordedFrame],
     preparation: &MajorCyclePreparation,
     prior: FinalNormalState,
     workers: usize,
 ) -> CompactTaylorResult {
     let specification = SpectralOperatorSpecification::new(problem).expect("Taylor operator");
-    let grid_residency = gridded_normal_execution_residency(
-        specification.grid_shape(),
-        program.accumulation_width(),
-        standard_convolution_support(),
-    )
-    .expect("exact Taylor compact grid residency");
+    let grid_residency = program
+        .storage_layout(
+            specification.slab().core_depth(),
+            standard_convolution_support(),
+        )
+        .expect("storage layout")
+        .residency(
+            blocks
+                .iter()
+                .map(|block| {
+                    usize::try_from(block.record_count()).expect("record capacity fits usize")
+                })
+                .sum(),
+        )
+        .expect("exact Taylor compact grid residency");
     let workload = spectral_operator_workload(
         &specification,
         frozen.plan.limits().max_block_samples(),
@@ -1545,21 +1689,28 @@ fn execute_compact_taylor(
         .map(|block| usize::try_from(block.record_count()).expect("record capacity fits usize"))
         .collect::<Vec<_>>();
     let mut apply = program
-        .begin_apply_with_route_capacities(
+        .begin_apply_with_storage_plan(
             problem,
             preparation.final_model(),
-            prior,
+            &mut program.bind_prior(prior).unwrap(),
             prepared,
-            &capacities,
+            &program
+                .storage_layout(
+                    problem.geometry().spectral().output_channels(),
+                    standard_convolution_support(),
+                )
+                .expect("storage layout")
+                .plan(&capacities, capacities.iter().sum())
+                .expect("complete window storage"),
         )
         .expect("begin compact Taylor apply");
     assert_eq!(
         apply
-            .two_domain_window_partition_count(
-                blocks
-                    .iter()
-                    .map(|block| (block.sequence(), block.encoded_bytes())),
-            )
+            .two_domain_window_partition_count(blocks.iter().map(|block| (
+                block.sequence(),
+                block.encoded_bytes(),
+                None
+            )),)
             .expect("prepare the complete compact window"),
         GRIDDED_NORMAL_PARTITION_COUNT
     );
@@ -1620,7 +1771,7 @@ fn execute_compact_taylor(
         }
     }
 
-    let (complete, routing) = apply
+    let (complete, routing, _recycle) = apply
         .finish_with_routing_measurements()
         .expect("finish compact Taylor apply");
     CompactTaylorResult {
@@ -1726,7 +1877,7 @@ fn t41_channel_major_sampling_fold_and_residency_preserve_all_channels() {
 
 #[test]
 fn t41_channel_major_ordered_slab_fold_matches_one_window() {
-    let problem = channel_major_problem_with_shape(4, ImageShape::new(256, 256));
+    let problem = seeded_channel_major_problem(4, ImageShape::new(256, 256));
     let selected = channel_major_samples(&problem);
     let frozen = freeze_taylor_replay(&problem, &selected);
     let preparation = nonzero_taylor_model(&problem);
@@ -1786,7 +1937,7 @@ fn t41_channel_major_ordered_slab_fold_matches_one_window() {
 
 #[test]
 fn t41_channel_major_supported_slab_then_zero_weight_gap_retains_completion() {
-    let problem = channel_major_problem(4);
+    let problem = seeded_channel_major_problem(4, ImageShape::new(IMAGE_WIDTH, IMAGE_WIDTH));
     let mut selected = channel_major_samples(&problem);
     for sample in &mut selected[2..] {
         sample.channel_flag = true;
@@ -1938,12 +2089,18 @@ fn t607_channel_local_ordered_slab_fold_matches_one_window() {
         first.completion().primitive_catalog(),
         SpectralPrimitiveCatalog::UnnormalizedChannelSlabV1
     );
-    let folded = CompleteDataOwnerSlabFold::begin(first)
+    let storage = casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(4)
+        .expect("four-channel fixture window");
+    let folded = CompleteDataOwnerSlabFold::begin(first, &storage)
         .expect("begin channel-local fold")
         .extend(second)
         .expect("append adjacent channel-local slab")
         .finish()
         .expect("complete channel-local coverage");
+
+    let folded = folded
+        .read_window(0..4)
+        .expect("four-channel fixture window");
 
     assert_eq!(folded.primitives().slab().core_range(), 0..4);
     assert_eq!(folded.primitives().dirty(), full.primitives().dirty());
@@ -1972,7 +2129,7 @@ fn t607_channel_local_ordered_slab_fold_matches_one_window() {
 
     let first = run_slab(0, 2);
     let gap = run_slab(3, 1);
-    let error = CompleteDataOwnerSlabFold::begin(first)
+    let error = CompleteDataOwnerSlabFold::begin(first, &storage)
         .expect("begin channel-local prefix")
         .extend(gap)
         .expect_err("a channel gap cannot be folded");
@@ -2040,9 +2197,12 @@ fn t41_channel_major_two_cycle_feedback_and_gridded_replay_stay_dual_space() {
     let preparation = nonzero_taylor_model(&problem);
 
     let initial = initial_normal_from_frozen(&problem, &frozen);
+    let initial_window = initial
+        .read_window(initial.slab().core_range())
+        .expect("coupled Taylor fixture window");
     let initial_residual = (0..2)
         .flat_map(|term| {
-            initial
+            initial_window
                 .coefficient_term(term)
                 .expect("initial Taylor term")
                 .residual()
@@ -2115,14 +2275,20 @@ fn t41_primary_beam_channel_major_replays_one_model_update_with_bounded_state() 
     let scalar_selected = channel_major_samples(&scalar_problem);
     let scalar_frozen = freeze_taylor_replay(&scalar_problem, &scalar_selected);
     let scalar_initial = initial_normal_from_frozen(&scalar_problem, &scalar_frozen);
-    let residual_nrms = complex_nrms(initial.residual(), scalar_initial.residual());
+    let initial_window = initial
+        .read_window(initial.slab().core_range())
+        .expect("coupled Taylor fixture window");
+    let scalar_window = scalar_initial
+        .read_window(scalar_initial.slab().core_range())
+        .expect("coupled Taylor fixture window");
+    let residual_nrms = complex_nrms(initial_window.residual(), scalar_window.residual());
     assert!(
         residual_nrms <= 1.0e-15,
         "CASA MVC removes the frequency-dependent PB before folding the residual family: NRMS={residual_nrms:e}",
     );
     let psf_nrms = complex_nrms(
-        initial.normal_approximation(),
-        scalar_initial.normal_approximation(),
+        initial_window.normal_approximation(),
+        scalar_window.normal_approximation(),
     );
     assert!(
         psf_nrms > 1.0e-8,
@@ -2305,6 +2471,8 @@ fn t47_mosaic_mtmfs_executes_signed_normal_moments() {
         executable,
         ModelExecutionAttemptId::new(identity(47, 120)),
         1,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("bind mosaic model lifecycle");
     let initial = lifecycle.initial_empty().expect("empty mosaic model");
@@ -2312,12 +2480,27 @@ fn t47_mosaic_mtmfs_executes_signed_normal_moments() {
         MajorCyclePreparation::prepare(&lifecycle, initial, None).expect("prepare mosaic model");
     let (complete_data, _, _) =
         run_operator(&problem, &selected, selected.len(), 1, Some(&preparation));
-    let completion = MajorCycleOwner::from_complete_data(complete_data, preparation)
-        .expect("join mosaic complete-data evidence")
-        .reconcile(&mut lifecycle)
-        .expect("reconcile mosaic normal state");
+    let completion = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    complete_data.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            complete_data
+                .seal(&storage)
+                .expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .expect("join mosaic complete-data evidence")
+    .reconcile(&mut lifecycle)
+    .expect("reconcile mosaic normal state");
     let (normal, _, model) = completion.into_parts();
-    let principal_sensitivity = normal
+    let window = normal
+        .read_window(normal.slab().core_range())
+        .expect("coupled Taylor fixture window");
+    let principal_sensitivity = window
         .normal_moment(0)
         .expect("principal mosaic normal moment")
         .sensitivity();
@@ -2493,48 +2676,51 @@ fn t42_final_normal_state_exposes_taylor_terms_and_hankel_blocks_without_channel
         normal.support_validity(),
         Some(SpectralChannelValidity::Valid)
     );
+    let window = normal
+        .read_window(normal.slab().core_range())
+        .expect("coupled Taylor fixture window");
     assert!(
-        normal.polarization_plane(0, 0).is_none(),
+        window.polarization_plane(0, 0).is_none(),
         "Taylor terms are not channels"
     );
 
     for coefficient in 0..2 {
-        let term = normal
+        let term = window
             .coefficient_term(coefficient)
             .expect("Taylor coefficient view");
         assert_eq!(term.coefficient(), coefficient);
         assert_eq!(term.residual().len(), IMAGE_WIDTH * IMAGE_WIDTH);
     }
-    assert!(normal.coefficient_term(2).is_none());
+    assert!(window.coefficient_term(2).is_none());
 
     for (moment, expected_sum_weight) in expected.into_iter().enumerate() {
-        let view = normal.normal_moment(moment).expect("Taylor moment view");
+        let view = window.normal_moment(moment).expect("Taylor moment view");
         assert_eq!(view.moment(), moment);
         assert_eq!(view.sum_weight().to_bits(), expected_sum_weight.to_bits());
         assert_eq!(view.normal_approximation().len(), IMAGE_WIDTH * IMAGE_WIDTH);
         assert_eq!(view.sensitivity().len(), IMAGE_WIDTH * IMAGE_WIDTH);
     }
-    assert!(normal.normal_moment(3).is_none());
+    assert!(window.normal_moment(3).is_none());
 
-    let upper = normal.normal_block(0, 1).expect("upper cross block");
-    let lower = normal.normal_block(1, 0).expect("lower cross block");
+    let upper = window.normal_block(0, 1).expect("upper cross block");
+    let lower = window.normal_block(1, 0).expect("lower cross block");
     assert_eq!(upper.moment(), 1);
     assert_eq!(lower.moment(), 1);
     assert_eq!(upper.normal_approximation(), lower.normal_approximation());
     assert_eq!(upper.sensitivity(), lower.sensitivity());
     assert_eq!(upper.sum_weight().to_bits(), lower.sum_weight().to_bits());
-    assert!(normal.normal_block(2, 0).is_none());
+    assert!(window.normal_block(2, 0).is_none());
 }
 
 #[test]
-fn t42_compact_v6_replay_matches_direct_residual_and_is_worker_bitwise_stable() {
+fn t42_compact_replay_matches_direct_residual_and_is_worker_bitwise_stable() {
     let problem = problem();
     let samples = samples(&problem);
     let frozen = freeze_taylor_replay(&problem, &samples);
     let preparation = nonzero_taylor_model(&problem);
     let (program, blocks) = compile_compact_program(&problem, &frozen);
 
-    assert_eq!(program.schema_version(), 6);
+    assert_eq!(program.schema_version(), 11);
     assert_eq!(
         gridded_normal_operator_record_bytes(&problem).expect("Taylor record width"),
         32,
@@ -2545,10 +2731,7 @@ fn t42_compact_v6_replay_matches_direct_residual_and_is_worker_bitwise_stable() 
     assert_eq!(program.block_count(), blocks.len() as u64);
     assert_eq!(
         program.record_count(),
-        blocks
-            .iter()
-            .map(GriddedNormalOperatorBlock::record_count)
-            .sum()
+        blocks.iter().map(RecordedFrame::record_count).sum()
     );
     assert!(program.record_count() > 0);
     for block in &blocks {
@@ -2563,7 +2746,7 @@ fn t42_compact_v6_replay_matches_direct_residual_and_is_worker_bitwise_stable() 
     }
 
     let direct_prior = initial_normal_from_frozen(&problem, &frozen);
-    let initial_content = direct_prior.content_identity();
+    let initial_content = direct_prior.diagnostic_content_identity().unwrap();
     assert_eq!(direct_prior.coefficient_term_count(), 2);
     assert_eq!(direct_prior.normal_moment_count(), 3);
     let direct = complete_frozen_taylor_operator(
@@ -2582,7 +2765,10 @@ fn t42_compact_v6_replay_matches_direct_residual_and_is_worker_bitwise_stable() 
     let direct_residual = direct.primitives().dirty().to_vec();
 
     let serial_prior = initial_normal_from_frozen(&problem, &frozen);
-    assert_eq!(serial_prior.content_identity(), initial_content);
+    assert_eq!(
+        serial_prior.diagnostic_content_identity().unwrap(),
+        initial_content
+    );
     let serial = execute_compact_taylor(
         &problem,
         &frozen,
@@ -2593,7 +2779,10 @@ fn t42_compact_v6_replay_matches_direct_residual_and_is_worker_bitwise_stable() 
         1,
     );
     let two_worker_prior = initial_normal_from_frozen(&problem, &frozen);
-    assert_eq!(two_worker_prior.content_identity(), initial_content);
+    assert_eq!(
+        two_worker_prior.diagnostic_content_identity().unwrap(),
+        initial_content
+    );
     let two_workers = execute_compact_taylor(
         &problem,
         &frozen,
@@ -2604,7 +2793,10 @@ fn t42_compact_v6_replay_matches_direct_residual_and_is_worker_bitwise_stable() 
         2,
     );
     let four_worker_prior = initial_normal_from_frozen(&problem, &frozen);
-    assert_eq!(four_worker_prior.content_identity(), initial_content);
+    assert_eq!(
+        four_worker_prior.diagnostic_content_identity().unwrap(),
+        initial_content
+    );
     let four_workers = execute_compact_taylor(
         &problem,
         &frozen,
@@ -2677,10 +2869,10 @@ fn t46_joint_compact_replay_matches_direct_residual_and_is_worker_bitwise_stable
     let preparation = nonzero_taylor_model(&problem);
     let (program, blocks) = compile_compact_program(&problem, &frozen);
 
-    assert_eq!(program.record_bytes(), 32);
+    assert_eq!(program.record_bytes(), GRIDDED_NORMAL_OPERATOR_RECORD_BYTES);
     assert_eq!(program.prediction_width(), 1);
     let direct_prior = initial_normal_from_frozen(&problem, &frozen);
-    let initial_content = direct_prior.content_identity();
+    let initial_content = direct_prior.diagnostic_content_identity().unwrap();
     assert_eq!(direct_prior.coefficient_term_count(), 2);
     assert_eq!(direct_prior.normal_moment_count(), 4);
     let direct = complete_frozen_taylor_operator(
@@ -2704,7 +2896,10 @@ fn t46_joint_compact_replay_matches_direct_residual_and_is_worker_bitwise_stable
 
     for workers in [1, 2] {
         let prior = initial_normal_from_frozen(&problem, &frozen);
-        assert_eq!(prior.content_identity(), initial_content);
+        assert_eq!(
+            prior.diagnostic_content_identity().unwrap(),
+            initial_content
+        );
         let compact = execute_compact_taylor(
             &problem,
             &frozen,

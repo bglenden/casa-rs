@@ -228,8 +228,8 @@ impl<T: LatticeElement> TempLattice<T> {
 
     /// Returns the configured maximum tile-cache size in pixels.
     ///
-    /// Returns `0` for in-memory lattices and for paged lattices with no
-    /// explicit request; persistent storage then uses its fixed default.
+    /// Returns `0` for in-memory lattices. Paged lattices report their effective
+    /// positive cache budget, including the fixed default when not overridden.
     pub fn maximum_cache_size_pixels(&self) -> usize {
         self.paged_array()
             .map(PagedArray::maximum_cache_size_pixels)
@@ -238,8 +238,8 @@ impl<T: LatticeElement> TempLattice<T> {
 
     /// Sets the maximum tile-cache size in pixels for the paged variant.
     ///
-    /// No-op for in-memory lattices. A value of `0` removes the explicit
-    /// maximum request. Mirrors C++ `TempLattice::setMaximumCacheSize`.
+    /// No-op for in-memory lattices. Paged lattices require a positive value;
+    /// rejection leaves their previous cache setting in effect.
     pub fn set_maximum_cache_size_pixels(
         &mut self,
         how_many_pixels: usize,
@@ -252,8 +252,8 @@ impl<T: LatticeElement> TempLattice<T> {
 
     /// Sets the tile cache to hold approximately `how_many_tiles` tiles.
     ///
-    /// No-op for in-memory lattices. A value of `0` removes the explicit
-    /// maximum request. Mirrors C++ `TempLattice::setCacheSizeInTiles`.
+    /// No-op for in-memory lattices. Paged lattices require at least one tile;
+    /// rejection leaves their previous cache setting in effect.
     pub fn set_cache_size_in_tiles(&mut self, how_many_tiles: usize) -> Result<(), LatticeError> {
         match self.paged_array_mut() {
             Some(pa) => pa.set_cache_size_in_tiles(how_many_tiles),

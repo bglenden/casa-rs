@@ -62,6 +62,70 @@ to NRMS <= 0.001, and outside-PB validity differences are counted and reported.
 This does not change CASA's strict Taylor support law, add a numerical epsilon,
 or relax any other product's exact validity comparison.
 
+T52 native EVLA paired-CF acceptance uses the application production route at
+512x512 with nine overlapping VLASS fields, four SPWs, nonzero W, both circular
+parallel hands, and 5,990,400 selected correlation-channel samples. Its frozen
+DIRTY and 30-iteration deterministic MT-MFS CLEAN references require all 18/19
+products and the unchanged beam, flux, centroid, structure and NRMS limits.
+On 2026-09-08 the programme owner approved retaining the frozen maximum mask
+mismatch fraction of 1e-5 only for `.alpha` and `.alpha.error`, with every
+differing pixel reported; all other validity is exact. The owner also approved
+macOS-only execution evidence in place of a host with no CASA installation.
+The native Rust generator and application must still neither link nor invoke
+CASA; CASA is used only to prepare/compare the frozen independent reference.
+These amendments are recorded in the [T52 work record](https://github.com/bglenden/casa-rs/issues/538#issuecomment-5577836559).
+
+Focused T52 gates are `t52_` model/reconstruction/application tests, the runtime
+`catalog` integration tests (including `native_catalog`) and `prepared_artifact`
+library tests, existing
+`prepared_aw_phase` import/reuse regressions, and the directly affected imager,
+provider and profile projection tests. The ignored frozen-cell tests require
+explicit surface/catalog paths; no CASA installation or model-data path is
+discovered implicitly. `perf_harness.t52_native_acceptance` binds the release
+test binary, input/source hashes, cold/warm cache payloads, full comparisons
+and a 30-minute/32-GiB process-scope guard. Supply its explicit absolute paths
+from the retained run request; generation workspace admission is a separate
+accounted bound, not a claim about total process RSS.
+
+T53 spectral joins use the public compiled/prepared operator and normal
+application boundaries. Run the `t53_` tests in the `continuum_application`
+integration target, the `mtmfs_block_normal` integration target, spectral
+selection/sampling and typed availability regressions, and directly affected
+polarization/product checks. The `casa-tables` integration target
+`selected_incremental_arrays` checks public typed UVW reads, sparse/repeated
+row order, output reuse and unmaterialized metadata in both byte orders.
+`tools/perf/imager/test_bench_cli.py` checks the
+benchmark command against a current release imager before opening a dataset.
+The representative workloads are `issue607-standard-cube-dirty-representative`,
+`t53-mosaic-cube-alma-representative`, and
+`t53-w-cube-shared-phase-representative`; the last uses the immutable-source
+copy produced by `tools/perf/imager/stage_t53_shared_phase.py` with CASA Python.
+The staged copy preserves the original IncrementalStMan UVW layout and values.
+Set `CASA_RS_T53_DATA_ROOT` to its directory and run the ignored
+`t53_w_cube_reads_native_uvw_and_publishes_vla_l_band_products` test
+as the two-channel native-reader, complete-product and off-axis CASA PSF
+application preflight. Its 512-square geometry exercises W-screen sampling
+when the requested padded size differs from the rounded FFT grid.
+Current native-AW Taylor evidence may be reused only after checking code and
+input applicability. These rows retain the size, channel, complete-product,
+validity and resource limits above; diagnostic laws do not replace them.
+The checked-in [T53 receipt](resources/imaging-architecture/representative-science-evidence/w-multifield-cube-vla.json)
+binds the current W-cube result and the applicable standard, mosaic and native-AW
+supporting joins without replacing their individual scientific contracts.
+
+T53 preserves the #478 named join gates
+`wproject_dirty_cube_products_track_casa_on_refim_point_withline_shared_phase_multifield`
+and `wproject_dirty_cube_products_track_casa_on_n2403_source_backed_calibrator_multifield`.
+Their pinned source is `crates/casars-imager/tests/imager_casa_parity.rs` at
+`376c7d87bb995f295a696995ad8292bc39582529`. A selected FIELD metadata row with no
+MAIN rows is not evidence of a multifield join. The original #445/#448
+single-field DIRTY, single-field deterministic CLEAN, 63-field DIRTY and
+63-field deterministic CLEAN gates remain named obligations under the
+[VLASS acceptance recipe](docs/imaging-architecture/t51-aw-vlass-acceptance.md).
+The owner-approved representative T53 boundary does not claim their full-size
+or performance acceptance. Current results and restart authority live in the
+[T53 work record](https://github.com/bglenden/casa-rs/issues/539#issuecomment-5579521124).
+
 ## Required discipline
 
 - Every approved work item defines falsifiable acceptance checks and ships verification evidence.
@@ -71,10 +135,17 @@ or relax any other product's exact validity comparison.
 - Observation-transaction coverage must prove exact per-MS read/write sets,
   mechanically derived typed observation reads, mutation-before-read ordering,
   exact `ProductRequirements` staging coverage, reconciliation and
-  complete-staging cuts, mandatory sealing through `plan`, a terminal sole
-  lock-held atomic publication, no controller polling after publication launch,
+  complete-staging cuts, mandatory transaction binding through `plan`, a terminal
+  publication step with atomic individual-image replacement, no controller
+  polling after publication launch,
   and fail-closed cancellation plus admission, numerical, output, and
   staging-fence failures.
+- ADR-0014 product publication tests exercise write-only bounded ownership,
+  complete ordered coverage, unchanged science/metadata and ordinary I/O errors.
+  Failed publication leaves an incomplete output set requiring rerun, not
+  resumable member recovery or whole-set rollback. Architectural mutation tests
+  reject content hashing and output rereads even without sealing terminology;
+  test/benchmark fingerprints remain diagnostic, outside production execution.
 - Binary serialization changes need endian coverage.
 - Measures-data dependent tests must skip cleanly when runtime tables are unavailable.
 - C++ dependent tests must skip cleanly when `pkg-config casacore` is unavailable.
@@ -123,7 +194,8 @@ or relax any other product's exact validity comparison.
 - Release/tag-only CI-like coverage: `scripts/run-coverage.sh --ci-like`
 - GitHub Actions reproduction: `scripts/ci-local.sh pr` for pull-request jobs or `scripts/ci-local.sh tag` for version-tag jobs
 - GitHub PR CI: lint/test, editable Python package, strict docs, and native GUI
-  checks for non-draft PRs
+  checks (Swift core unit tests, then the `just gui-test` interaction gate) for
+  non-draft PRs
 - GitHub tag CI: lint/test and editable Python package checks plus smoke,
   suite-install, and CI-like coverage
 - Main-branch pushes run the rustdoc and MkDocs deployment workflow
@@ -430,7 +502,9 @@ The executable GUI layer follows these rules:
 - Attach screenshots and useful accessibility diagnostics on failure, but do
   not use screenshot review as the only assertion that an interaction works.
 - Keep Core/store tests as the broad, fast base of the pyramid. UI tests prove
-  only behavior that requires the launched application boundary.
+  only behavior that requires the launched application boundary. The macOS CI
+  job runs the core tests with `swift test --package-path apps/casars-mac`
+  after building `casars-frontend-services`, before the interaction gate.
 - Keep the same `just gui-test` command available locally and in the supported
   macOS CI job. One green consolidated run in either environment satisfies the
   interaction gate; the other is optional unless needed for diagnosis or
@@ -610,7 +684,7 @@ For each notebook program phase:
 - approved outcome, included issues, and acceptance checks are not deferred or
   descoped without explicit user signoff recorded in the issue or PR
 - release work also runs the smoke gate, the blocking C++ interop gate, and the suite-install gate; CI-like coverage remains a version-tag CI gate and is run locally only for `scripts/release.sh --full` or explicit coverage reproduction
-- ordinary non-release merges stay on `just verify` plus targeted tests unless the user explicitly asks to exercise release/tag-only heavy gates
+- ordinary non-release merges stay on the affected gates (`just quick` or focused checks) plus CI unless the user explicitly asks to exercise release/tag-only heavy gates; `just verify` is for milestones and releases
 - release performance evidence is informational by default and becomes blocking only when `CASA_RS_ENFORCE_PERF=1`
 - slow CASA parity checks run when the approved work touches those concerns
 
@@ -618,7 +692,7 @@ For each notebook program phase:
 
 Work is not complete until:
 
-- `just verify` passes or any intentional exclusion is called out explicitly
+- the gates the change can affect pass (`just quick` or focused checks, plus CI)
 - tests cover the claimed behavior
 - native macOS GUI changes pass `just gui-test` locally or in hosted CI for
   changed critical interactions
@@ -626,11 +700,10 @@ Work is not complete until:
 - reviewers checked for shallow or tautological tests on medium/high-risk work
 - docs or ADRs were updated if reality changed
 - any approved-scope deferral records explicit user signoff
-- final merge, cleanup, and release actions receive an independent review and
-  explicit authorization
+- merges have explicit user authorization, and science, persistence, and
+  interoperability changes also have an independent review
 
-For an exact pull request, the repository `AGENTS.md` informed as-is waiver may
-replace the independent-final-review and current-check portions of this gate.
-Record each waived item on the pull request and issue; do not describe waived
-evidence as passing. The waiver changes process evidence only, never the
-accepted behavior or persistent-interoperability contract.
+A user's "merge as-is" for a pull request waives its review and check gates.
+Record the waiver on the pull request; do not describe waived evidence as
+passing. The waiver changes process evidence only, never the accepted behavior
+or persistent-interoperability contract.

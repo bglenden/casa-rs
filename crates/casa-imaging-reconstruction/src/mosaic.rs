@@ -272,7 +272,8 @@ fn pointing_pair_geometry(
         crate::mask::direction_world_to_pixel(geometry.direction, direction)
             .map_err(|_| SpectralOperatorError::UnsupportedGeometry)
     });
-    let pixels = [pixels[0]?, pixels[1]?];
+    let [first, second] = pixels;
+    let pixels = [first?, second?];
     let midpoint = [
         (pixels[0][0] + pixels[1][0]) * 0.5,
         (pixels[0][1] + pixels[1][1]) * 0.5,
@@ -308,7 +309,7 @@ impl MosaicProjector {
             return Err(SpectralOperatorError::UnsupportedProblem);
         }
         let conv_size = mosaic_convolution_size(geometry.image_shape);
-        if conv_size < 16 || conv_size % 2 != 0 {
+        if conv_size < 16 || !conv_size.is_multiple_of(2) {
             return Err(SpectralOperatorError::UnsupportedGeometry);
         }
         let family_pair = SelectedAntennaResponses {
@@ -440,7 +441,8 @@ impl MosaicProjector {
             )
             .map_err(|_| SpectralOperatorError::UnsupportedGeometry)
         });
-        let [antenna1_pixel, antenna2_pixel] = [pointing_pixels[0]?, pointing_pixels[1]?];
+        let [antenna1_pixel, antenna2_pixel] = pointing_pixels;
+        let [antenna1_pixel, antenna2_pixel] = [antenna1_pixel?, antenna2_pixel?];
         let pointing_pixel = [
             (antenna1_pixel[0] + antenna2_pixel[0]) * 0.5,
             (antenna1_pixel[1] + antenna2_pixel[1]) * 0.5,
@@ -679,7 +681,7 @@ impl MosaicProjector {
 fn mosaic_convolution_size(image_shape: [usize; 2]) -> usize {
     let support = image_shape.into_iter().max().unwrap_or(0).max(64);
     let mut convolution_size = support + 1;
-    while convolution_size % 2 != 0 || !is_composite_fft_length(convolution_size) {
+    while !convolution_size.is_multiple_of(2) || !is_composite_fft_length(convolution_size) {
         convolution_size += 1;
     }
     (convolution_size / 16 * 16).max(64)
@@ -687,7 +689,7 @@ fn mosaic_convolution_size(image_shape: [usize; 2]) -> usize {
 
 fn is_composite_fft_length(mut value: usize) -> bool {
     for factor in [2, 3, 5] {
-        while value > 1 && value % factor == 0 {
+        while value > 1 && value.is_multiple_of(factor) {
             value /= factor;
         }
     }

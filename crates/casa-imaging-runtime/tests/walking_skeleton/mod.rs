@@ -21,8 +21,8 @@ use casa_imaging_runtime::{
 mod support;
 
 use self::support::{
-    CancelAfterLaunch, PublicationProbe, TestRegistry, authority, cost_model, execution_provenance,
-    geometry, implementation, physical_work_for_problem, plan, problem_inputs,
+    CancelAfterLaunch, TestRegistry, authority, cost_model, execution_provenance, geometry,
+    implementation, physical_work_for_problem, plan, problem_inputs,
     product_publication_recording_executor, recording_executor, registry,
     request_with_products_and_model, run_receipted, test_registry,
 };
@@ -264,20 +264,12 @@ fn private_synthetic_request_crosses_the_complete_compile_plan_run_seam() {
     let provenance = provenance(151);
     let publication_launched = Arc::new(AtomicBool::new(false));
     let visible_generation = Arc::new(AtomicUsize::new(0));
-    let prepared_observed = Arc::new(AtomicBool::new(false));
-    let publication_calls = Arc::new(AtomicUsize::new(0));
     let publication_lease_observed = Arc::new(AtomicBool::new(false));
     let mut executor = product_publication_recording_executor(
         &skeleton.problem,
         Arc::clone(&publication_launched),
         Arc::clone(&visible_generation),
     );
-    executor.publication_probe = Some(PublicationProbe {
-        receipts: Arc::clone(&receipts),
-        attempt: provenance.attempt_id(),
-        prepared_observed: Arc::clone(&prepared_observed),
-        publication_calls: Arc::clone(&publication_calls),
-    });
     executor.publication_buffer_held = Some(Arc::clone(&publication_lease_observed));
     let registry = TestRegistry {
         id: registry(3),
@@ -299,11 +291,6 @@ fn private_synthetic_request_crosses_the_complete_compile_plan_run_seam() {
 
     assert_eq!(outcome, ExecutionOutcome::Succeeded);
     assert!(publication_launched.load(Ordering::SeqCst));
-    assert!(
-        prepared_observed.load(Ordering::SeqCst),
-        "durable prepared evidence must precede visibility"
-    );
-    assert_eq!(publication_calls.load(Ordering::SeqCst), 1);
     assert!(
         publication_lease_observed.load(Ordering::SeqCst),
         "the visibility operation must retain its plan-bound lease and allocation"
@@ -688,26 +675,18 @@ fn synthetic_mutation_output_and_publication_failures_remain_private() {
 }
 
 #[test]
-fn member_publication_failure_prevents_visibility_and_preserves_prepared_evidence() {
+fn publication_failure_fails_run_without_claiming_visible_outputs() {
     let skeleton = walking_skeleton();
     let receipts = Arc::new(skeleton.plan.receipt_store());
     let provenance = provenance(171);
     let publication_launched = Arc::new(AtomicBool::new(false));
     let visible_generation = Arc::new(AtomicUsize::new(0));
-    let prepared_observed = Arc::new(AtomicBool::new(false));
-    let publication_calls = Arc::new(AtomicUsize::new(0));
     let mut executor = product_publication_recording_executor(
         &skeleton.problem,
         Arc::clone(&publication_launched),
         Arc::clone(&visible_generation),
     );
     executor.publication_failure = Some("member publication failed");
-    executor.publication_probe = Some(PublicationProbe {
-        receipts: Arc::clone(&receipts),
-        attempt: provenance.attempt_id(),
-        prepared_observed: Arc::clone(&prepared_observed),
-        publication_calls: Arc::clone(&publication_calls),
-    });
     let registry = TestRegistry {
         id: registry(3),
         metadata: TestRegistry::metadata_for(&skeleton.problem),
@@ -731,8 +710,6 @@ fn member_publication_failure_prevents_visibility_and_preserves_prepared_evidenc
         RunError::Execution { node, .. } if node == WorkNodeId::new("transaction-commit")
     ));
     assert!(publication_launched.load(Ordering::SeqCst));
-    assert!(prepared_observed.load(Ordering::SeqCst));
-    assert_eq!(publication_calls.load(Ordering::SeqCst), 1);
     assert_eq!(visible_generation.load(Ordering::SeqCst), 0);
     let receipt = receipts
         .open(provenance.attempt_id())
@@ -747,110 +724,9 @@ fn member_publication_failure_prevents_visibility_and_preserves_prepared_evidenc
         })
         .map(|artifact| receipt.artifact_disposition(artifact))
         .collect::<Vec<_>>();
-    assert_eq!(
+    assert!(
         output_dispositions
             .iter()
-            .filter(|disposition| **disposition == Some(ArtifactDisposition::PublicationFailed))
-            .count(),
-        1
+            .all(|disposition| *disposition == Some(ArtifactDisposition::Staged))
     );
-    assert!(output_dispositions.iter().all(|disposition| matches!(
-        disposition,
-        Some(ArtifactDisposition::PublicationFailed | ArtifactDisposition::PublicationPrepared)
-    )));
-}
-
-#[test]
-fn later_member_failure_retains_published_prefix_and_prepared_suffix() {
-    let skeleton = walking_skeleton();
-    let receipts = Arc::new(skeleton.plan.receipt_store());
-    let provenance = provenance(173);
-    let publication_launched = Arc::new(AtomicBool::new(false));
-    let visible_generation = Arc::new(AtomicUsize::new(0));
-    let prepared_observed = Arc::new(AtomicBool::new(false));
-    let publication_calls = Arc::new(AtomicUsize::new(0));
-    let mut executor = product_publication_recording_executor(
-        &skeleton.problem,
-        Arc::clone(&publication_launched),
-        Arc::clone(&visible_generation),
-    );
-    executor.publication_probe = Some(PublicationProbe {
-        receipts: Arc::clone(&receipts),
-        attempt: provenance.attempt_id(),
-        prepared_observed: Arc::clone(&prepared_observed),
-        publication_calls: Arc::clone(&publication_calls),
-    });
-    executor.publication_failure_after = Some(1);
-    let registry = TestRegistry {
-        id: registry(3),
-        metadata: TestRegistry::metadata_for(&skeleton.problem),
-        executors: BTreeMap::from([(implementation(6), executor)]),
-    };
-    let mut completion = RunToCompletion;
-
-    let error = run_receipted(
-        &skeleton.problem,
-        &skeleton.plan,
-        &skeleton.current,
-        &registry,
-        authority(),
-        &mut completion,
-        receipts.bind(provenance.clone()),
-    )
-    .expect_err("a later member failure terminates after preserving the published prefix");
-
-    assert!(matches!(
-        error,
-        RunError::Execution { node, .. } if node == WorkNodeId::new("transaction-commit")
-    ));
-    assert!(publication_launched.load(Ordering::SeqCst));
-    assert!(prepared_observed.load(Ordering::SeqCst));
-    assert_eq!(publication_calls.load(Ordering::SeqCst), 1);
-    assert_eq!(visible_generation.load(Ordering::SeqCst), 1);
-    let receipt = receipts
-        .open(provenance.attempt_id())
-        .expect("reopen failed independent-member receipt");
-    assert_eq!(receipt.status(), ReceiptStatus::Failed);
-    assert_eq!(receipt.failure_kind(), Some(ReceiptFailureKind::Adapter));
-    let output_dispositions = receipt
-        .artifact_identities()
-        .into_iter()
-        .filter(|artifact| {
-            receipt.artifact_role(*artifact) == Some(casa_imaging_runtime::ArtifactRole::Output)
-        })
-        .map(|artifact| receipt.artifact_disposition(artifact))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        output_dispositions
-            .iter()
-            .filter(|disposition| **disposition == Some(ArtifactDisposition::Published))
-            .count(),
-        1
-    );
-    assert_eq!(
-        output_dispositions
-            .iter()
-            .filter(|disposition| **disposition == Some(ArtifactDisposition::PublicationFailed))
-            .count(),
-        1
-    );
-    assert_eq!(
-        output_dispositions
-            .iter()
-            .filter(|disposition| {
-                **disposition == Some(ArtifactDisposition::PublicationPrepared)
-            })
-            .count(),
-        output_dispositions.len() - 2
-    );
-    for layout in skeleton.plan.publication_layouts().entries() {
-        assert_eq!(
-            receipt.publication_participant(layout.artifact()),
-            Some(receipt_participant(layout.participant()))
-        );
-        assert_eq!(
-            receipt.publication_layout_identity(layout.artifact()),
-            Some(layout.layout_id())
-        );
-    }
 }

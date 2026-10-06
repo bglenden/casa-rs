@@ -7936,7 +7936,7 @@
     {
       "kind": "task",
       "id": "imager",
-      "contract_version": 15,
+      "contract_version": 16,
       "display_name": "Imager",
       "category": "Imaging",
       "summary": "Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet",
@@ -8001,6 +8001,17 @@
                   "value": true
                 }
               }
+            ]
+          }
+        },
+        {
+          "class": "overwrite",
+          "when": {
+            "kind": "all",
+            "predicates": [
+              {"kind": "equals", "parameter": "gridder", "value": {"kind": "string", "value": "awproject"}},
+              {"kind": "equals", "parameter": "aw_cf_source", "value": {"kind": "string", "value": "native-evla"}},
+              {"kind": "equals", "parameter": "native_cf_policy", "value": {"kind": "string", "value": "regenerate"}}
             ]
           }
         }
@@ -11474,17 +11485,17 @@
           }
         },
         {
-          "name": "cfcache",
+          "name": "aw_cf_source",
           "concept": {
-            "id": "parameter.cfcache",
+            "id": "parameter.aw_cf_source",
             "semantic_revision": 1
           },
-          "order": 69,
+          "order": 94,
           "default": {
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "auto"
+              "value": "casa-import"
             }
           },
           "required_when": {
@@ -11498,13 +11509,487 @@
               "value": "awproject"
             }
           },
-          "surface_note": "auto selects the managed plan-keyed cache; an explicit path preserves CASA cache interoperability.",
+          "surface_note": "Exactly one read-only CASA import or frozen native EVLA source; there is no fallback.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--aw-cf-source"
+              ],
+              "metavar": "CHOICE"
+            },
+            "provider": {
+              "field": "aw_cf_source",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "aw_cf_source"
+            },
+            "presentation": {
+              "label": "Paired AW convolution-function source",
+              "group": "Advanced Wide-Field",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "native_cf_cache",
+          "concept": {
+            "id": "parameter.native_cf_cache",
+            "semantic_revision": 1
+          },
+          "order": 95,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "all",
+            "predicates": [
+              {
+                "kind": "equals",
+                "parameter": "gridder",
+                "value": {
+                  "kind": "string",
+                  "value": "awproject"
+                }
+              },
+              {
+                "kind": "equals",
+                "parameter": "aw_cf_source",
+                "value": {
+                  "kind": "string",
+                  "value": "native-evla"
+                }
+              }
+            ]
+          },
+          "surface_note": "Native prepared-artifact cache; writable for generation actions and not readable by CASA.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--native-cf-cache"
+              ],
+              "metavar": "PATH"
+            },
+            "provider": {
+              "field": "native_cf_cache",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "native_cf_cache"
+            },
+            "presentation": {
+              "label": "Private native AW cache directory",
+              "group": "Advanced Wide-Field",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "evla_surface",
+          "concept": {
+            "id": "parameter.evla_surface",
+            "semantic_revision": 1
+          },
+          "order": 96,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "all",
+            "predicates": [
+              {
+                "kind": "equals",
+                "parameter": "gridder",
+                "value": {
+                  "kind": "string",
+                  "value": "awproject"
+                }
+              },
+              {
+                "kind": "equals",
+                "parameter": "aw_cf_source",
+                "value": {
+                  "kind": "string",
+                  "value": "native-evla"
+                }
+              }
+            ]
+          },
+          "surface_note": "Explicit radius, height and slope reference-data file for the frozen homogeneous 25 m EVLA model; no CASA installation discovery.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--evla-surface"
+              ],
+              "metavar": "PATH"
+            },
+            "provider": {
+              "field": "evla_surface",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "evla_surface"
+            },
+            "presentation": {
+              "label": "EVLA dish surface model",
+              "group": "Advanced Wide-Field",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "native_cf_policy",
+          "concept": {
+            "id": "parameter.native_cf_policy",
+            "semantic_revision": 1
+          },
+          "order": 97,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "reuse-only"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "all",
+            "predicates": [
+              {
+                "kind": "equals",
+                "parameter": "gridder",
+                "value": {
+                  "kind": "string",
+                  "value": "awproject"
+                }
+              },
+              {
+                "kind": "equals",
+                "parameter": "aw_cf_source",
+                "value": {
+                  "kind": "string",
+                  "value": "native-evla"
+                }
+              }
+            ]
+          },
+          "surface_note": "reuse-only validates a complete cache; generate-missing preserves valid cells; regenerate explicitly replaces all requested cells.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--native-cf-policy"
+              ],
+              "metavar": "CHOICE"
+            },
+            "provider": {
+              "field": "native_cf_policy",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "native_cf_policy"
+            },
+            "presentation": {
+              "label": "Native AW cache action",
+              "group": "Advanced Wide-Field",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "native_cf_working_size",
+          "concept": {
+            "id": "parameter.native_cf_working_size",
+            "semantic_revision": 1
+          },
+          "order": 98,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "all",
+            "predicates": [
+              {
+                "kind": "equals",
+                "parameter": "gridder",
+                "value": {
+                  "kind": "string",
+                  "value": "awproject"
+                }
+              },
+              {
+                "kind": "equals",
+                "parameter": "aw_cf_source",
+                "value": {
+                  "kind": "string",
+                  "value": "native-evla"
+                }
+              }
+            ]
+          },
+          "surface_note": "Explicit full even working-grid extent before support selection, not a requested output crop.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--native-cf-working-size"
+              ],
+              "metavar": "INTEGER"
+            },
+            "provider": {
+              "field": "native_cf_working_size",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "native_cf_working_size"
+            },
+            "presentation": {
+              "label": "Native AW full FFT extent",
+              "group": "Advanced Wide-Field",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "native_cf_oversampling",
+          "concept": {
+            "id": "parameter.native_cf_oversampling",
+            "semantic_revision": 1
+          },
+          "order": 99,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "all",
+            "predicates": [
+              {
+                "kind": "equals",
+                "parameter": "gridder",
+                "value": {
+                  "kind": "string",
+                  "value": "awproject"
+                }
+              },
+              {
+                "kind": "equals",
+                "parameter": "aw_cf_source",
+                "value": {
+                  "kind": "string",
+                  "value": "native-evla"
+                }
+              }
+            ]
+          },
+          "surface_note": "Explicit integer convolution-plane oversampling; validated by the native application owner.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--native-cf-oversampling"
+              ],
+              "metavar": "INTEGER"
+            },
+            "provider": {
+              "field": "native_cf_oversampling",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "native_cf_oversampling"
+            },
+            "presentation": {
+              "label": "Native AW convolution oversampling",
+              "group": "Advanced Wide-Field",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "native_cf_cache_bytes",
+          "concept": {
+            "id": "parameter.native_cf_cache_bytes",
+            "semantic_revision": 1
+          },
+          "order": 100,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "all",
+            "predicates": [
+              {
+                "kind": "equals",
+                "parameter": "gridder",
+                "value": {
+                  "kind": "string",
+                  "value": "awproject"
+                }
+              },
+              {
+                "kind": "equals",
+                "parameter": "aw_cf_source",
+                "value": {
+                  "kind": "string",
+                  "value": "native-evla"
+                }
+              }
+            ]
+          },
+          "surface_note": "Explicit catalog-wide storage bound in bytes, independent of cropped cell size. This is a request bound, not saved cache inventory.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--native-cf-cache-bytes"
+              ],
+              "metavar": "INTEGER"
+            },
+            "provider": {
+              "field": "native_cf_cache_bytes",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "native_cf_cache_bytes"
+            },
+            "presentation": {
+              "label": "Native AW durable-storage ceiling",
+              "group": "Advanced Wide-Field",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "native_cf_maximum_cells",
+          "concept": {
+            "id": "parameter.native_cf_maximum_cells",
+            "semantic_revision": 1
+          },
+          "order": 101,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "all",
+            "predicates": [
+              {
+                "kind": "equals",
+                "parameter": "gridder",
+                "value": {
+                  "kind": "string",
+                  "value": "awproject"
+                }
+              },
+              {
+                "kind": "equals",
+                "parameter": "aw_cf_source",
+                "value": {
+                  "kind": "string",
+                  "value": "native-evla"
+                }
+              }
+            ]
+          },
+          "surface_note": "Explicit maximum admitted metadata-only paired-cell count, not serialized compiled catalog state.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--native-cf-maximum-cells"
+              ],
+              "metavar": "INTEGER"
+            },
+            "provider": {
+              "field": "native_cf_maximum_cells",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "native_cf_maximum_cells"
+            },
+            "presentation": {
+              "label": "Native AW maximum catalog cells",
+              "group": "Advanced Wide-Field",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "cfcache",
+          "concept": {
+            "id": "parameter.cfcache",
+            "semantic_revision": 2
+          },
+          "order": 69,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "all",
+            "predicates": [
+              {"kind": "equals", "parameter": "gridder", "value": {"kind": "string", "value": "awproject"}},
+              {"kind": "equals", "parameter": "aw_cf_source", "value": {"kind": "string", "value": "casa-import"}}
+            ]
+          },
+          "surface_note": "Existing CASA CFS_/WTCFS_ input directory, imported read-only. This is never a native writable cache.",
           "projections": {
             "cli": {
               "flags": [
                 "--cfcache"
               ],
-              "metavar": "AUTO|PATH"
+              "metavar": "PATH"
             },
             "provider": {
               "field": "cfcache",
@@ -11514,7 +11999,7 @@
               "name": "cfcache"
             },
             "presentation": {
-              "label": "CF Cache",
+              "label": "CASA CF Cache Input",
               "group": "Advanced Wide-Field",
               "advanced": true,
               "hidden": false

@@ -16,10 +16,11 @@ pub use tiled_stman::{
     StreamedTiledPrimitiveColumn, StreamedTiledPrimitiveType, StreamedTiledShapeColumn,
     StreamedTiledShapeComplex32Column, StreamedTiledShapeCubeLayout, StreamedTiledShapeValueType,
     StreamingTiledPrimitiveWriter, StreamingTiledShapeComplex32Writer, StreamingTiledShapeWriter,
-    TilePixel, TiledArrayStorage, TiledFileIoStats, install_streamed_tiled_column,
-    install_streamed_tiled_column_primitive_column, install_streamed_tiled_shape_column,
-    install_streamed_tiled_shape_complex32_column, install_streamed_tiled_shape_primitive_column,
-    set_table_cache_budget_bytes, table_cache_budget_bytes,
+    TilePixel, TiledArrayStorage, TiledArrayStorageLayout, TiledFileIoStats,
+    install_streamed_tiled_column, install_streamed_tiled_column_primitive_column,
+    install_streamed_tiled_shape_column, install_streamed_tiled_shape_complex32_column,
+    install_streamed_tiled_shape_primitive_column, set_table_cache_budget_bytes,
+    table_cache_budget_bytes,
 };
 pub(crate) mod virtual_bitflags;
 pub(crate) mod virtual_compress;
@@ -143,11 +144,11 @@ fn storage_profile_enabled() -> bool {
 fn log_storage_profile(context: &str, phase: &str, delta: f64, total: f64, detail: Option<&str>) {
     let mut line =
         format!("[casa-tables profile] {context} phase={phase} dt={delta:.3}s total={total:.3}s");
-    if let Some(detail) = detail {
-        if !detail.is_empty() {
-            line.push(' ');
-            line.push_str(detail);
-        }
+    if let Some(detail) = detail
+        && !detail.is_empty()
+    {
+        line.push(' ');
+        line.push_str(detail);
     }
     eprintln!("{line}");
 }
@@ -563,10 +564,10 @@ fn project_column_values_for_group<'a>(
 ) -> Vec<Option<&'a Value>> {
     rows.iter()
         .map(|row| {
-            if let Some(idx) = field_index {
-                if let Some(field) = row.fields().get(idx).filter(|field| field.name == col_name) {
-                    return Some(&field.value);
-                }
+            if let Some(idx) = field_index
+                && let Some(field) = row.fields().get(idx).filter(|field| field.name == col_name)
+            {
+                return Some(&field.value);
             }
             row.get(col_name)
         })
@@ -642,14 +643,14 @@ impl StorageManager for CompositeStorage {
 
         // Clean up old data files before re-saving to prevent stale data
         // from a previous save with a different storage manager.
-        if table_path.is_dir() {
-            if let Ok(entries) = fs::read_dir(table_path) {
-                for entry in entries.flatten() {
-                    let name = entry.file_name();
-                    let name_str = name.to_string_lossy();
-                    if name_str.starts_with("table.f") {
-                        let _ = fs::remove_file(entry.path());
-                    }
+        if table_path.is_dir()
+            && let Ok(entries) = fs::read_dir(table_path)
+        {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with("table.f") {
+                    let _ = fs::remove_file(entry.path());
                 }
             }
         }
@@ -911,14 +912,14 @@ impl CompositeStorage {
     ) -> Result<(), StorageError> {
         use crate::table::DataManagerKind;
 
-        if table_path.is_dir() {
-            if let Ok(entries) = fs::read_dir(table_path) {
-                for entry in entries.flatten() {
-                    let name = entry.file_name();
-                    let name_str = name.to_string_lossy();
-                    if name_str.starts_with("table.f") {
-                        let _ = fs::remove_file(entry.path());
-                    }
+        if table_path.is_dir()
+            && let Ok(entries) = fs::read_dir(table_path)
+        {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with("table.f") {
+                    let _ = fs::remove_file(entry.path());
                 }
             }
         }
@@ -2686,7 +2687,7 @@ impl CompositeStorage {
         })
     }
 
-    fn load_plain_scalar_column_rows(
+    pub(crate) fn load_plain_scalar_column_rows(
         &self,
         table_path: &Path,
         table_dat: &TableDatContents,
@@ -2694,6 +2695,9 @@ impl CompositeStorage {
         selected_rows: &[usize],
         row_hint: Option<u64>,
     ) -> Result<Vec<Option<ScalarValue>>, StorageError> {
+        if selected_rows.is_empty() {
+            return Ok(Vec::new());
+        }
         let desc_idx = table_dat
             .table_desc
             .columns
@@ -2957,7 +2961,7 @@ impl CompositeStorage {
         array_column_from_snapshot(&snapshot, column)
     }
 
-    fn load_plain_array_column_rows(
+    pub(crate) fn load_plain_array_column_rows(
         &self,
         table_path: &Path,
         table_dat: &TableDatContents,
@@ -2965,6 +2969,9 @@ impl CompositeStorage {
         selected_rows: &[usize],
         row_hint: Option<u64>,
     ) -> Result<Vec<Option<ArrayValue>>, StorageError> {
+        if selected_rows.is_empty() {
+            return Ok(Vec::new());
+        }
         let desc_idx = table_dat
             .table_desc
             .columns
@@ -3392,8 +3399,7 @@ impl CompositeStorage {
         let dm_seq_nr = table_dat
             .column_set
             .columns
-            .iter()
-            .find(|entry| entry.original_name == column)
+            .get(desc_idx)
             .ok_or_else(|| {
                 StorageError::FormatMismatch(format!(
                     "array column '{column}' missing ColumnSet binding"
@@ -3419,6 +3425,19 @@ impl CompositeStorage {
             .collect();
 
         match dm.type_name.as_str() {
+            "IncrementalStMan" => {
+                let mut values = Vec::new();
+                let shape = self.fill_plain_array_column_rows_1d_typed(
+                    table_path,
+                    table_dat,
+                    read_metadata,
+                    request,
+                    SelectedArray1DCellsMut::Float64(&mut values),
+                )?;
+                Ok(SelectedArray1DCells::Float64(
+                    crate::table::SelectedArray1D::new(shape.row_count, shape.axis0_count, values),
+                ))
+            }
             "TiledColumnStMan" | "TiledShapeStMan" => tiled_stman::load_tiled_column_rows_1d_typed(
                 table_path,
                 read_metadata,
@@ -3429,7 +3448,7 @@ impl CompositeStorage {
                 request.selected_rows,
             ),
             other => Err(StorageError::FormatMismatch(format!(
-                "typed selected 1-D reads for column '{}' require TiledColumnStMan or TiledShapeStMan, found {other}",
+                "typed selected 1-D reads for column '{}' do not support {other}",
                 request.column
             ))),
         }
@@ -3471,8 +3490,7 @@ impl CompositeStorage {
         let dm_seq_nr = table_dat
             .column_set
             .columns
-            .iter()
-            .find(|entry| entry.original_name == column)
+            .get(desc_idx)
             .ok_or_else(|| {
                 StorageError::FormatMismatch(format!(
                     "array column '{column}' missing ColumnSet binding"
@@ -3497,6 +3515,33 @@ impl CompositeStorage {
             .filter(|(_, pc)| pc.dm_seq_nr == dm.seq_nr)
             .collect();
         match dm.type_name.as_str() {
+            "IncrementalStMan" => {
+                let SelectedArray1DCellsMut::Float64(values) = destination else {
+                    return Err(StorageError::FormatMismatch(format!(
+                        "typed selected ISM reads for '{column}' require an f64 destination"
+                    )));
+                };
+                let group_columns: Vec<_> = bound_cols
+                    .iter()
+                    .map(|(index, _)| &table_dat.table_desc.columns[*index])
+                    .collect();
+                let target = bound_cols
+                    .iter()
+                    .position(|(index, _)| *index == desc_idx)
+                    .expect("selected ISM column belongs to its data manager");
+                let axis0_count = incremental_stman::fill_ism_f64_array_rows(
+                    &table_path.join(format!("{TABLE_DATA_FILE_PREFIX}{}", dm.seq_nr)),
+                    &dm.data,
+                    &group_columns,
+                    target,
+                    request.selected_rows,
+                    values,
+                )?;
+                Ok(SelectedArray1DShape {
+                    row_count: request.selected_rows.len(),
+                    axis0_count,
+                })
+            }
             "TiledColumnStMan" | "TiledShapeStMan" => tiled_stman::fill_tiled_column_rows_1d_typed(
                 table_path,
                 read_metadata,
@@ -3508,7 +3553,7 @@ impl CompositeStorage {
                 destination,
             ),
             other => Err(StorageError::FormatMismatch(format!(
-                "typed selected 1-D reads for column '{}' require TiledColumnStMan or TiledShapeStMan, found {other}",
+                "typed selected 1-D reads for column '{}' do not support {other}",
                 request.column
             ))),
         }
@@ -5245,11 +5290,11 @@ pub(crate) fn strip_directory(target_path: &Path, from_path: &Path) -> String {
     }
 
     // Check if they share the same parent directory (./ convention).
-    if let (Some(from_parent), Some(target_parent)) = (from_abs.parent(), target_abs.parent()) {
-        if from_parent == target_parent {
-            let name = target_abs.file_name().unwrap_or_default().to_string_lossy();
-            return format!("./{name}");
-        }
+    if let (Some(from_parent), Some(target_parent)) = (from_abs.parent(), target_abs.parent())
+        && from_parent == target_parent
+    {
+        let name = target_abs.file_name().unwrap_or_default().to_string_lossy();
+        return format!("./{name}");
     }
 
     // Fallback: absolute path.

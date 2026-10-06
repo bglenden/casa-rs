@@ -10,16 +10,16 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 402
+- Concepts: 410
 - Surfaces: 41 (39 task, 2 session)
-- Surface bindings: 757
+- Surface bindings: 765
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
 | [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 4 | <code>msexplore</code> | 68 | explore and export common MeasurementSet plotms-style plots |
 | [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 4 | <code>calibration</code> | 49 | apply, inspect, and solve CASA-style calibration workflows |
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 3 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
-| [Imager](#surface-imager)<br><code>imager</code> | task | 15 | <code>imager</code> | 94 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
+| [Imager](#surface-imager)<br><code>imager</code> | task | 16 | <code>imager</code> | 102 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
 | [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 3 | <code>simobserve</code> | 43 | Generate a CASA-compatible synthetic VLA MeasurementSet |
 | [Table Browser](#surface-tablebrowser)<br><code>tablebrowser</code> | session | 3 | <code>table_browser</code> | 7 | browse arbitrary casacore tables |
 | [ImExplore](#surface-imexplore)<br><code>imexplore</code> | session | 3 | <code>image_browser</code> | 17 | browse persistent casacore images |
@@ -231,7 +231,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Imager (<code>imager</code>)
 
 - Kind: `task`
-- Contract version: `15`
+- Contract version: `16`
 - Category: Imaging
 - Provider family: `imager`
 - Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet
@@ -307,7 +307,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>chanchunks</code> | <code>parameter.chanchunks@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Stages | Requested number of top-level spectral channel chunks; the memory planner may select a larger active plane group when it fits<br><em>Surface:</em> Applies to cube and cubedata imaging; the runtime rejects zero and MFS use. |
 | <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | UV range selector.<br><em>Surface:</em> The complete CASA UV-range selector reaches the shared MeasurementSet selection engine. |
 | <code>intent</code> | <code>ms.selection.intent@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | Intent selector.<br><em>Surface:</em> The complete CASA intent selector reaches the shared MeasurementSet selection engine. |
-| <code>cfcache</code> | <code>parameter.cfcache@r1</code> | <code>optional&lt;path (directory)&gt; (states: auto)</code> | <code>"auto"</code>; optional | Advanced Wide-Field | AWProject convolution-function cache selection<br><em>Surface:</em> auto selects the managed plan-keyed cache; an explicit path preserves CASA cache interoperability. |
+| <code>cfcache</code> | <code>parameter.cfcache@r2</code> | <code>optional&lt;path (directory)&gt; (states: none)</code> | <code>"none"</code>; required | Advanced Wide-Field | Read-only CASA AW convolution-function cache input<br><em>Surface:</em> Existing CASA CFS_/WTCFS_ input directory, imported read-only. This is never a native writable cache. |
 | <code>cf_resident_mb</code> | <code>parameter.cf_resident_mb@r1</code> | <code>integer; unit dimension: data_size</code> | <code>256</code>; optional | Advanced Wide-Field | AW convolution-function working-memory ceiling in MiB<br><em>Surface:</em> Per-allocation full-cell LRU and compact source-order tap ceiling in MiB; the runtime charges both and rejects zero. |
 | <code>facets</code> | <code>parameter.facets@r2</code> | <code>integer</code> | <code>1</code>; optional | Advanced Wide-Field | Number of wide-field image facets<br><em>Surface:</em> Constant-basis MFS executes exact regular facets; unsupported basis combinations fail closed. |
 | <code>psfphasecenter</code> | <code>parameter.psfphasecenter@r1</code> | <code>optional&lt;string&gt; (states: none); unit dimension: angle</code> | <code>"none"</code>; optional | Advanced Wide-Field | Optional distinct AWProject PSF phase center |
@@ -332,6 +332,14 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>fitspw</code> | <code>parameter.fitspw@r1</code> | <code>string</code> | <code>"none"</code>; optional | Continuum Subtraction | Fit SPW selector. |
 | <code>fitorder</code> | <code>parameter.fitorder@r1</code> | <code>integer</code> | <code>0</code>; optional | Continuum Subtraction | Polynomial fit order. |
 | <code>save_continuum_residual</code> | <code>parameter.save_continuum_residual@r1</code> | <code>bool</code> | <code>false</code>; optional | Continuum Subtraction | Overwrite output-role selected cells in an existing CORRECTED_DATA column in place<br><em>Surface:</em> Requires continuum subtraction; fit-only and nonselected cells, flags, and weights remain unchanged. |
+| <code>aw_cf_source</code> | <code>parameter.aw_cf_source@r1</code> | <code>choice (2 values)</code> | <code>"casa-import"</code>; optional | Advanced Wide-Field | Paired AW convolution-function source<br><em>Surface:</em> Exactly one read-only CASA import or frozen native EVLA source; there is no fallback. |
+| <code>native_cf_cache</code> | <code>parameter.native_cf_cache@r1</code> | <code>optional&lt;path (directory)&gt; (states: none)</code> | <code>"none"</code>; required | Advanced Wide-Field | Private native AW cache directory<br><em>Surface:</em> Native prepared-artifact cache; writable for generation actions and not readable by CASA. |
+| <code>evla_surface</code> | <code>parameter.evla_surface@r1</code> | <code>optional&lt;path (file)&gt; (states: none)</code> | <code>"none"</code>; required | Advanced Wide-Field | EVLA dish surface model<br><em>Surface:</em> Explicit radius, height and slope reference-data file for the frozen homogeneous 25 m EVLA model; no CASA installation discovery. |
+| <code>native_cf_policy</code> | <code>parameter.native_cf_policy@r1</code> | <code>choice (3 values)</code> | <code>"reuse-only"</code>; optional | Advanced Wide-Field | Native AW cache action<br><em>Surface:</em> reuse-only validates a complete cache; generate-missing preserves valid cells; regenerate explicitly replaces all requested cells. |
+| <code>native_cf_working_size</code> | <code>parameter.native_cf_working_size@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; required | Advanced Wide-Field | Native AW full FFT extent<br><em>Surface:</em> Explicit full even working-grid extent before support selection, not a requested output crop. |
+| <code>native_cf_oversampling</code> | <code>parameter.native_cf_oversampling@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; required | Advanced Wide-Field | Native AW convolution oversampling<br><em>Surface:</em> Explicit integer convolution-plane oversampling; validated by the native application owner. |
+| <code>native_cf_cache_bytes</code> | <code>parameter.native_cf_cache_bytes@r1</code> | <code>optional&lt;integer&gt; (states: none); unit dimension: data_size</code> | <code>"none"</code>; required | Advanced Wide-Field | Native AW durable-storage ceiling<br><em>Surface:</em> Explicit catalog-wide storage bound in bytes, independent of cropped cell size. This is a request bound, not saved cache inventory. |
+| <code>native_cf_maximum_cells</code> | <code>parameter.native_cf_maximum_cells@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; required | Advanced Wide-Field | Native AW maximum catalog cells<br><em>Surface:</em> Explicit maximum admitted metadata-only paired-cell count, not serialized compiled catalog state. |
 
 <a id="surface-simobserve"></a>
 

@@ -28,7 +28,7 @@ designed to paste cleanly into Markdown:
 format = 1
 surface = "imager"
 kind = "task"
-contract = 15
+contract = 16
 
 [parameters]
 vis = "data/target.ms"
@@ -64,6 +64,30 @@ an explicit ordered migration chain.
 Relative dataset and product paths resolve against the explicit workspace, GUI
 project root, or process current directory. They do not resolve relative to the
 profile file merely because the file lives elsewhere.
+
+## Native EVLA AW convolution functions
+
+With `gridder = "awproject"`, `aw_cf_source = "casa-import"` is the default and
+requires an explicit `cfcache` input directory. CASA `CFS_`/`WTCFS_` cells are
+imported read-only; `auto` does not select or create a cache.
+
+Select `aw_cf_source = "native-evla"` to use the frozen homogeneous 25 m EVLA
+dish model without CASA at runtime. Supply `evla_surface` (the explicit dish
+surface input file), `native_cf_cache` (a separate private cache directory),
+`native_cf_working_size`, `native_cf_oversampling`, `native_cf_cache_bytes`, and
+`native_cf_maximum_cells`. Sampling and resource bounds are explicit request
+parameters, not inferred from a cache's contents. The native cache is **not
+CASA-readable** and cannot also be supplied as `cfcache`.
+
+`native_cf_policy` defaults to `"reuse-only"`: an incomplete or invalid cache
+fails without generation. `"generate-missing"` creates absent cells and retains
+valid completed cells; corruption remains an error. `"regenerate"` explicitly
+replaces all requested cells and carries the provider's overwrite safety
+classification. Neither source falls back to the other. These parameters are
+available through the same CLI flags, task JSON, sparse profiles, and generated
+Python wrapper. Profiles store the requested paths/action/bounds, not compiled
+plans, generated cells, cache inventory, or publication state. This exposes the
+frozen EVLA case, not general telescope support.
 
 ## Sources and precedence
 

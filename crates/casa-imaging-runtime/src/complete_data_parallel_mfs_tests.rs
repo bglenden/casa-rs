@@ -4,7 +4,7 @@
 
 use std::{collections::BTreeMap, convert::Infallible, fs, io, path::PathBuf, sync::OnceLock};
 
-use crate::complete_data_operator::project_managed_spill_budget;
+use crate::complete_data_operator::project_gridded_normal_compilation;
 use crate::spectral_cycle::CompleteDataStreamEvidence;
 use crate::{
     AttemptBoundObservationCompletion, BuildIdentity, CapacityDomainId, CapacityViewId,
@@ -46,7 +46,7 @@ use casa_imaging_model::{
 };
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, SpectralOperatorSpecification, WeightingExecutionLimits,
-    runtime_adapter::{gridded_normal_execution_residency, gridded_normal_route_capacity_bytes},
+    runtime_adapter::{GriddedNormalStorageLayout, gridded_normal_route_capacity_bytes},
 };
 use casa_ms::{
     SelectedObservationContentBudget, SelectedObservationResolutionRequest,
@@ -116,6 +116,193 @@ struct RunEvidence {
     expected_replay_grid_bytes: u64,
 }
 
+fn source_admission_fixture() -> (
+    casa_imaging_model::CompiledProblem,
+    casa_ms::ResolvedSelectedObservationAccess,
+) {
+    let (snapshot, access) = resolve_selected_observation(observation_resolution())
+        .unwrap()
+        .into_parts();
+    let problem = compile(ImagingRequest::new(
+        problem_specification(WeightingContract::new(
+            WeightingScheme::Uniform,
+            WeightDensityScope::GlobalSelection,
+        )),
+        geometry_with_facets(FacetLayout::Single),
+        ProblemInputIdentities::new(compile_observation(snapshot).unwrap()),
+        model_lifecycle(ModelStateIdentity::Empty),
+    ))
+    .unwrap();
+    (problem, access)
+}
+
+#[test]
+fn t51_source_budget_selection_is_finite_and_explicit_cap_fails_closed() {
+    let (problem, access) = source_admission_fixture();
+    let requirements = access.content_requirements(&problem).unwrap();
+    let blocks = access
+        .source_binding()
+        .content_budget()
+        .maximum_live_blocks();
+    let minimum = requirements.minimum_bytes(blocks).unwrap();
+    let authority = ResourceAuthority::with_inventory(runtime_inventory()).unwrap();
+    let capped = ResourcePolicy::Explicit(ResourceOverride {
+        memory_bytes: BTreeMap::from([(
+            CapacityDomainId::new("host-memory"),
+            (minimum - 1) as u64,
+        )]),
+        ..ResourceOverride::default()
+    });
+    let error = crate::SelectedObservationSourceResources::finalize_access(
+        &problem, access, &authority, &capped,
+    )
+    .err()
+    .expect("the mandatory owner envelope cannot escape an explicit cap");
+    let error = error
+        .get_ref()
+        .unwrap()
+        .downcast_ref::<crate::ResourceError>()
+        .unwrap();
+    assert_eq!(error.required(), Some(minimum as u64));
+    assert_eq!(error.available(), Some((minimum - 1) as u64));
+
+    let (problem, access) = source_admission_fixture();
+    let access = crate::SelectedObservationSourceResources::finalize_access(
+        &problem,
+        access,
+        &authority,
+        &ResourcePolicy::Exclusive,
+    )
+    .unwrap();
+    let budget = access.source_binding().content_budget();
+    let plan = requirements.plan(budget).unwrap();
+    assert_eq!(budget.available_bytes(), plan.maximum_resident_bytes());
+    assert_eq!(budget.maximum_live_blocks(), blocks);
+    assert!(budget.available_bytes() >= minimum);
+    assert!(budget.available_bytes() < HOST_MEMORY_BYTES as usize);
+    assert_eq!(
+        plan.rows_per_block(),
+        problem.inputs().observation_snapshot().sources()[0]
+            .selection()
+            .rows()
+            .selected_row_count() as usize,
+        "the small fixture quotes its complete useful row envelope, not spare host RAM"
+    );
+}
+
+#[test]
+fn t51_source_allocation_is_checked_before_deferred_open() {
+    let (problem, access) = source_admission_fixture();
+    let residency = access.certify_residency(&problem).unwrap();
+    let authority = ResourceAuthority::with_inventory(runtime_inventory()).unwrap();
+    let policy = ResourcePolicy::Explicit(ResourceOverride {
+        workers: Some(1),
+        ..ResourceOverride::default()
+    });
+    let planning_registry = PlanningRegistry::new(&problem);
+    let planned = SpectralCyclePlan::dirty(
+        &problem,
+        &planning_registry,
+        SpectralCycleExecutionPolicy::new(
+            implementation_id(),
+            WeightingExecutionLimits::new(1, 1).unwrap(),
+            residency.clone(),
+            storage_io(),
+            SpectralCyclePlanningLimits::new(1_000, 1, 900_000),
+            authority.clone(),
+            policy.clone(),
+        ),
+    )
+    .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let receipts =
+        ExecutionReceiptStore::new(directory.path(), ReceiptRetention::new(2, 1 << 20).unwrap())
+            .unwrap();
+    let plan = runtime_plan(
+        &problem,
+        PlanningBindings::new(
+            registry_id(),
+            policy.clone(),
+            PlannerCostModelProfileBootstrap::new(cost_model_id()),
+        ),
+        &authority,
+        &planning_registry,
+        &receipts,
+        |_, _| Ok::<_, Infallible>(planned.physical_candidates()),
+    )
+    .unwrap();
+    let SpectralCyclePlanParts {
+        physical,
+        weighting,
+        complete_data,
+        pass,
+        ..
+    } = planned.into_parts(&plan).unwrap();
+    let read = physical
+        .execution_dag()
+        .nodes()
+        .values()
+        .find(|node| node.kind == crate::WorkKind::ObservationRead)
+        .unwrap();
+    let read_node = read.id.clone();
+    let queue = read
+        .claims
+        .iter()
+        .find(|claim| matches!(claim.resource, crate::LeaseResource::Queue { .. }))
+        .unwrap()
+        .resource
+        .clone();
+    let wrong_allocations = crate::SelectedObservationSourceResources::new(
+        residency,
+        std::collections::BTreeSet::from([crate::AllocationId::new("not-the-admitted-source")]),
+        queue,
+    );
+    let invalid_measures = casa_ms::SelectedObservationMeasures::new(
+        casa_test_support::deterministic_measures_provider_for_identity([0xff; 32]),
+    )
+    .unwrap();
+    let deferred = casa_ms::DeferredSelectedObservationAccess::new(
+        invalid_measures,
+        vec![access.source_binding().clone()],
+    );
+    // Opening this deliberately invalid provider would fail Measures validation.
+    // The undeclared source allocation must be rejected before that open occurs.
+    let executor = SpectralCycleExecutor::new(
+        implementation_id(),
+        problem.clone(),
+        weighting,
+        wrong_allocations,
+        pass,
+        complete_data,
+        deferred,
+        ExecutableModelProblem::from_compiled(problem.clone()).unwrap(),
+        SpectralCyclePassInput::Initial,
+    );
+    let registry =
+        SpectralCycleRegistry::new(registry_id(), implementation_id(), &problem, executor);
+    let error = runtime_run(
+        &ExecutableModelProblem::from_compiled(problem.clone()).unwrap(),
+        &plan,
+        &RunBindings::new(problem.inputs().clone(), &policy, cost_model_id()),
+        &registry,
+        &authority,
+        &mut RunToCompletion,
+        receipts.bind(ExecutionProvenance::new(
+            attempt_id(0x51, 0),
+            BuildIdentity::from_sha256([0x51; 32]),
+        )),
+    )
+    .unwrap_err();
+    let crate::RunError::Execution { node, source } = error else {
+        panic!("expected the source-read allocation rejection, got {error:?}");
+    };
+    assert_eq!(node, read_node);
+    assert_eq!(
+        source.to_string(),
+        crate::WeightingEvidenceError.to_string()
+    );
+}
+
 #[test]
 fn complete_data_mfs_products_and_identities_are_exact_for_one_two_and_four_workers() {
     let runs = [1, 2, 4].map(execute_complete_data_mfs);
@@ -139,26 +326,27 @@ fn complete_data_mfs_products_and_identities_are_exact_for_one_two_and_four_work
     }
 
     for (workers, run) in [(1, &runs[0]), (2, &runs[1]), (4, &runs[2])] {
-        assert_stream_contract(&run.initial_stream, 1, 2, 0);
+        assert_stream_contract(&run.initial_stream, workers.min(2), 2, 0);
         assert_stream_contract(&run.final_stream, workers, 0, 1);
         assert_eq!(run.initial_stream.planned_gridded_route_capacity_bytes, 0);
         assert_eq!(
             run.final_stream.grid_resident_bytes, run.expected_replay_grid_bytes,
             "the admitted grid allocation must cover resident tile/shard plus merge grids",
         );
+        // The Stokes-I fixture now replays three encoded records in two frames,
+        // so the route reserves exactly that window.
+        let expected_route = gridded_normal_route_capacity_bytes(3, 2, 1).unwrap();
         assert_eq!(
-            run.final_stream.planned_gridded_route_capacity_bytes,
-            gridded_normal_route_capacity_bytes(0, 3, 1).unwrap(),
-            "the shared route window must cover the three exact empty frames",
+            run.final_stream.planned_gridded_route_capacity_bytes, expected_route,
+            "the plan reserves the encoded replay window",
         );
         assert_eq!(
             run.final_stream.peak_partial_dynamic_capacity_bytes, 0,
             "route-once replay must not retain dynamic scientific partials",
         );
         assert_eq!(
-            run.final_stream.peak_physical_route_capacity_bytes,
-            run.final_stream.planned_gridded_route_capacity_bytes,
-            "the empty replay must stay within its exact physical route allocation",
+            run.final_stream.peak_physical_route_capacity_bytes, expected_route,
+            "the routed replay touches its whole planned window once",
         );
         assert!(
             run.final_stream.peak_kernel_window_capacity_bytes
@@ -188,10 +376,29 @@ fn faceted_complete_data_products_are_exact_across_distinct_admitted_plans() {
     assert_worker_independent_stream(&serial.final_stream, &parallel.final_stream, "replay");
     assert_eq!(serial.final_stream.planned_workers, 1);
     assert_eq!(parallel.final_stream.planned_workers, 2);
-    assert_ne!(
-        serial.final_stream.peak_worker_stack_capacity_bytes,
-        parallel.final_stream.peak_worker_stack_capacity_bytes,
-        "the compared plans must reserve distinct worker-memory envelopes",
+    assert!(
+        serial.final_stream.planned_kernel_window_capacity_bytes
+            < parallel.final_stream.planned_kernel_window_capacity_bytes,
+        "the two-worker plan must admit a larger kernel/worker resource envelope",
+    );
+    for run in [&serial, &parallel] {
+        // The faceted Stokes-I fixture routes eight encoded records in one frame.
+        assert_eq!(
+            run.final_stream.peak_physical_route_capacity_bytes,
+            gridded_normal_route_capacity_bytes(8, 1, 1).unwrap(),
+        );
+        assert!(
+            run.final_stream.peak_kernel_window_capacity_bytes
+                <= run.final_stream.planned_kernel_window_capacity_bytes
+        );
+    }
+    assert_eq!(
+        serial.final_stream.peak_worker_stack_capacity_bytes, 0,
+        "the single lane executes in-line without a scoped worker task stack",
+    );
+    assert!(
+        parallel.final_stream.peak_worker_stack_capacity_bytes > 0,
+        "the two-worker plan starts scoped worker tasks with a stack window",
     );
 }
 
@@ -220,13 +427,14 @@ fn faceted_replay_budget_covers_every_physical_chart_in_one_source_block() {
         )
         .expect("scalar record width");
 
-    let budget = project_managed_spill_budget(&problem, maximum_block_samples)
-        .expect("faceted replay budget");
+    let budget = project_gridded_normal_compilation(&problem, maximum_block_samples)
+        .expect("faceted replay budget")
+        .spill;
 
     assert_eq!(
         budget.maximum_frame_payload_bytes(),
-        3 * 4 * record_bytes,
-        "one weighted sample may produce one record in each physical facet chart",
+        3 * 2 * 4 * record_bytes,
+        "an indivisible atom admits distinct prediction and accumulation terms in every physical chart",
     );
 }
 
@@ -234,7 +442,7 @@ fn faceted_replay_budget_covers_every_physical_chart_in_one_source_block() {
 fn balanced_policy_selects_the_largest_feasible_production_replay_team() {
     let run =
         execute_complete_data_mfs_with_policy(ResourcePolicy::Balanced, 17, FacetLayout::Single);
-    assert_eq!(run.initial_stream.planned_workers, 1);
+    assert_eq!(run.initial_stream.planned_workers, 2);
     assert_eq!(run.final_stream.planned_workers, 3);
     assert_eq!(run.final_stream.actual_workers, 3);
 }
@@ -325,7 +533,15 @@ fn execute_complete_data_mfs_with_policy(
         .into_parts();
     let snapshot = compile_observation(snapshot_input).expect("compile owner snapshot");
     let problem = compile(ImagingRequest::new(
-        problem_specification(weighting),
+        problem_specification_with_reconstruction(
+            weighting,
+            ReconstructionContract::new(
+                ReconstructionBasis::Constant,
+                ReconstructionAlgorithm::Hogbom,
+                ReconstructionControls::new(2, 0.1, 0.0),
+                PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+            ),
+        ),
         geometry_with_facets(facets),
         ProblemInputIdentities::new(snapshot),
         model_lifecycle(ModelStateIdentity::Empty),
@@ -333,15 +549,18 @@ fn execute_complete_data_mfs_with_policy(
     .expect("compile constant-basis MFS problem");
     let spectral_specification =
         SpectralOperatorSpecification::new(&problem).expect("fixture spectral specification");
-    let execution_residency = gridded_normal_execution_residency(
-        spectral_specification.grid_shape(),
-        spectral_specification.slab().core_depth(),
-        casa_imaging_reconstruction::runtime_adapter::standard_convolution_support(),
-    )
-    .expect("fixture two-domain residency");
-    let expected_replay_grid_bytes = execution_residency.peak_complex_values()
-        * std::mem::size_of::<Complex64>()
-        + execution_residency.metadata_bytes();
+    let expected_replay_grid_bytes = |record_bound| {
+        let execution_residency = GriddedNormalStorageLayout::new(
+            [spectral_specification.grid_shape()],
+            spectral_specification.slab().core_depth(),
+            casa_imaging_reconstruction::runtime_adapter::standard_convolution_support(),
+            false,
+        )
+        .and_then(|layout| layout.residency(record_bound))
+        .expect("fixture two-domain residency");
+        execution_residency.peak_complex_values() * std::mem::size_of::<Complex64>()
+            + execution_residency.metadata_bytes()
+    };
     let residency = initial_access
         .certify_residency(&problem)
         .expect("certify selected-content residency");
@@ -368,29 +587,163 @@ fn execute_complete_data_mfs_with_policy(
     };
     let planned = SpectralCyclePlan::initial(&problem, &planning_registry, execution_policy())
         .expect("plan initial complete-data MFS pass");
-    let minor_node = planned
-        .minor_cycle_node()
-        .expect("initial plan includes reconstruction cycle")
-        .clone();
+    let retained_metadata_bytes = planned.physical_candidates()[0]
+        .execution_dag()
+        .logical_allocations()
+        .values()
+        .find(|allocation| {
+            allocation
+                .id
+                .as_str()
+                .starts_with("gridded-normal-retained-metadata-")
+        })
+        .expect("retained metadata allocation")
+        .bytes;
+    for physical in planned.physical_candidates() {
+        let compiler = physical
+            .execution_dag()
+            .logical_allocations()
+            .values()
+            .find(|allocation| {
+                allocation
+                    .id
+                    .as_str()
+                    .starts_with("gridded-normal-compiler-")
+            })
+            .expect("compiler has one admitted allocation");
+        let reconciliation = physical
+            .observation_transaction()
+            .post_replay_reconciliation()
+            .unwrap();
+        assert_eq!(
+            compiler.lifetime.release_after,
+            std::collections::BTreeSet::from([crate::WorkDependency::Work(reconciliation.clone())]),
+            "compiler stays charged through post-fence scientific sealing",
+        );
+        assert_eq!(
+            compiler.bytes,
+            crate::complete_data_operator::project_gridded_normal_compilation(&problem, 1)
+                .unwrap()
+                .compiler
+                .transient_workspace_bytes() as u64,
+        );
+        assert_eq!(
+            compiler.lifetime.disposition,
+            crate::AllocationDisposition::Release
+        );
+        let metadata = physical
+            .execution_dag()
+            .logical_allocations()
+            .values()
+            .find(|allocation| {
+                allocation
+                    .id
+                    .as_str()
+                    .starts_with("gridded-normal-retained-metadata-")
+            })
+            .expect("retained metadata has its own admitted allocation");
+        assert_ne!(metadata.physical_slot, compiler.physical_slot);
+        let compilation =
+            crate::complete_data_operator::project_gridded_normal_compilation(&problem, 1)
+                .unwrap()
+                .compiler;
+        assert_eq!(
+            metadata.compatibility.layout,
+            crate::AllocationLayout::new(format!(
+                "gridded-normal-retained-metadata-{}",
+                compilation.binding()
+            ))
+        );
+        let wrong_program = crate::complete_data_operator::gridded_metadata_allocation(
+            &compiler.lifetime.acquire_at,
+            casa_imaging_model::LogicalIdentity::from_sha256([0; 32]),
+            metadata.bytes,
+        );
+        assert_eq!(wrong_program.bytes, metadata.bytes);
+        assert_ne!(
+            wrong_program.compatibility.layout,
+            metadata.compatibility.layout
+        );
+        assert_eq!(metadata.purpose, crate::AllocationPurpose::Data);
+        assert_eq!(
+            metadata.compatibility.access,
+            crate::AllocationAccess::ReadOnly
+        );
+        assert_eq!(
+            metadata.compatibility.storage_mode,
+            crate::StorageMode::Host
+        );
+        assert_eq!(
+            metadata.compatibility.initialization,
+            crate::InitializationPolicy::OverwriteBeforeRead
+        );
+        assert_eq!(
+            metadata.lifetime.disposition,
+            crate::AllocationDisposition::ExportImmutableArtifact {
+                owner_node: compiler.lifetime.acquire_at.clone(),
+            }
+        );
+        assert_eq!(
+            metadata.lifetime.release_after,
+            std::collections::BTreeSet::from([
+                crate::WorkDependency::Work(compiler.lifetime.acquire_at.clone()),
+                crate::WorkDependency::Fence(crate::FenceId::new(
+                    compiler.lifetime.acquire_at.clone(),
+                    crate::FenceKind::Io
+                )),
+            ])
+        );
+        assert!(
+            metadata.bytes > compilation.retained_metadata_bytes() as u64,
+            "runtime backing, permit, and deletion-owning spill path are separately charged"
+        );
+        assert_eq!(
+            physical
+                .execution_dag()
+                .logical_allocations()
+                .values()
+                .filter(|allocation| allocation.physical_slot == metadata.physical_slot)
+                .count(),
+            1,
+            "exported immutable metadata never shares a reusable slot"
+        );
+    }
+    let frozen_reservation = FrozenWeightingReservation::acquire(
+        &authority,
+        resource_policy.clone(),
+        planned.weighting_plan().planned_residency(),
+        replay_proof_bytes,
+    )
+    .expect("reserve frozen weighting state");
+    let receipt_directory = tempfile::tempdir().expect("receipt directory");
+    let receipts = ExecutionReceiptStore::new(
+        receipt_directory.path(),
+        ReceiptRetention::new(4, 1 << 20).expect("receipt retention"),
+    )
+    .expect("receipt store");
+    let initial_plan = runtime_plan(
+        &problem,
+        PlanningBindings::new(
+            registry_id(),
+            resource_policy.clone(),
+            PlannerCostModelProfileBootstrap::new(cost_model_id()),
+        ),
+        &authority,
+        &planning_registry,
+        &receipts,
+        |_, _| Ok::<_, Infallible>(planned.physical_candidates()),
+    )
+    .expect("bind initial execution plan");
     let SpectralCyclePlanParts {
-        physical,
         weighting: weighting_plan,
         complete_data,
         source_resources,
         pass,
+        minor_cycle_node,
         gridded_normal,
         ..
-    } = planned.into_parts();
-    let frozen_reservation = FrozenWeightingReservation::acquire(
-        &authority,
-        resource_policy.clone(),
-        weighting_plan.planned_residency(),
-        replay_proof_bytes,
-    )
-    .expect("reserve frozen weighting state");
-    let selected = initial_access
-        .open(&problem)
-        .expect("open owner-validated selected observation");
+    } = planned.into_parts(&initial_plan).unwrap();
+    let minor_node = minor_cycle_node.expect("initial plan includes reconstruction cycle");
     let executor = SpectralCycleExecutor::new(
         implementation_id(),
         problem.clone(),
@@ -398,7 +751,7 @@ fn execute_complete_data_mfs_with_policy(
         source_resources,
         pass,
         complete_data,
-        selected,
+        initial_access.into_deferred(),
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable initial model"),
         SpectralCyclePassInput::Initial,
     )
@@ -420,25 +773,6 @@ fn execute_complete_data_mfs_with_policy(
     );
     let initial_registry =
         SpectralCycleRegistry::new(registry_id(), implementation_id(), &problem, executor);
-    let receipt_directory = tempfile::tempdir().expect("receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        receipt_directory.path(),
-        ReceiptRetention::new(4, 1 << 20).expect("receipt retention"),
-    )
-    .expect("receipt store");
-    let initial_plan = runtime_plan(
-        &problem,
-        PlanningBindings::new(
-            registry_id(),
-            resource_policy.clone(),
-            PlannerCostModelProfileBootstrap::new(cost_model_id()),
-        ),
-        &authority,
-        &initial_registry,
-        &receipts,
-        move |_, _| Ok::<_, Infallible>(vec![physical]),
-    )
-    .expect("bind initial execution plan");
     let executable = ExecutableModelProblem::from_compiled(problem.clone()).expect("executable");
     let current = RunBindings::new(problem.inputs().clone(), &resource_policy, cost_model_id());
     let initial_attempt = attempt_id(execution_id, 0);
@@ -464,6 +798,16 @@ fn execute_complete_data_mfs_with_policy(
         .implementation()
         .take_reconstruction_cycle_completion()
         .expect("initial reconstruction completion");
+    if facets == FacetLayout::Single {
+        let measurements = initial_registry
+            .implementation()
+            .reconstruction_measurements()
+            .expect("single-plane owner uses the bounded resident executor");
+        assert_eq!(measurements.partitions_executed, 1);
+        assert_eq!(measurements.commits_completed, 1);
+        assert_eq!(measurements.source_read_operations, 0);
+        assert_eq!(measurements.blocks_filled, 0);
+    }
     let frozen_weighting = initial_registry
         .implementation()
         .take_frozen_weighting()
@@ -473,12 +817,16 @@ fn execute_complete_data_mfs_with_policy(
         .take_gridded_normal_replay()
         .expect("sealed gridded-normal replay");
     let final_input = minor.into_final_major_input();
-    let dirty = final_input.evidence().normal_state().residual().to_vec();
-    let psf = final_input
-        .evidence()
-        .normal_state()
-        .normal_approximation()
-        .to_vec();
+    let (dirty, psf) = {
+        let normal = final_input.evidence().normal_state();
+        let window = normal
+            .read_window(normal.slab().core_range())
+            .expect("coupled MFS fixture window");
+        (
+            window.residual().to_vec(),
+            window.normal_approximation().to_vec(),
+        )
+    };
 
     drop(resolution);
     let final_planned = SpectralCyclePlan::final_major(
@@ -489,14 +837,31 @@ fn execute_complete_data_mfs_with_policy(
         gridded_replay,
     )
     .expect("plan final gridded replay");
+    let final_plan = runtime_plan(
+        &problem,
+        PlanningBindings::new(
+            registry_id(),
+            resource_policy.clone(),
+            PlannerCostModelProfileBootstrap::new(cost_model_id()),
+        ),
+        &authority,
+        &planning_registry,
+        &receipts,
+        |_, _| Ok::<_, Infallible>(final_planned.physical_candidates()),
+    )
+    .expect("bind final execution plan");
     let SpectralCyclePlanParts {
-        physical: final_physical,
         weighting: final_weighting,
         complete_data: final_complete_data,
         pass: final_pass,
         gridded_normal: final_gridded_normal,
         ..
-    } = final_planned.into_parts();
+    } = final_planned.into_parts(&final_plan).unwrap();
+    let expected_replay_grid_bytes = expected_replay_grid_bytes(
+        final_complete_data
+            .gridded_replay_record_bound()
+            .expect("planned replay record bound"),
+    );
     let final_executor = SpectralCycleExecutor::new_gridded(
         implementation_id(),
         problem.clone(),
@@ -511,19 +876,6 @@ fn execute_complete_data_mfs_with_policy(
     .with_frozen_weighting(frozen_weighting);
     let final_registry =
         SpectralCycleRegistry::new(registry_id(), implementation_id(), &problem, final_executor);
-    let final_plan = runtime_plan(
-        &problem,
-        PlanningBindings::new(
-            registry_id(),
-            resource_policy.clone(),
-            PlannerCostModelProfileBootstrap::new(cost_model_id()),
-        ),
-        &authority,
-        &final_registry,
-        &receipts,
-        move |_, _| Ok::<_, Infallible>(vec![final_physical]),
-    )
-    .expect("bind final execution plan");
     runtime_run(
         &executable,
         &final_plan,
@@ -542,17 +894,62 @@ fn execute_complete_data_mfs_with_policy(
         .latest_complete_data_stream_evidence()
         .expect("final stream evidence")
         .into();
+    let mut completed_replay = final_registry
+        .implementation()
+        .take_gridded_normal_replay()
+        .expect("completed replay remains available for another cycle");
+    assert!(completed_replay.window_plan().is_none());
+    assert!(completed_replay.latest_read_measurements().is_some());
+    assert!(completed_replay.latest_stream_measurements().is_some());
+    assert!(completed_replay.release_completed_window_plan().is_err());
+    let next_window = completed_replay
+        .preview_windows(
+            1,
+            crate::complete_data_operator::GriddedNormalReplayPlanningCapacity::Unknown,
+            casa_imaging_reconstruction::runtime_adapter::standard_convolution_support(),
+            None,
+        )
+        .unwrap();
+    completed_replay.bind_window_plan(next_window).unwrap();
+    assert!(completed_replay.latest_read_measurements().is_none());
+    assert!(completed_replay.latest_stream_measurements().is_none());
+    assert!(
+        completed_replay.release_completed_window_plan().is_err(),
+        "the preceding cycle cannot authorize release of an unexecuted binding"
+    );
     let completion = final_registry
         .implementation()
         .take_completion()
         .expect("final-major completion")
         .into_completion();
 
+    let remaining_with_artifact = authority
+        .remaining_selected_source_memory_bytes(&resource_policy)
+        .expect("capacity with retained artifact");
+    completed_replay.assert_retained_backing_lifetime(|alive| {
+        assert_eq!(
+            authority
+                .remaining_selected_source_memory_bytes(&resource_policy)
+                .unwrap(),
+            remaining_with_artifact + if alive { 0 } else { retained_metadata_bytes },
+            "retained metadata is released exactly when the last guarded alias drops"
+        );
+    });
+
     RunEvidence {
         dirty,
         psf,
-        model: completion.final_model().samples().to_vec(),
-        residual: completion.normal_state().residual().to_vec(),
+        model: completion
+            .final_model()
+            .read_samples(0..completion.final_model().sample_count())
+            .expect("read fixture model")
+            .to_vec(),
+        residual: completion
+            .normal_state()
+            .read_window(completion.normal_state().slab().core_range())
+            .expect("coupled MFS fixture window")
+            .residual()
+            .to_vec(),
         sum_weights: completion.normal_state().sum_weights().to_vec(),
         initial_stream,
         final_stream,
@@ -598,7 +995,7 @@ fn observation_resolution() -> SelectedObservationResolutionRequest {
     )
 }
 
-fn geometry_with_facets(facets: FacetLayout) -> GeometryInput {
+pub(super) fn geometry_with_facets(facets: FacetLayout) -> GeometryInput {
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
@@ -649,7 +1046,22 @@ fn geometry_with_facets(facets: FacetLayout) -> GeometryInput {
     )
 }
 
-fn problem_specification(weighting: WeightingContract) -> ProblemSpecification {
+pub(super) fn problem_specification(weighting: WeightingContract) -> ProblemSpecification {
+    problem_specification_with_reconstruction(
+        weighting,
+        ReconstructionContract::new(
+            ReconstructionBasis::Constant,
+            ReconstructionAlgorithm::Dirty,
+            ReconstructionControls::new(0, 1.0, 0.0),
+            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+        ),
+    )
+}
+
+fn problem_specification_with_reconstruction(
+    weighting: WeightingContract,
+    reconstruction: ReconstructionContract,
+) -> ProblemSpecification {
     let numerics = NumericsContract::new(
         vec![NumericPrecision::F64],
         ReductionPolicy::Compensated,
@@ -663,14 +1075,14 @@ fn problem_specification(weighting: WeightingContract) -> ProblemSpecification {
         PrimaryBeamValidityPolicy::new(
             0.2,
             ProductSupportComparison::StrictlyGreater,
-            ProductBlankingPolicy::ZeroAndFalseMask,
+            ProductBlankingPolicy::Zero,
         )
         .expect("valid primary-beam policy"),
         TaylorValidityPolicy::new(
             TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
             0.1,
             ProductSupportComparison::StrictlyGreater,
-            ProductBlankingPolicy::ZeroAndFalseMask,
+            ProductBlankingPolicy::Zero,
         )
         .expect("valid Taylor policy"),
     );
@@ -685,12 +1097,7 @@ fn problem_specification(weighting: WeightingContract) -> ProblemSpecification {
                 ),
             ),
         ),
-        ReconstructionContract::new(
-            ReconstructionBasis::Constant,
-            ReconstructionAlgorithm::Dirty,
-            ReconstructionControls::new(0, 1.0, 0.0),
-            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
-        ),
+        reconstruction,
         weighting,
         ProductRequirements::new(
             vec![ProductKind::Psf],
@@ -796,6 +1203,16 @@ fn artifact_storage(authority: &ResourceAuthority, worker_count: u64) -> Managed
 }
 
 fn runtime_inventory() -> HostInventory {
+    runtime_inventory_with_roots(
+        fixture().storage_root.clone(),
+        fixture().measurement_set.clone(),
+    )
+}
+
+pub(super) fn runtime_inventory_with_roots(
+    storage_root: PathBuf,
+    source_root: PathBuf,
+) -> HostInventory {
     let memory_domain = CapacityDomainId::new("host-memory");
     let memory_view = CapacityViewId::new("host-memory");
     let io_rate = RateResourceId::new("io-rate");
@@ -822,7 +1239,7 @@ fn runtime_inventory() -> HostInventory {
             storage_domains: vec![
                 StorageDomain {
                     id: storage.clone(),
-                    root: fixture().storage_root.clone(),
+                    root: storage_root,
                     capacity_bytes: STORAGE_BYTES,
                     read_rate: io_rate.clone(),
                     write_rate: io_rate.clone(),
@@ -831,7 +1248,7 @@ fn runtime_inventory() -> HostInventory {
                 },
                 StorageDomain {
                     id: source_storage.clone(),
-                    root: fixture().measurement_set.clone(),
+                    root: source_root,
                     capacity_bytes: STORAGE_BYTES,
                     read_rate: io_rate.clone(),
                     write_rate: io_rate.clone(),
@@ -879,7 +1296,7 @@ fn runtime_inventory() -> HostInventory {
     }
 }
 
-fn storage_io() -> StorageIoResourceBinding {
+pub(super) fn storage_io() -> StorageIoResourceBinding {
     StorageIoResourceBinding::new(
         StorageDomainId::new("atomic-output"),
         RateResourceId::new("transaction-io-rate"),
@@ -888,7 +1305,7 @@ fn storage_io() -> StorageIoResourceBinding {
     )
 }
 
-fn artifact_storage_io() -> StorageIoResourceBinding {
+pub(super) fn artifact_storage_io() -> StorageIoResourceBinding {
     StorageIoResourceBinding::new(
         StorageDomainId::new("atomic-output"),
         RateResourceId::new("io-rate"),
@@ -901,7 +1318,7 @@ fn registry_id() -> ImplementationRegistryId {
     ImplementationRegistryId::from_sha256([TEST_IMPLEMENTATION_BYTE; 32])
 }
 
-fn implementation_id() -> WorkImplementationId {
+pub(super) fn implementation_id() -> WorkImplementationId {
     WorkImplementationId::new("issue-581-complete-data-mfs")
 }
 
@@ -914,7 +1331,7 @@ fn attempt_id(worker_count: u64, phase: u8) -> ExecutionAttemptId {
     ExecutionAttemptId::from_sha256([86_u8.wrapping_add(worker).wrapping_add(phase); 32])
 }
 
-struct PlanningImplementation {
+pub(super) struct PlanningImplementation {
     id: WorkImplementationId,
 }
 
@@ -956,14 +1373,14 @@ impl WorkImplementation for PlanningImplementation {
     }
 }
 
-struct PlanningRegistry {
+pub(super) struct PlanningRegistry {
     id: ImplementationRegistryId,
     metadata: ImplementationContractMetadata,
     implementation: PlanningImplementation,
 }
 
 impl PlanningRegistry {
-    fn new(problem: &casa_imaging_model::CompiledProblem) -> Self {
+    pub(super) fn new(problem: &casa_imaging_model::CompiledProblem) -> Self {
         Self {
             id: registry_id(),
             metadata: ImplementationContractMetadata::new(

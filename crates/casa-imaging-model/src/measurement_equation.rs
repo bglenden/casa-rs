@@ -15,11 +15,11 @@ use sha2::{Digest, Sha256};
 use crate::{
     ProblemInputIdentities,
     compiled_problem::{
-        InstrumentModel, InstrumentResponse, LogicalIdentity, NumericsContractId,
-        PolarizationContract, ProductKind, ProductNormalization, ReconstructionBasis,
-        ReconstructionContract, RestoringBeamPolicy, ScientificContract, SpectralKernel,
-        SpectralSamplingLaw, UvTaper, WProjectionContract, WeightDensityScope, WeightingContract,
-        WeightingScheme,
+        AwProjectionContract, InstrumentModel, InstrumentResponse, LogicalIdentity,
+        NumericsContractId, PolarizationContract, ProductKind, ProductNormalization,
+        ReconstructionBasis, ReconstructionContract, RestoringBeamPolicy, ScientificContract,
+        SpectralKernel, SpectralSamplingLaw, UvTaper, WProjectionContract, WeightDensityScope,
+        WeightingContract, WeightingScheme,
     },
     geometry::{CompiledGeometry, CompiledGeometryId, VisibilityPhaseConvention},
     observation::{
@@ -29,7 +29,7 @@ use crate::{
 };
 
 const WEIGHTING_COMMITMENT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-weighting-commitment";
-const WEIGHTING_COMMITMENT_IDENTITY_VERSION: u32 = 4;
+const WEIGHTING_COMMITMENT_IDENTITY_VERSION: u32 = 5;
 const CASA_UNPOLARIZED_WEIGHT_GROUP_LAW_V1: u8 = 0;
 
 /// Inner product on the model-coefficient space.
@@ -148,6 +148,8 @@ pub enum PairedTransformKind {
     ChannelIntegration,
     /// W-dependent convolution and its conjugate adjoint.
     WProjection,
+    /// Prepared convolution-function A/W response and its conjugate adjoint.
+    AwProjection,
 }
 
 /// One logical transform whose forward and adjoint directions cannot be separated.
@@ -189,6 +191,11 @@ pub enum PairedMeasurementTransform {
         /// Exact W envelope and plane identity compiled for this problem.
         contract: WProjectionContract,
     },
+    /// Apply one validated prepared-CF A/W family in both directions.
+    AwProjection {
+        /// Exact A/W terms and coordinate envelope compiled for this problem.
+        contract: AwProjectionContract,
+    },
 }
 
 impl PairedMeasurementTransform {
@@ -206,6 +213,7 @@ impl PairedMeasurementTransform {
             Self::SpectralResampling { .. } => PairedTransformKind::SpectralResampling,
             Self::ChannelIntegration { .. } => PairedTransformKind::ChannelIntegration,
             Self::WProjection { .. } => PairedTransformKind::WProjection,
+            Self::AwProjection { .. } => PairedTransformKind::AwProjection,
         }
     }
 }
@@ -355,6 +363,7 @@ pub struct WeightingOperatorContract {
     snapshot: ObservationSnapshotId,
     scheme: WeightingScheme,
     density_scope: WeightDensityScope,
+    casa_cube_density_padding: Option<usize>,
     uv_taper: Option<UvTaper>,
     sources: Box<[WeightingSource]>,
 }
@@ -394,6 +403,12 @@ impl WeightingOperatorContract {
     #[must_use]
     pub const fn density_scope(&self) -> WeightDensityScope {
         self.density_scope
+    }
+
+    /// Return the bound CASA cube law's metadata-derived padding per side.
+    #[must_use]
+    pub const fn casa_cube_density_padding(&self) -> Option<usize> {
+        self.casa_cube_density_padding
     }
 
     /// Return the optional UV taper owned by W.
@@ -574,6 +589,9 @@ pub(crate) fn compile_normal_equation(
     if let Some(contract) = science.measurement_equation().w_projection() {
         transforms.push(PairedMeasurementTransform::WProjection { contract });
     }
+    if let Some(contract) = science.measurement_equation().aw_projection() {
+        transforms.push(PairedMeasurementTransform::AwProjection { contract });
+    }
     let measurement_operator = MeasurementOperatorContract {
         domain: domain.clone(),
         codomain,
@@ -681,6 +699,7 @@ fn compile_weighting_operator(
         snapshot: snapshot.snapshot_id(),
         scheme: weighting.scheme(),
         density_scope: weighting.density_scope(),
+        casa_cube_density_padding: weighting.casa_cube_density_padding(),
         uv_taper: weighting.uv_taper(),
         sources,
     }
@@ -740,6 +759,13 @@ fn weighting_commitment_id(
         WeightDensityScope::GlobalSelection => 1,
         WeightDensityScope::PerOutputChannel => 2,
     }]);
+    match weighting.casa_cube_density_padding() {
+        None => hasher.update([0]),
+        Some(padding) => {
+            hasher.update([1]);
+            hasher.update((padding as u128).to_be_bytes());
+        }
+    }
     match weighting.uv_taper() {
         None => hasher.update([0]),
         Some(taper) => {

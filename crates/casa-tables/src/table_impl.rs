@@ -272,11 +272,18 @@ pub(crate) struct TableImpl {
 
 impl TableImpl {
     pub(crate) fn retained_lazy_metadata_heap_bytes(&self) -> Option<usize> {
-        if self.loaded_rows.get().is_some()
-            || self
-                .loaded_scalar_columns
-                .values()
-                .any(|values| values.get().is_some())
+        if self.loaded_rows.get().is_some() || self.lazy_rows.is_none() {
+            return None;
+        }
+        self.lazy_rows.as_ref()?.read_metadata.get()?;
+        self.retained_owned_metadata_heap_bytes()
+    }
+
+    pub(crate) fn retained_owned_metadata_heap_bytes(&self) -> Option<usize> {
+        if self
+            .loaded_scalar_columns
+            .values()
+            .any(|values| values.get().is_some())
             || self
                 .loaded_array_columns
                 .values()
@@ -291,9 +298,33 @@ impl TableImpl {
             return None;
         }
 
-        let lazy_rows = self.lazy_rows.as_ref()?;
-        let mut bytes = path_heap_bytes(&lazy_rows.path)
-            .checked_add(lazy_rows.read_metadata.get()?.retained_heap_bytes()?)?
+        let mut bytes = 0usize;
+        if let Some(lazy_rows) = self.lazy_rows.as_ref() {
+            bytes = bytes.checked_add(path_heap_bytes(&lazy_rows.path))?;
+            if let Some(metadata) = lazy_rows.read_metadata.get() {
+                bytes = bytes.checked_add(metadata.retained_heap_bytes()?)?;
+            }
+        }
+        if let Some(rows) = self.loaded_rows.get() {
+            bytes = bytes
+                .checked_add(rows.rows.capacity().checked_mul(size_of::<RecordValue>())?)?
+                .checked_add(
+                    rows.undefined_cells
+                        .capacity()
+                        .checked_mul(size_of::<HashSet<String>>())?,
+                )?;
+            for row in &rows.rows {
+                bytes = bytes.checked_add(row.retained_heap_bytes()?)?;
+            }
+            for undefined in &rows.undefined_cells {
+                bytes =
+                    bytes.checked_add(undefined.capacity().checked_mul(size_of::<String>())?)?;
+                for name in undefined {
+                    bytes = bytes.checked_add(name.capacity())?;
+                }
+            }
+        }
+        bytes = bytes
             .checked_add(string_keyed_map_heap_bytes(&self.loaded_scalar_columns)?)?
             .checked_add(string_keyed_map_heap_bytes(&self.loaded_array_columns)?)?
             .checked_add(string_keyed_map_heap_bytes(&self.buffered_array_cells)?)?
@@ -526,19 +557,27 @@ impl TableImpl {
             source.path.display()
         ));
         let storage = CompositeStorage;
-        let values = storage
-            .load_array_column_rows_with_row_hint(
+        let values = match source.read_metadata.get() {
+            Some(metadata) => storage.load_plain_array_column_rows(
+                &source.path,
+                &metadata.table_dat,
+                column,
+                row_indices,
+                Some(source.row_count_hint as u64),
+            ),
+            None => storage.load_array_column_rows_with_row_hint(
                 &source.path,
                 column,
                 row_indices,
                 Some(source.row_count_hint as u64),
-            )
-            .map_err(|err| {
-                TableError::Storage(format!(
-                    "failed to load selected rows for array column '{column}' from table {}: {err}",
-                    source.path.display()
-                ))
-            })?;
+            ),
+        }
+        .map_err(|err| {
+            TableError::Storage(format!(
+                "failed to load selected rows for array column '{column}' from table {}: {err}",
+                source.path.display()
+            ))
+        })?;
         if let Some(profiler) = profiler.as_mut() {
             profiler.mark_with_detail(
                 "storage_load_complete",
@@ -701,19 +740,27 @@ impl TableImpl {
             source.path.display()
         ));
         let storage = CompositeStorage;
-        let values = storage
-            .load_scalar_column_rows_with_row_hint(
+        let values = match source.read_metadata.get() {
+            Some(metadata) => storage.load_plain_scalar_column_rows(
+                &source.path,
+                &metadata.table_dat,
+                column,
+                row_indices,
+                Some(source.row_count_hint as u64),
+            ),
+            None => storage.load_scalar_column_rows_with_row_hint(
                 &source.path,
                 column,
                 row_indices,
                 Some(source.row_count_hint as u64),
-            )
-            .map_err(|err| {
-                TableError::Storage(format!(
-                    "failed to load selected rows for scalar column '{column}' from table {}: {err}",
-                    source.path.display()
-                ))
-            })?;
+            ),
+        }
+        .map_err(|err| {
+            TableError::Storage(format!(
+                "failed to load selected rows for scalar column '{column}' from table {}: {err}",
+                source.path.display()
+            ))
+        })?;
         if let Some(profiler) = profiler.as_mut() {
             profiler.mark_with_detail(
                 "storage_load_complete",
@@ -1696,17 +1743,17 @@ impl TableImpl {
             return Ok(Some(value));
         }
 
-        if let Some(cached_column) = self.loaded_array_columns.get_mut(column) {
-            if cached_column.get().is_some() {
-                let column_values = cached_column
-                    .get_mut()
-                    .expect("array column initialized before mutable access");
-                if let Some(cell) = column_values.get_mut(row_index) {
-                    *cell = Some(value);
-                    return Ok(None);
-                }
-                return Ok(Some(value));
+        if let Some(cached_column) = self.loaded_array_columns.get_mut(column)
+            && cached_column.get().is_some()
+        {
+            let column_values = cached_column
+                .get_mut()
+                .expect("array column initialized before mutable access");
+            if let Some(cell) = column_values.get_mut(row_index) {
+                *cell = Some(value);
+                return Ok(None);
             }
+            return Ok(Some(value));
         }
         self.pending_array_cells
             .by_column
@@ -1832,6 +1879,27 @@ impl TableImpl {
         self.loaded_array_columns = lazy_array_column_store(schema.as_ref());
         self.buffered_array_cells = lazy_buffered_array_cell_store(schema.as_ref());
         self.schema = schema;
+    }
+
+    pub(crate) fn refresh_read_metadata(
+        &mut self,
+        table_dat: TableDatContents,
+    ) -> Result<(), TableError> {
+        if let Some(source) = self.lazy_rows.as_mut() {
+            source.read_metadata.take();
+            let metadata =
+                RetainedTableReadMetadata::open(&source.path, table_dat).map_err(|error| {
+                    TableError::Storage(format!(
+                        "failed to refresh read metadata for table {}: {error}",
+                        source.path.display()
+                    ))
+                })?;
+            source
+                .read_metadata
+                .set(metadata)
+                .expect("read metadata cleared before refreshing");
+        }
+        Ok(())
     }
 
     /// Replace all inner state from a storage snapshot.

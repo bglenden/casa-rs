@@ -3,7 +3,7 @@ name = "casa-imaging-products"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "Native continuum product algorithms and the Product Generation Authority"
+description = "Native continuum product algorithms and bounded write-only generation"
 repository.workspace = true
 publish = false
 

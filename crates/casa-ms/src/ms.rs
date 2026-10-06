@@ -49,6 +49,7 @@ pub(crate) struct MainRowSelectionFact {
     antenna1: i32,
     antenna2: i32,
     time_mjd_seconds: f64,
+    time_centroid_mjd_seconds: f64,
     scan_number: i32,
     state_id: i32,
     observation_id: i32,
@@ -59,7 +60,7 @@ pub(crate) struct MainRowSelectionFact {
 
 impl MainRowSelectionFact {
     /// Exact bytes read from stored MAIN columns for each row.
-    pub(crate) const STORAGE_BYTES_PER_ROW: usize = 65;
+    pub(crate) const STORAGE_BYTES_PER_ROW: usize = 73;
 
     /// Return the physical MAIN row index.
     #[must_use]
@@ -90,6 +91,11 @@ impl MainRowSelectionFact {
     #[must_use]
     pub(crate) fn time_mjd_seconds(self) -> f64 {
         self.time_mjd_seconds
+    }
+    /// Return the stored `TIME_CENTROID` in MJD seconds.
+    #[must_use]
+    pub(crate) fn time_centroid_mjd_seconds(self) -> f64 {
+        self.time_centroid_mjd_seconds
     }
     /// Return the stored `SCAN_NUMBER`.
     #[must_use]
@@ -132,6 +138,7 @@ pub(crate) struct MainRowSelectionBlock {
     antenna1: Vec<i32>,
     antenna2: Vec<i32>,
     times_mjd_seconds: Vec<f64>,
+    time_centroids_mjd_seconds: Vec<f64>,
     scan_numbers: Vec<i32>,
     state_ids: Vec<i32>,
     observation_ids: Vec<i32>,
@@ -152,6 +159,7 @@ impl MainRowSelectionBlock {
             antenna1: Vec::with_capacity(rows),
             antenna2: Vec::with_capacity(rows),
             times_mjd_seconds: Vec::with_capacity(rows),
+            time_centroids_mjd_seconds: Vec::with_capacity(rows),
             scan_numbers: Vec::with_capacity(rows),
             state_ids: Vec::with_capacity(rows),
             observation_ids: Vec::with_capacity(rows),
@@ -177,6 +185,7 @@ impl MainRowSelectionBlock {
             antenna1: self.antenna1[offset],
             antenna2: self.antenna2[offset],
             time_mjd_seconds: self.times_mjd_seconds[offset],
+            time_centroid_mjd_seconds: self.time_centroids_mjd_seconds[offset],
             scan_number: self.scan_numbers[offset],
             state_id: self.state_ids[offset],
             observation_id: self.observation_ids[offset],
@@ -274,6 +283,10 @@ fn fill_main_row_selection_block(
                 RequiredScalarColumnValuesMut::Float64(&mut block.times_mjd_seconds),
             ),
             RequiredScalarColumnDestination::new(
+                "TIME_CENTROID",
+                RequiredScalarColumnValuesMut::Float64(&mut block.time_centroids_mjd_seconds),
+            ),
+            RequiredScalarColumnDestination::new(
                 "SCAN_NUMBER",
                 RequiredScalarColumnValuesMut::Int32(&mut block.scan_numbers),
             ),
@@ -317,6 +330,7 @@ fn fill_main_row_selection_block(
         block.antenna1.len(),
         block.antenna2.len(),
         block.times_mjd_seconds.len(),
+        block.time_centroids_mjd_seconds.len(),
         block.scan_numbers.len(),
         block.state_ids.len(),
         block.observation_ids.len(),
@@ -1608,6 +1622,11 @@ mod tests {
 
     #[test]
     fn main_row_selection_blocks_follow_the_explicit_read_plan_and_reuse_storage() {
+        assert_eq!(MainRowSelectionFact::STORAGE_BYTES_PER_ROW, 73);
+        assert_eq!(
+            MainRowSelectionCursor::retained_bytes_per_row(),
+            73 + size_of::<usize>()
+        );
         let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
         let schema = ms.main_table().schema().unwrap().clone();
         for (row, data_description_id) in [2, 5, 5, 7, 11].into_iter().enumerate() {
@@ -1621,6 +1640,7 @@ mod tests {
                         "ANTENNA1" => Value::Scalar(ScalarValue::Int32(row as i32 + 20)),
                         "ANTENNA2" => Value::Scalar(ScalarValue::Int32(row as i32 + 30)),
                         "TIME" => Value::Scalar(ScalarValue::Float64(row as f64 + 40.5)),
+                        "TIME_CENTROID" => Value::Scalar(ScalarValue::Float64(row as f64 + 45.5)),
                         "SCAN_NUMBER" => Value::Scalar(ScalarValue::Int32(row as i32 + 50)),
                         "STATE_ID" => Value::Scalar(ScalarValue::Int32(row as i32 + 60)),
                         "OBSERVATION_ID" => Value::Scalar(ScalarValue::Int32(row as i32 + 70)),
@@ -1666,6 +1686,7 @@ mod tests {
             let current = (
                 block.data_description_ids.as_ptr(),
                 block.field_ids.as_ptr(),
+                block.time_centroids_mjd_seconds.as_ptr(),
                 block.uvw_m.as_ptr(),
             );
             match storage {
@@ -1686,6 +1707,7 @@ mod tests {
         assert_eq!(last.antenna1(), 24);
         assert_eq!(last.antenna2(), 34);
         assert_eq!(last.time_mjd_seconds(), 44.5);
+        assert_eq!(last.time_centroid_mjd_seconds(), 49.5);
         assert_eq!(last.scan_number(), 54);
         assert_eq!(last.state_id(), 64);
         assert_eq!(last.observation_id(), 74);

@@ -118,6 +118,7 @@
    "casa-imaging-model",
    "casa-imaging-products",
    "casa-imaging-reconstruction",
+   "casa-lattices",
    "casa-ms"
   ],
   "casa-simulation-synthesis": [

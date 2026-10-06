@@ -715,7 +715,6 @@ impl CubeSpectralSetup {
         time_bounds_mjd_sec: [f64; 2],
         derived_engine: &MsCalEngine,
     ) -> MsResult<(Self, ResolvedChannelSelection)> {
-        ensure_supported_interpolation(axis_config.interpolation)?;
         let channel_mode = axis_config.start.is_none() && axis_config.width.is_none()
             || matches!(axis_config.start, Some(CubeAxisValue::Channel(_)))
                 && axis_config.width.is_none()
@@ -903,7 +902,6 @@ impl CubeSpectralSetup {
         time_bounds_mjd_sec: [f64; 2],
         derived_engine: &MsCalEngine,
     ) -> MsResult<(Self, ResolvedChannelSelection)> {
-        ensure_supported_interpolation(axis_config.interpolation)?;
         if nchan == 0 {
             return Err(MsError::VersionError(
                 "cube output channel count must be positive".to_string(),
@@ -1044,7 +1042,14 @@ impl CubeSpectralSetup {
         row_field_id: usize,
         derived_engine: &MsCalEngine,
     ) -> MsResult<CubeRowSpectralContributions> {
-        ensure_supported_interpolation(self.interpolation)?;
+        // CASA FTMachine bypasses interpolation for a single output plane.
+        let interpolation = match self.interpolation {
+            CubeInterpolation::Cubic if self.output_channel_frequencies_hz.len() == 1 => {
+                CubeInterpolation::Nearest
+            }
+            interpolation => interpolation,
+        };
+        ensure_supported_interpolation(interpolation)?;
         if source_channel_widths_hz.len() != source_frequencies_hz.len() {
             return Err(MsError::VersionError(format!(
                 "row cube interpolation requires matching frequency/width arrays, got {} and {}",
@@ -1072,8 +1077,7 @@ impl CubeSpectralSetup {
                     })
                     .collect::<MsResult<Vec<_>>>()?
             };
-        let source_channel_widths_for_interpolation = if self.interpolation
-            == CubeInterpolation::Nearest
+        let source_channel_widths_for_interpolation = if interpolation == CubeInterpolation::Nearest
             || self.interpolation_uses_native_source_frequencies
         {
             source_channel_widths_hz.to_vec()
@@ -1149,7 +1153,7 @@ impl CubeSpectralSetup {
             &source_frequencies_for_interpolation,
             &source_channel_widths_for_interpolation,
             &output_frequencies_for_interpolation,
-            self.interpolation,
+            interpolation,
         );
         let source_channel_output_map = build_source_channel_output_map(
             &source_frequencies_for_interpolation,
@@ -1172,7 +1176,7 @@ impl CubeSpectralSetup {
             &source_channel_widths_for_interpolation,
             &output_frequencies_for_interpolation,
             &output_channel_widths_for_interpolation,
-            self.interpolation,
+            interpolation,
         );
         let padded_grid_channel_contributions = build_grid_channel_contributions(
             source_frequencies_hz,
@@ -1180,11 +1184,11 @@ impl CubeSpectralSetup {
             &source_channel_widths_for_interpolation,
             &padded_output_frequencies_for_interpolation,
             &[],
-            self.interpolation,
+            interpolation,
         );
         let source_channel_model_contributions = source_frequencies_for_interpolation
             .into_iter()
-            .map(|source_frequency_hz| match self.interpolation {
+            .map(|source_frequency_hz| match interpolation {
                 CubeInterpolation::Nearest => nearest_channel_index(
                     &output_frequencies_for_interpolation,
                     source_frequency_hz,
@@ -2381,19 +2385,17 @@ fn casa_grid_frequency_channel_map(
         );
     }
 
-    if min_image_hz < min_vis_hz {
-        if let Some(value) =
+    if min_image_hz < min_vis_hz
+        && let Some(value) =
             nearest_bracketed_output_frequency(output_channel_frequencies_hz, min_vis_hz)
-        {
-            min_image_hz = value;
-        }
+    {
+        min_image_hz = value;
     }
-    if max_image_hz > max_vis_hz {
-        if let Some(value) =
+    if max_image_hz > max_vis_hz
+        && let Some(value) =
             nearest_bracketed_output_frequency(output_channel_frequencies_hz, max_vis_hz)
-        {
-            max_image_hz = value;
-        }
+    {
+        max_image_hz = value;
     }
 
     let interp_width_hz = (image_width_hz / width.floor()).copysign(source_increment_hz);

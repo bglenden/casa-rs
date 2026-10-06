@@ -456,20 +456,20 @@ impl<'s> Lexer<'s> {
             }
         }
         // exponent (e/E/d/D)
-        if let Some(c) = self.peek_char() {
-            if c == 'e' || c == 'E' || c == 'd' || c == 'D' {
+        if let Some(c) = self.peek_char()
+            && (c == 'e' || c == 'E' || c == 'd' || c == 'D')
+        {
+            self.advance_char();
+            if let Some(s) = self.peek_char()
+                && (s == '+' || s == '-')
+            {
                 self.advance_char();
-                if let Some(s) = self.peek_char() {
-                    if s == '+' || s == '-' {
-                        self.advance_char();
-                    }
-                }
-                while let Some(d) = self.peek_char() {
-                    if d.is_ascii_digit() {
-                        self.advance_char();
-                    } else {
-                        break;
-                    }
+            }
+            while let Some(d) = self.peek_char() {
+                if d.is_ascii_digit() {
+                    self.advance_char();
+                } else {
+                    break;
                 }
             }
         }

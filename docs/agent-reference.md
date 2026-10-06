@@ -1,7 +1,7 @@
 # Agent Reference
 
 Truth class: normative
-Last reality check: 2026-07-18
+Last reality check: 2026-10-06
 Verification: just docs-check
 
 This is situational guidance for agents. Read only the section relevant to the
@@ -53,6 +53,37 @@ are:
 Slow, release, parity, and tutorial gates run shared-data preflight and report
 the selected root. Do not use `/private/tmp` as a canonical dataset location or
 add personal workstation archives as implicit default-gate fallbacks.
+
+## Storage Locations
+
+Follow the storage rules in `AGENTS.md`. Current locations:
+
+- Internal disk (small; keep at least about 40 GB free): source, builds, and
+  small durable evidence for quick tests under
+  `/Users/brianglendenning/SoftwareProjects/casa-rs-evidence/<work-item>/`.
+- NAS `storage` over Tailscale, mounted at `/Volumes/home`: large or
+  long-lived artifacts under `/Volumes/home/casa-rs/`. Shared CASA test data is
+  at `/Volumes/home/casatestdata`.
+- External disk `GLENDENNING` at `/Volumes/GLENDENNING/`: fast working space
+  for large datasets and runs. It has had repeated disconnects, so it is never
+  the only copy of anything that matters. Its preserved datasets are mirrored
+  at `/Volumes/home/casa-rs-glendenning-preserve/GLENDENNING/` (see
+  `/Volumes/GLENDENNING/README.md` for the path mapping).
+
+Delete development artifacts once the code has moved past them. For a long
+benchmark campaign that must survive restarts, keep one current Markdown record
+(source revision, commands, results, next step) next to its evidence on the NAS
+and replace superseded runs rather than accumulating them.
+
+## Workstation Toolchain
+
+- Keep Xcode and the Command Line Tools on the same major version. If `cc`
+  links fail with `tapi error ... unknown architecture` (for example while
+  building `fitsio-sys`), `xcrun` is resolving a newer Command Line Tools SDK
+  than Xcode's linker understands: update Xcode, or set
+  `SDKROOT=$(xcode-select -p)/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk`.
+- After an Xcode update, run `sudo xcodebuild -license accept` and
+  `sudo xcodebuild -runFirstLaunch`; until then `git` and `cc` fail.
 
 ## Release And Installation
 

@@ -172,17 +172,17 @@ impl Accumulator {
                 }
             }
             AggregateFunc::NTrue => {
-                if let Ok(b) = val.to_bool() {
-                    if b {
-                        self.ntrue += 1;
-                    }
+                if let Ok(b) = val.to_bool()
+                    && b
+                {
+                    self.ntrue += 1;
                 }
             }
             AggregateFunc::NFalse => {
-                if let Ok(b) = val.to_bool() {
-                    if !b {
-                        self.nfalse += 1;
-                    }
+                if let Ok(b) = val.to_bool()
+                    && !b
+                {
+                    self.nfalse += 1;
                 }
             }
             AggregateFunc::Median | AggregateFunc::Fractile => {
@@ -286,7 +286,7 @@ impl Accumulator {
                 } else {
                     self.values.sort_by(|a, b| a.total_cmp(b));
                     let len = self.values.len();
-                    let med = if len % 2 == 0 {
+                    let med = if len.is_multiple_of(2) {
                         (self.values[len / 2 - 1] + self.values[len / 2]) / 2.0
                     } else {
                         self.values[len / 2]

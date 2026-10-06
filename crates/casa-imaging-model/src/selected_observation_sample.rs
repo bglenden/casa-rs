@@ -16,7 +16,7 @@ use crate::{
 };
 
 const SELECTED_OBSERVATION_GENERATION_DOMAIN: &[u8] = b"casa-rs-selected-observation-generation";
-const SELECTED_OBSERVATION_GENERATION_VERSION: u32 = 8;
+const SELECTED_OBSERVATION_GENERATION_VERSION: u32 = 9;
 const GENERATION_ROW_RUN_MARKER: u8 = 0xa1;
 const GENERATION_ROW_RUN_TERMINAL: u8 = 0xaf;
 const GENERATION_CHANNEL_RUN_MARKER: u8 = 0xb1;
@@ -145,6 +145,7 @@ pub struct SelectedImageDomainProjection {
     facet_ordinal: u32,
     model: SelectedPhaseCentreProjection,
     psf: SelectedPsfPhaseCentreProjection,
+    aw_pointing_pixel: Option<[f64; 2]>,
 }
 
 impl SelectedImageDomainProjection {
@@ -171,6 +172,7 @@ impl SelectedImageDomainProjection {
             facet_ordinal,
             model,
             psf: SelectedPsfPhaseCentreProjection::Distinct(psf),
+            aw_pointing_pixel: None,
         }
     }
 
@@ -195,7 +197,22 @@ impl SelectedImageDomainProjection {
             facet_ordinal,
             model,
             psf: SelectedPsfPhaseCentreProjection::SharedWithModel,
+            aw_pointing_pixel: None,
         }
+    }
+
+    /// Attach the exact CASA chart-local baseline pointing pixel used by AW projection.
+    ///
+    /// The coordinate is the already averaged two-antenna pointing pixel in
+    /// this chart. Raw pointing directions remain available separately for
+    /// primary-beam and mosaic evaluation.
+    #[must_use]
+    pub fn with_aw_pointing_pixel(mut self, pixel: [f64; 2]) -> Option<Self> {
+        if pixel.iter().any(|value| !value.is_finite()) {
+            return None;
+        }
+        self.aw_pointing_pixel = Some(pixel);
+        Some(self)
     }
 
     /// Return the index into canonical compiled image domains.
@@ -229,6 +246,12 @@ impl SelectedImageDomainProjection {
     #[must_use]
     pub const fn psf_shares_model(self) -> bool {
         matches!(self.psf, SelectedPsfPhaseCentreProjection::SharedWithModel)
+    }
+
+    /// Return the exact CASA chart-local baseline pointing pixel, when evaluated.
+    #[must_use]
+    pub const fn aw_pointing_pixel(self) -> Option<[f64; 2]> {
+        self.aw_pointing_pixel
     }
 }
 
@@ -641,11 +664,152 @@ impl SelectedSpectralInterval {
     }
 }
 
+/// Row-local geometry of an emitted selected native-channel vector.
+///
+/// The first two selected centres are evaluated in the requested output frame.
+/// They are not reconstructed from `CHAN_WIDTH`, and retain their exact values
+/// even when selected channels have gaps or descend in frequency. A restricted
+/// replay additionally retains the original vector's first pair for the
+/// interpolation lattice. This is a non-persistent report: selected-source
+/// traversal owns its provenance.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SelectedRowSpectralGeometry {
+    measurement_set: MeasurementSetIdentity,
+    physical_row: u64,
+    data_description_id: i32,
+    spectral_window_id: u32,
+    polarization_id: u32,
+    field_id: i32,
+    time_mjd_days_bits: u64,
+    source_frame: FrequencyFrame,
+    output_frame: FrequencyFrame,
+    selected_channels: usize,
+    first: (u32, f64),
+    second: Option<(u32, f64)>,
+    lattice_first_pair_hz: Option<[f64; 2]>,
+}
+
+impl SelectedRowSpectralGeometry {
+    /// Bind a singleton or the first pair of the complete selected vector to
+    /// one source row and frame-conversion context.
+    ///
+    /// Indices remain in canonical selected-channel order, independently of
+    /// frequency direction. The caller supplies both converted centres, not a
+    /// channel-width approximation. Flags never change this geometry.
+    #[must_use]
+    pub fn new(
+        sample: SelectedObservationSampleView<'_>,
+        output_frame: FrequencyFrame,
+        selected_channels: usize,
+        first: (u32, f64),
+        second: Option<(u32, f64)>,
+    ) -> Option<Self> {
+        if selected_channels == 0
+            || !first.1.is_finite()
+            || first.1 <= 0.0
+            || (selected_channels == 1) != second.is_none()
+            || second.is_some_and(|second| {
+                second.0 <= first.0
+                    || !second.1.is_finite()
+                    || second.1 <= 0.0
+                    || !(second.1 - first.1).is_finite()
+                    || second.1 == first.1
+            })
+        {
+            return None;
+        }
+        let address = sample.address();
+        Some(Self {
+            measurement_set: address.measurement_set,
+            physical_row: address.physical_row,
+            data_description_id: address.data_description_id,
+            spectral_window_id: address.spectral_window_id,
+            polarization_id: address.polarization_id,
+            field_id: sample.metadata().field_id,
+            time_mjd_days_bits: sample.coordinates().time.mjd_days().to_bits(),
+            source_frame: address.frequency_frame,
+            output_frame,
+            selected_channels,
+            first,
+            second,
+            lattice_first_pair_hz: second.map(|second| [first.1, second.1]),
+        })
+    }
+
+    /// Whether this descriptor belongs to the sample's row and conversion context.
+    #[must_use]
+    pub fn matches_sample(
+        self,
+        sample: SelectedObservationSampleView<'_>,
+        output_frame: FrequencyFrame,
+    ) -> bool {
+        let address = sample.address();
+        self.measurement_set == address.measurement_set
+            && self.physical_row == address.physical_row
+            && self.data_description_id == address.data_description_id
+            && self.spectral_window_id == address.spectral_window_id
+            && self.polarization_id == address.polarization_id
+            && self.field_id == sample.metadata().field_id
+            && self.time_mjd_days_bits == sample.coordinates().time.mjd_days().to_bits()
+            && self.source_frame == address.frequency_frame
+            && self.output_frame == output_frame
+    }
+
+    /// Number of native channels in the emitted vector, including flagged channels.
+    #[must_use]
+    pub const fn selected_channels(self) -> usize {
+        self.selected_channels
+    }
+
+    /// Index and exact converted centre of the first selected channel.
+    #[must_use]
+    pub const fn first(self) -> (u32, f64) {
+        self.first
+    }
+
+    /// Index and exact converted centre of the second selected channel, absent for a singleton.
+    #[must_use]
+    pub const fn second(self) -> Option<(u32, f64)> {
+        self.second
+    }
+
+    /// Exact first-pair centres for row-local interpolation, absent for a singleton.
+    #[must_use]
+    pub fn first_pair_hz(self) -> Option<[f64; 2]> {
+        self.second.map(|second| [self.first.1, second.1])
+    }
+
+    /// Preserve the complete selected vector's interpolation lattice while
+    /// describing a bounded contiguous window of that vector. The local first
+    /// pair and count still describe the samples that must actually arrive.
+    #[must_use]
+    pub fn with_lattice_first_pair_hz(mut self, pair: [f64; 2]) -> Option<Self> {
+        if pair.iter().any(|value| !value.is_finite() || *value <= 0.0)
+            || !(pair[1] - pair[0]).is_finite()
+            || pair[0] == pair[1]
+            || self.second.is_some_and(|second| {
+                (second.1 - self.first.1).signum() != (pair[1] - pair[0]).signum()
+            })
+        {
+            return None;
+        }
+        self.lattice_first_pair_hz = Some(pair);
+        Some(self)
+    }
+
+    /// Exact first pair of the original selected vector, not the local window.
+    #[must_use]
+    pub const fn lattice_first_pair_hz(self) -> Option<[f64; 2]> {
+        self.lattice_first_pair_hz
+    }
+}
+
 /// Source-backed frame/interval evaluation for one selected spectral sample.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SelectedSpectralEvaluation {
     native: SelectedSpectralInterval,
     output_frame: SelectedSpectralInterval,
+    row_geometry: Option<SelectedRowSpectralGeometry>,
     effective_weight: f64,
     valid: bool,
 }
@@ -662,6 +826,7 @@ impl SelectedSpectralEvaluation {
         (effective_weight.is_finite() && effective_weight >= 0.0).then_some(Self {
             native,
             output_frame,
+            row_geometry: None,
             effective_weight,
             valid,
         })
@@ -677,6 +842,22 @@ impl SelectedSpectralEvaluation {
     #[must_use]
     pub const fn output_frame(self) -> SelectedSpectralInterval {
         self.output_frame
+    }
+
+    /// Attach the source owner's exact selected-row geometry.
+    ///
+    /// Row-interpolating consumers require this descriptor; its absence never
+    /// authorizes a channel-width or catalogue approximation.
+    #[must_use]
+    pub const fn with_row_geometry(mut self, geometry: SelectedRowSpectralGeometry) -> Self {
+        self.row_geometry = Some(geometry);
+        self
+    }
+
+    /// Return the source owner's selected-row geometry, when the envelope carries it.
+    #[must_use]
+    pub const fn row_geometry(self) -> Option<SelectedRowSpectralGeometry> {
+        self.row_geometry
     }
 
     /// Return the source weight after exact flag validity has been applied.
@@ -872,6 +1053,7 @@ impl SelectedInputWeightGroup {
 pub struct SelectedObservationSampleView<'a> {
     storage: SelectedObservationSampleStorage<'a>,
     input_weight_group: SelectedInputWeightGroup,
+    row_spectral_geometry: Option<SelectedRowSpectralGeometry>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -895,6 +1077,7 @@ impl<'a> SelectedObservationSampleView<'a> {
         Self {
             storage: SelectedObservationSampleStorage::Scalar(sample),
             input_weight_group: SelectedInputWeightGroup::single(sample.input_weight),
+            row_spectral_geometry: None,
         }
     }
 
@@ -912,6 +1095,7 @@ impl<'a> SelectedObservationSampleView<'a> {
                 correlation,
             },
             input_weight_group: SelectedInputWeightGroup::single(correlation.input_weight),
+            row_spectral_geometry: None,
         }
     }
 
@@ -931,6 +1115,24 @@ impl<'a> SelectedObservationSampleView<'a> {
     #[must_use]
     pub const fn input_weight_group(self) -> SelectedInputWeightGroup {
         self.input_weight_group
+    }
+
+    /// Attach the traversal-only spectral descriptor without changing the scalar value schema.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn with_row_spectral_geometry(
+        mut self,
+        geometry: Option<SelectedRowSpectralGeometry>,
+    ) -> Self {
+        self.row_spectral_geometry = geometry;
+        self
+    }
+
+    /// Borrow the source-issued row geometry carried through weighted traversal.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn row_spectral_geometry(self) -> Option<SelectedRowSpectralGeometry> {
+        self.row_spectral_geometry
     }
 
     /// Return the exact selected-sample address.
@@ -1430,6 +1632,14 @@ fn encode_generation_row_content(encoder: &mut CanonicalEncoder, content: &Gener
         encode_phase_centre_projection(encoder, projection.model());
         encoder.u8(u8::from(projection.psf_shares_model()));
         encode_phase_centre_projection(encoder, projection.psf());
+        match projection.aw_pointing_pixel() {
+            None => encoder.u8(0),
+            Some(pixel) => {
+                encoder.u8(1);
+                encoder.f64(pixel[0]);
+                encoder.f64(pixel[1]);
+            }
+        }
     }
     encoder.u8(match coordinates.uvw_law {
         UvwCoordinateLaw::PhaseTrackingCentre => 0,
@@ -1540,10 +1750,10 @@ mod tests {
 
     const GENERATION_FIXTURE: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../resources/imaging-architecture/baselines/selected-observation-generation-v8.txt"
+        "/../../resources/imaging-architecture/baselines/selected-observation-generation-v9.txt"
     ));
 
-    const ENCODED_FIELDS: [&str; 51] = [
+    const ENCODED_FIELDS: [&str; 54] = [
         "row.data_description_id:i32",
         "row.spectral_window_id:u32",
         "row.polarization_id:u32",
@@ -1559,6 +1769,9 @@ mod tests {
         "row.domain_projection.psf_shares_model:u8",
         "row.domain_projection.psf_uvw_m:f64-x-y-z",
         "row.domain_projection.psf_phase_shift_m:f64",
+        "row.domain_projection.aw_pointing_pixel:option-tag-u8",
+        "row.domain_projection.aw_pointing_pixel_x:f64-if-present",
+        "row.domain_projection.aw_pointing_pixel_y:f64-if-present",
         "row.uvw_law:tag-u8",
         "row.time:mjd-days-f64-then-scale-tag-u8",
         "row.time_centroid:mjd-days-f64-then-scale-tag-u8",
@@ -1620,6 +1833,13 @@ mod tests {
         assert_eq!(main.psf(), main.model());
         assert!(!outlier.psf_shares_model());
         assert_eq!(outlier.psf(), psf);
+        assert_eq!(main.aw_pointing_pixel(), None);
+        let exact = main
+            .with_aw_pointing_pixel([256.25, 255.75])
+            .expect("finite AW pointing pixel");
+        assert_eq!(exact.aw_pointing_pixel(), Some([256.25, 255.75]));
+        assert!(main.with_aw_pointing_pixel([f64::NAN, 0.0]).is_none());
+        assert!(main.with_aw_pointing_pixel([0.0, f64::INFINITY]).is_none());
         assert!(SelectedImageDomainProjections::new([outlier, main]).is_none());
         assert!(SelectedImageDomainProjections::new([main, outlier, main_second]).is_none());
         assert!(SelectedImageDomainProjections::new([main, outlier]).is_some());
@@ -1683,7 +1903,7 @@ mod tests {
             generation(&[&[second.clone(), first.clone()]]),
             "logical sample order participates in content identity"
         );
-        assert_eq!(SelectedObservationGenerationId::SCHEMA_VERSION, 8);
+        assert_eq!(SelectedObservationGenerationId::SCHEMA_VERSION, 9);
 
         let mutations: &[SampleMutation] = &[
             ("data description", |s| s.address.data_description_id += 1),
@@ -1719,6 +1939,16 @@ mod tests {
                 s.coordinates.transformed_uvw_m[2] += 1.0
             }),
             ("phase shift", |s| s.coordinates.phase_shift_m += 1.0),
+            ("AW pointing pixel", |s| {
+                let projection = s
+                    .domain_projections
+                    .get(0)
+                    .expect("primary domain projection")
+                    .with_aw_pointing_pixel([256.25, 255.75])
+                    .expect("finite AW pointing pixel");
+                s.domain_projections = SelectedImageDomainProjections::new([projection])
+                    .expect("canonical primary projection");
+            }),
             ("time", |s| {
                 s.coordinates.time = Epoch::new(59_001.0, TimeScale::Utc)
             }),
@@ -1838,10 +2068,10 @@ mod tests {
         assert_eq!(
             one_block.as_bytes(),
             [
-                77, 197, 204, 165, 208, 30, 160, 65, 207, 107, 26, 113, 112, 39, 221, 124, 87, 241,
-                59, 16, 59, 57, 137, 41, 5, 209, 82, 40, 81, 243, 230, 9,
+                208, 185, 128, 230, 73, 170, 22, 87, 177, 39, 200, 199, 95, 200, 118, 231, 38, 37,
+                127, 140, 27, 181, 133, 44, 30, 17, 183, 73, 204, 146, 212, 144,
             ],
-            "schema-8 golden ratchet"
+            "schema-9 golden ratchet"
         );
     }
 
@@ -1924,7 +2154,7 @@ mod tests {
             fixture_value("identity_domain"),
             "casa-rs-selected-observation-generation"
         );
-        assert_eq!(fixture_value("generation_schema_version"), "8");
+        assert_eq!(fixture_value("generation_schema_version"), "9");
         assert_eq!(fixture_value("row_run_marker"), "0xa1");
         assert_eq!(fixture_value("row_run_terminal"), "0xaf");
         assert_eq!(fixture_value("channel_run_marker"), "0xb1");
@@ -1968,7 +2198,7 @@ mod tests {
 
         assert_eq!(
             (encoder.proof_bytes(), encoder.proof_hash_calls()),
-            (524, 97),
+            (525, 98),
         );
     }
 

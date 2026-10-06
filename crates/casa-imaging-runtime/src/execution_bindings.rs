@@ -19,11 +19,11 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     AdaptationId, AdaptationTransition, AdmissionInfeasibilityCertificate, AllocationId,
-    AlternativeId, ClaimLifetime, DemandAlternatives, ExecutionAttemptId, ExecutionError,
-    ExecutionKnobs, ExecutionOutcome, ExecutionReceiptBinding, FenceKind, IoBufferKind,
-    LeaseResource, PhysicalSlotId, PublicationLayoutLedger, ReceiptError, ReceiptFailureKind,
-    ReceiptStatus, ResourceAuthority, ResourceError, ResourceIdentity, ResourceOverride,
-    ResourcePolicy, WorkDomain, WorkImplementationId, WorkKind, WorkNodeId,
+    ClaimLifetime, DemandAlternatives, ExecutionAttemptId, ExecutionError, ExecutionKnobs,
+    ExecutionOutcome, ExecutionReceiptBinding, FenceKind, IoBufferKind, LeaseResource,
+    PhysicalSlotId, PublicationLayoutLedger, ReceiptError, ReceiptFailureKind, ReceiptStatus,
+    ResourceAuthority, ResourceError, ResourceOverride, ResourcePolicy, WorkDomain,
+    WorkImplementationId, WorkKind, WorkNodeId,
     bounded_stream::BOUNDED_WORKER_STACK_BYTES,
     cost_model::PlannerCostModelProfileRecord,
     execution::{
@@ -41,6 +41,8 @@ const EXECUTION_PLAN_IDENTITY_DOMAIN: &[u8] = b"casa-rs-execution-plan";
 const EXECUTION_PLAN_IDENTITY_VERSION: u32 = 12;
 const RESOURCE_POLICY_IDENTITY_DOMAIN: &[u8] = b"casa-rs-resource-policy";
 const RESOURCE_POLICY_IDENTITY_VERSION: u32 = 1;
+
+mod work_control;
 
 macro_rules! digest_identity {
     ($name:ident, $summary:literal) => {
@@ -460,14 +462,8 @@ pub enum ArtifactDisposition {
     RejectedStale,
     /// Staged as an output and ready for the sole atomic publication operation.
     Staged,
-    /// Privately prepared for one independently atomic product replacement.
-    PublicationPrepared,
     /// Durably published as an output, as reported only by a completed receipt.
     Published,
-    /// A member replacement failed before visibility; the prior member remains visible.
-    PublicationFailed,
-    /// A member replacement returned without proving whether visibility changed.
-    PublicationUncertain,
 }
 
 /// Observed peak use of one exact resource claim.
@@ -1215,13 +1211,7 @@ pub struct PhysicalWorkBinding {
     artifacts: Vec<PlannedArtifact>,
     observation_transaction: ObservationTransactionWork,
     publication_layouts: PublicationLayoutLedger,
-    product_publication: ProductPublicationAuthority,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ProductPublicationAuthority {
-    None,
-    Planned(crate::ProductPublicationPlan),
+    product_publication: Option<crate::ProductPublicationPlan>,
 }
 
 /// Registry-owned science, numerics, and capability metadata for one
@@ -1438,6 +1428,7 @@ impl ImplementationContractCommitment {
         &self,
         registry: &R,
         execution_dag: &ExecutionDag,
+        resolved: &mut BTreeMap<WorkImplementationId, ImplementationContractMetadata>,
     ) -> Result<Self, PhysicalWorkBindingError> {
         if self.registry != registry.registry_id()
             || self.implementation_ids != implementation_ids(execution_dag)
@@ -1450,32 +1441,32 @@ impl ImplementationContractCommitment {
             );
         }
         let mut declarations = self.declarations.clone();
-        for work in execution_dag.nodes().values() {
-            let implementation = registry.resolve(&work.implementation).ok_or_else(|| {
-                PhysicalWorkBindingError::MissingImplementationContract(work.implementation.clone())
-            })?;
-            if implementation.implementation_id() != &work.implementation {
-                return Err(
-                    PhysicalWorkBindingError::ConflictingImplementationContract {
-                        reason: format!(
-                            "registry resolved {} for requested implementation {}",
-                            implementation.implementation_id().as_str(),
-                            work.implementation.as_str()
-                        ),
-                    },
-                );
-            }
-            let observed = registry
-                .implementation_contract(&work.implementation)
-                .ok_or_else(|| {
-                    PhysicalWorkBindingError::MissingImplementationContract(
-                        work.implementation.clone(),
-                    )
+        for identity in self.implementation_ids.values().collect::<BTreeSet<_>>() {
+            if !resolved.contains_key(identity) {
+                let implementation = registry.resolve(identity).ok_or_else(|| {
+                    PhysicalWorkBindingError::MissingImplementationContract(identity.clone())
                 })?;
+                if implementation.implementation_id() != identity {
+                    return Err(
+                        PhysicalWorkBindingError::ConflictingImplementationContract {
+                            reason: format!(
+                                "registry resolved {} for requested implementation {}",
+                                implementation.implementation_id().as_str(),
+                                identity.as_str()
+                            ),
+                        },
+                    );
+                }
+                let observed = registry.implementation_contract(identity).ok_or_else(|| {
+                    PhysicalWorkBindingError::MissingImplementationContract(identity.clone())
+                })?;
+                resolved.insert(identity.clone(), observed);
+            }
+            let observed = &resolved[identity];
             let declaration = ImplementationContractDeclaration {
                 problem: observed.problem,
                 numerics: observed.numerics,
-                required_capabilities: observed.required_capabilities,
+                required_capabilities: observed.required_capabilities.clone(),
             };
             if declaration.problem != self.problem
                 || declaration.numerics != self.numerics
@@ -1485,12 +1476,12 @@ impl ImplementationContractCommitment {
                     PhysicalWorkBindingError::ConflictingImplementationContract {
                         reason: format!(
                             "registry contract for implementation {} disagrees with the sealed science contract",
-                            work.implementation.as_str()
+                            identity.as_str()
                         ),
                     },
                 );
             }
-            declarations.insert(work.implementation.clone(), declaration);
+            declarations.insert(identity.clone(), declaration);
         }
         Ok(Self {
             registry: self.registry,
@@ -1517,29 +1508,13 @@ impl ImplementationContractCommitment {
                 },
             );
         }
-        for work in execution_dag.nodes().values() {
-            let Some(implementation) = registry.resolve(&work.implementation) else {
-                return Err(PhysicalWorkBindingError::MissingImplementationContract(
-                    work.implementation.clone(),
-                ));
-            };
-            if implementation.implementation_id() != &work.implementation {
-                return Err(
-                    PhysicalWorkBindingError::ConflictingImplementationContract {
-                        reason: format!(
-                            "run registry resolved {} for planned implementation {}",
-                            implementation.implementation_id().as_str(),
-                            work.implementation.as_str()
-                        ),
-                    },
-                );
-            }
-            let planned = self.declarations.get(&work.implementation).ok_or_else(|| {
-                PhysicalWorkBindingError::MissingImplementationContract(work.implementation.clone())
+        for identity in self.implementation_ids.values().collect::<BTreeSet<_>>() {
+            let planned = self.declarations.get(identity).ok_or_else(|| {
+                PhysicalWorkBindingError::MissingImplementationContract(identity.clone())
             })?;
-            let Some(observed) = registry.implementation_contract(&work.implementation) else {
+            let Some(observed) = registry.implementation_contract(identity) else {
                 return Err(PhysicalWorkBindingError::MissingImplementationContract(
-                    work.implementation.clone(),
+                    identity.clone(),
                 ));
             };
             if observed.problem != planned.problem
@@ -1550,7 +1525,7 @@ impl ImplementationContractCommitment {
                     PhysicalWorkBindingError::ConflictingImplementationContract {
                         reason: format!(
                             "run registry changed the contract for implementation {}",
-                            work.implementation.as_str()
+                            identity.as_str()
                         ),
                     },
                 );
@@ -1623,7 +1598,7 @@ impl PhysicalWorkBinding {
             artifacts,
             observation_transaction,
             publication_layouts,
-            ProductPublicationAuthority::None,
+            None,
         )
     }
 
@@ -1646,7 +1621,7 @@ impl PhysicalWorkBinding {
         if !matches!(
             observation_transaction.publication_scope(),
             crate::ObservationTransactionPublicationScope::ProductPublication
-                | crate::ObservationTransactionPublicationScope::SealedProductPublication
+                | crate::ObservationTransactionPublicationScope::GeneratedProductPublication
         ) {
             return invalid_product_publication(
                 "native product publication requires ProductPublication transaction scope",
@@ -1659,7 +1634,7 @@ impl PhysicalWorkBinding {
             artifacts,
             observation_transaction,
             publication_layouts,
-            ProductPublicationAuthority::Planned(product_publication.clone()),
+            Some(product_publication.clone()),
         )?;
         binding.validate_product_publication(product_publication)?;
         Ok(binding)
@@ -1711,7 +1686,7 @@ impl PhysicalWorkBinding {
         mut artifacts: Vec<PlannedArtifact>,
         observation_transaction: ObservationTransactionWork,
         publication_layouts: PublicationLayoutLedger,
-        product_publication: ProductPublicationAuthority,
+        product_publication: Option<crate::ProductPublicationPlan>,
     ) -> Result<Self, PhysicalWorkBindingError> {
         for node in execution_dag.nodes().keys() {
             if !prediction.stages.contains_key(node) {
@@ -1767,7 +1742,7 @@ impl PhysicalWorkBinding {
                 crate::PublicationParticipant::Product { .. }
             )
         });
-        if has_product_layout && matches!(product_publication, ProductPublicationAuthority::None) {
+        if has_product_layout && product_publication.is_none() {
             return invalid_product_publication(
                 "Product layouts require an exact planned native generation",
             );
@@ -1790,7 +1765,7 @@ impl PhysicalWorkBinding {
         &self.implementation_contract
     }
 
-    pub(crate) fn product_publication_authority(&self) -> ProductPublicationAuthority {
+    pub(crate) fn product_publication_plan(&self) -> Option<crate::ProductPublicationPlan> {
         self.product_publication.clone()
     }
 
@@ -1828,10 +1803,11 @@ impl PhysicalWorkBinding {
     fn bind_registry<R: ImplementationRegistry>(
         self,
         registry: &R,
+        resolved: &mut BTreeMap<WorkImplementationId, ImplementationContractMetadata>,
     ) -> Result<Self, PhysicalWorkBindingError> {
-        let contract = self
-            .implementation_contract
-            .bind_registry(registry, &self.execution_dag)?;
+        let contract =
+            self.implementation_contract
+                .bind_registry(registry, &self.execution_dag, resolved)?;
         Self::with_implementation_contract(
             contract,
             self.execution_dag,
@@ -1890,6 +1866,7 @@ fn validate_publication_layouts(
 
     let mut staged_by_producer = BTreeMap::<WorkNodeId, u64>::new();
     let mut io_by_node = BTreeMap::<(WorkNodeId, IoBufferKind), u64>::new();
+    let mut writers_by_node = BTreeMap::<(WorkNodeId, IoBufferKind, AllocationId), u64>::new();
     let mut bytes_by_allocation = BTreeMap::<AllocationId, u64>::new();
     for layout in layouts.entries() {
         let staging = layout.staging();
@@ -1939,20 +1916,19 @@ fn validate_publication_layouts(
             .copied()
             .unwrap_or(0)
             .saturating_add(layout.resource_bounds().staged_storage_bytes());
-        *io_by_node
-            .entry((producer.id.clone(), staging.writer_buffer_kind()))
-            .or_default() = io_by_node
-            .get(&(producer.id.clone(), staging.writer_buffer_kind()))
-            .copied()
-            .unwrap_or(0)
-            .saturating_add(layout.resource_bounds().writer_buffer_bytes());
-        *bytes_by_allocation
+        let writer_bytes = layout.resource_bounds().writer_buffer_bytes();
+        let writer = writers_by_node
+            .entry((
+                producer.id.clone(),
+                staging.writer_buffer_kind(),
+                allocation.id.clone(),
+            ))
+            .or_default();
+        *writer = (*writer).max(writer_bytes);
+        let allocation_bytes = bytes_by_allocation
             .entry(allocation.id.clone())
-            .or_default() = bytes_by_allocation
-            .get(&allocation.id)
-            .copied()
-            .unwrap_or(0)
-            .saturating_add(layout.resource_bounds().writer_buffer_bytes());
+            .or_default();
+        *allocation_bytes = (*allocation_bytes).max(writer_bytes);
 
         if let Some(mapped) = staging.mapped_page_cache() {
             let mapped_producer = dag.nodes().get(mapped.producer()).ok_or_else(|| {
@@ -2022,6 +1998,10 @@ fn validate_publication_layouts(
                 .unwrap_or(0)
                 .saturating_add(required);
         }
+    }
+    for ((node, kind, _), bytes) in writers_by_node {
+        let total = io_by_node.entry((node, kind)).or_default();
+        *total = total.saturating_add(bytes);
     }
     for (producer, required) in staged_by_producer {
         let declared = dag.nodes()[&producer]
@@ -2385,7 +2365,6 @@ pub struct ExecutionPlan {
     resource_policy: ResourcePolicy,
     resource_policy_id: ResourcePolicyId,
     planner_cost_model_profile: PlannerCostModelProfileId,
-    recorded_receipt_source: crate::receipt::ReceiptEvidenceSource,
     receipt_store: ExecutionReceiptStore,
     implementation_contract: ImplementationContractCommitment,
     execution_dag: ExecutionDag,
@@ -2393,7 +2372,7 @@ pub struct ExecutionPlan {
     artifacts: Vec<PlannedArtifact>,
     observation_transaction: BoundObservationTransaction,
     publication_layouts: PublicationLayoutLedger,
-    product_publication: ProductPublicationAuthority,
+    product_publication: Option<crate::ProductPublicationPlan>,
 }
 
 impl ExecutionPlan {
@@ -2517,8 +2496,6 @@ impl ExecutionPlan {
 pub enum PlanError<E> {
     /// The physical planner could not produce candidates.
     Planner(E),
-    /// Durable receipt evidence could not be read or validated.
-    Receipt(ReceiptError),
     /// A candidate was structurally incompatible with the authority topology.
     InvalidCandidate(ExecutionError),
     /// The emitted DAG and transaction declaration do not implement the compiled problem.
@@ -2543,7 +2520,6 @@ impl<E: fmt::Display> fmt::Display for PlanError<E> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Planner(error) => write!(formatter, "physical planner failed: {error}"),
-            Self::Receipt(error) => write!(formatter, "execution receipt evidence failed: {error}"),
             Self::InvalidCandidate(error) => {
                 write!(formatter, "physical candidate failed: {error}")
             }
@@ -2560,7 +2536,6 @@ impl<E: Error + 'static> Error for PlanError<E> {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Planner(error) => Some(error),
-            Self::Receipt(error) => Some(error),
             Self::InvalidCandidate(error) => Some(error),
             Self::ObservationTransaction(error) => Some(error),
             Self::Resource(error) => Some(error),
@@ -2575,9 +2550,8 @@ impl<E: Error + 'static> Error for PlanError<E> {
 /// hard feasibility with reserved headroom is proven only by Resource Authority
 /// admission under the bound host-use policy; and among admitted candidates
 /// the plan commits to the minimum conservative predicted wall time including
-/// uncertainty. Integrity-checked quantitative receipt constraints are passed
-/// into that same authority admission, where they produce explicit recorded
-/// refusals without entering the cost model. When no candidate fits, the returned
+/// uncertainty. Only current resource availability and demand constrain admission;
+/// historical receipt stores are not scanned. When no candidate fits, the returned
 /// [`PlanError::infeasibility_certificate`] reports exactly why each
 /// alternative was refused.
 pub fn plan<E, R>(
@@ -2591,16 +2565,19 @@ pub fn plan<E, R>(
 where
     R: ImplementationRegistry,
 {
-    let recorded_infeasibility =
-        RecordedInfeasibility::from_store(receipts).map_err(PlanError::Receipt)?;
     let emitted_candidates = planner(problem, &bindings).map_err(PlanError::Planner)?;
     let emitted_candidates = expand_worker_scalable_candidates(emitted_candidates)
         .map_err(PlanError::InvalidCandidate)?;
     let mut candidates = Vec::with_capacity(emitted_candidates.len());
+    let mut resolved = BTreeMap::new();
     for candidate in emitted_candidates {
-        candidates.push(candidate.bind_registry(registry).map_err(|error| {
-            PlanError::InvalidCandidate(ExecutionError::InvalidPlan(error.to_string()))
-        })?);
+        candidates.push(
+            candidate
+                .bind_registry(registry, &mut resolved)
+                .map_err(|error| {
+                    PlanError::InvalidCandidate(ExecutionError::InvalidPlan(error.to_string()))
+                })?,
+        );
     }
     let Some(first) = candidates.first() else {
         return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
@@ -2613,12 +2590,6 @@ where
     let reference_layouts = first.publication_layouts.clone();
     let reference_product_publication = first.product_publication.clone();
     for candidate in &candidates {
-        candidate
-            .implementation_contract()
-            .validate_registry(registry, &candidate.execution_dag)
-            .map_err(|error| {
-                PlanError::InvalidCandidate(ExecutionError::InvalidPlan(error.to_string()))
-            })?;
         let commitment = candidate.implementation_contract();
         if commitment.registry_id() != bindings.implementation_registry {
             return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
@@ -2688,12 +2659,7 @@ where
     // in ascending conservative-predicted-time order and the authority commits
     // to the first feasible one: the minimum-time feasible candidate.
     candidates.sort_by_key(|candidate| candidate.prediction().conservative_nanos());
-    let recorded_constraints = recorded_infeasibility.admission_constraints(
-        problem.problem_id().as_bytes(),
-        bindings.resource_policy_id.as_bytes(),
-        &candidates,
-    );
-    let lease = match authority.acquire_with_recorded_constraints(
+    let lease = match authority.acquire(
         bindings.resource_policy.clone(),
         DemandAlternatives {
             required_capabilities,
@@ -2702,7 +2668,6 @@ where
                 .map(|candidate| candidate.execution_dag.resource_alternative().clone())
                 .collect(),
         },
-        &recorded_constraints,
     ) {
         Ok(lease) => lease,
         Err(error) => return Err(PlanError::Resource(error)),
@@ -2742,7 +2707,6 @@ where
         resource_policy: bindings.resource_policy,
         resource_policy_id: bindings.resource_policy_id,
         planner_cost_model_profile,
-        recorded_receipt_source: recorded_infeasibility.source.clone(),
         receipt_store: receipts.clone(),
         implementation_contract: physical_work.implementation_contract,
         execution_dag: physical_work.execution_dag,
@@ -2793,114 +2757,6 @@ fn product_surface(candidate: &PhysicalWorkBinding) -> BTreeMap<ArtifactIdentity
         .filter(|artifact| matches!(artifact.role(), ArtifactRole::Input | ArtifactRole::Output))
         .map(|artifact| (artifact.identity(), artifact.role()))
         .collect()
-}
-
-/// Recorded terminal failed or aborted executions that constrain planning.
-///
-/// Each entry is durable receipt evidence that one demand alternative of one
-/// compiled problem terminally failed or was aborted. Quantitative receipts are
-/// converted to explicit admission constraints owned by Resource Authority;
-/// they never enter the performance cost model, which changes only through
-/// reviewed profile promotion.
-#[derive(Clone, Debug)]
-pub(crate) struct RecordedInfeasibility {
-    source: crate::receipt::ReceiptEvidenceSource,
-    regions: Vec<RegionFailure>,
-}
-
-#[derive(Clone, Debug)]
-struct RegionFailure {
-    problem: [u8; 32],
-    physical_work: [u8; 32],
-    resource_policy: [u8; 32],
-    alternative: AlternativeId,
-    attempt: ExecutionAttemptId,
-    status: ReceiptStatus,
-    resource_identity: ResourceIdentity,
-    required: u64,
-    available: u64,
-}
-
-impl RecordedInfeasibility {
-    /// Derive constraints from integrity-checked resource-infeasibility
-    /// receipts in `store`.
-    ///
-    /// Other failed or aborted receipts are deliberately ignored: an
-    /// interrupted scheduler, adapter, or evidence-contract failure is not
-    /// proof that the candidate's resource region is infeasible.
-    fn from_store(store: &crate::ExecutionReceiptStore) -> Result<Self, ReceiptError> {
-        let mut regions = Vec::new();
-        for attempt in store.attempts()? {
-            let receipt = store.open(attempt)?;
-            let status = receipt.status();
-            if !matches!(
-                status,
-                ReceiptStatus::Failed | ReceiptStatus::Aborted | ReceiptStatus::Infeasible
-            ) || receipt.failure_kind() != Some(ReceiptFailureKind::ResourceInfeasible)
-            {
-                continue;
-            }
-            let Some(crate::ReceiptInfeasibilityCertificate::Infeasible {
-                resource_identity,
-                required,
-                available,
-                ..
-            }) = receipt.infeasibility_certificate()
-            else {
-                // Capability gaps and references to earlier receipts are not
-                // quantitative pressure regions and cannot constrain a later
-                // Resource Authority decision.
-                continue;
-            };
-            regions.push(RegionFailure {
-                problem: receipt.problem_identity(),
-                physical_work: receipt.dag_identity(),
-                resource_policy: receipt.resource_policy_identity(),
-                alternative: receipt.selected_alternative_projection().id,
-                attempt,
-                status,
-                resource_identity,
-                required,
-                available,
-            });
-        }
-        Ok(Self {
-            source: store.evidence_source(),
-            regions,
-        })
-    }
-
-    fn admission_constraints(
-        &self,
-        problem: [u8; 32],
-        resource_policy: [u8; 32],
-        candidates: &[PhysicalWorkBinding],
-    ) -> Vec<crate::resource_authority::RecordedAdmissionConstraint> {
-        candidates
-            .iter()
-            .flat_map(|candidate| {
-                self.regions
-                    .iter()
-                    .filter(|region| {
-                        region.problem == problem
-                            && region.physical_work == candidate.physical_work_id().as_bytes()
-                            && region.resource_policy == resource_policy
-                            && region.alternative
-                                == candidate.execution_dag.resource_alternative().id
-                    })
-                    .map(
-                        |region| crate::resource_authority::RecordedAdmissionConstraint {
-                            alternative: region.alternative.clone(),
-                            resource: region.resource_identity.clone(),
-                            required: region.required,
-                            available: region.available,
-                            attempt: region.attempt,
-                            status: region.status,
-                        },
-                    )
-            })
-            .collect()
-    }
 }
 
 /// Effective identities observed immediately before execution.
@@ -2977,8 +2833,6 @@ pub enum RunError<E> {
     Scheduler(ExecutionError),
     /// A successful adapter return omitted, duplicated, or exceeded sealed evidence.
     Evidence(ExecutionEvidenceError),
-    /// Completed product authority or staged identities did not match the immutable plan.
-    ProductPublication(crate::ProductPublicationError),
     /// One exact plan-owned work node or its asynchronous fence failed.
     Execution {
         /// Node whose adapter reported the failure.
@@ -3010,12 +2864,6 @@ impl<E: fmt::Display> fmt::Display for RunError<E> {
             ),
             Self::Scheduler(error) => write!(formatter, "execution scheduling failed: {error}"),
             Self::Evidence(error) => write!(formatter, "execution evidence failed: {error}"),
-            Self::ProductPublication(error) => {
-                write!(
-                    formatter,
-                    "product publication authorization failed: {error}"
-                )
-            }
             Self::Execution { node, source } => {
                 write!(formatter, "work node {} failed: {source}", node.as_str())
             }
@@ -3032,7 +2880,6 @@ impl<E: Error + 'static> Error for RunError<E> {
             | Self::ImplementationMismatch { .. } => None,
             Self::Scheduler(error) => Some(error),
             Self::Evidence(error) => Some(error),
-            Self::ProductPublication(error) => Some(error),
             Self::Execution { source, .. } => Some(source),
         }
     }
@@ -3045,6 +2892,13 @@ pub struct CompiledWorkContext<'a> {
 }
 
 impl<'a> CompiledWorkContext<'a> {
+    pub(crate) fn prepared_artifact_dependency_id(
+        self,
+        kind: casa_imaging_model::PreparedArtifactScientificKind,
+    ) -> casa_imaging_model::LogicalIdentity {
+        self.problem.prepared_artifact_dependency_id(kind)
+    }
+
     /// Return the stable compiled-problem identity.
     #[must_use]
     pub const fn problem_id(self) -> CompiledProblemId {
@@ -3114,6 +2968,7 @@ impl<'a> CompiledWorkContext<'a> {
 /// authority.
 #[derive(Clone, Copy, Debug)]
 pub struct WorkExecutionContext<'a> {
+    control: Option<&'a work_control::WorkControl<'a>>,
     attempt_id: ExecutionAttemptId,
     compiled: CompiledWorkContext<'a>,
     implementation_registry: ImplementationRegistryId,
@@ -3126,15 +2981,79 @@ pub struct WorkExecutionContext<'a> {
     visibility_writes: Option<&'a ObservationWriteSet>,
     publication: Option<&'a ObservationTransactionContract>,
     publication_resources: Option<PublicationResources<'a>>,
-    product_publication: Option<&'a crate::ProductPublicationAuthorization>,
     completed_observation_reads: &'a BTreeMap<WorkNodeId, AttemptBoundObservationCompletion>,
 }
 
+#[cfg(test)]
+pub(crate) struct WorkExecutionTestBindings<'a> {
+    problem: &'a CompiledProblem,
+    implementation_registry: ImplementationRegistryId,
+    completed_observation_reads: &'a BTreeMap<WorkNodeId, AttemptBoundObservationCompletion>,
+}
+
+#[cfg(test)]
+impl<'a> WorkExecutionTestBindings<'a> {
+    pub(crate) const fn new(
+        problem: &'a CompiledProblem,
+        implementation_registry: ImplementationRegistryId,
+        completed_observation_reads: &'a BTreeMap<WorkNodeId, AttemptBoundObservationCompletion>,
+    ) -> Self {
+        Self {
+            problem,
+            implementation_registry,
+            completed_observation_reads,
+        }
+    }
+}
+
 impl<'a> WorkExecutionContext<'a> {
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        attempt_id: ExecutionAttemptId,
+        bindings: WorkExecutionTestBindings<'a>,
+        scheduled: &'a crate::execution::WorkExecutionContext,
+        planned_artifacts: &'a [PlannedArtifact],
+        stage_prediction: &'a StagePrediction,
+        resource_alternative: &'a crate::DemandAlternative,
+    ) -> Self {
+        Self {
+            control: None,
+            attempt_id,
+            compiled: CompiledWorkContext {
+                problem: bindings.problem,
+            },
+            implementation_registry: bindings.implementation_registry,
+            scheduled,
+            planned_artifacts,
+            stage_prediction,
+            resource_alternative,
+            observation_consistency: None,
+            observation_reads: None,
+            visibility_writes: None,
+            publication: None,
+            publication_resources: None,
+            completed_observation_reads: bindings.completed_observation_reads,
+        }
+    }
+
     /// Return the execution attempt that dispatched this exact node call.
     #[must_use]
     pub const fn attempt_id(self) -> ExecutionAttemptId {
         self.attempt_id
+    }
+
+    /// Poll cooperative control between independently settled preparation units.
+    ///
+    /// This seam is enabled only for synchronous, fence-free Cache work before
+    /// publication. The controller sees the launch-time pressure snapshot and
+    /// no eligible adaptation while work is active. On `true`, settle local
+    /// resources and return partial failure measurements; the runtime owns
+    /// cancellation, validation, draining and terminal receipt classification.
+    /// A mid-work adaptation request stops work as an invalid scheduler request.
+    #[must_use]
+    pub fn stop_requested(self) -> bool {
+        self.control
+            .is_some_and(work_control::WorkControl::stop_requested)
     }
 
     /// Return compiled science common to every work node.
@@ -3209,8 +3128,9 @@ impl<'a> WorkExecutionContext<'a> {
 
     pub(crate) fn plan_artifact(self, identity: ArtifactIdentity) -> Option<&'a PlannedArtifact> {
         self.planned_artifacts
-            .iter()
-            .find(|artifact| artifact.identity() == identity)
+            .binary_search_by_key(&identity, PlannedArtifact::identity)
+            .ok()
+            .map(|index| &self.planned_artifacts[index])
     }
 
     /// Return the canonical prediction for this exact node.
@@ -3270,12 +3190,6 @@ impl<'a> WorkExecutionContext<'a> {
     #[must_use]
     pub const fn publication_resources(self) -> Option<PublicationResources<'a>> {
         self.publication_resources
-    }
-
-    /// Return the runtime-validated Product Generation seal only to the final publish call.
-    #[must_use]
-    pub const fn product_publication(self) -> Option<&'a crate::ProductPublicationAuthorization> {
-        self.product_publication
     }
 
     /// Return one scheduler-retained selected-observation completion when its
@@ -3543,64 +3457,14 @@ pub trait WorkImplementation {
         Ok(())
     }
 
-    /// Return the Product Generation seal produced by this completed publication node.
-    ///
-    /// The runtime invokes this after synchronous work and every declared fence
-    /// have settled but before it prepares the durable publication receipt or
-    /// exposes staging. Native product publication plans require one projection;
-    /// implementations without native product members may retain the default.
-    fn complete_product_generation(
-        &self,
-        _context: WorkExecutionContext<'_>,
-    ) -> Result<Option<casa_imaging_products::PublicationProjection>, Self::Error> {
-        Ok(None)
-    }
-
-    /// Atomically activate the members of this transaction's publication scope.
+    /// Publish this transaction's output members, replacing each image atomically.
     ///
     /// The runtime invokes this exactly once, only after every fence and fallible
     /// scheduler transition has settled successfully, while the transaction
-    /// lease, permits, and allocations remain held. Returning an error leaves
-    /// the previous generation solely visible; returning success is the final
-    /// operation before [`ExecutionOutcome::Succeeded`] and resource release.
+    /// lease, permits, and allocations remain held. An error fails the run and
+    /// leaves an incomplete output set requiring a rerun; already replaced images
+    /// are not rolled back. This is not an atomic whole-set transaction.
     fn publish(&self, context: WorkExecutionContext<'_>) -> Result<(), Self::Error>;
-
-    /// Independently publish one authorized product member.
-    ///
-    /// Returning `None` retains the indivisible [`Self::publish`] path. Native
-    /// product publication implementations return one identity-bound outcome;
-    /// the runtime checkpoints it before attempting the next member.
-    fn publish_product_member(
-        &self,
-        _context: WorkExecutionContext<'_>,
-        _entry: crate::AuthorizedProductPublicationEntry,
-    ) -> Option<Result<ArtifactMeasurement, ProductMemberPublicationFailure<Self::Error>>> {
-        None
-    }
-}
-
-/// One failed member promotion together with its receipt evidence.
-#[derive(Debug)]
-pub struct ProductMemberPublicationFailure<E> {
-    source: E,
-    measurement: ArtifactMeasurement,
-}
-
-impl<E> ProductMemberPublicationFailure<E> {
-    /// Retain the adapter failure and exact failed/uncertain member evidence.
-    #[must_use]
-    pub const fn new(source: E, measurement: ArtifactMeasurement) -> Self {
-        Self {
-            source,
-            measurement,
-        }
-    }
-
-    /// Consume the failure into its adapter source and member evidence.
-    #[must_use]
-    pub fn into_parts(self) -> (E, ArtifactMeasurement) {
-        (self.source, self.measurement)
-    }
 }
 
 /// Immutable registry snapshot that resolves selected implementations by identity.
@@ -3855,17 +3719,16 @@ fn validate_measurements(
             });
         }
     }
-    if require_complete {
-        if let Some(((resource, lifetime), _)) = claims
+    if require_complete
+        && let Some(((resource, lifetime), _)) = claims
             .iter()
             .find(|(key, _)| !measured_claims.contains_key(*key))
-        {
-            return Err(ExecutionEvidenceError::MissingResource {
-                node: node.clone(),
-                resource: resource.clone(),
-                lifetime: lifetime.clone(),
-            });
-        }
+    {
+        return Err(ExecutionEvidenceError::MissingResource {
+            node: node.clone(),
+            resource: resource.clone(),
+            lifetime: lifetime.clone(),
+        });
     }
 
     let predicted_io = plan.prediction.stages[node]
@@ -3891,16 +3754,15 @@ fn validate_measurements(
             });
         }
     }
-    if require_complete {
-        if let Some(kind) = predicted_io
+    if require_complete
+        && let Some(kind) = predicted_io
             .keys()
             .find(|kind| !measured_io.contains_key(kind))
-        {
-            return Err(ExecutionEvidenceError::MissingIo {
-                node: node.clone(),
-                kind: *kind,
-            });
-        }
+    {
+        return Err(ExecutionEvidenceError::MissingIo {
+            node: node.clone(),
+            kind: *kind,
+        });
     }
 
     let planned_artifacts = plan
@@ -4007,10 +3869,7 @@ fn validate_artifact_measurements(
         };
         let disposition = measurement.disposition();
         let disposition_matches_role = if planned.role() == ArtifactRole::Output {
-            matches!(
-                disposition,
-                ArtifactDisposition::Staged | ArtifactDisposition::PublicationPrepared
-            )
+            matches!(disposition, ArtifactDisposition::Staged)
         } else {
             matches!(
                 disposition,
@@ -4081,6 +3940,7 @@ fn work_execution_context<'a>(
                   visibility_writes,
                   publication,
                   publication_resources| WorkExecutionContext {
+        control: None,
         attempt_id,
         compiled,
         implementation_registry: plan.implementation_registry,
@@ -4093,7 +3953,6 @@ fn work_execution_context<'a>(
         visibility_writes,
         publication,
         publication_resources,
-        product_publication: None,
         completed_observation_reads,
     };
     if work.node().kind == WorkKind::ObservationReadWriteback {
@@ -4122,7 +3981,7 @@ fn work_execution_context<'a>(
         )
     } else {
         common(
-            (transaction_work.initial_consistency_check() == &work.node().id)
+            (transaction_work.initial_consistency_check() == Some(&work.node().id))
                 .then_some(problem.observation_transaction()),
             None,
             None,
@@ -4169,18 +4028,16 @@ fn publication_execution_context<'a>(
     plan: &'a ExecutionPlan,
     work: &'a crate::execution::WorkExecutionContext,
     reservation: &'a PublicationReservation,
-    product_publication: Option<&'a crate::ProductPublicationAuthorization>,
     completed_observation_reads: &'a BTreeMap<WorkNodeId, AttemptBoundObservationCompletion>,
 ) -> WorkExecutionContext<'a> {
     let mut context =
         work_execution_context(attempt_id, problem, plan, work, completed_observation_reads);
     context.publication_resources = Some(PublicationResources { reservation });
-    context.product_publication = product_publication;
     context
 }
 
-/// Persist the bound plan before execution, drive its complete DAG to
-/// settlement, and atomically publish typed terminal evidence before returning.
+/// Reserve bounded receipt capacity, drive the complete DAG to settlement,
+/// and persist a typed final summary. Routine progress remains in memory.
 pub fn run<R, C>(
     problem: &ExecutableModelProblem,
     plan: &ExecutionPlan,
@@ -4196,7 +4053,7 @@ where
 {
     let compiled_problem = problem.compiled_problem();
     let binding_result = validate_bindings(compiled_problem, plan, current);
-    let receipt_source_matches = plan.recorded_receipt_source == receipt.evidence_source();
+    let receipt_source_matches = plan.receipt_store.evidence_source() == receipt.evidence_source();
     // A valid run must use the store captured by planning.  A stale binding
     // still receives durable mutation evidence, but it is rebound to that
     // canonical store before any receipt file can be created; the caller's
@@ -4268,11 +4125,6 @@ fn receipt_failure<E>(result: &Result<ExecutionOutcome, RunError<E>>) -> Option<
             Some(error.node().clone()),
             None,
         ),
-        RunError::ProductPublication(error) => ReceiptFailure::new(
-            ReceiptFailureKind::EvidenceContract,
-            None,
-            Some(error.to_string()),
-        ),
         RunError::Execution { node, .. } => {
             ReceiptFailure::new(ReceiptFailureKind::Adapter, Some(node.clone()), None)
         }
@@ -4340,10 +4192,10 @@ where
     let mut settled_observation_fences = BTreeMap::<WorkNodeId, BTreeSet<FenceKind>>::new();
     let mut completed_observation_reads =
         BTreeMap::<WorkNodeId, AttemptBoundObservationCompletion>::new();
-    let mut publication_measurements = None;
     let mut pending = None;
     let mut controller_stopped = false;
     loop {
+        let mut status_for_work = None;
         if pending.is_none() && !controller_stopped {
             let status = match (scheduler.lease_epoch(), scheduler.pressure_changed()) {
                 (Some(lease_epoch), Ok(Some(pressure_changed))) => ExecutionStatus {
@@ -4407,6 +4259,7 @@ where
                     }
                 }
             }
+            status_for_work = Some(status);
         }
         if pending.is_some() {
             let _ = abort_launched_work(&launched, &implementations);
@@ -4435,42 +4288,36 @@ where
                     defer_receipt_error(&mut scheduler, &mut pending, error);
                     controller_stopped = true;
                     let _ = receipt.work_failed(&node_id);
-                    if work.node().kind == WorkKind::Release {
-                        if scheduler.fail_release_work(&node_id).is_err() {
-                            return Err(terminal_drain_error(
-                                &mut scheduler,
-                                &mut pending,
-                                "receipt checkpoint failure is retained",
-                            ));
+                    // Receipt failure stops new work, but cannot substitute
+                    // for the concrete cleanup of already-live allocations.
+                    if work.node().kind != WorkKind::Release {
+                        match scheduler.finish_work(
+                            node_id,
+                            WorkResult::Failed {
+                                message: "execution receipt checkpoint failed".to_string(),
+                            },
+                        ) {
+                            Ok(fences) => {
+                                for fence in fences {
+                                    if scheduler.complete_fence(fence).is_err() {
+                                        return Err(terminal_drain_error(
+                                            &mut scheduler,
+                                            &mut pending,
+                                            "receipt checkpoint failure is retained",
+                                        ));
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                return Err(terminal_drain_error(
+                                    &mut scheduler,
+                                    &mut pending,
+                                    "receipt checkpoint failure is retained",
+                                ));
+                            }
                         }
                         continue;
                     }
-                    match scheduler.finish_work(
-                        node_id,
-                        WorkResult::Failed {
-                            message: "execution receipt checkpoint failed".to_string(),
-                        },
-                    ) {
-                        Ok(fences) => {
-                            for fence in fences {
-                                if scheduler.complete_fence(fence).is_err() {
-                                    return Err(terminal_drain_error(
-                                        &mut scheduler,
-                                        &mut pending,
-                                        "receipt checkpoint failure is retained",
-                                    ));
-                                }
-                            }
-                        }
-                        Err(_) => {
-                            return Err(terminal_drain_error(
-                                &mut scheduler,
-                                &mut pending,
-                                "receipt checkpoint failure is retained",
-                            ));
-                        }
-                    }
-                    continue;
                 }
                 let context = work_execution_context(
                     receipt.attempt_id(),
@@ -4479,7 +4326,52 @@ where
                     &work,
                     &completed_observation_reads,
                 );
-                match implementation.execute(context) {
+                let (execution, stop) = if !controller_stopped
+                    && pending.is_none()
+                    && work.node().kind == WorkKind::Cache
+                    && work.node().fences.is_empty()
+                {
+                    work_control::execute(
+                        implementation,
+                        context,
+                        controller,
+                        status_for_work.expect("active work follows controller admission"),
+                    )
+                } else {
+                    (implementation.execute(context), None)
+                };
+                let cooperative_cancel = stop == Some(RunDirective::Cancel);
+                if let Some(directive) = stop {
+                    controller_stopped = true;
+                    if let Err(source) = implementation.abort_node_io(&node_id) {
+                        pending = Some(PendingRunError::Execution {
+                            node: node_id.clone(),
+                            source,
+                        });
+                    }
+                    if let Err((node, source)) = abort_launched_work(&launched, &implementations)
+                        && pending.is_none()
+                    {
+                        pending = Some(PendingRunError::Execution { node, source });
+                    }
+                    match directive {
+                        RunDirective::Cancel => {
+                            if let Err(error) = scheduler.cancel() {
+                                defer_scheduler_error(&mut scheduler, &mut pending, error);
+                            }
+                        }
+                        RunDirective::Adapt(requested) => defer_scheduler_error(
+                            &mut scheduler,
+                            &mut pending,
+                            ExecutionError::IneligibleAdaptation {
+                                requested,
+                                eligible: Vec::new(),
+                            },
+                        ),
+                        RunDirective::Continue => unreachable!("only stop requests are retained"),
+                    }
+                }
+                match execution {
                     Ok(measurements) => {
                         if work.node().kind == WorkKind::Publication {
                             controller_stopped = true;
@@ -4504,9 +4396,6 @@ where
                         };
                         match validation {
                             Ok(()) => {
-                                if work.node().kind == WorkKind::Publication {
-                                    publication_measurements = Some(measurements.clone());
-                                }
                                 let mut receipt_error = receipt.fences_launched(&node_id).err();
                                 if let Err(error) = receipt.work_completed(&node_id, &measurements)
                                     && receipt_error.is_none()
@@ -4728,9 +4617,12 @@ where
                                 )
                             }) {
                             Some((measurements, Ok(()))) => {
-                                if let Err(error) =
+                                let recorded = if cooperative_cancel {
+                                    receipt.work_cancelled_with_measurements(&node_id, measurements)
+                                } else {
                                     receipt.work_failed_with_measurements(&node_id, measurements)
-                                {
+                                };
+                                if let Err(error) = recorded {
                                     defer_receipt_error(&mut scheduler, &mut pending, error);
                                 }
                             }
@@ -4755,7 +4647,7 @@ where
                                 let _ = receipt.work_failed(&node_id);
                             }
                         }
-                        if pending.is_none() {
+                        if pending.is_none() && !cooperative_cancel {
                             pending = Some(PendingRunError::Execution {
                                 node: node_id.clone(),
                                 source,
@@ -5061,130 +4953,27 @@ where
                         ))
                     })?;
                     let implementation = implementations[&work.node().implementation];
-                    let completion_context = publication_execution_context(
-                        receipt.attempt_id(),
-                        problem,
-                        plan,
-                        work,
-                        &resources,
-                        None,
-                        &completed_observation_reads,
-                    );
-                    let projection = implementation
-                        .complete_product_generation(completion_context)
-                        .map_err(|source| RunError::Execution {
-                            node: publication.clone(),
-                            source,
-                        })?;
-                    let product_publication = match (&plan.product_publication, projection) {
-                        (ProductPublicationAuthority::Planned(planned), Some(projection)) => {
-                            let authorization = planned
-                                .authorize(&projection)
-                                .map_err(RunError::ProductPublication)?;
-                            let measurements =
-                                publication_measurements.as_ref().ok_or_else(|| {
-                                    RunError::ProductPublication(
-                                        crate::ProductPublicationError::MissingProjection,
-                                    )
-                                })?;
-                            authorization
-                                .validate_staging(measurements)
-                                .map_err(RunError::ProductPublication)?;
-                            Some(authorization)
-                        }
-                        (ProductPublicationAuthority::Planned(_), None) => {
-                            return Err(RunError::ProductPublication(
-                                crate::ProductPublicationError::MissingProjection,
-                            ));
-                        }
-                        (_, Some(_)) => {
-                            return Err(RunError::ProductPublication(
-                                crate::ProductPublicationError::UnexpectedProjection,
-                            ));
-                        }
-                        (_, None) => None,
-                    };
                     let context = publication_execution_context(
                         receipt.attempt_id(),
                         problem,
                         plan,
                         work,
                         &resources,
-                        product_publication.as_ref(),
                         &completed_observation_reads,
                     );
-                    if let Some(authorization) = product_publication.as_ref() {
-                        receipt
-                            .prepare_independent_product_publication()
-                            .map_err(RunError::Receipt)?;
-                        for entry in authorization.entries() {
-                            let outcome = implementation
-                                .publish_product_member(context, *entry)
-                                .ok_or_else(|| {
-                                    RunError::ProductPublication(
-                                        crate::ProductPublicationError::MissingMemberPublisher,
-                                    )
-                                })?;
-                            match outcome {
-                                Ok(measurement) => {
-                                    receipt
-                                        .record_publication_measurements(&WorkMeasurements::new(
-                                            Vec::new(),
-                                            Vec::new(),
-                                            vec![measurement],
-                                        ))
-                                        .map_err(RunError::Receipt)?;
-                                }
-                                Err(failure) => {
-                                    let (source, measurement) = failure.into_parts();
-                                    receipt
-                                        .record_publication_measurements(&WorkMeasurements::new(
-                                            Vec::new(),
-                                            Vec::new(),
-                                            vec![measurement],
-                                        ))
-                                        .map_err(RunError::Receipt)?;
-                                    receipt
-                                        .finish(
-                                            ReceiptStatus::Failed,
-                                            Some(ReceiptFailure::new(
-                                                ReceiptFailureKind::Adapter,
-                                                Some(publication.clone()),
-                                                None,
-                                            )),
-                                        )
-                                        .map_err(RunError::Receipt)?;
-                                    return Err(RunError::Execution {
-                                        node: publication,
-                                        source,
-                                    });
-                                }
-                            }
-                        }
-                        receipt
-                            .complete_independent_product_publication()
-                            .map_err(RunError::Receipt)?;
-                        scheduler
-                            .complete_publication()
-                            .map_err(RunError::Scheduler)?;
-                        return Ok(ExecutionOutcome::Succeeded);
-                    }
-                    let prepared = receipt.prepare_publication().map_err(RunError::Receipt)?;
+                    receipt.prepare_publication().map_err(RunError::Receipt)?;
                     match implementation.publish(context) {
                         Ok(()) => {
-                            receipt.complete_publication(prepared);
+                            receipt.complete_publication().map_err(RunError::Receipt)?;
                             scheduler
                                 .complete_publication()
                                 .map_err(RunError::Scheduler)?;
                             Ok(ExecutionOutcome::Succeeded)
                         }
-                        Err(source) => {
-                            drop(prepared);
-                            Err(RunError::Execution {
-                                node: publication,
-                                source,
-                            })
-                        }
+                        Err(source) => Err(RunError::Execution {
+                            node: publication,
+                            source,
+                        }),
                     }
                 })();
                 if outcome.is_err() {
@@ -5333,12 +5122,11 @@ fn execution_plan_id(plan: &ExecutionPlan) -> ExecutionPlanId {
     encoder.digest(plan.planner_cost_model_profile.as_bytes());
     encoder.digest(plan.execution_dag.physical_work_id().as_bytes());
     match &plan.product_publication {
-        ProductPublicationAuthority::None => encoder.u8(0),
-        ProductPublicationAuthority::Planned(publication) => {
+        None => encoder.u8(0),
+        Some(publication) => {
             encoder.u8(1);
             encoder.digest(publication.problem_id().as_bytes());
             encoder.digest(publication.graph_id().as_bytes());
-            encoder.digest(publication.generation_id().as_bytes());
             encoder.usize(publication.entries().len());
             for entry in publication.entries() {
                 encoder.usize(entry.node().ordinal());
@@ -5427,7 +5215,7 @@ fn encode_observation_transaction(
     encoder.u8(match transaction.work().publication_scope() {
         crate::ObservationTransactionPublicationScope::ReconstructionOnly => 0,
         crate::ObservationTransactionPublicationScope::ProductPublication => 1,
-        crate::ObservationTransactionPublicationScope::SealedProductPublication => 2,
+        crate::ObservationTransactionPublicationScope::GeneratedProductPublication => 2,
     });
     encoder.u8(u8::from(transaction.work().source_free_reconstruction()));
     encoder.digest(transaction.problem_id().as_bytes());
@@ -5435,7 +5223,9 @@ fn encode_observation_transaction(
     encoder.digest(transaction.transaction_id().as_bytes());
     encoder.digest(transaction.physical_work_id().as_bytes());
     let work = transaction.work();
-    encoder.string(work.initial_consistency_check().as_str());
+    if let Some(check) = work.initial_consistency_check() {
+        encoder.string(check.as_str());
+    }
     encode_dependencies(encoder, work.observation_reads());
     match work.final_model_preparation() {
         Some(node) => {

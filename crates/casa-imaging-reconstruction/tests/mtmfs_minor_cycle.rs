@@ -33,11 +33,11 @@ use casa_imaging_model::{
     WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
-    ExecutableModelProblem, FinalNormalState, MajorCycleOwner, MajorCyclePreparation,
-    MinorCycleProgram, MinorCycleStopReason, MinorCycleValidity, ModelGeneration, ModelLifecycle,
-    ReconstructionMask, SpectralOperatorSpecification, SpectralStencilValidity,
-    WeightingExecutionLimits, begin_weighting_generation, compile_spectral_stencil, plan_weighting,
-    run_minor_cycle,
+    ChannelCyclePolicy, ExecutableModelProblem, FinalNormalState, MajorCycleOwner,
+    MajorCyclePreparation, MinorCycleProgram, MinorCycleStopReason, MinorCycleValidity,
+    ModelGeneration, ModelLifecycle, ReconstructionCycle, ReconstructionMask,
+    SpectralOperatorSpecification, SpectralStencilValidity, WeightingExecutionLimits,
+    begin_weighting_generation, compile_spectral_stencil, plan_weighting, run_minor_cycle,
     runtime_adapter::{
         CompleteDataOwnerResult, SpectralOperatorPass, prepare_spectral_operator,
         spectral_operator_workload,
@@ -145,14 +145,14 @@ fn validity() -> ProductValidityPolicies {
         PrimaryBeamValidityPolicy::new(
             0.2,
             ProductSupportComparison::StrictlyGreater,
-            ProductBlankingPolicy::ZeroAndFalseMask,
+            ProductBlankingPolicy::Zero,
         )
         .expect("valid primary-beam policy"),
         TaylorValidityPolicy::new(
             TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
             0.1,
             ProductSupportComparison::StrictlyGreater,
-            ProductBlankingPolicy::ZeroAndFalseMask,
+            ProductBlankingPolicy::Zero,
         )
         .expect("valid Taylor policy"),
     )
@@ -163,6 +163,13 @@ fn problem() -> casa_imaging_model::CompiledProblem {
 }
 
 fn problem_with_scales(scales_px: Vec<f64>) -> casa_imaging_model::CompiledProblem {
+    problem_with_controls(scales_px, ReconstructionControls::new(8, 1.0, 0.0))
+}
+
+fn problem_with_controls(
+    scales_px: Vec<f64>,
+    controls: ReconstructionControls,
+) -> casa_imaging_model::CompiledProblem {
     let centre = IMAGE_WIDTH as f64 / 2.0;
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
@@ -229,7 +236,7 @@ fn problem_with_scales(scales_px: Vec<f64>) -> casa_imaging_model::CompiledProbl
                     scales_px,
                     small_scale_bias: 0.0,
                 },
-                ReconstructionControls::new(8, 1.0, 0.0),
+                controls,
                 PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
             ),
             WeightingContract::new(
@@ -519,6 +526,8 @@ fn run_final_normal_state(
         executable,
         ModelExecutionAttemptId::new(identity(42, 120)),
         1,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("bind Taylor model lifecycle");
     let initial = lifecycle.initial_empty().expect("empty Taylor model");
@@ -531,10 +540,22 @@ fn run_final_normal_state(
         density_partitions,
         Some(&preparation),
     );
-    let completion = MajorCycleOwner::from_complete_data(complete_data, preparation)
-        .expect("join Taylor complete-data evidence")
-        .reconcile(&mut lifecycle)
-        .expect("reconcile Taylor normal state");
+    let completion = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    complete_data.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            complete_data
+                .seal(&storage)
+                .expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .expect("join Taylor complete-data evidence")
+    .reconcile(&mut lifecycle)
+    .expect("reconcile Taylor normal state");
     let (normal, model_completion, final_model) = completion.into_parts();
     assert_eq!(
         normal.input_model_generation(),
@@ -619,7 +640,13 @@ fn run_point(
     assert_eq!(normal.normal_moment_count(), 3);
     assert_eq!(model.shape().coefficients(), 2);
     assert_eq!(model.shape().domains()[0].pixels(), normal.shape());
-    assert_eq!(model.samples().len(), model.shape().sample_count());
+    assert_eq!(
+        model
+            .read_samples(0..model.sample_count())
+            .expect("read fixture model")
+            .len(),
+        model.shape().sample_count()
+    );
     let mask = mask_pixel.map_or_else(
         || full_mask(&normal, &model),
         |pixel| one_pixel_mask(&normal, &model, pixel),
@@ -634,6 +661,97 @@ fn assert_close(actual: f64, expected: f64, context: &str) {
         (actual - expected).abs() <= 1.0e-10 * scale,
         "{context}: actual={actual:e}, expected={expected:e}"
     );
+}
+
+#[test]
+fn t51_mtmfs_noise_population_is_independent_of_the_clean_mask() {
+    let problem = problem_with_controls(
+        vec![0.0, 2.0],
+        ReconstructionControls::new(8, 0.1, 0.0).with_noise_sigma(5.0),
+    );
+    let selected = samples(&problem);
+    let (lifecycle, normal, model) = run_final_normal_state(&problem, &selected, 1, 1);
+    let full = run_minor_cycle(
+        &lifecycle,
+        &model,
+        &normal,
+        &full_mask(&normal, &model),
+        point_program(&problem, 1),
+    )
+    .expect("full-mask MT-MFS noise estimate");
+    let source = run_minor_cycle(
+        &lifecycle,
+        &model,
+        &normal,
+        &one_pixel_mask(&normal, &model, [10, 8]),
+        point_program(&problem, 1),
+    )
+    .expect("source-mask MT-MFS noise estimate");
+    let full_rms = full.evidence().noise_rms().expect("full-image noise RMS");
+    let source_rms = source
+        .evidence()
+        .noise_rms()
+        .expect("source-mask noise RMS");
+    assert!(
+        full_rms > 0.0,
+        "fixture must contain spatial residual variation"
+    );
+    assert_eq!(
+        source_rms, full_rms,
+        "CLEAN support chooses components, not the fast-noise population (CASA SIImageStore::calcRobustRMS)"
+    );
+}
+
+#[test]
+fn t51_global_convergence_tolerance_does_not_relax_the_minor_cycle_threshold() {
+    let baseline = problem_with_scales(vec![0.0, 2.0]);
+    let reference = run_point(baseline.clone(), 1, 1, point_program(&baseline, 1), None);
+    let peak = reference.evidence().initial_peak_flux();
+
+    for (ratio, expected_iterations) in [(1.005, 0), (1.011, 1)] {
+        for use_noise in [false, true] {
+            let threshold = peak / ratio;
+            let controls = if use_noise {
+                let probe = problem_with_controls(
+                    vec![0.0, 2.0],
+                    ReconstructionControls::new(8, 0.1, 0.0).with_noise_sigma(1.0),
+                );
+                let noise = run_point(probe.clone(), 1, 1, point_program(&probe, 1), None)
+                    .evidence()
+                    .noise_rms()
+                    .expect("nonzero fixture noise");
+                assert!(noise > 0.0);
+                ReconstructionControls::new(8, 0.1, 0.0).with_noise_sigma(threshold / noise)
+            } else {
+                ReconstructionControls::new(8, 0.1, threshold)
+            };
+            let problem = problem_with_controls(vec![0.0, 2.0], controls);
+            let selected = samples(&problem);
+            let (lifecycle, normal, model) = run_final_normal_state(&problem, &selected, 1, 1);
+            let mask = full_mask(&normal, &model);
+            let program = point_program(&problem, 1);
+            let minor = run_minor_cycle(&lifecycle, &model, &normal, &mask, program.clone())
+                .expect("standalone minor solve");
+            assert_eq!(
+                minor.evidence().iterations(),
+                1,
+                "minor threshold stays exact"
+            );
+            let cycle = ReconstructionCycle::new(ChannelCyclePolicy::Coupled, program)
+                .run(&lifecycle, &model, &normal, &mask)
+                .expect("fresh-state coupled reconstruction cycle");
+            assert_eq!(
+                cycle.evidence().iterations(),
+                expected_iterations,
+                "CASA's 1% global entry tolerance: ratio={ratio}, nsigma={use_noise}"
+            );
+            if expected_iterations == 0 {
+                assert!(cycle.delta().is_none());
+                assert!(!cycle.evidence().requests_reconciliation());
+                assert!(cycle.evidence().recorded_components().next().is_none());
+            }
+        }
+    }
 }
 
 #[test]
@@ -666,6 +784,9 @@ fn t43_point_selection_solves_the_declared_cross_term_block_in_coefficient_order
 
     let pixel = terms[0].cell().pixel();
     let residual_index = pixel[0] * normal.shape()[1] + pixel[1];
+    let normal = normal
+        .read_window(normal.slab().core_range())
+        .expect("coupled Taylor window");
     let psf_peak_index = normal
         .normal_block(0, 0)
         .expect("principal normal block")

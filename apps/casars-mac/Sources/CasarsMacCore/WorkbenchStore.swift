@@ -32,10 +32,12 @@ public protocol ProjectProbeClient {
 public struct ProjectFixtureProbe: Equatable {
     public var project: ProjectFixture
     public var diagnostics: [String]
+    public var entries: [ProjectDirectoryEntry]
 
-    public init(project: ProjectFixture, diagnostics: [String]) {
+    public init(project: ProjectFixture, diagnostics: [String], entries: [ProjectDirectoryEntry] = []) {
         self.project = project
         self.diagnostics = diagnostics
+        self.entries = entries
     }
 }
 
@@ -44,7 +46,7 @@ public struct UniFFIProjectProbeClient: ProjectProbeClient {
 
     public func probeProject(path: String) throws -> ProjectFixtureProbe {
         let probe = try CasarsFrontendServices.probeProject(path: path)
-        return ProjectFixtureProbe(project: ProjectFixture(probe: probe), diagnostics: probe.diagnostics)
+        return ProjectFixtureProbe(project: ProjectFixture(probe: probe), diagnostics: probe.diagnostics, entries: probe.entries.map(ProjectDirectoryEntry.init))
     }
 
     public func probePath(path: String) throws -> DatasetSummary? {
@@ -310,7 +312,7 @@ public struct TutorialDemoProjectClient: DemoProjectClient {
             project.name = "TW Hya Tutorial Demo"
             project.source = .probed
             let diagnostics = probe.diagnostics + staged.map { "Staged tutorial dataset: \($0)" }
-            return ProjectFixtureProbe(project: project, diagnostics: diagnostics)
+            return ProjectFixtureProbe(project: project, diagnostics: diagnostics, entries: probe.entries)
         } catch {
             try? fileManager.removeItem(at: root)
             throw error
@@ -790,6 +792,7 @@ extension AssistantCorpusRefreshRequest: Equatable {}
 
 public final class WorkbenchStore: ObservableObject {
     @Published public private(set) var state: WorkbenchState
+    @Published public private(set) var projectFileNodes: [ProjectFileNode] = []
     @Published package private(set) var pythonNotebookRuntime = NotebookPythonRuntimeState()
     @Published package private(set) var tabPresentationStates: [String: WorkbenchTabPresentationState] = [:]
     @Published package private(set) var selectedProjectFileRemovalTarget: ProjectItemRemovalTarget?
@@ -1216,6 +1219,7 @@ public final class WorkbenchStore: ObservableObject {
             state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
             state.applicationCatalog = applicationCatalog
             state.project = project
+            projectFileNodes = ProjectFileNode.build(entries: probed.entries)
             state.probeDiagnostics = probed.diagnostics
             state.selectedDatasetID = project.datasets.first?.id
             state.dockMode = .datasets
@@ -1258,6 +1262,7 @@ public final class WorkbenchStore: ObservableObject {
             state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
             state.applicationCatalog = applicationCatalog
             state.project = probed.project
+            projectFileNodes = ProjectFileNode.build(entries: probed.entries)
             state.probeDiagnostics = probed.diagnostics
             state.selectedDatasetID = probed.project.datasets.first?.id
             loadScientificNotebooks()
@@ -1437,11 +1442,12 @@ public final class WorkbenchStore: ObservableObject {
             let refreshed = (
                 datasets: projectDatasetsWithLooseFiles(
                     recognizedDatasets: probe.project.datasets,
-                    rootPath: state.project.rootPath
+                    entries: probe.entries
                 ),
                 diagnostics: probe.diagnostics
             )
             state.project.datasets = deduplicatedDatasets(refreshed.datasets)
+            projectFileNodes = ProjectFileNode.build(entries: probe.entries)
             state.probeDiagnostics = refreshed.diagnostics
             if let selectedPath,
                let replacement = state.project.datasets.first(where: { $0.path == selectedPath }) {
@@ -1688,26 +1694,12 @@ public final class WorkbenchStore: ObservableObject {
 
     private func projectDatasetsWithLooseFiles(
         recognizedDatasets: [DatasetSummary],
-        rootPath: String
+        entries: [ProjectDirectoryEntry]
     ) -> [DatasetSummary] {
         let recognizedPaths = Set(recognizedDatasets.map { Self.standardizedDatasetPath($0.path) })
-        let datasetDirectoryPaths = recognizedDatasets
-            .filter { dataset in
-                dataset.kind != .runProduct && FileManager.default.fileExists(atPath: dataset.path, isDirectory: nil)
-            }
-            .compactMap { dataset -> String? in
-                var isDirectory = ObjCBool(false)
-                guard FileManager.default.fileExists(atPath: dataset.path, isDirectory: &isDirectory),
-                      isDirectory.boolValue
-                else {
-                    return nil
-                }
-                return Self.standardizedDatasetPath(dataset.path)
-            }
         let looseFiles = looseProjectFileDatasets(
-            rootPath: rootPath,
+            entries: entries,
             recognizedPaths: recognizedPaths,
-            datasetDirectoryPaths: datasetDirectoryPaths
         )
         return deduplicatedDatasets(recognizedDatasets + looseFiles)
     }
@@ -1728,70 +1720,22 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func looseProjectFileDatasets(
-        rootPath: String,
-        recognizedPaths: Set<String>,
-        datasetDirectoryPaths: [String]
+        entries: [ProjectDirectoryEntry],
+        recognizedPaths: Set<String>
     ) -> [DatasetSummary] {
-        let rootURL = URL(fileURLWithPath: rootPath, isDirectory: true).standardizedFileURL
         var output: [DatasetSummary] = []
-        var scanned = 0
-        scanLooseProjectFiles(
-            directory: rootURL,
-            rootURL: rootURL,
-            depth: 0,
-            scanned: &scanned,
-            output: &output,
-            recognizedPaths: recognizedPaths,
-            datasetDirectoryPaths: datasetDirectoryPaths
-        )
-        return output.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
-    }
-
-    private func scanLooseProjectFiles(
-        directory: URL,
-        rootURL: URL,
-        depth: Int,
-        scanned: inout Int,
-        output: inout [DatasetSummary],
-        recognizedPaths: Set<String>,
-        datasetDirectoryPaths: [String]
-    ) {
-        guard depth <= 5, scanned < 500 else {
-            return
-        }
-        let entries = (try? FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey],
-            options: [.skipsHiddenFiles]
-        )) ?? []
-        for entry in entries {
-            guard scanned < 500 else {
-                return
-            }
-            scanned += 1
+        let visible = entries.filter(\.looseFileCandidate)
+        for item in visible {
+            let entry = URL(fileURLWithPath: item.path)
             let standardizedPath = Self.standardizedDatasetPath(entry.path)
             if recognizedPaths.contains(standardizedPath) {
                 continue
             }
-            let values = try? entry.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
-            if values?.isDirectory == true {
-                if datasetDirectoryPaths.contains(where: { standardizedPath == $0 || standardizedPath.hasPrefix($0 + "/") }) {
-                    continue
-                }
-                if shouldProbeLooseProjectDirectory(entry),
-                   let probed = try? probeClient.probePath(path: standardizedPath) {
+            if item.isDirectory {
+                if let probed = item.dataset {
                     output.append(probed)
                     continue
                 }
-                scanLooseProjectFiles(
-                    directory: entry,
-                    rootURL: rootURL,
-                    depth: depth + 1,
-                    scanned: &scanned,
-                    output: &output,
-                    recognizedPaths: recognizedPaths,
-                    datasetDirectoryPaths: datasetDirectoryPaths
-                )
                 continue
             }
             if shouldSurfaceLooseRegionFile(entry) {
@@ -1803,7 +1747,7 @@ public final class WorkbenchStore: ObservableObject {
                     kind: .region,
                     size: "region file",
                     units: "CRTF",
-                    sizeBytes: UInt64(values?.fileSize ?? 0),
+                    sizeBytes: item.sizeBytes,
                     notes: "Project region file discovered by disk refresh.",
                     diagnostics: [
                         "Region parameter syntax: --region \(relativePath)",
@@ -1821,28 +1765,14 @@ public final class WorkbenchStore: ObservableObject {
                 name: entry.lastPathComponent,
                 path: standardizedPath,
                 kind: .runProduct,
-                size: byteCountString(UInt64(values?.fileSize ?? 0)),
+                size: byteCountString(item.sizeBytes),
                 units: entry.pathExtension.uppercased(),
-                sizeBytes: UInt64(values?.fileSize ?? 0),
+                sizeBytes: item.sizeBytes,
                 notes: "Project file discovered by disk refresh.",
                 diagnostics: ["Project-relative path: \(relativePath)"]
             ))
         }
-    }
-
-    private func shouldProbeLooseProjectDirectory(_ url: URL) -> Bool {
-        isCasacoreTableDirectory(url)
-    }
-
-    private func isCasacoreTableDirectory(_ url: URL) -> Bool {
-        let tableDatURL = url.appendingPathComponent("table.dat", isDirectory: false)
-        var isDirectory = ObjCBool(false)
-        guard FileManager.default.fileExists(atPath: tableDatURL.path, isDirectory: &isDirectory),
-              !isDirectory.boolValue
-        else {
-            return false
-        }
-        return FileManager.default.isReadableFile(atPath: tableDatURL.path)
+        return output.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
     }
 
     private func shouldSurfaceLooseProjectFile(_ url: URL) -> Bool {

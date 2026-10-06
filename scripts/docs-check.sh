@@ -13,15 +13,6 @@ required_headers=(
   "docs/README.md:Truth class: current descriptive"
   "docs/agent-reference.md:Truth class: normative"
   "apps/casars-mac/AGENTS.md:Truth class: normative"
-  "docs/Planning/Phase 2 - Table fillout/README.md:Truth class: historical"
-  "docs/Planning/Phase 2 - Table fillout/WAVE_TEMPLATE.md:Truth class: historical"
-  "docs/Planning/Phase 3 - Quanta Measures Coordinates/README.md:Truth class: historical"
-  "docs/Planning/Phase 3 - Quanta Measures Coordinates/WAVE_TEMPLATE.md:Truth class: historical"
-  "docs/Planning/Phase 4 - MeasurementSet and Derived Calibration Workflows/README.md:Truth class: historical"
-  "docs/Planning/Phase 4 - MeasurementSet and Derived Calibration Workflows/WAVE_TEMPLATE.md:Truth class: historical"
-  "docs/Planning/Phase 5 - Lattices Coordinates Images/WAVE_TEMPLATE.md:Truth class: historical"
-  "docs/Planning/Phase 5 - Lattices Coordinates Images/Deterministic Imaging Parity Program.md:Truth class: historical"
-  "docs/Planning/Phase 5 - Lattices Coordinates Images/Imaging Effect Matrix.md:Truth class: historical"
   "docs/imaging-effects-inventory.md:Truth class: current descriptive"
 )
 
@@ -54,11 +45,7 @@ grep -Fxq '@AGENTS.md' CLAUDE.md || {
 }
 
 for forbidden in \
-  "README.md:Detailed phase and backlog tracking still lives in the phase-specific" \
-  "docs/Planning/Phase 2 - Table fillout/README.md:Wave file names are the only status source of truth" \
-  "docs/Planning/Phase 3 - Quanta Measures Coordinates/README.md:Wave file names are the only status source of truth" \
-  "docs/Planning/Phase 4 - MeasurementSet and Derived Calibration Workflows/README.md:Wave file names are the only status source of truth" \
-  "docs/Planning/Phase 5 - Lattices Coordinates Images/Deterministic Imaging Parity Program.md:single active implementation plan"
+  "README.md:Detailed phase and backlog tracking still lives in the phase-specific"
 do
   path="${forbidden%%:*}"
   pattern="${forbidden#*:}"

@@ -74,18 +74,6 @@ SCENARIOS: list[dict[str, Any]] = [
         "overrides": {"deconvolver": "multiscale", "scales": [0, 5, 15]},
     },
     {
-        "id": "aw-widefield-hogbom-medium",
-        "mode_family": "aw_widefield_hogbom",
-        "base_workload": "wave3-aw-widefield-medium-serial",
-        "overrides": {"deconvolver": "hogbom"},
-    },
-    {
-        "id": "aw-widefield-clark-medium",
-        "mode_family": "aw_widefield_clark",
-        "base_workload": "wave3-aw-widefield-medium-serial",
-        "overrides": {"deconvolver": "clark"},
-    },
-    {
         "id": "standard-cube-hogbom-one-channel",
         "mode_family": "standard_cube_hogbom",
         "base_workload": "wave3-standard-mfs-single-term-heavy-wave2",

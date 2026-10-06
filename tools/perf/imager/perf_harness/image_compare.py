@@ -67,6 +67,9 @@ FULL_STRUCTURE_EVIDENCE_FIELDS = {
     "left_raw_finite_pixels",
     "right_raw_finite_pixels",
     "paired_raw_finite_pixels",
+    "paired_raw_left_abs_max",
+    "paired_raw_right_abs_max",
+    "paired_raw_diff_abs_max",
     "paired_image_mask_finite_pixels",
     "central_mask_mismatch_pixels",
     "workspace_lifecycle",
@@ -1388,6 +1391,8 @@ def _validate_full_array_evidence(
         right=right,
         difference=difference,
         count=count,
+        chunks=chunks,
+        max_chunk_elements=max_chunk,
         label=label,
     )
     _validate_full_array_product_mirrors(
@@ -1663,6 +1668,8 @@ def _validate_full_array_numerical_algebra(
     right: dict[str, Any],
     difference: dict[str, Any],
     count: int,
+    chunks: int,
+    max_chunk_elements: int,
     label: str,
 ) -> None:
     cross_sum = _finite_number(full.get("cross_sum"), label=f"{label} cross_sum")
@@ -1670,7 +1677,7 @@ def _validate_full_array_numerical_algebra(
     correlation = _optional_finite_number(
         full.get("correlation"), label=f"{label} correlation"
     )
-    if correlation is not None and not _within_closed_interval(correlation, -1.0, 1.0):
+    if correlation is not None and not -1.0 <= correlation <= 1.0:
         raise ValueError(f"{label} correlation is outside [-1, 1]")
 
     left_sum = float(left["sum"])
@@ -1689,9 +1696,38 @@ def _validate_full_array_numerical_algebra(
     expected_correlation = (
         expected_covariance_numerator / denominator if denominator else None
     )
-    if not _optional_numbers_close(correlation, expected_correlation):
-        raise ValueError(f"{label} correlation is not derived from streamed sums")
-    cross_bound = math.sqrt(left_squares * right_squares)
+    correlation_roundoff = _correlation_roundoff_bound(
+        count=count,
+        chunks=chunks,
+        max_chunk_elements=max_chunk_elements,
+        left_sum=left_sum,
+        right_sum=right_sum,
+        left_squares=left_squares,
+        right_squares=right_squares,
+        covariance_numerator=expected_covariance_numerator,
+        left_variance_numerator=left_variance_numerator,
+        right_variance_numerator=right_variance_numerator,
+    )
+    left_is_constant = left["min"] == left["max"]
+    right_is_constant = right["min"] == right["max"]
+    if left_is_constant or right_is_constant:
+        if correlation is not None:
+            raise ValueError(
+                f"{label} correlation is defined for a constant operand"
+            )
+    elif correlation is None:
+        raise ValueError(f"{label} correlation is missing for variable operands")
+    elif (
+        expected_correlation is not None
+        and correlation_roundoff is not None
+        and not _optional_numbers_close_with_bound(
+            correlation, expected_correlation, correlation_roundoff
+        )
+    ):
+        raise ValueError(
+            f"{label} correlation is not derived from streamed sums"
+        )
+    cross_bound = math.sqrt(left_squares) * math.sqrt(right_squares)
     if not _less_equal_with_roundoff(abs(cross_sum), cross_bound):
         raise ValueError(f"{label} cross_sum violates Cauchy-Schwarz")
     if not _numbers_close(
@@ -1830,6 +1866,122 @@ def _optional_finite_number(value: Any, *, label: str) -> float | None:
     return _finite_number(value, label=label)
 
 
+def _correlation_roundoff_bound(
+    *,
+    count: int,
+    chunks: int,
+    max_chunk_elements: int,
+    left_sum: float,
+    right_sum: float,
+    left_squares: float,
+    right_squares: float,
+    covariance_numerator: float,
+    left_variance_numerator: float,
+    right_variance_numerator: float,
+) -> float | None:
+    """Bound raw-moment correlation error from the streamed reductions.
+
+    The full reducer retains raw sums for auditability, while the published
+    correlation is computed from centered moments.  A raw correlation is an
+    ill-conditioned subtraction for large baselines, so compare the two using
+    a first-order IEEE-754 error bound for the recorded chunk reductions and
+    the subsequent moment products.  Returning ``None`` means a centered
+    variance is too uncertain to provide a finite consistency interval.
+    """
+
+    unit_roundoff = math.ulp(1.0) / 2.0
+    operation_count = 2 * max_chunk_elements + chunks + 8
+    operation_roundoff = float(operation_count) * unit_roundoff
+    if not math.isfinite(operation_roundoff) or operation_roundoff >= 1.0:
+        return None
+    gamma = operation_roundoff / (1.0 - operation_roundoff)
+
+    left_abs_sum = math.sqrt(float(count)) * math.sqrt(left_squares)
+    right_abs_sum = math.sqrt(float(count)) * math.sqrt(right_squares)
+    cross_abs_sum = math.sqrt(left_squares) * math.sqrt(right_squares)
+    if not all(
+        math.isfinite(value)
+        for value in (left_abs_sum, right_abs_sum, cross_abs_sum)
+    ):
+        return None
+
+    left_sum_error = gamma * left_abs_sum
+    right_sum_error = gamma * right_abs_sum
+    left_squares_error = gamma * left_squares
+    right_squares_error = gamma * right_squares
+    cross_sum_error = gamma * cross_abs_sum
+
+    left_product = left_sum * left_sum / count
+    right_product = right_sum * right_sum / count
+    mean_product = left_sum * right_sum / count
+    left_product_error = (
+        (2.0 * abs(left_sum) * left_sum_error + left_sum_error**2) / count
+        + unit_roundoff * abs(left_product)
+    )
+    right_product_error = (
+        (2.0 * abs(right_sum) * right_sum_error + right_sum_error**2) / count
+        + unit_roundoff * abs(right_product)
+    )
+    mean_product_error = (
+        (
+            abs(right_sum) * left_sum_error
+            + abs(left_sum) * right_sum_error
+            + left_sum_error * right_sum_error
+        )
+        / count
+        + unit_roundoff * abs(mean_product)
+    )
+    covariance_error = (
+        cross_sum_error
+        + mean_product_error
+        + unit_roundoff * abs(covariance_numerator)
+    )
+    left_variance_error = (
+        left_squares_error
+        + left_product_error
+        + unit_roundoff * abs(left_variance_numerator)
+    )
+    right_variance_error = (
+        right_squares_error
+        + right_product_error
+        + unit_roundoff * abs(right_variance_numerator)
+    )
+
+    if (
+        left_variance_numerator <= left_variance_error
+        or right_variance_numerator <= right_variance_error
+    ):
+        return None
+    lower_denominator = math.sqrt(
+        left_variance_numerator - left_variance_error
+    ) * math.sqrt(right_variance_numerator - right_variance_error)
+    if lower_denominator == 0.0 or not math.isfinite(lower_denominator):
+        return None
+    raw_denominator = math.sqrt(left_variance_numerator) * math.sqrt(
+        right_variance_numerator
+    )
+    raw_correlation = covariance_numerator / raw_denominator
+    denominator_relative_error = 0.5 * (
+        left_variance_error / (left_variance_numerator - left_variance_error)
+        + right_variance_error / (right_variance_numerator - right_variance_error)
+    )
+    bound = (
+        covariance_error / lower_denominator
+        + abs(raw_correlation) * denominator_relative_error
+    )
+    return bound if math.isfinite(bound) else None
+
+
+def _optional_numbers_close_with_bound(
+    left: float | None, right: float | None, bound: float | None
+) -> bool:
+    if left is None or right is None:
+        return left is right
+    if _numbers_close(left, right):
+        return True
+    return bound is not None and abs(left - right) <= bound
+
+
 def _numbers_close(left: float, right: float, *, scale: tuple[float, ...] = ()) -> bool:
     absolute_scale = max(1.0, abs(left), abs(right), *(abs(value) for value in scale))
     return math.isclose(
@@ -1947,6 +2099,13 @@ def _validate_full_structure_evidence(
         raise ValueError(
             f"image comparison product {suffix} native expected_pixels is invalid"
         )
+    for field in (
+        "paired_raw_left_abs_max",
+        "paired_raw_right_abs_max",
+        "paired_raw_diff_abs_max",
+    ):
+        if _finite_number(evidence[field], label=f"{suffix} native {field}") < 0.0:
+            raise ValueError(f"image comparison product {suffix} native {field} is negative")
     exact_values = {
         "method": FULL_STRUCTURE_METHOD,
         "storage": FULL_STRUCTURE_STORAGE,
@@ -2061,15 +2220,16 @@ def _validate_structure_semantics(
         expected_review = {
             "label": expected_label,
             "summary": (
-                f"{suffix}: structured difference is not applicable because full "
-                "evidence proves both operands and their difference are exactly zero."
+                f"{suffix}: structured difference is not applicable on the review plane; "
+                "both operands and their difference are exactly zero there. "
+                "Full-array numerical checks remain applicable."
             ),
             "checks": [
                 {
                     "name": "exact_zero_operands",
                     "label": expected_label,
                     "value": True,
-                    "meaning": "full comparison domain proves both operands are zero",
+                    "meaning": "complete central review plane proves both operands are zero",
                 }
             ],
             "legend": _structured_difference_review_legend(),
@@ -2086,25 +2246,25 @@ def _validate_structure_semantics(
             or structure.get("scale_offset_gradient_fit")
             != {
                 "status": expected_label,
-                "reason": "both operands and their difference are exactly zero",
+                "reason": "both operands and their difference are exactly zero on the review plane",
             }
             or structure.get("beam_block_rms_by_scale") != []
             or structure.get("block_rms_decay_slope_vs_independent_beams") is not None
         ):
             raise ValueError(f"{label} exact-zero structure result is inconsistent")
-        full = product["full_array"]
-        zero_values = (
-            full["left"]["min"],
-            full["left"]["max"],
-            full["left"]["sum_squares"],
-            full["right"]["min"],
-            full["right"]["max"],
-            full["right"]["sum_squares"],
-            full["difference"]["sum_squares"],
-            full["difference"]["abs_max"],
-        )
-        if any(value != 0.0 for value in zero_values):
-            raise ValueError(f"{label} exact-zero review contradicts full-array values")
+        evidence = structure["native_spatial_evidence"]
+        if (
+            evidence["paired_raw_finite_pixels"] != evidence["expected_pixels"]
+            or any(
+                evidence[field] != 0.0
+                for field in (
+                    "paired_raw_left_abs_max",
+                    "paired_raw_right_abs_max",
+                    "paired_raw_diff_abs_max",
+                )
+            )
+        ):
+            raise ValueError(f"{label} exact-zero review contradicts central-plane values")
         return
     if status != "computed":
         raise ValueError(f"{label} full structure result is incomplete")
@@ -2767,7 +2927,8 @@ def _structured_difference_review_legend() -> dict[str, str]:
         ),
         "unknown": "Check could not be evaluated for this product.",
         "not_applicable_exact_zero": (
-            "Full evidence proves both operands and their difference are exactly zero."
+            "Both operands and their difference are exactly zero on the complete "
+            "central review plane; full-array numerical checks remain applicable."
         ),
     }
 

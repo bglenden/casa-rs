@@ -210,13 +210,13 @@ impl ManagedStateStore {
         let write_result = write_and_replace(&temp, &target, contents);
         let unlock_result = FileExt::unlock(&lock);
 
-        if let Err(source) = unlock_result {
-            if write_result.is_ok() {
-                return Err(ManagedStateError::Lock {
-                    path: lock_path,
-                    source,
-                });
-            }
+        if let Err(source) = unlock_result
+            && write_result.is_ok()
+        {
+            return Err(ManagedStateError::Lock {
+                path: lock_path,
+                source,
+            });
         }
         write_result?;
         Ok(StateWriteOutcome {

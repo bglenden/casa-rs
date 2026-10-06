@@ -35,6 +35,9 @@ toml = "0.8"
 uniffi = "0.29.5"
 uniffi_bindgen = "0.29.5"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSString", "NSObjCRuntime"] }
+
 [dev-dependencies]
 flate2 = "1"
 ndarray.workspace = true

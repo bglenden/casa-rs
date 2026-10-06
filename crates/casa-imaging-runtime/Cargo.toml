@@ -14,9 +14,12 @@ workspace = true
 casa-imaging-model = { path = "../casa-imaging-model" }
 casa-imaging-products = { path = "../casa-imaging-products" }
 casa-imaging-reconstruction = { path = "../casa-imaging-reconstruction" }
+casa-lattices = { path = "../casa-lattices" }
+ndarray.workspace = true
 num-complex.workspace = true
 rayon = "1"
 casa-ms = { path = "../casa-ms" }
+crc32c = "0.6"
 fs2 = "0.4"
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
@@ -31,11 +34,13 @@ casa-types = { path = "../casa-types" }
 
 [target.'cfg(all(target_os = "macos", not(coverage)))'.dependencies]
 objc2 = "0.6.4"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSString", "NSError"] }
 objc2-metal = { version = "0.3.2", default-features = false, features = [
     "MTLAllocation",
     "MTLBuffer",
     "MTLCommandBuffer",
     "MTLCommandQueue",
     "MTLDevice",
+    "MTLLibrary",
     "MTLResource",
 ] }

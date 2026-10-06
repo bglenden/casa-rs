@@ -53,6 +53,9 @@ jobs:
           # casars-imager progress instrumentation is process-global and its
           # unit tests intentionally exercise that shared context.
           RUST_TEST_THREADS: 1
+          # Debug builds of the bounded imaging stack legitimately exceed the
+          # default test-thread stack; production uses release frames.
+          RUST_MIN_STACK: 33554432
         run: cargo test --workspace
 
   python_package:
@@ -115,6 +118,12 @@ jobs:
 
       - name: Check generated frontend bindings
         run: scripts/generate-frontend-bindings.sh --check
+
+      - name: Build frontend services library for Swift tests
+        run: cargo build -p casars-frontend-services --lib
+
+      - name: Run Swift core unit tests
+        run: swift test --package-path apps/casars-mac
 
       - name: Run native GUI interaction gate
         run: just gui-test

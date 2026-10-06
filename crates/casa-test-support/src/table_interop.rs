@@ -135,29 +135,29 @@ pub fn run_full_cross_matrix(
         results.last().unwrap().passed
     );
 
-    if crate::casacore_oracle_available() {
-        if let Some(cpp_fix) = fixture.cpp_fixture {
-            eprintln!("[cross-matrix] starting CC");
-            results.push(run_cc(cpp_fix));
-            eprintln!(
-                "[cross-matrix] CC done: passed={}",
-                results.last().unwrap().passed
-            );
+    if crate::casacore_oracle_available()
+        && let Some(cpp_fix) = fixture.cpp_fixture
+    {
+        eprintln!("[cross-matrix] starting CC");
+        results.push(run_cc(cpp_fix));
+        eprintln!(
+            "[cross-matrix] CC done: passed={}",
+            results.last().unwrap().passed
+        );
 
-            eprintln!("[cross-matrix] starting CR");
-            results.push(run_cr(fixture, manager, cpp_fix));
-            eprintln!(
-                "[cross-matrix] CR done: passed={}",
-                results.last().unwrap().passed
-            );
+        eprintln!("[cross-matrix] starting CR");
+        results.push(run_cr(fixture, manager, cpp_fix));
+        eprintln!(
+            "[cross-matrix] CR done: passed={}",
+            results.last().unwrap().passed
+        );
 
-            eprintln!("[cross-matrix] starting RC");
-            results.push(run_rc(fixture, manager, cpp_fix));
-            eprintln!(
-                "[cross-matrix] RC done: passed={}",
-                results.last().unwrap().passed
-            );
-        }
+        eprintln!("[cross-matrix] starting RC");
+        results.push(run_rc(fixture, manager, cpp_fix));
+        eprintln!(
+            "[cross-matrix] RC done: passed={}",
+            results.last().unwrap().passed
+        );
     }
 
     results
@@ -186,21 +186,21 @@ pub fn run_endian_cross_matrix(
         EndianFormat::LittleEndian,
     ));
 
-    if crate::casacore_oracle_available() {
-        if let Some(cpp_fix) = fixture.cpp_fixture {
-            results.push(run_rc_with_endian(
-                fixture,
-                manager,
-                cpp_fix,
-                EndianFormat::BigEndian,
-            ));
-            results.push(run_rc_with_endian(
-                fixture,
-                manager,
-                cpp_fix,
-                EndianFormat::LittleEndian,
-            ));
-        }
+    if crate::casacore_oracle_available()
+        && let Some(cpp_fix) = fixture.cpp_fixture
+    {
+        results.push(run_rc_with_endian(
+            fixture,
+            manager,
+            cpp_fix,
+            EndianFormat::BigEndian,
+        ));
+        results.push(run_rc_with_endian(
+            fixture,
+            manager,
+            cpp_fix,
+            EndianFormat::LittleEndian,
+        ));
     }
 
     results

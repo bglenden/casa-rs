@@ -348,10 +348,10 @@ impl Table {
                 undefined = Some(undefined_columns_for_row(&row, schema));
             }
             self.inner.insert_row(index, row)?;
-            if let Some(undefined) = undefined {
-                if let Some(set) = self.inner.undefined_for_row_mut(index)? {
-                    *set = undefined;
-                }
+            if let Some(undefined) = undefined
+                && let Some(set) = self.inner.undefined_for_row_mut(index)?
+            {
+                *set = undefined;
             }
             Ok(())
         })();

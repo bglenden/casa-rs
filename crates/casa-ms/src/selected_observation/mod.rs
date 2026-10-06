@@ -9,6 +9,7 @@
 mod access;
 mod bound_observation;
 mod content_plan;
+mod indexed_block;
 mod measures;
 mod row_access;
 mod row_selection;
@@ -21,16 +22,21 @@ pub(crate) use access::{
 };
 pub use access::{BoundObservationSourceError, SelectedObservationBlock};
 pub use bound_observation::{
-    BoundSelectedObservation, BoundSelectedObservationError, ObservationSourceBinding,
-    SelectedObservationBlockConsumer, SelectedObservationBlockSource,
+    BoundSelectedObservation, BoundSelectedObservationError, DeferredSelectedObservationAccess,
+    ObservationSourceBinding, SelectedObservationBlockConsumer, SelectedObservationBlockSource,
     SelectedObservationCompletion, SelectedObservationReplayAuthorization,
     SelectedObservationReplayProof, SelectedObservationResidencyCertificate,
     SelectedObservationTerminal, SelectedObservationTraversalError,
-    SelectedObservationTraversalMeasurements,
+    SelectedObservationTraversalMeasurements, SelectedObservationWindowCompletion,
 };
-pub use content_plan::{SelectedObservationContentBudget, SelectedObservationReferenceDataBudget};
-pub(crate) use content_plan::{
-    SelectedObservationContentPlan, SelectedObservationContentPlanError,
+pub use content_plan::{
+    SelectedObservationContentBudget, SelectedObservationContentPlan,
+    SelectedObservationContentPlanError, SelectedObservationContentRequirements,
+    SelectedObservationReferenceDataBudget,
+};
+pub use indexed_block::{
+    SelectedObservationBlockIndex, SelectedObservationBlockIndexPlan,
+    SelectedObservationIndexedBlock, SelectedObservationProjector,
 };
 pub use measures::{SelectedObservationMeasures, SelectedObservationMeasuresError};
 pub use row_access::{SelectedObservationRow, SelectedObservationRowSelection};

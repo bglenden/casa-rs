@@ -112,8 +112,10 @@ fn current_sparse_profiles_round_trip_through_one_canonical_request() -> Result<
                     request
                         .aw_project
                         .as_ref()
-                        .map(|config| config.cf_cache.as_path()),
-                    Some(std::path::Path::new("cf-cache/vlass-spw2-17"))
+                        .map(|config| config.source.clone()),
+                    Some(casars_imager::ImagerAwCfSource::CasaImport {
+                        cf_cache: PathBuf::from("cf-cache/vlass-spw2-17")
+                    })
                 );
             }
             "vlass-all" => {

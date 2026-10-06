@@ -323,7 +323,7 @@ impl PublicationLayoutLedger {
         let mut participants = BTreeSet::new();
         let mut staged_storage_bytes = 0_u64;
         let mut final_storage_bytes = 0_u64;
-        let mut writer_buffer_bytes = 0_u64;
+        let mut writer_buffers = std::collections::BTreeMap::<AllocationId, u64>::new();
         let mut mapped_page_cache_bytes = 0_u64;
         for entry in &entries {
             if entry.layout_id.as_bytes() == [0; 32] {
@@ -369,11 +369,10 @@ impl PublicationLayoutLedger {
                 .ok_or(PublicationLayoutError::AggregateOverflow {
                     kind: PublicationBoundKind::FinalStorage,
                 })?;
-            writer_buffer_bytes = writer_buffer_bytes
-                .checked_add(entry.resource_bounds.writer_buffer_bytes())
-                .ok_or(PublicationLayoutError::AggregateOverflow {
-                    kind: PublicationBoundKind::WriterBuffer,
-                })?;
+            let writer = writer_buffers
+                .entry(entry.staging.writer_allocation().clone())
+                .or_default();
+            *writer = (*writer).max(entry.resource_bounds.writer_buffer_bytes());
             if entry.staging.mapped_page_cache().is_some() {
                 mapped_page_cache_bytes = mapped_page_cache_bytes
                     .checked_add(entry.resource_bounds.mapped_page_cache_bytes())
@@ -382,6 +381,13 @@ impl PublicationLayoutLedger {
                     })?;
             }
         }
+        let writer_buffer_bytes = writer_buffers.values().try_fold(0_u64, |total, bytes| {
+            total
+                .checked_add(*bytes)
+                .ok_or(PublicationLayoutError::AggregateOverflow {
+                    kind: PublicationBoundKind::WriterBuffer,
+                })
+        })?;
         Ok(Self {
             entries: entries.into_boxed_slice(),
             staged_storage_bytes,

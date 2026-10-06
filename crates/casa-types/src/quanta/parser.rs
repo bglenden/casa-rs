@@ -133,11 +133,11 @@ fn parse_field(bytes: &[u8], pos: &mut usize) -> Result<UnitVal, UnitError> {
     if field.len() > 2 {
         let prefix2 = std::str::from_utf8(&field[..2]).unwrap_or("");
         let rest2 = std::str::from_utf8(&field[2..]).unwrap_or("");
-        if let Some(pfactor) = reg.lookup_prefix(prefix2) {
-            if let Some(uval) = reg.lookup_unit(rest2) {
-                *pos = end;
-                return Ok(UnitVal::new(pfactor * uval.factor, uval.dim));
-            }
+        if let Some(pfactor) = reg.lookup_prefix(prefix2)
+            && let Some(uval) = reg.lookup_unit(rest2)
+        {
+            *pos = end;
+            return Ok(UnitVal::new(pfactor * uval.factor, uval.dim));
         }
     }
 
@@ -145,11 +145,11 @@ fn parse_field(bytes: &[u8], pos: &mut usize) -> Result<UnitVal, UnitError> {
     if field.len() > 1 {
         let prefix1 = std::str::from_utf8(&field[..1]).unwrap_or("");
         let rest1 = std::str::from_utf8(&field[1..]).unwrap_or("");
-        if let Some(pfactor) = reg.lookup_prefix(prefix1) {
-            if let Some(uval) = reg.lookup_unit(rest1) {
-                *pos = end;
-                return Ok(UnitVal::new(pfactor * uval.factor, uval.dim));
-            }
+        if let Some(pfactor) = reg.lookup_prefix(prefix1)
+            && let Some(uval) = reg.lookup_unit(rest1)
+        {
+            *pos = end;
+            return Ok(UnitVal::new(pfactor * uval.factor, uval.dim));
         }
     }
 

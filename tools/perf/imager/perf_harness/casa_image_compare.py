@@ -438,7 +438,28 @@ def discover_product_inventory(prefix):
         if path.name.startswith(stem)
         and path.name != stem
         and path.name[len(stem) :].startswith(".")
+        and not is_paired_cf_cache(path)
     )
+
+
+def is_paired_cf_cache(path):
+    """A paired convolution cache is input infrastructure, not an image product."""
+    if not path.is_dir() or (path / "table.info").exists():
+        return False
+    roles = set()
+    for child in path.iterdir():
+        if child.name.startswith("WTCFS"):
+            role = "weight"
+        elif child.name.startswith("CFS"):
+            role = "imaging"
+        else:
+            continue
+        info = child / "table.info"
+        if info.is_file() and "Type = Image" in info.read_text().splitlines():
+            roles.add(role)
+        if len(roles) == 2:
+            return True
+    return False
 
 
 def compare_product_inventory(left_prefix, right_prefix, expected, required):
@@ -1892,6 +1913,9 @@ class FullSpatialStructureReducer:
             "left_raw_finite_pixels": self.left_raw_finite_pixels,
             "right_raw_finite_pixels": self.right_raw_finite_pixels,
             "paired_raw_finite_pixels": self.paired_raw_finite_pixels,
+            "paired_raw_left_abs_max": self.paired_raw_left_abs_max,
+            "paired_raw_right_abs_max": self.paired_raw_right_abs_max,
+            "paired_raw_diff_abs_max": self.paired_raw_diff_abs_max,
             "paired_image_mask_finite_pixels": (self.paired_image_mask_finite_pixels),
             "central_mask_mismatch_pixels": self.central_mask_mismatch_pixels,
             "workspace_lifecycle": "remove_on_success_retain_on_failure",
@@ -1916,7 +1940,7 @@ class FullSpatialStructureReducer:
         return bool(
             self.spatial_pixels_visited == self.shape[0] * self.shape[1]
             and self.overlap_write_pixels == 0
-            and self.paired_raw_finite_pixels > 0
+            and self.paired_raw_finite_pixels == self.shape[0] * self.shape[1]
             and self.paired_raw_left_abs_max == 0.0
             and self.paired_raw_right_abs_max == 0.0
             and self.paired_raw_diff_abs_max == 0.0
@@ -1995,6 +2019,11 @@ class FullArrayReducer:
         self.cross_sum = CompensatedSum()
         self.diff_sum = CompensatedSum()
         self.diff_sum_squares = CompensatedSum()
+        # Keep the raw aggregates above as part of the comparison evidence,
+        # but do not derive correlation by subtracting nearly equal O(sum of
+        # squares) values.  The paired centered summary provides the stable
+        # route for the published correlation without changing the schema.
+        self.centered_moments = StreamingPairedMoments()
         self.diff_abs_max = 0.0
         self.left_peak = None
         self.right_peak = None
@@ -2107,6 +2136,7 @@ class FullArrayReducer:
         self.cross_sum.add(np.dot(left_values, right_values))
         self.diff_sum.add(np.sum(diff, dtype=np.float64))
         self.diff_sum_squares.add(np.dot(diff, diff))
+        self.centered_moments.add(left_values, right_values)
         self.diff_abs_max = max(self.diff_abs_max, float(np.max(np.abs(diff))))
         self.left_peak = update_chunk_peak(self.left_peak, left, valid, blc)
         self.right_peak = update_chunk_peak(self.right_peak, right, valid, blc)
@@ -2135,10 +2165,22 @@ class FullArrayReducer:
             left_variance_numerator = left_squares - left_sum * left_sum / count
             right_variance_numerator = right_squares - right_sum * right_sum / count
             covariance = covariance_numerator / count
-            denominator = math.sqrt(
-                max(0.0, left_variance_numerator) * max(0.0, right_variance_numerator)
-            )
-            correlation = covariance_numerator / denominator if denominator else None
+            centered_left = self.centered_moments.left_sum_squared_deviations
+            centered_right = self.centered_moments.right_sum_squared_deviations
+            centered_covariance_numerator = self.centered_moments.sum_product_deviations
+            if self.left_min == self.left_max or self.right_min == self.right_max:
+                correlation = None
+            else:
+                denominator = math.sqrt(max(0.0, centered_left)) * math.sqrt(
+                    max(0.0, centered_right)
+                )
+                correlation = (
+                    centered_covariance_numerator / denominator
+                    if denominator
+                    else None
+                )
+                if correlation is not None and math.isfinite(correlation):
+                    correlation = min(1.0, max(-1.0, correlation))
         right_peak = self.right_peak["abs_value"] if self.right_peak else None
         result = {
             "status": status,
@@ -2740,7 +2782,7 @@ def exact_zero_structure_evidence(suffix, *, evidence_scope):
         "large_scale_power_fraction": None,
         "scale_offset_gradient_fit": {
             "status": label,
-            "reason": "both operands and their difference are exactly zero",
+            "reason": "both operands and their difference are exactly zero on the review plane",
         },
         "beam_block_rms_by_scale": [],
         "block_rms_decay_slope_vs_independent_beams": None,
@@ -2748,15 +2790,16 @@ def exact_zero_structure_evidence(suffix, *, evidence_scope):
         "review": {
             "label": label,
             "summary": (
-                f"{suffix}: structured difference is not applicable because full "
-                "evidence proves both operands and their difference are exactly zero."
+                f"{suffix}: structured difference is not applicable on the review plane; "
+                "both operands and their difference are exactly zero there. "
+                "Full-array numerical checks remain applicable."
             ),
             "checks": [
                 {
                     "name": "exact_zero_operands",
                     "label": label,
                     "value": True,
-                    "meaning": "full comparison domain proves both operands are zero",
+                    "meaning": "complete central review plane proves both operands are zero",
                 }
             ],
             "legend": structured_difference_review_legend(),
@@ -3219,6 +3262,59 @@ class StreamingMoments:
         self.count = combined_count
 
 
+class StreamingPairedMoments:
+    """Numerically stable centered covariance summary for bounded chunks."""
+
+    def __init__(self):
+        self.count = 0
+        self.left_mean = 0.0
+        self.right_mean = 0.0
+        self.left_sum_squared_deviations = 0.0
+        self.right_sum_squared_deviations = 0.0
+        self.sum_product_deviations = 0.0
+
+    def add(self, left, right):
+        left = np.asarray(left, dtype=np.float64)
+        right = np.asarray(right, dtype=np.float64)
+        if left.shape != right.shape:
+            raise ValueError("paired moment chunks have different shapes")
+        if left.size == 0:
+            return
+        batch_count = int(left.size)
+        batch_left_mean = float(np.mean(left))
+        batch_right_mean = float(np.mean(right))
+        left_centered = left - batch_left_mean
+        right_centered = right - batch_right_mean
+        batch_left_deviations = float(np.dot(left_centered, left_centered))
+        batch_right_deviations = float(np.dot(right_centered, right_centered))
+        batch_product_deviations = float(np.dot(left_centered, right_centered))
+        if self.count == 0:
+            self.count = batch_count
+            self.left_mean = batch_left_mean
+            self.right_mean = batch_right_mean
+            self.left_sum_squared_deviations = batch_left_deviations
+            self.right_sum_squared_deviations = batch_right_deviations
+            self.sum_product_deviations = batch_product_deviations
+            return
+        combined_count = self.count + batch_count
+        weight = float(self.count) * float(batch_count) / float(combined_count)
+        left_delta = batch_left_mean - self.left_mean
+        right_delta = batch_right_mean - self.right_mean
+        self.left_sum_squared_deviations += (
+            batch_left_deviations + left_delta**2 * weight
+        )
+        self.right_sum_squared_deviations += (
+            batch_right_deviations + right_delta**2 * weight
+        )
+        self.sum_product_deviations += (
+            batch_product_deviations + left_delta * right_delta * weight
+        )
+        fraction = float(batch_count) / float(combined_count)
+        self.left_mean += left_delta * fraction
+        self.right_mean += right_delta * fraction
+        self.count = combined_count
+
+
 def _quadratic_basis(x, y):
     basis = np.empty((x.size, 7), dtype=np.float64)
     basis[:, 0] = 1.0
@@ -3630,7 +3726,8 @@ def structured_difference_review_legend():
         "bad": "Structured or large enough difference; do not close without explanation.",
         "unknown": "Check could not be evaluated for this product.",
         "not_applicable_exact_zero": (
-            "Full evidence proves both operands and their difference are exactly zero."
+            "Both operands and their difference are exactly zero on the complete "
+            "central review plane; full-array numerical checks remain applicable."
         ),
     }
 

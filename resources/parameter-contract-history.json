@@ -357,6 +357,11 @@
       "fingerprint": "6fbf597ffc8e7676459629de859c66c48d70e3edbda62e2f6789ab04774eff4c"
     },
     {
+      "id": "parameter.aw_cf_source",
+      "semantic_revision": 1,
+      "fingerprint": "9f96e480112624e40069ba9bd4978caf35dc50131e432c0fbea0333a630e3e0e"
+    },
+    {
       "id": "parameter.axes",
       "semantic_revision": 1,
       "fingerprint": "d9cca213f0d8e13017804cd560194fcdcf0c579a128441e60fe070b058071431"
@@ -440,6 +445,11 @@
       "id": "parameter.cfcache",
       "semantic_revision": 1,
       "fingerprint": "392f55473a583b6493bb92508117a3b02d645680e95982c5915c031d9e85525d"
+    },
+    {
+      "id": "parameter.cfcache",
+      "semantic_revision": 2,
+      "fingerprint": "cdd07faf562cac7089d0a47b15a80ed93e1622f8f3c67df275d387dd25166283"
     },
     {
       "id": "parameter.chanbin",
@@ -620,6 +630,11 @@
       "id": "parameter.estimates",
       "semantic_revision": 1,
       "fingerprint": "3676c1efa094acbbc45753211c65658dd5b452308ab1979932ec0985e9ba9e45"
+    },
+    {
+      "id": "parameter.evla_surface",
+      "semantic_revision": 1,
+      "fingerprint": "f981b4c22b30f9ac3dbd52a84171e595a74a63f5317821616b33e8166527c13d"
     },
     {
       "id": "parameter.evlabands",
@@ -1225,6 +1240,36 @@
       "id": "parameter.ms_channels",
       "semantic_revision": 1,
       "fingerprint": "075cac21857c3a4e1c070edd99c6dbafa4d2bd7e7478920c6fe4be7896df0677"
+    },
+    {
+      "id": "parameter.native_cf_cache",
+      "semantic_revision": 1,
+      "fingerprint": "825fa863d77704150735d9cc85c5c14c931af029e009dca5457c13389bf47bb0"
+    },
+    {
+      "id": "parameter.native_cf_cache_bytes",
+      "semantic_revision": 1,
+      "fingerprint": "cea6c4d988c7b18542d007efbb81beb07ad8b74f800008a21e87ed79f391f545"
+    },
+    {
+      "id": "parameter.native_cf_maximum_cells",
+      "semantic_revision": 1,
+      "fingerprint": "2590c02c436f74a612acc7c45e72ed0fa556899da8c2bfb2e3f150587ab049aa"
+    },
+    {
+      "id": "parameter.native_cf_oversampling",
+      "semantic_revision": 1,
+      "fingerprint": "abc6a3f9dba686c183584139db54705e64a5739f9ab61357a871a7ed7f04bb78"
+    },
+    {
+      "id": "parameter.native_cf_policy",
+      "semantic_revision": 1,
+      "fingerprint": "beb833c4d1c0b6d25737f6b91797064d9c5e8ae809ca04321381d6b31e045b08"
+    },
+    {
+      "id": "parameter.native_cf_working_size",
+      "semantic_revision": 1,
+      "fingerprint": "3eeb74ac75960556841bfd28566c0fcc8569ea49ac66d3c2934db7c14df594c8"
     },
     {
       "id": "parameter.negativethreshold",
@@ -2417,6 +2462,11 @@
       "id": "imager",
       "contract_version": 15,
       "fingerprint": "8662fe48bc23f1cf78300d270cd4da753bea2827ac91962a32d7efd64d3df800"
+    },
+    {
+      "id": "imager",
+      "contract_version": 16,
+      "fingerprint": "2ca45aab06ee1b50bd5584b90b94dabe14ff3e77411353dfccba60e5b3d6acb1"
     },
     {
       "id": "imcollapse",

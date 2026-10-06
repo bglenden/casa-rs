@@ -93,7 +93,7 @@ pub fn common_enclosing_gaussian(
     if gaussians.iter().all(|gaussian| *gaussian == gaussians[0]) {
         return Ok(gaussians[0]);
     }
-    common_enclosing_recursive(gaussians)
+    common_enclosing_iterative(gaussians)
 }
 
 /// Compute the Gaussian that convolves `source` into `target`.
@@ -154,78 +154,81 @@ fn valid(gaussian: EllipticalGaussian) -> bool {
         && gaussian.major >= gaussian.minor
 }
 
-fn common_enclosing_recursive(
+fn common_enclosing_iterative(
     gaussians: &[EllipticalGaussian],
 ) -> Result<EllipticalGaussian, EllipticalGaussianError> {
-    let (max_index, &max_gaussian) = gaussians
-        .iter()
-        .enumerate()
-        .max_by(|(_, lhs), (_, rhs)| lhs.area().total_cmp(&rhs.area()))
-        .ok_or(EllipticalGaussianError::EmptySet)?;
+    let mut gaussians = gaussians.to_vec();
+    loop {
+        let (max_index, &max_gaussian) = gaussians
+            .iter()
+            .enumerate()
+            .max_by(|(_, lhs), (_, rhs)| lhs.area().total_cmp(&rhs.area()))
+            .ok_or(EllipticalGaussianError::EmptySet)?;
 
-    let problem = gaussians
-        .iter()
-        .copied()
-        .enumerate()
-        .filter(|(index, _)| *index != max_index)
-        .map(|(_, gaussian)| gaussian)
-        .find(|gaussian| !encloses(max_gaussian, *gaussian));
-    let Some(problem) = problem else {
-        return Ok(max_gaussian);
-    };
+        let problem = gaussians
+            .iter()
+            .copied()
+            .enumerate()
+            .filter(|(index, _)| *index != max_index)
+            .map(|(_, gaussian)| gaussian)
+            .find(|gaussian| !encloses(max_gaussian, *gaussian));
+        let Some(problem) = problem else {
+            return Ok(max_gaussian);
+        };
 
-    let relative_angle = normalize_position_angle(problem.position_angle)
-        - normalize_position_angle(max_gaussian.position_angle);
-    if (normalize_angle_pi(relative_angle).abs() - std::f64::consts::FRAC_PI_2).abs() <= 1.0e-12 {
-        let max_has_major = max_gaussian.major >= problem.major;
-        return Ok(EllipticalGaussian::new(
-            if max_has_major {
-                max_gaussian.major
-            } else {
-                problem.major
-            },
-            if max_has_major {
-                problem.major
-            } else {
-                max_gaussian.major
-            },
-            normalize_position_angle(if max_has_major {
-                max_gaussian.position_angle
-            } else {
-                problem.position_angle
-            }),
-        ));
+        let relative_angle = normalize_position_angle(problem.position_angle)
+            - normalize_position_angle(max_gaussian.position_angle);
+        if (normalize_angle_pi(relative_angle).abs() - std::f64::consts::FRAC_PI_2).abs() <= 1.0e-12
+        {
+            let max_has_major = max_gaussian.major >= problem.major;
+            return Ok(EllipticalGaussian::new(
+                if max_has_major {
+                    max_gaussian.major
+                } else {
+                    problem.major
+                },
+                if max_has_major {
+                    problem.major
+                } else {
+                    max_gaussian.major
+                },
+                normalize_position_angle(if max_has_major {
+                    max_gaussian.position_angle
+                } else {
+                    problem.position_angle
+                }),
+            ));
+        }
+
+        let equal_area_axis = (max_gaussian.major * max_gaussian.minor).sqrt();
+        let x_scale = equal_area_axis / max_gaussian.major;
+        let y_scale = equal_area_axis / max_gaussian.minor;
+        let (problem_major, _, problem_angle) = transform_ellipse_by_scaling(
+            problem.major,
+            problem.minor,
+            relative_angle,
+            x_scale,
+            y_scale,
+        );
+        let (mut major, mut minor, common_angle) = transform_ellipse_by_scaling(
+            problem_major,
+            equal_area_axis,
+            problem_angle,
+            1.0 / x_scale,
+            1.0 / y_scale,
+        );
+        let position_angle = common_angle + normalize_position_angle(max_gaussian.position_angle);
+        let mut enclosing =
+            EllipticalGaussian::new(major, minor, normalize_position_angle(position_angle));
+        while !(encloses(enclosing, max_gaussian) && encloses(enclosing, problem)) {
+            major *= 1.001;
+            minor *= 1.001;
+            enclosing =
+                EllipticalGaussian::new(major, minor, normalize_position_angle(position_angle));
+        }
+
+        gaussians[max_index] = enclosing;
     }
-
-    let equal_area_axis = (max_gaussian.major * max_gaussian.minor).sqrt();
-    let x_scale = equal_area_axis / max_gaussian.major;
-    let y_scale = equal_area_axis / max_gaussian.minor;
-    let (problem_major, _, problem_angle) = transform_ellipse_by_scaling(
-        problem.major,
-        problem.minor,
-        relative_angle,
-        x_scale,
-        y_scale,
-    );
-    let (mut major, mut minor, common_angle) = transform_ellipse_by_scaling(
-        problem_major,
-        equal_area_axis,
-        problem_angle,
-        1.0 / x_scale,
-        1.0 / y_scale,
-    );
-    let position_angle = common_angle + normalize_position_angle(max_gaussian.position_angle);
-    let mut enclosing =
-        EllipticalGaussian::new(major, minor, normalize_position_angle(position_angle));
-    while !(encloses(enclosing, max_gaussian) && encloses(enclosing, problem)) {
-        major *= 1.001;
-        minor *= 1.001;
-        enclosing = EllipticalGaussian::new(major, minor, normalize_position_angle(position_angle));
-    }
-
-    let mut reduced = gaussians.to_vec();
-    reduced[max_index] = enclosing;
-    common_enclosing_recursive(&reduced)
 }
 
 fn from_x_axis(major: f64, minor: f64, x_axis_angle: f64) -> EllipticalGaussian {
@@ -350,6 +353,17 @@ fn transform_ellipse_by_scaling(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn common_envelope_reuses_one_working_set_for_many_planes() {
+        let pair = [
+            EllipticalGaussian::new(7.0, 4.0, 35_f64.to_radians()),
+            EllipticalGaussian::new(6.0, 5.0, -20_f64.to_radians()),
+        ];
+        let expected = common_enclosing_gaussian(&pair).unwrap();
+        let repeated = pair.into_iter().cycle().take(16_384).collect::<Vec<_>>();
+        assert_eq!(common_enclosing_gaussian(&repeated).unwrap(), expected);
+    }
 
     #[test]
     fn common_envelope_matches_the_casa_two_beam_reference() {

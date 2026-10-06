@@ -278,10 +278,12 @@ fn parse_value_comment(rest: &str) -> (FitsValue, Option<String>) {
     }
 
     // Integer (no decimal point, no exponent)
-    if !val_str.contains('.') && !val_str.contains('E') && !val_str.contains('e') {
-        if let Ok(i) = val_str.parse::<i64>() {
-            return (FitsValue::Integer(i), comment);
-        }
+    if !val_str.contains('.')
+        && !val_str.contains('E')
+        && !val_str.contains('e')
+        && let Ok(i) = val_str.parse::<i64>()
+    {
+        return (FitsValue::Integer(i), comment);
     }
 
     // Float

@@ -339,33 +339,33 @@ impl SimobserveFamilyTaskRequest {
                 return Err("field_phase_centers_rad entries must be finite radians".to_string());
             }
         }
-        if let Some([right_ascension_rad, declination_rad]) = self.phase_center_rad {
-            if !right_ascension_rad.is_finite() || !declination_rad.is_finite() {
-                return Err("phase_center_rad values must be finite when provided".to_string());
-            }
+        if let Some([right_ascension_rad, declination_rad]) = self.phase_center_rad
+            && (!right_ascension_rad.is_finite() || !declination_rad.is_finite())
+        {
+            return Err("phase_center_rad values must be finite when provided".to_string());
         }
-        if let Some(start_frequency_hz) = self.start_frequency_hz {
-            if start_frequency_hz <= 0.0 || !start_frequency_hz.is_finite() {
-                return Err("start_frequency_hz must be positive when provided".to_string());
-            }
+        if let Some(start_frequency_hz) = self.start_frequency_hz
+            && (start_frequency_hz <= 0.0 || !start_frequency_hz.is_finite())
+        {
+            return Err("start_frequency_hz must be positive when provided".to_string());
         }
-        if let Some(channel_width_hz) = self.channel_width_hz {
-            if channel_width_hz <= 0.0 || !channel_width_hz.is_finite() {
-                return Err("channel_width_hz must be positive when provided".to_string());
-            }
+        if let Some(channel_width_hz) = self.channel_width_hz
+            && (channel_width_hz <= 0.0 || !channel_width_hz.is_finite())
+        {
+            return Err("channel_width_hz must be positive when provided".to_string());
         }
         if matches!(self.time_sample_count, Some(0)) {
             return Err("time_sample_count must be positive when provided".to_string());
         }
-        if let Some(integration_seconds) = self.integration_seconds {
-            if integration_seconds <= 0.0 || !integration_seconds.is_finite() {
-                return Err("integration_seconds must be positive when provided".to_string());
-            }
+        if let Some(integration_seconds) = self.integration_seconds
+            && (integration_seconds <= 0.0 || !integration_seconds.is_finite())
+        {
+            return Err("integration_seconds must be positive when provided".to_string());
         }
-        if let Some(start_time_mjd_seconds) = self.start_time_mjd_seconds {
-            if !start_time_mjd_seconds.is_finite() {
-                return Err("start_time_mjd_seconds must be finite when provided".to_string());
-            }
+        if let Some(start_time_mjd_seconds) = self.start_time_mjd_seconds
+            && !start_time_mjd_seconds.is_finite()
+        {
+            return Err("start_time_mjd_seconds must be finite when provided".to_string());
         }
         validate_family_imaging_mode(&self.imaging_mode)?;
         let output_ms = self
@@ -851,14 +851,10 @@ fn family_config_candidates(label: &str) -> Vec<PathBuf> {
             }
         }
     }
-    if let Some(casapath) = std::env::var_os("CASAPATH") {
-        if let Some(first_root) = casapath.to_string_lossy().split_whitespace().next() {
-            push_family_config_candidates(
-                &mut candidates,
-                &Path::new(first_root).join("data"),
-                label,
-            );
-        }
+    if let Some(casapath) = std::env::var_os("CASAPATH")
+        && let Some(first_root) = casapath.to_string_lossy().split_whitespace().next()
+    {
+        push_family_config_candidates(&mut candidates, &Path::new(first_root).join("data"), label);
     }
     candidates
 }

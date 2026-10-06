@@ -1305,7 +1305,7 @@ impl<'a> SpectralLineRecord<'a> {
         let base = 2 * (self.header_words() + 4);
         let mut values = Vec::with_capacity(true_channels);
         let raw = self.cursor.bytes_at(base, true_channels * 4)?;
-        for chunk in raw.chunks_exact(4) {
+        for chunk in raw.as_chunks::<4>().0 {
             let real = decode_i16(&chunk[..2])? as f32 / scale;
             let imag = decode_i16(&chunk[2..])? as f32 / scale;
             values.push(Complex32::new(real, imag));

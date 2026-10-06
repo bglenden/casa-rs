@@ -23,11 +23,16 @@ use std::{
 use thiserror::Error;
 
 use crate::selected_observation_buffer::SelectedObservationBufferFillReport;
+use crate::selected_pointing::SelectedPointingQueryDomain;
 
-use super::access::{BlockVisitError, ProjectedSelectedObservationSample, SelectedRowReplay};
+use super::access::{
+    BlockVisitError, BoundObservationReferenceData, ProjectedSelectedObservationSample,
+    SelectedRowReplay,
+};
 use super::{
     BoundObservationSamples, BoundObservationSource, BoundObservationSourceError,
-    SelectedObservationBlock, SelectedObservationContentBudget, SelectedObservationMeasures,
+    SelectedObservationBlock, SelectedObservationContentBudget,
+    SelectedObservationContentRequirements, SelectedObservationMeasures,
     SelectedObservationMeasuresError,
     content_plan::SelectedObservationSharedBytes,
     maximum_selected_correlations,
@@ -47,6 +52,7 @@ pub struct ObservationSourceBinding {
     current_state: ObservationSourceState,
     content_budget: SelectedObservationContentBudget,
     ephemeris: Option<Arc<crate::SelectedObservationEphemeris>>,
+    pointing_query_domain: Option<SelectedPointingQueryDomain>,
 }
 
 /// Opaque storage-owner certificate for one complete selected-observation residency contract.
@@ -64,6 +70,7 @@ pub struct SelectedObservationResidencyCertificate {
     aggregate_reference_data_bytes: usize,
     peak_live_blocks: usize,
     maximum_pointing_polynomial_terms: usize,
+    replay_proof_retained_heap_bytes: usize,
 }
 
 /// Opaque owner-minted proof that one exact selected read set completed an
@@ -287,6 +294,8 @@ impl SelectedObservationResidencyCertificate {
             aggregate_reference_data_bytes,
             peak_live_blocks,
             maximum_pointing_polynomial_terms,
+            replay_proof_retained_heap_bytes:
+                BoundSelectedObservation::replay_proof_retained_heap_bytes(problem, bindings)?,
         })
     }
 
@@ -294,6 +303,13 @@ impl SelectedObservationResidencyCertificate {
     #[must_use]
     pub const fn aggregate_resident_bytes(&self) -> usize {
         self.aggregate_resident_bytes
+    }
+
+    /// Heap retained by the selected-read completion across major cycles.
+    /// This is derived from the same immutable source bindings as this certificate.
+    #[must_use]
+    pub const fn replay_proof_retained_heap_bytes(&self) -> usize {
+        self.replay_proof_retained_heap_bytes
     }
 
     /// Return the exact immutable reference-data allocation retained by all bindings.
@@ -354,6 +370,7 @@ impl ObservationSourceBinding {
             current_state,
             content_budget,
             ephemeris: None,
+            pointing_query_domain: None,
         }
     }
 
@@ -364,6 +381,14 @@ impl ObservationSourceBinding {
         ephemeris: Option<crate::SelectedObservationEphemeris>,
     ) -> Self {
         self.ephemeris = ephemeris.map(Arc::new);
+        self
+    }
+
+    pub(crate) fn with_pointing_query_domain(
+        mut self,
+        pointing_query_domain: SelectedPointingQueryDomain,
+    ) -> Self {
+        self.pointing_query_domain = Some(pointing_query_domain);
         self
     }
 
@@ -385,10 +410,31 @@ impl ObservationSourceBinding {
         self.content_budget
     }
 
+    pub(crate) fn set_content_budget(&mut self, budget: SelectedObservationContentBudget) {
+        self.content_budget = budget;
+    }
+
     fn ephemeris_identity(&self) -> Option<LogicalIdentity> {
         self.ephemeris
             .as_deref()
             .map(crate::SelectedObservationEphemeris::identity)
+    }
+
+    pub(crate) fn pointing_query_domain(&self) -> Option<&SelectedPointingQueryDomain> {
+        self.pointing_query_domain.as_ref()
+    }
+
+    fn additional_retained_heap_bytes<'a>(
+        &self,
+        already_accounted_rows: impl IntoIterator<Item = &'a casa_imaging_model::SelectedRows>,
+    ) -> Option<usize> {
+        self.current_state
+            .additional_retained_heap_bytes(already_accounted_rows)?
+            .checked_add(
+                self.pointing_query_domain
+                    .as_ref()
+                    .map_or(0, SelectedPointingQueryDomain::retained_bytes),
+            )
     }
 
     /// Return the exact ephemeris allocation retained by this source binding.
@@ -397,6 +443,79 @@ impl ObservationSourceBinding {
         self.ephemeris
             .as_deref()
             .map_or(0, |ephemeris| ephemeris.retained_bytes())
+    }
+}
+
+/// An unopened selected-observation capability for an admitted source-read operation.
+///
+/// It retains the source states and Measures capability, but no MeasurementSet
+/// locks, prepared POINTING catalogs, or selected-content blocks. Multi-source
+/// bindings keep the same canonical ordering and validation as
+/// [`BoundSelectedObservation::open`].
+pub struct DeferredSelectedObservationAccess {
+    measures: SelectedObservationMeasures,
+    bindings: Vec<ObservationSourceBinding>,
+    owner_validated: bool,
+}
+
+impl DeferredSelectedObservationAccess {
+    /// Defer ordinary multi-source binding until its source-read allocation exists.
+    #[must_use]
+    pub fn new(
+        measures: SelectedObservationMeasures,
+        bindings: Vec<ObservationSourceBinding>,
+    ) -> Self {
+        Self {
+            measures,
+            bindings,
+            owner_validated: false,
+        }
+    }
+
+    pub(crate) fn owner_validated(
+        measures: SelectedObservationMeasures,
+        bindings: Vec<ObservationSourceBinding>,
+    ) -> Self {
+        Self {
+            measures,
+            bindings,
+            owner_validated: true,
+        }
+    }
+
+    /// Derive the unchanged aggregate source-residency certificate without opening tables.
+    pub fn certify_residency(
+        &self,
+        problem: &CompiledProblem,
+    ) -> Result<SelectedObservationResidencyCertificate, BoundSelectedObservationError> {
+        BoundSelectedObservation::certify_residency(problem, &self.bindings)
+    }
+
+    /// Open under fresh read locks only when execution admits this source owner.
+    #[cfg(unix)]
+    pub fn open(
+        self,
+        problem: &CompiledProblem,
+    ) -> Result<BoundSelectedObservation, BoundSelectedObservationError> {
+        BoundSelectedObservation::open_internal(
+            problem,
+            self.measures,
+            self.bindings,
+            self.owner_validated,
+        )
+    }
+
+    /// Reopen an owner-resolved source set and validate its exhaustive replay proof.
+    #[cfg(unix)]
+    pub fn rebind(
+        self,
+        problem: &CompiledProblem,
+        proof: &SelectedObservationReplayProof,
+    ) -> Result<BoundSelectedObservation, BoundSelectedObservationError> {
+        if !self.owner_validated {
+            return Err(BoundSelectedObservationError::ReplayProofMismatch);
+        }
+        BoundSelectedObservation::rebind(problem, self.measures, self.bindings, proof)
     }
 }
 
@@ -422,6 +541,31 @@ pub struct BoundSelectedObservation {
 }
 
 impl BoundSelectedObservation {
+    #[cfg(unix)]
+    pub(crate) fn single_source_content_requirements(
+        problem: &CompiledProblem,
+        measures: &SelectedObservationMeasures,
+        binding: &ObservationSourceBinding,
+    ) -> Result<SelectedObservationContentRequirements, BoundSelectedObservationError> {
+        let expected = problem.inputs().observation_snapshot().sources();
+        if expected.len() != 1 {
+            return Err(BoundSelectedObservationError::BindingSetMismatch);
+        }
+        let source = &expected[0];
+        if source.identity() != binding.measurement_set() {
+            return Err(BoundSelectedObservationError::MissingSourceBinding {
+                measurement_set: source.identity(),
+            });
+        }
+        // Resolved access opens with vec![binding] and one prospective source slot.
+        let shared = Self::shared_bytes(problem, measures, std::slice::from_ref(binding), 1, 1)?;
+        BoundObservationSource::content_requirements(problem, source, binding, measures, shared)
+            .map_err(|error| BoundSelectedObservationError::Source {
+                measurement_set: source.identity(),
+                error: Box::new(error),
+            })
+    }
+
     /// Mint the opaque aggregate residency contract for a complete source-binding set.
     ///
     /// The same canonical derivation is repeated and retained by [`Self::open`],
@@ -490,7 +634,6 @@ impl BoundSelectedObservation {
                             .map(|prior| prior.current_state.selected_rows()),
                     );
                 binding
-                    .current_state
                     .additional_retained_heap_bytes(already_accounted_rows)
                     .and_then(|additional| bytes.checked_add(additional))
                     .ok_or(BoundSelectedObservationError::BindingGraphByteOverflow)
@@ -524,17 +667,6 @@ impl BoundSelectedObservation {
         bindings: Vec<ObservationSourceBinding>,
     ) -> Result<Self, BoundSelectedObservationError> {
         Self::open_internal(problem, measures, bindings, false)
-    }
-
-    /// Open a proof-eligible owner after rederiving every source state under
-    /// fresh retained locks.
-    #[cfg(unix)]
-    pub(crate) fn open_owner_validated(
-        problem: &CompiledProblem,
-        measures: SelectedObservationMeasures,
-        bindings: Vec<ObservationSourceBinding>,
-    ) -> Result<Self, BoundSelectedObservationError> {
-        Self::open_internal(problem, measures, bindings, true)
     }
 
     #[cfg(unix)]
@@ -590,7 +722,10 @@ impl BoundSelectedObservation {
                     &measures,
                     shared_bytes,
                     binding.content_budget,
-                    binding.ephemeris.as_ref(),
+                    BoundObservationReferenceData::new(
+                        binding.ephemeris.as_ref(),
+                        binding.pointing_query_domain(),
+                    ),
                 )
             } else {
                 BoundObservationSource::open_with_measures(
@@ -600,7 +735,10 @@ impl BoundSelectedObservation {
                     &measures,
                     shared_bytes,
                     binding.content_budget,
-                    binding.ephemeris.as_ref(),
+                    BoundObservationReferenceData::new(
+                        binding.ephemeris.as_ref(),
+                        binding.pointing_query_domain(),
+                    ),
                 )
             };
             sources.push(
@@ -615,7 +753,7 @@ impl BoundSelectedObservation {
         }
         measures.verify_state()?;
         let access_binding = NEXT_ACCESS_BINDING
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
                 value.checked_add(1)
             })
             .map_err(|_| BoundSelectedObservationError::AccessIdentityExhausted)?;
@@ -699,7 +837,10 @@ impl BoundSelectedObservation {
                     &measures,
                     shared_bytes,
                     binding.content_budget,
-                    binding.ephemeris.as_ref(),
+                    BoundObservationReferenceData::new(
+                        binding.ephemeris.as_ref(),
+                        binding.pointing_query_domain(),
+                    ),
                 )
                 .map_err(|error| BoundSelectedObservationError::Source {
                     measurement_set: identity,
@@ -712,7 +853,7 @@ impl BoundSelectedObservation {
         }
         measures.verify_state()?;
         let access_binding = NEXT_ACCESS_BINDING
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
                 value.checked_add(1)
             })
             .map_err(|_| BoundSelectedObservationError::AccessIdentityExhausted)?;
@@ -814,11 +955,13 @@ impl BoundSelectedObservation {
         let sources = &self.sources;
         let mut spectral_evaluator = SpectralEvaluationProjector::new();
         let pending_weight_group = Cell::new(None);
+        let pending_spectral_selection = Cell::new(None);
         let selected = std::iter::from_fn(|| {
             samples.next_projected().map(|projected| {
                 projected
                     .map(|projected| {
                         pending_weight_group.set(Some(projected.input_weight_group));
+                        pending_spectral_selection.set(Some(projected.spectral_selection));
                         projected.selected
                     })
                     .map_err(TraversalPassError::Source)
@@ -840,6 +983,10 @@ impl BoundSelectedObservation {
                         problem,
                         sample.as_view().with_input_weight_group(input_weight_group),
                         source.geometry_engine(),
+                        pending_spectral_selection
+                            .take()
+                            .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)
+                            .map_err(TraversalPassError::Source)?,
                     )
                     .map_err(TraversalPassError::Source)?;
                 consume(projected).map_err(TraversalPassError::Consumer)
@@ -909,6 +1056,36 @@ impl BoundSelectedObservation {
         ),
         BoundSelectedObservationError,
     > {
+        self.into_block_stream_with_frequency_bounds(problem, None)
+    }
+
+    /// Split one retained traversal into a source stream restricted to an output-frame
+    /// frequency envelope. The retained row manifest and original replay proof remain complete.
+    pub fn into_windowed_block_stream<'a>(
+        self,
+        problem: &'a CompiledProblem,
+        frequency_bounds_hz: [f64; 2],
+    ) -> Result<
+        (
+            SelectedObservationBlockSource<'a>,
+            SelectedObservationBlockConsumer<'a>,
+        ),
+        BoundSelectedObservationError,
+    > {
+        self.into_block_stream_with_frequency_bounds(problem, Some(frequency_bounds_hz))
+    }
+
+    fn into_block_stream_with_frequency_bounds<'a>(
+        self,
+        problem: &'a CompiledProblem,
+        frequency_bounds_hz: Option<[f64; 2]>,
+    ) -> Result<
+        (
+            SelectedObservationBlockSource<'a>,
+            SelectedObservationBlockConsumer<'a>,
+        ),
+        BoundSelectedObservationError,
+    > {
         if !self.identity.matches(problem) {
             return Err(BoundSelectedObservationError::ProblemMismatch);
         }
@@ -943,6 +1120,7 @@ impl BoundSelectedObservation {
                 measures: self.measures,
                 sources: self.sources,
                 source_index: 0,
+                block_ordinal: 0,
                 row_replay: None,
                 source_pass_recorded: false,
                 exhausted: false,
@@ -953,6 +1131,8 @@ impl BoundSelectedObservation {
                 traversal,
                 next_traversal,
                 replay_mode,
+                frequency_bounds_hz,
+                emitted_sample_count: 0,
             },
             SelectedObservationBlockConsumer {
                 problem,
@@ -965,6 +1145,7 @@ impl BoundSelectedObservation {
                 correlations: Vec::with_capacity(maximum_correlations),
                 evaluations: Vec::with_capacity(maximum_correlations),
                 peak_scratch_current_bytes: 0,
+                frequency_bounds_hz,
             },
         ))
     }
@@ -977,6 +1158,7 @@ pub struct SelectedObservationBlockSource<'a> {
     measures: SelectedObservationMeasures,
     sources: Vec<BoundObservationSource>,
     source_index: usize,
+    block_ordinal: u64,
     row_replay: Option<SelectedRowReplay>,
     source_pass_recorded: bool,
     exhausted: bool,
@@ -987,6 +1169,8 @@ pub struct SelectedObservationBlockSource<'a> {
     traversal: u64,
     next_traversal: u64,
     replay_mode: SelectedObservationReplayMode,
+    frequency_bounds_hz: Option<[f64; 2]>,
+    emitted_sample_count: u64,
 }
 
 impl SelectedObservationBlockSource<'_> {
@@ -1001,6 +1185,7 @@ impl SelectedObservationBlockSource<'_> {
         &mut self,
         block: &mut SelectedObservationBlock,
     ) -> Result<Option<u32>, BoundObservationSourceError> {
+        block.index_binding = None;
         if self.exhausted {
             return Ok(None);
         }
@@ -1031,7 +1216,18 @@ impl SelectedObservationBlockSource<'_> {
                     .expect("selected-row replay initialized for current source"),
                 block,
                 &mut self.measurements,
+                self.frequency_bounds_hz,
             )? {
+                self.emitted_sample_count = self
+                    .emitted_sample_count
+                    .checked_add(block.selected_sample_count()?)
+                    .ok_or(BoundObservationSourceError::MeasurementOverflow)?;
+                self.block_ordinal = self
+                    .block_ordinal
+                    .checked_add(1)
+                    .ok_or(BoundObservationSourceError::MeasurementOverflow)?;
+                block.index_binding =
+                    Some((self.access_binding, self.traversal, self.block_ordinal));
                 return u32::try_from(self.source_index)
                     .map(Some)
                     .map_err(|_| BoundObservationSourceError::MeasurementOverflow);
@@ -1057,6 +1253,8 @@ impl SelectedObservationBlockSource<'_> {
             next_traversal: self.next_traversal,
             measurements: self.measurements,
             replay_mode: self.replay_mode,
+            frequency_bounds_hz: self.frequency_bounds_hz,
+            emitted_sample_count: self.emitted_sample_count,
         })
     }
 }
@@ -1071,9 +1269,97 @@ pub struct SelectedObservationBlockConsumer<'a> {
     correlations: Vec<SelectedObservationRunCorrelation>,
     evaluations: Vec<SelectedSpectralEvaluation>,
     peak_scratch_current_bytes: usize,
+    frequency_bounds_hz: Option<[f64; 2]>,
 }
 
 impl SelectedObservationBlockConsumer<'_> {
+    /// Inspect exactly one contiguous native-run window and retain its compact
+    /// index. Call windows in canonical order and cover every block exactly once.
+    /// Projection can then run over disjoint index ranges with worker-local scratch.
+    pub fn index_block_range(
+        &mut self,
+        block: &SelectedObservationBlock,
+        range: std::ops::Range<usize>,
+        index: &mut super::SelectedObservationBlockIndex,
+    ) -> Result<(), SelectedObservationTraversalError<std::convert::Infallible>> {
+        index.clear();
+        self.inspect_block_range_with(block, range, |row, channel, correlations| {
+            index.push(row, channel, correlations)
+        })?;
+        index.binding = Some((
+            self.problem.problem_id(),
+            block
+                .index_binding
+                .ok_or(SelectedObservationTraversalError::Source(
+                    BoundObservationSourceError::StoredSampleShapeMismatch,
+                ))?,
+        ));
+        Ok(())
+    }
+
+    /// Inspect one borrowed native-run window without retaining an index or samples.
+    /// Call windows in canonical order and cover every block exactly once. Workers
+    /// can independently project disjoint borrowed ranges while this owner retains
+    /// the single ordered source inspection and terminal completion.
+    pub fn inspect_block_range(
+        &mut self,
+        block: &SelectedObservationBlock,
+        range: std::ops::Range<usize>,
+    ) -> Result<(), SelectedObservationTraversalError<std::convert::Infallible>> {
+        self.inspect_block_range_with(block, range, |_, _, _| Ok(()))
+    }
+
+    fn inspect_block_range_with(
+        &mut self,
+        block: &SelectedObservationBlock,
+        range: std::ops::Range<usize>,
+        mut retain: impl FnMut(
+            &SelectedObservationRunRow,
+            SelectedObservationRunChannel,
+            &[SelectedObservationRunCorrelation],
+        ) -> Result<(), BoundObservationSourceError>,
+    ) -> Result<(), SelectedObservationTraversalError<std::convert::Infallible>> {
+        if block.index_binding.is_none() {
+            return Err(SelectedObservationTraversalError::Source(
+                BoundObservationSourceError::StoredSampleShapeMismatch,
+            ));
+        }
+        let inspection = &mut self.inspection;
+        let rebound_sample_count = &mut self.rebound_sample_count;
+        block
+            .visit_selected_sample_range(
+                self.problem,
+                &mut self.correlations,
+                range,
+                |row, channel, correlations, _, _| {
+                    if let Some(inspection) = inspection {
+                        inspection
+                            .push_run(row, &channel, correlations)
+                            .map_err(SelectedObservationTraversalError::Inspection)?;
+                    } else {
+                        *rebound_sample_count = rebound_sample_count
+                            .checked_add(u64::try_from(correlations.len()).map_err(|_| {
+                                SelectedObservationTraversalError::MeasurementOverflow
+                            })?)
+                            .ok_or(SelectedObservationTraversalError::MeasurementOverflow)?;
+                    }
+                    retain(row, channel, correlations)
+                        .map_err(SelectedObservationTraversalError::Source)
+                },
+            )
+            .map_err(|error| match error {
+                BlockVisitError::Source(error) => SelectedObservationTraversalError::Source(error),
+                BlockVisitError::Consumer(error) => error,
+            })?;
+        self.peak_scratch_current_bytes = self.peak_scratch_current_bytes.max(
+            self.correlations
+                .len()
+                .checked_mul(size_of::<SelectedObservationRunCorrelation>())
+                .ok_or(SelectedObservationTraversalError::MeasurementOverflow)?,
+        );
+        Ok(())
+    }
+
     /// Return bytes handed to the selected-generation hasher so far.
     #[must_use]
     pub const fn generation_proof_bytes(&self) -> u64 {
@@ -1108,7 +1394,7 @@ impl SelectedObservationBlockConsumer<'_> {
             .visit_selected_samples(
                 self.problem,
                 correlations,
-                |row, channel, correlations, geometry_engine| {
+                |row, channel, correlations, geometry_engine, spectral_selection| {
                     evaluations.clear();
                     if evaluations.capacity() < correlations.len() {
                         return Err(SelectedObservationTraversalError::Source(
@@ -1131,7 +1417,7 @@ impl SelectedObservationBlockConsumer<'_> {
                             SelectedObservationSampleView::from_run(row, &channel, correlation);
                         evaluations.push(
                             spectral_evaluator
-                                .project(self.problem, sample, geometry_engine)
+                                .project(self.problem, sample, geometry_engine, spectral_selection)
                                 .map_err(SelectedObservationTraversalError::Source)?
                                 .spectral_evaluation(),
                         );
@@ -1174,6 +1460,11 @@ impl SelectedObservationBlockConsumer<'_> {
         (BoundSelectedObservation, SelectedObservationCompletion),
         SelectedObservationTraversalError<std::convert::Infallible>,
     > {
+        if self.frequency_bounds_hz.is_some() || terminal.frequency_bounds_hz.is_some() {
+            return Err(SelectedObservationTraversalError::Binding(
+                BoundSelectedObservationError::ReplayProofMismatch,
+            ));
+        }
         let scratch_capacity_bytes = self
             .correlations
             .capacity()
@@ -1201,6 +1492,11 @@ impl SelectedObservationBlockConsumer<'_> {
                 ));
             }
         };
+        if sample_count != terminal.emitted_sample_count {
+            return Err(SelectedObservationTraversalError::Binding(
+                BoundSelectedObservationError::ReplayProofMismatch,
+            ));
+        }
         let mut measurements = terminal.measurements;
         measurements
             .record_consumer_scratch(peak_scratch_current_bytes, scratch_capacity_bytes)
@@ -1248,6 +1544,100 @@ impl SelectedObservationBlockConsumer<'_> {
             replay_proof,
             rebound,
         };
+        let selected_replay_mode = match (&terminal.replay_mode, &completion.replay_proof) {
+            (SelectedObservationReplayMode::Proving, Some(proof)) => {
+                SelectedObservationReplayMode::Rebound(proof.clone())
+            }
+            _ => terminal.replay_mode.clone(),
+        };
+        let selected = BoundSelectedObservation {
+            identity: terminal.identity,
+            residency: terminal.residency,
+            measures: terminal.measures,
+            sources: terminal.sources,
+            replay_mode: selected_replay_mode,
+            access_binding: terminal.access_binding,
+            next_traversal: terminal.next_traversal,
+        };
+        Ok((selected, completion))
+    }
+
+    /// Finish a bounded frequency-window traversal without claiming exhaustive coverage.
+    pub fn complete_window(
+        self,
+        terminal: SelectedObservationTerminal,
+    ) -> Result<
+        (
+            BoundSelectedObservation,
+            SelectedObservationWindowCompletion,
+        ),
+        SelectedObservationTraversalError<std::convert::Infallible>,
+    > {
+        let frequency_bounds_hz =
+            self.frequency_bounds_hz
+                .ok_or(SelectedObservationTraversalError::Binding(
+                    BoundSelectedObservationError::ReplayProofMismatch,
+                ))?;
+        if terminal.frequency_bounds_hz != Some(frequency_bounds_hz) {
+            return Err(SelectedObservationTraversalError::Binding(
+                BoundSelectedObservationError::ReplayProofMismatch,
+            ));
+        }
+        let proof = self
+            .rebound
+            .clone()
+            .ok_or(SelectedObservationTraversalError::Binding(
+                BoundSelectedObservationError::ReplayProofMismatch,
+            ))?;
+        if self.inspection.is_some() {
+            return Err(SelectedObservationTraversalError::Binding(
+                BoundSelectedObservationError::ReplayProofMismatch,
+            ));
+        }
+        let terminal_proof = match &terminal.replay_mode {
+            SelectedObservationReplayMode::Rebound(terminal_proof)
+                if Arc::ptr_eq(&terminal_proof.inner, &proof.inner) =>
+            {
+                terminal_proof
+            }
+            _ => {
+                return Err(SelectedObservationTraversalError::Binding(
+                    BoundSelectedObservationError::ReplayProofMismatch,
+                ));
+            }
+        };
+        let scratch_capacity_bytes = self
+            .correlations
+            .capacity()
+            .checked_mul(size_of::<SelectedObservationRunCorrelation>())
+            .and_then(|bytes| {
+                self.evaluations
+                    .capacity()
+                    .checked_mul(size_of::<SelectedSpectralEvaluation>())
+                    .and_then(|evaluations| bytes.checked_add(evaluations))
+            })
+            .and_then(|bytes| bytes.checked_add(size_of::<SelectedInputWeightGroup>()))
+            .ok_or(SelectedObservationTraversalError::MeasurementOverflow)?;
+        let sample_count = self.rebound_sample_count;
+        if sample_count != terminal.emitted_sample_count {
+            return Err(SelectedObservationTraversalError::Binding(
+                BoundSelectedObservationError::ReplayProofMismatch,
+            ));
+        }
+        let mut measurements = terminal.measurements;
+        measurements
+            .record_consumer_scratch(self.peak_scratch_current_bytes, scratch_capacity_bytes)
+            .map_err(SelectedObservationTraversalError::Source)?;
+        let measurements = measurements
+            .finish(sample_count)
+            .ok_or(SelectedObservationTraversalError::MeasurementOverflow)?;
+        let generation_id = terminal_proof.generation_id();
+        let completion = SelectedObservationWindowCompletion {
+            generation_id,
+            sample_count,
+            frequency_bounds_hz,
+            measurements,
+        };
         let selected = BoundSelectedObservation {
             identity: terminal.identity,
             residency: terminal.residency,
@@ -1272,6 +1662,8 @@ pub struct SelectedObservationTerminal {
     next_traversal: u64,
     measurements: SelectedObservationTraversalMeasurementsBuilder,
     replay_mode: SelectedObservationReplayMode,
+    frequency_bounds_hz: Option<[f64; 2]>,
+    emitted_sample_count: u64,
 }
 
 impl SelectedObservationTerminal {
@@ -1754,6 +2146,45 @@ pub struct SelectedObservationCompletion {
     traversal: u64,
     replay_proof: Option<SelectedObservationReplayProof>,
     rebound: bool,
+}
+
+/// Truthful completion for one bounded output-frequency window.
+///
+/// The generation identity is inherited from the retained exhaustive proof;
+/// `sample_count` is only the count actually emitted by this window and never
+/// authorizes it as a replacement for the full replay proof.
+#[derive(Debug)]
+pub struct SelectedObservationWindowCompletion {
+    generation_id: SelectedObservationGenerationId,
+    sample_count: u64,
+    frequency_bounds_hz: [f64; 2],
+    measurements: SelectedObservationTraversalMeasurements,
+}
+
+impl SelectedObservationWindowCompletion {
+    /// Return the retained exhaustive generation identity.
+    #[must_use]
+    pub const fn generation_id(&self) -> SelectedObservationGenerationId {
+        self.generation_id
+    }
+
+    /// Return the number of validated samples emitted by this window.
+    #[must_use]
+    pub const fn sample_count(&self) -> u64 {
+        self.sample_count
+    }
+
+    /// Return the output-frame frequency envelope requested for this window.
+    #[must_use]
+    pub const fn frequency_bounds_hz(&self) -> [f64; 2] {
+        self.frequency_bounds_hz
+    }
+
+    /// Return physical measurements for this bounded window traversal.
+    #[must_use]
+    pub const fn measurements(&self) -> &SelectedObservationTraversalMeasurements {
+        &self.measurements
+    }
 }
 
 impl SelectedObservationCompletion {

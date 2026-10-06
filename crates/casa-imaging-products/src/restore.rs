@@ -10,150 +10,14 @@ use ndarray::{Array2, Axis};
 use num_complex::Complex64;
 use rustfft::FftPlanner;
 
-use casa_imaging_model::{
-    PrimaryBeamValidityPolicy, ProductNormalization, ProductSupportComparison,
-};
+use casa_imaging_model::ProductNormalization;
 
 use crate::beam::RestoringBeam;
 use crate::error::ProductsError;
 
+pub use casa_imaging_reconstruction::MosaicSensitivity;
+
 const FWHM_TO_SIGMA: f64 = 1.0 / 2.354_820_045_030_949_3;
-
-/// Direction-dependent sensitivity state used to form mosaic products.
-///
-/// The reconstruction owner supplies unnormalized `A* W A` diagonal values.
-/// This product-owned view derives CASA's unit-peak primary beam, flat-noise
-/// and flat-sky normalizations, PB validity, and PB correction from that one
-/// authoritative state. It never aliases the CLEAN mask.
-#[derive(Debug, Clone, Copy)]
-pub struct MosaicSensitivity<'a> {
-    values: &'a [f64],
-    peak: f64,
-}
-
-impl<'a> MosaicSensitivity<'a> {
-    /// Bind one finite sensitivity plane with positive support.
-    ///
-    /// # Errors
-    ///
-    /// Small negative values from finite FFT convolution ringing remain part of
-    /// the published CASA-compatible weight plane, but never form PB support.
-    /// Rejects empty, non-finite, or wholly unsupported state.
-    pub fn new(values: &'a [f64]) -> Result<Self, ProductsError> {
-        if values.is_empty() || values.iter().any(|value| !value.is_finite()) {
-            return Err(ProductsError::GeneratedNonfinite);
-        }
-        let peak = values.iter().copied().fold(0.0_f64, f64::max);
-        if peak <= 0.0 {
-            return Err(ProductsError::UnsupportedProblem);
-        }
-        Ok(Self { values, peak })
-    }
-
-    /// Build CASA's unit-peak mosaic PB, `sqrt(sensitivity / peak)`.
-    #[must_use]
-    pub fn primary_beam(self) -> Vec<f32> {
-        self.values
-            .iter()
-            .map(|value| (value.max(0.0) / self.peak).sqrt() as f32)
-            .collect()
-    }
-
-    /// Normalize one unnormalized mosaic normal-equation plane.
-    ///
-    /// Flat-noise divides by `sqrt(sensitivity * peak)`; flat-sky divides by
-    /// sensitivity. Unsupported pixels are numerically blanked to zero and
-    /// receive their distinct false validity through [`Self::validity`].
-    ///
-    /// # Errors
-    ///
-    /// Rejects a payload with different shape or a non-mosaic normalization.
-    pub fn normalize(
-        self,
-        values: &[f32],
-        normalization: ProductNormalization,
-    ) -> Result<Vec<f32>, ProductsError> {
-        if values.len() != self.values.len() {
-            return Err(ProductsError::PayloadLengthMismatch {
-                expected: self.values.len(),
-                actual: values.len(),
-            });
-        }
-        match normalization {
-            ProductNormalization::FlatNoise | ProductNormalization::FlatSky => values
-                .iter()
-                .zip(self.values)
-                .map(|(value, sensitivity)| {
-                    let denominator = match normalization {
-                        ProductNormalization::FlatNoise => (sensitivity * self.peak).sqrt(),
-                        ProductNormalization::FlatSky => *sensitivity,
-                        ProductNormalization::UnitResponse => unreachable!(),
-                    };
-                    if denominator > 0.0 {
-                        let normalized = f64::from(*value) / denominator;
-                        normalized
-                            .is_finite()
-                            .then_some(normalized as f32)
-                            .ok_or(ProductsError::GeneratedNonfinite)
-                    } else {
-                        Ok(0.0)
-                    }
-                })
-                .collect(),
-            ProductNormalization::UnitResponse => Err(ProductsError::UnsupportedProblem),
-        }
-    }
-
-    /// Derive PB support independently of CLEAN-mask and normal-state validity.
-    #[must_use]
-    pub fn validity(self, policy: PrimaryBeamValidityPolicy) -> Vec<bool> {
-        let cutoff = f64::from(policy.cutoff());
-        self.values
-            .iter()
-            .map(|value| {
-                let pb = (value / self.peak).sqrt();
-                match policy.comparison() {
-                    ProductSupportComparison::StrictlyGreater => pb > cutoff,
-                }
-            })
-            .collect()
-    }
-
-    /// Divide a normalized image by PB on the exact PB-valid support.
-    ///
-    /// # Errors
-    ///
-    /// Rejects a payload with different shape or generated non-finite values.
-    pub fn correct_primary_beam(
-        self,
-        values: &[f32],
-        policy: PrimaryBeamValidityPolicy,
-    ) -> Result<Vec<f32>, ProductsError> {
-        if values.len() != self.values.len() {
-            return Err(ProductsError::PayloadLengthMismatch {
-                expected: self.values.len(),
-                actual: values.len(),
-            });
-        }
-        let valid = self.validity(policy);
-        values
-            .iter()
-            .zip(self.values)
-            .zip(valid)
-            .map(|((value, sensitivity), valid)| {
-                if !valid {
-                    return Ok(0.0);
-                }
-                let pb = (sensitivity / self.peak).sqrt();
-                let corrected = f64::from(*value) / pb;
-                corrected
-                    .is_finite()
-                    .then_some(corrected as f32)
-                    .ok_or(ProductsError::GeneratedNonfinite)
-            })
-            .collect()
-    }
-}
 
 /// Normalize one unnormalized plane to its compiled product normalization.
 ///
@@ -222,6 +86,29 @@ pub fn gaussian_beam_image(
         kernel.mapv_inplace(|value| value / peak);
     }
     kernel
+}
+
+pub(crate) fn restore_model_plane(
+    model: &[f32],
+    residual: Vec<f32>,
+    shape: [usize; 2],
+    beam: &RestoringBeam,
+    cell_size_rad: [f64; 2],
+) -> Vec<f32> {
+    // FFT zero signs cannot affect addition except when the residual is -0.
+    if model.iter().all(|value| *value == 0.0)
+        && residual
+            .iter()
+            .all(|value| value.to_bits() != (-0.0_f32).to_bits())
+    {
+        return residual;
+    }
+    let kernel = gaussian_beam_image(shape, beam, cell_size_rad);
+    let mut restored = fft_convolve(model, kernel.as_slice().expect("contiguous"), shape);
+    for (restored, residual) in restored.iter_mut().zip(residual) {
+        *restored += residual;
+    }
+    restored
 }
 
 /// Result of rescaling one normalized residual plane to a selected beam.
@@ -416,6 +303,41 @@ fn shift_even(data: &mut Array2<Complex64>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_restoration_matches_fft_for_empty_sparse_and_dense_planes() {
+        let beam = RestoringBeam::new(4.0e-6, 3.0e-6, 0.2).unwrap();
+        let shape = [8, 16];
+        let kernel = gaussian_beam_image(shape, &beam, [1.0e-6; 2]);
+        let mut sparse = vec![0.0; 128];
+        sparse[37] = -2.5;
+        for model in [
+            vec![0.0; 128],
+            vec![-0.0; 128],
+            sparse,
+            (0..128)
+                .map(|index| (index as f32 - 60.0) / 128.0)
+                .collect(),
+        ] {
+            for residual in [vec![0.0; 128], vec![-0.0; 128], vec![1.25; 128]] {
+                let mut expected = fft_convolve(&model, kernel.as_slice().unwrap(), shape);
+                for (value, residual) in expected.iter_mut().zip(&residual) {
+                    *value += residual;
+                }
+                let actual = restore_model_plane(&model, residual, shape, &beam, [1.0e-6; 2]);
+                assert_eq!(
+                    actual
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>(),
+                    expected
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>()
+                );
+            }
+        }
+    }
 
     #[test]
     fn identical_beams_leave_the_residual_bit_exact() {

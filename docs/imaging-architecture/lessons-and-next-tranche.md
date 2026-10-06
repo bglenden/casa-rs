@@ -1,7 +1,7 @@
 # Imaging architecture lessons and next-tranche contract
 
 Truth class: normative programme delivery
-Last reality check: 2026-09-02
+Last reality check: 2026-09-07
 Verification: `just docs-check`; `just arch-check`
 
 This document records the delivery consequences learned while implementing and
@@ -28,22 +28,19 @@ ticket graph. Do not bridge the gap with a raw digest, caller-filled map,
 test-only public constructor, placeholder completion, compatibility adapter, or
 second authority.
 
-### Planning, completion, and publication are different phases
+### Generation ownership and publication lifecycle
 
-The logical compiler owns immutable commitments. A scientific owner later
-mints completion evidence from the actual bounded execution. Product
-publication consumes an exact set of those typed completions and yields a
-seal. These records have distinct identities and schema revisions:
-
-1. compiler-owned commitment;
-2. owner-minted, attempt-bound completion;
-3. planned product generation;
-4. authorized product-generation seal; and
-5. durable publication result.
-
-None may be reconstructed from another record's digest. Runtime transports the
-closed evidence envelope and enforces attempt/fence placement; it does not
-reinterpret science or maintain a second source-role catalog.
+[ADR-0014](../adr/0014-trusted-product-generation-without-content-attestation.md)
+supersedes this document's former product commitment/completion/seal choreography.
+Those historical requirements are non-normative. The compiler owns product
+contracts; scientific owners provide the matching final state; generation
+transfers bounded owned windows directly to private CASA staging. No content
+hash, attestation object or full-array verification pass grants publication
+permission. Runtime preserves run association, exact inventory, complete writes,
+fence placement and atomic individual-image replacement. Publication failure
+fails the run with an incomplete output set requiring rerun, not per-member
+resumable recovery or whole-set rollback.
+It does not reinterpret science or maintain a second source-role catalog.
 
 ### Exact evidence is derived, not declared
 
@@ -78,12 +75,12 @@ provenance, access capability, or attempt evidence.
 
 ### Visibility is the irreversible boundary
 
-T08 established the required publication choreography: durably prepare the
-exact staged result and terminal candidate, perform the sole external
-visibility operation once, then promote or retain fail-closed reconciliation
-evidence. No fallible scientific validation, receipt mutation that can change
-the run result, retry, or alternate publisher is legal after visibility.
-Pre-publication artifacts are `Staged`, never `Published`.
+ADR-0014 supersedes T08's durable prepared/terminal-candidate choreography and
+fail-closed reconciliation requirement. Each image replacement remains atomic,
+but the complete output set is not transactional or resumable. Ordinary write,
+promotion or final-receipt failures fail the run; an incomplete set requires a
+rerun and already replaced images are not rolled back. No publication ledger,
+content attestation or whole-receipt progress rewrite is required.
 
 ### Merge checkpoints are architecture gates
 
@@ -136,12 +133,13 @@ programme gate remains unchanged.
    not count. Keep one implementation ticket active; allow a second only when
    both depend solely on merged interfaces and touch no common ownership
    surface.
-2. **Code, gate, or blocker.** Within 45 minutes of selection, open the linked
-   pull request with a material code/test commit, start a required pre-edit
-   named gate, or report the exact failed command or contract, file/type/symbol,
-   evidence, and next action. During non-gate work, another 45 minutes may not
-   pass without a material commit or concrete blocker. Ask only at the existing
-   stop points. In-scope Rust API changes are already approved.
+2. **Code, result, gate, or blocker.** Within 45 minutes of selection, produce
+   a tested code change, a discriminating measurement, start an issue-named
+   gate, or report the concrete blocker and next action. Apply the same progress
+   checkpoint during non-gate work; do not manufacture commits or expand
+   bookkeeping to satisfy it. Open the linked pull request when a material
+   code/test commit is ready. Ask only at the existing stop points. In-scope
+   Rust API changes are already approved.
 3. **One acceptance boundary.** Run only ticket-required or directly affected
    identity, schema, resource, architecture, and immediate-seam gates. Generic
    workflows, `just verify`, GUI, docs, Python, unrelated crates, and broad
@@ -163,6 +161,36 @@ programme gate remains unchanged.
 The 45-minute clock pauses while a named gate is visibly running; record its
 command and start once, then its result. The post-repair closure check is not a
 second review and may not reopen design or inspect untouched work.
+
+#### Correctness-first execution and lean records
+
+Scientific correctness and required resource limits remain acceptance gates;
+correctness-only tickets do not acquire a speed gate. Bounded local improvements
+to repeated computation, allocation, copying, caching, and I/O may precede full
+acceptance when they preserve required behavior. Use a focused parent/candidate
+check, then the issue-named acceptance; missing full-workload attribution or an
+exact CASA component timer does not block that local experiment. The serial
+reference requirement in #448 and approved performance targets remain unchanged.
+An explicit run/time checkpoint still stops execution; process changes do not
+renew an exhausted run allowance.
+
+The 45-minute rule requires a working change, discriminating result, or concrete
+blocker, not artificial micro-commits or repeated GitHub updates. Keep one current
+summary on the issue or pull request and link from the other. Batch source-hash
+and registry maintenance before affected gates and review. Internal hashes,
+receipts, and defensive checks are implementation choices, not automatically
+scientific requirements: establish the behavior actually required before adding
+or repeating them. Changing a promised guarantee requires an explicit decision
+and corresponding tests; it is not an excuse to bypass a failing check.
+
+Use the single consolidated contract review above, not a new review cycle for
+each diagnostic or optimization. Retry limits follow the same underlying problem
+across agents and handoffs. Routine progress monitoring belongs in scripts or
+product wait mechanisms, with model attention on actionable changes. Before an
+unattended overnight run, agree on a time or spending checkpoint and pause there
+with a concise restart handoff. Shared account usage is not exact ticket billing.
+None of these process rules reduces scientific, persistence, resource, deletion,
+or full-wave acceptance requirements.
 
 ### Representative scientific evidence
 
@@ -203,6 +231,11 @@ matrix and neither dirty nor clean heterogeneous-mosaic acceptance can block an
 otherwise complete T-ticket closure.
 
 ## Corrected next tranche
+
+The following delivered-ticket sequence is historical. Its T13/T22 product
+attestation and partial-publication recovery requirements are superseded and
+non-normative under ADR-0014; the scientific ownership and deletion outcomes
+remain applicable.
 
 | Order | Ticket | Sole outcome in this tranche | Explicit exclusion |
 |---|---|---|---|
@@ -271,10 +304,11 @@ cutover are:
   and owns model, weighting, replay, complete-data, and normal-state algorithms
   and their opaque completions. It does not import MeasurementSet/storage APIs.
 - `casa-imaging-products` depends on the model and reconstruction owners. It
-  owns the entire product-generation construction capability: typed source
-  catalog, planned generation, artifact identities, authority, seal, product
-  algorithms, and publication projection. Leaving raw generation construction
-  in the model would preserve the bypass and make this module shallow.
+  owns scientific product generation, source/run and shape checks, bounded
+  windows and scientific metadata. Its writer interface transfers ownership;
+  it does not attest, retain a second full-product store, or reread generated
+  content to authorize publication. The former source-commitment, seal and
+  publication-projection requirements are superseded by ADR-0014.
 - `casa-imaging-runtime` depends inward on the owners it schedules. It retains
   physical plans, leases, layouts, attempts, fences, receipt I/O, and the sole
   publication capability; it does not own scientific completion meaning.
@@ -307,8 +341,8 @@ migration atomically.
 
 ## Persistent interoperability boundary
 
-The new commitment, completion, generation, seal, plan, and receipt records are
-CASA-RS control/evidence schemas. They do not alter casacore MeasurementSet or
+The remaining plan, run and receipt records are CASA-RS control/evidence
+schemas; removed product-attestation records must not be restored. They do not alter casacore MeasurementSet or
 image-table persistence. Any proposal for a new MS sidecar, intrinsic dataset
 identifier, co-committed receipt, or other CASA-visible persisted structure
 still stops for a separate interoperability decision and Rust/C++ evidence.

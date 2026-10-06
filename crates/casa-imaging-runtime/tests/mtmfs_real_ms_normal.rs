@@ -84,12 +84,15 @@ fn t42_real_ms_mtmfs_normal_matches_casa_oracle_inputs() -> Result<(), Box<dyn E
     copy_measurement_set(&source, &staged)?;
     initialize_measurement_set_owner_manifest(&staged)?;
 
-    let (problem, mut selected) = build_problem(&staged)?;
+    let (problem, access) = build_problem(&staged)?;
+    let mut selected = access.open(&problem)?;
     let executable = ExecutableModelProblem::from_compiled(problem.clone())?;
     let mut lifecycle = ModelLifecycle::bind(
         executable,
         ModelExecutionAttemptId::new(LogicalIdentity::from_sha256([0x52; 32])),
         1,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )?;
     let initial = lifecycle.initial_empty()?;
     let preparation = MajorCyclePreparation::prepare(&lifecycle, initial, None)?;
@@ -186,14 +189,26 @@ fn t42_real_ms_mtmfs_normal_matches_casa_oracle_inputs() -> Result<(), Box<dyn E
     }
 
     let (tail, _weighting_state, summary) = weighting.finish()?;
-    if let Some(block) = tail {
-        if !owner.consume_block(&block)?.is_empty() {
-            return Err("empty model emitted final visibilities".into());
-        }
+    if let Some(block) = tail
+        && !owner.consume_block(&block)?.is_empty()
+    {
+        return Err("empty model emitted final visibilities".into());
     }
     let complete_data = owner.complete(&summary, completion.generation_id(), None)?;
-    let joined = MajorCycleOwner::from_complete_data(complete_data, preparation)?
-        .reconcile(&mut lifecycle)?;
+    let joined = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    complete_data.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            complete_data
+                .seal(&storage)
+                .expect("seal fixture normal state")
+        },
+        preparation,
+    )?
+    .reconcile(&mut lifecycle)?;
     let (normal, _, _) = joined.into_parts();
     if normal.catalog() != NormalStateCatalog::UnnormalizedTaylorBlockV1
         || normal.coefficient_term_count() != 2
@@ -205,9 +220,12 @@ fn t42_real_ms_mtmfs_normal_matches_casa_oracle_inputs() -> Result<(), Box<dyn E
         return Err("new owner did not produce the expected two-term Taylor normal family".into());
     }
 
+    let window = normal
+        .read_window(normal.slab().core_range())
+        .expect("coupled Taylor fixture window");
     let dirty = (0..2)
         .map(|term| {
-            normal
+            window
                 .coefficient_term(term)
                 .map(|view| view.residual().to_vec())
                 .ok_or("missing Taylor dirty term")
@@ -215,7 +233,7 @@ fn t42_real_ms_mtmfs_normal_matches_casa_oracle_inputs() -> Result<(), Box<dyn E
         .collect::<Result<Vec<_>, _>>()?;
     let psf = (0..3)
         .map(|moment| {
-            normal
+            window
                 .normal_moment(moment)
                 .map(|view| view.normal_approximation().to_vec())
                 .ok_or("missing Taylor normal moment")
@@ -315,7 +333,7 @@ pub(crate) fn build_problem(
 ) -> Result<
     (
         casa_imaging_model::CompiledProblem,
-        casa_ms::BoundSelectedObservation,
+        casa_ms::DeferredSelectedObservationAccess,
     ),
     Box<dyn Error>,
 > {
@@ -331,7 +349,7 @@ pub(crate) fn build_t44_problem(
 ) -> Result<
     (
         casa_imaging_model::CompiledProblem,
-        casa_ms::BoundSelectedObservation,
+        casa_ms::DeferredSelectedObservationAccess,
     ),
     Box<dyn Error>,
 > {
@@ -344,7 +362,7 @@ fn build_problem_with_specification(
 ) -> Result<
     (
         casa_imaging_model::CompiledProblem,
-        casa_ms::BoundSelectedObservation,
+        casa_ms::DeferredSelectedObservationAccess,
     ),
     Box<dyn Error>,
 > {
@@ -542,8 +560,7 @@ fn build_problem_with_specification(
         ),
     ))?;
     access.certify_residency(&problem)?;
-    let selected = access.open(&problem)?;
-    Ok((problem, selected))
+    Ok((problem, access.into_deferred()))
 }
 
 fn specification() -> Result<ProblemSpecification, Box<dyn Error>> {
@@ -595,13 +612,13 @@ fn specification_with_products(
         PrimaryBeamValidityPolicy::new(
             0.2,
             ProductSupportComparison::StrictlyGreater,
-            ProductBlankingPolicy::ZeroAndFalseMask,
+            ProductBlankingPolicy::Zero,
         )?,
         TaylorValidityPolicy::new(
             TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
             0.1,
             ProductSupportComparison::StrictlyGreater,
-            ProductBlankingPolicy::ZeroAndFalseMask,
+            ProductBlankingPolicy::Zero,
         )?,
     );
     Ok(ProblemSpecification::new(

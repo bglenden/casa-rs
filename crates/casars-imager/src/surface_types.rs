@@ -100,11 +100,11 @@ pub enum AwProjectNormalization {
     PbSquare,
 }
 
-/// A/W-projection task controls retained until their native owner lands.
+/// A/W-projection task controls projected to the native application owner.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AwProjectControls {
-    /// Convolution-function cache path.
-    pub cf_cache: PathBuf,
+    /// Exactly one read-only CASA import or explicitly requested native cache.
+    pub source: casa_imaging_application::ContinuumAwCfSource,
     /// Requested resident cache ceiling.
     pub cf_resident_bytes: usize,
     /// Explicit W-plane count.
@@ -139,7 +139,7 @@ impl AwProjectControls {
     /// CASA task defaults, transported without executing A/W projection.
     pub fn casa_defaults(cf_cache: PathBuf) -> Self {
         Self {
-            cf_cache,
+            source: casa_imaging_application::ContinuumAwCfSource::CasaImport(cf_cache),
             cf_resident_bytes: 256 * 1024 * 1024,
             w_plane_count: None,
             psf_phase_center_direction_rad: None,

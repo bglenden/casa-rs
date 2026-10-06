@@ -265,11 +265,11 @@ pub use storage::{
     StreamedTiledPrimitiveType, StreamedTiledShapeColumn, StreamedTiledShapeComplex32Column,
     StreamedTiledShapeCubeLayout, StreamedTiledShapeValueType, StreamingTiledPrimitiveWriter,
     StreamingTiledShapeComplex32Writer, StreamingTiledShapeWriter, TableInfo, TileLayoutError,
-    TileLayoutPlan, TileLayoutPlanner, TilePixel, TiledArrayStorage, TiledFileIoStats,
-    install_streamed_tiled_column, install_streamed_tiled_column_primitive_column,
-    install_streamed_tiled_shape_column, install_streamed_tiled_shape_complex32_column,
-    install_streamed_tiled_shape_primitive_column, set_table_cache_budget_bytes,
-    table_cache_budget_bytes,
+    TileLayoutPlan, TileLayoutPlanner, TilePixel, TiledArrayStorage, TiledArrayStorageLayout,
+    TiledFileIoStats, install_streamed_tiled_column,
+    install_streamed_tiled_column_primitive_column, install_streamed_tiled_shape_column,
+    install_streamed_tiled_shape_complex32_column, install_streamed_tiled_shape_primitive_column,
+    set_table_cache_budget_bytes, table_cache_budget_bytes,
 };
 pub use table::{
     ColumnBinding, ColumnCellIter, ColumnCellRef, ColumnChunkIter, ColumnOverride, ColumnOverrides,
