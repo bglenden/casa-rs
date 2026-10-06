@@ -580,7 +580,7 @@
 <a href=#580 id=580 data-nosnippet>580</a>        <span class="kw">let </span><span class="kw-2">mut </span>reference_peak = <span class="number">0.0_f64</span>;
 <a href=#581 id=581 data-nosnippet>581</a>        <span class="comment">// The T51 exporter writes its canonical last-axis-contiguous
 <a href=#582 id=582 data-nosnippet>582</a>        // representation; native numerical workspaces are x-contiguous.
-<a href=#583 id=583 data-nosnippet>583</a>        </span><span class="kw">for </span>(index, bytes) <span class="kw">in </span>bytes.chunks_exact(<span class="number">8</span>).enumerate() {
+<a href=#583 id=583 data-nosnippet>583</a>        </span><span class="kw">for </span>(index, bytes) <span class="kw">in </span>bytes.as_chunks::&lt;<span class="number">8</span>&gt;().<span class="number">0</span>.iter().enumerate() {
 <a href=#584 id=584 data-nosnippet>584</a>            <span class="kw">let </span>value = plane.values[index / plane.size + plane.size * (index % plane.size)];
 <a href=#585 id=585 data-nosnippet>585</a>            <span class="kw">let </span>reference = Complex32::new(
 <a href=#586 id=586 data-nosnippet>586</a>                f32::from_le_bytes(bytes[..<span class="number">4</span>].try_into().unwrap()),

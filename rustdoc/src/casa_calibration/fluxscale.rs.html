@@ -544,7 +544,7 @@
 <a href=#544 id=544 data-nosnippet>544</a>        <span class="kw">return </span><span class="number">0.0</span>;
 <a href=#545 id=545 data-nosnippet>545</a>    }
 <a href=#546 id=546 data-nosnippet>546</a>    <span class="kw">let </span>mid = values.len() / <span class="number">2</span>;
-<a href=#547 id=547 data-nosnippet>547</a>    <span class="kw">if </span>values.len() % <span class="number">2 </span>== <span class="number">0 </span>{
+<a href=#547 id=547 data-nosnippet>547</a>    <span class="kw">if </span>values.len().is_multiple_of(<span class="number">2</span>) {
 <a href=#548 id=548 data-nosnippet>548</a>        (values[mid - <span class="number">1</span>] + values[mid]) / <span class="number">2.0
 <a href=#549 id=549 data-nosnippet>549</a>    </span>} <span class="kw">else </span>{
 <a href=#550 id=550 data-nosnippet>550</a>        values[mid]

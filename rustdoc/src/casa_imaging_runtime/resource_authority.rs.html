@@ -3063,12 +3063,12 @@
 <a href=#3063 id=3063 data-nosnippet>3063</a>        .state
 <a href=#3064 id=3064 data-nosnippet>3064</a>        .lock()
 <a href=#3065 id=3065 data-nosnippet>3065</a>        .map_err(|<span class="kw">_</span>| ResourceError::AuthorityPoisoned)<span class="question-mark">?</span>;
-<a href=#3066 id=3066 data-nosnippet>3066</a>    <span class="kw">if let </span>LeaseResource::MeasurementSetLock { measurement_set } = resource {
-<a href=#3067 id=3067 data-nosnippet>3067</a>        <span class="kw">if </span>state.active_measurement_set_locks.get(measurement_set) != <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>lease_id) {
-<a href=#3068 id=3068 data-nosnippet>3068</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ResourceError::Invalid(
-<a href=#3069 id=3069 data-nosnippet>3069</a>                <span class="string">"exact MeasurementSet lock ownership is absent"</span>.to_string(),
-<a href=#3070 id=3070 data-nosnippet>3070</a>            ));
-<a href=#3071 id=3071 data-nosnippet>3071</a>        }
+<a href=#3066 id=3066 data-nosnippet>3066</a>    <span class="kw">if let </span>LeaseResource::MeasurementSetLock { measurement_set } = resource
+<a href=#3067 id=3067 data-nosnippet>3067</a>        &amp;&amp; state.active_measurement_set_locks.get(measurement_set) != <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>lease_id)
+<a href=#3068 id=3068 data-nosnippet>3068</a>    {
+<a href=#3069 id=3069 data-nosnippet>3069</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ResourceError::Invalid(
+<a href=#3070 id=3070 data-nosnippet>3070</a>            <span class="string">"exact MeasurementSet lock ownership is absent"</span>.to_string(),
+<a href=#3071 id=3071 data-nosnippet>3071</a>        ));
 <a href=#3072 id=3072 data-nosnippet>3072</a>    }
 <a href=#3073 id=3073 data-nosnippet>3073</a>    <span class="kw">let </span>released = {
 <a href=#3074 id=3074 data-nosnippet>3074</a>        <span class="kw">let </span>record = state.leases.get_mut(<span class="kw-2">&amp;</span>lease_id).ok_or_else(|| {
@@ -4255,12 +4255,12 @@
 <a href=#4255 id=4255 data-nosnippet>4255</a>            <span class="string">"logical CPU topology must be nonzero"</span>.to_string(),
 <a href=#4256 id=4256 data-nosnippet>4256</a>        ));
 <a href=#4257 id=4257 data-nosnippet>4257</a>    }
-<a href=#4258 id=4258 data-nosnippet>4258</a>    <span class="kw">if let </span>CpuClassCapacity::Known(performance_cpu_cores) = topology.performance_cpu_cores {
-<a href=#4259 id=4259 data-nosnippet>4259</a>        <span class="kw">if </span>performance_cpu_cores == <span class="number">0 </span>|| performance_cpu_cores &gt; topology.logical_cpu_threads {
-<a href=#4260 id=4260 data-nosnippet>4260</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ResourceError::Invalid(
-<a href=#4261 id=4261 data-nosnippet>4261</a>                <span class="string">"known performance CPU topology must be within logical CPU capacity"</span>.to_string(),
-<a href=#4262 id=4262 data-nosnippet>4262</a>            ));
-<a href=#4263 id=4263 data-nosnippet>4263</a>        }
+<a href=#4258 id=4258 data-nosnippet>4258</a>    <span class="kw">if let </span>CpuClassCapacity::Known(performance_cpu_cores) = topology.performance_cpu_cores
+<a href=#4259 id=4259 data-nosnippet>4259</a>        &amp;&amp; (performance_cpu_cores == <span class="number">0 </span>|| performance_cpu_cores &gt; topology.logical_cpu_threads)
+<a href=#4260 id=4260 data-nosnippet>4260</a>    {
+<a href=#4261 id=4261 data-nosnippet>4261</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ResourceError::Invalid(
+<a href=#4262 id=4262 data-nosnippet>4262</a>            <span class="string">"known performance CPU topology must be within logical CPU capacity"</span>.to_string(),
+<a href=#4263 id=4263 data-nosnippet>4263</a>        ));
 <a href=#4264 id=4264 data-nosnippet>4264</a>    }
 <a href=#4265 id=4265 data-nosnippet>4265</a>    <span class="kw">let </span><span class="kw-2">mut </span>domains = BTreeMap::new();
 <a href=#4266 id=4266 data-nosnippet>4266</a>    <span class="kw">for </span>domain <span class="kw">in </span><span class="kw-2">&amp;</span>topology.memory_domains {

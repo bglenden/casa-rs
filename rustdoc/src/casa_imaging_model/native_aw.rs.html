@@ -156,8 +156,8 @@
 <a href=#156 id=156 data-nosnippet>156</a>    <span class="doccomment">/// Validate a cell before numerical generation or scientific identity minting.
 <a href=#157 id=157 data-nosnippet>157</a>    </span><span class="kw">pub fn </span>validate(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), NativeAwRequestError&gt; {
 <a href=#158 id=158 data-nosnippet>158</a>        <span class="kw">if </span><span class="self">self</span>.size &lt; <span class="number">8
-<a href=#159 id=159 data-nosnippet>159</a>            </span>|| <span class="self">self</span>.size % <span class="number">2 </span>!= <span class="number">0
-<a href=#160 id=160 data-nosnippet>160</a>            </span>|| <span class="self">self
+<a href=#159 id=159 data-nosnippet>159</a>            </span>|| !<span class="self">self</span>.size.is_multiple_of(<span class="number">2</span>)
+<a href=#160 id=160 data-nosnippet>160</a>            || <span class="self">self
 <a href=#161 id=161 data-nosnippet>161</a>                </span>.size
 <a href=#162 id=162 data-nosnippet>162</a>                .checked_mul(<span class="self">self</span>.size)
 <a href=#163 id=163 data-nosnippet>163</a>                .and_then(|n| n.checked_mul(<span class="number">6 </span>* <span class="number">8</span>))

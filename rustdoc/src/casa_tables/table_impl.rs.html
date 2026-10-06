@@ -1743,17 +1743,17 @@
 <a href=#1743 id=1743 data-nosnippet>1743</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(value));
 <a href=#1744 id=1744 data-nosnippet>1744</a>        }
 <a href=#1745 id=1745 data-nosnippet>1745</a>
-<a href=#1746 id=1746 data-nosnippet>1746</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(cached_column) = <span class="self">self</span>.loaded_array_columns.get_mut(column) {
-<a href=#1747 id=1747 data-nosnippet>1747</a>            <span class="kw">if </span>cached_column.get().is_some() {
-<a href=#1748 id=1748 data-nosnippet>1748</a>                <span class="kw">let </span>column_values = cached_column
-<a href=#1749 id=1749 data-nosnippet>1749</a>                    .get_mut()
-<a href=#1750 id=1750 data-nosnippet>1750</a>                    .expect(<span class="string">"array column initialized before mutable access"</span>);
-<a href=#1751 id=1751 data-nosnippet>1751</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(cell) = column_values.get_mut(row_index) {
-<a href=#1752 id=1752 data-nosnippet>1752</a>                    <span class="kw-2">*</span>cell = <span class="prelude-val">Some</span>(value);
-<a href=#1753 id=1753 data-nosnippet>1753</a>                    <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-<a href=#1754 id=1754 data-nosnippet>1754</a>                }
-<a href=#1755 id=1755 data-nosnippet>1755</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(value));
-<a href=#1756 id=1756 data-nosnippet>1756</a>            }
+<a href=#1746 id=1746 data-nosnippet>1746</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(cached_column) = <span class="self">self</span>.loaded_array_columns.get_mut(column)
+<a href=#1747 id=1747 data-nosnippet>1747</a>            &amp;&amp; cached_column.get().is_some()
+<a href=#1748 id=1748 data-nosnippet>1748</a>        {
+<a href=#1749 id=1749 data-nosnippet>1749</a>            <span class="kw">let </span>column_values = cached_column
+<a href=#1750 id=1750 data-nosnippet>1750</a>                .get_mut()
+<a href=#1751 id=1751 data-nosnippet>1751</a>                .expect(<span class="string">"array column initialized before mutable access"</span>);
+<a href=#1752 id=1752 data-nosnippet>1752</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(cell) = column_values.get_mut(row_index) {
+<a href=#1753 id=1753 data-nosnippet>1753</a>                <span class="kw-2">*</span>cell = <span class="prelude-val">Some</span>(value);
+<a href=#1754 id=1754 data-nosnippet>1754</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+<a href=#1755 id=1755 data-nosnippet>1755</a>            }
+<a href=#1756 id=1756 data-nosnippet>1756</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(value));
 <a href=#1757 id=1757 data-nosnippet>1757</a>        }
 <a href=#1758 id=1758 data-nosnippet>1758</a>        <span class="self">self</span>.pending_array_cells
 <a href=#1759 id=1759 data-nosnippet>1759</a>            .by_column

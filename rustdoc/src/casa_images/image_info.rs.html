@@ -168,10 +168,10 @@
 <a href=#168 id=168 data-nosnippet>168</a>        <span class="kw">let </span><span class="kw-2">mut </span>rec = RecordValue::default();
 <a href=#169 id=169 data-nosnippet>169</a>        <span class="kw">if </span><span class="self">self</span>.beam_set.is_multi() {
 <a href=#170 id=170 data-nosnippet>170</a>            rec.upsert(<span class="string">"perplanebeams"</span>, Value::Record(<span class="self">self</span>.beam_set.to_record()));
-<a href=#171 id=171 data-nosnippet>171</a>        } <span class="kw">else if let </span><span class="prelude-val">Some</span>(beam) = <span class="self">self</span>.beam_set.single_beam() {
-<a href=#172 id=172 data-nosnippet>172</a>            <span class="kw">if </span>!beam.is_null() {
-<a href=#173 id=173 data-nosnippet>173</a>                rec.upsert(<span class="string">"restoringbeam"</span>, Value::Record(beam.to_record()));
-<a href=#174 id=174 data-nosnippet>174</a>            }
+<a href=#171 id=171 data-nosnippet>171</a>        } <span class="kw">else if let </span><span class="prelude-val">Some</span>(beam) = <span class="self">self</span>.beam_set.single_beam()
+<a href=#172 id=172 data-nosnippet>172</a>            &amp;&amp; !beam.is_null()
+<a href=#173 id=173 data-nosnippet>173</a>        {
+<a href=#174 id=174 data-nosnippet>174</a>            rec.upsert(<span class="string">"restoringbeam"</span>, Value::Record(beam.to_record()));
 <a href=#175 id=175 data-nosnippet>175</a>        }
 <a href=#176 id=176 data-nosnippet>176</a>        rec.upsert(
 <a href=#177 id=177 data-nosnippet>177</a>            <span class="string">"imagetype"</span>,

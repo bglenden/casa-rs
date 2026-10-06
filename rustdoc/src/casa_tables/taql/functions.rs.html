@@ -1029,7 +1029,7 @@
 <a href=#1029 id=1029 data-nosnippet>1029</a>                .collect::&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
 <a href=#1030 id=1030 data-nosnippet>1030</a>            vals.sort_by(|a, b| a.total_cmp(b));
 <a href=#1031 id=1031 data-nosnippet>1031</a>            <span class="kw">let </span>n = vals.len();
-<a href=#1032 id=1032 data-nosnippet>1032</a>            <span class="kw">let </span>med = <span class="kw">if </span>n % <span class="number">2 </span>== <span class="number">0 </span>{
+<a href=#1032 id=1032 data-nosnippet>1032</a>            <span class="kw">let </span>med = <span class="kw">if </span>n.is_multiple_of(<span class="number">2</span>) {
 <a href=#1033 id=1033 data-nosnippet>1033</a>                (vals[n / <span class="number">2 </span>- <span class="number">1</span>] + vals[n / <span class="number">2</span>]) / <span class="number">2.0
 <a href=#1034 id=1034 data-nosnippet>1034</a>            </span>} <span class="kw">else </span>{
 <a href=#1035 id=1035 data-nosnippet>1035</a>                vals[n / <span class="number">2</span>]
@@ -1833,7 +1833,7 @@
 <a href=#1833 id=1833 data-nosnippet>1833</a>            <span class="kw">let </span><span class="kw-2">mut </span>sorted = vals.to_vec();
 <a href=#1834 id=1834 data-nosnippet>1834</a>            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 <a href=#1835 id=1835 data-nosnippet>1835</a>            <span class="kw">let </span>mid = sorted.len() / <span class="number">2</span>;
-<a href=#1836 id=1836 data-nosnippet>1836</a>            <span class="kw">if </span>sorted.len() % <span class="number">2 </span>== <span class="number">0 </span>{
+<a href=#1836 id=1836 data-nosnippet>1836</a>            <span class="kw">if </span>sorted.len().is_multiple_of(<span class="number">2</span>) {
 <a href=#1837 id=1837 data-nosnippet>1837</a>                (sorted[mid - <span class="number">1</span>] + sorted[mid]) / <span class="number">2.0
 <a href=#1838 id=1838 data-nosnippet>1838</a>            </span>} <span class="kw">else </span>{
 <a href=#1839 id=1839 data-nosnippet>1839</a>                sorted[mid]

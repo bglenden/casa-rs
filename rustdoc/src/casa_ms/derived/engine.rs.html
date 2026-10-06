@@ -2705,11 +2705,11 @@
 <a href=#2705 id=2705 data-nosnippet>2705</a>        <span class="kw">for </span>hour <span class="kw">in </span><span class="number">0</span>..<span class="number">24 </span>{
 <a href=#2706 id=2706 data-nosnippet>2706</a>            <span class="kw">let </span>time = (<span class="number">59000.0 </span>+ hour <span class="kw">as </span>f64 / <span class="number">24.0</span>) * <span class="number">86400.0</span>;
 <a href=#2707 id=2707 data-nosnippet>2707</a>            <span class="kw">let </span>result = engine.azel(time, <span class="number">0</span>, <span class="number">0</span>);
-<a href=#2708 id=2708 data-nosnippet>2708</a>            <span class="kw">if let </span><span class="prelude-val">Ok</span>((_az, el)) = result {
-<a href=#2709 id=2709 data-nosnippet>2709</a>                <span class="kw">if </span>el &gt; <span class="number">0.0 </span>{
-<a href=#2710 id=2710 data-nosnippet>2710</a>                    found_visible = <span class="bool-val">true</span>;
-<a href=#2711 id=2711 data-nosnippet>2711</a>                    <span class="kw">break</span>;
-<a href=#2712 id=2712 data-nosnippet>2712</a>                }
+<a href=#2708 id=2708 data-nosnippet>2708</a>            <span class="kw">if let </span><span class="prelude-val">Ok</span>((_az, el)) = result
+<a href=#2709 id=2709 data-nosnippet>2709</a>                &amp;&amp; el &gt; <span class="number">0.0
+<a href=#2710 id=2710 data-nosnippet>2710</a>            </span>{
+<a href=#2711 id=2711 data-nosnippet>2711</a>                found_visible = <span class="bool-val">true</span>;
+<a href=#2712 id=2712 data-nosnippet>2712</a>                <span class="kw">break</span>;
 <a href=#2713 id=2713 data-nosnippet>2713</a>            }
 <a href=#2714 id=2714 data-nosnippet>2714</a>        }
 <a href=#2715 id=2715 data-nosnippet>2715</a>        <span class="macro">assert!</span>(
@@ -2725,11 +2725,11 @@
 <a href=#2725 id=2725 data-nosnippet>2725</a>        <span class="kw">for </span>hour <span class="kw">in </span><span class="number">0</span>..<span class="number">24 </span>{
 <a href=#2726 id=2726 data-nosnippet>2726</a>            <span class="kw">let </span>time = (<span class="number">59000.0 </span>+ hour <span class="kw">as </span>f64 / <span class="number">24.0</span>) * <span class="number">86400.0</span>;
 <a href=#2727 id=2727 data-nosnippet>2727</a>            <span class="kw">let </span>result = engine.azel_observatory(time, <span class="number">0</span>);
-<a href=#2728 id=2728 data-nosnippet>2728</a>            <span class="kw">if let </span><span class="prelude-val">Ok</span>((_az, el)) = result {
-<a href=#2729 id=2729 data-nosnippet>2729</a>                <span class="kw">if </span>el &gt; <span class="number">0.0 </span>{
-<a href=#2730 id=2730 data-nosnippet>2730</a>                    found_visible = <span class="bool-val">true</span>;
-<a href=#2731 id=2731 data-nosnippet>2731</a>                    <span class="kw">break</span>;
-<a href=#2732 id=2732 data-nosnippet>2732</a>                }
+<a href=#2728 id=2728 data-nosnippet>2728</a>            <span class="kw">if let </span><span class="prelude-val">Ok</span>((_az, el)) = result
+<a href=#2729 id=2729 data-nosnippet>2729</a>                &amp;&amp; el &gt; <span class="number">0.0
+<a href=#2730 id=2730 data-nosnippet>2730</a>            </span>{
+<a href=#2731 id=2731 data-nosnippet>2731</a>                found_visible = <span class="bool-val">true</span>;
+<a href=#2732 id=2732 data-nosnippet>2732</a>                <span class="kw">break</span>;
 <a href=#2733 id=2733 data-nosnippet>2733</a>            }
 <a href=#2734 id=2734 data-nosnippet>2734</a>        }
 <a href=#2735 id=2735 data-nosnippet>2735</a>        <span class="macro">assert!</span>(

@@ -134,13 +134,13 @@
 <a href=#134 id=134 data-nosnippet>134</a>        PreparedArtifactPrecision::F32 | PreparedArtifactPrecision::ComplexF32 =&gt; {
 <a href=#135 id=135 data-nosnippet>135</a>            <span class="comment">// A non-short-circuit reduction lets the finite fast path vectorize;
 <a href=#136 id=136 data-nosnippet>136</a>            // only invalid payloads need the ordered scan for an exact error index.
-<a href=#137 id=137 data-nosnippet>137</a>            </span><span class="kw">if </span>bytes.chunks_exact(<span class="number">4</span>).fold(<span class="bool-val">true</span>, |finite, chunk| {
-<a href=#138 id=138 data-nosnippet>138</a>                finite &amp; f32::from_le_bytes(chunk.try_into().expect(<span class="string">"exact f32 chunk"</span>)).is_finite()
+<a href=#137 id=137 data-nosnippet>137</a>            </span><span class="kw">if </span>bytes.as_chunks::&lt;<span class="number">4</span>&gt;().<span class="number">0</span>.iter().fold(<span class="bool-val">true</span>, |finite, chunk| {
+<a href=#138 id=138 data-nosnippet>138</a>                finite &amp; f32::from_le_bytes(<span class="kw-2">*</span>chunk).is_finite()
 <a href=#139 id=139 data-nosnippet>139</a>            }) {
 <a href=#140 id=140 data-nosnippet>140</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(());
 <a href=#141 id=141 data-nosnippet>141</a>            }
-<a href=#142 id=142 data-nosnippet>142</a>            <span class="kw">for </span>(offset, chunk) <span class="kw">in </span>bytes.chunks_exact(<span class="number">4</span>).enumerate() {
-<a href=#143 id=143 data-nosnippet>143</a>                <span class="kw">if </span>!f32::from_le_bytes(chunk.try_into().expect(<span class="string">"exact f32 chunk"</span>)).is_finite() {
+<a href=#142 id=142 data-nosnippet>142</a>            <span class="kw">for </span>(offset, chunk) <span class="kw">in </span>bytes.as_chunks::&lt;<span class="number">4</span>&gt;().<span class="number">0</span>.iter().enumerate() {
+<a href=#143 id=143 data-nosnippet>143</a>                <span class="kw">if </span>!f32::from_le_bytes(<span class="kw-2">*</span>chunk).is_finite() {
 <a href=#144 id=144 data-nosnippet>144</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(PreparedArtifactError::NonFiniteValue {
 <a href=#145 id=145 data-nosnippet>145</a>                        segment: segment.to_string(),
 <a href=#146 id=146 data-nosnippet>146</a>                        scalar: first_scalar + offset <span class="kw">as </span>u64,
@@ -149,13 +149,13 @@
 <a href=#149 id=149 data-nosnippet>149</a>            }
 <a href=#150 id=150 data-nosnippet>150</a>        }
 <a href=#151 id=151 data-nosnippet>151</a>        PreparedArtifactPrecision::F64 | PreparedArtifactPrecision::ComplexF64 =&gt; {
-<a href=#152 id=152 data-nosnippet>152</a>            <span class="kw">if </span>bytes.chunks_exact(<span class="number">8</span>).fold(<span class="bool-val">true</span>, |finite, chunk| {
-<a href=#153 id=153 data-nosnippet>153</a>                finite &amp; f64::from_le_bytes(chunk.try_into().expect(<span class="string">"exact f64 chunk"</span>)).is_finite()
+<a href=#152 id=152 data-nosnippet>152</a>            <span class="kw">if </span>bytes.as_chunks::&lt;<span class="number">8</span>&gt;().<span class="number">0</span>.iter().fold(<span class="bool-val">true</span>, |finite, chunk| {
+<a href=#153 id=153 data-nosnippet>153</a>                finite &amp; f64::from_le_bytes(<span class="kw-2">*</span>chunk).is_finite()
 <a href=#154 id=154 data-nosnippet>154</a>            }) {
 <a href=#155 id=155 data-nosnippet>155</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(());
 <a href=#156 id=156 data-nosnippet>156</a>            }
-<a href=#157 id=157 data-nosnippet>157</a>            <span class="kw">for </span>(offset, chunk) <span class="kw">in </span>bytes.chunks_exact(<span class="number">8</span>).enumerate() {
-<a href=#158 id=158 data-nosnippet>158</a>                <span class="kw">if </span>!f64::from_le_bytes(chunk.try_into().expect(<span class="string">"exact f64 chunk"</span>)).is_finite() {
+<a href=#157 id=157 data-nosnippet>157</a>            <span class="kw">for </span>(offset, chunk) <span class="kw">in </span>bytes.as_chunks::&lt;<span class="number">8</span>&gt;().<span class="number">0</span>.iter().enumerate() {
+<a href=#158 id=158 data-nosnippet>158</a>                <span class="kw">if </span>!f64::from_le_bytes(<span class="kw-2">*</span>chunk).is_finite() {
 <a href=#159 id=159 data-nosnippet>159</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(PreparedArtifactError::NonFiniteValue {
 <a href=#160 id=160 data-nosnippet>160</a>                        segment: segment.to_string(),
 <a href=#161 id=161 data-nosnippet>161</a>                        scalar: first_scalar + offset <span class="kw">as </span>u64,

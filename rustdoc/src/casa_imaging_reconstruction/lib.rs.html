@@ -1535,7 +1535,7 @@
 <a href=#1535 id=1535 data-nosnippet>1535</a>    <span class="kw">fn </span>next_generation_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ModelGenerationId {
 <a href=#1536 id=1536 data-nosnippet>1536</a>        <span class="kw">let </span>ordinal = <span class="self">self
 <a href=#1537 id=1537 data-nosnippet>1537</a>            </span>.next_generation
-<a href=#1538 id=1538 data-nosnippet>1538</a>            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |ordinal| {
+<a href=#1538 id=1538 data-nosnippet>1538</a>            .try_update(Ordering::Relaxed, Ordering::Relaxed, |ordinal| {
 <a href=#1539 id=1539 data-nosnippet>1539</a>                ordinal.checked_add(<span class="number">1</span>)
 <a href=#1540 id=1540 data-nosnippet>1540</a>            })
 <a href=#1541 id=1541 data-nosnippet>1541</a>            .expect(<span class="string">"model generation ordinal exhausted"</span>);
@@ -2344,7 +2344,7 @@
 <a href=#2344 id=2344 data-nosnippet>2344</a>
 <a href=#2345 id=2345 data-nosnippet>2345</a><span class="kw">fn </span>next_authority_seal() -&gt; AuthoritySeal {
 <a href=#2346 id=2346 data-nosnippet>2346</a>    <span class="kw">let </span>seal = NEXT_AUTHORITY_SEAL
-<a href=#2347 id=2347 data-nosnippet>2347</a>        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |seal| {
+<a href=#2347 id=2347 data-nosnippet>2347</a>        .try_update(Ordering::Relaxed, Ordering::Relaxed, |seal| {
 <a href=#2348 id=2348 data-nosnippet>2348</a>            seal.checked_add(<span class="number">1</span>)
 <a href=#2349 id=2349 data-nosnippet>2349</a>        })
 <a href=#2350 id=2350 data-nosnippet>2350</a>        .expect(<span class="string">"model lifecycle authority seal space exhausted"</span>);
@@ -2538,10 +2538,10 @@
 <a href=#2538 id=2538 data-nosnippet>2538</a>            }));
 <a href=#2539 id=2539 data-nosnippet>2539</a>        }
 <a href=#2540 id=2540 data-nosnippet>2540</a>    }
-<a href=#2541 id=2541 data-nosnippet>2541</a>    <span class="kw">if </span>!values.is_empty() {
-<a href=#2542 id=2542 data-nosnippet>2542</a>        <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = storage.write(written, <span class="kw-2">&amp;</span>values) {
-<a href=#2543 id=2543 data-nosnippet>2543</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(error));
-<a href=#2544 id=2544 data-nosnippet>2544</a>        }
+<a href=#2541 id=2541 data-nosnippet>2541</a>    <span class="kw">if </span>!values.is_empty()
+<a href=#2542 id=2542 data-nosnippet>2542</a>        &amp;&amp; <span class="kw">let </span><span class="prelude-val">Err</span>(error) = storage.write(written, <span class="kw-2">&amp;</span>values)
+<a href=#2543 id=2543 data-nosnippet>2543</a>    {
+<a href=#2544 id=2544 data-nosnippet>2544</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(error));
 <a href=#2545 id=2545 data-nosnippet>2545</a>    }
 <a href=#2546 id=2546 data-nosnippet>2546</a>    <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(storage))
 <a href=#2547 id=2547 data-nosnippet>2547</a>}

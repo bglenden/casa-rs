@@ -76,11 +76,11 @@
 <a href=#76 id=76 data-nosnippet>76</a>
 <a href=#77 id=77 data-nosnippet>77</a><span class="kw">fn </span>log_calibration_profile(phase: <span class="kw-2">&amp;</span>str, seconds: f64, detail: <span class="kw">impl </span>Into&lt;<span class="prelude-ty">Option</span>&lt;String&gt;&gt;) {
 <a href=#78 id=78 data-nosnippet>78</a>    <span class="kw">let </span><span class="kw-2">mut </span>line = <span class="macro">format!</span>(<span class="string">"[casa-calibration profile] phase={phase} dt={seconds:.3}s"</span>);
-<a href=#79 id=79 data-nosnippet>79</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(detail) = detail.into() {
-<a href=#80 id=80 data-nosnippet>80</a>        <span class="kw">if </span>!detail.is_empty() {
-<a href=#81 id=81 data-nosnippet>81</a>            line.push(<span class="string">' '</span>);
-<a href=#82 id=82 data-nosnippet>82</a>            line.push_str(<span class="kw-2">&amp;</span>detail);
-<a href=#83 id=83 data-nosnippet>83</a>        }
+<a href=#79 id=79 data-nosnippet>79</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(detail) = detail.into()
+<a href=#80 id=80 data-nosnippet>80</a>        &amp;&amp; !detail.is_empty()
+<a href=#81 id=81 data-nosnippet>81</a>    {
+<a href=#82 id=82 data-nosnippet>82</a>        line.push(<span class="string">' '</span>);
+<a href=#83 id=83 data-nosnippet>83</a>        line.push_str(<span class="kw-2">&amp;</span>detail);
 <a href=#84 id=84 data-nosnippet>84</a>    }
 <a href=#85 id=85 data-nosnippet>85</a>    <span class="macro">eprintln!</span>(<span class="string">"{line}"</span>);
 <a href=#86 id=86 data-nosnippet>86</a>}
@@ -4346,7 +4346,7 @@
 <a href=#4346 id=4346 data-nosnippet>4346</a>    <span class="kw">if </span>total_coefficients == nominal_total {
 <a href=#4347 id=4347 data-nosnippet>4347</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(nominal_receptor_count.max(<span class="number">1</span>));
 <a href=#4348 id=4348 data-nosnippet>4348</a>    }
-<a href=#4349 id=4349 data-nosnippet>4349</a>    <span class="kw">if </span>total_coefficients % coefficients_per_receptor == <span class="number">0 </span>{
+<a href=#4349 id=4349 data-nosnippet>4349</a>    <span class="kw">if </span>total_coefficients.is_multiple_of(coefficients_per_receptor) {
 <a href=#4350 id=4350 data-nosnippet>4350</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>((total_coefficients / coefficients_per_receptor).max(<span class="number">1</span>));
 <a href=#4351 id=4351 data-nosnippet>4351</a>    }
 <a href=#4352 id=4352 data-nosnippet>4352</a>    <span class="prelude-val">Err</span>(ApplyExecutionError::UnsupportedCalibrationTable {

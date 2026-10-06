@@ -144,11 +144,11 @@
 <a href=#144 id=144 data-nosnippet>144</a><span class="kw">fn </span>log_storage_profile(context: <span class="kw-2">&amp;</span>str, phase: <span class="kw-2">&amp;</span>str, delta: f64, total: f64, detail: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>str&gt;) {
 <a href=#145 id=145 data-nosnippet>145</a>    <span class="kw">let </span><span class="kw-2">mut </span>line =
 <a href=#146 id=146 data-nosnippet>146</a>        <span class="macro">format!</span>(<span class="string">"[casa-tables profile] {context} phase={phase} dt={delta:.3}s total={total:.3}s"</span>);
-<a href=#147 id=147 data-nosnippet>147</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(detail) = detail {
-<a href=#148 id=148 data-nosnippet>148</a>        <span class="kw">if </span>!detail.is_empty() {
-<a href=#149 id=149 data-nosnippet>149</a>            line.push(<span class="string">' '</span>);
-<a href=#150 id=150 data-nosnippet>150</a>            line.push_str(detail);
-<a href=#151 id=151 data-nosnippet>151</a>        }
+<a href=#147 id=147 data-nosnippet>147</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(detail) = detail
+<a href=#148 id=148 data-nosnippet>148</a>        &amp;&amp; !detail.is_empty()
+<a href=#149 id=149 data-nosnippet>149</a>    {
+<a href=#150 id=150 data-nosnippet>150</a>        line.push(<span class="string">' '</span>);
+<a href=#151 id=151 data-nosnippet>151</a>        line.push_str(detail);
 <a href=#152 id=152 data-nosnippet>152</a>    }
 <a href=#153 id=153 data-nosnippet>153</a>    <span class="macro">eprintln!</span>(<span class="string">"{line}"</span>);
 <a href=#154 id=154 data-nosnippet>154</a>}
@@ -564,10 +564,10 @@
 <a href=#564 id=564 data-nosnippet>564</a>) -&gt; Vec&lt;<span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>Value&gt;&gt; {
 <a href=#565 id=565 data-nosnippet>565</a>    rows.iter()
 <a href=#566 id=566 data-nosnippet>566</a>        .map(|row| {
-<a href=#567 id=567 data-nosnippet>567</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(idx) = field_index {
-<a href=#568 id=568 data-nosnippet>568</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(field) = row.fields().get(idx).filter(|field| field.name == col_name) {
-<a href=#569 id=569 data-nosnippet>569</a>                    <span class="kw">return </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>field.value);
-<a href=#570 id=570 data-nosnippet>570</a>                }
+<a href=#567 id=567 data-nosnippet>567</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(idx) = field_index
+<a href=#568 id=568 data-nosnippet>568</a>                &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(field) = row.fields().get(idx).filter(|field| field.name == col_name)
+<a href=#569 id=569 data-nosnippet>569</a>            {
+<a href=#570 id=570 data-nosnippet>570</a>                <span class="kw">return </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>field.value);
 <a href=#571 id=571 data-nosnippet>571</a>            }
 <a href=#572 id=572 data-nosnippet>572</a>            row.get(col_name)
 <a href=#573 id=573 data-nosnippet>573</a>        })
@@ -643,14 +643,14 @@
 <a href=#643 id=643 data-nosnippet>643</a>
 <a href=#644 id=644 data-nosnippet>644</a>        <span class="comment">// Clean up old data files before re-saving to prevent stale data
 <a href=#645 id=645 data-nosnippet>645</a>        // from a previous save with a different storage manager.
-<a href=#646 id=646 data-nosnippet>646</a>        </span><span class="kw">if </span>table_path.is_dir() {
-<a href=#647 id=647 data-nosnippet>647</a>            <span class="kw">if let </span><span class="prelude-val">Ok</span>(entries) = fs::read_dir(table_path) {
-<a href=#648 id=648 data-nosnippet>648</a>                <span class="kw">for </span>entry <span class="kw">in </span>entries.flatten() {
-<a href=#649 id=649 data-nosnippet>649</a>                    <span class="kw">let </span>name = entry.file_name();
-<a href=#650 id=650 data-nosnippet>650</a>                    <span class="kw">let </span>name_str = name.to_string_lossy();
-<a href=#651 id=651 data-nosnippet>651</a>                    <span class="kw">if </span>name_str.starts_with(<span class="string">"table.f"</span>) {
-<a href=#652 id=652 data-nosnippet>652</a>                        <span class="kw">let _ </span>= fs::remove_file(entry.path());
-<a href=#653 id=653 data-nosnippet>653</a>                    }
+<a href=#646 id=646 data-nosnippet>646</a>        </span><span class="kw">if </span>table_path.is_dir()
+<a href=#647 id=647 data-nosnippet>647</a>            &amp;&amp; <span class="kw">let </span><span class="prelude-val">Ok</span>(entries) = fs::read_dir(table_path)
+<a href=#648 id=648 data-nosnippet>648</a>        {
+<a href=#649 id=649 data-nosnippet>649</a>            <span class="kw">for </span>entry <span class="kw">in </span>entries.flatten() {
+<a href=#650 id=650 data-nosnippet>650</a>                <span class="kw">let </span>name = entry.file_name();
+<a href=#651 id=651 data-nosnippet>651</a>                <span class="kw">let </span>name_str = name.to_string_lossy();
+<a href=#652 id=652 data-nosnippet>652</a>                <span class="kw">if </span>name_str.starts_with(<span class="string">"table.f"</span>) {
+<a href=#653 id=653 data-nosnippet>653</a>                    <span class="kw">let _ </span>= fs::remove_file(entry.path());
 <a href=#654 id=654 data-nosnippet>654</a>                }
 <a href=#655 id=655 data-nosnippet>655</a>            }
 <a href=#656 id=656 data-nosnippet>656</a>        }
@@ -912,14 +912,14 @@
 <a href=#912 id=912 data-nosnippet>912</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), StorageError&gt; {
 <a href=#913 id=913 data-nosnippet>913</a>        <span class="kw">use </span><span class="kw">crate</span>::table::DataManagerKind;
 <a href=#914 id=914 data-nosnippet>914</a>
-<a href=#915 id=915 data-nosnippet>915</a>        <span class="kw">if </span>table_path.is_dir() {
-<a href=#916 id=916 data-nosnippet>916</a>            <span class="kw">if let </span><span class="prelude-val">Ok</span>(entries) = fs::read_dir(table_path) {
-<a href=#917 id=917 data-nosnippet>917</a>                <span class="kw">for </span>entry <span class="kw">in </span>entries.flatten() {
-<a href=#918 id=918 data-nosnippet>918</a>                    <span class="kw">let </span>name = entry.file_name();
-<a href=#919 id=919 data-nosnippet>919</a>                    <span class="kw">let </span>name_str = name.to_string_lossy();
-<a href=#920 id=920 data-nosnippet>920</a>                    <span class="kw">if </span>name_str.starts_with(<span class="string">"table.f"</span>) {
-<a href=#921 id=921 data-nosnippet>921</a>                        <span class="kw">let _ </span>= fs::remove_file(entry.path());
-<a href=#922 id=922 data-nosnippet>922</a>                    }
+<a href=#915 id=915 data-nosnippet>915</a>        <span class="kw">if </span>table_path.is_dir()
+<a href=#916 id=916 data-nosnippet>916</a>            &amp;&amp; <span class="kw">let </span><span class="prelude-val">Ok</span>(entries) = fs::read_dir(table_path)
+<a href=#917 id=917 data-nosnippet>917</a>        {
+<a href=#918 id=918 data-nosnippet>918</a>            <span class="kw">for </span>entry <span class="kw">in </span>entries.flatten() {
+<a href=#919 id=919 data-nosnippet>919</a>                <span class="kw">let </span>name = entry.file_name();
+<a href=#920 id=920 data-nosnippet>920</a>                <span class="kw">let </span>name_str = name.to_string_lossy();
+<a href=#921 id=921 data-nosnippet>921</a>                <span class="kw">if </span>name_str.starts_with(<span class="string">"table.f"</span>) {
+<a href=#922 id=922 data-nosnippet>922</a>                    <span class="kw">let _ </span>= fs::remove_file(entry.path());
 <a href=#923 id=923 data-nosnippet>923</a>                }
 <a href=#924 id=924 data-nosnippet>924</a>            }
 <a href=#925 id=925 data-nosnippet>925</a>        }
@@ -5290,11 +5290,11 @@
 <a href=#5290 id=5290 data-nosnippet>5290</a>    }
 <a href=#5291 id=5291 data-nosnippet>5291</a>
 <a href=#5292 id=5292 data-nosnippet>5292</a>    <span class="comment">// Check if they share the same parent directory (./ convention).
-<a href=#5293 id=5293 data-nosnippet>5293</a>    </span><span class="kw">if let </span>(<span class="prelude-val">Some</span>(from_parent), <span class="prelude-val">Some</span>(target_parent)) = (from_abs.parent(), target_abs.parent()) {
-<a href=#5294 id=5294 data-nosnippet>5294</a>        <span class="kw">if </span>from_parent == target_parent {
-<a href=#5295 id=5295 data-nosnippet>5295</a>            <span class="kw">let </span>name = target_abs.file_name().unwrap_or_default().to_string_lossy();
-<a href=#5296 id=5296 data-nosnippet>5296</a>            <span class="kw">return </span><span class="macro">format!</span>(<span class="string">"./{name}"</span>);
-<a href=#5297 id=5297 data-nosnippet>5297</a>        }
+<a href=#5293 id=5293 data-nosnippet>5293</a>    </span><span class="kw">if let </span>(<span class="prelude-val">Some</span>(from_parent), <span class="prelude-val">Some</span>(target_parent)) = (from_abs.parent(), target_abs.parent())
+<a href=#5294 id=5294 data-nosnippet>5294</a>        &amp;&amp; from_parent == target_parent
+<a href=#5295 id=5295 data-nosnippet>5295</a>    {
+<a href=#5296 id=5296 data-nosnippet>5296</a>        <span class="kw">let </span>name = target_abs.file_name().unwrap_or_default().to_string_lossy();
+<a href=#5297 id=5297 data-nosnippet>5297</a>        <span class="kw">return </span><span class="macro">format!</span>(<span class="string">"./{name}"</span>);
 <a href=#5298 id=5298 data-nosnippet>5298</a>    }
 <a href=#5299 id=5299 data-nosnippet>5299</a>
 <a href=#5300 id=5300 data-nosnippet>5300</a>    <span class="comment">// Fallback: absolute path.

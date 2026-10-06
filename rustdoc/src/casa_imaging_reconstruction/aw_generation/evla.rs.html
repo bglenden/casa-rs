@@ -141,8 +141,8 @@
 <a href=#141 id=141 data-nosnippet>141</a>        parallactic_angle_rad: f64,
 <a href=#142 id=142 data-nosnippet>142</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, NativeAwGenerationError&gt; {
 <a href=#143 id=143 data-nosnippet>143</a>        <span class="kw">if </span>size &lt; <span class="number">4
-<a href=#144 id=144 data-nosnippet>144</a>            </span>|| size % <span class="number">2 </span>!= <span class="number">0
-<a href=#145 id=145 data-nosnippet>145</a>            </span>|| subpixels == <span class="number">0
+<a href=#144 id=144 data-nosnippet>144</a>            </span>|| !size.is_multiple_of(<span class="number">2</span>)
+<a href=#145 id=145 data-nosnippet>145</a>            || subpixels == <span class="number">0
 <a href=#146 id=146 data-nosnippet>146</a>            </span>|| size
 <a href=#147 id=147 data-nosnippet>147</a>                .checked_mul(size)
 <a href=#148 id=148 data-nosnippet>148</a>                .and_then(|size| size.checked_mul(<span class="number">4</span>))
@@ -535,7 +535,7 @@
 <a href=#535 id=535 data-nosnippet>535</a>        <span class="kw">let </span><span class="kw-2">mut </span>maximum_error = <span class="number">0.0_f64</span>;
 <a href=#536 id=536 data-nosnippet>536</a>        <span class="kw">let </span><span class="kw-2">mut </span>reference_peak = <span class="number">0.0_f64</span>;
 <a href=#537 id=537 data-nosnippet>537</a>        <span class="kw">let </span><span class="kw-2">mut </span>support_mismatches = <span class="number">0</span>;
-<a href=#538 id=538 data-nosnippet>538</a>        <span class="kw">for </span>(value, bytes) <span class="kw">in </span>aperture.iter().zip(bytes.chunks_exact(<span class="number">8</span>)) {
+<a href=#538 id=538 data-nosnippet>538</a>        <span class="kw">for </span>(value, bytes) <span class="kw">in </span>aperture.iter().zip(bytes.as_chunks::&lt;<span class="number">8</span>&gt;().<span class="number">0</span>) {
 <a href=#539 id=539 data-nosnippet>539</a>            <span class="kw">let </span>reference = Complex32::new(
 <a href=#540 id=540 data-nosnippet>540</a>                f32::from_le_bytes(bytes[..<span class="number">4</span>].try_into().unwrap()),
 <a href=#541 id=541 data-nosnippet>541</a>                f32::from_le_bytes(bytes[<span class="number">4</span>..].try_into().unwrap()),

@@ -297,8 +297,8 @@
 <a href=#297 id=297 data-nosnippet>297</a>            .checked_add(<span class="number">1</span>)
 <a href=#298 id=298 data-nosnippet>298</a>            .ok_or(PreparedArtifactError::ArtifactTooLarge)<span class="question-mark">?</span>;
 <a href=#299 id=299 data-nosnippet>299</a>        <span class="kw">let </span>role = ROLE.get();
-<a href=#300 id=300 data-nosnippet>300</a>        <span class="kw">let </span>selected =
-<a href=#301 id=301 data-nosnippet>301</a>            mix(SEED ^ <span class="self">self</span>.ordinal ^ (u64::from(role.pass) &lt;&lt; <span class="number">32</span>)) % <span class="self">self</span>.denominator == <span class="number">0</span>;
+<a href=#300 id=300 data-nosnippet>300</a>        <span class="kw">let </span>selected = mix(SEED ^ <span class="self">self</span>.ordinal ^ (u64::from(role.pass) &lt;&lt; <span class="number">32</span>))
+<a href=#301 id=301 data-nosnippet>301</a>            .is_multiple_of(<span class="self">self</span>.denominator);
 <a href=#302 id=302 data-nosnippet>302</a>        <span class="kw">let </span>cost = Cost::new(selected);
 <a href=#303 id=303 data-nosnippet>303</a>        <span class="prelude-val">Ok</span>(Sample {
 <a href=#304 id=304 data-nosnippet>304</a>            session: <span class="self">self</span>.session,

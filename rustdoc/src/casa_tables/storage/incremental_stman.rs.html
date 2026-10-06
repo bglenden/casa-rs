@@ -928,7 +928,7 @@
 <a href=#928 id=928 data-nosnippet>928</a>        })<span class="question-mark">?</span>;
 <a href=#929 id=929 data-nosnippet>929</a>        <span class="kw">for </span>(output, bytes) <span class="kw">in </span>values[output_row * axis0_count..(output_row + <span class="number">1</span>) * axis0_count]
 <a href=#930 id=930 data-nosnippet>930</a>            .iter_mut()
-<a href=#931 id=931 data-nosnippet>931</a>            .zip(raw.chunks_exact(<span class="number">8</span>))
+<a href=#931 id=931 data-nosnippet>931</a>            .zip(raw.as_chunks::&lt;<span class="number">8</span>&gt;().<span class="number">0</span>)
 <a href=#932 id=932 data-nosnippet>932</a>        {
 <a href=#933 id=933 data-nosnippet>933</a>            <span class="kw-2">*</span>output = <span class="kw">if </span>header.big_endian {
 <a href=#934 id=934 data-nosnippet>934</a>                read_f64_be(bytes)
@@ -2613,10 +2613,10 @@
 <a href=#2613 id=2613 data-nosnippet>2613</a>    field_index: usize,
 <a href=#2614 id=2614 data-nosnippet>2614</a>    field_name: <span class="kw-2">&amp;</span>str,
 <a href=#2615 id=2615 data-nosnippet>2615</a>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>casa_types::Value&gt; {
-<a href=#2616 id=2616 data-nosnippet>2616</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(field) = row.fields().get(field_index) {
-<a href=#2617 id=2617 data-nosnippet>2617</a>        <span class="kw">if </span>field.name == field_name {
-<a href=#2618 id=2618 data-nosnippet>2618</a>            <span class="kw">return </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>field.value);
-<a href=#2619 id=2619 data-nosnippet>2619</a>        }
+<a href=#2616 id=2616 data-nosnippet>2616</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(field) = row.fields().get(field_index)
+<a href=#2617 id=2617 data-nosnippet>2617</a>        &amp;&amp; field.name == field_name
+<a href=#2618 id=2618 data-nosnippet>2618</a>    {
+<a href=#2619 id=2619 data-nosnippet>2619</a>        <span class="kw">return </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>field.value);
 <a href=#2620 id=2620 data-nosnippet>2620</a>    }
 <a href=#2621 id=2621 data-nosnippet>2621</a>    row.fields()
 <a href=#2622 id=2622 data-nosnippet>2622</a>        .iter()

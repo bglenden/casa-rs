@@ -2075,7 +2075,7 @@
 <a href=#2075 id=2075 data-nosnippet>2075</a>                            <span class="kw">return</span>;
 <a href=#2076 id=2076 data-nosnippet>2076</a>                        }
 <a href=#2077 id=2077 data-nosnippet>2077</a>                        <span class="kw">if </span>ready_queue_capacity &gt; <span class="number">0 </span>{
-<a href=#2078 id=2078 data-nosnippet>2078</a>                            <span class="kw">let </span>current_queued = <span class="kw">match </span>producer_ready_current_bytes.fetch_update(
+<a href=#2078 id=2078 data-nosnippet>2078</a>                            <span class="kw">let </span>current_queued = <span class="kw">match </span>producer_ready_current_bytes.try_update(
 <a href=#2079 id=2079 data-nosnippet>2079</a>                                Ordering::AcqRel,
 <a href=#2080 id=2080 data-nosnippet>2080</a>                                Ordering::Acquire,
 <a href=#2081 id=2081 data-nosnippet>2081</a>                                |bytes| bytes.checked_add(resident_current_bytes),
@@ -2086,7 +2086,7 @@
 <a href=#2086 id=2086 data-nosnippet>2086</a>                                    <span class="kw">return</span>;
 <a href=#2087 id=2087 data-nosnippet>2087</a>                                }
 <a href=#2088 id=2088 data-nosnippet>2088</a>                            };
-<a href=#2089 id=2089 data-nosnippet>2089</a>                            <span class="kw">let </span>capacity_queued = <span class="kw">match </span>producer_ready_capacity_bytes.fetch_update(
+<a href=#2089 id=2089 data-nosnippet>2089</a>                            <span class="kw">let </span>capacity_queued = <span class="kw">match </span>producer_ready_capacity_bytes.try_update(
 <a href=#2090 id=2090 data-nosnippet>2090</a>                                Ordering::AcqRel,
 <a href=#2091 id=2091 data-nosnippet>2091</a>                                Ordering::Acquire,
 <a href=#2092 id=2092 data-nosnippet>2092</a>                                |bytes| bytes.checked_add(resident_capacity_bytes),
@@ -2244,12 +2244,12 @@
 <a href=#2244 id=2244 data-nosnippet>2244</a>                    <span class="kw">if </span>ready_queue_capacity &gt; <span class="number">0 </span>{
 <a href=#2245 id=2245 data-nosnippet>2245</a>                        ready_count.fetch_sub(<span class="number">1</span>, Ordering::AcqRel);
 <a href=#2246 id=2246 data-nosnippet>2246</a>                        <span class="kw">if </span>ready_current_bytes
-<a href=#2247 id=2247 data-nosnippet>2247</a>                            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |bytes| {
+<a href=#2247 id=2247 data-nosnippet>2247</a>                            .try_update(Ordering::AcqRel, Ordering::Acquire, |bytes| {
 <a href=#2248 id=2248 data-nosnippet>2248</a>                                bytes.checked_sub(lease.resident_current_bytes)
 <a href=#2249 id=2249 data-nosnippet>2249</a>                            })
 <a href=#2250 id=2250 data-nosnippet>2250</a>                            .is_err()
 <a href=#2251 id=2251 data-nosnippet>2251</a>                            || ready_capacity_bytes
-<a href=#2252 id=2252 data-nosnippet>2252</a>                                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |bytes| {
+<a href=#2252 id=2252 data-nosnippet>2252</a>                                .try_update(Ordering::AcqRel, Ordering::Acquire, |bytes| {
 <a href=#2253 id=2253 data-nosnippet>2253</a>                                    bytes.checked_sub(lease.resident_capacity_bytes)
 <a href=#2254 id=2254 data-nosnippet>2254</a>                                })
 <a href=#2255 id=2255 data-nosnippet>2255</a>                                .is_err()

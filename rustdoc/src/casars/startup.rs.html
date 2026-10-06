@@ -248,16 +248,16 @@
 <a href=#248 id=248 data-nosnippet>248</a>}
 <a href=#249 id=249 data-nosnippet>249</a>
 <a href=#250 id=250 data-nosnippet>250</a><span class="kw">fn </span>append_csv_value(values: <span class="kw-2">&amp;mut </span>Vec&lt;StartupPrefill&gt;, id: String, value: String) {
-<a href=#251 id=251 data-nosnippet>251</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(existing) = values.iter_mut().find(|entry| entry.id == id) {
-<a href=#252 id=252 data-nosnippet>252</a>        <span class="kw">if let </span>StartupValue::Text(existing_text) = <span class="kw-2">&amp;mut </span>existing.value {
-<a href=#253 id=253 data-nosnippet>253</a>            <span class="kw">if </span>existing_text.is_empty() {
-<a href=#254 id=254 data-nosnippet>254</a>                <span class="kw-2">*</span>existing_text = value;
-<a href=#255 id=255 data-nosnippet>255</a>            } <span class="kw">else if </span>!value.is_empty() {
-<a href=#256 id=256 data-nosnippet>256</a>                existing_text.push(<span class="string">','</span>);
-<a href=#257 id=257 data-nosnippet>257</a>                existing_text.push_str(<span class="kw-2">&amp;</span>value);
-<a href=#258 id=258 data-nosnippet>258</a>            }
-<a href=#259 id=259 data-nosnippet>259</a>            <span class="kw">return</span>;
-<a href=#260 id=260 data-nosnippet>260</a>        }
+<a href=#251 id=251 data-nosnippet>251</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(existing) = values.iter_mut().find(|entry| entry.id == id)
+<a href=#252 id=252 data-nosnippet>252</a>        &amp;&amp; <span class="kw">let </span>StartupValue::Text(existing_text) = <span class="kw-2">&amp;mut </span>existing.value
+<a href=#253 id=253 data-nosnippet>253</a>    {
+<a href=#254 id=254 data-nosnippet>254</a>        <span class="kw">if </span>existing_text.is_empty() {
+<a href=#255 id=255 data-nosnippet>255</a>            <span class="kw-2">*</span>existing_text = value;
+<a href=#256 id=256 data-nosnippet>256</a>        } <span class="kw">else if </span>!value.is_empty() {
+<a href=#257 id=257 data-nosnippet>257</a>            existing_text.push(<span class="string">','</span>);
+<a href=#258 id=258 data-nosnippet>258</a>            existing_text.push_str(<span class="kw-2">&amp;</span>value);
+<a href=#259 id=259 data-nosnippet>259</a>        }
+<a href=#260 id=260 data-nosnippet>260</a>        <span class="kw">return</span>;
 <a href=#261 id=261 data-nosnippet>261</a>    }
 <a href=#262 id=262 data-nosnippet>262</a>    values.push(StartupPrefill {
 <a href=#263 id=263 data-nosnippet>263</a>        id,

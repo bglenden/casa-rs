@@ -3590,7 +3590,7 @@
 <a href=#3590 id=3590 data-nosnippet>3590</a><span class="kw">fn </span>taylor_psf_support(shape: [usize; <span class="number">2</span>], maximum_scale_px: f64) -&gt; usize {
 <a href=#3591 id=3591 data-nosnippet>3591</a>    <span class="kw">let </span><span class="kw-2">mut </span>support = ((<span class="number">16.0 </span>+ maximum_scale_px * maximum_scale_px).sqrt() * <span class="number">20.0</span>) <span class="kw">as </span>usize;
 <a href=#3592 id=3592 data-nosnippet>3592</a>    support = support.max(<span class="number">80</span>).min(shape[<span class="number">0</span>]).min(shape[<span class="number">1</span>]);
-<a href=#3593 id=3593 data-nosnippet>3593</a>    <span class="kw">if </span>support % <span class="number">2 </span>!= <span class="number">0 </span>{
+<a href=#3593 id=3593 data-nosnippet>3593</a>    <span class="kw">if </span>!support.is_multiple_of(<span class="number">2</span>) {
 <a href=#3594 id=3594 data-nosnippet>3594</a>        support -= <span class="number">1</span>;
 <a href=#3595 id=3595 data-nosnippet>3595</a>    }
 <a href=#3596 id=3596 data-nosnippet>3596</a>    support
@@ -4360,812 +4360,816 @@
 <a href=#4360 id=4360 data-nosnippet>4360</a>            <span class="kw">let </span>bytes = std::fs::read(directory.join(name)).expect(<span class="string">"native float plane"</span>);
 <a href=#4361 id=4361 data-nosnippet>4361</a>            <span class="macro">assert_eq!</span>(bytes.len(), cells * <span class="number">4</span>, <span class="string">"native plane shape: {name}"</span>);
 <a href=#4362 id=4362 data-nosnippet>4362</a>            bytes
-<a href=#4363 id=4363 data-nosnippet>4363</a>                .chunks_exact(<span class="number">4</span>)
-<a href=#4364 id=4364 data-nosnippet>4364</a>                .map(|bytes| f64::from(f32::from_le_bytes(bytes.try_into().unwrap())))
-<a href=#4365 id=4365 data-nosnippet>4365</a>                .inspect(|value| <span class="macro">assert!</span>(value.is_finite(), <span class="string">"finite native plane: {name}"</span>))
-<a href=#4366 id=4366 data-nosnippet>4366</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
-<a href=#4367 id=4367 data-nosnippet>4367</a>        };
-<a href=#4368 id=4368 data-nosnippet>4368</a>        <span class="kw">let </span>native_residuals = [load(<span class="string">"residual0.f32le"</span>), load(<span class="string">"residual1.f32le"</span>)];
-<a href=#4369 id=4369 data-nosnippet>4369</a>        <span class="kw">let </span><span class="kw-2">mut </span>residuals = native_residuals
-<a href=#4370 id=4370 data-nosnippet>4370</a>            .iter()
-<a href=#4371 id=4371 data-nosnippet>4371</a>            .flatten()
-<a href=#4372 id=4372 data-nosnippet>4372</a>            .map(|value| Complex64::new(<span class="kw-2">*</span>value, <span class="number">0.0</span>))
-<a href=#4373 id=4373 data-nosnippet>4373</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#4374 id=4374 data-nosnippet>4374</a>        <span class="kw">let </span><span class="kw-2">mut </span>psfs = (<span class="number">0</span>..<span class="number">3</span>)
-<a href=#4375 id=4375 data-nosnippet>4375</a>            .flat_map(|term| load(<span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"psf{term}.f32le"</span>)))
-<a href=#4376 id=4376 data-nosnippet>4376</a>            .map(|value| Complex64::new(value, <span class="number">0.0</span>))
-<a href=#4377 id=4377 data-nosnippet>4377</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#4378 id=4378 data-nosnippet>4378</a>        <span class="kw">let </span>raw_state = raw_response.then(|| {
-<a href=#4379 id=4379 data-nosnippet>4379</a>            <span class="comment">// Deliberately distinct synthetic sum weights make each owner
-<a href=#4380 id=4380 data-nosnippet>4380</a>            // conversion observable. This is an algebra/wiring regression,
-<a href=#4381 id=4381 data-nosnippet>4381</a>            // not a measurement of the retained observation's raw scalars.
-<a href=#4382 id=4382 data-nosnippet>4382</a>            </span><span class="kw">let </span>normal_weight = <span class="number">17.0</span>;
-<a href=#4383 id=4383 data-nosnippet>4383</a>            <span class="kw">let </span>published_weight = <span class="number">5.0</span>;
-<a href=#4384 id=4384 data-nosnippet>4384</a>            <span class="kw">let </span>weight = load(<span class="string">"weight0.f32le"</span>);
-<a href=#4385 id=4385 data-nosnippet>4385</a>            <span class="kw">let </span>peak = weight.iter().copied().fold(<span class="number">0.0_f64</span>, f64::max);
-<a href=#4386 id=4386 data-nosnippet>4386</a>            <span class="kw">for </span>(index, residual) <span class="kw">in </span>residuals.iter_mut().enumerate() {
-<a href=#4387 id=4387 data-nosnippet>4387</a>                <span class="kw-2">*</span>residual <span class="kw-2">*</span>= published_weight * (weight[index % cells] * peak).sqrt();
-<a href=#4388 id=4388 data-nosnippet>4388</a>            }
-<a href=#4389 id=4389 data-nosnippet>4389</a>            <span class="kw">for </span>psf <span class="kw">in </span><span class="kw-2">&amp;mut </span>psfs {
-<a href=#4390 id=4390 data-nosnippet>4390</a>                <span class="kw-2">*</span>psf <span class="kw-2">*</span>= normal_weight;
-<a href=#4391 id=4391 data-nosnippet>4391</a>            }
-<a href=#4392 id=4392 data-nosnippet>4392</a>            (
-<a href=#4393 id=4393 data-nosnippet>4393</a>                weight
-<a href=#4394 id=4394 data-nosnippet>4394</a>                    .into_iter()
-<a href=#4395 id=4395 data-nosnippet>4395</a>                    .map(|value| value * normal_weight)
-<a href=#4396 id=4396 data-nosnippet>4396</a>                    .collect(),
-<a href=#4397 id=4397 data-nosnippet>4397</a>                normal_weight,
-<a href=#4398 id=4398 data-nosnippet>4398</a>                published_weight,
-<a href=#4399 id=4399 data-nosnippet>4399</a>            )
-<a href=#4400 id=4400 data-nosnippet>4400</a>        });
-<a href=#4401 id=4401 data-nosnippet>4401</a>        <span class="kw">let </span>(problem, lifecycle, base, normal) = <span class="kw">crate</span>::major_cycle::native_minor_fixture::build(
-<a href=#4402 id=4402 data-nosnippet>4402</a>            residuals.into_boxed_slice(),
-<a href=#4403 id=4403 data-nosnippet>4403</a>            psfs.into_boxed_slice(),
-<a href=#4404 id=4404 data-nosnippet>4404</a>            raw_state,
-<a href=#4405 id=4405 data-nosnippet>4405</a>        );
-<a href=#4406 id=4406 data-nosnippet>4406</a>        <span class="kw">let </span>window = normal
-<a href=#4407 id=4407 data-nosnippet>4407</a>            .read_window(normal.slab().core_range())
-<a href=#4408 id=4408 data-nosnippet>4408</a>            .expect(<span class="string">"coupled Taylor fixture window"</span>);
-<a href=#4409 id=4409 data-nosnippet>4409</a>        <span class="kw">for </span>term <span class="kw">in </span><span class="number">0</span>..<span class="number">2 </span>{
-<a href=#4410 id=4410 data-nosnippet>4410</a>            <span class="macro">assert_eq!</span>(
-<a href=#4411 id=4411 data-nosnippet>4411</a>                window
-<a href=#4412 id=4412 data-nosnippet>4412</a>                    .coefficient_term(term)
-<a href=#4413 id=4413 data-nosnippet>4413</a>                    .expect(<span class="string">"native residual term"</span>)
-<a href=#4414 id=4414 data-nosnippet>4414</a>                    .residual()
-<a href=#4415 id=4415 data-nosnippet>4415</a>                    .len(),
-<a href=#4416 id=4416 data-nosnippet>4416</a>                cells
-<a href=#4417 id=4417 data-nosnippet>4417</a>            );
-<a href=#4418 id=4418 data-nosnippet>4418</a>        }
-<a href=#4419 id=4419 data-nosnippet>4419</a>        <span class="kw">for </span>moment <span class="kw">in </span><span class="number">0</span>..<span class="number">3 </span>{
-<a href=#4420 id=4420 data-nosnippet>4420</a>            <span class="macro">assert_eq!</span>(
-<a href=#4421 id=4421 data-nosnippet>4421</a>                window
-<a href=#4422 id=4422 data-nosnippet>4422</a>                    .normal_moment(moment)
-<a href=#4423 id=4423 data-nosnippet>4423</a>                    .expect(<span class="string">"complete native normal moment"</span>)
-<a href=#4424 id=4424 data-nosnippet>4424</a>                    .normal_approximation()
-<a href=#4425 id=4425 data-nosnippet>4425</a>                    .len(),
-<a href=#4426 id=4426 data-nosnippet>4426</a>                cells
-<a href=#4427 id=4427 data-nosnippet>4427</a>            );
-<a href=#4428 id=4428 data-nosnippet>4428</a>        }
-<a href=#4429 id=4429 data-nosnippet>4429</a>        <span class="kw">let </span>mask_values = load(<span class="string">"mask.f32le"</span>);
-<a href=#4430 id=4430 data-nosnippet>4430</a>        <span class="macro">assert!</span>(
-<a href=#4431 id=4431 data-nosnippet>4431</a>            mask_values
-<a href=#4432 id=4432 data-nosnippet>4432</a>                .iter()
-<a href=#4433 id=4433 data-nosnippet>4433</a>                .all(|value| <span class="kw-2">*</span>value == <span class="number">0.0 </span>|| <span class="kw-2">*</span>value == <span class="number">1.0</span>)
-<a href=#4434 id=4434 data-nosnippet>4434</a>        );
-<a href=#4435 id=4435 data-nosnippet>4435</a>        <span class="kw">let </span>support = mask_values
-<a href=#4436 id=4436 data-nosnippet>4436</a>            .iter()
-<a href=#4437 id=4437 data-nosnippet>4437</a>            .map(|value| <span class="kw-2">*</span>value == <span class="number">1.0</span>)
-<a href=#4438 id=4438 data-nosnippet>4438</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#4439 id=4439 data-nosnippet>4439</a>        <span class="macro">assert_eq!</span>(support.iter().filter(|value| <span class="kw-2">**</span>value).count(), <span class="number">4096</span>);
-<a href=#4440 id=4440 data-nosnippet>4440</a>        <span class="kw">let </span>direction = problem.geometry().domains()[<span class="number">0</span>].direction();
-<a href=#4441 id=4441 data-nosnippet>4441</a>        <span class="kw">let </span>mask = <span class="kw">crate</span>::ReconstructionMask::from_reprojected_support(
-<a href=#4442 id=4442 data-nosnippet>4442</a>            problem.problem_id(),
-<a href=#4443 id=4443 data-nosnippet>4443</a>            base.generation_id(),
-<a href=#4444 id=4444 data-nosnippet>4444</a>            direction,
-<a href=#4445 id=4445 data-nosnippet>4445</a>            shape,
-<a href=#4446 id=4446 data-nosnippet>4446</a>            <span class="kw-2">&amp;</span>support,
-<a href=#4447 id=4447 data-nosnippet>4447</a>            direction,
-<a href=#4448 id=4448 data-nosnippet>4448</a>            shape,
-<a href=#4449 id=4449 data-nosnippet>4449</a>        )
-<a href=#4450 id=4450 data-nosnippet>4450</a>        .expect(<span class="string">"native mask with synthetic matching coordinates"</span>);
-<a href=#4451 id=4451 data-nosnippet>4451</a>        <span class="kw">let </span><span class="kw-2">mut </span>controls = MinorCycleProgram::for_problem(<span class="kw-2">&amp;</span>problem)
-<a href=#4452 id=4452 data-nosnippet>4452</a>            .expect(<span class="string">"native MT-MFS controls"</span>)
-<a href=#4453 id=4453 data-nosnippet>4453</a>            .with_fixed_cycle_threshold(<span class="prelude-val">Some</span>(<span class="number">0.028_467_236_086_726_19</span>))
-<a href=#4454 id=4454 data-nosnippet>4454</a>            .record_component_sequence(<span class="number">30</span>)
-<a href=#4455 id=4455 data-nosnippet>4455</a>            .expect(<span class="string">"bounded native step trace"</span>);
-<a href=#4456 id=4456 data-nosnippet>4456</a>        <span class="kw">let </span>binding = raw_response.then(|| {
-<a href=#4457 id=4457 data-nosnippet>4457</a>            <span class="kw">crate</span>::MinorCycleImageResponse::new(
-<a href=#4458 id=4458 data-nosnippet>4458</a>                casa_imaging_model::ProductNormalization::FlatNoise,
-<a href=#4459 id=4459 data-nosnippet>4459</a>                casa_imaging_model::PrimaryBeamValidityPolicy::new(
-<a href=#4460 id=4460 data-nosnippet>4460</a>                    <span class="number">0.0001</span>,
-<a href=#4461 id=4461 data-nosnippet>4461</a>                    casa_imaging_model::ProductSupportComparison::StrictlyGreater,
-<a href=#4462 id=4462 data-nosnippet>4462</a>                    casa_imaging_model::ProductBlankingPolicy::Zero,
-<a href=#4463 id=4463 data-nosnippet>4463</a>                )
-<a href=#4464 id=4464 data-nosnippet>4464</a>                .unwrap(),
-<a href=#4465 id=4465 data-nosnippet>4465</a>            )
-<a href=#4466 id=4466 data-nosnippet>4466</a>            .unwrap()
-<a href=#4467 id=4467 data-nosnippet>4467</a>        });
-<a href=#4468 id=4468 data-nosnippet>4468</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(binding) = binding {
-<a href=#4469 id=4469 data-nosnippet>4469</a>            controls = controls.with_image_response(binding);
-<a href=#4470 id=4470 data-nosnippet>4470</a>        }
-<a href=#4471 id=4471 data-nosnippet>4471</a>        <span class="kw">let </span>response = <span class="kw">super</span>::TaylorSolveResponse::new(<span class="kw-2">&amp;</span>window, binding).unwrap();
-<a href=#4472 id=4472 data-nosnippet>4472</a>        <span class="kw">let </span>raw_identity = normal.diagnostic_content_identity().unwrap();
-<a href=#4473 id=4473 data-nosnippet>4473</a>        <span class="kw">if </span>raw_response {
-<a href=#4474 id=4474 data-nosnippet>4474</a>            <span class="kw">let </span><span class="kw-2">mut </span>missing_binding = controls.clone();
-<a href=#4475 id=4475 data-nosnippet>4475</a>            missing_binding.requires_image_response = <span class="bool-val">true</span>;
-<a href=#4476 id=4476 data-nosnippet>4476</a>            missing_binding.image_response = <span class="prelude-val">None</span>;
-<a href=#4477 id=4477 data-nosnippet>4477</a>            <span class="macro">assert_eq!</span>(
-<a href=#4478 id=4478 data-nosnippet>4478</a>                <span class="kw">super</span>::run_taylor_minor_cycle(<span class="kw-2">&amp;</span>lifecycle, <span class="kw-2">&amp;</span>base, <span class="kw-2">&amp;</span>normal, <span class="kw-2">&amp;</span>mask, missing_binding)
-<a href=#4479 id=4479 data-nosnippet>4479</a>                    .unwrap_err(),
-<a href=#4480 id=4480 data-nosnippet>4480</a>                <span class="kw">super</span>::MinorCycleError::MissingImageResponse
-<a href=#4481 id=4481 data-nosnippet>4481</a>            );
-<a href=#4482 id=4482 data-nosnippet>4482</a>            <span class="kw">let </span>principal = window.normal_moment(<span class="number">0</span>).unwrap();
-<a href=#4483 id=4483 data-nosnippet>4483</a>            <span class="macro">eprintln!</span>(
-<a href=#4484 id=4484 data-nosnippet>4484</a>                <span class="string">"native_minor3 synthetic_raw normal_sum={} published_sum={} raw_h00={} normalized_h00={}"</span>,
-<a href=#4485 id=4485 data-nosnippet>4485</a>                principal.sum_weight(),
-<a href=#4486 id=4486 data-nosnippet>4486</a>                normal.published_sum_weights()[<span class="number">0</span>],
-<a href=#4487 id=4487 data-nosnippet>4487</a>                principal.normal_approximation()[<span class="number">256 </span>* <span class="number">512 </span>+ <span class="number">256</span>].re,
-<a href=#4488 id=4488 data-nosnippet>4488</a>                principal.normal_approximation()[<span class="number">256 </span>* <span class="number">512 </span>+ <span class="number">256</span>].re * response.normal_scale
-<a href=#4489 id=4489 data-nosnippet>4489</a>            );
-<a href=#4490 id=4490 data-nosnippet>4490</a>            <span class="macro">assert!</span>(
-<a href=#4491 id=4491 data-nosnippet>4491</a>                (principal.normal_approximation()[<span class="number">256 </span>* <span class="number">512 </span>+ <span class="number">256</span>].re * response.normal_scale
-<a href=#4492 id=4492 data-nosnippet>4492</a>                    - <span class="number">1.0</span>)
-<a href=#4493 id=4493 data-nosnippet>4493</a>                    .abs()
-<a href=#4494 id=4494 data-nosnippet>4494</a>                    &lt; <span class="number">1.0e-12
-<a href=#4495 id=4495 data-nosnippet>4495</a>            </span>);
-<a href=#4496 id=4496 data-nosnippet>4496</a>            <span class="kw">let </span>evidence_id = |program: <span class="kw-2">&amp;</span>MinorCycleProgram| {
-<a href=#4497 id=4497 data-nosnippet>4497</a>                <span class="kw">super</span>::minor_cycle_evidence_id(
-<a href=#4498 id=4498 data-nosnippet>4498</a>                    lifecycle.authority(),
-<a href=#4499 id=4499 data-nosnippet>4499</a>                    lifecycle.attempt(),
-<a href=#4500 id=4500 data-nosnippet>4500</a>                    lifecycle.epoch(),
-<a href=#4501 id=4501 data-nosnippet>4501</a>                    base.generation_id(),
-<a href=#4502 id=4502 data-nosnippet>4502</a>                    normal.completion_id(),
-<a href=#4503 id=4503 data-nosnippet>4503</a>                    <span class="kw-2">&amp;</span>[mask.generation_id()],
-<a href=#4504 id=4504 data-nosnippet>4504</a>                    program,
-<a href=#4505 id=4505 data-nosnippet>4505</a>                    <span class="number">0</span>,
-<a href=#4506 id=4506 data-nosnippet>4506</a>                    <span class="number">0</span>,
-<a href=#4507 id=4507 data-nosnippet>4507</a>                    <span class="number">0.0</span>,
-<a href=#4508 id=4508 data-nosnippet>4508</a>                    <span class="number">0.0</span>,
-<a href=#4509 id=4509 data-nosnippet>4509</a>                    <span class="prelude-val">None</span>,
+<a href=#4363 id=4363 data-nosnippet>4363</a>                .as_chunks::&lt;<span class="number">4</span>&gt;()
+<a href=#4364 id=4364 data-nosnippet>4364</a>                .<span class="number">0
+<a href=#4365 id=4365 data-nosnippet>4365</a>                </span>.iter()
+<a href=#4366 id=4366 data-nosnippet>4366</a>                .map(|bytes| f64::from(f32::from_le_bytes(<span class="kw-2">*</span>bytes)))
+<a href=#4367 id=4367 data-nosnippet>4367</a>                .inspect(|value| <span class="macro">assert!</span>(value.is_finite(), <span class="string">"finite native plane: {name}"</span>))
+<a href=#4368 id=4368 data-nosnippet>4368</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+<a href=#4369 id=4369 data-nosnippet>4369</a>        };
+<a href=#4370 id=4370 data-nosnippet>4370</a>        <span class="kw">let </span>native_residuals = [load(<span class="string">"residual0.f32le"</span>), load(<span class="string">"residual1.f32le"</span>)];
+<a href=#4371 id=4371 data-nosnippet>4371</a>        <span class="kw">let </span><span class="kw-2">mut </span>residuals = native_residuals
+<a href=#4372 id=4372 data-nosnippet>4372</a>            .iter()
+<a href=#4373 id=4373 data-nosnippet>4373</a>            .flatten()
+<a href=#4374 id=4374 data-nosnippet>4374</a>            .map(|value| Complex64::new(<span class="kw-2">*</span>value, <span class="number">0.0</span>))
+<a href=#4375 id=4375 data-nosnippet>4375</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#4376 id=4376 data-nosnippet>4376</a>        <span class="kw">let </span><span class="kw-2">mut </span>psfs = (<span class="number">0</span>..<span class="number">3</span>)
+<a href=#4377 id=4377 data-nosnippet>4377</a>            .flat_map(|term| load(<span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"psf{term}.f32le"</span>)))
+<a href=#4378 id=4378 data-nosnippet>4378</a>            .map(|value| Complex64::new(value, <span class="number">0.0</span>))
+<a href=#4379 id=4379 data-nosnippet>4379</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#4380 id=4380 data-nosnippet>4380</a>        <span class="kw">let </span>raw_state = raw_response.then(|| {
+<a href=#4381 id=4381 data-nosnippet>4381</a>            <span class="comment">// Deliberately distinct synthetic sum weights make each owner
+<a href=#4382 id=4382 data-nosnippet>4382</a>            // conversion observable. This is an algebra/wiring regression,
+<a href=#4383 id=4383 data-nosnippet>4383</a>            // not a measurement of the retained observation's raw scalars.
+<a href=#4384 id=4384 data-nosnippet>4384</a>            </span><span class="kw">let </span>normal_weight = <span class="number">17.0</span>;
+<a href=#4385 id=4385 data-nosnippet>4385</a>            <span class="kw">let </span>published_weight = <span class="number">5.0</span>;
+<a href=#4386 id=4386 data-nosnippet>4386</a>            <span class="kw">let </span>weight = load(<span class="string">"weight0.f32le"</span>);
+<a href=#4387 id=4387 data-nosnippet>4387</a>            <span class="kw">let </span>peak = weight.iter().copied().fold(<span class="number">0.0_f64</span>, f64::max);
+<a href=#4388 id=4388 data-nosnippet>4388</a>            <span class="kw">for </span>(index, residual) <span class="kw">in </span>residuals.iter_mut().enumerate() {
+<a href=#4389 id=4389 data-nosnippet>4389</a>                <span class="kw-2">*</span>residual <span class="kw-2">*</span>= published_weight * (weight[index % cells] * peak).sqrt();
+<a href=#4390 id=4390 data-nosnippet>4390</a>            }
+<a href=#4391 id=4391 data-nosnippet>4391</a>            <span class="kw">for </span>psf <span class="kw">in </span><span class="kw-2">&amp;mut </span>psfs {
+<a href=#4392 id=4392 data-nosnippet>4392</a>                <span class="kw-2">*</span>psf <span class="kw-2">*</span>= normal_weight;
+<a href=#4393 id=4393 data-nosnippet>4393</a>            }
+<a href=#4394 id=4394 data-nosnippet>4394</a>            (
+<a href=#4395 id=4395 data-nosnippet>4395</a>                weight
+<a href=#4396 id=4396 data-nosnippet>4396</a>                    .into_iter()
+<a href=#4397 id=4397 data-nosnippet>4397</a>                    .map(|value| value * normal_weight)
+<a href=#4398 id=4398 data-nosnippet>4398</a>                    .collect(),
+<a href=#4399 id=4399 data-nosnippet>4399</a>                normal_weight,
+<a href=#4400 id=4400 data-nosnippet>4400</a>                published_weight,
+<a href=#4401 id=4401 data-nosnippet>4401</a>            )
+<a href=#4402 id=4402 data-nosnippet>4402</a>        });
+<a href=#4403 id=4403 data-nosnippet>4403</a>        <span class="kw">let </span>(problem, lifecycle, base, normal) = <span class="kw">crate</span>::major_cycle::native_minor_fixture::build(
+<a href=#4404 id=4404 data-nosnippet>4404</a>            residuals.into_boxed_slice(),
+<a href=#4405 id=4405 data-nosnippet>4405</a>            psfs.into_boxed_slice(),
+<a href=#4406 id=4406 data-nosnippet>4406</a>            raw_state,
+<a href=#4407 id=4407 data-nosnippet>4407</a>        );
+<a href=#4408 id=4408 data-nosnippet>4408</a>        <span class="kw">let </span>window = normal
+<a href=#4409 id=4409 data-nosnippet>4409</a>            .read_window(normal.slab().core_range())
+<a href=#4410 id=4410 data-nosnippet>4410</a>            .expect(<span class="string">"coupled Taylor fixture window"</span>);
+<a href=#4411 id=4411 data-nosnippet>4411</a>        <span class="kw">for </span>term <span class="kw">in </span><span class="number">0</span>..<span class="number">2 </span>{
+<a href=#4412 id=4412 data-nosnippet>4412</a>            <span class="macro">assert_eq!</span>(
+<a href=#4413 id=4413 data-nosnippet>4413</a>                window
+<a href=#4414 id=4414 data-nosnippet>4414</a>                    .coefficient_term(term)
+<a href=#4415 id=4415 data-nosnippet>4415</a>                    .expect(<span class="string">"native residual term"</span>)
+<a href=#4416 id=4416 data-nosnippet>4416</a>                    .residual()
+<a href=#4417 id=4417 data-nosnippet>4417</a>                    .len(),
+<a href=#4418 id=4418 data-nosnippet>4418</a>                cells
+<a href=#4419 id=4419 data-nosnippet>4419</a>            );
+<a href=#4420 id=4420 data-nosnippet>4420</a>        }
+<a href=#4421 id=4421 data-nosnippet>4421</a>        <span class="kw">for </span>moment <span class="kw">in </span><span class="number">0</span>..<span class="number">3 </span>{
+<a href=#4422 id=4422 data-nosnippet>4422</a>            <span class="macro">assert_eq!</span>(
+<a href=#4423 id=4423 data-nosnippet>4423</a>                window
+<a href=#4424 id=4424 data-nosnippet>4424</a>                    .normal_moment(moment)
+<a href=#4425 id=4425 data-nosnippet>4425</a>                    .expect(<span class="string">"complete native normal moment"</span>)
+<a href=#4426 id=4426 data-nosnippet>4426</a>                    .normal_approximation()
+<a href=#4427 id=4427 data-nosnippet>4427</a>                    .len(),
+<a href=#4428 id=4428 data-nosnippet>4428</a>                cells
+<a href=#4429 id=4429 data-nosnippet>4429</a>            );
+<a href=#4430 id=4430 data-nosnippet>4430</a>        }
+<a href=#4431 id=4431 data-nosnippet>4431</a>        <span class="kw">let </span>mask_values = load(<span class="string">"mask.f32le"</span>);
+<a href=#4432 id=4432 data-nosnippet>4432</a>        <span class="macro">assert!</span>(
+<a href=#4433 id=4433 data-nosnippet>4433</a>            mask_values
+<a href=#4434 id=4434 data-nosnippet>4434</a>                .iter()
+<a href=#4435 id=4435 data-nosnippet>4435</a>                .all(|value| <span class="kw-2">*</span>value == <span class="number">0.0 </span>|| <span class="kw-2">*</span>value == <span class="number">1.0</span>)
+<a href=#4436 id=4436 data-nosnippet>4436</a>        );
+<a href=#4437 id=4437 data-nosnippet>4437</a>        <span class="kw">let </span>support = mask_values
+<a href=#4438 id=4438 data-nosnippet>4438</a>            .iter()
+<a href=#4439 id=4439 data-nosnippet>4439</a>            .map(|value| <span class="kw-2">*</span>value == <span class="number">1.0</span>)
+<a href=#4440 id=4440 data-nosnippet>4440</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#4441 id=4441 data-nosnippet>4441</a>        <span class="macro">assert_eq!</span>(support.iter().filter(|value| <span class="kw-2">**</span>value).count(), <span class="number">4096</span>);
+<a href=#4442 id=4442 data-nosnippet>4442</a>        <span class="kw">let </span>direction = problem.geometry().domains()[<span class="number">0</span>].direction();
+<a href=#4443 id=4443 data-nosnippet>4443</a>        <span class="kw">let </span>mask = <span class="kw">crate</span>::ReconstructionMask::from_reprojected_support(
+<a href=#4444 id=4444 data-nosnippet>4444</a>            problem.problem_id(),
+<a href=#4445 id=4445 data-nosnippet>4445</a>            base.generation_id(),
+<a href=#4446 id=4446 data-nosnippet>4446</a>            direction,
+<a href=#4447 id=4447 data-nosnippet>4447</a>            shape,
+<a href=#4448 id=4448 data-nosnippet>4448</a>            <span class="kw-2">&amp;</span>support,
+<a href=#4449 id=4449 data-nosnippet>4449</a>            direction,
+<a href=#4450 id=4450 data-nosnippet>4450</a>            shape,
+<a href=#4451 id=4451 data-nosnippet>4451</a>        )
+<a href=#4452 id=4452 data-nosnippet>4452</a>        .expect(<span class="string">"native mask with synthetic matching coordinates"</span>);
+<a href=#4453 id=4453 data-nosnippet>4453</a>        <span class="kw">let </span><span class="kw-2">mut </span>controls = MinorCycleProgram::for_problem(<span class="kw-2">&amp;</span>problem)
+<a href=#4454 id=4454 data-nosnippet>4454</a>            .expect(<span class="string">"native MT-MFS controls"</span>)
+<a href=#4455 id=4455 data-nosnippet>4455</a>            .with_fixed_cycle_threshold(<span class="prelude-val">Some</span>(<span class="number">0.028_467_236_086_726_19</span>))
+<a href=#4456 id=4456 data-nosnippet>4456</a>            .record_component_sequence(<span class="number">30</span>)
+<a href=#4457 id=4457 data-nosnippet>4457</a>            .expect(<span class="string">"bounded native step trace"</span>);
+<a href=#4458 id=4458 data-nosnippet>4458</a>        <span class="kw">let </span>binding = raw_response.then(|| {
+<a href=#4459 id=4459 data-nosnippet>4459</a>            <span class="kw">crate</span>::MinorCycleImageResponse::new(
+<a href=#4460 id=4460 data-nosnippet>4460</a>                casa_imaging_model::ProductNormalization::FlatNoise,
+<a href=#4461 id=4461 data-nosnippet>4461</a>                casa_imaging_model::PrimaryBeamValidityPolicy::new(
+<a href=#4462 id=4462 data-nosnippet>4462</a>                    <span class="number">0.0001</span>,
+<a href=#4463 id=4463 data-nosnippet>4463</a>                    casa_imaging_model::ProductSupportComparison::StrictlyGreater,
+<a href=#4464 id=4464 data-nosnippet>4464</a>                    casa_imaging_model::ProductBlankingPolicy::Zero,
+<a href=#4465 id=4465 data-nosnippet>4465</a>                )
+<a href=#4466 id=4466 data-nosnippet>4466</a>                .unwrap(),
+<a href=#4467 id=4467 data-nosnippet>4467</a>            )
+<a href=#4468 id=4468 data-nosnippet>4468</a>            .unwrap()
+<a href=#4469 id=4469 data-nosnippet>4469</a>        });
+<a href=#4470 id=4470 data-nosnippet>4470</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(binding) = binding {
+<a href=#4471 id=4471 data-nosnippet>4471</a>            controls = controls.with_image_response(binding);
+<a href=#4472 id=4472 data-nosnippet>4472</a>        }
+<a href=#4473 id=4473 data-nosnippet>4473</a>        <span class="kw">let </span>response = <span class="kw">super</span>::TaylorSolveResponse::new(<span class="kw-2">&amp;</span>window, binding).unwrap();
+<a href=#4474 id=4474 data-nosnippet>4474</a>        <span class="kw">let </span>raw_identity = normal.diagnostic_content_identity().unwrap();
+<a href=#4475 id=4475 data-nosnippet>4475</a>        <span class="kw">if </span>raw_response {
+<a href=#4476 id=4476 data-nosnippet>4476</a>            <span class="kw">let </span><span class="kw-2">mut </span>missing_binding = controls.clone();
+<a href=#4477 id=4477 data-nosnippet>4477</a>            missing_binding.requires_image_response = <span class="bool-val">true</span>;
+<a href=#4478 id=4478 data-nosnippet>4478</a>            missing_binding.image_response = <span class="prelude-val">None</span>;
+<a href=#4479 id=4479 data-nosnippet>4479</a>            <span class="macro">assert_eq!</span>(
+<a href=#4480 id=4480 data-nosnippet>4480</a>                <span class="kw">super</span>::run_taylor_minor_cycle(<span class="kw-2">&amp;</span>lifecycle, <span class="kw-2">&amp;</span>base, <span class="kw-2">&amp;</span>normal, <span class="kw-2">&amp;</span>mask, missing_binding)
+<a href=#4481 id=4481 data-nosnippet>4481</a>                    .unwrap_err(),
+<a href=#4482 id=4482 data-nosnippet>4482</a>                <span class="kw">super</span>::MinorCycleError::MissingImageResponse
+<a href=#4483 id=4483 data-nosnippet>4483</a>            );
+<a href=#4484 id=4484 data-nosnippet>4484</a>            <span class="kw">let </span>principal = window.normal_moment(<span class="number">0</span>).unwrap();
+<a href=#4485 id=4485 data-nosnippet>4485</a>            <span class="macro">eprintln!</span>(
+<a href=#4486 id=4486 data-nosnippet>4486</a>                <span class="string">"native_minor3 synthetic_raw normal_sum={} published_sum={} raw_h00={} normalized_h00={}"</span>,
+<a href=#4487 id=4487 data-nosnippet>4487</a>                principal.sum_weight(),
+<a href=#4488 id=4488 data-nosnippet>4488</a>                normal.published_sum_weights()[<span class="number">0</span>],
+<a href=#4489 id=4489 data-nosnippet>4489</a>                principal.normal_approximation()[<span class="number">256 </span>* <span class="number">512 </span>+ <span class="number">256</span>].re,
+<a href=#4490 id=4490 data-nosnippet>4490</a>                principal.normal_approximation()[<span class="number">256 </span>* <span class="number">512 </span>+ <span class="number">256</span>].re * response.normal_scale
+<a href=#4491 id=4491 data-nosnippet>4491</a>            );
+<a href=#4492 id=4492 data-nosnippet>4492</a>            <span class="macro">assert!</span>(
+<a href=#4493 id=4493 data-nosnippet>4493</a>                (principal.normal_approximation()[<span class="number">256 </span>* <span class="number">512 </span>+ <span class="number">256</span>].re * response.normal_scale
+<a href=#4494 id=4494 data-nosnippet>4494</a>                    - <span class="number">1.0</span>)
+<a href=#4495 id=4495 data-nosnippet>4495</a>                    .abs()
+<a href=#4496 id=4496 data-nosnippet>4496</a>                    &lt; <span class="number">1.0e-12
+<a href=#4497 id=4497 data-nosnippet>4497</a>            </span>);
+<a href=#4498 id=4498 data-nosnippet>4498</a>            <span class="kw">let </span>evidence_id = |program: <span class="kw-2">&amp;</span>MinorCycleProgram| {
+<a href=#4499 id=4499 data-nosnippet>4499</a>                <span class="kw">super</span>::minor_cycle_evidence_id(
+<a href=#4500 id=4500 data-nosnippet>4500</a>                    lifecycle.authority(),
+<a href=#4501 id=4501 data-nosnippet>4501</a>                    lifecycle.attempt(),
+<a href=#4502 id=4502 data-nosnippet>4502</a>                    lifecycle.epoch(),
+<a href=#4503 id=4503 data-nosnippet>4503</a>                    base.generation_id(),
+<a href=#4504 id=4504 data-nosnippet>4504</a>                    normal.completion_id(),
+<a href=#4505 id=4505 data-nosnippet>4505</a>                    <span class="kw-2">&amp;</span>[mask.generation_id()],
+<a href=#4506 id=4506 data-nosnippet>4506</a>                    program,
+<a href=#4507 id=4507 data-nosnippet>4507</a>                    <span class="number">0</span>,
+<a href=#4508 id=4508 data-nosnippet>4508</a>                    <span class="number">0</span>,
+<a href=#4509 id=4509 data-nosnippet>4509</a>                    <span class="number">0.0</span>,
 <a href=#4510 id=4510 data-nosnippet>4510</a>                    <span class="number">0.0</span>,
-<a href=#4511 id=4511 data-nosnippet>4511</a>                    MinorCycleStopReason::ThresholdReached,
-<a href=#4512 id=4512 data-nosnippet>4512</a>                    <span class="prelude-val">None</span>,
-<a href=#4513 id=4513 data-nosnippet>4513</a>                    <span class="number">0</span>,
+<a href=#4511 id=4511 data-nosnippet>4511</a>                    <span class="prelude-val">None</span>,
+<a href=#4512 id=4512 data-nosnippet>4512</a>                    <span class="number">0.0</span>,
+<a href=#4513 id=4513 data-nosnippet>4513</a>                    MinorCycleStopReason::ThresholdReached,
 <a href=#4514 id=4514 data-nosnippet>4514</a>                    <span class="prelude-val">None</span>,
-<a href=#4515 id=4515 data-nosnippet>4515</a>                )
-<a href=#4516 id=4516 data-nosnippet>4516</a>            };
-<a href=#4517 id=4517 data-nosnippet>4517</a>            <span class="kw">let </span><span class="kw-2">mut </span>unbound = controls.clone();
-<a href=#4518 id=4518 data-nosnippet>4518</a>            unbound.image_response = <span class="prelude-val">None</span>;
-<a href=#4519 id=4519 data-nosnippet>4519</a>            <span class="kw">let </span>flat_sky = controls.clone().with_image_response(
-<a href=#4520 id=4520 data-nosnippet>4520</a>                <span class="kw">crate</span>::MinorCycleImageResponse::new(
-<a href=#4521 id=4521 data-nosnippet>4521</a>                    casa_imaging_model::ProductNormalization::FlatSky,
-<a href=#4522 id=4522 data-nosnippet>4522</a>                    binding.unwrap().policy(),
-<a href=#4523 id=4523 data-nosnippet>4523</a>                )
-<a href=#4524 id=4524 data-nosnippet>4524</a>                .unwrap(),
-<a href=#4525 id=4525 data-nosnippet>4525</a>            );
-<a href=#4526 id=4526 data-nosnippet>4526</a>            <span class="macro">assert_ne!</span>(evidence_id(<span class="kw-2">&amp;</span>controls), evidence_id(<span class="kw-2">&amp;</span>unbound));
-<a href=#4527 id=4527 data-nosnippet>4527</a>            <span class="macro">assert_ne!</span>(evidence_id(<span class="kw-2">&amp;</span>controls), evidence_id(<span class="kw-2">&amp;</span>flat_sky));
-<a href=#4528 id=4528 data-nosnippet>4528</a>            <span class="macro">eprintln!</span>(<span class="string">"native_minor3 missing_binding_rejected=true response_binding_hashed=true"</span>);
-<a href=#4529 id=4529 data-nosnippet>4529</a>        }
-<a href=#4530 id=4530 data-nosnippet>4530</a>        <span class="kw">let </span>started = std::time::Instant::now();
-<a href=#4531 id=4531 data-nosnippet>4531</a>        <span class="kw">let </span>result = <span class="kw">super</span>::run_taylor_minor_cycle(<span class="kw-2">&amp;</span>lifecycle, <span class="kw-2">&amp;</span>base, <span class="kw-2">&amp;</span>normal, <span class="kw-2">&amp;</span>mask, controls)
-<a href=#4532 id=4532 data-nosnippet>4532</a>            .expect(<span class="string">"production minor cycle on native normalized inputs"</span>);
-<a href=#4533 id=4533 data-nosnippet>4533</a>        <span class="kw">let </span>evidence = result.evidence();
-<a href=#4534 id=4534 data-nosnippet>4534</a>        <span class="macro">assert_eq!</span>(
-<a href=#4535 id=4535 data-nosnippet>4535</a>            normal.diagnostic_content_identity().unwrap(),
-<a href=#4536 id=4536 data-nosnippet>4536</a>            raw_identity,
-<a href=#4537 id=4537 data-nosnippet>4537</a>            <span class="string">"solve only borrows raw normal state"
-<a href=#4538 id=4538 data-nosnippet>4538</a>        </span>);
-<a href=#4539 id=4539 data-nosnippet>4539</a>        <span class="macro">eprintln!</span>(
-<a href=#4540 id=4540 data-nosnippet>4540</a>            <span class="string">"native_minor3 iterations={} initial_peak={:.17e} final_peak={:.17e} elapsed_s={:.6}"</span>,
-<a href=#4541 id=4541 data-nosnippet>4541</a>            evidence.iterations(),
-<a href=#4542 id=4542 data-nosnippet>4542</a>            evidence.initial_peak_flux(),
-<a href=#4543 id=4543 data-nosnippet>4543</a>            evidence.final_peak_flux(),
-<a href=#4544 id=4544 data-nosnippet>4544</a>            started.elapsed().as_secs_f64(),
-<a href=#4545 id=4545 data-nosnippet>4545</a>        );
-<a href=#4546 id=4546 data-nosnippet>4546</a>        <span class="kw">let </span><span class="kw-2">mut </span>model_planes = [<span class="macro">vec!</span>[<span class="number">0.0</span>; cells], <span class="macro">vec!</span>[<span class="number">0.0</span>; cells]];
-<a href=#4547 id=4547 data-nosnippet>4547</a>        <span class="kw">let </span><span class="kw-2">mut </span>model_terms = BTreeMap::new();
-<a href=#4548 id=4548 data-nosnippet>4548</a>        <span class="kw">for </span>term <span class="kw">in </span>result
-<a href=#4549 id=4549 data-nosnippet>4549</a>            .delta()
-<a href=#4550 id=4550 data-nosnippet>4550</a>            .expect(<span class="string">"three steps produce a model delta"</span>)
-<a href=#4551 id=4551 data-nosnippet>4551</a>            .terms()
-<a href=#4552 id=4552 data-nosnippet>4552</a>        {
-<a href=#4553 id=4553 data-nosnippet>4553</a>            <span class="kw">let </span>cell = term.cell();
-<a href=#4554 id=4554 data-nosnippet>4554</a>            <span class="kw">let </span>pixel = cell.pixel();
-<a href=#4555 id=4555 data-nosnippet>4555</a>            <span class="kw">let </span>value = term.increment().value();
-<a href=#4556 id=4556 data-nosnippet>4556</a>            model_planes[cell.coefficient()][pixel[<span class="number">0</span>] * shape[<span class="number">1</span>] + pixel[<span class="number">1</span>]] = value;
-<a href=#4557 id=4557 data-nosnippet>4557</a>            <span class="kw">let </span>solve_value = <span class="kw">if let </span><span class="prelude-val">Some</span>((sensitivity, binding)) = response.directional {
-<a href=#4558 id=4558 data-nosnippet>4558</a>                sensitivity
-<a href=#4559 id=4559 data-nosnippet>4559</a>                    .physical_to_apparent(
-<a href=#4560 id=4560 data-nosnippet>4560</a>                        value,
-<a href=#4561 id=4561 data-nosnippet>4561</a>                        pixel[<span class="number">0</span>] * shape[<span class="number">1</span>] + pixel[<span class="number">1</span>],
-<a href=#4562 id=4562 data-nosnippet>4562</a>                        binding.normalization(),
-<a href=#4563 id=4563 data-nosnippet>4563</a>                        binding.policy(),
-<a href=#4564 id=4564 data-nosnippet>4564</a>                    )
-<a href=#4565 id=4565 data-nosnippet>4565</a>                    .unwrap()
-<a href=#4566 id=4566 data-nosnippet>4566</a>            } <span class="kw">else </span>{
-<a href=#4567 id=4567 data-nosnippet>4567</a>                value
-<a href=#4568 id=4568 data-nosnippet>4568</a>            };
-<a href=#4569 id=4569 data-nosnippet>4569</a>            model_terms.insert(
-<a href=#4570 id=4570 data-nosnippet>4570</a>                base.shape().flat_index(cell).expect(<span class="string">"model cell"</span>),
-<a href=#4571 id=4571 data-nosnippet>4571</a>                solve_value,
-<a href=#4572 id=4572 data-nosnippet>4572</a>            );
-<a href=#4573 id=4573 data-nosnippet>4573</a>        }
-<a href=#4574 id=4574 data-nosnippet>4574</a>        <span class="kw">let </span><span class="kw-2">mut </span>residual_planes = native_residuals.to_vec();
-<a href=#4575 id=4575 data-nosnippet>4575</a>        <span class="kw">super</span>::refresh_taylor_residuals(
-<a href=#4576 id=4576 data-nosnippet>4576</a>            <span class="kw-2">&amp;mut </span>residual_planes,
-<a href=#4577 id=4577 data-nosnippet>4577</a>            <span class="kw-2">&amp;</span>window,
-<a href=#4578 id=4578 data-nosnippet>4578</a>            shape,
-<a href=#4579 id=4579 data-nosnippet>4579</a>            [<span class="number">256</span>, <span class="number">256</span>],
-<a href=#4580 id=4580 data-nosnippet>4580</a>            <span class="kw-2">&amp;</span>base,
-<a href=#4581 id=4581 data-nosnippet>4581</a>            <span class="kw-2">&amp;</span>model_terms,
-<a href=#4582 id=4582 data-nosnippet>4582</a>            response,
-<a href=#4583 id=4583 data-nosnippet>4583</a>        )
-<a href=#4584 id=4584 data-nosnippet>4584</a>        .expect(<span class="string">"same production terminal residual refresh"</span>);
-<a href=#4585 id=4585 data-nosnippet>4585</a>        <span class="kw">let </span>nrms = |actual: <span class="kw-2">&amp;</span>[f64], expected: <span class="kw-2">&amp;</span>[f64]| {
-<a href=#4586 id=4586 data-nosnippet>4586</a>            <span class="kw">let </span>error = actual
-<a href=#4587 id=4587 data-nosnippet>4587</a>                .iter()
-<a href=#4588 id=4588 data-nosnippet>4588</a>                .zip(expected)
-<a href=#4589 id=4589 data-nosnippet>4589</a>                .map(|(a, b)| (a - b).powi(<span class="number">2</span>))
-<a href=#4590 id=4590 data-nosnippet>4590</a>                .sum::&lt;f64&gt;();
-<a href=#4591 id=4591 data-nosnippet>4591</a>            <span class="kw">let </span>reference = expected.iter().map(|value| value.powi(<span class="number">2</span>)).sum::&lt;f64&gt;();
-<a href=#4592 id=4592 data-nosnippet>4592</a>            (error / reference).sqrt()
-<a href=#4593 id=4593 data-nosnippet>4593</a>        };
-<a href=#4594 id=4594 data-nosnippet>4594</a>        <span class="kw">let </span><span class="kw-2">mut </span>metrics = Vec::new();
-<a href=#4595 id=4595 data-nosnippet>4595</a>        <span class="kw">for </span>term <span class="kw">in </span><span class="number">0</span>..<span class="number">2 </span>{
-<a href=#4596 id=4596 data-nosnippet>4596</a>            <span class="kw">for </span>(kind, actual) <span class="kw">in </span>[
-<a href=#4597 id=4597 data-nosnippet>4597</a>                (<span class="string">"model"</span>, <span class="kw-2">&amp;</span>model_planes[term]),
-<a href=#4598 id=4598 data-nosnippet>4598</a>                (<span class="string">"residual"</span>, <span class="kw-2">&amp;</span>residual_planes[term]),
-<a href=#4599 id=4599 data-nosnippet>4599</a>            ] {
-<a href=#4600 id=4600 data-nosnippet>4600</a>                <span class="kw">let </span>expected = <span class="kw">if </span>raw_response &amp;&amp; kind == <span class="string">"model" </span>{
-<a href=#4601 id=4601 data-nosnippet>4601</a>                    <span class="kw">let </span>root = std::path::PathBuf::from(
-<a href=#4602 id=4602 data-nosnippet>4602</a>                        std::env::var_os(<span class="string">"CASA_RS_T51_NATIVE_MODEL_WEIGHT_FIXTURE"</span>)
-<a href=#4603 id=4603 data-nosnippet>4603</a>                            .expect(<span class="string">"native physical model fixture"</span>),
-<a href=#4604 id=4604 data-nosnippet>4604</a>                    );
-<a href=#4605 id=4605 data-nosnippet>4605</a>                    <span class="kw">let </span>bytes =
-<a href=#4606 id=4606 data-nosnippet>4606</a>                        std::fs::read(root.join(<span class="macro">format!</span>(<span class="string">"native_first3_physical{term}.f32le"</span>)))
-<a href=#4607 id=4607 data-nosnippet>4607</a>                            .unwrap();
-<a href=#4608 id=4608 data-nosnippet>4608</a>                    <span class="macro">assert_eq!</span>(bytes.len(), cells * <span class="number">4</span>);
-<a href=#4609 id=4609 data-nosnippet>4609</a>                    bytes
-<a href=#4610 id=4610 data-nosnippet>4610</a>                        .chunks_exact(<span class="number">4</span>)
-<a href=#4611 id=4611 data-nosnippet>4611</a>                        .map(|bytes| f64::from(f32::from_le_bytes(bytes.try_into().unwrap())))
-<a href=#4612 id=4612 data-nosnippet>4612</a>                        .collect()
-<a href=#4613 id=4613 data-nosnippet>4613</a>                } <span class="kw">else </span>{
-<a href=#4614 id=4614 data-nosnippet>4614</a>                    load(<span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"native_{kind}{term}.f32le"</span>))
-<a href=#4615 id=4615 data-nosnippet>4615</a>                };
-<a href=#4616 id=4616 data-nosnippet>4616</a>                <span class="kw">let </span>error = nrms(actual, <span class="kw-2">&amp;</span>expected);
-<a href=#4617 id=4617 data-nosnippet>4617</a>                <span class="macro">eprintln!</span>(<span class="string">"native_minor3 {kind}{term} nrms={error:.17e}"</span>);
-<a href=#4618 id=4618 data-nosnippet>4618</a>                metrics.push((<span class="macro">format!</span>(<span class="string">"{kind}{term}"</span>), error));
-<a href=#4619 id=4619 data-nosnippet>4619</a>            }
-<a href=#4620 id=4620 data-nosnippet>4620</a>        }
-<a href=#4621 id=4621 data-nosnippet>4621</a>        <span class="macro">assert_eq!</span>(evidence.iterations(), <span class="number">3</span>);
-<a href=#4622 id=4622 data-nosnippet>4622</a>        <span class="macro">assert!</span>((evidence.initial_peak_flux() / <span class="number">0.035_584_043_711_423_874 </span>- <span class="number">1.0</span>).abs() &lt;= <span class="number">1.0e-3</span>);
-<a href=#4623 id=4623 data-nosnippet>4623</a>        <span class="macro">assert!</span>((evidence.final_peak_flux() / <span class="number">0.025_940_770_283_341_408 </span>- <span class="number">1.0</span>).abs() &lt;= <span class="number">1.0e-3</span>);
-<a href=#4624 id=4624 data-nosnippet>4624</a>        <span class="kw">for </span>(name, error) <span class="kw">in </span>metrics {
-<a href=#4625 id=4625 data-nosnippet>4625</a>            <span class="macro">assert!</span>(error &lt;= <span class="number">1.0e-3</span>, <span class="string">"native first-minor {name} NRMS {error}"</span>);
-<a href=#4626 id=4626 data-nosnippet>4626</a>        }
-<a href=#4627 id=4627 data-nosnippet>4627</a>    }
-<a href=#4628 id=4628 data-nosnippet>4628</a>
-<a href=#4629 id=4629 data-nosnippet>4629</a>    <span class="kw">use </span>casa_imaging_model::{
-<a href=#4630 id=4630 data-nosnippet>4630</a>        HogbomIterationAccounting, ModelCell, ReconstructionAlgorithm, ReconstructionBasis,
-<a href=#4631 id=4631 data-nosnippet>4631</a>        ReconstructionControls,
-<a href=#4632 id=4632 data-nosnippet>4632</a>    };
-<a href=#4633 id=4633 data-nosnippet>4633</a>    <span class="kw">use </span>num_complex::Complex64;
-<a href=#4634 id=4634 data-nosnippet>4634</a>
-<a href=#4635 id=4635 data-nosnippet>4635</a>    <span class="kw">use super</span>::{
-<a href=#4636 id=4636 data-nosnippet>4636</a>        ImageDomainHogbomWork, MinorCycleComponent, MinorCycleModelPlane, MinorCycleProgram,
-<a href=#4637 id=4637 data-nosnippet>4637</a>        MinorCycleStopReason, TaylorCandidate, TaylorSearchWindow, build_scale_kernels,
-<a href=#4638 id=4638 data-nosnippet>4638</a>        minor_cycle_workspace_bytes, model_cell, multiscale_diverged, prefer_taylor_across_scales,
-<a href=#4639 id=4639 data-nosnippet>4639</a>        prefer_taylor_within_scale, run_image_domain_hogbom_controllers, subtract_psf,
-<a href=#4640 id=4640 data-nosnippet>4640</a>        subtract_psf_circular, subtract_psf_patch, taylor_psf_peak_index,
-<a href=#4641 id=4641 data-nosnippet>4641</a>        taylor_rows_nearly_dependent, within_multiscale_border,
-<a href=#4642 id=4642 data-nosnippet>4642</a>    };
-<a href=#4643 id=4643 data-nosnippet>4643</a>
-<a href=#4644 id=4644 data-nosnippet>4644</a>    <span class="attr">#[test]
-<a href=#4645 id=4645 data-nosnippet>4645</a>    </span><span class="kw">fn </span>t55_point_psf_subtraction_preserves_clipping_patch_and_pixel_arithmetic() {
-<a href=#4646 id=4646 data-nosnippet>4646</a>        <span class="kw">let </span>shape = [<span class="number">7</span>, <span class="number">11</span>];
-<a href=#4647 id=4647 data-nosnippet>4647</a>        <span class="kw">let </span>psf = (<span class="number">0</span>..shape[<span class="number">0</span>] * shape[<span class="number">1</span>])
-<a href=#4648 id=4648 data-nosnippet>4648</a>            .map(|index| Complex64::new((index <span class="kw">as </span>f64 - <span class="number">23.0</span>) / <span class="number">17.0</span>, <span class="number">0.25</span>))
-<a href=#4649 id=4649 data-nosnippet>4649</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#4650 id=4650 data-nosnippet>4650</a>        <span class="kw">let </span>original = (<span class="number">0</span>..psf.len())
-<a href=#4651 id=4651 data-nosnippet>4651</a>            .map(|index| (index <span class="kw">as </span>f64 + <span class="number">1.0</span>) / <span class="number">13.0</span>)
-<a href=#4652 id=4652 data-nosnippet>4652</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#4653 id=4653 data-nosnippet>4653</a>        <span class="kw">for </span>peak <span class="kw">in </span>[[<span class="number">0</span>, <span class="number">0</span>], [<span class="number">3</span>, <span class="number">5</span>], [<span class="number">6</span>, <span class="number">10</span>], [<span class="number">1</span>, <span class="number">9</span>]] {
-<a href=#4654 id=4654 data-nosnippet>4654</a>            <span class="kw">for </span>psf_peak <span class="kw">in </span>[[<span class="number">0</span>, <span class="number">0</span>], [<span class="number">3</span>, <span class="number">5</span>], [<span class="number">6</span>, <span class="number">10</span>]] {
-<a href=#4655 id=4655 data-nosnippet>4655</a>                <span class="kw">for </span>radius <span class="kw">in </span>[<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>([<span class="number">0</span>, <span class="number">0</span>]), <span class="prelude-val">Some</span>([<span class="number">1</span>, <span class="number">2</span>]), <span class="prelude-val">Some</span>(shape)] {
-<a href=#4656 id=4656 data-nosnippet>4656</a>                    <span class="kw">let </span><span class="kw-2">mut </span>expected = original.clone();
-<a href=#4657 id=4657 data-nosnippet>4657</a>                    <span class="kw">for </span>(target, value) <span class="kw">in </span>expected.iter_mut().enumerate() {
-<a href=#4658 id=4658 data-nosnippet>4658</a>                        <span class="kw">let </span>pixel = [target / shape[<span class="number">1</span>], target % shape[<span class="number">1</span>]];
-<a href=#4659 id=4659 data-nosnippet>4659</a>                        <span class="kw">let </span>source = [
-<a href=#4660 id=4660 data-nosnippet>4660</a>                            pixel[<span class="number">0</span>] <span class="kw">as </span>isize + psf_peak[<span class="number">0</span>] <span class="kw">as </span>isize - peak[<span class="number">0</span>] <span class="kw">as </span>isize,
-<a href=#4661 id=4661 data-nosnippet>4661</a>                            pixel[<span class="number">1</span>] <span class="kw">as </span>isize + psf_peak[<span class="number">1</span>] <span class="kw">as </span>isize - peak[<span class="number">1</span>] <span class="kw">as </span>isize,
-<a href=#4662 id=4662 data-nosnippet>4662</a>                        ];
-<a href=#4663 id=4663 data-nosnippet>4663</a>                        <span class="kw">if </span>source[<span class="number">0</span>] &lt; <span class="number">0
-<a href=#4664 id=4664 data-nosnippet>4664</a>                            </span>|| source[<span class="number">0</span>] &gt;= shape[<span class="number">0</span>] <span class="kw">as </span>isize
-<a href=#4665 id=4665 data-nosnippet>4665</a>                            || source[<span class="number">1</span>] &lt; <span class="number">0
-<a href=#4666 id=4666 data-nosnippet>4666</a>                            </span>|| source[<span class="number">1</span>] &gt;= shape[<span class="number">1</span>] <span class="kw">as </span>isize
-<a href=#4667 id=4667 data-nosnippet>4667</a>                        {
-<a href=#4668 id=4668 data-nosnippet>4668</a>                            <span class="kw">continue</span>;
-<a href=#4669 id=4669 data-nosnippet>4669</a>                        }
-<a href=#4670 id=4670 data-nosnippet>4670</a>                        <span class="kw">let </span>source = [source[<span class="number">0</span>] <span class="kw">as </span>usize, source[<span class="number">1</span>] <span class="kw">as </span>usize];
-<a href=#4671 id=4671 data-nosnippet>4671</a>                        <span class="kw">if </span>radius.is_some_and(|radius| {
-<a href=#4672 id=4672 data-nosnippet>4672</a>                            source[<span class="number">0</span>].abs_diff(psf_peak[<span class="number">0</span>]) &gt; radius[<span class="number">0</span>]
-<a href=#4673 id=4673 data-nosnippet>4673</a>                                || source[<span class="number">1</span>].abs_diff(psf_peak[<span class="number">1</span>]) &gt; radius[<span class="number">1</span>]
-<a href=#4674 id=4674 data-nosnippet>4674</a>                        }) {
-<a href=#4675 id=4675 data-nosnippet>4675</a>                            <span class="kw">continue</span>;
-<a href=#4676 id=4676 data-nosnippet>4676</a>                        }
-<a href=#4677 id=4677 data-nosnippet>4677</a>                        <span class="kw-2">*</span>value -= <span class="number">0.37 </span>* psf[source[<span class="number">0</span>] * shape[<span class="number">1</span>] + source[<span class="number">1</span>]].re;
-<a href=#4678 id=4678 data-nosnippet>4678</a>                    }
-<a href=#4679 id=4679 data-nosnippet>4679</a>                    <span class="kw">let </span><span class="kw-2">mut </span>actual = original.clone();
-<a href=#4680 id=4680 data-nosnippet>4680</a>                    <span class="kw">match </span>radius {
-<a href=#4681 id=4681 data-nosnippet>4681</a>                        <span class="prelude-val">Some</span>(radius) =&gt; subtract_psf_patch(
-<a href=#4682 id=4682 data-nosnippet>4682</a>                            <span class="kw-2">&amp;mut </span>actual,
-<a href=#4683 id=4683 data-nosnippet>4683</a>                            <span class="kw-2">&amp;</span>psf,
-<a href=#4684 id=4684 data-nosnippet>4684</a>                            shape,
-<a href=#4685 id=4685 data-nosnippet>4685</a>                            peak,
-<a href=#4686 id=4686 data-nosnippet>4686</a>                            psf_peak,
-<a href=#4687 id=4687 data-nosnippet>4687</a>                            radius,
-<a href=#4688 id=4688 data-nosnippet>4688</a>                            <span class="number">0.37</span>,
-<a href=#4689 id=4689 data-nosnippet>4689</a>                        ),
-<a href=#4690 id=4690 data-nosnippet>4690</a>                        <span class="prelude-val">None </span>=&gt; subtract_psf(<span class="kw-2">&amp;mut </span>actual, <span class="kw-2">&amp;</span>psf, shape, peak, psf_peak, <span class="number">0.37</span>),
-<a href=#4691 id=4691 data-nosnippet>4691</a>                    }
-<a href=#4692 id=4692 data-nosnippet>4692</a>                    .expect(<span class="string">"finite point subtraction"</span>);
-<a href=#4693 id=4693 data-nosnippet>4693</a>                    <span class="macro">assert!</span>(
-<a href=#4694 id=4694 data-nosnippet>4694</a>                        actual
-<a href=#4695 id=4695 data-nosnippet>4695</a>                            .iter()
-<a href=#4696 id=4696 data-nosnippet>4696</a>                            .zip(<span class="kw-2">&amp;</span>expected)
-<a href=#4697 id=4697 data-nosnippet>4697</a>                            .all(|(actual, expected)| actual.to_bits() == expected.to_bits()),
-<a href=#4698 id=4698 data-nosnippet>4698</a>                        <span class="string">"peak={peak:?}, psf_peak={psf_peak:?}, radius={radius:?}"
-<a href=#4699 id=4699 data-nosnippet>4699</a>                    </span>);
-<a href=#4700 id=4700 data-nosnippet>4700</a>                }
-<a href=#4701 id=4701 data-nosnippet>4701</a>            }
-<a href=#4702 id=4702 data-nosnippet>4702</a>        }
-<a href=#4703 id=4703 data-nosnippet>4703</a>    }
-<a href=#4704 id=4704 data-nosnippet>4704</a>
-<a href=#4705 id=4705 data-nosnippet>4705</a>    <span class="attr">#[test]
-<a href=#4706 id=4706 data-nosnippet>4706</a>    #[ignore = <span class="string">"bounded local timing probe; run in release mode for T55"</span>]
-<a href=#4707 id=4707 data-nosnippet>4707</a>    </span><span class="kw">fn </span>t55_point_psf_subtraction_locality_probe() {
-<a href=#4708 id=4708 data-nosnippet>4708</a>        <span class="kw">use </span>std::{hint::black_box, time::Instant};
-<a href=#4709 id=4709 data-nosnippet>4709</a>
-<a href=#4710 id=4710 data-nosnippet>4710</a>        <span class="kw">fn </span>strided_parent(residual: <span class="kw-2">&amp;mut </span>[f64], psf: <span class="kw-2">&amp;</span>[Complex64], edge: usize, flux: f64) {
-<a href=#4711 id=4711 data-nosnippet>4711</a>            <span class="kw">for </span>y <span class="kw">in </span><span class="number">0</span>..edge {
-<a href=#4712 id=4712 data-nosnippet>4712</a>                <span class="kw">for </span>x <span class="kw">in </span><span class="number">0</span>..edge {
-<a href=#4713 id=4713 data-nosnippet>4713</a>                    <span class="kw">let </span>index = x * edge + y;
-<a href=#4714 id=4714 data-nosnippet>4714</a>                    <span class="kw">let </span>updated = residual[index] - flux * psf[index].re;
-<a href=#4715 id=4715 data-nosnippet>4715</a>                    <span class="macro">assert!</span>(updated.is_finite());
-<a href=#4716 id=4716 data-nosnippet>4716</a>                    residual[index] = updated;
-<a href=#4717 id=4717 data-nosnippet>4717</a>                }
-<a href=#4718 id=4718 data-nosnippet>4718</a>            }
-<a href=#4719 id=4719 data-nosnippet>4719</a>        }
-<a href=#4720 id=4720 data-nosnippet>4720</a>
-<a href=#4721 id=4721 data-nosnippet>4721</a>        <span class="kw">let </span>edge = <span class="number">1024</span>;
-<a href=#4722 id=4722 data-nosnippet>4722</a>        <span class="kw">let </span>psf = (<span class="number">0</span>..edge * edge)
-<a href=#4723 id=4723 data-nosnippet>4723</a>            .map(|index| Complex64::new((index % <span class="number">97</span>) <span class="kw">as </span>f64 / <span class="number">97.0</span>, <span class="number">0.0</span>))
-<a href=#4724 id=4724 data-nosnippet>4724</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#4725 id=4725 data-nosnippet>4725</a>        <span class="kw">let </span><span class="kw-2">mut </span>parent_times = Vec::new();
-<a href=#4726 id=4726 data-nosnippet>4726</a>        <span class="kw">let </span><span class="kw-2">mut </span>candidate_times = Vec::new();
-<a href=#4727 id=4727 data-nosnippet>4727</a>        <span class="kw">for </span>round <span class="kw">in </span><span class="number">0</span>..<span class="number">6 </span>{
-<a href=#4728 id=4728 data-nosnippet>4728</a>            <span class="kw">let </span><span class="kw-2">mut </span>parent = <span class="macro">vec!</span>[<span class="number">1.0</span>; psf.len()];
-<a href=#4729 id=4729 data-nosnippet>4729</a>            <span class="kw">let </span><span class="kw-2">mut </span>candidate = parent.clone();
-<a href=#4730 id=4730 data-nosnippet>4730</a>            <span class="kw">let </span>parent_first = round % <span class="number">2 </span>== <span class="number">0</span>;
-<a href=#4731 id=4731 data-nosnippet>4731</a>            <span class="kw">for </span>run_parent <span class="kw">in </span>[parent_first, !parent_first] {
-<a href=#4732 id=4732 data-nosnippet>4732</a>                <span class="kw">let </span>started = Instant::now();
-<a href=#4733 id=4733 data-nosnippet>4733</a>                <span class="kw">for _ in </span><span class="number">0</span>..<span class="number">16 </span>{
-<a href=#4734 id=4734 data-nosnippet>4734</a>                    <span class="kw">if </span>run_parent {
-<a href=#4735 id=4735 data-nosnippet>4735</a>                        strided_parent(black_box(<span class="kw-2">&amp;mut </span>parent), black_box(<span class="kw-2">&amp;</span>psf), edge, <span class="number">0.001</span>);
-<a href=#4736 id=4736 data-nosnippet>4736</a>                    } <span class="kw">else </span>{
-<a href=#4737 id=4737 data-nosnippet>4737</a>                        subtract_psf(
-<a href=#4738 id=4738 data-nosnippet>4738</a>                            black_box(<span class="kw-2">&amp;mut </span>candidate),
-<a href=#4739 id=4739 data-nosnippet>4739</a>                            black_box(<span class="kw-2">&amp;</span>psf),
-<a href=#4740 id=4740 data-nosnippet>4740</a>                            [edge, edge],
-<a href=#4741 id=4741 data-nosnippet>4741</a>                            [edge / <span class="number">2</span>, edge / <span class="number">2</span>],
-<a href=#4742 id=4742 data-nosnippet>4742</a>                            [edge / <span class="number">2</span>, edge / <span class="number">2</span>],
-<a href=#4743 id=4743 data-nosnippet>4743</a>                            <span class="number">0.001</span>,
-<a href=#4744 id=4744 data-nosnippet>4744</a>                        )
-<a href=#4745 id=4745 data-nosnippet>4745</a>                        .expect(<span class="string">"finite point subtraction"</span>);
-<a href=#4746 id=4746 data-nosnippet>4746</a>                    }
-<a href=#4747 id=4747 data-nosnippet>4747</a>                }
-<a href=#4748 id=4748 data-nosnippet>4748</a>                <span class="kw">let </span>elapsed = started.elapsed().as_nanos();
-<a href=#4749 id=4749 data-nosnippet>4749</a>                <span class="kw">if </span>round &gt; <span class="number">0 </span>{
-<a href=#4750 id=4750 data-nosnippet>4750</a>                    <span class="kw">if </span>run_parent {
-<a href=#4751 id=4751 data-nosnippet>4751</a>                        parent_times.push(elapsed);
-<a href=#4752 id=4752 data-nosnippet>4752</a>                    } <span class="kw">else </span>{
-<a href=#4753 id=4753 data-nosnippet>4753</a>                        candidate_times.push(elapsed);
-<a href=#4754 id=4754 data-nosnippet>4754</a>                    }
-<a href=#4755 id=4755 data-nosnippet>4755</a>                }
-<a href=#4756 id=4756 data-nosnippet>4756</a>            }
-<a href=#4757 id=4757 data-nosnippet>4757</a>            <span class="macro">assert!</span>(
-<a href=#4758 id=4758 data-nosnippet>4758</a>                parent
-<a href=#4759 id=4759 data-nosnippet>4759</a>                    .iter()
-<a href=#4760 id=4760 data-nosnippet>4760</a>                    .zip(<span class="kw-2">&amp;</span>candidate)
-<a href=#4761 id=4761 data-nosnippet>4761</a>                    .all(|(parent, candidate)| parent.to_bits() == candidate.to_bits())
-<a href=#4762 id=4762 data-nosnippet>4762</a>            );
-<a href=#4763 id=4763 data-nosnippet>4763</a>        }
-<a href=#4764 id=4764 data-nosnippet>4764</a>        parent_times.sort_unstable();
-<a href=#4765 id=4765 data-nosnippet>4765</a>        candidate_times.sort_unstable();
-<a href=#4766 id=4766 data-nosnippet>4766</a>        <span class="macro">eprintln!</span>(
-<a href=#4767 id=4767 data-nosnippet>4767</a>            <span class="string">"T55 PSF locality: shape={edge}x{edge}, components=16, warmup_pairs=1, measured_pairs=5, parent_median_ns={}, candidate_median_ns={}, speedup={:.3}; local kernel only"</span>,
-<a href=#4768 id=4768 data-nosnippet>4768</a>            parent_times[<span class="number">2</span>],
-<a href=#4769 id=4769 data-nosnippet>4769</a>            candidate_times[<span class="number">2</span>],
-<a href=#4770 id=4770 data-nosnippet>4770</a>            parent_times[<span class="number">2</span>] <span class="kw">as </span>f64 / candidate_times[<span class="number">2</span>] <span class="kw">as </span>f64
-<a href=#4771 id=4771 data-nosnippet>4771</a>        );
-<a href=#4772 id=4772 data-nosnippet>4772</a>    }
-<a href=#4773 id=4773 data-nosnippet>4773</a>
-<a href=#4774 id=4774 data-nosnippet>4774</a>    <span class="kw">fn </span>point_domain_work&lt;<span class="lifetime">'a</span>&gt;(
-<a href=#4775 id=4775 data-nosnippet>4775</a>        domain_ordinal: usize,
-<a href=#4776 id=4776 data-nosnippet>4776</a>        residual: f64,
-<a href=#4777 id=4777 data-nosnippet>4777</a>        psf: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[Complex64],
-<a href=#4778 id=4778 data-nosnippet>4778</a>    ) -&gt; ImageDomainHogbomWork&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#4779 id=4779 data-nosnippet>4779</a>        ImageDomainHogbomWork {
-<a href=#4780 id=4780 data-nosnippet>4780</a>            domain_ordinal,
-<a href=#4781 id=4781 data-nosnippet>4781</a>            shape: [<span class="number">1</span>, <span class="number">1</span>],
-<a href=#4782 id=4782 data-nosnippet>4782</a>            psf: std::borrow::Cow::Borrowed(psf),
-<a href=#4783 id=4783 data-nosnippet>4783</a>            model_plane: MinorCycleModelPlane::new(domain_ordinal, <span class="number">0</span>, <span class="number">0</span>),
-<a href=#4784 id=4784 data-nosnippet>4784</a>            psf_peak: <span class="number">1.0</span>,
-<a href=#4785 id=4785 data-nosnippet>4785</a>            psf_peak_pixel: [<span class="number">0</span>, <span class="number">0</span>],
-<a href=#4786 id=4786 data-nosnippet>4786</a>            valid_support: <span class="macro">vec!</span>[<span class="bool-val">true</span>].into_boxed_slice(),
-<a href=#4787 id=4787 data-nosnippet>4787</a>            residual: <span class="macro">vec!</span>[residual],
-<a href=#4788 id=4788 data-nosnippet>4788</a>            noise_rms: <span class="prelude-val">None</span>,
-<a href=#4789 id=4789 data-nosnippet>4789</a>        }
-<a href=#4790 id=4790 data-nosnippet>4790</a>    }
-<a href=#4791 id=4791 data-nosnippet>4791</a>
-<a href=#4792 id=4792 data-nosnippet>4792</a>    <span class="kw">fn </span>casa_inclusive_program(max_iterations: usize, gain: f64) -&gt; MinorCycleProgram {
-<a href=#4793 id=4793 data-nosnippet>4793</a>        MinorCycleProgram::from_compiled(
-<a href=#4794 id=4794 data-nosnippet>4794</a>            ReconstructionControls::new(max_iterations, gain, <span class="number">0.0</span>)
-<a href=#4795 id=4795 data-nosnippet>4795</a>                .with_cycle_limits(max_iterations, <span class="prelude-val">None</span>)
-<a href=#4796 id=4796 data-nosnippet>4796</a>                .with_hogbom_iteration_accounting(HogbomIterationAccounting::CasaInclusive),
-<a href=#4797 id=4797 data-nosnippet>4797</a>        )
-<a href=#4798 id=4798 data-nosnippet>4798</a>        .expect(<span class="string">"CASA-inclusive point-clean program"</span>)
-<a href=#4799 id=4799 data-nosnippet>4799</a>        .record_component_sequence(<span class="number">32</span>)
-<a href=#4800 id=4800 data-nosnippet>4800</a>        .expect(<span class="string">"bounded diagnostic component sequence"</span>)
-<a href=#4801 id=4801 data-nosnippet>4801</a>    }
-<a href=#4802 id=4802 data-nosnippet>4802</a>
-<a href=#4803 id=4803 data-nosnippet>4803</a>    <span class="attr">#[test]
-<a href=#4804 id=4804 data-nosnippet>4804</a>    </span><span class="kw">fn </span>image_domains_share_the_set_threshold_but_each_complete_the_full_set_budget() {
-<a href=#4805 id=4805 data-nosnippet>4805</a>        <span class="kw">let </span>psf = [Complex64::new(<span class="number">1.0</span>, <span class="number">0.0</span>)];
-<a href=#4806 id=4806 data-nosnippet>4806</a>        <span class="kw">let </span>main_peak = <span class="number">1.038_444_757_f64</span>;
-<a href=#4807 id=4807 data-nosnippet>4807</a>        <span class="kw">let </span>outlier_peak = <span class="number">5.569_267_75_f64</span>;
-<a href=#4808 id=4808 data-nosnippet>4808</a>        <span class="kw">let </span>shared_cycle_threshold = <span class="number">0.771_931_6_f64</span>;
-<a href=#4809 id=4809 data-nosnippet>4809</a>        <span class="kw">let </span><span class="kw-2">mut </span>work = [
-<a href=#4810 id=4810 data-nosnippet>4810</a>            point_domain_work(<span class="number">0</span>, main_peak, <span class="kw-2">&amp;</span>psf),
-<a href=#4811 id=4811 data-nosnippet>4811</a>            point_domain_work(<span class="number">1</span>, outlier_peak, <span class="kw-2">&amp;</span>psf),
-<a href=#4812 id=4812 data-nosnippet>4812</a>        ];
-<a href=#4813 id=4813 data-nosnippet>4813</a>        <span class="kw">let </span>controls = casa_inclusive_program(<span class="number">10</span>, <span class="number">0.1</span>);
-<a href=#4814 id=4814 data-nosnippet>4814</a>        <span class="kw">let </span><span class="kw-2">mut </span>terms = BTreeMap::new();
-<a href=#4815 id=4815 data-nosnippet>4815</a>        <span class="kw">let </span><span class="kw-2">mut </span>recorded = Vec::&lt;MinorCycleComponent&gt;::new();
-<a href=#4816 id=4816 data-nosnippet>4816</a>
-<a href=#4817 id=4817 data-nosnippet>4817</a>        <span class="kw">let </span>evidence = run_image_domain_hogbom_controllers(
-<a href=#4818 id=4818 data-nosnippet>4818</a>            <span class="kw-2">&amp;mut </span>work,
-<a href=#4819 id=4819 data-nosnippet>4819</a>            <span class="kw-2">&amp;</span>controls,
-<a href=#4820 id=4820 data-nosnippet>4820</a>            <span class="prelude-val">Some</span>(shared_cycle_threshold),
-<a href=#4821 id=4821 data-nosnippet>4821</a>            <span class="kw-2">&amp;mut </span>terms,
-<a href=#4822 id=4822 data-nosnippet>4822</a>            <span class="kw-2">&amp;mut </span>recorded,
-<a href=#4823 id=4823 data-nosnippet>4823</a>        )
-<a href=#4824 id=4824 data-nosnippet>4824</a>        .expect(<span class="string">"two canonical field controllers"</span>);
-<a href=#4825 id=4825 data-nosnippet>4825</a>
-<a href=#4826 id=4826 data-nosnippet>4826</a>        <span class="macro">assert_eq!</span>(evidence.len(), <span class="number">2</span>);
-<a href=#4827 id=4827 data-nosnippet>4827</a>        <span class="macro">assert_eq!</span>(
-<a href=#4828 id=4828 data-nosnippet>4828</a>            (
-<a href=#4829 id=4829 data-nosnippet>4829</a>                evidence[<span class="number">0</span>].iterations(),
-<a href=#4830 id=4830 data-nosnippet>4830</a>                evidence[<span class="number">0</span>].controller_iterations(),
-<a href=#4831 id=4831 data-nosnippet>4831</a>                evidence[<span class="number">0</span>].stop_reason(),
-<a href=#4832 id=4832 data-nosnippet>4832</a>            ),
-<a href=#4833 id=4833 data-nosnippet>4833</a>            (<span class="number">3</span>, <span class="number">3</span>, MinorCycleStopReason::ThresholdReached)
-<a href=#4834 id=4834 data-nosnippet>4834</a>        );
-<a href=#4835 id=4835 data-nosnippet>4835</a>        <span class="macro">assert_eq!</span>(
-<a href=#4836 id=4836 data-nosnippet>4836</a>            (
-<a href=#4837 id=4837 data-nosnippet>4837</a>                evidence[<span class="number">1</span>].iterations(),
-<a href=#4838 id=4838 data-nosnippet>4838</a>                evidence[<span class="number">1</span>].controller_iterations(),
-<a href=#4839 id=4839 data-nosnippet>4839</a>                evidence[<span class="number">1</span>].stop_reason(),
-<a href=#4840 id=4840 data-nosnippet>4840</a>            ),
-<a href=#4841 id=4841 data-nosnippet>4841</a>            (<span class="number">11</span>, <span class="number">10</span>, MinorCycleStopReason::IterationBound)
-<a href=#4842 id=4842 data-nosnippet>4842</a>        );
-<a href=#4843 id=4843 data-nosnippet>4843</a>        <span class="macro">assert!</span>(
-<a href=#4844 id=4844 data-nosnippet>4844</a>            evidence
-<a href=#4845 id=4845 data-nosnippet>4845</a>                .iter()
-<a href=#4846 id=4846 data-nosnippet>4846</a>                .all(|run| run.cycle_threshold() == <span class="prelude-val">Some</span>(shared_cycle_threshold))
-<a href=#4847 id=4847 data-nosnippet>4847</a>        );
-<a href=#4848 id=4848 data-nosnippet>4848</a>        <span class="macro">assert_eq!</span>(
-<a href=#4849 id=4849 data-nosnippet>4849</a>            evidence.iter().map(|run| run.iterations()).sum::&lt;usize&gt;(),
-<a href=#4850 id=4850 data-nosnippet>4850</a>            <span class="number">14
-<a href=#4851 id=4851 data-nosnippet>4851</a>        </span>);
+<a href=#4515 id=4515 data-nosnippet>4515</a>                    <span class="number">0</span>,
+<a href=#4516 id=4516 data-nosnippet>4516</a>                    <span class="prelude-val">None</span>,
+<a href=#4517 id=4517 data-nosnippet>4517</a>                )
+<a href=#4518 id=4518 data-nosnippet>4518</a>            };
+<a href=#4519 id=4519 data-nosnippet>4519</a>            <span class="kw">let </span><span class="kw-2">mut </span>unbound = controls.clone();
+<a href=#4520 id=4520 data-nosnippet>4520</a>            unbound.image_response = <span class="prelude-val">None</span>;
+<a href=#4521 id=4521 data-nosnippet>4521</a>            <span class="kw">let </span>flat_sky = controls.clone().with_image_response(
+<a href=#4522 id=4522 data-nosnippet>4522</a>                <span class="kw">crate</span>::MinorCycleImageResponse::new(
+<a href=#4523 id=4523 data-nosnippet>4523</a>                    casa_imaging_model::ProductNormalization::FlatSky,
+<a href=#4524 id=4524 data-nosnippet>4524</a>                    binding.unwrap().policy(),
+<a href=#4525 id=4525 data-nosnippet>4525</a>                )
+<a href=#4526 id=4526 data-nosnippet>4526</a>                .unwrap(),
+<a href=#4527 id=4527 data-nosnippet>4527</a>            );
+<a href=#4528 id=4528 data-nosnippet>4528</a>            <span class="macro">assert_ne!</span>(evidence_id(<span class="kw-2">&amp;</span>controls), evidence_id(<span class="kw-2">&amp;</span>unbound));
+<a href=#4529 id=4529 data-nosnippet>4529</a>            <span class="macro">assert_ne!</span>(evidence_id(<span class="kw-2">&amp;</span>controls), evidence_id(<span class="kw-2">&amp;</span>flat_sky));
+<a href=#4530 id=4530 data-nosnippet>4530</a>            <span class="macro">eprintln!</span>(<span class="string">"native_minor3 missing_binding_rejected=true response_binding_hashed=true"</span>);
+<a href=#4531 id=4531 data-nosnippet>4531</a>        }
+<a href=#4532 id=4532 data-nosnippet>4532</a>        <span class="kw">let </span>started = std::time::Instant::now();
+<a href=#4533 id=4533 data-nosnippet>4533</a>        <span class="kw">let </span>result = <span class="kw">super</span>::run_taylor_minor_cycle(<span class="kw-2">&amp;</span>lifecycle, <span class="kw-2">&amp;</span>base, <span class="kw-2">&amp;</span>normal, <span class="kw-2">&amp;</span>mask, controls)
+<a href=#4534 id=4534 data-nosnippet>4534</a>            .expect(<span class="string">"production minor cycle on native normalized inputs"</span>);
+<a href=#4535 id=4535 data-nosnippet>4535</a>        <span class="kw">let </span>evidence = result.evidence();
+<a href=#4536 id=4536 data-nosnippet>4536</a>        <span class="macro">assert_eq!</span>(
+<a href=#4537 id=4537 data-nosnippet>4537</a>            normal.diagnostic_content_identity().unwrap(),
+<a href=#4538 id=4538 data-nosnippet>4538</a>            raw_identity,
+<a href=#4539 id=4539 data-nosnippet>4539</a>            <span class="string">"solve only borrows raw normal state"
+<a href=#4540 id=4540 data-nosnippet>4540</a>        </span>);
+<a href=#4541 id=4541 data-nosnippet>4541</a>        <span class="macro">eprintln!</span>(
+<a href=#4542 id=4542 data-nosnippet>4542</a>            <span class="string">"native_minor3 iterations={} initial_peak={:.17e} final_peak={:.17e} elapsed_s={:.6}"</span>,
+<a href=#4543 id=4543 data-nosnippet>4543</a>            evidence.iterations(),
+<a href=#4544 id=4544 data-nosnippet>4544</a>            evidence.initial_peak_flux(),
+<a href=#4545 id=4545 data-nosnippet>4545</a>            evidence.final_peak_flux(),
+<a href=#4546 id=4546 data-nosnippet>4546</a>            started.elapsed().as_secs_f64(),
+<a href=#4547 id=4547 data-nosnippet>4547</a>        );
+<a href=#4548 id=4548 data-nosnippet>4548</a>        <span class="kw">let </span><span class="kw-2">mut </span>model_planes = [<span class="macro">vec!</span>[<span class="number">0.0</span>; cells], <span class="macro">vec!</span>[<span class="number">0.0</span>; cells]];
+<a href=#4549 id=4549 data-nosnippet>4549</a>        <span class="kw">let </span><span class="kw-2">mut </span>model_terms = BTreeMap::new();
+<a href=#4550 id=4550 data-nosnippet>4550</a>        <span class="kw">for </span>term <span class="kw">in </span>result
+<a href=#4551 id=4551 data-nosnippet>4551</a>            .delta()
+<a href=#4552 id=4552 data-nosnippet>4552</a>            .expect(<span class="string">"three steps produce a model delta"</span>)
+<a href=#4553 id=4553 data-nosnippet>4553</a>            .terms()
+<a href=#4554 id=4554 data-nosnippet>4554</a>        {
+<a href=#4555 id=4555 data-nosnippet>4555</a>            <span class="kw">let </span>cell = term.cell();
+<a href=#4556 id=4556 data-nosnippet>4556</a>            <span class="kw">let </span>pixel = cell.pixel();
+<a href=#4557 id=4557 data-nosnippet>4557</a>            <span class="kw">let </span>value = term.increment().value();
+<a href=#4558 id=4558 data-nosnippet>4558</a>            model_planes[cell.coefficient()][pixel[<span class="number">0</span>] * shape[<span class="number">1</span>] + pixel[<span class="number">1</span>]] = value;
+<a href=#4559 id=4559 data-nosnippet>4559</a>            <span class="kw">let </span>solve_value = <span class="kw">if let </span><span class="prelude-val">Some</span>((sensitivity, binding)) = response.directional {
+<a href=#4560 id=4560 data-nosnippet>4560</a>                sensitivity
+<a href=#4561 id=4561 data-nosnippet>4561</a>                    .physical_to_apparent(
+<a href=#4562 id=4562 data-nosnippet>4562</a>                        value,
+<a href=#4563 id=4563 data-nosnippet>4563</a>                        pixel[<span class="number">0</span>] * shape[<span class="number">1</span>] + pixel[<span class="number">1</span>],
+<a href=#4564 id=4564 data-nosnippet>4564</a>                        binding.normalization(),
+<a href=#4565 id=4565 data-nosnippet>4565</a>                        binding.policy(),
+<a href=#4566 id=4566 data-nosnippet>4566</a>                    )
+<a href=#4567 id=4567 data-nosnippet>4567</a>                    .unwrap()
+<a href=#4568 id=4568 data-nosnippet>4568</a>            } <span class="kw">else </span>{
+<a href=#4569 id=4569 data-nosnippet>4569</a>                value
+<a href=#4570 id=4570 data-nosnippet>4570</a>            };
+<a href=#4571 id=4571 data-nosnippet>4571</a>            model_terms.insert(
+<a href=#4572 id=4572 data-nosnippet>4572</a>                base.shape().flat_index(cell).expect(<span class="string">"model cell"</span>),
+<a href=#4573 id=4573 data-nosnippet>4573</a>                solve_value,
+<a href=#4574 id=4574 data-nosnippet>4574</a>            );
+<a href=#4575 id=4575 data-nosnippet>4575</a>        }
+<a href=#4576 id=4576 data-nosnippet>4576</a>        <span class="kw">let </span><span class="kw-2">mut </span>residual_planes = native_residuals.to_vec();
+<a href=#4577 id=4577 data-nosnippet>4577</a>        <span class="kw">super</span>::refresh_taylor_residuals(
+<a href=#4578 id=4578 data-nosnippet>4578</a>            <span class="kw-2">&amp;mut </span>residual_planes,
+<a href=#4579 id=4579 data-nosnippet>4579</a>            <span class="kw-2">&amp;</span>window,
+<a href=#4580 id=4580 data-nosnippet>4580</a>            shape,
+<a href=#4581 id=4581 data-nosnippet>4581</a>            [<span class="number">256</span>, <span class="number">256</span>],
+<a href=#4582 id=4582 data-nosnippet>4582</a>            <span class="kw-2">&amp;</span>base,
+<a href=#4583 id=4583 data-nosnippet>4583</a>            <span class="kw-2">&amp;</span>model_terms,
+<a href=#4584 id=4584 data-nosnippet>4584</a>            response,
+<a href=#4585 id=4585 data-nosnippet>4585</a>        )
+<a href=#4586 id=4586 data-nosnippet>4586</a>        .expect(<span class="string">"same production terminal residual refresh"</span>);
+<a href=#4587 id=4587 data-nosnippet>4587</a>        <span class="kw">let </span>nrms = |actual: <span class="kw-2">&amp;</span>[f64], expected: <span class="kw-2">&amp;</span>[f64]| {
+<a href=#4588 id=4588 data-nosnippet>4588</a>            <span class="kw">let </span>error = actual
+<a href=#4589 id=4589 data-nosnippet>4589</a>                .iter()
+<a href=#4590 id=4590 data-nosnippet>4590</a>                .zip(expected)
+<a href=#4591 id=4591 data-nosnippet>4591</a>                .map(|(a, b)| (a - b).powi(<span class="number">2</span>))
+<a href=#4592 id=4592 data-nosnippet>4592</a>                .sum::&lt;f64&gt;();
+<a href=#4593 id=4593 data-nosnippet>4593</a>            <span class="kw">let </span>reference = expected.iter().map(|value| value.powi(<span class="number">2</span>)).sum::&lt;f64&gt;();
+<a href=#4594 id=4594 data-nosnippet>4594</a>            (error / reference).sqrt()
+<a href=#4595 id=4595 data-nosnippet>4595</a>        };
+<a href=#4596 id=4596 data-nosnippet>4596</a>        <span class="kw">let </span><span class="kw-2">mut </span>metrics = Vec::new();
+<a href=#4597 id=4597 data-nosnippet>4597</a>        <span class="kw">for </span>term <span class="kw">in </span><span class="number">0</span>..<span class="number">2 </span>{
+<a href=#4598 id=4598 data-nosnippet>4598</a>            <span class="kw">for </span>(kind, actual) <span class="kw">in </span>[
+<a href=#4599 id=4599 data-nosnippet>4599</a>                (<span class="string">"model"</span>, <span class="kw-2">&amp;</span>model_planes[term]),
+<a href=#4600 id=4600 data-nosnippet>4600</a>                (<span class="string">"residual"</span>, <span class="kw-2">&amp;</span>residual_planes[term]),
+<a href=#4601 id=4601 data-nosnippet>4601</a>            ] {
+<a href=#4602 id=4602 data-nosnippet>4602</a>                <span class="kw">let </span>expected = <span class="kw">if </span>raw_response &amp;&amp; kind == <span class="string">"model" </span>{
+<a href=#4603 id=4603 data-nosnippet>4603</a>                    <span class="kw">let </span>root = std::path::PathBuf::from(
+<a href=#4604 id=4604 data-nosnippet>4604</a>                        std::env::var_os(<span class="string">"CASA_RS_T51_NATIVE_MODEL_WEIGHT_FIXTURE"</span>)
+<a href=#4605 id=4605 data-nosnippet>4605</a>                            .expect(<span class="string">"native physical model fixture"</span>),
+<a href=#4606 id=4606 data-nosnippet>4606</a>                    );
+<a href=#4607 id=4607 data-nosnippet>4607</a>                    <span class="kw">let </span>bytes =
+<a href=#4608 id=4608 data-nosnippet>4608</a>                        std::fs::read(root.join(<span class="macro">format!</span>(<span class="string">"native_first3_physical{term}.f32le"</span>)))
+<a href=#4609 id=4609 data-nosnippet>4609</a>                            .unwrap();
+<a href=#4610 id=4610 data-nosnippet>4610</a>                    <span class="macro">assert_eq!</span>(bytes.len(), cells * <span class="number">4</span>);
+<a href=#4611 id=4611 data-nosnippet>4611</a>                    bytes
+<a href=#4612 id=4612 data-nosnippet>4612</a>                        .as_chunks::&lt;<span class="number">4</span>&gt;()
+<a href=#4613 id=4613 data-nosnippet>4613</a>                        .<span class="number">0
+<a href=#4614 id=4614 data-nosnippet>4614</a>                        </span>.iter()
+<a href=#4615 id=4615 data-nosnippet>4615</a>                        .map(|bytes| f64::from(f32::from_le_bytes(<span class="kw-2">*</span>bytes)))
+<a href=#4616 id=4616 data-nosnippet>4616</a>                        .collect()
+<a href=#4617 id=4617 data-nosnippet>4617</a>                } <span class="kw">else </span>{
+<a href=#4618 id=4618 data-nosnippet>4618</a>                    load(<span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"native_{kind}{term}.f32le"</span>))
+<a href=#4619 id=4619 data-nosnippet>4619</a>                };
+<a href=#4620 id=4620 data-nosnippet>4620</a>                <span class="kw">let </span>error = nrms(actual, <span class="kw-2">&amp;</span>expected);
+<a href=#4621 id=4621 data-nosnippet>4621</a>                <span class="macro">eprintln!</span>(<span class="string">"native_minor3 {kind}{term} nrms={error:.17e}"</span>);
+<a href=#4622 id=4622 data-nosnippet>4622</a>                metrics.push((<span class="macro">format!</span>(<span class="string">"{kind}{term}"</span>), error));
+<a href=#4623 id=4623 data-nosnippet>4623</a>            }
+<a href=#4624 id=4624 data-nosnippet>4624</a>        }
+<a href=#4625 id=4625 data-nosnippet>4625</a>        <span class="macro">assert_eq!</span>(evidence.iterations(), <span class="number">3</span>);
+<a href=#4626 id=4626 data-nosnippet>4626</a>        <span class="macro">assert!</span>((evidence.initial_peak_flux() / <span class="number">0.035_584_043_711_423_874 </span>- <span class="number">1.0</span>).abs() &lt;= <span class="number">1.0e-3</span>);
+<a href=#4627 id=4627 data-nosnippet>4627</a>        <span class="macro">assert!</span>((evidence.final_peak_flux() / <span class="number">0.025_940_770_283_341_408 </span>- <span class="number">1.0</span>).abs() &lt;= <span class="number">1.0e-3</span>);
+<a href=#4628 id=4628 data-nosnippet>4628</a>        <span class="kw">for </span>(name, error) <span class="kw">in </span>metrics {
+<a href=#4629 id=4629 data-nosnippet>4629</a>            <span class="macro">assert!</span>(error &lt;= <span class="number">1.0e-3</span>, <span class="string">"native first-minor {name} NRMS {error}"</span>);
+<a href=#4630 id=4630 data-nosnippet>4630</a>        }
+<a href=#4631 id=4631 data-nosnippet>4631</a>    }
+<a href=#4632 id=4632 data-nosnippet>4632</a>
+<a href=#4633 id=4633 data-nosnippet>4633</a>    <span class="kw">use </span>casa_imaging_model::{
+<a href=#4634 id=4634 data-nosnippet>4634</a>        HogbomIterationAccounting, ModelCell, ReconstructionAlgorithm, ReconstructionBasis,
+<a href=#4635 id=4635 data-nosnippet>4635</a>        ReconstructionControls,
+<a href=#4636 id=4636 data-nosnippet>4636</a>    };
+<a href=#4637 id=4637 data-nosnippet>4637</a>    <span class="kw">use </span>num_complex::Complex64;
+<a href=#4638 id=4638 data-nosnippet>4638</a>
+<a href=#4639 id=4639 data-nosnippet>4639</a>    <span class="kw">use super</span>::{
+<a href=#4640 id=4640 data-nosnippet>4640</a>        ImageDomainHogbomWork, MinorCycleComponent, MinorCycleModelPlane, MinorCycleProgram,
+<a href=#4641 id=4641 data-nosnippet>4641</a>        MinorCycleStopReason, TaylorCandidate, TaylorSearchWindow, build_scale_kernels,
+<a href=#4642 id=4642 data-nosnippet>4642</a>        minor_cycle_workspace_bytes, model_cell, multiscale_diverged, prefer_taylor_across_scales,
+<a href=#4643 id=4643 data-nosnippet>4643</a>        prefer_taylor_within_scale, run_image_domain_hogbom_controllers, subtract_psf,
+<a href=#4644 id=4644 data-nosnippet>4644</a>        subtract_psf_circular, subtract_psf_patch, taylor_psf_peak_index,
+<a href=#4645 id=4645 data-nosnippet>4645</a>        taylor_rows_nearly_dependent, within_multiscale_border,
+<a href=#4646 id=4646 data-nosnippet>4646</a>    };
+<a href=#4647 id=4647 data-nosnippet>4647</a>
+<a href=#4648 id=4648 data-nosnippet>4648</a>    <span class="attr">#[test]
+<a href=#4649 id=4649 data-nosnippet>4649</a>    </span><span class="kw">fn </span>t55_point_psf_subtraction_preserves_clipping_patch_and_pixel_arithmetic() {
+<a href=#4650 id=4650 data-nosnippet>4650</a>        <span class="kw">let </span>shape = [<span class="number">7</span>, <span class="number">11</span>];
+<a href=#4651 id=4651 data-nosnippet>4651</a>        <span class="kw">let </span>psf = (<span class="number">0</span>..shape[<span class="number">0</span>] * shape[<span class="number">1</span>])
+<a href=#4652 id=4652 data-nosnippet>4652</a>            .map(|index| Complex64::new((index <span class="kw">as </span>f64 - <span class="number">23.0</span>) / <span class="number">17.0</span>, <span class="number">0.25</span>))
+<a href=#4653 id=4653 data-nosnippet>4653</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#4654 id=4654 data-nosnippet>4654</a>        <span class="kw">let </span>original = (<span class="number">0</span>..psf.len())
+<a href=#4655 id=4655 data-nosnippet>4655</a>            .map(|index| (index <span class="kw">as </span>f64 + <span class="number">1.0</span>) / <span class="number">13.0</span>)
+<a href=#4656 id=4656 data-nosnippet>4656</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#4657 id=4657 data-nosnippet>4657</a>        <span class="kw">for </span>peak <span class="kw">in </span>[[<span class="number">0</span>, <span class="number">0</span>], [<span class="number">3</span>, <span class="number">5</span>], [<span class="number">6</span>, <span class="number">10</span>], [<span class="number">1</span>, <span class="number">9</span>]] {
+<a href=#4658 id=4658 data-nosnippet>4658</a>            <span class="kw">for </span>psf_peak <span class="kw">in </span>[[<span class="number">0</span>, <span class="number">0</span>], [<span class="number">3</span>, <span class="number">5</span>], [<span class="number">6</span>, <span class="number">10</span>]] {
+<a href=#4659 id=4659 data-nosnippet>4659</a>                <span class="kw">for </span>radius <span class="kw">in </span>[<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>([<span class="number">0</span>, <span class="number">0</span>]), <span class="prelude-val">Some</span>([<span class="number">1</span>, <span class="number">2</span>]), <span class="prelude-val">Some</span>(shape)] {
+<a href=#4660 id=4660 data-nosnippet>4660</a>                    <span class="kw">let </span><span class="kw-2">mut </span>expected = original.clone();
+<a href=#4661 id=4661 data-nosnippet>4661</a>                    <span class="kw">for </span>(target, value) <span class="kw">in </span>expected.iter_mut().enumerate() {
+<a href=#4662 id=4662 data-nosnippet>4662</a>                        <span class="kw">let </span>pixel = [target / shape[<span class="number">1</span>], target % shape[<span class="number">1</span>]];
+<a href=#4663 id=4663 data-nosnippet>4663</a>                        <span class="kw">let </span>source = [
+<a href=#4664 id=4664 data-nosnippet>4664</a>                            pixel[<span class="number">0</span>] <span class="kw">as </span>isize + psf_peak[<span class="number">0</span>] <span class="kw">as </span>isize - peak[<span class="number">0</span>] <span class="kw">as </span>isize,
+<a href=#4665 id=4665 data-nosnippet>4665</a>                            pixel[<span class="number">1</span>] <span class="kw">as </span>isize + psf_peak[<span class="number">1</span>] <span class="kw">as </span>isize - peak[<span class="number">1</span>] <span class="kw">as </span>isize,
+<a href=#4666 id=4666 data-nosnippet>4666</a>                        ];
+<a href=#4667 id=4667 data-nosnippet>4667</a>                        <span class="kw">if </span>source[<span class="number">0</span>] &lt; <span class="number">0
+<a href=#4668 id=4668 data-nosnippet>4668</a>                            </span>|| source[<span class="number">0</span>] &gt;= shape[<span class="number">0</span>] <span class="kw">as </span>isize
+<a href=#4669 id=4669 data-nosnippet>4669</a>                            || source[<span class="number">1</span>] &lt; <span class="number">0
+<a href=#4670 id=4670 data-nosnippet>4670</a>                            </span>|| source[<span class="number">1</span>] &gt;= shape[<span class="number">1</span>] <span class="kw">as </span>isize
+<a href=#4671 id=4671 data-nosnippet>4671</a>                        {
+<a href=#4672 id=4672 data-nosnippet>4672</a>                            <span class="kw">continue</span>;
+<a href=#4673 id=4673 data-nosnippet>4673</a>                        }
+<a href=#4674 id=4674 data-nosnippet>4674</a>                        <span class="kw">let </span>source = [source[<span class="number">0</span>] <span class="kw">as </span>usize, source[<span class="number">1</span>] <span class="kw">as </span>usize];
+<a href=#4675 id=4675 data-nosnippet>4675</a>                        <span class="kw">if </span>radius.is_some_and(|radius| {
+<a href=#4676 id=4676 data-nosnippet>4676</a>                            source[<span class="number">0</span>].abs_diff(psf_peak[<span class="number">0</span>]) &gt; radius[<span class="number">0</span>]
+<a href=#4677 id=4677 data-nosnippet>4677</a>                                || source[<span class="number">1</span>].abs_diff(psf_peak[<span class="number">1</span>]) &gt; radius[<span class="number">1</span>]
+<a href=#4678 id=4678 data-nosnippet>4678</a>                        }) {
+<a href=#4679 id=4679 data-nosnippet>4679</a>                            <span class="kw">continue</span>;
+<a href=#4680 id=4680 data-nosnippet>4680</a>                        }
+<a href=#4681 id=4681 data-nosnippet>4681</a>                        <span class="kw-2">*</span>value -= <span class="number">0.37 </span>* psf[source[<span class="number">0</span>] * shape[<span class="number">1</span>] + source[<span class="number">1</span>]].re;
+<a href=#4682 id=4682 data-nosnippet>4682</a>                    }
+<a href=#4683 id=4683 data-nosnippet>4683</a>                    <span class="kw">let </span><span class="kw-2">mut </span>actual = original.clone();
+<a href=#4684 id=4684 data-nosnippet>4684</a>                    <span class="kw">match </span>radius {
+<a href=#4685 id=4685 data-nosnippet>4685</a>                        <span class="prelude-val">Some</span>(radius) =&gt; subtract_psf_patch(
+<a href=#4686 id=4686 data-nosnippet>4686</a>                            <span class="kw-2">&amp;mut </span>actual,
+<a href=#4687 id=4687 data-nosnippet>4687</a>                            <span class="kw-2">&amp;</span>psf,
+<a href=#4688 id=4688 data-nosnippet>4688</a>                            shape,
+<a href=#4689 id=4689 data-nosnippet>4689</a>                            peak,
+<a href=#4690 id=4690 data-nosnippet>4690</a>                            psf_peak,
+<a href=#4691 id=4691 data-nosnippet>4691</a>                            radius,
+<a href=#4692 id=4692 data-nosnippet>4692</a>                            <span class="number">0.37</span>,
+<a href=#4693 id=4693 data-nosnippet>4693</a>                        ),
+<a href=#4694 id=4694 data-nosnippet>4694</a>                        <span class="prelude-val">None </span>=&gt; subtract_psf(<span class="kw-2">&amp;mut </span>actual, <span class="kw-2">&amp;</span>psf, shape, peak, psf_peak, <span class="number">0.37</span>),
+<a href=#4695 id=4695 data-nosnippet>4695</a>                    }
+<a href=#4696 id=4696 data-nosnippet>4696</a>                    .expect(<span class="string">"finite point subtraction"</span>);
+<a href=#4697 id=4697 data-nosnippet>4697</a>                    <span class="macro">assert!</span>(
+<a href=#4698 id=4698 data-nosnippet>4698</a>                        actual
+<a href=#4699 id=4699 data-nosnippet>4699</a>                            .iter()
+<a href=#4700 id=4700 data-nosnippet>4700</a>                            .zip(<span class="kw-2">&amp;</span>expected)
+<a href=#4701 id=4701 data-nosnippet>4701</a>                            .all(|(actual, expected)| actual.to_bits() == expected.to_bits()),
+<a href=#4702 id=4702 data-nosnippet>4702</a>                        <span class="string">"peak={peak:?}, psf_peak={psf_peak:?}, radius={radius:?}"
+<a href=#4703 id=4703 data-nosnippet>4703</a>                    </span>);
+<a href=#4704 id=4704 data-nosnippet>4704</a>                }
+<a href=#4705 id=4705 data-nosnippet>4705</a>            }
+<a href=#4706 id=4706 data-nosnippet>4706</a>        }
+<a href=#4707 id=4707 data-nosnippet>4707</a>    }
+<a href=#4708 id=4708 data-nosnippet>4708</a>
+<a href=#4709 id=4709 data-nosnippet>4709</a>    <span class="attr">#[test]
+<a href=#4710 id=4710 data-nosnippet>4710</a>    #[ignore = <span class="string">"bounded local timing probe; run in release mode for T55"</span>]
+<a href=#4711 id=4711 data-nosnippet>4711</a>    </span><span class="kw">fn </span>t55_point_psf_subtraction_locality_probe() {
+<a href=#4712 id=4712 data-nosnippet>4712</a>        <span class="kw">use </span>std::{hint::black_box, time::Instant};
+<a href=#4713 id=4713 data-nosnippet>4713</a>
+<a href=#4714 id=4714 data-nosnippet>4714</a>        <span class="kw">fn </span>strided_parent(residual: <span class="kw-2">&amp;mut </span>[f64], psf: <span class="kw-2">&amp;</span>[Complex64], edge: usize, flux: f64) {
+<a href=#4715 id=4715 data-nosnippet>4715</a>            <span class="kw">for </span>y <span class="kw">in </span><span class="number">0</span>..edge {
+<a href=#4716 id=4716 data-nosnippet>4716</a>                <span class="kw">for </span>x <span class="kw">in </span><span class="number">0</span>..edge {
+<a href=#4717 id=4717 data-nosnippet>4717</a>                    <span class="kw">let </span>index = x * edge + y;
+<a href=#4718 id=4718 data-nosnippet>4718</a>                    <span class="kw">let </span>updated = residual[index] - flux * psf[index].re;
+<a href=#4719 id=4719 data-nosnippet>4719</a>                    <span class="macro">assert!</span>(updated.is_finite());
+<a href=#4720 id=4720 data-nosnippet>4720</a>                    residual[index] = updated;
+<a href=#4721 id=4721 data-nosnippet>4721</a>                }
+<a href=#4722 id=4722 data-nosnippet>4722</a>            }
+<a href=#4723 id=4723 data-nosnippet>4723</a>        }
+<a href=#4724 id=4724 data-nosnippet>4724</a>
+<a href=#4725 id=4725 data-nosnippet>4725</a>        <span class="kw">let </span>edge = <span class="number">1024</span>;
+<a href=#4726 id=4726 data-nosnippet>4726</a>        <span class="kw">let </span>psf = (<span class="number">0</span>..edge * edge)
+<a href=#4727 id=4727 data-nosnippet>4727</a>            .map(|index| Complex64::new((index % <span class="number">97</span>) <span class="kw">as </span>f64 / <span class="number">97.0</span>, <span class="number">0.0</span>))
+<a href=#4728 id=4728 data-nosnippet>4728</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#4729 id=4729 data-nosnippet>4729</a>        <span class="kw">let </span><span class="kw-2">mut </span>parent_times = Vec::new();
+<a href=#4730 id=4730 data-nosnippet>4730</a>        <span class="kw">let </span><span class="kw-2">mut </span>candidate_times = Vec::new();
+<a href=#4731 id=4731 data-nosnippet>4731</a>        <span class="kw">for </span>round <span class="kw">in </span><span class="number">0</span>..<span class="number">6 </span>{
+<a href=#4732 id=4732 data-nosnippet>4732</a>            <span class="kw">let </span><span class="kw-2">mut </span>parent = <span class="macro">vec!</span>[<span class="number">1.0</span>; psf.len()];
+<a href=#4733 id=4733 data-nosnippet>4733</a>            <span class="kw">let </span><span class="kw-2">mut </span>candidate = parent.clone();
+<a href=#4734 id=4734 data-nosnippet>4734</a>            <span class="kw">let </span>parent_first = round % <span class="number">2 </span>== <span class="number">0</span>;
+<a href=#4735 id=4735 data-nosnippet>4735</a>            <span class="kw">for </span>run_parent <span class="kw">in </span>[parent_first, !parent_first] {
+<a href=#4736 id=4736 data-nosnippet>4736</a>                <span class="kw">let </span>started = Instant::now();
+<a href=#4737 id=4737 data-nosnippet>4737</a>                <span class="kw">for _ in </span><span class="number">0</span>..<span class="number">16 </span>{
+<a href=#4738 id=4738 data-nosnippet>4738</a>                    <span class="kw">if </span>run_parent {
+<a href=#4739 id=4739 data-nosnippet>4739</a>                        strided_parent(black_box(<span class="kw-2">&amp;mut </span>parent), black_box(<span class="kw-2">&amp;</span>psf), edge, <span class="number">0.001</span>);
+<a href=#4740 id=4740 data-nosnippet>4740</a>                    } <span class="kw">else </span>{
+<a href=#4741 id=4741 data-nosnippet>4741</a>                        subtract_psf(
+<a href=#4742 id=4742 data-nosnippet>4742</a>                            black_box(<span class="kw-2">&amp;mut </span>candidate),
+<a href=#4743 id=4743 data-nosnippet>4743</a>                            black_box(<span class="kw-2">&amp;</span>psf),
+<a href=#4744 id=4744 data-nosnippet>4744</a>                            [edge, edge],
+<a href=#4745 id=4745 data-nosnippet>4745</a>                            [edge / <span class="number">2</span>, edge / <span class="number">2</span>],
+<a href=#4746 id=4746 data-nosnippet>4746</a>                            [edge / <span class="number">2</span>, edge / <span class="number">2</span>],
+<a href=#4747 id=4747 data-nosnippet>4747</a>                            <span class="number">0.001</span>,
+<a href=#4748 id=4748 data-nosnippet>4748</a>                        )
+<a href=#4749 id=4749 data-nosnippet>4749</a>                        .expect(<span class="string">"finite point subtraction"</span>);
+<a href=#4750 id=4750 data-nosnippet>4750</a>                    }
+<a href=#4751 id=4751 data-nosnippet>4751</a>                }
+<a href=#4752 id=4752 data-nosnippet>4752</a>                <span class="kw">let </span>elapsed = started.elapsed().as_nanos();
+<a href=#4753 id=4753 data-nosnippet>4753</a>                <span class="kw">if </span>round &gt; <span class="number">0 </span>{
+<a href=#4754 id=4754 data-nosnippet>4754</a>                    <span class="kw">if </span>run_parent {
+<a href=#4755 id=4755 data-nosnippet>4755</a>                        parent_times.push(elapsed);
+<a href=#4756 id=4756 data-nosnippet>4756</a>                    } <span class="kw">else </span>{
+<a href=#4757 id=4757 data-nosnippet>4757</a>                        candidate_times.push(elapsed);
+<a href=#4758 id=4758 data-nosnippet>4758</a>                    }
+<a href=#4759 id=4759 data-nosnippet>4759</a>                }
+<a href=#4760 id=4760 data-nosnippet>4760</a>            }
+<a href=#4761 id=4761 data-nosnippet>4761</a>            <span class="macro">assert!</span>(
+<a href=#4762 id=4762 data-nosnippet>4762</a>                parent
+<a href=#4763 id=4763 data-nosnippet>4763</a>                    .iter()
+<a href=#4764 id=4764 data-nosnippet>4764</a>                    .zip(<span class="kw-2">&amp;</span>candidate)
+<a href=#4765 id=4765 data-nosnippet>4765</a>                    .all(|(parent, candidate)| parent.to_bits() == candidate.to_bits())
+<a href=#4766 id=4766 data-nosnippet>4766</a>            );
+<a href=#4767 id=4767 data-nosnippet>4767</a>        }
+<a href=#4768 id=4768 data-nosnippet>4768</a>        parent_times.sort_unstable();
+<a href=#4769 id=4769 data-nosnippet>4769</a>        candidate_times.sort_unstable();
+<a href=#4770 id=4770 data-nosnippet>4770</a>        <span class="macro">eprintln!</span>(
+<a href=#4771 id=4771 data-nosnippet>4771</a>            <span class="string">"T55 PSF locality: shape={edge}x{edge}, components=16, warmup_pairs=1, measured_pairs=5, parent_median_ns={}, candidate_median_ns={}, speedup={:.3}; local kernel only"</span>,
+<a href=#4772 id=4772 data-nosnippet>4772</a>            parent_times[<span class="number">2</span>],
+<a href=#4773 id=4773 data-nosnippet>4773</a>            candidate_times[<span class="number">2</span>],
+<a href=#4774 id=4774 data-nosnippet>4774</a>            parent_times[<span class="number">2</span>] <span class="kw">as </span>f64 / candidate_times[<span class="number">2</span>] <span class="kw">as </span>f64
+<a href=#4775 id=4775 data-nosnippet>4775</a>        );
+<a href=#4776 id=4776 data-nosnippet>4776</a>    }
+<a href=#4777 id=4777 data-nosnippet>4777</a>
+<a href=#4778 id=4778 data-nosnippet>4778</a>    <span class="kw">fn </span>point_domain_work&lt;<span class="lifetime">'a</span>&gt;(
+<a href=#4779 id=4779 data-nosnippet>4779</a>        domain_ordinal: usize,
+<a href=#4780 id=4780 data-nosnippet>4780</a>        residual: f64,
+<a href=#4781 id=4781 data-nosnippet>4781</a>        psf: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[Complex64],
+<a href=#4782 id=4782 data-nosnippet>4782</a>    ) -&gt; ImageDomainHogbomWork&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#4783 id=4783 data-nosnippet>4783</a>        ImageDomainHogbomWork {
+<a href=#4784 id=4784 data-nosnippet>4784</a>            domain_ordinal,
+<a href=#4785 id=4785 data-nosnippet>4785</a>            shape: [<span class="number">1</span>, <span class="number">1</span>],
+<a href=#4786 id=4786 data-nosnippet>4786</a>            psf: std::borrow::Cow::Borrowed(psf),
+<a href=#4787 id=4787 data-nosnippet>4787</a>            model_plane: MinorCycleModelPlane::new(domain_ordinal, <span class="number">0</span>, <span class="number">0</span>),
+<a href=#4788 id=4788 data-nosnippet>4788</a>            psf_peak: <span class="number">1.0</span>,
+<a href=#4789 id=4789 data-nosnippet>4789</a>            psf_peak_pixel: [<span class="number">0</span>, <span class="number">0</span>],
+<a href=#4790 id=4790 data-nosnippet>4790</a>            valid_support: <span class="macro">vec!</span>[<span class="bool-val">true</span>].into_boxed_slice(),
+<a href=#4791 id=4791 data-nosnippet>4791</a>            residual: <span class="macro">vec!</span>[residual],
+<a href=#4792 id=4792 data-nosnippet>4792</a>            noise_rms: <span class="prelude-val">None</span>,
+<a href=#4793 id=4793 data-nosnippet>4793</a>        }
+<a href=#4794 id=4794 data-nosnippet>4794</a>    }
+<a href=#4795 id=4795 data-nosnippet>4795</a>
+<a href=#4796 id=4796 data-nosnippet>4796</a>    <span class="kw">fn </span>casa_inclusive_program(max_iterations: usize, gain: f64) -&gt; MinorCycleProgram {
+<a href=#4797 id=4797 data-nosnippet>4797</a>        MinorCycleProgram::from_compiled(
+<a href=#4798 id=4798 data-nosnippet>4798</a>            ReconstructionControls::new(max_iterations, gain, <span class="number">0.0</span>)
+<a href=#4799 id=4799 data-nosnippet>4799</a>                .with_cycle_limits(max_iterations, <span class="prelude-val">None</span>)
+<a href=#4800 id=4800 data-nosnippet>4800</a>                .with_hogbom_iteration_accounting(HogbomIterationAccounting::CasaInclusive),
+<a href=#4801 id=4801 data-nosnippet>4801</a>        )
+<a href=#4802 id=4802 data-nosnippet>4802</a>        .expect(<span class="string">"CASA-inclusive point-clean program"</span>)
+<a href=#4803 id=4803 data-nosnippet>4803</a>        .record_component_sequence(<span class="number">32</span>)
+<a href=#4804 id=4804 data-nosnippet>4804</a>        .expect(<span class="string">"bounded diagnostic component sequence"</span>)
+<a href=#4805 id=4805 data-nosnippet>4805</a>    }
+<a href=#4806 id=4806 data-nosnippet>4806</a>
+<a href=#4807 id=4807 data-nosnippet>4807</a>    <span class="attr">#[test]
+<a href=#4808 id=4808 data-nosnippet>4808</a>    </span><span class="kw">fn </span>image_domains_share_the_set_threshold_but_each_complete_the_full_set_budget() {
+<a href=#4809 id=4809 data-nosnippet>4809</a>        <span class="kw">let </span>psf = [Complex64::new(<span class="number">1.0</span>, <span class="number">0.0</span>)];
+<a href=#4810 id=4810 data-nosnippet>4810</a>        <span class="kw">let </span>main_peak = <span class="number">1.038_444_757_f64</span>;
+<a href=#4811 id=4811 data-nosnippet>4811</a>        <span class="kw">let </span>outlier_peak = <span class="number">5.569_267_75_f64</span>;
+<a href=#4812 id=4812 data-nosnippet>4812</a>        <span class="kw">let </span>shared_cycle_threshold = <span class="number">0.771_931_6_f64</span>;
+<a href=#4813 id=4813 data-nosnippet>4813</a>        <span class="kw">let </span><span class="kw-2">mut </span>work = [
+<a href=#4814 id=4814 data-nosnippet>4814</a>            point_domain_work(<span class="number">0</span>, main_peak, <span class="kw-2">&amp;</span>psf),
+<a href=#4815 id=4815 data-nosnippet>4815</a>            point_domain_work(<span class="number">1</span>, outlier_peak, <span class="kw-2">&amp;</span>psf),
+<a href=#4816 id=4816 data-nosnippet>4816</a>        ];
+<a href=#4817 id=4817 data-nosnippet>4817</a>        <span class="kw">let </span>controls = casa_inclusive_program(<span class="number">10</span>, <span class="number">0.1</span>);
+<a href=#4818 id=4818 data-nosnippet>4818</a>        <span class="kw">let </span><span class="kw-2">mut </span>terms = BTreeMap::new();
+<a href=#4819 id=4819 data-nosnippet>4819</a>        <span class="kw">let </span><span class="kw-2">mut </span>recorded = Vec::&lt;MinorCycleComponent&gt;::new();
+<a href=#4820 id=4820 data-nosnippet>4820</a>
+<a href=#4821 id=4821 data-nosnippet>4821</a>        <span class="kw">let </span>evidence = run_image_domain_hogbom_controllers(
+<a href=#4822 id=4822 data-nosnippet>4822</a>            <span class="kw-2">&amp;mut </span>work,
+<a href=#4823 id=4823 data-nosnippet>4823</a>            <span class="kw-2">&amp;</span>controls,
+<a href=#4824 id=4824 data-nosnippet>4824</a>            <span class="prelude-val">Some</span>(shared_cycle_threshold),
+<a href=#4825 id=4825 data-nosnippet>4825</a>            <span class="kw-2">&amp;mut </span>terms,
+<a href=#4826 id=4826 data-nosnippet>4826</a>            <span class="kw-2">&amp;mut </span>recorded,
+<a href=#4827 id=4827 data-nosnippet>4827</a>        )
+<a href=#4828 id=4828 data-nosnippet>4828</a>        .expect(<span class="string">"two canonical field controllers"</span>);
+<a href=#4829 id=4829 data-nosnippet>4829</a>
+<a href=#4830 id=4830 data-nosnippet>4830</a>        <span class="macro">assert_eq!</span>(evidence.len(), <span class="number">2</span>);
+<a href=#4831 id=4831 data-nosnippet>4831</a>        <span class="macro">assert_eq!</span>(
+<a href=#4832 id=4832 data-nosnippet>4832</a>            (
+<a href=#4833 id=4833 data-nosnippet>4833</a>                evidence[<span class="number">0</span>].iterations(),
+<a href=#4834 id=4834 data-nosnippet>4834</a>                evidence[<span class="number">0</span>].controller_iterations(),
+<a href=#4835 id=4835 data-nosnippet>4835</a>                evidence[<span class="number">0</span>].stop_reason(),
+<a href=#4836 id=4836 data-nosnippet>4836</a>            ),
+<a href=#4837 id=4837 data-nosnippet>4837</a>            (<span class="number">3</span>, <span class="number">3</span>, MinorCycleStopReason::ThresholdReached)
+<a href=#4838 id=4838 data-nosnippet>4838</a>        );
+<a href=#4839 id=4839 data-nosnippet>4839</a>        <span class="macro">assert_eq!</span>(
+<a href=#4840 id=4840 data-nosnippet>4840</a>            (
+<a href=#4841 id=4841 data-nosnippet>4841</a>                evidence[<span class="number">1</span>].iterations(),
+<a href=#4842 id=4842 data-nosnippet>4842</a>                evidence[<span class="number">1</span>].controller_iterations(),
+<a href=#4843 id=4843 data-nosnippet>4843</a>                evidence[<span class="number">1</span>].stop_reason(),
+<a href=#4844 id=4844 data-nosnippet>4844</a>            ),
+<a href=#4845 id=4845 data-nosnippet>4845</a>            (<span class="number">11</span>, <span class="number">10</span>, MinorCycleStopReason::IterationBound)
+<a href=#4846 id=4846 data-nosnippet>4846</a>        );
+<a href=#4847 id=4847 data-nosnippet>4847</a>        <span class="macro">assert!</span>(
+<a href=#4848 id=4848 data-nosnippet>4848</a>            evidence
+<a href=#4849 id=4849 data-nosnippet>4849</a>                .iter()
+<a href=#4850 id=4850 data-nosnippet>4850</a>                .all(|run| run.cycle_threshold() == <span class="prelude-val">Some</span>(shared_cycle_threshold))
+<a href=#4851 id=4851 data-nosnippet>4851</a>        );
 <a href=#4852 id=4852 data-nosnippet>4852</a>        <span class="macro">assert_eq!</span>(
-<a href=#4853 id=4853 data-nosnippet>4853</a>            evidence
-<a href=#4854 id=4854 data-nosnippet>4854</a>                .iter()
-<a href=#4855 id=4855 data-nosnippet>4855</a>                .map(|run| run.controller_iterations())
-<a href=#4856 id=4856 data-nosnippet>4856</a>                .sum::&lt;usize&gt;(),
-<a href=#4857 id=4857 data-nosnippet>4857</a>            <span class="number">13</span>,
-<a href=#4858 id=4858 data-nosnippet>4858</a>            <span class="string">"CASA compares niter only after every field finishes its controller"
-<a href=#4859 id=4859 data-nosnippet>4859</a>        </span>);
-<a href=#4860 id=4860 data-nosnippet>4860</a>        <span class="kw">let </span>main_model = terms[<span class="kw-2">&amp;</span>ModelCell::new(<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, [<span class="number">0</span>, <span class="number">0</span>])];
-<a href=#4861 id=4861 data-nosnippet>4861</a>        <span class="kw">let </span>outlier_model = terms[<span class="kw-2">&amp;</span>ModelCell::new(<span class="number">1</span>, <span class="number">0</span>, <span class="number">0</span>, [<span class="number">0</span>, <span class="number">0</span>])];
-<a href=#4862 id=4862 data-nosnippet>4862</a>        <span class="macro">assert!</span>((main_model - main_peak * (<span class="number">1.0 </span>- <span class="number">0.9_f64</span>.powi(<span class="number">3</span>))).abs() &lt; <span class="number">1.0e-12</span>);
-<a href=#4863 id=4863 data-nosnippet>4863</a>        <span class="macro">assert!</span>((outlier_model - outlier_peak * (<span class="number">1.0 </span>- <span class="number">0.9_f64</span>.powi(<span class="number">11</span>))).abs() &lt; <span class="number">1.0e-12</span>);
-<a href=#4864 id=4864 data-nosnippet>4864</a>        <span class="macro">assert_eq!</span>(
-<a href=#4865 id=4865 data-nosnippet>4865</a>            recorded
-<a href=#4866 id=4866 data-nosnippet>4866</a>                .iter()
-<a href=#4867 id=4867 data-nosnippet>4867</a>                .map(|component| component.cell().domain())
-<a href=#4868 id=4868 data-nosnippet>4868</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
-<a href=#4869 id=4869 data-nosnippet>4869</a>            [<span class="macro">vec!</span>[<span class="number">0</span>; <span class="number">3</span>], <span class="macro">vec!</span>[<span class="number">1</span>; <span class="number">11</span>]].concat()
-<a href=#4870 id=4870 data-nosnippet>4870</a>        );
-<a href=#4871 id=4871 data-nosnippet>4871</a>    }
-<a href=#4872 id=4872 data-nosnippet>4872</a>
-<a href=#4873 id=4873 data-nosnippet>4873</a>    <span class="attr">#[test]
-<a href=#4874 id=4874 data-nosnippet>4874</a>    </span><span class="kw">fn </span>one_domain_collection_uses_the_same_shared_threshold_controller_path() {
-<a href=#4875 id=4875 data-nosnippet>4875</a>        <span class="kw">let </span>psf = [Complex64::new(<span class="number">1.0</span>, <span class="number">0.0</span>)];
-<a href=#4876 id=4876 data-nosnippet>4876</a>        <span class="kw">let </span>peak = <span class="number">1.038_444_757_f64</span>;
-<a href=#4877 id=4877 data-nosnippet>4877</a>        <span class="kw">let </span>shared_cycle_threshold = <span class="number">0.771_931_6_f64</span>;
-<a href=#4878 id=4878 data-nosnippet>4878</a>        <span class="kw">let </span><span class="kw-2">mut </span>work = [point_domain_work(<span class="number">0</span>, peak, <span class="kw-2">&amp;</span>psf)];
-<a href=#4879 id=4879 data-nosnippet>4879</a>        <span class="kw">let </span>controls = casa_inclusive_program(<span class="number">10</span>, <span class="number">0.1</span>);
-<a href=#4880 id=4880 data-nosnippet>4880</a>        <span class="kw">let </span><span class="kw-2">mut </span>terms = BTreeMap::new();
-<a href=#4881 id=4881 data-nosnippet>4881</a>        <span class="kw">let </span><span class="kw-2">mut </span>recorded = Vec::new();
-<a href=#4882 id=4882 data-nosnippet>4882</a>
-<a href=#4883 id=4883 data-nosnippet>4883</a>        <span class="kw">let </span>evidence = run_image_domain_hogbom_controllers(
-<a href=#4884 id=4884 data-nosnippet>4884</a>            <span class="kw-2">&amp;mut </span>work,
-<a href=#4885 id=4885 data-nosnippet>4885</a>            <span class="kw-2">&amp;</span>controls,
-<a href=#4886 id=4886 data-nosnippet>4886</a>            <span class="prelude-val">Some</span>(shared_cycle_threshold),
-<a href=#4887 id=4887 data-nosnippet>4887</a>            <span class="kw-2">&amp;mut </span>terms,
-<a href=#4888 id=4888 data-nosnippet>4888</a>            <span class="kw-2">&amp;mut </span>recorded,
-<a href=#4889 id=4889 data-nosnippet>4889</a>        )
-<a href=#4890 id=4890 data-nosnippet>4890</a>        .expect(<span class="string">"one-domain collection controller"</span>);
-<a href=#4891 id=4891 data-nosnippet>4891</a>
-<a href=#4892 id=4892 data-nosnippet>4892</a>        <span class="macro">assert_eq!</span>(evidence.len(), <span class="number">1</span>);
-<a href=#4893 id=4893 data-nosnippet>4893</a>        <span class="macro">assert_eq!</span>(evidence[<span class="number">0</span>].domain_ordinal(), <span class="number">0</span>);
-<a href=#4894 id=4894 data-nosnippet>4894</a>        <span class="macro">assert_eq!</span>(evidence[<span class="number">0</span>].iterations(), <span class="number">3</span>);
-<a href=#4895 id=4895 data-nosnippet>4895</a>        <span class="macro">assert_eq!</span>(evidence[<span class="number">0</span>].controller_iterations(), <span class="number">3</span>);
-<a href=#4896 id=4896 data-nosnippet>4896</a>        <span class="macro">assert_eq!</span>(evidence[<span class="number">0</span>].cycle_threshold(), <span class="prelude-val">Some</span>(shared_cycle_threshold));
-<a href=#4897 id=4897 data-nosnippet>4897</a>        <span class="macro">assert!</span>(
-<a href=#4898 id=4898 data-nosnippet>4898</a>            (terms[<span class="kw-2">&amp;</span>ModelCell::new(<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, [<span class="number">0</span>, <span class="number">0</span>])] - peak * (<span class="number">1.0 </span>- <span class="number">0.9_f64</span>.powi(<span class="number">3</span>))).abs()
-<a href=#4899 id=4899 data-nosnippet>4899</a>                &lt; <span class="number">1.0e-12
-<a href=#4900 id=4900 data-nosnippet>4900</a>        </span>);
-<a href=#4901 id=4901 data-nosnippet>4901</a>        <span class="macro">assert_eq!</span>(recorded.len(), <span class="number">3</span>);
-<a href=#4902 id=4902 data-nosnippet>4902</a>    }
-<a href=#4903 id=4903 data-nosnippet>4903</a>
-<a href=#4904 id=4904 data-nosnippet>4904</a>    <span class="attr">#[test]
-<a href=#4905 id=4905 data-nosnippet>4905</a>    </span><span class="kw">fn </span>t55_point_workspace_includes_active_set_sparse_delta_and_diagnostics() {
-<a href=#4906 id=4906 data-nosnippet>4906</a>        <span class="kw">let </span>shape = [<span class="number">128</span>, <span class="number">256</span>];
-<a href=#4907 id=4907 data-nosnippet>4907</a>        <span class="kw">let </span>bytes = |algorithm, iterations, recorded| {
-<a href=#4908 id=4908 data-nosnippet>4908</a>            minor_cycle_workspace_bytes(
-<a href=#4909 id=4909 data-nosnippet>4909</a>                shape,
-<a href=#4910 id=4910 data-nosnippet>4910</a>                <span class="number">1</span>,
-<a href=#4911 id=4911 data-nosnippet>4911</a>                ReconstructionBasis::ChannelLocal { channels: <span class="number">64 </span>},
-<a href=#4912 id=4912 data-nosnippet>4912</a>                algorithm,
-<a href=#4913 id=4913 data-nosnippet>4913</a>                iterations,
-<a href=#4914 id=4914 data-nosnippet>4914</a>                recorded,
-<a href=#4915 id=4915 data-nosnippet>4915</a>            )
-<a href=#4916 id=4916 data-nosnippet>4916</a>        };
-<a href=#4917 id=4917 data-nosnippet>4917</a>        <span class="kw">let </span>hogbom = bytes(<span class="kw-2">&amp;</span>ReconstructionAlgorithm::Hogbom, <span class="number">8</span>, <span class="number">0</span>);
-<a href=#4918 id=4918 data-nosnippet>4918</a>        <span class="kw">let </span>clark = bytes(<span class="kw-2">&amp;</span>ReconstructionAlgorithm::Clark, <span class="number">8</span>, <span class="number">0</span>);
-<a href=#4919 id=4919 data-nosnippet>4919</a>        <span class="macro">assert!</span>(hogbom &gt; <span class="number">16 </span>* (shape[<span class="number">0</span>] * shape[<span class="number">1</span>]) <span class="kw">as </span>u64);
-<a href=#4920 id=4920 data-nosnippet>4920</a>        <span class="macro">assert_eq!</span>(clark - hogbom, (shape[<span class="number">0</span>] * shape[<span class="number">1</span>]) <span class="kw">as </span>u64);
-<a href=#4921 id=4921 data-nosnippet>4921</a>        <span class="macro">assert!</span>(bytes(<span class="kw-2">&amp;</span>ReconstructionAlgorithm::Clark, <span class="number">16</span>, <span class="number">0</span>) &gt; clark);
-<a href=#4922 id=4922 data-nosnippet>4922</a>        <span class="macro">assert_eq!</span>(
-<a href=#4923 id=4923 data-nosnippet>4923</a>            bytes(<span class="kw-2">&amp;</span>ReconstructionAlgorithm::Clark, <span class="number">8</span>, <span class="number">64</span>) - clark,
-<a href=#4924 id=4924 data-nosnippet>4924</a>            <span class="number">16 </span>* size_of::&lt;MinorCycleComponent&gt;() <span class="kw">as </span>u64
-<a href=#4925 id=4925 data-nosnippet>4925</a>        );
+<a href=#4853 id=4853 data-nosnippet>4853</a>            evidence.iter().map(|run| run.iterations()).sum::&lt;usize&gt;(),
+<a href=#4854 id=4854 data-nosnippet>4854</a>            <span class="number">14
+<a href=#4855 id=4855 data-nosnippet>4855</a>        </span>);
+<a href=#4856 id=4856 data-nosnippet>4856</a>        <span class="macro">assert_eq!</span>(
+<a href=#4857 id=4857 data-nosnippet>4857</a>            evidence
+<a href=#4858 id=4858 data-nosnippet>4858</a>                .iter()
+<a href=#4859 id=4859 data-nosnippet>4859</a>                .map(|run| run.controller_iterations())
+<a href=#4860 id=4860 data-nosnippet>4860</a>                .sum::&lt;usize&gt;(),
+<a href=#4861 id=4861 data-nosnippet>4861</a>            <span class="number">13</span>,
+<a href=#4862 id=4862 data-nosnippet>4862</a>            <span class="string">"CASA compares niter only after every field finishes its controller"
+<a href=#4863 id=4863 data-nosnippet>4863</a>        </span>);
+<a href=#4864 id=4864 data-nosnippet>4864</a>        <span class="kw">let </span>main_model = terms[<span class="kw-2">&amp;</span>ModelCell::new(<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, [<span class="number">0</span>, <span class="number">0</span>])];
+<a href=#4865 id=4865 data-nosnippet>4865</a>        <span class="kw">let </span>outlier_model = terms[<span class="kw-2">&amp;</span>ModelCell::new(<span class="number">1</span>, <span class="number">0</span>, <span class="number">0</span>, [<span class="number">0</span>, <span class="number">0</span>])];
+<a href=#4866 id=4866 data-nosnippet>4866</a>        <span class="macro">assert!</span>((main_model - main_peak * (<span class="number">1.0 </span>- <span class="number">0.9_f64</span>.powi(<span class="number">3</span>))).abs() &lt; <span class="number">1.0e-12</span>);
+<a href=#4867 id=4867 data-nosnippet>4867</a>        <span class="macro">assert!</span>((outlier_model - outlier_peak * (<span class="number">1.0 </span>- <span class="number">0.9_f64</span>.powi(<span class="number">11</span>))).abs() &lt; <span class="number">1.0e-12</span>);
+<a href=#4868 id=4868 data-nosnippet>4868</a>        <span class="macro">assert_eq!</span>(
+<a href=#4869 id=4869 data-nosnippet>4869</a>            recorded
+<a href=#4870 id=4870 data-nosnippet>4870</a>                .iter()
+<a href=#4871 id=4871 data-nosnippet>4871</a>                .map(|component| component.cell().domain())
+<a href=#4872 id=4872 data-nosnippet>4872</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
+<a href=#4873 id=4873 data-nosnippet>4873</a>            [<span class="macro">vec!</span>[<span class="number">0</span>; <span class="number">3</span>], <span class="macro">vec!</span>[<span class="number">1</span>; <span class="number">11</span>]].concat()
+<a href=#4874 id=4874 data-nosnippet>4874</a>        );
+<a href=#4875 id=4875 data-nosnippet>4875</a>    }
+<a href=#4876 id=4876 data-nosnippet>4876</a>
+<a href=#4877 id=4877 data-nosnippet>4877</a>    <span class="attr">#[test]
+<a href=#4878 id=4878 data-nosnippet>4878</a>    </span><span class="kw">fn </span>one_domain_collection_uses_the_same_shared_threshold_controller_path() {
+<a href=#4879 id=4879 data-nosnippet>4879</a>        <span class="kw">let </span>psf = [Complex64::new(<span class="number">1.0</span>, <span class="number">0.0</span>)];
+<a href=#4880 id=4880 data-nosnippet>4880</a>        <span class="kw">let </span>peak = <span class="number">1.038_444_757_f64</span>;
+<a href=#4881 id=4881 data-nosnippet>4881</a>        <span class="kw">let </span>shared_cycle_threshold = <span class="number">0.771_931_6_f64</span>;
+<a href=#4882 id=4882 data-nosnippet>4882</a>        <span class="kw">let </span><span class="kw-2">mut </span>work = [point_domain_work(<span class="number">0</span>, peak, <span class="kw-2">&amp;</span>psf)];
+<a href=#4883 id=4883 data-nosnippet>4883</a>        <span class="kw">let </span>controls = casa_inclusive_program(<span class="number">10</span>, <span class="number">0.1</span>);
+<a href=#4884 id=4884 data-nosnippet>4884</a>        <span class="kw">let </span><span class="kw-2">mut </span>terms = BTreeMap::new();
+<a href=#4885 id=4885 data-nosnippet>4885</a>        <span class="kw">let </span><span class="kw-2">mut </span>recorded = Vec::new();
+<a href=#4886 id=4886 data-nosnippet>4886</a>
+<a href=#4887 id=4887 data-nosnippet>4887</a>        <span class="kw">let </span>evidence = run_image_domain_hogbom_controllers(
+<a href=#4888 id=4888 data-nosnippet>4888</a>            <span class="kw-2">&amp;mut </span>work,
+<a href=#4889 id=4889 data-nosnippet>4889</a>            <span class="kw-2">&amp;</span>controls,
+<a href=#4890 id=4890 data-nosnippet>4890</a>            <span class="prelude-val">Some</span>(shared_cycle_threshold),
+<a href=#4891 id=4891 data-nosnippet>4891</a>            <span class="kw-2">&amp;mut </span>terms,
+<a href=#4892 id=4892 data-nosnippet>4892</a>            <span class="kw-2">&amp;mut </span>recorded,
+<a href=#4893 id=4893 data-nosnippet>4893</a>        )
+<a href=#4894 id=4894 data-nosnippet>4894</a>        .expect(<span class="string">"one-domain collection controller"</span>);
+<a href=#4895 id=4895 data-nosnippet>4895</a>
+<a href=#4896 id=4896 data-nosnippet>4896</a>        <span class="macro">assert_eq!</span>(evidence.len(), <span class="number">1</span>);
+<a href=#4897 id=4897 data-nosnippet>4897</a>        <span class="macro">assert_eq!</span>(evidence[<span class="number">0</span>].domain_ordinal(), <span class="number">0</span>);
+<a href=#4898 id=4898 data-nosnippet>4898</a>        <span class="macro">assert_eq!</span>(evidence[<span class="number">0</span>].iterations(), <span class="number">3</span>);
+<a href=#4899 id=4899 data-nosnippet>4899</a>        <span class="macro">assert_eq!</span>(evidence[<span class="number">0</span>].controller_iterations(), <span class="number">3</span>);
+<a href=#4900 id=4900 data-nosnippet>4900</a>        <span class="macro">assert_eq!</span>(evidence[<span class="number">0</span>].cycle_threshold(), <span class="prelude-val">Some</span>(shared_cycle_threshold));
+<a href=#4901 id=4901 data-nosnippet>4901</a>        <span class="macro">assert!</span>(
+<a href=#4902 id=4902 data-nosnippet>4902</a>            (terms[<span class="kw-2">&amp;</span>ModelCell::new(<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, [<span class="number">0</span>, <span class="number">0</span>])] - peak * (<span class="number">1.0 </span>- <span class="number">0.9_f64</span>.powi(<span class="number">3</span>))).abs()
+<a href=#4903 id=4903 data-nosnippet>4903</a>                &lt; <span class="number">1.0e-12
+<a href=#4904 id=4904 data-nosnippet>4904</a>        </span>);
+<a href=#4905 id=4905 data-nosnippet>4905</a>        <span class="macro">assert_eq!</span>(recorded.len(), <span class="number">3</span>);
+<a href=#4906 id=4906 data-nosnippet>4906</a>    }
+<a href=#4907 id=4907 data-nosnippet>4907</a>
+<a href=#4908 id=4908 data-nosnippet>4908</a>    <span class="attr">#[test]
+<a href=#4909 id=4909 data-nosnippet>4909</a>    </span><span class="kw">fn </span>t55_point_workspace_includes_active_set_sparse_delta_and_diagnostics() {
+<a href=#4910 id=4910 data-nosnippet>4910</a>        <span class="kw">let </span>shape = [<span class="number">128</span>, <span class="number">256</span>];
+<a href=#4911 id=4911 data-nosnippet>4911</a>        <span class="kw">let </span>bytes = |algorithm, iterations, recorded| {
+<a href=#4912 id=4912 data-nosnippet>4912</a>            minor_cycle_workspace_bytes(
+<a href=#4913 id=4913 data-nosnippet>4913</a>                shape,
+<a href=#4914 id=4914 data-nosnippet>4914</a>                <span class="number">1</span>,
+<a href=#4915 id=4915 data-nosnippet>4915</a>                ReconstructionBasis::ChannelLocal { channels: <span class="number">64 </span>},
+<a href=#4916 id=4916 data-nosnippet>4916</a>                algorithm,
+<a href=#4917 id=4917 data-nosnippet>4917</a>                iterations,
+<a href=#4918 id=4918 data-nosnippet>4918</a>                recorded,
+<a href=#4919 id=4919 data-nosnippet>4919</a>            )
+<a href=#4920 id=4920 data-nosnippet>4920</a>        };
+<a href=#4921 id=4921 data-nosnippet>4921</a>        <span class="kw">let </span>hogbom = bytes(<span class="kw-2">&amp;</span>ReconstructionAlgorithm::Hogbom, <span class="number">8</span>, <span class="number">0</span>);
+<a href=#4922 id=4922 data-nosnippet>4922</a>        <span class="kw">let </span>clark = bytes(<span class="kw-2">&amp;</span>ReconstructionAlgorithm::Clark, <span class="number">8</span>, <span class="number">0</span>);
+<a href=#4923 id=4923 data-nosnippet>4923</a>        <span class="macro">assert!</span>(hogbom &gt; <span class="number">16 </span>* (shape[<span class="number">0</span>] * shape[<span class="number">1</span>]) <span class="kw">as </span>u64);
+<a href=#4924 id=4924 data-nosnippet>4924</a>        <span class="macro">assert_eq!</span>(clark - hogbom, (shape[<span class="number">0</span>] * shape[<span class="number">1</span>]) <span class="kw">as </span>u64);
+<a href=#4925 id=4925 data-nosnippet>4925</a>        <span class="macro">assert!</span>(bytes(<span class="kw-2">&amp;</span>ReconstructionAlgorithm::Clark, <span class="number">16</span>, <span class="number">0</span>) &gt; clark);
 <a href=#4926 id=4926 data-nosnippet>4926</a>        <span class="macro">assert_eq!</span>(
-<a href=#4927 id=4927 data-nosnippet>4927</a>            bytes(<span class="kw-2">&amp;</span>ReconstructionAlgorithm::Hogbom, <span class="number">8</span>, <span class="number">0</span>),
-<a href=#4928 id=4928 data-nosnippet>4928</a>            minor_cycle_workspace_bytes(
-<a href=#4929 id=4929 data-nosnippet>4929</a>                shape,
-<a href=#4930 id=4930 data-nosnippet>4930</a>                <span class="number">1</span>,
-<a href=#4931 id=4931 data-nosnippet>4931</a>                ReconstructionBasis::Constant,
-<a href=#4932 id=4932 data-nosnippet>4932</a>                <span class="kw-2">&amp;</span>ReconstructionAlgorithm::Hogbom,
-<a href=#4933 id=4933 data-nosnippet>4933</a>                <span class="number">8</span>,
-<a href=#4934 id=4934 data-nosnippet>4934</a>                <span class="number">0
-<a href=#4935 id=4935 data-nosnippet>4935</a>            </span>)
-<a href=#4936 id=4936 data-nosnippet>4936</a>        );
-<a href=#4937 id=4937 data-nosnippet>4937</a>    }
-<a href=#4938 id=4938 data-nosnippet>4938</a>
-<a href=#4939 id=4939 data-nosnippet>4939</a>    <span class="attr">#[test]
-<a href=#4940 id=4940 data-nosnippet>4940</a>    </span><span class="kw">fn </span>mtmfs_workspace_claim_scales_with_terms_and_effective_kernels() {
-<a href=#4941 id=4941 data-nosnippet>4941</a>        <span class="kw">let </span>point = ReconstructionAlgorithm::Mtmfs {
-<a href=#4942 id=4942 data-nosnippet>4942</a>            scales_px: <span class="macro">vec!</span>[<span class="number">0.0</span>],
-<a href=#4943 id=4943 data-nosnippet>4943</a>            small_scale_bias: <span class="number">0.0</span>,
-<a href=#4944 id=4944 data-nosnippet>4944</a>        };
-<a href=#4945 id=4945 data-nosnippet>4945</a>        <span class="kw">let </span>multiscale = ReconstructionAlgorithm::Mtmfs {
-<a href=#4946 id=4946 data-nosnippet>4946</a>            scales_px: <span class="macro">vec!</span>[<span class="number">0.0</span>, <span class="number">5.0</span>],
+<a href=#4927 id=4927 data-nosnippet>4927</a>            bytes(<span class="kw-2">&amp;</span>ReconstructionAlgorithm::Clark, <span class="number">8</span>, <span class="number">64</span>) - clark,
+<a href=#4928 id=4928 data-nosnippet>4928</a>            <span class="number">16 </span>* size_of::&lt;MinorCycleComponent&gt;() <span class="kw">as </span>u64
+<a href=#4929 id=4929 data-nosnippet>4929</a>        );
+<a href=#4930 id=4930 data-nosnippet>4930</a>        <span class="macro">assert_eq!</span>(
+<a href=#4931 id=4931 data-nosnippet>4931</a>            bytes(<span class="kw-2">&amp;</span>ReconstructionAlgorithm::Hogbom, <span class="number">8</span>, <span class="number">0</span>),
+<a href=#4932 id=4932 data-nosnippet>4932</a>            minor_cycle_workspace_bytes(
+<a href=#4933 id=4933 data-nosnippet>4933</a>                shape,
+<a href=#4934 id=4934 data-nosnippet>4934</a>                <span class="number">1</span>,
+<a href=#4935 id=4935 data-nosnippet>4935</a>                ReconstructionBasis::Constant,
+<a href=#4936 id=4936 data-nosnippet>4936</a>                <span class="kw-2">&amp;</span>ReconstructionAlgorithm::Hogbom,
+<a href=#4937 id=4937 data-nosnippet>4937</a>                <span class="number">8</span>,
+<a href=#4938 id=4938 data-nosnippet>4938</a>                <span class="number">0
+<a href=#4939 id=4939 data-nosnippet>4939</a>            </span>)
+<a href=#4940 id=4940 data-nosnippet>4940</a>        );
+<a href=#4941 id=4941 data-nosnippet>4941</a>    }
+<a href=#4942 id=4942 data-nosnippet>4942</a>
+<a href=#4943 id=4943 data-nosnippet>4943</a>    <span class="attr">#[test]
+<a href=#4944 id=4944 data-nosnippet>4944</a>    </span><span class="kw">fn </span>mtmfs_workspace_claim_scales_with_terms_and_effective_kernels() {
+<a href=#4945 id=4945 data-nosnippet>4945</a>        <span class="kw">let </span>point = ReconstructionAlgorithm::Mtmfs {
+<a href=#4946 id=4946 data-nosnippet>4946</a>            scales_px: <span class="macro">vec!</span>[<span class="number">0.0</span>],
 <a href=#4947 id=4947 data-nosnippet>4947</a>            small_scale_bias: <span class="number">0.0</span>,
 <a href=#4948 id=4948 data-nosnippet>4948</a>        };
-<a href=#4949 id=4949 data-nosnippet>4949</a>        <span class="kw">let </span>two_terms = minor_cycle_workspace_bytes(
-<a href=#4950 id=4950 data-nosnippet>4950</a>            [<span class="number">128</span>, <span class="number">128</span>],
-<a href=#4951 id=4951 data-nosnippet>4951</a>            <span class="number">1</span>,
-<a href=#4952 id=4952 data-nosnippet>4952</a>            ReconstructionBasis::Taylor { terms: <span class="number">2 </span>},
-<a href=#4953 id=4953 data-nosnippet>4953</a>            <span class="kw-2">&amp;</span>point,
-<a href=#4954 id=4954 data-nosnippet>4954</a>            <span class="number">8</span>,
-<a href=#4955 id=4955 data-nosnippet>4955</a>            <span class="number">64</span>,
-<a href=#4956 id=4956 data-nosnippet>4956</a>        );
-<a href=#4957 id=4957 data-nosnippet>4957</a>        <span class="kw">let </span>three_terms = minor_cycle_workspace_bytes(
-<a href=#4958 id=4958 data-nosnippet>4958</a>            [<span class="number">128</span>, <span class="number">128</span>],
-<a href=#4959 id=4959 data-nosnippet>4959</a>            <span class="number">1</span>,
-<a href=#4960 id=4960 data-nosnippet>4960</a>            ReconstructionBasis::Taylor { terms: <span class="number">3 </span>},
-<a href=#4961 id=4961 data-nosnippet>4961</a>            <span class="kw-2">&amp;</span>point,
-<a href=#4962 id=4962 data-nosnippet>4962</a>            <span class="number">8</span>,
-<a href=#4963 id=4963 data-nosnippet>4963</a>            <span class="number">64</span>,
-<a href=#4964 id=4964 data-nosnippet>4964</a>        );
-<a href=#4965 id=4965 data-nosnippet>4965</a>        <span class="kw">let </span>three_terms_multiscale = minor_cycle_workspace_bytes(
-<a href=#4966 id=4966 data-nosnippet>4966</a>            [<span class="number">128</span>, <span class="number">128</span>],
-<a href=#4967 id=4967 data-nosnippet>4967</a>            <span class="number">1</span>,
-<a href=#4968 id=4968 data-nosnippet>4968</a>            ReconstructionBasis::Taylor { terms: <span class="number">3 </span>},
-<a href=#4969 id=4969 data-nosnippet>4969</a>            <span class="kw-2">&amp;</span>multiscale,
-<a href=#4970 id=4970 data-nosnippet>4970</a>            <span class="number">8</span>,
-<a href=#4971 id=4971 data-nosnippet>4971</a>            <span class="number">64</span>,
-<a href=#4972 id=4972 data-nosnippet>4972</a>        );
-<a href=#4973 id=4973 data-nosnippet>4973</a>
-<a href=#4974 id=4974 data-nosnippet>4974</a>        <span class="macro">assert!</span>(three_terms &gt; two_terms);
-<a href=#4975 id=4975 data-nosnippet>4975</a>        <span class="macro">assert!</span>(three_terms_multiscale &gt; three_terms);
-<a href=#4976 id=4976 data-nosnippet>4976</a>        <span class="macro">assert!</span>(three_terms &gt;= <span class="number">128 </span>* <span class="number">128 </span>* <span class="number">3 </span>* std::mem::size_of::&lt;f64&gt;() <span class="kw">as </span>u64);
-<a href=#4977 id=4977 data-nosnippet>4977</a>    }
-<a href=#4978 id=4978 data-nosnippet>4978</a>
-<a href=#4979 id=4979 data-nosnippet>4979</a>    <span class="attr">#[test]
-<a href=#4980 id=4980 data-nosnippet>4980</a>    </span><span class="kw">fn </span>model_plane_coordinates_are_preserved_in_component_cells() {
-<a href=#4981 id=4981 data-nosnippet>4981</a>        <span class="kw">let </span>cell = model_cell(MinorCycleModelPlane::new(<span class="number">2</span>, <span class="number">3</span>, <span class="number">1</span>), [<span class="number">8</span>, <span class="number">8</span>], [<span class="number">4</span>, <span class="number">5</span>])
-<a href=#4982 id=4982 data-nosnippet>4982</a>            .expect(<span class="string">"pixel lies in the selected model plane"</span>);
-<a href=#4983 id=4983 data-nosnippet>4983</a>
-<a href=#4984 id=4984 data-nosnippet>4984</a>        <span class="macro">assert_eq!</span>(cell.domain(), <span class="number">2</span>);
-<a href=#4985 id=4985 data-nosnippet>4985</a>        <span class="macro">assert_eq!</span>(cell.coefficient(), <span class="number">3</span>);
-<a href=#4986 id=4986 data-nosnippet>4986</a>        <span class="macro">assert_eq!</span>(cell.polarization(), <span class="number">1</span>);
-<a href=#4987 id=4987 data-nosnippet>4987</a>        <span class="macro">assert_eq!</span>(cell.pixel(), [<span class="number">4</span>, <span class="number">5</span>]);
-<a href=#4988 id=4988 data-nosnippet>4988</a>    }
-<a href=#4989 id=4989 data-nosnippet>4989</a>
-<a href=#4990 id=4990 data-nosnippet>4990</a>    <span class="attr">#[test]
-<a href=#4991 id=4991 data-nosnippet>4991</a>    </span><span class="kw">fn </span>multiscale_search_excludes_the_casa_one_and_a_half_scale_border() {
-<a href=#4992 id=4992 data-nosnippet>4992</a>        <span class="macro">assert!</span>(within_multiscale_border([<span class="number">0</span>, <span class="number">0</span>], [<span class="number">64</span>, <span class="number">64</span>], <span class="number">0</span>));
-<a href=#4993 id=4993 data-nosnippet>4993</a>        <span class="macro">assert!</span>(within_multiscale_border([<span class="number">63</span>, <span class="number">63</span>], [<span class="number">64</span>, <span class="number">64</span>], <span class="number">0</span>));
-<a href=#4994 id=4994 data-nosnippet>4994</a>        <span class="macro">assert!</span>(!within_multiscale_border([<span class="number">10</span>, <span class="number">20</span>], [<span class="number">64</span>, <span class="number">64</span>], <span class="number">10</span>));
-<a href=#4995 id=4995 data-nosnippet>4995</a>        <span class="macro">assert!</span>(within_multiscale_border([<span class="number">11</span>, <span class="number">20</span>], [<span class="number">64</span>, <span class="number">64</span>], <span class="number">10</span>));
-<a href=#4996 id=4996 data-nosnippet>4996</a>        <span class="macro">assert!</span>(within_multiscale_border([<span class="number">52</span>, <span class="number">20</span>], [<span class="number">64</span>, <span class="number">64</span>], <span class="number">10</span>));
-<a href=#4997 id=4997 data-nosnippet>4997</a>        <span class="macro">assert!</span>(!within_multiscale_border([<span class="number">53</span>, <span class="number">20</span>], [<span class="number">64</span>, <span class="number">64</span>], <span class="number">10</span>));
-<a href=#4998 id=4998 data-nosnippet>4998</a>    }
-<a href=#4999 id=4999 data-nosnippet>4999</a>
-<a href=#5000 id=5000 data-nosnippet>5000</a>    <span class="attr">#[test]
-<a href=#5001 id=5001 data-nosnippet>5001</a>    </span><span class="kw">fn </span>mtmfs_rejects_casa_nearly_dependent_hessian_rows() {
-<a href=#5002 id=5002 data-nosnippet>5002</a>        <span class="macro">assert!</span>(taylor_rows_nearly_dependent(<span class="kw-2">&amp;</span>[<span class="number">1.0</span>, <span class="number">2.0</span>, <span class="number">0.0</span>, <span class="number">4.0</span>], <span class="number">2</span>));
-<a href=#5003 id=5003 data-nosnippet>5003</a>        <span class="macro">assert!</span>(!taylor_rows_nearly_dependent(<span class="kw-2">&amp;</span>[<span class="number">4.0</span>, <span class="number">1.0</span>, <span class="number">0.0</span>, <span class="number">3.0</span>], <span class="number">2</span>));
-<a href=#5004 id=5004 data-nosnippet>5004</a>        <span class="macro">assert!</span>(!taylor_rows_nearly_dependent(<span class="kw-2">&amp;</span>[<span class="number">1.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">1.0</span>], <span class="number">2</span>));
-<a href=#5005 id=5005 data-nosnippet>5005</a>    }
-<a href=#5006 id=5006 data-nosnippet>5006</a>
-<a href=#5007 id=5007 data-nosnippet>5007</a>    <span class="attr">#[test]
-<a href=#5008 id=5008 data-nosnippet>5008</a>    </span><span class="kw">fn </span>mtmfs_psf_peak_is_confined_to_the_central_beam_patch() {
-<a href=#5009 id=5009 data-nosnippet>5009</a>        <span class="kw">let </span>shape = [<span class="number">128</span>, <span class="number">128</span>];
-<a href=#5010 id=5010 data-nosnippet>5010</a>        <span class="kw">let </span><span class="kw-2">mut </span>psf = <span class="macro">vec!</span>[Complex64::new(<span class="number">0.0</span>, <span class="number">0.0</span>); shape[<span class="number">0</span>] * shape[<span class="number">1</span>]];
-<a href=#5011 id=5011 data-nosnippet>5011</a>        psf[<span class="number">0</span>] = Complex64::new(<span class="number">2.0</span>, <span class="number">0.0</span>);
-<a href=#5012 id=5012 data-nosnippet>5012</a>        psf[<span class="number">64 </span>* shape[<span class="number">1</span>] + <span class="number">64</span>] = Complex64::new(<span class="number">1.0</span>, <span class="number">0.0</span>);
-<a href=#5013 id=5013 data-nosnippet>5013</a>        <span class="macro">assert_eq!</span>(
-<a href=#5014 id=5014 data-nosnippet>5014</a>            taylor_psf_peak_index(<span class="kw-2">&amp;</span>psf, shape, <span class="number">0.0</span>),
-<a href=#5015 id=5015 data-nosnippet>5015</a>            <span class="prelude-val">Some</span>(<span class="number">64 </span>* shape[<span class="number">1</span>] + <span class="number">64</span>)
-<a href=#5016 id=5016 data-nosnippet>5016</a>        );
-<a href=#5017 id=5017 data-nosnippet>5017</a>    }
-<a href=#5018 id=5018 data-nosnippet>5018</a>
-<a href=#5019 id=5019 data-nosnippet>5019</a>    <span class="attr">#[test]
-<a href=#5020 id=5020 data-nosnippet>5020</a>    </span><span class="kw">fn </span>mtmfs_psf_peak_uses_scan_order_for_roundoff_ties() {
-<a href=#5021 id=5021 data-nosnippet>5021</a>        <span class="kw">let </span>shape = [<span class="number">8</span>, <span class="number">8</span>];
-<a href=#5022 id=5022 data-nosnippet>5022</a>        <span class="kw">let </span><span class="kw-2">mut </span>psf = <span class="macro">vec!</span>[Complex64::new(<span class="number">0.0</span>, <span class="number">0.0</span>); shape[<span class="number">0</span>] * shape[<span class="number">1</span>]];
-<a href=#5023 id=5023 data-nosnippet>5023</a>        psf[<span class="number">9</span>] = Complex64::new(<span class="number">1.0</span>, <span class="number">0.0</span>);
-<a href=#5024 id=5024 data-nosnippet>5024</a>        psf[<span class="number">15</span>] = Complex64::new(<span class="number">1.0 </span>+ <span class="number">0.5e-12</span>, <span class="number">0.0</span>);
-<a href=#5025 id=5025 data-nosnippet>5025</a>        <span class="macro">assert_eq!</span>(taylor_psf_peak_index(<span class="kw-2">&amp;</span>psf, shape, <span class="number">0.0</span>), <span class="prelude-val">Some</span>(<span class="number">9</span>));
-<a href=#5026 id=5026 data-nosnippet>5026</a>        psf[<span class="number">15</span>] = Complex64::new(<span class="number">1.0 </span>+ <span class="number">2.0e-12</span>, <span class="number">0.0</span>);
-<a href=#5027 id=5027 data-nosnippet>5027</a>        <span class="macro">assert_eq!</span>(taylor_psf_peak_index(<span class="kw-2">&amp;</span>psf, shape, <span class="number">0.0</span>), <span class="prelude-val">Some</span>(<span class="number">15</span>));
-<a href=#5028 id=5028 data-nosnippet>5028</a>    }
-<a href=#5029 id=5029 data-nosnippet>5029</a>
-<a href=#5030 id=5030 data-nosnippet>5030</a>    <span class="attr">#[test]
-<a href=#5031 id=5031 data-nosnippet>5031</a>    </span><span class="kw">fn </span>mtmfs_candidate_peak_uses_scan_order_for_roundoff_ties() {
-<a href=#5032 id=5032 data-nosnippet>5032</a>        <span class="kw">let </span>current = TaylorCandidate {
-<a href=#5033 id=5033 data-nosnippet>5033</a>            index: <span class="number">9</span>,
-<a href=#5034 id=5034 data-nosnippet>5034</a>            scale_index: <span class="number">0</span>,
-<a href=#5035 id=5035 data-nosnippet>5035</a>            coefficients: Vec::new(),
-<a href=#5036 id=5036 data-nosnippet>5036</a>            score: <span class="number">1.0</span>,
-<a href=#5037 id=5037 data-nosnippet>5037</a>        };
-<a href=#5038 id=5038 data-nosnippet>5038</a>        <span class="kw">let </span>near_tie = TaylorCandidate {
-<a href=#5039 id=5039 data-nosnippet>5039</a>            index: <span class="number">15</span>,
-<a href=#5040 id=5040 data-nosnippet>5040</a>            scale_index: <span class="number">0</span>,
-<a href=#5041 id=5041 data-nosnippet>5041</a>            coefficients: Vec::new(),
-<a href=#5042 id=5042 data-nosnippet>5042</a>            score: <span class="number">1.0 </span>+ <span class="number">0.5e-12</span>,
-<a href=#5043 id=5043 data-nosnippet>5043</a>        };
-<a href=#5044 id=5044 data-nosnippet>5044</a>        <span class="macro">assert!</span>(!prefer_taylor_within_scale(<span class="kw-2">&amp;</span>near_tie, <span class="kw-2">&amp;</span>current));
-<a href=#5045 id=5045 data-nosnippet>5045</a>        <span class="kw">let </span>distinct = TaylorCandidate {
-<a href=#5046 id=5046 data-nosnippet>5046</a>            score: <span class="number">1.0 </span>+ <span class="number">2.0e-12</span>,
-<a href=#5047 id=5047 data-nosnippet>5047</a>            ..near_tie
-<a href=#5048 id=5048 data-nosnippet>5048</a>        };
-<a href=#5049 id=5049 data-nosnippet>5049</a>        <span class="macro">assert!</span>(prefer_taylor_within_scale(<span class="kw-2">&amp;</span>distinct, <span class="kw-2">&amp;</span>current));
-<a href=#5050 id=5050 data-nosnippet>5050</a>    }
-<a href=#5051 id=5051 data-nosnippet>5051</a>
-<a href=#5052 id=5052 data-nosnippet>5052</a>    <span class="attr">#[test]
-<a href=#5053 id=5053 data-nosnippet>5053</a>    </span><span class="kw">fn </span>mtmfs_followup_search_is_confined_to_the_casa_psf_patch() {
-<a href=#5054 id=5054 data-nosnippet>5054</a>        <span class="kw">let </span>window = TaylorSearchWindow::around([<span class="number">20</span>, <span class="number">20</span>], <span class="number">80</span>, [<span class="number">256</span>, <span class="number">256</span>]);
-<a href=#5055 id=5055 data-nosnippet>5055</a>        <span class="macro">assert!</span>(window.contains([<span class="number">0</span>, <span class="number">0</span>]));
-<a href=#5056 id=5056 data-nosnippet>5056</a>        <span class="macro">assert!</span>(window.contains([<span class="number">79</span>, <span class="number">79</span>]));
-<a href=#5057 id=5057 data-nosnippet>5057</a>        <span class="macro">assert!</span>(!window.contains([<span class="number">80</span>, <span class="number">20</span>]));
-<a href=#5058 id=5058 data-nosnippet>5058</a>        <span class="macro">assert!</span>(!window.contains([<span class="number">200</span>, <span class="number">200</span>]));
-<a href=#5059 id=5059 data-nosnippet>5059</a>
-<a href=#5060 id=5060 data-nosnippet>5060</a>        <span class="kw">let </span>full_plane = TaylorSearchWindow::around([<span class="number">114</span>, <span class="number">49</span>], <span class="number">128</span>, [<span class="number">128</span>, <span class="number">128</span>]);
-<a href=#5061 id=5061 data-nosnippet>5061</a>        <span class="macro">assert_eq!</span>(full_plane.start, [<span class="number">0</span>, <span class="number">0</span>]);
-<a href=#5062 id=5062 data-nosnippet>5062</a>        <span class="macro">assert_eq!</span>(full_plane.end_exclusive, [<span class="number">128</span>, <span class="number">128</span>]);
-<a href=#5063 id=5063 data-nosnippet>5063</a>        <span class="macro">assert!</span>(full_plane.contains([<span class="number">10</span>, <span class="number">96</span>]));
-<a href=#5064 id=5064 data-nosnippet>5064</a>    }
-<a href=#5065 id=5065 data-nosnippet>5065</a>
-<a href=#5066 id=5066 data-nosnippet>5066</a>    <span class="attr">#[test]
-<a href=#5067 id=5067 data-nosnippet>5067</a>    </span><span class="kw">fn </span>mtmfs_scale_selection_preserves_casa_signed_two_stage_order() {
-<a href=#5068 id=5068 data-nosnippet>5068</a>        <span class="kw">let </span>kernels = build_scale_kernels(<span class="kw-2">&amp;</span>[<span class="number">0.0</span>, <span class="number">2.0</span>], <span class="number">0.0</span>);
-<a href=#5069 id=5069 data-nosnippet>5069</a>        <span class="kw">let </span>negative_large = TaylorCandidate {
-<a href=#5070 id=5070 data-nosnippet>5070</a>            index: <span class="number">0</span>,
-<a href=#5071 id=5071 data-nosnippet>5071</a>            scale_index: <span class="number">0</span>,
-<a href=#5072 id=5072 data-nosnippet>5072</a>            coefficients: Vec::new(),
-<a href=#5073 id=5073 data-nosnippet>5073</a>            score: -<span class="number">10.0</span>,
-<a href=#5074 id=5074 data-nosnippet>5074</a>        };
-<a href=#5075 id=5075 data-nosnippet>5075</a>        <span class="kw">let </span>negative_small = TaylorCandidate {
-<a href=#5076 id=5076 data-nosnippet>5076</a>            index: <span class="number">1</span>,
-<a href=#5077 id=5077 data-nosnippet>5077</a>            scale_index: <span class="number">1</span>,
-<a href=#5078 id=5078 data-nosnippet>5078</a>            coefficients: Vec::new(),
-<a href=#5079 id=5079 data-nosnippet>5079</a>            score: -<span class="number">2.0</span>,
-<a href=#5080 id=5080 data-nosnippet>5080</a>        };
-<a href=#5081 id=5081 data-nosnippet>5081</a>        <span class="macro">assert!</span>(prefer_taylor_across_scales(
-<a href=#5082 id=5082 data-nosnippet>5082</a>            <span class="kw-2">&amp;</span>negative_small,
-<a href=#5083 id=5083 data-nosnippet>5083</a>            <span class="kw-2">&amp;</span>negative_large,
-<a href=#5084 id=5084 data-nosnippet>5084</a>            <span class="kw-2">&amp;</span>kernels
-<a href=#5085 id=5085 data-nosnippet>5085</a>        ));
-<a href=#5086 id=5086 data-nosnippet>5086</a>        <span class="kw">let </span>positive_tie = TaylorCandidate {
-<a href=#5087 id=5087 data-nosnippet>5087</a>            index: <span class="number">2</span>,
-<a href=#5088 id=5088 data-nosnippet>5088</a>            scale_index: <span class="number">0</span>,
-<a href=#5089 id=5089 data-nosnippet>5089</a>            coefficients: Vec::new(),
-<a href=#5090 id=5090 data-nosnippet>5090</a>            score: <span class="number">10.0</span>,
-<a href=#5091 id=5091 data-nosnippet>5091</a>        };
-<a href=#5092 id=5092 data-nosnippet>5092</a>        <span class="macro">assert!</span>(prefer_taylor_within_scale(<span class="kw-2">&amp;</span>positive_tie, <span class="kw-2">&amp;</span>negative_large));
-<a href=#5093 id=5093 data-nosnippet>5093</a>    }
-<a href=#5094 id=5094 data-nosnippet>5094</a>
-<a href=#5095 id=5095 data-nosnippet>5095</a>    <span class="attr">#[test]
-<a href=#5096 id=5096 data-nosnippet>5096</a>    </span><span class="kw">fn </span>multiscale_divergence_boundary_requires_prior_progress_and_exceeds_one_half() {
-<a href=#5097 id=5097 data-nosnippet>5097</a>        <span class="macro">assert!</span>(!multiscale_diverged(<span class="number">2.0</span>, <span class="number">4.0</span>, <span class="number">0</span>));
-<a href=#5098 id=5098 data-nosnippet>5098</a>        <span class="macro">assert!</span>(!multiscale_diverged(<span class="number">2.0</span>, <span class="number">3.0</span>, <span class="number">1</span>));
-<a href=#5099 id=5099 data-nosnippet>5099</a>        <span class="macro">assert!</span>(multiscale_diverged(<span class="number">2.0</span>, <span class="number">3.000_000_000_1</span>, <span class="number">1</span>));
-<a href=#5100 id=5100 data-nosnippet>5100</a>    }
-<a href=#5101 id=5101 data-nosnippet>5101</a>
-<a href=#5102 id=5102 data-nosnippet>5102</a>    <span class="attr">#[test]
-<a href=#5103 id=5103 data-nosnippet>5103</a>    </span><span class="kw">fn </span>clark_subcycle_refresh_recomputes_the_exact_full_residual() {
-<a href=#5104 id=5104 data-nosnippet>5104</a>        <span class="kw">let </span>shape = [<span class="number">3</span>, <span class="number">3</span>];
-<a href=#5105 id=5105 data-nosnippet>5105</a>        <span class="kw">let </span>dirty = <span class="macro">vec!</span>[Complex64::new(<span class="number">0.0</span>, <span class="number">0.0</span>); <span class="number">9</span>];
-<a href=#5106 id=5106 data-nosnippet>5106</a>        <span class="kw">let </span><span class="kw-2">mut </span>dirty = dirty;
-<a href=#5107 id=5107 data-nosnippet>5107</a>        dirty[<span class="number">0</span>] = Complex64::new(<span class="number">3.0</span>, <span class="number">0.0</span>);
-<a href=#5108 id=5108 data-nosnippet>5108</a>        <span class="kw">let </span><span class="kw-2">mut </span>psf = <span class="macro">vec!</span>[Complex64::new(<span class="number">0.0</span>, <span class="number">0.0</span>); <span class="number">9</span>];
-<a href=#5109 id=5109 data-nosnippet>5109</a>        psf[<span class="number">4</span>] = Complex64::new(<span class="number">1.0</span>, <span class="number">0.0</span>);
-<a href=#5110 id=5110 data-nosnippet>5110</a>        psf[<span class="number">3</span>] = Complex64::new(<span class="number">0.25</span>, <span class="number">0.0</span>);
-<a href=#5111 id=5111 data-nosnippet>5111</a>        <span class="kw">let </span><span class="kw-2">mut </span>refreshed = dirty.iter().map(|value| value.re).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#5112 id=5112 data-nosnippet>5112</a>        subtract_psf(<span class="kw-2">&amp;mut </span>refreshed, <span class="kw-2">&amp;</span>psf, shape, [<span class="number">0</span>, <span class="number">0</span>], [<span class="number">1</span>, <span class="number">1</span>], <span class="number">2.0</span>)
-<a href=#5113 id=5113 data-nosnippet>5113</a>            .expect(<span class="string">"first exact full subtraction"</span>);
-<a href=#5114 id=5114 data-nosnippet>5114</a>        subtract_psf(<span class="kw-2">&amp;mut </span>refreshed, <span class="kw-2">&amp;</span>psf, shape, [<span class="number">2</span>, <span class="number">2</span>], [<span class="number">1</span>, <span class="number">1</span>], -<span class="number">1.5</span>)
-<a href=#5115 id=5115 data-nosnippet>5115</a>            .expect(<span class="string">"second exact full subtraction"</span>);
-<a href=#5116 id=5116 data-nosnippet>5116</a>        <span class="macro">assert_eq!</span>(
-<a href=#5117 id=5117 data-nosnippet>5117</a>            refreshed,
-<a href=#5118 id=5118 data-nosnippet>5118</a>            <span class="macro">vec!</span>[<span class="number">1.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.375</span>, <span class="number">1.5</span>]
-<a href=#5119 id=5119 data-nosnippet>5119</a>        );
-<a href=#5120 id=5120 data-nosnippet>5120</a>    }
-<a href=#5121 id=5121 data-nosnippet>5121</a>
-<a href=#5122 id=5122 data-nosnippet>5122</a>    <span class="attr">#[test]
-<a href=#5123 id=5123 data-nosnippet>5123</a>    </span><span class="kw">fn </span>multiscale_kernels_are_compact_and_unit_normalized() {
-<a href=#5124 id=5124 data-nosnippet>5124</a>        <span class="kw">let </span>kernels = build_scale_kernels(<span class="kw-2">&amp;</span>[<span class="number">0.0</span>, <span class="number">3.0</span>], <span class="number">0.6</span>);
-<a href=#5125 id=5125 data-nosnippet>5125</a>        <span class="macro">assert_eq!</span>(kernels[<span class="number">0</span>].samples.as_slice(), <span class="kw-2">&amp;</span>[([<span class="number">0</span>, <span class="number">0</span>], <span class="number">1.0</span>)]);
-<a href=#5126 id=5126 data-nosnippet>5126</a>        <span class="macro">assert!</span>(
-<a href=#5127 id=5127 data-nosnippet>5127</a>            (kernels[<span class="number">1</span>]
-<a href=#5128 id=5128 data-nosnippet>5128</a>                .samples
-<a href=#5129 id=5129 data-nosnippet>5129</a>                .iter()
-<a href=#5130 id=5130 data-nosnippet>5130</a>                .map(|(<span class="kw">_</span>, value)| value)
-<a href=#5131 id=5131 data-nosnippet>5131</a>                .sum::&lt;f64&gt;()
-<a href=#5132 id=5132 data-nosnippet>5132</a>                - <span class="number">1.0</span>)
-<a href=#5133 id=5133 data-nosnippet>5133</a>                .abs()
-<a href=#5134 id=5134 data-nosnippet>5134</a>                &lt; <span class="number">1.0e-12
-<a href=#5135 id=5135 data-nosnippet>5135</a>        </span>);
-<a href=#5136 id=5136 data-nosnippet>5136</a>        <span class="macro">assert!</span>(kernels[<span class="number">1</span>].samples.iter().all(|(offset, <span class="kw">_</span>)| {
-<a href=#5137 id=5137 data-nosnippet>5137</a>            (offset[<span class="number">0</span>] <span class="kw">as </span>f64 / <span class="number">3.0</span>).powi(<span class="number">2</span>) + (offset[<span class="number">1</span>] <span class="kw">as </span>f64 / <span class="number">3.0</span>).powi(<span class="number">2</span>) &lt; <span class="number">1.0
-<a href=#5138 id=5138 data-nosnippet>5138</a>        </span>}));
-<a href=#5139 id=5139 data-nosnippet>5139</a>    }
-<a href=#5140 id=5140 data-nosnippet>5140</a>
-<a href=#5141 id=5141 data-nosnippet>5141</a>    <span class="attr">#[test]
-<a href=#5142 id=5142 data-nosnippet>5142</a>    </span><span class="kw">fn </span>shifted_psf_overlap_can_start_before_the_component_peak() {
-<a href=#5143 id=5143 data-nosnippet>5143</a>        <span class="kw">let </span><span class="kw-2">mut </span>residual = <span class="macro">vec!</span>[<span class="number">0.0</span>; <span class="number">9</span>];
-<a href=#5144 id=5144 data-nosnippet>5144</a>        <span class="kw">let </span>psf = <span class="macro">vec!</span>[Complex64::new(<span class="number">1.0</span>, <span class="number">0.0</span>); <span class="number">9</span>];
-<a href=#5145 id=5145 data-nosnippet>5145</a>
-<a href=#5146 id=5146 data-nosnippet>5146</a>        subtract_psf(<span class="kw-2">&amp;mut </span>residual, <span class="kw-2">&amp;</span>psf, [<span class="number">3</span>, <span class="number">3</span>], [<span class="number">2</span>, <span class="number">2</span>], [<span class="number">1</span>, <span class="number">1</span>], <span class="number">1.0</span>)
-<a href=#5147 id=5147 data-nosnippet>5147</a>            .expect(<span class="string">"valid clipped negative shift"</span>);
-<a href=#5148 id=5148 data-nosnippet>5148</a>
-<a href=#5149 id=5149 data-nosnippet>5149</a>        <span class="macro">assert_eq!</span>(
-<a href=#5150 id=5150 data-nosnippet>5150</a>            residual,
-<a href=#5151 id=5151 data-nosnippet>5151</a>            <span class="macro">vec!</span>[<span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, -<span class="number">1.0</span>, -<span class="number">1.0</span>, <span class="number">0.0</span>, -<span class="number">1.0</span>, -<span class="number">1.0</span>]
-<a href=#5152 id=5152 data-nosnippet>5152</a>        );
-<a href=#5153 id=5153 data-nosnippet>5153</a>    }
-<a href=#5154 id=5154 data-nosnippet>5154</a>
-<a href=#5155 id=5155 data-nosnippet>5155</a>    <span class="attr">#[test]
-<a href=#5156 id=5156 data-nosnippet>5156</a>    </span><span class="kw">fn </span>multiscale_terminal_refresh_uses_casa_circular_psf_convolution() {
-<a href=#5157 id=5157 data-nosnippet>5157</a>        <span class="kw">let </span><span class="kw-2">mut </span>residual = <span class="macro">vec!</span>[<span class="number">0.0</span>; <span class="number">9</span>];
-<a href=#5158 id=5158 data-nosnippet>5158</a>        <span class="kw">let </span>psf = (<span class="number">1</span>..=<span class="number">9</span>)
-<a href=#5159 id=5159 data-nosnippet>5159</a>            .map(|value| Complex64::new(f64::from(value), <span class="number">0.0</span>))
-<a href=#5160 id=5160 data-nosnippet>5160</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#5161 id=5161 data-nosnippet>5161</a>
-<a href=#5162 id=5162 data-nosnippet>5162</a>        subtract_psf_circular(<span class="kw-2">&amp;mut </span>residual, <span class="kw-2">&amp;</span>psf, [<span class="number">3</span>, <span class="number">3</span>], [<span class="number">0</span>, <span class="number">0</span>], [<span class="number">1</span>, <span class="number">1</span>], <span class="number">1.0</span>)
-<a href=#5163 id=5163 data-nosnippet>5163</a>            .expect(<span class="string">"finite circular subtraction"</span>);
-<a href=#5164 id=5164 data-nosnippet>5164</a>
-<a href=#5165 id=5165 data-nosnippet>5165</a>        <span class="macro">assert_eq!</span>(
-<a href=#5166 id=5166 data-nosnippet>5166</a>            residual,
-<a href=#5167 id=5167 data-nosnippet>5167</a>            <span class="macro">vec!</span>[-<span class="number">5.0</span>, -<span class="number">6.0</span>, -<span class="number">4.0</span>, -<span class="number">8.0</span>, -<span class="number">9.0</span>, -<span class="number">7.0</span>, -<span class="number">2.0</span>, -<span class="number">3.0</span>, -<span class="number">1.0</span>]
-<a href=#5168 id=5168 data-nosnippet>5168</a>        );
-<a href=#5169 id=5169 data-nosnippet>5169</a>    }
-<a href=#5170 id=5170 data-nosnippet>5170</a>}
+<a href=#4949 id=4949 data-nosnippet>4949</a>        <span class="kw">let </span>multiscale = ReconstructionAlgorithm::Mtmfs {
+<a href=#4950 id=4950 data-nosnippet>4950</a>            scales_px: <span class="macro">vec!</span>[<span class="number">0.0</span>, <span class="number">5.0</span>],
+<a href=#4951 id=4951 data-nosnippet>4951</a>            small_scale_bias: <span class="number">0.0</span>,
+<a href=#4952 id=4952 data-nosnippet>4952</a>        };
+<a href=#4953 id=4953 data-nosnippet>4953</a>        <span class="kw">let </span>two_terms = minor_cycle_workspace_bytes(
+<a href=#4954 id=4954 data-nosnippet>4954</a>            [<span class="number">128</span>, <span class="number">128</span>],
+<a href=#4955 id=4955 data-nosnippet>4955</a>            <span class="number">1</span>,
+<a href=#4956 id=4956 data-nosnippet>4956</a>            ReconstructionBasis::Taylor { terms: <span class="number">2 </span>},
+<a href=#4957 id=4957 data-nosnippet>4957</a>            <span class="kw-2">&amp;</span>point,
+<a href=#4958 id=4958 data-nosnippet>4958</a>            <span class="number">8</span>,
+<a href=#4959 id=4959 data-nosnippet>4959</a>            <span class="number">64</span>,
+<a href=#4960 id=4960 data-nosnippet>4960</a>        );
+<a href=#4961 id=4961 data-nosnippet>4961</a>        <span class="kw">let </span>three_terms = minor_cycle_workspace_bytes(
+<a href=#4962 id=4962 data-nosnippet>4962</a>            [<span class="number">128</span>, <span class="number">128</span>],
+<a href=#4963 id=4963 data-nosnippet>4963</a>            <span class="number">1</span>,
+<a href=#4964 id=4964 data-nosnippet>4964</a>            ReconstructionBasis::Taylor { terms: <span class="number">3 </span>},
+<a href=#4965 id=4965 data-nosnippet>4965</a>            <span class="kw-2">&amp;</span>point,
+<a href=#4966 id=4966 data-nosnippet>4966</a>            <span class="number">8</span>,
+<a href=#4967 id=4967 data-nosnippet>4967</a>            <span class="number">64</span>,
+<a href=#4968 id=4968 data-nosnippet>4968</a>        );
+<a href=#4969 id=4969 data-nosnippet>4969</a>        <span class="kw">let </span>three_terms_multiscale = minor_cycle_workspace_bytes(
+<a href=#4970 id=4970 data-nosnippet>4970</a>            [<span class="number">128</span>, <span class="number">128</span>],
+<a href=#4971 id=4971 data-nosnippet>4971</a>            <span class="number">1</span>,
+<a href=#4972 id=4972 data-nosnippet>4972</a>            ReconstructionBasis::Taylor { terms: <span class="number">3 </span>},
+<a href=#4973 id=4973 data-nosnippet>4973</a>            <span class="kw-2">&amp;</span>multiscale,
+<a href=#4974 id=4974 data-nosnippet>4974</a>            <span class="number">8</span>,
+<a href=#4975 id=4975 data-nosnippet>4975</a>            <span class="number">64</span>,
+<a href=#4976 id=4976 data-nosnippet>4976</a>        );
+<a href=#4977 id=4977 data-nosnippet>4977</a>
+<a href=#4978 id=4978 data-nosnippet>4978</a>        <span class="macro">assert!</span>(three_terms &gt; two_terms);
+<a href=#4979 id=4979 data-nosnippet>4979</a>        <span class="macro">assert!</span>(three_terms_multiscale &gt; three_terms);
+<a href=#4980 id=4980 data-nosnippet>4980</a>        <span class="macro">assert!</span>(three_terms &gt;= <span class="number">128 </span>* <span class="number">128 </span>* <span class="number">3 </span>* std::mem::size_of::&lt;f64&gt;() <span class="kw">as </span>u64);
+<a href=#4981 id=4981 data-nosnippet>4981</a>    }
+<a href=#4982 id=4982 data-nosnippet>4982</a>
+<a href=#4983 id=4983 data-nosnippet>4983</a>    <span class="attr">#[test]
+<a href=#4984 id=4984 data-nosnippet>4984</a>    </span><span class="kw">fn </span>model_plane_coordinates_are_preserved_in_component_cells() {
+<a href=#4985 id=4985 data-nosnippet>4985</a>        <span class="kw">let </span>cell = model_cell(MinorCycleModelPlane::new(<span class="number">2</span>, <span class="number">3</span>, <span class="number">1</span>), [<span class="number">8</span>, <span class="number">8</span>], [<span class="number">4</span>, <span class="number">5</span>])
+<a href=#4986 id=4986 data-nosnippet>4986</a>            .expect(<span class="string">"pixel lies in the selected model plane"</span>);
+<a href=#4987 id=4987 data-nosnippet>4987</a>
+<a href=#4988 id=4988 data-nosnippet>4988</a>        <span class="macro">assert_eq!</span>(cell.domain(), <span class="number">2</span>);
+<a href=#4989 id=4989 data-nosnippet>4989</a>        <span class="macro">assert_eq!</span>(cell.coefficient(), <span class="number">3</span>);
+<a href=#4990 id=4990 data-nosnippet>4990</a>        <span class="macro">assert_eq!</span>(cell.polarization(), <span class="number">1</span>);
+<a href=#4991 id=4991 data-nosnippet>4991</a>        <span class="macro">assert_eq!</span>(cell.pixel(), [<span class="number">4</span>, <span class="number">5</span>]);
+<a href=#4992 id=4992 data-nosnippet>4992</a>    }
+<a href=#4993 id=4993 data-nosnippet>4993</a>
+<a href=#4994 id=4994 data-nosnippet>4994</a>    <span class="attr">#[test]
+<a href=#4995 id=4995 data-nosnippet>4995</a>    </span><span class="kw">fn </span>multiscale_search_excludes_the_casa_one_and_a_half_scale_border() {
+<a href=#4996 id=4996 data-nosnippet>4996</a>        <span class="macro">assert!</span>(within_multiscale_border([<span class="number">0</span>, <span class="number">0</span>], [<span class="number">64</span>, <span class="number">64</span>], <span class="number">0</span>));
+<a href=#4997 id=4997 data-nosnippet>4997</a>        <span class="macro">assert!</span>(within_multiscale_border([<span class="number">63</span>, <span class="number">63</span>], [<span class="number">64</span>, <span class="number">64</span>], <span class="number">0</span>));
+<a href=#4998 id=4998 data-nosnippet>4998</a>        <span class="macro">assert!</span>(!within_multiscale_border([<span class="number">10</span>, <span class="number">20</span>], [<span class="number">64</span>, <span class="number">64</span>], <span class="number">10</span>));
+<a href=#4999 id=4999 data-nosnippet>4999</a>        <span class="macro">assert!</span>(within_multiscale_border([<span class="number">11</span>, <span class="number">20</span>], [<span class="number">64</span>, <span class="number">64</span>], <span class="number">10</span>));
+<a href=#5000 id=5000 data-nosnippet>5000</a>        <span class="macro">assert!</span>(within_multiscale_border([<span class="number">52</span>, <span class="number">20</span>], [<span class="number">64</span>, <span class="number">64</span>], <span class="number">10</span>));
+<a href=#5001 id=5001 data-nosnippet>5001</a>        <span class="macro">assert!</span>(!within_multiscale_border([<span class="number">53</span>, <span class="number">20</span>], [<span class="number">64</span>, <span class="number">64</span>], <span class="number">10</span>));
+<a href=#5002 id=5002 data-nosnippet>5002</a>    }
+<a href=#5003 id=5003 data-nosnippet>5003</a>
+<a href=#5004 id=5004 data-nosnippet>5004</a>    <span class="attr">#[test]
+<a href=#5005 id=5005 data-nosnippet>5005</a>    </span><span class="kw">fn </span>mtmfs_rejects_casa_nearly_dependent_hessian_rows() {
+<a href=#5006 id=5006 data-nosnippet>5006</a>        <span class="macro">assert!</span>(taylor_rows_nearly_dependent(<span class="kw-2">&amp;</span>[<span class="number">1.0</span>, <span class="number">2.0</span>, <span class="number">0.0</span>, <span class="number">4.0</span>], <span class="number">2</span>));
+<a href=#5007 id=5007 data-nosnippet>5007</a>        <span class="macro">assert!</span>(!taylor_rows_nearly_dependent(<span class="kw-2">&amp;</span>[<span class="number">4.0</span>, <span class="number">1.0</span>, <span class="number">0.0</span>, <span class="number">3.0</span>], <span class="number">2</span>));
+<a href=#5008 id=5008 data-nosnippet>5008</a>        <span class="macro">assert!</span>(!taylor_rows_nearly_dependent(<span class="kw-2">&amp;</span>[<span class="number">1.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">1.0</span>], <span class="number">2</span>));
+<a href=#5009 id=5009 data-nosnippet>5009</a>    }
+<a href=#5010 id=5010 data-nosnippet>5010</a>
+<a href=#5011 id=5011 data-nosnippet>5011</a>    <span class="attr">#[test]
+<a href=#5012 id=5012 data-nosnippet>5012</a>    </span><span class="kw">fn </span>mtmfs_psf_peak_is_confined_to_the_central_beam_patch() {
+<a href=#5013 id=5013 data-nosnippet>5013</a>        <span class="kw">let </span>shape = [<span class="number">128</span>, <span class="number">128</span>];
+<a href=#5014 id=5014 data-nosnippet>5014</a>        <span class="kw">let </span><span class="kw-2">mut </span>psf = <span class="macro">vec!</span>[Complex64::new(<span class="number">0.0</span>, <span class="number">0.0</span>); shape[<span class="number">0</span>] * shape[<span class="number">1</span>]];
+<a href=#5015 id=5015 data-nosnippet>5015</a>        psf[<span class="number">0</span>] = Complex64::new(<span class="number">2.0</span>, <span class="number">0.0</span>);
+<a href=#5016 id=5016 data-nosnippet>5016</a>        psf[<span class="number">64 </span>* shape[<span class="number">1</span>] + <span class="number">64</span>] = Complex64::new(<span class="number">1.0</span>, <span class="number">0.0</span>);
+<a href=#5017 id=5017 data-nosnippet>5017</a>        <span class="macro">assert_eq!</span>(
+<a href=#5018 id=5018 data-nosnippet>5018</a>            taylor_psf_peak_index(<span class="kw-2">&amp;</span>psf, shape, <span class="number">0.0</span>),
+<a href=#5019 id=5019 data-nosnippet>5019</a>            <span class="prelude-val">Some</span>(<span class="number">64 </span>* shape[<span class="number">1</span>] + <span class="number">64</span>)
+<a href=#5020 id=5020 data-nosnippet>5020</a>        );
+<a href=#5021 id=5021 data-nosnippet>5021</a>    }
+<a href=#5022 id=5022 data-nosnippet>5022</a>
+<a href=#5023 id=5023 data-nosnippet>5023</a>    <span class="attr">#[test]
+<a href=#5024 id=5024 data-nosnippet>5024</a>    </span><span class="kw">fn </span>mtmfs_psf_peak_uses_scan_order_for_roundoff_ties() {
+<a href=#5025 id=5025 data-nosnippet>5025</a>        <span class="kw">let </span>shape = [<span class="number">8</span>, <span class="number">8</span>];
+<a href=#5026 id=5026 data-nosnippet>5026</a>        <span class="kw">let </span><span class="kw-2">mut </span>psf = <span class="macro">vec!</span>[Complex64::new(<span class="number">0.0</span>, <span class="number">0.0</span>); shape[<span class="number">0</span>] * shape[<span class="number">1</span>]];
+<a href=#5027 id=5027 data-nosnippet>5027</a>        psf[<span class="number">9</span>] = Complex64::new(<span class="number">1.0</span>, <span class="number">0.0</span>);
+<a href=#5028 id=5028 data-nosnippet>5028</a>        psf[<span class="number">15</span>] = Complex64::new(<span class="number">1.0 </span>+ <span class="number">0.5e-12</span>, <span class="number">0.0</span>);
+<a href=#5029 id=5029 data-nosnippet>5029</a>        <span class="macro">assert_eq!</span>(taylor_psf_peak_index(<span class="kw-2">&amp;</span>psf, shape, <span class="number">0.0</span>), <span class="prelude-val">Some</span>(<span class="number">9</span>));
+<a href=#5030 id=5030 data-nosnippet>5030</a>        psf[<span class="number">15</span>] = Complex64::new(<span class="number">1.0 </span>+ <span class="number">2.0e-12</span>, <span class="number">0.0</span>);
+<a href=#5031 id=5031 data-nosnippet>5031</a>        <span class="macro">assert_eq!</span>(taylor_psf_peak_index(<span class="kw-2">&amp;</span>psf, shape, <span class="number">0.0</span>), <span class="prelude-val">Some</span>(<span class="number">15</span>));
+<a href=#5032 id=5032 data-nosnippet>5032</a>    }
+<a href=#5033 id=5033 data-nosnippet>5033</a>
+<a href=#5034 id=5034 data-nosnippet>5034</a>    <span class="attr">#[test]
+<a href=#5035 id=5035 data-nosnippet>5035</a>    </span><span class="kw">fn </span>mtmfs_candidate_peak_uses_scan_order_for_roundoff_ties() {
+<a href=#5036 id=5036 data-nosnippet>5036</a>        <span class="kw">let </span>current = TaylorCandidate {
+<a href=#5037 id=5037 data-nosnippet>5037</a>            index: <span class="number">9</span>,
+<a href=#5038 id=5038 data-nosnippet>5038</a>            scale_index: <span class="number">0</span>,
+<a href=#5039 id=5039 data-nosnippet>5039</a>            coefficients: Vec::new(),
+<a href=#5040 id=5040 data-nosnippet>5040</a>            score: <span class="number">1.0</span>,
+<a href=#5041 id=5041 data-nosnippet>5041</a>        };
+<a href=#5042 id=5042 data-nosnippet>5042</a>        <span class="kw">let </span>near_tie = TaylorCandidate {
+<a href=#5043 id=5043 data-nosnippet>5043</a>            index: <span class="number">15</span>,
+<a href=#5044 id=5044 data-nosnippet>5044</a>            scale_index: <span class="number">0</span>,
+<a href=#5045 id=5045 data-nosnippet>5045</a>            coefficients: Vec::new(),
+<a href=#5046 id=5046 data-nosnippet>5046</a>            score: <span class="number">1.0 </span>+ <span class="number">0.5e-12</span>,
+<a href=#5047 id=5047 data-nosnippet>5047</a>        };
+<a href=#5048 id=5048 data-nosnippet>5048</a>        <span class="macro">assert!</span>(!prefer_taylor_within_scale(<span class="kw-2">&amp;</span>near_tie, <span class="kw-2">&amp;</span>current));
+<a href=#5049 id=5049 data-nosnippet>5049</a>        <span class="kw">let </span>distinct = TaylorCandidate {
+<a href=#5050 id=5050 data-nosnippet>5050</a>            score: <span class="number">1.0 </span>+ <span class="number">2.0e-12</span>,
+<a href=#5051 id=5051 data-nosnippet>5051</a>            ..near_tie
+<a href=#5052 id=5052 data-nosnippet>5052</a>        };
+<a href=#5053 id=5053 data-nosnippet>5053</a>        <span class="macro">assert!</span>(prefer_taylor_within_scale(<span class="kw-2">&amp;</span>distinct, <span class="kw-2">&amp;</span>current));
+<a href=#5054 id=5054 data-nosnippet>5054</a>    }
+<a href=#5055 id=5055 data-nosnippet>5055</a>
+<a href=#5056 id=5056 data-nosnippet>5056</a>    <span class="attr">#[test]
+<a href=#5057 id=5057 data-nosnippet>5057</a>    </span><span class="kw">fn </span>mtmfs_followup_search_is_confined_to_the_casa_psf_patch() {
+<a href=#5058 id=5058 data-nosnippet>5058</a>        <span class="kw">let </span>window = TaylorSearchWindow::around([<span class="number">20</span>, <span class="number">20</span>], <span class="number">80</span>, [<span class="number">256</span>, <span class="number">256</span>]);
+<a href=#5059 id=5059 data-nosnippet>5059</a>        <span class="macro">assert!</span>(window.contains([<span class="number">0</span>, <span class="number">0</span>]));
+<a href=#5060 id=5060 data-nosnippet>5060</a>        <span class="macro">assert!</span>(window.contains([<span class="number">79</span>, <span class="number">79</span>]));
+<a href=#5061 id=5061 data-nosnippet>5061</a>        <span class="macro">assert!</span>(!window.contains([<span class="number">80</span>, <span class="number">20</span>]));
+<a href=#5062 id=5062 data-nosnippet>5062</a>        <span class="macro">assert!</span>(!window.contains([<span class="number">200</span>, <span class="number">200</span>]));
+<a href=#5063 id=5063 data-nosnippet>5063</a>
+<a href=#5064 id=5064 data-nosnippet>5064</a>        <span class="kw">let </span>full_plane = TaylorSearchWindow::around([<span class="number">114</span>, <span class="number">49</span>], <span class="number">128</span>, [<span class="number">128</span>, <span class="number">128</span>]);
+<a href=#5065 id=5065 data-nosnippet>5065</a>        <span class="macro">assert_eq!</span>(full_plane.start, [<span class="number">0</span>, <span class="number">0</span>]);
+<a href=#5066 id=5066 data-nosnippet>5066</a>        <span class="macro">assert_eq!</span>(full_plane.end_exclusive, [<span class="number">128</span>, <span class="number">128</span>]);
+<a href=#5067 id=5067 data-nosnippet>5067</a>        <span class="macro">assert!</span>(full_plane.contains([<span class="number">10</span>, <span class="number">96</span>]));
+<a href=#5068 id=5068 data-nosnippet>5068</a>    }
+<a href=#5069 id=5069 data-nosnippet>5069</a>
+<a href=#5070 id=5070 data-nosnippet>5070</a>    <span class="attr">#[test]
+<a href=#5071 id=5071 data-nosnippet>5071</a>    </span><span class="kw">fn </span>mtmfs_scale_selection_preserves_casa_signed_two_stage_order() {
+<a href=#5072 id=5072 data-nosnippet>5072</a>        <span class="kw">let </span>kernels = build_scale_kernels(<span class="kw-2">&amp;</span>[<span class="number">0.0</span>, <span class="number">2.0</span>], <span class="number">0.0</span>);
+<a href=#5073 id=5073 data-nosnippet>5073</a>        <span class="kw">let </span>negative_large = TaylorCandidate {
+<a href=#5074 id=5074 data-nosnippet>5074</a>            index: <span class="number">0</span>,
+<a href=#5075 id=5075 data-nosnippet>5075</a>            scale_index: <span class="number">0</span>,
+<a href=#5076 id=5076 data-nosnippet>5076</a>            coefficients: Vec::new(),
+<a href=#5077 id=5077 data-nosnippet>5077</a>            score: -<span class="number">10.0</span>,
+<a href=#5078 id=5078 data-nosnippet>5078</a>        };
+<a href=#5079 id=5079 data-nosnippet>5079</a>        <span class="kw">let </span>negative_small = TaylorCandidate {
+<a href=#5080 id=5080 data-nosnippet>5080</a>            index: <span class="number">1</span>,
+<a href=#5081 id=5081 data-nosnippet>5081</a>            scale_index: <span class="number">1</span>,
+<a href=#5082 id=5082 data-nosnippet>5082</a>            coefficients: Vec::new(),
+<a href=#5083 id=5083 data-nosnippet>5083</a>            score: -<span class="number">2.0</span>,
+<a href=#5084 id=5084 data-nosnippet>5084</a>        };
+<a href=#5085 id=5085 data-nosnippet>5085</a>        <span class="macro">assert!</span>(prefer_taylor_across_scales(
+<a href=#5086 id=5086 data-nosnippet>5086</a>            <span class="kw-2">&amp;</span>negative_small,
+<a href=#5087 id=5087 data-nosnippet>5087</a>            <span class="kw-2">&amp;</span>negative_large,
+<a href=#5088 id=5088 data-nosnippet>5088</a>            <span class="kw-2">&amp;</span>kernels
+<a href=#5089 id=5089 data-nosnippet>5089</a>        ));
+<a href=#5090 id=5090 data-nosnippet>5090</a>        <span class="kw">let </span>positive_tie = TaylorCandidate {
+<a href=#5091 id=5091 data-nosnippet>5091</a>            index: <span class="number">2</span>,
+<a href=#5092 id=5092 data-nosnippet>5092</a>            scale_index: <span class="number">0</span>,
+<a href=#5093 id=5093 data-nosnippet>5093</a>            coefficients: Vec::new(),
+<a href=#5094 id=5094 data-nosnippet>5094</a>            score: <span class="number">10.0</span>,
+<a href=#5095 id=5095 data-nosnippet>5095</a>        };
+<a href=#5096 id=5096 data-nosnippet>5096</a>        <span class="macro">assert!</span>(prefer_taylor_within_scale(<span class="kw-2">&amp;</span>positive_tie, <span class="kw-2">&amp;</span>negative_large));
+<a href=#5097 id=5097 data-nosnippet>5097</a>    }
+<a href=#5098 id=5098 data-nosnippet>5098</a>
+<a href=#5099 id=5099 data-nosnippet>5099</a>    <span class="attr">#[test]
+<a href=#5100 id=5100 data-nosnippet>5100</a>    </span><span class="kw">fn </span>multiscale_divergence_boundary_requires_prior_progress_and_exceeds_one_half() {
+<a href=#5101 id=5101 data-nosnippet>5101</a>        <span class="macro">assert!</span>(!multiscale_diverged(<span class="number">2.0</span>, <span class="number">4.0</span>, <span class="number">0</span>));
+<a href=#5102 id=5102 data-nosnippet>5102</a>        <span class="macro">assert!</span>(!multiscale_diverged(<span class="number">2.0</span>, <span class="number">3.0</span>, <span class="number">1</span>));
+<a href=#5103 id=5103 data-nosnippet>5103</a>        <span class="macro">assert!</span>(multiscale_diverged(<span class="number">2.0</span>, <span class="number">3.000_000_000_1</span>, <span class="number">1</span>));
+<a href=#5104 id=5104 data-nosnippet>5104</a>    }
+<a href=#5105 id=5105 data-nosnippet>5105</a>
+<a href=#5106 id=5106 data-nosnippet>5106</a>    <span class="attr">#[test]
+<a href=#5107 id=5107 data-nosnippet>5107</a>    </span><span class="kw">fn </span>clark_subcycle_refresh_recomputes_the_exact_full_residual() {
+<a href=#5108 id=5108 data-nosnippet>5108</a>        <span class="kw">let </span>shape = [<span class="number">3</span>, <span class="number">3</span>];
+<a href=#5109 id=5109 data-nosnippet>5109</a>        <span class="kw">let </span>dirty = <span class="macro">vec!</span>[Complex64::new(<span class="number">0.0</span>, <span class="number">0.0</span>); <span class="number">9</span>];
+<a href=#5110 id=5110 data-nosnippet>5110</a>        <span class="kw">let </span><span class="kw-2">mut </span>dirty = dirty;
+<a href=#5111 id=5111 data-nosnippet>5111</a>        dirty[<span class="number">0</span>] = Complex64::new(<span class="number">3.0</span>, <span class="number">0.0</span>);
+<a href=#5112 id=5112 data-nosnippet>5112</a>        <span class="kw">let </span><span class="kw-2">mut </span>psf = <span class="macro">vec!</span>[Complex64::new(<span class="number">0.0</span>, <span class="number">0.0</span>); <span class="number">9</span>];
+<a href=#5113 id=5113 data-nosnippet>5113</a>        psf[<span class="number">4</span>] = Complex64::new(<span class="number">1.0</span>, <span class="number">0.0</span>);
+<a href=#5114 id=5114 data-nosnippet>5114</a>        psf[<span class="number">3</span>] = Complex64::new(<span class="number">0.25</span>, <span class="number">0.0</span>);
+<a href=#5115 id=5115 data-nosnippet>5115</a>        <span class="kw">let </span><span class="kw-2">mut </span>refreshed = dirty.iter().map(|value| value.re).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#5116 id=5116 data-nosnippet>5116</a>        subtract_psf(<span class="kw-2">&amp;mut </span>refreshed, <span class="kw-2">&amp;</span>psf, shape, [<span class="number">0</span>, <span class="number">0</span>], [<span class="number">1</span>, <span class="number">1</span>], <span class="number">2.0</span>)
+<a href=#5117 id=5117 data-nosnippet>5117</a>            .expect(<span class="string">"first exact full subtraction"</span>);
+<a href=#5118 id=5118 data-nosnippet>5118</a>        subtract_psf(<span class="kw-2">&amp;mut </span>refreshed, <span class="kw-2">&amp;</span>psf, shape, [<span class="number">2</span>, <span class="number">2</span>], [<span class="number">1</span>, <span class="number">1</span>], -<span class="number">1.5</span>)
+<a href=#5119 id=5119 data-nosnippet>5119</a>            .expect(<span class="string">"second exact full subtraction"</span>);
+<a href=#5120 id=5120 data-nosnippet>5120</a>        <span class="macro">assert_eq!</span>(
+<a href=#5121 id=5121 data-nosnippet>5121</a>            refreshed,
+<a href=#5122 id=5122 data-nosnippet>5122</a>            <span class="macro">vec!</span>[<span class="number">1.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.375</span>, <span class="number">1.5</span>]
+<a href=#5123 id=5123 data-nosnippet>5123</a>        );
+<a href=#5124 id=5124 data-nosnippet>5124</a>    }
+<a href=#5125 id=5125 data-nosnippet>5125</a>
+<a href=#5126 id=5126 data-nosnippet>5126</a>    <span class="attr">#[test]
+<a href=#5127 id=5127 data-nosnippet>5127</a>    </span><span class="kw">fn </span>multiscale_kernels_are_compact_and_unit_normalized() {
+<a href=#5128 id=5128 data-nosnippet>5128</a>        <span class="kw">let </span>kernels = build_scale_kernels(<span class="kw-2">&amp;</span>[<span class="number">0.0</span>, <span class="number">3.0</span>], <span class="number">0.6</span>);
+<a href=#5129 id=5129 data-nosnippet>5129</a>        <span class="macro">assert_eq!</span>(kernels[<span class="number">0</span>].samples.as_slice(), <span class="kw-2">&amp;</span>[([<span class="number">0</span>, <span class="number">0</span>], <span class="number">1.0</span>)]);
+<a href=#5130 id=5130 data-nosnippet>5130</a>        <span class="macro">assert!</span>(
+<a href=#5131 id=5131 data-nosnippet>5131</a>            (kernels[<span class="number">1</span>]
+<a href=#5132 id=5132 data-nosnippet>5132</a>                .samples
+<a href=#5133 id=5133 data-nosnippet>5133</a>                .iter()
+<a href=#5134 id=5134 data-nosnippet>5134</a>                .map(|(<span class="kw">_</span>, value)| value)
+<a href=#5135 id=5135 data-nosnippet>5135</a>                .sum::&lt;f64&gt;()
+<a href=#5136 id=5136 data-nosnippet>5136</a>                - <span class="number">1.0</span>)
+<a href=#5137 id=5137 data-nosnippet>5137</a>                .abs()
+<a href=#5138 id=5138 data-nosnippet>5138</a>                &lt; <span class="number">1.0e-12
+<a href=#5139 id=5139 data-nosnippet>5139</a>        </span>);
+<a href=#5140 id=5140 data-nosnippet>5140</a>        <span class="macro">assert!</span>(kernels[<span class="number">1</span>].samples.iter().all(|(offset, <span class="kw">_</span>)| {
+<a href=#5141 id=5141 data-nosnippet>5141</a>            (offset[<span class="number">0</span>] <span class="kw">as </span>f64 / <span class="number">3.0</span>).powi(<span class="number">2</span>) + (offset[<span class="number">1</span>] <span class="kw">as </span>f64 / <span class="number">3.0</span>).powi(<span class="number">2</span>) &lt; <span class="number">1.0
+<a href=#5142 id=5142 data-nosnippet>5142</a>        </span>}));
+<a href=#5143 id=5143 data-nosnippet>5143</a>    }
+<a href=#5144 id=5144 data-nosnippet>5144</a>
+<a href=#5145 id=5145 data-nosnippet>5145</a>    <span class="attr">#[test]
+<a href=#5146 id=5146 data-nosnippet>5146</a>    </span><span class="kw">fn </span>shifted_psf_overlap_can_start_before_the_component_peak() {
+<a href=#5147 id=5147 data-nosnippet>5147</a>        <span class="kw">let </span><span class="kw-2">mut </span>residual = <span class="macro">vec!</span>[<span class="number">0.0</span>; <span class="number">9</span>];
+<a href=#5148 id=5148 data-nosnippet>5148</a>        <span class="kw">let </span>psf = <span class="macro">vec!</span>[Complex64::new(<span class="number">1.0</span>, <span class="number">0.0</span>); <span class="number">9</span>];
+<a href=#5149 id=5149 data-nosnippet>5149</a>
+<a href=#5150 id=5150 data-nosnippet>5150</a>        subtract_psf(<span class="kw-2">&amp;mut </span>residual, <span class="kw-2">&amp;</span>psf, [<span class="number">3</span>, <span class="number">3</span>], [<span class="number">2</span>, <span class="number">2</span>], [<span class="number">1</span>, <span class="number">1</span>], <span class="number">1.0</span>)
+<a href=#5151 id=5151 data-nosnippet>5151</a>            .expect(<span class="string">"valid clipped negative shift"</span>);
+<a href=#5152 id=5152 data-nosnippet>5152</a>
+<a href=#5153 id=5153 data-nosnippet>5153</a>        <span class="macro">assert_eq!</span>(
+<a href=#5154 id=5154 data-nosnippet>5154</a>            residual,
+<a href=#5155 id=5155 data-nosnippet>5155</a>            <span class="macro">vec!</span>[<span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, -<span class="number">1.0</span>, -<span class="number">1.0</span>, <span class="number">0.0</span>, -<span class="number">1.0</span>, -<span class="number">1.0</span>]
+<a href=#5156 id=5156 data-nosnippet>5156</a>        );
+<a href=#5157 id=5157 data-nosnippet>5157</a>    }
+<a href=#5158 id=5158 data-nosnippet>5158</a>
+<a href=#5159 id=5159 data-nosnippet>5159</a>    <span class="attr">#[test]
+<a href=#5160 id=5160 data-nosnippet>5160</a>    </span><span class="kw">fn </span>multiscale_terminal_refresh_uses_casa_circular_psf_convolution() {
+<a href=#5161 id=5161 data-nosnippet>5161</a>        <span class="kw">let </span><span class="kw-2">mut </span>residual = <span class="macro">vec!</span>[<span class="number">0.0</span>; <span class="number">9</span>];
+<a href=#5162 id=5162 data-nosnippet>5162</a>        <span class="kw">let </span>psf = (<span class="number">1</span>..=<span class="number">9</span>)
+<a href=#5163 id=5163 data-nosnippet>5163</a>            .map(|value| Complex64::new(f64::from(value), <span class="number">0.0</span>))
+<a href=#5164 id=5164 data-nosnippet>5164</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#5165 id=5165 data-nosnippet>5165</a>
+<a href=#5166 id=5166 data-nosnippet>5166</a>        subtract_psf_circular(<span class="kw-2">&amp;mut </span>residual, <span class="kw-2">&amp;</span>psf, [<span class="number">3</span>, <span class="number">3</span>], [<span class="number">0</span>, <span class="number">0</span>], [<span class="number">1</span>, <span class="number">1</span>], <span class="number">1.0</span>)
+<a href=#5167 id=5167 data-nosnippet>5167</a>            .expect(<span class="string">"finite circular subtraction"</span>);
+<a href=#5168 id=5168 data-nosnippet>5168</a>
+<a href=#5169 id=5169 data-nosnippet>5169</a>        <span class="macro">assert_eq!</span>(
+<a href=#5170 id=5170 data-nosnippet>5170</a>            residual,
+<a href=#5171 id=5171 data-nosnippet>5171</a>            <span class="macro">vec!</span>[-<span class="number">5.0</span>, -<span class="number">6.0</span>, -<span class="number">4.0</span>, -<span class="number">8.0</span>, -<span class="number">9.0</span>, -<span class="number">7.0</span>, -<span class="number">2.0</span>, -<span class="number">3.0</span>, -<span class="number">1.0</span>]
+<a href=#5172 id=5172 data-nosnippet>5172</a>        );
+<a href=#5173 id=5173 data-nosnippet>5173</a>    }
+<a href=#5174 id=5174 data-nosnippet>5174</a>}
 </code></pre></div></section></main></body></html>

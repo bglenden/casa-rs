@@ -1775,7 +1775,7 @@
 <a href=#1775 id=1775 data-nosnippet>1775</a>    <span class="kw">if </span>beams.is_empty() {
 <a href=#1776 id=1776 data-nosnippet>1776</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(beams);
 <a href=#1777 id=1777 data-nosnippet>1777</a>    }
-<a href=#1778 id=1778 data-nosnippet>1778</a>    <span class="kw">if </span>domain_count == <span class="number">0 </span>|| beams.len() % domain_count != <span class="number">0 </span>{
+<a href=#1778 id=1778 data-nosnippet>1778</a>    <span class="kw">if </span>domain_count == <span class="number">0 </span>|| !beams.len().is_multiple_of(domain_count) {
 <a href=#1779 id=1779 data-nosnippet>1779</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::SourceLineageMismatch);
 <a href=#1780 id=1780 data-nosnippet>1780</a>    }
 <a href=#1781 id=1781 data-nosnippet>1781</a>    <span class="kw">let </span>channels = beams.len() / domain_count;

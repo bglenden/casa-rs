@@ -1427,7 +1427,7 @@
 <a href=#1427 id=1427 data-nosnippet>1427</a>    <span class="kw">if </span>columns == <span class="number">0 </span>|| rows == <span class="number">0 </span>{
 <a href=#1428 id=1428 data-nosnippet>1428</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(CompileGeometryError::EmptyFacetLayout);
 <a href=#1429 id=1429 data-nosnippet>1429</a>    }
-<a href=#1430 id=1430 data-nosnippet>1430</a>    <span class="kw">if </span>shape.width % columns != <span class="number">0 </span>|| shape.height % rows != <span class="number">0 </span>{
+<a href=#1430 id=1430 data-nosnippet>1430</a>    <span class="kw">if </span>!shape.width.is_multiple_of(columns) || !shape.height.is_multiple_of(rows) {
 <a href=#1431 id=1431 data-nosnippet>1431</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(CompileGeometryError::NonDivisibleFacetLayout {
 <a href=#1432 id=1432 data-nosnippet>1432</a>            width: shape.width,
 <a href=#1433 id=1433 data-nosnippet>1433</a>            height: shape.height,

@@ -1348,7 +1348,7 @@
 <a href=#1348 id=1348 data-nosnippet>1348</a>    sorted.sort_by(nan_safe_cmp);
 <a href=#1349 id=1349 data-nosnippet>1349</a>    <span class="kw">let </span>n = sorted.len();
 <a href=#1350 id=1350 data-nosnippet>1350</a>    <span class="kw">let </span>n2 = (n - <span class="number">1</span>) / <span class="number">2</span>;
-<a href=#1351 id=1351 data-nosnippet>1351</a>    <span class="kw">if </span>n % <span class="number">2 </span>== <span class="number">0 </span>{
+<a href=#1351 id=1351 data-nosnippet>1351</a>    <span class="kw">if </span>n.is_multiple_of(<span class="number">2</span>) {
 <a href=#1352 id=1352 data-nosnippet>1352</a>        (sorted[n2] + sorted[n2 + <span class="number">1</span>]) / <span class="number">2.0
 <a href=#1353 id=1353 data-nosnippet>1353</a>    </span>} <span class="kw">else </span>{
 <a href=#1354 id=1354 data-nosnippet>1354</a>        sorted[n2]
@@ -1371,7 +1371,7 @@
 <a href=#1371 id=1371 data-nosnippet>1371</a>    devs.sort_by(nan_safe_cmp);
 <a href=#1372 id=1372 data-nosnippet>1372</a>    <span class="kw">let </span>n = devs.len();
 <a href=#1373 id=1373 data-nosnippet>1373</a>    <span class="kw">let </span>n2 = (n - <span class="number">1</span>) / <span class="number">2</span>;
-<a href=#1374 id=1374 data-nosnippet>1374</a>    <span class="kw">if </span>n % <span class="number">2 </span>== <span class="number">0 </span>{
+<a href=#1374 id=1374 data-nosnippet>1374</a>    <span class="kw">if </span>n.is_multiple_of(<span class="number">2</span>) {
 <a href=#1375 id=1375 data-nosnippet>1375</a>        (devs[n2] + devs[n2 + <span class="number">1</span>]) / <span class="number">2.0
 <a href=#1376 id=1376 data-nosnippet>1376</a>    </span>} <span class="kw">else </span>{
 <a href=#1377 id=1377 data-nosnippet>1377</a>        devs[n2]

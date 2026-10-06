@@ -91,13 +91,13 @@
 <a href=#91 id=91 data-nosnippet>91</a>        };
 <a href=#92 id=92 data-nosnippet>92</a>        <span class="comment">// Allow (but don't require) a trailing semicolon.
 <a href=#93 id=93 data-nosnippet>93</a>        // (not a real token — just skip any leftover)
-<a href=#94 id=94 data-nosnippet>94</a>        </span><span class="kw">if </span>!<span class="self">self</span>.lexer.is_eof() {
-<a href=#95 id=95 data-nosnippet>95</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>((tok, span)) = <span class="self">self</span>.lexer.next_token() {
-<a href=#96 id=96 data-nosnippet>96</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(TaqlError::parse(
-<a href=#97 id=97 data-nosnippet>97</a>                    <span class="self">self</span>.lexer.position(span.start),
-<a href=#98 id=98 data-nosnippet>98</a>                    <span class="macro">format!</span>(<span class="string">"unexpected token after statement: {tok}"</span>),
-<a href=#99 id=99 data-nosnippet>99</a>                ));
-<a href=#100 id=100 data-nosnippet>100</a>            }
+<a href=#94 id=94 data-nosnippet>94</a>        </span><span class="kw">if </span>!<span class="self">self</span>.lexer.is_eof()
+<a href=#95 id=95 data-nosnippet>95</a>            &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>((tok, span)) = <span class="self">self</span>.lexer.next_token()
+<a href=#96 id=96 data-nosnippet>96</a>        {
+<a href=#97 id=97 data-nosnippet>97</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(TaqlError::parse(
+<a href=#98 id=98 data-nosnippet>98</a>                <span class="self">self</span>.lexer.position(span.start),
+<a href=#99 id=99 data-nosnippet>99</a>                <span class="macro">format!</span>(<span class="string">"unexpected token after statement: {tok}"</span>),
+<a href=#100 id=100 data-nosnippet>100</a>            ));
 <a href=#101 id=101 data-nosnippet>101</a>        }
 <a href=#102 id=102 data-nosnippet>102</a>        <span class="prelude-val">Ok</span>(stmt)
 <a href=#103 id=103 data-nosnippet>103</a>    }
@@ -925,24 +925,24 @@
 <a href=#925 id=925 data-nosnippet>925</a>        <span class="kw">let </span>name = <span class="self">self</span>.parse_ident_string()<span class="question-mark">?</span>;
 <a href=#926 id=926 data-nosnippet>926</a>
 <a href=#927 id=927 data-nosnippet>927</a>        <span class="comment">// Check for g-prefixed aggregate function names (e.g. gmin, gcount)
-<a href=#928 id=928 data-nosnippet>928</a>        </span><span class="kw">if </span><span class="self">self</span>.lexer.peek() == <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>Token::LParen) {
-<a href=#929 id=929 data-nosnippet>929</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(agg) = aggregate_from_name(<span class="kw-2">&amp;</span>name) {
-<a href=#930 id=930 data-nosnippet>930</a>                <span class="self">self</span>.lexer.next_token(); <span class="comment">// consume (
-<a href=#931 id=931 data-nosnippet>931</a>                </span><span class="kw">let </span>arg = <span class="kw">if </span><span class="self">self</span>.lexer.peek() == <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>Token::RParen) {
-<a href=#932 id=932 data-nosnippet>932</a>                    <span class="comment">// Zero-arg aggregate: gcount(), growid(), etc.
-<a href=#933 id=933 data-nosnippet>933</a>                    </span>Expr::Star
-<a href=#934 id=934 data-nosnippet>934</a>                } <span class="kw">else if </span><span class="self">self</span>.lexer.peek() == <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>Token::Star) {
-<a href=#935 id=935 data-nosnippet>935</a>                    <span class="self">self</span>.lexer.next_token();
-<a href=#936 id=936 data-nosnippet>936</a>                    Expr::Star
-<a href=#937 id=937 data-nosnippet>937</a>                } <span class="kw">else </span>{
-<a href=#938 id=938 data-nosnippet>938</a>                    <span class="self">self</span>.parse_expr()<span class="question-mark">?
-<a href=#939 id=939 data-nosnippet>939</a>                </span>};
-<a href=#940 id=940 data-nosnippet>940</a>                <span class="self">self</span>.lexer.expect(<span class="kw-2">&amp;</span>Token::RParen)<span class="question-mark">?</span>;
-<a href=#941 id=941 data-nosnippet>941</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(Expr::Aggregate {
-<a href=#942 id=942 data-nosnippet>942</a>                    func: agg,
-<a href=#943 id=943 data-nosnippet>943</a>                    arg: Box::new(arg),
-<a href=#944 id=944 data-nosnippet>944</a>                });
-<a href=#945 id=945 data-nosnippet>945</a>            }
+<a href=#928 id=928 data-nosnippet>928</a>        </span><span class="kw">if </span><span class="self">self</span>.lexer.peek() == <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>Token::LParen)
+<a href=#929 id=929 data-nosnippet>929</a>            &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(agg) = aggregate_from_name(<span class="kw-2">&amp;</span>name)
+<a href=#930 id=930 data-nosnippet>930</a>        {
+<a href=#931 id=931 data-nosnippet>931</a>            <span class="self">self</span>.lexer.next_token(); <span class="comment">// consume (
+<a href=#932 id=932 data-nosnippet>932</a>            </span><span class="kw">let </span>arg = <span class="kw">if </span><span class="self">self</span>.lexer.peek() == <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>Token::RParen) {
+<a href=#933 id=933 data-nosnippet>933</a>                <span class="comment">// Zero-arg aggregate: gcount(), growid(), etc.
+<a href=#934 id=934 data-nosnippet>934</a>                </span>Expr::Star
+<a href=#935 id=935 data-nosnippet>935</a>            } <span class="kw">else if </span><span class="self">self</span>.lexer.peek() == <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>Token::Star) {
+<a href=#936 id=936 data-nosnippet>936</a>                <span class="self">self</span>.lexer.next_token();
+<a href=#937 id=937 data-nosnippet>937</a>                Expr::Star
+<a href=#938 id=938 data-nosnippet>938</a>            } <span class="kw">else </span>{
+<a href=#939 id=939 data-nosnippet>939</a>                <span class="self">self</span>.parse_expr()<span class="question-mark">?
+<a href=#940 id=940 data-nosnippet>940</a>            </span>};
+<a href=#941 id=941 data-nosnippet>941</a>            <span class="self">self</span>.lexer.expect(<span class="kw-2">&amp;</span>Token::RParen)<span class="question-mark">?</span>;
+<a href=#942 id=942 data-nosnippet>942</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(Expr::Aggregate {
+<a href=#943 id=943 data-nosnippet>943</a>                func: agg,
+<a href=#944 id=944 data-nosnippet>944</a>                arg: Box::new(arg),
+<a href=#945 id=945 data-nosnippet>945</a>            });
 <a href=#946 id=946 data-nosnippet>946</a>        }
 <a href=#947 id=947 data-nosnippet>947</a>
 <a href=#948 id=948 data-nosnippet>948</a>        <span class="comment">// Function call: name(...)

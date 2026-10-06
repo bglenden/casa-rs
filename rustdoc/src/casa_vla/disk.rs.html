@@ -374,7 +374,7 @@
 <a href=#374 id=374 data-nosnippet>374</a>        <span class="kw-2">mut </span>first_sector: Vec&lt;u8&gt;,
 <a href=#375 id=375 data-nosnippet>375</a>        total_size: usize,
 <a href=#376 id=376 data-nosnippet>376</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;u8&gt;, VlaError&gt; {
-<a href=#377 id=377 data-nosnippet>377</a>        <span class="kw">if </span>total_size &lt; PHYSICAL_RECORD_SIZE || total_size % PHYSICAL_RECORD_SIZE != <span class="number">0 </span>{
+<a href=#377 id=377 data-nosnippet>377</a>        <span class="kw">if </span>total_size &lt; PHYSICAL_RECORD_SIZE || !total_size.is_multiple_of(PHYSICAL_RECORD_SIZE) {
 <a href=#378 id=378 data-nosnippet>378</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(invalid_record(
 <a href=#379 id=379 data-nosnippet>379</a>                <span class="kw-2">&amp;</span><span class="self">self</span>.path,
 <a href=#380 id=380 data-nosnippet>380</a>                <span class="macro">format!</span>(<span class="string">"invalid disk physical-record size: {total_size} bytes"</span>),

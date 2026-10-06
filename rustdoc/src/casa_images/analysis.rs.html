@@ -3869,10 +3869,10 @@
 <a href=#3869 id=3869 data-nosnippet>3869</a>                    <span class="kw">continue</span>;
 <a href=#3870 id=3870 data-nosnippet>3870</a>                }
 <a href=#3871 id=3871 data-nosnippet>3871</a>                <span class="kw">let </span>value = value.into();
-<a href=#3872 id=3872 data-nosnippet>3872</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>([min, max]) = includepix {
-<a href=#3873 id=3873 data-nosnippet>3873</a>                    <span class="kw">if </span>value &lt; min || value &gt; max {
-<a href=#3874 id=3874 data-nosnippet>3874</a>                        <span class="kw">continue</span>;
-<a href=#3875 id=3875 data-nosnippet>3875</a>                    }
+<a href=#3872 id=3872 data-nosnippet>3872</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>([min, max]) = includepix
+<a href=#3873 id=3873 data-nosnippet>3873</a>                    &amp;&amp; (value &lt; min || value &gt; max)
+<a href=#3874 id=3874 data-nosnippet>3874</a>                {
+<a href=#3875 id=3875 data-nosnippet>3875</a>                    <span class="kw">continue</span>;
 <a href=#3876 id=3876 data-nosnippet>3876</a>                }
 <a href=#3877 id=3877 data-nosnippet>3877</a>                samples.push((value, <span class="kw-2">*</span>coord));
 <a href=#3878 id=3878 data-nosnippet>3878</a>            }
@@ -3880,10 +3880,10 @@
 <a href=#3880 id=3880 data-nosnippet>3880</a>        <span class="prelude-val">None </span>=&gt; {
 <a href=#3881 id=3881 data-nosnippet>3881</a>            <span class="kw">for </span>(value, coord) <span class="kw">in </span>values.into_iter().zip(coords.iter()) {
 <a href=#3882 id=3882 data-nosnippet>3882</a>                <span class="kw">let </span>value = value.into();
-<a href=#3883 id=3883 data-nosnippet>3883</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>([min, max]) = includepix {
-<a href=#3884 id=3884 data-nosnippet>3884</a>                    <span class="kw">if </span>value &lt; min || value &gt; max {
-<a href=#3885 id=3885 data-nosnippet>3885</a>                        <span class="kw">continue</span>;
-<a href=#3886 id=3886 data-nosnippet>3886</a>                    }
+<a href=#3883 id=3883 data-nosnippet>3883</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>([min, max]) = includepix
+<a href=#3884 id=3884 data-nosnippet>3884</a>                    &amp;&amp; (value &lt; min || value &gt; max)
+<a href=#3885 id=3885 data-nosnippet>3885</a>                {
+<a href=#3886 id=3886 data-nosnippet>3886</a>                    <span class="kw">continue</span>;
 <a href=#3887 id=3887 data-nosnippet>3887</a>                }
 <a href=#3888 id=3888 data-nosnippet>3888</a>                samples.push((value, <span class="kw-2">*</span>coord));
 <a href=#3889 id=3889 data-nosnippet>3889</a>            }
@@ -3981,19 +3981,19 @@
 <a href=#3981 id=3981 data-nosnippet>3981</a>        <span class="kw">for </span>(chan, coord) <span class="kw">in </span>coords.iter().enumerate().take(input.shape()[axis]) {
 <a href=#3982 id=3982 data-nosnippet>3982</a>            <span class="kw">let </span><span class="kw-2">mut </span>full_index = out_index.clone();
 <a href=#3983 id=3983 data-nosnippet>3983</a>            full_index.insert(axis, chan);
-<a href=#3984 id=3984 data-nosnippet>3984</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(mask) = mask {
-<a href=#3985 id=3985 data-nosnippet>3985</a>                <span class="kw">if </span>!mask[IxDyn(<span class="kw-2">&amp;</span>full_index)] {
-<a href=#3986 id=3986 data-nosnippet>3986</a>                    <span class="kw">continue</span>;
-<a href=#3987 id=3987 data-nosnippet>3987</a>                }
+<a href=#3984 id=3984 data-nosnippet>3984</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(mask) = mask
+<a href=#3985 id=3985 data-nosnippet>3985</a>                &amp;&amp; !mask[IxDyn(<span class="kw-2">&amp;</span>full_index)]
+<a href=#3986 id=3986 data-nosnippet>3986</a>            {
+<a href=#3987 id=3987 data-nosnippet>3987</a>                <span class="kw">continue</span>;
 <a href=#3988 id=3988 data-nosnippet>3988</a>            }
 <a href=#3989 id=3989 data-nosnippet>3989</a>            <span class="kw">let </span>value = (<span class="kw-2">*</span>input.get(IxDyn(<span class="kw-2">&amp;</span>full_index)).ok_or_else(|| {
 <a href=#3990 id=3990 data-nosnippet>3990</a>                ImageError::InvalidMetadata(<span class="string">"moment index out of bounds"</span>.to_string())
 <a href=#3991 id=3991 data-nosnippet>3991</a>            })<span class="question-mark">?</span>)
 <a href=#3992 id=3992 data-nosnippet>3992</a>            .into();
-<a href=#3993 id=3993 data-nosnippet>3993</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>([min, max]) = includepix {
-<a href=#3994 id=3994 data-nosnippet>3994</a>                <span class="kw">if </span>value &lt; min || value &gt; max {
-<a href=#3995 id=3995 data-nosnippet>3995</a>                    <span class="kw">continue</span>;
-<a href=#3996 id=3996 data-nosnippet>3996</a>                }
+<a href=#3993 id=3993 data-nosnippet>3993</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>([min, max]) = includepix
+<a href=#3994 id=3994 data-nosnippet>3994</a>                &amp;&amp; (value &lt; min || value &gt; max)
+<a href=#3995 id=3995 data-nosnippet>3995</a>            {
+<a href=#3996 id=3996 data-nosnippet>3996</a>                <span class="kw">continue</span>;
 <a href=#3997 id=3997 data-nosnippet>3997</a>            }
 <a href=#3998 id=3998 data-nosnippet>3998</a>            samples.push((value, <span class="kw-2">*</span>coord));
 <a href=#3999 id=3999 data-nosnippet>3999</a>        }
@@ -4216,15 +4216,15 @@
 <a href=#4216 id=4216 data-nosnippet>4216</a>        hdu.write_key(<span class="kw-2">&amp;mut </span>fits, <span class="string">"OBJECT"</span>, info.object_name.as_str())
 <a href=#4217 id=4217 data-nosnippet>4217</a>            .map_err(|error| ImageError::Io(error.to_string()))<span class="question-mark">?</span>;
 <a href=#4218 id=4218 data-nosnippet>4218</a>    }
-<a href=#4219 id=4219 data-nosnippet>4219</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(beam) = info.beam_set.single_beam() {
-<a href=#4220 id=4220 data-nosnippet>4220</a>        <span class="kw">if </span>!beam.is_null() {
-<a href=#4221 id=4221 data-nosnippet>4221</a>            hdu.write_key(<span class="kw-2">&amp;mut </span>fits, <span class="string">"BMAJ"</span>, beam.major_in(<span class="string">"deg"</span>)<span class="question-mark">?</span>)
-<a href=#4222 id=4222 data-nosnippet>4222</a>                .map_err(|error| ImageError::Io(error.to_string()))<span class="question-mark">?</span>;
-<a href=#4223 id=4223 data-nosnippet>4223</a>            hdu.write_key(<span class="kw-2">&amp;mut </span>fits, <span class="string">"BMIN"</span>, beam.minor_in(<span class="string">"deg"</span>)<span class="question-mark">?</span>)
-<a href=#4224 id=4224 data-nosnippet>4224</a>                .map_err(|error| ImageError::Io(error.to_string()))<span class="question-mark">?</span>;
-<a href=#4225 id=4225 data-nosnippet>4225</a>            hdu.write_key(<span class="kw-2">&amp;mut </span>fits, <span class="string">"BPA"</span>, beam.position_angle_in(<span class="string">"deg"</span>)<span class="question-mark">?</span>)
-<a href=#4226 id=4226 data-nosnippet>4226</a>                .map_err(|error| ImageError::Io(error.to_string()))<span class="question-mark">?</span>;
-<a href=#4227 id=4227 data-nosnippet>4227</a>        }
+<a href=#4219 id=4219 data-nosnippet>4219</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(beam) = info.beam_set.single_beam()
+<a href=#4220 id=4220 data-nosnippet>4220</a>        &amp;&amp; !beam.is_null()
+<a href=#4221 id=4221 data-nosnippet>4221</a>    {
+<a href=#4222 id=4222 data-nosnippet>4222</a>        hdu.write_key(<span class="kw-2">&amp;mut </span>fits, <span class="string">"BMAJ"</span>, beam.major_in(<span class="string">"deg"</span>)<span class="question-mark">?</span>)
+<a href=#4223 id=4223 data-nosnippet>4223</a>            .map_err(|error| ImageError::Io(error.to_string()))<span class="question-mark">?</span>;
+<a href=#4224 id=4224 data-nosnippet>4224</a>        hdu.write_key(<span class="kw-2">&amp;mut </span>fits, <span class="string">"BMIN"</span>, beam.minor_in(<span class="string">"deg"</span>)<span class="question-mark">?</span>)
+<a href=#4225 id=4225 data-nosnippet>4225</a>            .map_err(|error| ImageError::Io(error.to_string()))<span class="question-mark">?</span>;
+<a href=#4226 id=4226 data-nosnippet>4226</a>        hdu.write_key(<span class="kw-2">&amp;mut </span>fits, <span class="string">"BPA"</span>, beam.position_angle_in(<span class="string">"deg"</span>)<span class="question-mark">?</span>)
+<a href=#4227 id=4227 data-nosnippet>4227</a>            .map_err(|error| ImageError::Io(error.to_string()))<span class="question-mark">?</span>;
 <a href=#4228 id=4228 data-nosnippet>4228</a>    }
 <a href=#4229 id=4229 data-nosnippet>4229</a>    <span class="prelude-val">Ok</span>(FitsExportSummary {
 <a href=#4230 id=4230 data-nosnippet>4230</a>        imagename: imagename.display().to_string(),

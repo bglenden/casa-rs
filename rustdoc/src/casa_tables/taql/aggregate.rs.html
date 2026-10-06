@@ -172,17 +172,17 @@
 <a href=#172 id=172 data-nosnippet>172</a>                }
 <a href=#173 id=173 data-nosnippet>173</a>            }
 <a href=#174 id=174 data-nosnippet>174</a>            AggregateFunc::NTrue =&gt; {
-<a href=#175 id=175 data-nosnippet>175</a>                <span class="kw">if let </span><span class="prelude-val">Ok</span>(b) = val.to_bool() {
-<a href=#176 id=176 data-nosnippet>176</a>                    <span class="kw">if </span>b {
-<a href=#177 id=177 data-nosnippet>177</a>                        <span class="self">self</span>.ntrue += <span class="number">1</span>;
-<a href=#178 id=178 data-nosnippet>178</a>                    }
+<a href=#175 id=175 data-nosnippet>175</a>                <span class="kw">if let </span><span class="prelude-val">Ok</span>(b) = val.to_bool()
+<a href=#176 id=176 data-nosnippet>176</a>                    &amp;&amp; b
+<a href=#177 id=177 data-nosnippet>177</a>                {
+<a href=#178 id=178 data-nosnippet>178</a>                    <span class="self">self</span>.ntrue += <span class="number">1</span>;
 <a href=#179 id=179 data-nosnippet>179</a>                }
 <a href=#180 id=180 data-nosnippet>180</a>            }
 <a href=#181 id=181 data-nosnippet>181</a>            AggregateFunc::NFalse =&gt; {
-<a href=#182 id=182 data-nosnippet>182</a>                <span class="kw">if let </span><span class="prelude-val">Ok</span>(b) = val.to_bool() {
-<a href=#183 id=183 data-nosnippet>183</a>                    <span class="kw">if </span>!b {
-<a href=#184 id=184 data-nosnippet>184</a>                        <span class="self">self</span>.nfalse += <span class="number">1</span>;
-<a href=#185 id=185 data-nosnippet>185</a>                    }
+<a href=#182 id=182 data-nosnippet>182</a>                <span class="kw">if let </span><span class="prelude-val">Ok</span>(b) = val.to_bool()
+<a href=#183 id=183 data-nosnippet>183</a>                    &amp;&amp; !b
+<a href=#184 id=184 data-nosnippet>184</a>                {
+<a href=#185 id=185 data-nosnippet>185</a>                    <span class="self">self</span>.nfalse += <span class="number">1</span>;
 <a href=#186 id=186 data-nosnippet>186</a>                }
 <a href=#187 id=187 data-nosnippet>187</a>            }
 <a href=#188 id=188 data-nosnippet>188</a>            AggregateFunc::Median | AggregateFunc::Fractile =&gt; {
@@ -286,7 +286,7 @@
 <a href=#286 id=286 data-nosnippet>286</a>                } <span class="kw">else </span>{
 <a href=#287 id=287 data-nosnippet>287</a>                    <span class="self">self</span>.values.sort_by(|a, b| a.total_cmp(b));
 <a href=#288 id=288 data-nosnippet>288</a>                    <span class="kw">let </span>len = <span class="self">self</span>.values.len();
-<a href=#289 id=289 data-nosnippet>289</a>                    <span class="kw">let </span>med = <span class="kw">if </span>len % <span class="number">2 </span>== <span class="number">0 </span>{
+<a href=#289 id=289 data-nosnippet>289</a>                    <span class="kw">let </span>med = <span class="kw">if </span>len.is_multiple_of(<span class="number">2</span>) {
 <a href=#290 id=290 data-nosnippet>290</a>                        (<span class="self">self</span>.values[len / <span class="number">2 </span>- <span class="number">1</span>] + <span class="self">self</span>.values[len / <span class="number">2</span>]) / <span class="number">2.0
 <a href=#291 id=291 data-nosnippet>291</a>                    </span>} <span class="kw">else </span>{
 <a href=#292 id=292 data-nosnippet>292</a>                        <span class="self">self</span>.values[len / <span class="number">2</span>]

@@ -572,7 +572,7 @@
 <a href=#572 id=572 data-nosnippet>572</a>        <span class="kw">for </span>(row, bytes) <span class="kw">in </span>output
 <a href=#573 id=573 data-nosnippet>573</a>            .metadata
 <a href=#574 id=574 data-nosnippet>574</a>            .iter_mut()
-<a href=#575 id=575 data-nosnippet>575</a>            .zip(metadata.chunks_exact(ROW_BYTES))
+<a href=#575 id=575 data-nosnippet>575</a>            .zip(metadata.as_chunks::&lt;ROW_BYTES&gt;().<span class="number">0</span>)
 <a href=#576 id=576 data-nosnippet>576</a>        {
 <a href=#577 id=577 data-nosnippet>577</a>            row.physical_row = u64::from_le_bytes(bytes[..<span class="number">8</span>].try_into().unwrap());
 <a href=#578 id=578 data-nosnippet>578</a>            row.uvw_m = std::array::from_fn(|axis| decode_f64(bytes, (axis + <span class="number">1</span>) * <span class="number">8</span>));

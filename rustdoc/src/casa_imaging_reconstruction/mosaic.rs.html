@@ -309,7 +309,7 @@
 <a href=#309 id=309 data-nosnippet>309</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SpectralOperatorError::UnsupportedProblem);
 <a href=#310 id=310 data-nosnippet>310</a>        }
 <a href=#311 id=311 data-nosnippet>311</a>        <span class="kw">let </span>conv_size = mosaic_convolution_size(geometry.image_shape);
-<a href=#312 id=312 data-nosnippet>312</a>        <span class="kw">if </span>conv_size &lt; <span class="number">16 </span>|| conv_size % <span class="number">2 </span>!= <span class="number">0 </span>{
+<a href=#312 id=312 data-nosnippet>312</a>        <span class="kw">if </span>conv_size &lt; <span class="number">16 </span>|| !conv_size.is_multiple_of(<span class="number">2</span>) {
 <a href=#313 id=313 data-nosnippet>313</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SpectralOperatorError::UnsupportedGeometry);
 <a href=#314 id=314 data-nosnippet>314</a>        }
 <a href=#315 id=315 data-nosnippet>315</a>        <span class="kw">let </span>family_pair = SelectedAntennaResponses {
@@ -681,7 +681,7 @@
 <a href=#681 id=681 data-nosnippet>681</a><span class="kw">fn </span>mosaic_convolution_size(image_shape: [usize; <span class="number">2</span>]) -&gt; usize {
 <a href=#682 id=682 data-nosnippet>682</a>    <span class="kw">let </span>support = image_shape.into_iter().max().unwrap_or(<span class="number">0</span>).max(<span class="number">64</span>);
 <a href=#683 id=683 data-nosnippet>683</a>    <span class="kw">let </span><span class="kw-2">mut </span>convolution_size = support + <span class="number">1</span>;
-<a href=#684 id=684 data-nosnippet>684</a>    <span class="kw">while </span>convolution_size % <span class="number">2 </span>!= <span class="number">0 </span>|| !is_composite_fft_length(convolution_size) {
+<a href=#684 id=684 data-nosnippet>684</a>    <span class="kw">while </span>!convolution_size.is_multiple_of(<span class="number">2</span>) || !is_composite_fft_length(convolution_size) {
 <a href=#685 id=685 data-nosnippet>685</a>        convolution_size += <span class="number">1</span>;
 <a href=#686 id=686 data-nosnippet>686</a>    }
 <a href=#687 id=687 data-nosnippet>687</a>    (convolution_size / <span class="number">16 </span>* <span class="number">16</span>).max(<span class="number">64</span>)
@@ -689,7 +689,7 @@
 <a href=#689 id=689 data-nosnippet>689</a>
 <a href=#690 id=690 data-nosnippet>690</a><span class="kw">fn </span>is_composite_fft_length(<span class="kw-2">mut </span>value: usize) -&gt; bool {
 <a href=#691 id=691 data-nosnippet>691</a>    <span class="kw">for </span>factor <span class="kw">in </span>[<span class="number">2</span>, <span class="number">3</span>, <span class="number">5</span>] {
-<a href=#692 id=692 data-nosnippet>692</a>        <span class="kw">while </span>value &gt; <span class="number">1 </span>&amp;&amp; value % factor == <span class="number">0 </span>{
+<a href=#692 id=692 data-nosnippet>692</a>        <span class="kw">while </span>value &gt; <span class="number">1 </span>&amp;&amp; value.is_multiple_of(factor) {
 <a href=#693 id=693 data-nosnippet>693</a>            value /= factor;
 <a href=#694 id=694 data-nosnippet>694</a>        }
 <a href=#695 id=695 data-nosnippet>695</a>    }

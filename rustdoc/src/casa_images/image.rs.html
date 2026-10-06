@@ -2572,13 +2572,13 @@
 <a href=#2572 id=2572 data-nosnippet>2572</a>        <span class="kw">return </span>stored;
 <a href=#2573 id=2573 data-nosnippet>2573</a>    }
 <a href=#2574 id=2574 data-nosnippet>2574</a>
-<a href=#2575 id=2575 data-nosnippet>2575</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(image_name) = image_path.file_name() {
-<a href=#2576 id=2576 data-nosnippet>2576</a>        <span class="kw">if </span>stored.starts_with(Path::new(image_name)) {
-<a href=#2577 id=2577 data-nosnippet>2577</a>            <span class="kw">return </span>image_path
-<a href=#2578 id=2578 data-nosnippet>2578</a>                .parent()
-<a href=#2579 id=2579 data-nosnippet>2579</a>                .map(|parent| parent.join(<span class="kw-2">&amp;</span>stored))
-<a href=#2580 id=2580 data-nosnippet>2580</a>                .unwrap_or(stored);
-<a href=#2581 id=2581 data-nosnippet>2581</a>        }
+<a href=#2575 id=2575 data-nosnippet>2575</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(image_name) = image_path.file_name()
+<a href=#2576 id=2576 data-nosnippet>2576</a>        &amp;&amp; stored.starts_with(Path::new(image_name))
+<a href=#2577 id=2577 data-nosnippet>2577</a>    {
+<a href=#2578 id=2578 data-nosnippet>2578</a>        <span class="kw">return </span>image_path
+<a href=#2579 id=2579 data-nosnippet>2579</a>            .parent()
+<a href=#2580 id=2580 data-nosnippet>2580</a>            .map(|parent| parent.join(<span class="kw-2">&amp;</span>stored))
+<a href=#2581 id=2581 data-nosnippet>2581</a>            .unwrap_or(stored);
 <a href=#2582 id=2582 data-nosnippet>2582</a>    }
 <a href=#2583 id=2583 data-nosnippet>2583</a>
 <a href=#2584 id=2584 data-nosnippet>2584</a>    image_path.join(stored)

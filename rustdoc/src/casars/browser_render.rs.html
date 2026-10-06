@@ -1222,10 +1222,10 @@
 <a href=#1222 id=1222 data-nosnippet>1222</a>    <span class="kw">if </span>axis.sampled_len == <span class="number">0 </span>|| geometry_len == <span class="number">0 </span>{
 <a href=#1223 id=1223 data-nosnippet>1223</a>        <span class="kw">return </span>Vec::new();
 <a href=#1224 id=1224 data-nosnippet>1224</a>    }
-<a href=#1225 id=1225 data-nosnippet>1225</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(ticks) = plane_axis_nice_ticks(axis, probe, geometry_len, reverse) {
-<a href=#1226 id=1226 data-nosnippet>1226</a>        <span class="kw">if </span>!ticks.is_empty() {
-<a href=#1227 id=1227 data-nosnippet>1227</a>            <span class="kw">return </span>ticks;
-<a href=#1228 id=1228 data-nosnippet>1228</a>        }
+<a href=#1225 id=1225 data-nosnippet>1225</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(ticks) = plane_axis_nice_ticks(axis, probe, geometry_len, reverse)
+<a href=#1226 id=1226 data-nosnippet>1226</a>        &amp;&amp; !ticks.is_empty()
+<a href=#1227 id=1227 data-nosnippet>1227</a>    {
+<a href=#1228 id=1228 data-nosnippet>1228</a>        <span class="kw">return </span>ticks;
 <a href=#1229 id=1229 data-nosnippet>1229</a>    }
 <a href=#1230 id=1230 data-nosnippet>1230</a>    <span class="kw">let </span>tick_count: usize = <span class="kw">if </span>geometry_len &gt;= <span class="number">520 </span>{
 <a href=#1231 id=1231 data-nosnippet>1231</a>        <span class="number">5

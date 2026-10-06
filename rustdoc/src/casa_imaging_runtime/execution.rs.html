@@ -3550,13 +3550,13 @@
 <a href=#3550 id=3550 data-nosnippet>3550</a>}
 <a href=#3551 id=3551 data-nosnippet>3551</a>
 <a href=#3552 id=3552 data-nosnippet>3552</a><span class="kw">fn </span>validate_lifetime(node: <span class="kw-2">&amp;</span>WorkNode, lifetime: <span class="kw-2">&amp;</span>ClaimLifetime) -&gt; <span class="prelude-ty">Result</span>&lt;(), ExecutionError&gt; {
-<a href=#3553 id=3553 data-nosnippet>3553</a>    <span class="kw">if let </span>ClaimLifetime::Fences(kinds) = lifetime {
-<a href=#3554 id=3554 data-nosnippet>3554</a>        <span class="kw">if </span>kinds.is_empty() || !kinds.is_subset(<span class="kw-2">&amp;</span>node.fences) {
-<a href=#3555 id=3555 data-nosnippet>3555</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ExecutionError::invalid_plan(<span class="macro">format!</span>(
-<a href=#3556 id=3556 data-nosnippet>3556</a>                <span class="string">"work node {} retains state through an empty or undeclared fence set"</span>,
-<a href=#3557 id=3557 data-nosnippet>3557</a>                node.id.as_str()
-<a href=#3558 id=3558 data-nosnippet>3558</a>            )));
-<a href=#3559 id=3559 data-nosnippet>3559</a>        }
+<a href=#3553 id=3553 data-nosnippet>3553</a>    <span class="kw">if let </span>ClaimLifetime::Fences(kinds) = lifetime
+<a href=#3554 id=3554 data-nosnippet>3554</a>        &amp;&amp; (kinds.is_empty() || !kinds.is_subset(<span class="kw-2">&amp;</span>node.fences))
+<a href=#3555 id=3555 data-nosnippet>3555</a>    {
+<a href=#3556 id=3556 data-nosnippet>3556</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ExecutionError::invalid_plan(<span class="macro">format!</span>(
+<a href=#3557 id=3557 data-nosnippet>3557</a>            <span class="string">"work node {} retains state through an empty or undeclared fence set"</span>,
+<a href=#3558 id=3558 data-nosnippet>3558</a>            node.id.as_str()
+<a href=#3559 id=3559 data-nosnippet>3559</a>        )));
 <a href=#3560 id=3560 data-nosnippet>3560</a>    }
 <a href=#3561 id=3561 data-nosnippet>3561</a>    <span class="prelude-val">Ok</span>(())
 <a href=#3562 id=3562 data-nosnippet>3562</a>}

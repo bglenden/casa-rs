@@ -3926,13 +3926,13 @@
 <a href=#3926 id=3926 data-nosnippet>3926</a>            (<span class="string">"WEIGHT_SPECTRUM"</span>, weight_spectrum_grid.as_ref()),
 <a href=#3927 id=3927 data-nosnippet>3927</a>            (<span class="string">"SIGMA_SPECTRUM"</span>, sigma_spectrum_grid.as_ref()),
 <a href=#3928 id=3928 data-nosnippet>3928</a>        ] {
-<a href=#3929 id=3929 data-nosnippet>3929</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(grid) = grid {
-<a href=#3930 id=3930 data-nosnippet>3930</a>                <span class="kw">if </span>grid.corr_count != corr_count || grid.chan_count != chan_count {
-<a href=#3931 id=3931 data-nosnippet>3931</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">format!</span>(
-<a href=#3932 id=3932 data-nosnippet>3932</a>                        <span class="string">"{column_name} shape [{}, {}] does not match data shape [{corr_count}, {chan_count}]"</span>,
-<a href=#3933 id=3933 data-nosnippet>3933</a>                        grid.corr_count, grid.chan_count
-<a href=#3934 id=3934 data-nosnippet>3934</a>                    ));
-<a href=#3935 id=3935 data-nosnippet>3935</a>                }
+<a href=#3929 id=3929 data-nosnippet>3929</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(grid) = grid
+<a href=#3930 id=3930 data-nosnippet>3930</a>                &amp;&amp; (grid.corr_count != corr_count || grid.chan_count != chan_count)
+<a href=#3931 id=3931 data-nosnippet>3931</a>            {
+<a href=#3932 id=3932 data-nosnippet>3932</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">format!</span>(
+<a href=#3933 id=3933 data-nosnippet>3933</a>                    <span class="string">"{column_name} shape [{}, {}] does not match data shape [{corr_count}, {chan_count}]"</span>,
+<a href=#3934 id=3934 data-nosnippet>3934</a>                    grid.corr_count, grid.chan_count
+<a href=#3935 id=3935 data-nosnippet>3935</a>                ));
 <a href=#3936 id=3936 data-nosnippet>3936</a>            }
 <a href=#3937 id=3937 data-nosnippet>3937</a>        }
 <a href=#3938 id=3938 data-nosnippet>3938</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(started) = row_arrays_started {

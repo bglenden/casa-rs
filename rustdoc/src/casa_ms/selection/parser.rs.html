@@ -380,10 +380,10 @@
 <a href=#380 id=380 data-nosnippet>380</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>((date, time)) = value.split_once(<span class="string">'T'</span>) {
 <a href=#381 id=381 data-nosnippet>381</a>        <span class="kw">return </span><span class="prelude-val">Some</span>((date.trim(), <span class="prelude-val">Some</span>(time.trim())));
 <a href=#382 id=382 data-nosnippet>382</a>    }
-<a href=#383 id=383 data-nosnippet>383</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>((date, time)) = value.split_once(<span class="string">' '</span>) {
-<a href=#384 id=384 data-nosnippet>384</a>        <span class="kw">if </span>looks_like_date(date.trim()) {
-<a href=#385 id=385 data-nosnippet>385</a>            <span class="kw">return </span><span class="prelude-val">Some</span>((date.trim(), <span class="prelude-val">Some</span>(time.trim())));
-<a href=#386 id=386 data-nosnippet>386</a>        }
+<a href=#383 id=383 data-nosnippet>383</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>((date, time)) = value.split_once(<span class="string">' '</span>)
+<a href=#384 id=384 data-nosnippet>384</a>        &amp;&amp; looks_like_date(date.trim())
+<a href=#385 id=385 data-nosnippet>385</a>    {
+<a href=#386 id=386 data-nosnippet>386</a>        <span class="kw">return </span><span class="prelude-val">Some</span>((date.trim(), <span class="prelude-val">Some</span>(time.trim())));
 <a href=#387 id=387 data-nosnippet>387</a>    }
 <a href=#388 id=388 data-nosnippet>388</a>    <span class="kw">let </span>slash_count = value.matches(<span class="string">'/'</span>).count();
 <a href=#389 id=389 data-nosnippet>389</a>    <span class="kw">if </span>slash_count &gt;= <span class="number">2 </span>&amp;&amp; !value.contains(<span class="string">':'</span>) {

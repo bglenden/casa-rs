@@ -1942,21 +1942,21 @@
 <a href=#1942 id=1942 data-nosnippet>1942</a>            }
 <a href=#1943 id=1943 data-nosnippet>1943</a>        }
 <a href=#1944 id=1944 data-nosnippet>1944</a>        <span class="self">self</span>.next_partition_commit += <span class="number">1</span>;
-<a href=#1945 id=1945 data-nosnippet>1945</a>        <span class="kw">if </span><span class="self">self</span>.next_partition_commit == GRIDDED_NORMAL_LANE_COUNT {
-<a href=#1946 id=1946 data-nosnippet>1946</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(trace) = <span class="self">self</span>.science_prediction_trace.as_mut() {
-<a href=#1947 id=1947 data-nosnippet>1947</a>                <span class="kw">let </span>prepared = <span class="self">self
-<a href=#1948 id=1948 data-nosnippet>1948</a>                    </span>.two_domain
-<a href=#1949 id=1949 data-nosnippet>1949</a>                    .read()
-<a href=#1950 id=1950 data-nosnippet>1950</a>                    .map_err(|<span class="kw">_</span>| SpectralOperatorError::GriddedSectorPoisoned)<span class="question-mark">?</span>;
-<a href=#1951 id=1951 data-nosnippet>1951</a>                prepared.with_published_predictions(|predictions| {
-<a href=#1952 id=1952 data-nosnippet>1952</a>                    <span class="kw">for </span>prediction <span class="kw">in </span>predictions {
-<a href=#1953 id=1953 data-nosnippet>1953</a>                        <span class="kw">for </span>value <span class="kw">in </span><span class="kw-2">&amp;</span>prediction.values {
-<a href=#1954 id=1954 data-nosnippet>1954</a>                            trace.push_complex(<span class="kw-2">*</span>value);
-<a href=#1955 id=1955 data-nosnippet>1955</a>                        }
+<a href=#1945 id=1945 data-nosnippet>1945</a>        <span class="kw">if </span><span class="self">self</span>.next_partition_commit == GRIDDED_NORMAL_LANE_COUNT
+<a href=#1946 id=1946 data-nosnippet>1946</a>            &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(trace) = <span class="self">self</span>.science_prediction_trace.as_mut()
+<a href=#1947 id=1947 data-nosnippet>1947</a>        {
+<a href=#1948 id=1948 data-nosnippet>1948</a>            <span class="kw">let </span>prepared = <span class="self">self
+<a href=#1949 id=1949 data-nosnippet>1949</a>                </span>.two_domain
+<a href=#1950 id=1950 data-nosnippet>1950</a>                .read()
+<a href=#1951 id=1951 data-nosnippet>1951</a>                .map_err(|<span class="kw">_</span>| SpectralOperatorError::GriddedSectorPoisoned)<span class="question-mark">?</span>;
+<a href=#1952 id=1952 data-nosnippet>1952</a>            prepared.with_published_predictions(|predictions| {
+<a href=#1953 id=1953 data-nosnippet>1953</a>                <span class="kw">for </span>prediction <span class="kw">in </span>predictions {
+<a href=#1954 id=1954 data-nosnippet>1954</a>                    <span class="kw">for </span>value <span class="kw">in </span><span class="kw-2">&amp;</span>prediction.values {
+<a href=#1955 id=1955 data-nosnippet>1955</a>                        trace.push_complex(<span class="kw-2">*</span>value);
 <a href=#1956 id=1956 data-nosnippet>1956</a>                    }
-<a href=#1957 id=1957 data-nosnippet>1957</a>                    <span class="prelude-val">Ok</span>(())
-<a href=#1958 id=1958 data-nosnippet>1958</a>                })<span class="question-mark">?</span>;
-<a href=#1959 id=1959 data-nosnippet>1959</a>            }
+<a href=#1957 id=1957 data-nosnippet>1957</a>                }
+<a href=#1958 id=1958 data-nosnippet>1958</a>                <span class="prelude-val">Ok</span>(())
+<a href=#1959 id=1959 data-nosnippet>1959</a>            })<span class="question-mark">?</span>;
 <a href=#1960 id=1960 data-nosnippet>1960</a>        }
 <a href=#1961 id=1961 data-nosnippet>1961</a>        <span class="kw">if </span><span class="self">self</span>.next_partition_commit != GRIDDED_NORMAL_PARTITION_COUNT {
 <a href=#1962 id=1962 data-nosnippet>1962</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());

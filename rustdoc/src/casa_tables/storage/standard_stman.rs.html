@@ -1336,7 +1336,7 @@
 <a href=#1336 id=1336 data-nosnippet>1336</a>            <span class="kw">if </span>big_endian == <span class="macro">cfg!</span>(target_endian = <span class="string">"big"</span>) {
 <a href=#1337 id=1337 data-nosnippet>1337</a>                scalar_slice_as_bytes_mut(output).copy_from_slice(source);
 <a href=#1338 id=1338 data-nosnippet>1338</a>            } <span class="kw">else </span>{
-<a href=#1339 id=1339 data-nosnippet>1339</a>                <span class="kw">for </span>(value, bytes) <span class="kw">in </span>output.iter_mut().zip(source.chunks_exact(<span class="number">4</span>)) {
+<a href=#1339 id=1339 data-nosnippet>1339</a>                <span class="kw">for </span>(value, bytes) <span class="kw">in </span>output.iter_mut().zip(source.as_chunks::&lt;<span class="number">4</span>&gt;().<span class="number">0</span>) {
 <a href=#1340 id=1340 data-nosnippet>1340</a>                    <span class="kw-2">*</span>value = read_i32_canonical(bytes, big_endian);
 <a href=#1341 id=1341 data-nosnippet>1341</a>                }
 <a href=#1342 id=1342 data-nosnippet>1342</a>            }
@@ -1348,7 +1348,7 @@
 <a href=#1348 id=1348 data-nosnippet>1348</a>            <span class="kw">if </span>big_endian == <span class="macro">cfg!</span>(target_endian = <span class="string">"big"</span>) {
 <a href=#1349 id=1349 data-nosnippet>1349</a>                scalar_slice_as_bytes_mut(output).copy_from_slice(source);
 <a href=#1350 id=1350 data-nosnippet>1350</a>            } <span class="kw">else </span>{
-<a href=#1351 id=1351 data-nosnippet>1351</a>                <span class="kw">for </span>(value, bytes) <span class="kw">in </span>output.iter_mut().zip(source.chunks_exact(<span class="number">4</span>)) {
+<a href=#1351 id=1351 data-nosnippet>1351</a>                <span class="kw">for </span>(value, bytes) <span class="kw">in </span>output.iter_mut().zip(source.as_chunks::&lt;<span class="number">4</span>&gt;().<span class="number">0</span>) {
 <a href=#1352 id=1352 data-nosnippet>1352</a>                    <span class="kw-2">*</span>value = <span class="kw">if </span>big_endian {
 <a href=#1353 id=1353 data-nosnippet>1353</a>                        read_f32_be(bytes)
 <a href=#1354 id=1354 data-nosnippet>1354</a>                    } <span class="kw">else </span>{
@@ -1364,7 +1364,7 @@
 <a href=#1364 id=1364 data-nosnippet>1364</a>            <span class="kw">if </span>big_endian == <span class="macro">cfg!</span>(target_endian = <span class="string">"big"</span>) {
 <a href=#1365 id=1365 data-nosnippet>1365</a>                scalar_slice_as_bytes_mut(output).copy_from_slice(source);
 <a href=#1366 id=1366 data-nosnippet>1366</a>            } <span class="kw">else </span>{
-<a href=#1367 id=1367 data-nosnippet>1367</a>                <span class="kw">for </span>(value, bytes) <span class="kw">in </span>output.iter_mut().zip(source.chunks_exact(<span class="number">8</span>)) {
+<a href=#1367 id=1367 data-nosnippet>1367</a>                <span class="kw">for </span>(value, bytes) <span class="kw">in </span>output.iter_mut().zip(source.as_chunks::&lt;<span class="number">8</span>&gt;().<span class="number">0</span>) {
 <a href=#1368 id=1368 data-nosnippet>1368</a>                    <span class="kw-2">*</span>value = <span class="kw">if </span>big_endian {
 <a href=#1369 id=1369 data-nosnippet>1369</a>                        read_f64_be(bytes)
 <a href=#1370 id=1370 data-nosnippet>1370</a>                    } <span class="kw">else </span>{

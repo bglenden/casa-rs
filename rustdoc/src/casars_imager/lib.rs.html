@@ -1316,7 +1316,7 @@
 <a href=#1316 id=1316 data-nosnippet>1316</a>        .iter()
 <a href=#1317 id=1317 data-nosnippet>1317</a>        .any(|arg| <span class="macro">matches!</span>(arg.to_str(), <span class="prelude-val">Some</span>(<span class="string">"-h" </span>| <span class="string">"--help"</span>)))
 <a href=#1318 id=1318 data-nosnippet>1318</a>    {
-<a href=#1319 id=1319 data-nosnippet>1319</a>        <span class="macro">println!</span>(<span class="string">"{}"</span>, command_schema(<span class="string">"casars-imager"</span>).render_help());
+<a href=#1319 id=1319 data-nosnippet>1319</a>        <span class="macro">println!</span>(<span class="string">"{}"</span>, schema::render_help(<span class="string">"casars-imager"</span>));
 <a href=#1320 id=1320 data-nosnippet>1320</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
 <a href=#1321 id=1321 data-nosnippet>1321</a>    }
 <a href=#1322 id=1322 data-nosnippet>1322</a>    <span class="kw">let </span>request = request_from_parameter_cli_args(<span class="kw-2">&amp;</span>args)<span class="question-mark">?</span>;

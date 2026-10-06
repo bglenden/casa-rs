@@ -753,7 +753,7 @@
 <a href=#753 id=753 data-nosnippet>753</a>        }
 <a href=#754 id=754 data-nosnippet>754</a>        measures.verify_state()<span class="question-mark">?</span>;
 <a href=#755 id=755 data-nosnippet>755</a>        <span class="kw">let </span>access_binding = NEXT_ACCESS_BINDING
-<a href=#756 id=756 data-nosnippet>756</a>            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+<a href=#756 id=756 data-nosnippet>756</a>            .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
 <a href=#757 id=757 data-nosnippet>757</a>                value.checked_add(<span class="number">1</span>)
 <a href=#758 id=758 data-nosnippet>758</a>            })
 <a href=#759 id=759 data-nosnippet>759</a>            .map_err(|<span class="kw">_</span>| BoundSelectedObservationError::AccessIdentityExhausted)<span class="question-mark">?</span>;
@@ -853,7 +853,7 @@
 <a href=#853 id=853 data-nosnippet>853</a>        }
 <a href=#854 id=854 data-nosnippet>854</a>        measures.verify_state()<span class="question-mark">?</span>;
 <a href=#855 id=855 data-nosnippet>855</a>        <span class="kw">let </span>access_binding = NEXT_ACCESS_BINDING
-<a href=#856 id=856 data-nosnippet>856</a>            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+<a href=#856 id=856 data-nosnippet>856</a>            .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
 <a href=#857 id=857 data-nosnippet>857</a>                value.checked_add(<span class="number">1</span>)
 <a href=#858 id=858 data-nosnippet>858</a>            })
 <a href=#859 id=859 data-nosnippet>859</a>            .map_err(|<span class="kw">_</span>| BoundSelectedObservationError::AccessIdentityExhausted)<span class="question-mark">?</span>;

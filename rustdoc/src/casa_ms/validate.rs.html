@@ -180,15 +180,15 @@
 <a href=#180 id=180 data-nosnippet>180</a>            }
 <a href=#181 id=181 data-nosnippet>181</a>            <span class="prelude-val">Some</span>(col_schema) =&gt; {
 <a href=#182 id=182 data-nosnippet>182</a>                <span class="comment">// Check data type
-<a href=#183 id=183 data-nosnippet>183</a>                </span><span class="kw">if let </span><span class="prelude-val">Some</span>(expected_type) = col_schema.data_type() {
-<a href=#184 id=184 data-nosnippet>184</a>                    <span class="kw">if </span>expected_type != col_def.data_type {
-<a href=#185 id=185 data-nosnippet>185</a>                        issues.push(ValidationIssue::WrongColumnType {
-<a href=#186 id=186 data-nosnippet>186</a>                            table_name: table_name.to_string(),
-<a href=#187 id=187 data-nosnippet>187</a>                            column_name: col_def.name.to_string(),
-<a href=#188 id=188 data-nosnippet>188</a>                            expected: <span class="macro">format!</span>(<span class="string">"{:?}"</span>, col_def.data_type),
-<a href=#189 id=189 data-nosnippet>189</a>                            found: <span class="macro">format!</span>(<span class="string">"{expected_type:?}"</span>),
-<a href=#190 id=190 data-nosnippet>190</a>                        });
-<a href=#191 id=191 data-nosnippet>191</a>                    }
+<a href=#183 id=183 data-nosnippet>183</a>                </span><span class="kw">if let </span><span class="prelude-val">Some</span>(expected_type) = col_schema.data_type()
+<a href=#184 id=184 data-nosnippet>184</a>                    &amp;&amp; expected_type != col_def.data_type
+<a href=#185 id=185 data-nosnippet>185</a>                {
+<a href=#186 id=186 data-nosnippet>186</a>                    issues.push(ValidationIssue::WrongColumnType {
+<a href=#187 id=187 data-nosnippet>187</a>                        table_name: table_name.to_string(),
+<a href=#188 id=188 data-nosnippet>188</a>                        column_name: col_def.name.to_string(),
+<a href=#189 id=189 data-nosnippet>189</a>                        expected: <span class="macro">format!</span>(<span class="string">"{:?}"</span>, col_def.data_type),
+<a href=#190 id=190 data-nosnippet>190</a>                        found: <span class="macro">format!</span>(<span class="string">"{expected_type:?}"</span>),
+<a href=#191 id=191 data-nosnippet>191</a>                    });
 <a href=#192 id=192 data-nosnippet>192</a>                }
 <a href=#193 id=193 data-nosnippet>193</a>            }
 <a href=#194 id=194 data-nosnippet>194</a>        }

@@ -1127,11 +1127,11 @@
 <a href=#1127 id=1127 data-nosnippet>1127</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(flags) = updates.get_mut(<span class="kw-2">&amp;</span>sample.row) <span class="kw">else </span>{
 <a href=#1128 id=1128 data-nosnippet>1128</a>            <span class="kw">continue</span>;
 <a href=#1129 id=1129 data-nosnippet>1129</a>        };
-<a href=#1130 id=1130 data-nosnippet>1130</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(value) = flags.get_mut(IxDyn(<span class="kw-2">&amp;</span>[sample.corr, sample.chan])) {
-<a href=#1131 id=1131 data-nosnippet>1131</a>            <span class="kw">if </span><span class="kw-2">*</span>value != new_flag {
-<a href=#1132 id=1132 data-nosnippet>1132</a>                <span class="kw-2">*</span>value = new_flag;
-<a href=#1133 id=1133 data-nosnippet>1133</a>                changed.changed_samples += <span class="number">1</span>;
-<a href=#1134 id=1134 data-nosnippet>1134</a>            }
+<a href=#1130 id=1130 data-nosnippet>1130</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(value) = flags.get_mut(IxDyn(<span class="kw-2">&amp;</span>[sample.corr, sample.chan]))
+<a href=#1131 id=1131 data-nosnippet>1131</a>            &amp;&amp; <span class="kw-2">*</span>value != new_flag
+<a href=#1132 id=1132 data-nosnippet>1132</a>        {
+<a href=#1133 id=1133 data-nosnippet>1133</a>            <span class="kw-2">*</span>value = new_flag;
+<a href=#1134 id=1134 data-nosnippet>1134</a>            changed.changed_samples += <span class="number">1</span>;
 <a href=#1135 id=1135 data-nosnippet>1135</a>        }
 <a href=#1136 id=1136 data-nosnippet>1136</a>    }
 <a href=#1137 id=1137 data-nosnippet>1137</a>    write_flag_updates(ms, updates, <span class="kw-2">&amp;mut </span>changed)<span class="question-mark">?</span>;
@@ -1149,12 +1149,12 @@
 <a href=#1149 id=1149 data-nosnippet>1149</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(flags) = updates.get_mut(<span class="kw-2">&amp;</span>row) <span class="kw">else </span>{
 <a href=#1150 id=1150 data-nosnippet>1150</a>            <span class="kw">continue</span>;
 <a href=#1151 id=1151 data-nosnippet>1151</a>        };
-<a href=#1152 id=1152 data-nosnippet>1152</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(value) = flags.get_mut(IxDyn(<span class="kw-2">&amp;</span>[corr, chan])) {
-<a href=#1153 id=1153 data-nosnippet>1153</a>            <span class="kw">if </span>!<span class="kw-2">*</span>value {
-<a href=#1154 id=1154 data-nosnippet>1154</a>                <span class="kw-2">*</span>value = <span class="bool-val">true</span>;
-<a href=#1155 id=1155 data-nosnippet>1155</a>                changed.changed_samples += <span class="number">1</span>;
-<a href=#1156 id=1156 data-nosnippet>1156</a>                touched_rows.insert(row);
-<a href=#1157 id=1157 data-nosnippet>1157</a>            }
+<a href=#1152 id=1152 data-nosnippet>1152</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(value) = flags.get_mut(IxDyn(<span class="kw-2">&amp;</span>[corr, chan]))
+<a href=#1153 id=1153 data-nosnippet>1153</a>            &amp;&amp; !<span class="kw-2">*</span>value
+<a href=#1154 id=1154 data-nosnippet>1154</a>        {
+<a href=#1155 id=1155 data-nosnippet>1155</a>            <span class="kw-2">*</span>value = <span class="bool-val">true</span>;
+<a href=#1156 id=1156 data-nosnippet>1156</a>            changed.changed_samples += <span class="number">1</span>;
+<a href=#1157 id=1157 data-nosnippet>1157</a>            touched_rows.insert(row);
 <a href=#1158 id=1158 data-nosnippet>1158</a>        }
 <a href=#1159 id=1159 data-nosnippet>1159</a>    }
 <a href=#1160 id=1160 data-nosnippet>1160</a>    write_touched_flag_updates(ms, updates, touched_rows, <span class="kw-2">&amp;mut </span>changed)<span class="question-mark">?</span>;
@@ -1176,12 +1176,12 @@
 <a href=#1176 id=1176 data-nosnippet>1176</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(flags) = updates.get_mut(<span class="kw-2">&amp;</span>sample.row) <span class="kw">else </span>{
 <a href=#1177 id=1177 data-nosnippet>1177</a>            <span class="kw">continue</span>;
 <a href=#1178 id=1178 data-nosnippet>1178</a>        };
-<a href=#1179 id=1179 data-nosnippet>1179</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(value) = flags.get_mut(IxDyn(<span class="kw-2">&amp;</span>[sample.corr, sample.chan])) {
-<a href=#1180 id=1180 data-nosnippet>1180</a>            <span class="kw">if </span>!<span class="kw-2">*</span>value {
-<a href=#1181 id=1181 data-nosnippet>1181</a>                <span class="kw-2">*</span>value = <span class="bool-val">true</span>;
-<a href=#1182 id=1182 data-nosnippet>1182</a>                changed.changed_samples += <span class="number">1</span>;
-<a href=#1183 id=1183 data-nosnippet>1183</a>                touched_rows.insert(sample.row);
-<a href=#1184 id=1184 data-nosnippet>1184</a>            }
+<a href=#1179 id=1179 data-nosnippet>1179</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(value) = flags.get_mut(IxDyn(<span class="kw-2">&amp;</span>[sample.corr, sample.chan]))
+<a href=#1180 id=1180 data-nosnippet>1180</a>            &amp;&amp; !<span class="kw-2">*</span>value
+<a href=#1181 id=1181 data-nosnippet>1181</a>        {
+<a href=#1182 id=1182 data-nosnippet>1182</a>            <span class="kw-2">*</span>value = <span class="bool-val">true</span>;
+<a href=#1183 id=1183 data-nosnippet>1183</a>            changed.changed_samples += <span class="number">1</span>;
+<a href=#1184 id=1184 data-nosnippet>1184</a>            touched_rows.insert(sample.row);
 <a href=#1185 id=1185 data-nosnippet>1185</a>        }
 <a href=#1186 id=1186 data-nosnippet>1186</a>    }
 <a href=#1187 id=1187 data-nosnippet>1187</a>    write_touched_flag_updates(ms, updates, touched_rows, <span class="kw-2">&amp;mut </span>changed)<span class="question-mark">?</span>;
@@ -1891,11 +1891,11 @@
 <a href=#1891 id=1891 data-nosnippet>1891</a>        <span class="kw">let </span><span class="kw-2">mut </span>count = <span class="number">0usize</span>;
 <a href=#1892 id=1892 data-nosnippet>1892</a>        <span class="kw">for </span>key1 <span class="kw">in </span><span class="kw-2">&amp;</span>axis1 {
 <a href=#1893 id=1893 data-nosnippet>1893</a>            <span class="kw">let </span>(row, chan) = tfcrop_row_chan(direction, <span class="kw-2">*</span>key0, <span class="kw-2">*</span>key1);
-<a href=#1894 id=1894 data-nosnippet>1894</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(sample) = by_row_chan.get(<span class="kw-2">&amp;</span>(row, chan)) {
-<a href=#1895 id=1895 data-nosnippet>1895</a>                <span class="kw">if </span>!sample_is_modified(sample, modified) {
-<a href=#1896 id=1896 data-nosnippet>1896</a>                    sum += tfcrop_value(sample);
-<a href=#1897 id=1897 data-nosnippet>1897</a>                    count += <span class="number">1</span>;
-<a href=#1898 id=1898 data-nosnippet>1898</a>                }
+<a href=#1894 id=1894 data-nosnippet>1894</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(sample) = by_row_chan.get(<span class="kw-2">&amp;</span>(row, chan))
+<a href=#1895 id=1895 data-nosnippet>1895</a>                &amp;&amp; !sample_is_modified(sample, modified)
+<a href=#1896 id=1896 data-nosnippet>1896</a>            {
+<a href=#1897 id=1897 data-nosnippet>1897</a>                sum += tfcrop_value(sample);
+<a href=#1898 id=1898 data-nosnippet>1898</a>                count += <span class="number">1</span>;
 <a href=#1899 id=1899 data-nosnippet>1899</a>            }
 <a href=#1900 id=1900 data-nosnippet>1900</a>        }
 <a href=#1901 id=1901 data-nosnippet>1901</a>        <span class="kw">if </span>count &gt; <span class="number">0 </span>{
@@ -1951,11 +1951,11 @@
 <a href=#1951 id=1951 data-nosnippet>1951</a>                <span class="kw">continue</span>;
 <a href=#1952 id=1952 data-nosnippet>1952</a>            }
 <a href=#1953 id=1953 data-nosnippet>1953</a>            <span class="kw">let </span>(row, chan) = tfcrop_row_chan(direction, <span class="kw-2">*</span>key0, <span class="kw-2">*</span>key1);
-<a href=#1954 id=1954 data-nosnippet>1954</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(sample) = by_row_chan.get(<span class="kw-2">&amp;</span>(row, chan)) {
-<a href=#1955 id=1955 data-nosnippet>1955</a>                <span class="kw">if </span>!modified[sample.index] {
-<a href=#1956 id=1956 data-nosnippet>1956</a>                    modified[sample.index] = <span class="bool-val">true</span>;
-<a href=#1957 id=1957 data-nosnippet>1957</a>                    direction_flags[sample.index] = <span class="bool-val">true</span>;
-<a href=#1958 id=1958 data-nosnippet>1958</a>                }
+<a href=#1954 id=1954 data-nosnippet>1954</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(sample) = by_row_chan.get(<span class="kw-2">&amp;</span>(row, chan))
+<a href=#1955 id=1955 data-nosnippet>1955</a>                &amp;&amp; !modified[sample.index]
+<a href=#1956 id=1956 data-nosnippet>1956</a>            {
+<a href=#1957 id=1957 data-nosnippet>1957</a>                modified[sample.index] = <span class="bool-val">true</span>;
+<a href=#1958 id=1958 data-nosnippet>1958</a>                direction_flags[sample.index] = <span class="bool-val">true</span>;
 <a href=#1959 id=1959 data-nosnippet>1959</a>            }
 <a href=#1960 id=1960 data-nosnippet>1960</a>        }
 <a href=#1961 id=1961 data-nosnippet>1961</a>    }
@@ -2204,7 +2204,7 @@
 <a href=#2204 id=2204 data-nosnippet>2204</a>    }
 <a href=#2205 id=2205 data-nosnippet>2205</a>    values.sort_by(f64::total_cmp);
 <a href=#2206 id=2206 data-nosnippet>2206</a>    <span class="kw">let </span>mid = values.len() / <span class="number">2</span>;
-<a href=#2207 id=2207 data-nosnippet>2207</a>    <span class="kw">if </span>values.len() % <span class="number">2 </span>== <span class="number">0 </span>{
+<a href=#2207 id=2207 data-nosnippet>2207</a>    <span class="kw">if </span>values.len().is_multiple_of(<span class="number">2</span>) {
 <a href=#2208 id=2208 data-nosnippet>2208</a>        (values[mid - <span class="number">1</span>] + values[mid]) / <span class="number">2.0
 <a href=#2209 id=2209 data-nosnippet>2209</a>    </span>} <span class="kw">else </span>{
 <a href=#2210 id=2210 data-nosnippet>2210</a>        values[mid]
