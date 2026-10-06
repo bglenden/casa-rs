@@ -86,7 +86,8 @@ The internal disk is small. Do not fill it.
   `just docs-check`.
 - Merge `main` into long-lived branches regularly.
 - Remove the worktrees and branches you create once their work is merged or
-  pushed.
+  pushed. `just tidy` lists leftovers already merged into `main`;
+  `just tidy --apply` removes them.
 - The repository is public; copying its source to any host is fine. Never copy
   credentials, secrets, or non-public datasets.
 
