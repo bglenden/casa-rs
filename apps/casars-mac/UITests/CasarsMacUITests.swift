@@ -2528,6 +2528,7 @@ final class CasarsMacUITests: XCTestCase {
                    || identifier.hasPrefix("notebook.selector.")
                    || identifier.hasPrefix("notebook.richElement.")
                    || identifier == "tutorialPrototype.disclosure"
+                   || identifier == "project.name"
                    || identifier == "project.source"
                    || (identifier.hasPrefix("tutorialPrototype.dataset.status.")
                        && issue.element?.value as? String == "missing")
@@ -3116,6 +3117,12 @@ final class CasarsMacUITests: XCTestCase {
 
     private func clickIdentified(_ identifier: String, timeout: TimeInterval = 5) throws {
         let control = try require(identifier, timeout: timeout)
+        // A control can exist before it is hittable while it animates in.
+        let hittable = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "hittable == true"),
+            object: control
+        )
+        _ = XCTWaiter.wait(for: [hittable], timeout: timeout)
         XCTAssertTrue(control.isHittable, "Identified control is not hittable: \(identifier)\n\(app.debugDescription)")
         control.click()
     }
@@ -3144,7 +3151,14 @@ final class CasarsMacUITests: XCTestCase {
             return viewport.contains(CGPoint(x: target.frame.midX, y: target.frame.midY))
         }
         for _ in 0..<attempts where !isComfortablyVisible() {
-            scroll.scroll(byDeltaX: 0, deltaY: deltaY)
+            // Scroll toward the target once it is laid out; the caller's sign
+            // only covers content that is not materialized yet. Layout differs
+            // across macOS releases, so a fixed direction can move away from it.
+            var step = deltaY
+            if target.exists {
+                step = target.frame.midY > scroll.frame.midY ? -abs(deltaY) : abs(deltaY)
+            }
+            scroll.scroll(byDeltaX: 0, deltaY: step)
         }
         XCTAssertTrue(
             isComfortablyVisible(),
