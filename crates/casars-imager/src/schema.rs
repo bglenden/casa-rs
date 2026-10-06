@@ -15,9 +15,18 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
     schema
 }
 
+/// Render `--help`: the parameter surface followed by the shared task-host actions.
+pub(crate) fn render_help(program_name: &str) -> String {
+    format!(
+        "{}\n\n{}",
+        command_schema(program_name).render_help(),
+        casa_task_runtime::task_cli_machine_help("ImagerTaskRequest")
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::command_schema;
+    use super::{command_schema, render_help};
     use casa_ms::presentation::{UiArgumentParser, UiValueKind};
 
     #[test]
@@ -138,6 +147,15 @@ mod tests {
             choices.is_empty(),
             "stokes accepts the full CASA selector grammar"
         );
+    }
+
+    #[test]
+    fn help_lists_task_host_actions() {
+        let help = render_help("casars-imager");
+        assert!(help.contains("--imagename"));
+        for action in ["--protocol-info", "--json-schema", "--json-run <SOURCE>"] {
+            assert!(help.contains(action), "help omits {action}");
+        }
     }
 
     #[test]

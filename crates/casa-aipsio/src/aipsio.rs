@@ -554,10 +554,10 @@ impl AipsIo {
         self.level = 0;
         self.has_cached_type = false;
 
-        if let Some(state) = self.file_state.take() {
-            if state.delete_on_close {
-                let _ = remove_file(state.path);
-            }
+        if let Some(state) = self.file_state.take()
+            && state.delete_on_close
+        {
+            let _ = remove_file(state.path);
         }
         Ok(())
     }
@@ -1178,8 +1178,8 @@ impl AipsIo {
                 .ok_or(AipsIoObjectError::LengthOverflow)?
         ];
         self.get_f32_into(&mut scalars)?;
-        for (value, pair) in values.iter_mut().zip(scalars.chunks_exact(2)) {
-            *value = Complex32::new(pair[0], pair[1]);
+        for (value, &[re, im]) in values.iter_mut().zip(scalars.as_chunks::<2>().0) {
+            *value = Complex32::new(re, im);
         }
         Ok(())
     }
@@ -1194,8 +1194,8 @@ impl AipsIo {
                 .ok_or(AipsIoObjectError::LengthOverflow)?
         ];
         self.get_f64_into(&mut scalars)?;
-        for (value, pair) in values.iter_mut().zip(scalars.chunks_exact(2)) {
-            *value = Complex64::new(pair[0], pair[1]);
+        for (value, &[re, im]) in values.iter_mut().zip(scalars.as_chunks::<2>().0) {
+            *value = Complex64::new(re, im);
         }
         Ok(())
     }
@@ -1691,10 +1691,8 @@ impl AipsIo {
             .ok_or(AipsIoObjectError::LengthOverflow)?;
         let mut buf = vec![0_u8; byte_len];
         self.read_counted(&mut buf)?;
-        for (value, chunk) in values.iter_mut().zip(buf.chunks_exact(N)) {
-            let mut bytes = [0_u8; N];
-            bytes.copy_from_slice(chunk);
-            *value = decode(bytes);
+        for (value, bytes) in values.iter_mut().zip(buf.as_chunks::<N>().0) {
+            *value = decode(*bytes);
         }
         Ok(())
     }

@@ -3525,8 +3525,8 @@ impl CompleteDataPlanFragment {
         if !base.execution_dag().nodes().contains_key(&self.replay_node) {
             return Err(CompleteDataPlanError::MissingReplayNode);
         }
-        if let Some(binding) = &self.initial_working_set {
-            if base
+        if let Some(binding) = &self.initial_working_set
+            && (base
                 .execution_dag()
                 .logical_allocations()
                 .get(&binding.density.id)
@@ -3551,10 +3551,9 @@ impl CompleteDataPlanFragment {
                     .count()
                     != 1
                 || binding.allocation.release_after
-                    != BTreeSet::from([WorkDependency::Work(reconciliation.clone())])
-            {
-                return Err(CompleteDataPlanError::PlanMismatch);
-            }
+                    != BTreeSet::from([WorkDependency::Work(reconciliation.clone())]))
+        {
+            return Err(CompleteDataPlanError::PlanMismatch);
         }
         let specs = self.allocation_specs(reconciliation)?;
         let reader = self.aw_reader.clone();
@@ -3619,10 +3618,10 @@ impl CompleteDataPlanFragment {
         if !replay.fences.contains(&FenceKind::Io) {
             return Err(CompleteDataPlanError::ReplayWithoutTerminalFence);
         }
-        if let Some(reader) = &reader {
-            if reader.implementation() != &replay.implementation {
-                return Err(CompleteDataPlanError::PlanMismatch);
-            }
+        if let Some(reader) = &reader
+            && reader.implementation() != &replay.implementation
+        {
+            return Err(CompleteDataPlanError::PlanMismatch);
         }
         let preparation = WorkNode {
             id: self.preparation_node.clone(),

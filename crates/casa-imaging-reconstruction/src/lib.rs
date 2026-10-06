@@ -1535,7 +1535,7 @@ impl ModelLifecycle {
     fn next_generation_id(&self) -> ModelGenerationId {
         let ordinal = self
             .next_generation
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |ordinal| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |ordinal| {
                 ordinal.checked_add(1)
             })
             .expect("model generation ordinal exhausted");
@@ -2344,7 +2344,7 @@ const fn coordinate_tolerance(precision: NumericPrecision) -> f64 {
 
 fn next_authority_seal() -> AuthoritySeal {
     let seal = NEXT_AUTHORITY_SEAL
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |seal| {
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |seal| {
             seal.checked_add(1)
         })
         .expect("model lifecycle authority seal space exhausted");
@@ -2538,10 +2538,10 @@ fn store_exact_samples<E>(
             }));
         }
     }
-    if !values.is_empty() {
-        if let Err(error) = storage.write(written, &values) {
-            return Ok(Err(error));
-        }
+    if !values.is_empty()
+        && let Err(error) = storage.write(written, &values)
+    {
+        return Ok(Err(error));
     }
     Ok(Ok(storage))
 }

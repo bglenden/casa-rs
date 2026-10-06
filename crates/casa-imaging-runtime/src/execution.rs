@@ -3550,13 +3550,13 @@ fn claim_requires_domain_lifetime(node: &WorkNode, resource: &LeaseResource) -> 
 }
 
 fn validate_lifetime(node: &WorkNode, lifetime: &ClaimLifetime) -> Result<(), ExecutionError> {
-    if let ClaimLifetime::Fences(kinds) = lifetime {
-        if kinds.is_empty() || !kinds.is_subset(&node.fences) {
-            return Err(ExecutionError::invalid_plan(format!(
-                "work node {} retains state through an empty or undeclared fence set",
-                node.id.as_str()
-            )));
-        }
+    if let ClaimLifetime::Fences(kinds) = lifetime
+        && (kinds.is_empty() || !kinds.is_subset(&node.fences))
+    {
+        return Err(ExecutionError::invalid_plan(format!(
+            "work node {} retains state through an empty or undeclared fence set",
+            node.id.as_str()
+        )));
     }
     Ok(())
 }

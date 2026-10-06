@@ -134,13 +134,13 @@ pub(super) fn validate_finite(
         PreparedArtifactPrecision::F32 | PreparedArtifactPrecision::ComplexF32 => {
             // A non-short-circuit reduction lets the finite fast path vectorize;
             // only invalid payloads need the ordered scan for an exact error index.
-            if bytes.chunks_exact(4).fold(true, |finite, chunk| {
-                finite & f32::from_le_bytes(chunk.try_into().expect("exact f32 chunk")).is_finite()
+            if bytes.as_chunks::<4>().0.iter().fold(true, |finite, chunk| {
+                finite & f32::from_le_bytes(*chunk).is_finite()
             }) {
                 return Ok(());
             }
-            for (offset, chunk) in bytes.chunks_exact(4).enumerate() {
-                if !f32::from_le_bytes(chunk.try_into().expect("exact f32 chunk")).is_finite() {
+            for (offset, chunk) in bytes.as_chunks::<4>().0.iter().enumerate() {
+                if !f32::from_le_bytes(*chunk).is_finite() {
                     return Err(PreparedArtifactError::NonFiniteValue {
                         segment: segment.to_string(),
                         scalar: first_scalar + offset as u64,
@@ -149,13 +149,13 @@ pub(super) fn validate_finite(
             }
         }
         PreparedArtifactPrecision::F64 | PreparedArtifactPrecision::ComplexF64 => {
-            if bytes.chunks_exact(8).fold(true, |finite, chunk| {
-                finite & f64::from_le_bytes(chunk.try_into().expect("exact f64 chunk")).is_finite()
+            if bytes.as_chunks::<8>().0.iter().fold(true, |finite, chunk| {
+                finite & f64::from_le_bytes(*chunk).is_finite()
             }) {
                 return Ok(());
             }
-            for (offset, chunk) in bytes.chunks_exact(8).enumerate() {
-                if !f64::from_le_bytes(chunk.try_into().expect("exact f64 chunk")).is_finite() {
+            for (offset, chunk) in bytes.as_chunks::<8>().0.iter().enumerate() {
+                if !f64::from_le_bytes(*chunk).is_finite() {
                     return Err(PreparedArtifactError::NonFiniteValue {
                         segment: segment.to_string(),
                         scalar: first_scalar + offset as u64,

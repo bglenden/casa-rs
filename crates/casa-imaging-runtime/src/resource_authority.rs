@@ -3063,12 +3063,12 @@ fn release_permit(
         .state
         .lock()
         .map_err(|_| ResourceError::AuthorityPoisoned)?;
-    if let LeaseResource::MeasurementSetLock { measurement_set } = resource {
-        if state.active_measurement_set_locks.get(measurement_set) != Some(&lease_id) {
-            return Err(ResourceError::Invalid(
-                "exact MeasurementSet lock ownership is absent".to_string(),
-            ));
-        }
+    if let LeaseResource::MeasurementSetLock { measurement_set } = resource
+        && state.active_measurement_set_locks.get(measurement_set) != Some(&lease_id)
+    {
+        return Err(ResourceError::Invalid(
+            "exact MeasurementSet lock ownership is absent".to_string(),
+        ));
     }
     let released = {
         let record = state.leases.get_mut(&lease_id).ok_or_else(|| {
@@ -4255,12 +4255,12 @@ fn validate_inventory(inventory: &HostInventory) -> Result<(), ResourceError> {
             "logical CPU topology must be nonzero".to_string(),
         ));
     }
-    if let CpuClassCapacity::Known(performance_cpu_cores) = topology.performance_cpu_cores {
-        if performance_cpu_cores == 0 || performance_cpu_cores > topology.logical_cpu_threads {
-            return Err(ResourceError::Invalid(
-                "known performance CPU topology must be within logical CPU capacity".to_string(),
-            ));
-        }
+    if let CpuClassCapacity::Known(performance_cpu_cores) = topology.performance_cpu_cores
+        && (performance_cpu_cores == 0 || performance_cpu_cores > topology.logical_cpu_threads)
+    {
+        return Err(ResourceError::Invalid(
+            "known performance CPU topology must be within logical CPU capacity".to_string(),
+        ));
     }
     let mut domains = BTreeMap::new();
     for domain in &topology.memory_domains {

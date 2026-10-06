@@ -168,10 +168,10 @@ impl ImageInfo {
         let mut rec = RecordValue::default();
         if self.beam_set.is_multi() {
             rec.upsert("perplanebeams", Value::Record(self.beam_set.to_record()));
-        } else if let Some(beam) = self.beam_set.single_beam() {
-            if !beam.is_null() {
-                rec.upsert("restoringbeam", Value::Record(beam.to_record()));
-            }
+        } else if let Some(beam) = self.beam_set.single_beam()
+            && !beam.is_null()
+        {
+            rec.upsert("restoringbeam", Value::Record(beam.to_record()));
         }
         rec.upsert(
             "imagetype",

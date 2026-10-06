@@ -453,25 +453,24 @@ impl SpectralCoordinate {
             }
         }
 
-        if let Some(conversion) = &self.conversion {
-            if let (Some(direction), Some(position), Some(epoch)) = (
+        if let Some(conversion) = &self.conversion
+            && let (Some(direction), Some(position), Some(epoch)) = (
                 conversion.frame.direction(),
                 conversion.frame.position(),
                 conversion.frame.epoch(),
-            ) {
-                let mut conversion_record = RecordValue::default();
-                conversion_record.upsert(
-                    "system",
-                    Value::Scalar(ScalarValue::String(
-                        conversion.frequency_ref.as_str().into(),
-                    )),
-                );
-                conversion_record
-                    .upsert("direction", Value::Record(direction_to_record(direction)));
-                conversion_record.upsert("position", Value::Record(position_to_record(position)));
-                conversion_record.upsert("epoch", Value::Record(epoch_to_record(epoch)));
-                rec.upsert("conversion", Value::Record(conversion_record));
-            }
+            )
+        {
+            let mut conversion_record = RecordValue::default();
+            conversion_record.upsert(
+                "system",
+                Value::Scalar(ScalarValue::String(
+                    conversion.frequency_ref.as_str().into(),
+                )),
+            );
+            conversion_record.upsert("direction", Value::Record(direction_to_record(direction)));
+            conversion_record.upsert("position", Value::Record(position_to_record(position)));
+            conversion_record.upsert("epoch", Value::Record(epoch_to_record(epoch)));
+            rec.upsert("conversion", Value::Record(conversion_record));
         }
 
         rec

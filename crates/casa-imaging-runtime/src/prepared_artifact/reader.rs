@@ -567,12 +567,12 @@ impl PreparedArtifactReader {
         let (store_lock, manifest_snapshot, measurements) = match session {
             Ok(session) => session,
             Err(failure) => {
-                if let Some(measurements) = &failure.measurements {
-                    if let Err(error) = state.observe(measurements) {
-                        state.aborted = true;
-                        state.reader_failed = true;
-                        return Err(error);
-                    }
+                if let Some(measurements) = &failure.measurements
+                    && let Err(error) = state.observe(measurements)
+                {
+                    state.aborted = true;
+                    state.reader_failed = true;
+                    return Err(error);
                 }
                 state.aborted = true;
                 state.reader_failed = true;
@@ -716,14 +716,14 @@ impl PreparedArtifactReader {
                 }
             }
             Err(failure) => {
-                if let Some(measurements) = &failure.measurements {
-                    if let Err(error) = state.observe(measurements) {
-                        state.aborted = true;
-                        state.reader_failed = true;
-                        state.record_cell_rejected(identity);
-                        self.settled.notify_all();
-                        return Err(error);
-                    }
+                if let Some(measurements) = &failure.measurements
+                    && let Err(error) = state.observe(measurements)
+                {
+                    state.aborted = true;
+                    state.reader_failed = true;
+                    state.record_cell_rejected(identity);
+                    self.settled.notify_all();
+                    return Err(error);
                 }
                 state.aborted = true;
                 state.reader_failed = true;

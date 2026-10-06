@@ -913,12 +913,12 @@ impl ColumnOverrides {
     pub(crate) fn effective_row_count(&self, table_row_count: usize) -> Result<usize, TableError> {
         let row_count = self.row_count.unwrap_or(table_row_count);
         for (column, override_value) in &self.columns {
-            if let Some(column_rows) = override_value.row_count() {
-                if column_rows != row_count {
-                    return Err(TableError::Storage(format!(
-                        "column override {column} has {column_rows} values for {row_count} rows"
-                    )));
-                }
+            if let Some(column_rows) = override_value.row_count()
+                && column_rows != row_count
+            {
+                return Err(TableError::Storage(format!(
+                    "column override {column} has {column_rows} values for {row_count} rows"
+                )));
             }
         }
         Ok(row_count)
@@ -2372,10 +2372,10 @@ impl Drop for Table {
             }
         }
 
-        if self.marked_for_delete {
-            if let Some(path) = &self.source_path {
-                let _ = std::fs::remove_dir_all(path);
-            }
+        if self.marked_for_delete
+            && let Some(path) = &self.source_path
+        {
+            let _ = std::fs::remove_dir_all(path);
         }
     }
 }

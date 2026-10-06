@@ -528,8 +528,10 @@ mod tests {
             let bytes = std::fs::read(root.join(name)).expect("native Float plane");
             assert_eq!(bytes.len(), 512 * 512 * 4);
             bytes
-                .chunks_exact(4)
-                .map(|bytes| f64::from(f32::from_le_bytes(bytes.try_into().unwrap())))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|bytes| f64::from(f32::from_le_bytes(*bytes)))
                 .collect::<Vec<_>>()
         };
         let weight = load("weight0.f32le");
@@ -613,8 +615,10 @@ mod tests {
             let bytes = std::fs::read(root.join(name)).expect("native edge Float plane");
             assert_eq!(bytes.len(), 512 * 512 * 4);
             bytes
-                .chunks_exact(4)
-                .map(|bytes| f64::from(f32::from_le_bytes(bytes.try_into().unwrap())))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|bytes| f64::from(f32::from_le_bytes(*bytes)))
                 .collect::<Vec<_>>()
         };
         let weights = load("edges_weight0.f32le");
@@ -692,8 +696,10 @@ mod tests {
             let bytes = std::fs::read(root.join(name)).expect("native Float fixture");
             assert_eq!(bytes.len(), length * 4);
             bytes
-                .chunks_exact(4)
-                .map(|bytes| f32::from_le_bytes(bytes.try_into().unwrap()))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|bytes| f32::from_le_bytes(*bytes))
                 .collect::<Vec<_>>()
         };
         let cells = 512 * 512;

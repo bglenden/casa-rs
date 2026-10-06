@@ -2750,8 +2750,12 @@ fn evaluate_observation_pointings(
         .ok_or(BoundObservationSourceError::MissingPointingQueryDomain)?
         .direction_brackets(&source.geometry_engine, &queries)?;
     let mut pointings = Vec::with_capacity(buffer.row_count());
-    for ((row, antenna_brackets), fallback) in
-        brackets.chunks_exact(2).enumerate().zip(phase_directions)
+    for ((row, antenna_brackets), fallback) in brackets
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .enumerate()
+        .zip(phase_directions)
     {
         pointings.push(SelectedPointingDirections {
             antenna1: resolve_pointing_direction(

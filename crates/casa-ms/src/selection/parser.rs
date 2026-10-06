@@ -380,10 +380,10 @@ fn split_date_time_parts(value: &str) -> Option<(&str, Option<&str>)> {
     if let Some((date, time)) = value.split_once('T') {
         return Some((date.trim(), Some(time.trim())));
     }
-    if let Some((date, time)) = value.split_once(' ') {
-        if looks_like_date(date.trim()) {
-            return Some((date.trim(), Some(time.trim())));
-        }
+    if let Some((date, time)) = value.split_once(' ')
+        && looks_like_date(date.trim())
+    {
+        return Some((date.trim(), Some(time.trim())));
     }
     let slash_count = value.matches('/').count();
     if slash_count >= 2 && !value.contains(':') {

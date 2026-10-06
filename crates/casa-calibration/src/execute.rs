@@ -76,11 +76,11 @@ fn calibration_profile_enabled() -> bool {
 
 fn log_calibration_profile(phase: &str, seconds: f64, detail: impl Into<Option<String>>) {
     let mut line = format!("[casa-calibration profile] phase={phase} dt={seconds:.3}s");
-    if let Some(detail) = detail.into() {
-        if !detail.is_empty() {
-            line.push(' ');
-            line.push_str(&detail);
-        }
+    if let Some(detail) = detail.into()
+        && !detail.is_empty()
+    {
+        line.push(' ');
+        line.push_str(&detail);
     }
     eprintln!("{line}");
 }
@@ -4346,7 +4346,7 @@ fn infer_bpoly_receptor_count(
     if total_coefficients == nominal_total {
         return Ok(nominal_receptor_count.max(1));
     }
-    if total_coefficients % coefficients_per_receptor == 0 {
+    if total_coefficients.is_multiple_of(coefficients_per_receptor) {
         return Ok((total_coefficients / coefficients_per_receptor).max(1));
     }
     Err(ApplyExecutionError::UnsupportedCalibrationTable {

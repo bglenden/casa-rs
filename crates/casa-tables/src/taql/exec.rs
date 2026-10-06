@@ -184,10 +184,11 @@ pub(crate) fn execute_materializing_readonly(
             ref row_indices,
             columns: _,
         } => {
-            if let Statement::Select(sel) = stmt {
-                if !sel.columns.is_empty() && has_computed_columns(&sel.columns) {
-                    return materialize_select(sel, row_indices, table);
-                }
+            if let Statement::Select(sel) = stmt
+                && !sel.columns.is_empty()
+                && has_computed_columns(&sel.columns)
+            {
+                return materialize_select(sel, row_indices, table);
             }
             Ok(result)
         }
@@ -1269,12 +1270,13 @@ fn extract_column_names(
     // Verify all simple column refs exist in schema
     if let Some(schema) = table.schema() {
         for col in columns {
-            if let Expr::ColumnRef(cr) = &col.expr {
-                if cr.table.is_none() && !schema.columns().iter().any(|c| c.name() == cr.column) {
-                    return Err(TaqlError::ColumnNotFound {
-                        name: cr.column.clone(),
-                    });
-                }
+            if let Expr::ColumnRef(cr) = &col.expr
+                && cr.table.is_none()
+                && !schema.columns().iter().any(|c| c.name() == cr.column)
+            {
+                return Err(TaqlError::ColumnNotFound {
+                    name: cr.column.clone(),
+                });
             }
         }
     }
@@ -1301,31 +1303,27 @@ fn expr_value_to_table_value(
     column: &str,
 ) -> Result<Value, TaqlError> {
     // Try to match schema type
-    if let Some(schema) = table.schema() {
-        if let Some(col_schema) = schema.columns().iter().find(|c| c.name() == column) {
-            use casa_types::PrimitiveType;
-            if let Some(ptype) = col_schema.data_type() {
-                return Ok(Value::Scalar(match (ptype, val) {
-                    (PrimitiveType::Bool, ExprValue::Bool(b)) => ScalarValue::Bool(*b),
-                    (PrimitiveType::Int32, ExprValue::Int(n)) => ScalarValue::Int32(*n as i32),
-                    (PrimitiveType::Int64, ExprValue::Int(n)) => ScalarValue::Int64(*n),
-                    (PrimitiveType::Float32, ExprValue::Float(v)) => {
-                        ScalarValue::Float32(*v as f32)
-                    }
-                    (PrimitiveType::Float32, ExprValue::Quantity(q)) => {
-                        ScalarValue::Float32(q.value() as f32)
-                    }
-                    (PrimitiveType::Float64, ExprValue::Float(v)) => ScalarValue::Float64(*v),
-                    (PrimitiveType::Float64, ExprValue::Quantity(q)) => {
-                        ScalarValue::Float64(q.value())
-                    }
-                    (PrimitiveType::Float64, ExprValue::Int(n)) => ScalarValue::Float64(*n as f64),
-                    (PrimitiveType::String, ExprValue::String(s)) => ScalarValue::String(s.clone()),
-                    (PrimitiveType::Int32, ExprValue::Float(v)) => ScalarValue::Int32(*v as i32),
-                    (PrimitiveType::Int64, ExprValue::Float(v)) => ScalarValue::Int64(*v as i64),
-                    _ => return Ok(expr_value_to_value_untyped(val)),
-                }));
-            }
+    if let Some(schema) = table.schema()
+        && let Some(col_schema) = schema.columns().iter().find(|c| c.name() == column)
+    {
+        use casa_types::PrimitiveType;
+        if let Some(ptype) = col_schema.data_type() {
+            return Ok(Value::Scalar(match (ptype, val) {
+                (PrimitiveType::Bool, ExprValue::Bool(b)) => ScalarValue::Bool(*b),
+                (PrimitiveType::Int32, ExprValue::Int(n)) => ScalarValue::Int32(*n as i32),
+                (PrimitiveType::Int64, ExprValue::Int(n)) => ScalarValue::Int64(*n),
+                (PrimitiveType::Float32, ExprValue::Float(v)) => ScalarValue::Float32(*v as f32),
+                (PrimitiveType::Float32, ExprValue::Quantity(q)) => {
+                    ScalarValue::Float32(q.value() as f32)
+                }
+                (PrimitiveType::Float64, ExprValue::Float(v)) => ScalarValue::Float64(*v),
+                (PrimitiveType::Float64, ExprValue::Quantity(q)) => ScalarValue::Float64(q.value()),
+                (PrimitiveType::Float64, ExprValue::Int(n)) => ScalarValue::Float64(*n as f64),
+                (PrimitiveType::String, ExprValue::String(s)) => ScalarValue::String(s.clone()),
+                (PrimitiveType::Int32, ExprValue::Float(v)) => ScalarValue::Int32(*v as i32),
+                (PrimitiveType::Int64, ExprValue::Float(v)) => ScalarValue::Int64(*v as i64),
+                _ => return Ok(expr_value_to_value_untyped(val)),
+            }));
         }
     }
     Ok(expr_value_to_value_untyped(val))

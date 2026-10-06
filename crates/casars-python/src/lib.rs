@@ -814,10 +814,10 @@ fn py_to_value(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<Value> {
     if value.hasattr("dtype")? && value.hasattr("shape")? {
         return Ok(Value::Array(py_any_to_array_value(py, value)?));
     }
-    if value.is_instance_of::<PyList>() || value.is_instance_of::<PySequence>() {
-        if let Ok(array) = py_any_to_array_value(py, value) {
-            return Ok(Value::Array(array));
-        }
+    if (value.is_instance_of::<PyList>() || value.is_instance_of::<PySequence>())
+        && let Ok(array) = py_any_to_array_value(py, value)
+    {
+        return Ok(Value::Array(array));
     }
     if value.is_instance_of::<PyBool>() {
         return Ok(Value::Scalar(ScalarValue::Bool(value.extract()?)));

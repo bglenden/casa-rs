@@ -77,7 +77,6 @@ impl SelectedPointingQueryDomain {
         SelectedPointingQueryDomainBuilder::default()
     }
 
-    #[must_use]
     pub(crate) fn antenna_ids(&self) -> impl ExactSizeIterator<Item = i32> + '_ {
         self.antennas.iter().map(|antenna| antenna.antenna_id)
     }

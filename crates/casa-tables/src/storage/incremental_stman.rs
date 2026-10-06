@@ -928,7 +928,7 @@ pub(crate) fn fill_ism_f64_array_rows(
         })?;
         for (output, bytes) in values[output_row * axis0_count..(output_row + 1) * axis0_count]
             .iter_mut()
-            .zip(raw.chunks_exact(8))
+            .zip(raw.as_chunks::<8>().0)
         {
             *output = if header.big_endian {
                 read_f64_be(bytes)
@@ -2613,10 +2613,10 @@ fn row_value_at_index<'a>(
     field_index: usize,
     field_name: &str,
 ) -> Option<&'a casa_types::Value> {
-    if let Some(field) = row.fields().get(field_index) {
-        if field.name == field_name {
-            return Some(&field.value);
-        }
+    if let Some(field) = row.fields().get(field_index)
+        && field.name == field_name
+    {
+        return Some(&field.value);
     }
     row.fields()
         .iter()

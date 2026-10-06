@@ -3533,7 +3533,9 @@ impl ExactF32Grid {
         }
         Ok(self
             .limbs
-            .chunks_exact(F32_SUPERACCUMULATOR_LIMBS)
+            .as_chunks::<F32_SUPERACCUMULATOR_LIMBS>()
+            .0
+            .iter()
             .map(exact_f32_accumulator_value)
             .collect::<Vec<_>>()
             .into_boxed_slice())
@@ -3575,7 +3577,7 @@ fn add_shifted_mantissa(
     }
 }
 
-fn exact_f32_accumulator_value(accumulator: &[u64]) -> f64 {
+fn exact_f32_accumulator_value(accumulator: &[u64; F32_SUPERACCUMULATOR_LIMBS]) -> f64 {
     let Some(highest_bit) = accumulator.iter().rposition(|limb| *limb != 0).map(|word| {
         word * u64::BITS as usize + (u64::BITS - 1 - accumulator[word].leading_zeros()) as usize
     }) else {

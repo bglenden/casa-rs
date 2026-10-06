@@ -374,7 +374,7 @@ impl<R: Read> VlaDiskReader<R> {
         mut first_sector: Vec<u8>,
         total_size: usize,
     ) -> Result<Vec<u8>, VlaError> {
-        if total_size < PHYSICAL_RECORD_SIZE || total_size % PHYSICAL_RECORD_SIZE != 0 {
+        if total_size < PHYSICAL_RECORD_SIZE || !total_size.is_multiple_of(PHYSICAL_RECORD_SIZE) {
             return Err(invalid_record(
                 &self.path,
                 format!("invalid disk physical-record size: {total_size} bytes"),

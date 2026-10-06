@@ -1942,21 +1942,21 @@ impl GriddedNormalOperatorApply {
             }
         }
         self.next_partition_commit += 1;
-        if self.next_partition_commit == GRIDDED_NORMAL_LANE_COUNT {
-            if let Some(trace) = self.science_prediction_trace.as_mut() {
-                let prepared = self
-                    .two_domain
-                    .read()
-                    .map_err(|_| SpectralOperatorError::GriddedSectorPoisoned)?;
-                prepared.with_published_predictions(|predictions| {
-                    for prediction in predictions {
-                        for value in &prediction.values {
-                            trace.push_complex(*value);
-                        }
+        if self.next_partition_commit == GRIDDED_NORMAL_LANE_COUNT
+            && let Some(trace) = self.science_prediction_trace.as_mut()
+        {
+            let prepared = self
+                .two_domain
+                .read()
+                .map_err(|_| SpectralOperatorError::GriddedSectorPoisoned)?;
+            prepared.with_published_predictions(|predictions| {
+                for prediction in predictions {
+                    for value in &prediction.values {
+                        trace.push_complex(*value);
                     }
-                    Ok(())
-                })?;
-            }
+                }
+                Ok(())
+            })?;
         }
         if self.next_partition_commit != GRIDDED_NORMAL_PARTITION_COUNT {
             return Ok(());

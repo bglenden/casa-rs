@@ -297,8 +297,8 @@ impl Probe {
             .checked_add(1)
             .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
         let role = ROLE.get();
-        let selected =
-            mix(SEED ^ self.ordinal ^ (u64::from(role.pass) << 32)) % self.denominator == 0;
+        let selected = mix(SEED ^ self.ordinal ^ (u64::from(role.pass) << 32))
+            .is_multiple_of(self.denominator);
         let cost = Cost::new(selected);
         Ok(Sample {
             session: self.session,

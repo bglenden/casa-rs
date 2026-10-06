@@ -587,12 +587,12 @@ fn apply_migration_step(
 ) -> Result<(), ProfileError> {
     match step {
         MigrationStep::Rename { from, to } => {
-            if let Some(value) = parameters.remove(from) {
-                if parameters.insert(to.clone(), value).is_some() {
-                    return Err(ProfileError::Contract(format!(
-                        "migration rename {from:?} -> {to:?} collides with an explicit value"
-                    )));
-                }
+            if let Some(value) = parameters.remove(from)
+                && parameters.insert(to.clone(), value).is_some()
+            {
+                return Err(ProfileError::Contract(format!(
+                    "migration rename {from:?} -> {to:?} collides with an explicit value"
+                )));
             }
         }
         MigrationStep::Remove { parameter } => {

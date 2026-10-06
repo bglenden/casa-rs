@@ -1029,7 +1029,7 @@ pub fn call_function(
                 .collect::<Result<_, _>>()?;
             vals.sort_by(|a, b| a.total_cmp(b));
             let n = vals.len();
-            let med = if n % 2 == 0 {
+            let med = if n.is_multiple_of(2) {
                 (vals[n / 2 - 1] + vals[n / 2]) / 2.0
             } else {
                 vals[n / 2]
@@ -1833,7 +1833,7 @@ fn window_aggregate(vals: &[f64], op: RunningOp) -> f64 {
             let mut sorted = vals.to_vec();
             sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
             let mid = sorted.len() / 2;
-            if sorted.len() % 2 == 0 {
+            if sorted.len().is_multiple_of(2) {
                 (sorted[mid - 1] + sorted[mid]) / 2.0
             } else {
                 sorted[mid]
