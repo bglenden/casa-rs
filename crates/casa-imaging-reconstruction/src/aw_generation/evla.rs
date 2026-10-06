@@ -535,7 +535,7 @@ mod tests {
         let mut maximum_error = 0.0_f64;
         let mut reference_peak = 0.0_f64;
         let mut support_mismatches = 0;
-        for (value, bytes) in aperture.iter().zip(bytes.as_chunks::<8>().0.iter()) {
+        for (value, bytes) in aperture.iter().zip(bytes.as_chunks::<8>().0) {
             let reference = Complex32::new(
                 f32::from_le_bytes(bytes[..4].try_into().unwrap()),
                 f32::from_le_bytes(bytes[4..].try_into().unwrap()),

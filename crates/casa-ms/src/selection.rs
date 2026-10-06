@@ -1441,13 +1441,7 @@ pub(crate) fn load_uvw_column(table: &Table, rows: &[usize]) -> MsResult<Vec<[f6
                 found: format!("f64[{}]", values.axis0_count()),
             });
         }
-        return Ok(values
-            .into_values()
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .map(|uvw| [uvw[0], uvw[1], uvw[2]])
-            .collect());
+        return Ok(values.into_values().as_chunks::<3>().0.to_vec());
     }
 
     let values = accessor.array_cells_owned_uncached(rows)?;

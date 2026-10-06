@@ -2326,7 +2326,6 @@ impl PreparedGriddedNormalBlock {
             for bytes in encoded
                 .as_chunks::<GRIDDED_NORMAL_OPERATOR_RECORD_BYTES>()
                 .0
-                .iter()
             {
                 let record = decode_record(bytes, grid_shape, output_channels)?;
                 let group_ordinal = u32::try_from(self.predictions.len())
@@ -4704,7 +4703,6 @@ mod tests {
         for record in encoded
             .as_chunks::<GRIDDED_NORMAL_OPERATOR_RECORD_BYTES>()
             .0
-            .iter()
         {
             let record = decode_record(record, geometry.grid_shape, 1).expect("decode record");
             let predicted = gridder.degrid(&model_grid, record.taps) * record.forward_scale;

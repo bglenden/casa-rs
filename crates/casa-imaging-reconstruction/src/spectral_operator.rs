@@ -44,7 +44,6 @@ use crate::{
     primary_beam::PreparedPrimaryBeamPower,
     spectral_sampling::{
         CasaLinearOutputGrid, CasaLinearRowCursor, CasaLinearSample, interpolate_complex_pair,
-        next_f64_down, next_f64_up,
     },
     trace_complex_values,
     weighting::{
@@ -7084,8 +7083,8 @@ impl CompleteDataOwnerState {
             || frequencies[self.specification.slab.core_range()]
                 .iter()
                 .any(|frequency| {
-                    next_f64_down(*frequency - half_width) < next_f64_down(bounds[0])
-                        || next_f64_up(*frequency + half_width) > next_f64_up(bounds[1])
+                    f64::next_down(*frequency - half_width) < f64::next_down(bounds[0])
+                        || f64::next_up(*frequency + half_width) > f64::next_up(bounds[1])
                 })
         {
             return Err(SpectralOperatorError::IncompleteCoverage);
@@ -7143,12 +7142,12 @@ impl CompleteDataOwnerState {
         let first_centre = frequencies[range.start];
         let last_centre = frequencies[range.end - 1];
         Some([
-            next_f64_down(
+            f64::next_down(
                 first
                     .min(last)
                     .min(first_centre.min(last_centre) - half_width),
             ),
-            next_f64_up(
+            f64::next_up(
                 first
                     .max(last)
                     .max(first_centre.max(last_centre) + half_width),

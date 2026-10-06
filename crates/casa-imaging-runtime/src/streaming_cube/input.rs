@@ -572,7 +572,7 @@ impl NativeStoreReader<'_> {
         for (row, bytes) in output
             .metadata
             .iter_mut()
-            .zip(metadata.as_chunks::<ROW_BYTES>().0.iter())
+            .zip(metadata.as_chunks::<ROW_BYTES>().0)
         {
             row.physical_row = u64::from_le_bytes(bytes[..8].try_into().unwrap());
             row.uvw_m = std::array::from_fn(|axis| decode_f64(bytes, (axis + 1) * 8));
