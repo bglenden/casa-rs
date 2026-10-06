@@ -194,7 +194,8 @@ or performance acceptance. Current results and restart authority live in the
 - Release/tag-only CI-like coverage: `scripts/run-coverage.sh --ci-like`
 - GitHub Actions reproduction: `scripts/ci-local.sh pr` for pull-request jobs or `scripts/ci-local.sh tag` for version-tag jobs
 - GitHub PR CI: lint/test, editable Python package, strict docs, and native GUI
-  checks for non-draft PRs
+  checks (Swift core unit tests, then the `just gui-test` interaction gate) for
+  non-draft PRs
 - GitHub tag CI: lint/test and editable Python package checks plus smoke,
   suite-install, and CI-like coverage
 - Main-branch pushes run the rustdoc and MkDocs deployment workflow
@@ -499,7 +500,9 @@ The executable GUI layer follows these rules:
 - Attach screenshots and useful accessibility diagnostics on failure, but do
   not use screenshot review as the only assertion that an interaction works.
 - Keep Core/store tests as the broad, fast base of the pyramid. UI tests prove
-  only behavior that requires the launched application boundary.
+  only behavior that requires the launched application boundary. The macOS CI
+  job runs the core tests with `swift test --package-path apps/casars-mac`
+  after building `casars-frontend-services`, before the interaction gate.
 - Keep the same `just gui-test` command available locally and in the supported
   macOS CI job. One green consolidated run in either environment satisfies the
   interaction gate; the other is optional unless needed for diagnosis or
