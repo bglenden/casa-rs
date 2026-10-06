@@ -194,6 +194,10 @@ arch-check:
 docs-check:
     bash scripts/docs-check.sh
 
+# List (or with --apply, remove) worktrees and local branches already merged into origin/main.
+tidy *args:
+    bash scripts/tidy-git.sh {{args}}
+
 gui-test:
     python3 apps/casars-mac/script/gui_acceptance.py run gui-test
 
