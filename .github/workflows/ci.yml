@@ -4,6 +4,8 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
+    # Runs on main warm the Rust build caches that pull requests restore.
+    branches: [main]
     tags:
       - "v*.*.*"
 
@@ -25,6 +27,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Only main saves; pull requests restore main's cache.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Check architecture
         run: scripts/arch-check.sh
@@ -67,6 +75,12 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Only main saves; pull requests restore main's cache.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
@@ -76,7 +90,7 @@ jobs:
         run: scripts/test-python-package.sh
 
   docs:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -84,6 +98,12 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Only main saves; pull requests restore main's cache.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -97,7 +117,9 @@ jobs:
         run: scripts/build-python-docs.sh site
 
   native_gui:
-    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    if: >-
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false)
+      || github.ref == 'refs/heads/main'
     runs-on: macos-15
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
@@ -107,6 +129,12 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Only main saves; pull requests restore main's cache.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install just
         uses: taiki-e/install-action@just
@@ -126,6 +154,8 @@ jobs:
         run: swift test --package-path apps/casars-mac
 
       - name: Run native GUI interaction gate
+        # Main runs only warm the build cache; the gate runs on pull requests.
+        if: github.event_name == 'pull_request'
         run: just gui-test
 
       - name: Retain GUI test result bundle
