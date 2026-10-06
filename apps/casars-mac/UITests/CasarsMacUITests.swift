@@ -3150,18 +3150,21 @@ final class CasarsMacUITests: XCTestCase {
             .completed,
             "Scroll view is not hittable: \(scrollIdentifier)"
         )
+        // Judge visibility by geometry: on macOS 26 XCTest reports some
+        // visible controls inside scroll views as not hittable.
         let isComfortablyVisible = {
-            guard target.exists, target.isHittable else { return false }
+            guard target.exists else { return false }
             let viewport = scroll.frame.insetBy(dx: 8, dy: 40)
             return viewport.contains(CGPoint(x: target.frame.midX, y: target.frame.midY))
         }
         for _ in 0..<attempts where !isComfortablyVisible() {
-            // Scroll toward the target once it is laid out; the caller's sign
-            // only covers content that is not materialized yet. Layout differs
-            // across macOS releases, so a fixed direction can move away from it.
+            // Scroll toward the target once it is laid out, by no more than its
+            // distance from the centre so the step cannot overshoot; the
+            // caller's sign only covers content that is not materialized yet.
             var step = deltaY
             if target.exists {
-                step = target.frame.midY > scroll.frame.midY ? -abs(deltaY) : abs(deltaY)
+                let limit = abs(deltaY)
+                step = min(max(scroll.frame.midY - target.frame.midY, -limit), limit)
             }
             scroll.scroll(byDeltaX: 0, deltaY: step)
         }
@@ -3181,7 +3184,11 @@ final class CasarsMacUITests: XCTestCase {
         if (element(stateIdentifier).value as? String)?.contains(expected) == true {
             return
         }
-        XCTAssertTrue(control.isHittable, "Control is not hittable: \(controlIdentifier)")
+        let window = app.windows.firstMatch.frame
+        XCTAssertTrue(
+            control.isEnabled && window.contains(CGPoint(x: control.frame.midX, y: control.frame.midY)),
+            "Control is not enabled and on screen: \(controlIdentifier)"
+        )
         control.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
         if !waitForAccessibilityValue(stateIdentifier, containing: expected) && attempts > 1 {
             control.typeKey(.space, modifierFlags: [])
