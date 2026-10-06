@@ -682,7 +682,7 @@ For each notebook program phase:
 - approved outcome, included issues, and acceptance checks are not deferred or
   descoped without explicit user signoff recorded in the issue or PR
 - release work also runs the smoke gate, the blocking C++ interop gate, and the suite-install gate; CI-like coverage remains a version-tag CI gate and is run locally only for `scripts/release.sh --full` or explicit coverage reproduction
-- ordinary non-release merges stay on `just verify` plus targeted tests unless the user explicitly asks to exercise release/tag-only heavy gates
+- ordinary non-release merges stay on the affected gates (`just quick` or focused checks) plus CI unless the user explicitly asks to exercise release/tag-only heavy gates; `just verify` is for milestones and releases
 - release performance evidence is informational by default and becomes blocking only when `CASA_RS_ENFORCE_PERF=1`
 - slow CASA parity checks run when the approved work touches those concerns
 
@@ -690,7 +690,7 @@ For each notebook program phase:
 
 Work is not complete until:
 
-- `just verify` passes or any intentional exclusion is called out explicitly
+- the gates the change can affect pass (`just quick` or focused checks, plus CI)
 - tests cover the claimed behavior
 - native macOS GUI changes pass `just gui-test` locally or in hosted CI for
   changed critical interactions
@@ -698,11 +698,10 @@ Work is not complete until:
 - reviewers checked for shallow or tautological tests on medium/high-risk work
 - docs or ADRs were updated if reality changed
 - any approved-scope deferral records explicit user signoff
-- final merge, cleanup, and release actions receive an independent review and
-  explicit authorization
+- merges have explicit user authorization, and science, persistence, and
+  interoperability changes also have an independent review
 
-For an exact pull request, the repository `AGENTS.md` informed as-is waiver may
-replace the independent-final-review and current-check portions of this gate.
-Record each waived item on the pull request and issue; do not describe waived
-evidence as passing. The waiver changes process evidence only, never the
-accepted behavior or persistent-interoperability contract.
+A user's "merge as-is" for a pull request waives its review and check gates.
+Record the waiver on the pull request; do not describe waived evidence as
+passing. The waiver changes process evidence only, never the accepted behavior
+or persistent-interoperability contract.
