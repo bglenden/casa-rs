@@ -5168,6 +5168,12 @@ mod tests {
             sink.borrow_mut().extend(slots);
         }
         assert_eq!(*sink.borrow(), [0, 1, 2, 3, 4, 5]);
+        // Rayon runs each worker's start handler asynchronously, so under CPU
+        // contention one worker can finish every wave before the other starts.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while team.threads_started.load(Ordering::Relaxed) < 2 && Instant::now() < deadline {
+            std::thread::yield_now();
+        }
         assert_eq!(team.threads_started.load(Ordering::Relaxed), 2);
         assert_eq!(team.external_pool_installs(), 3);
         let barrier = Barrier::new(2);
