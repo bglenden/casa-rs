@@ -179,8 +179,8 @@ impl StandardGridder {
             casa_composite_padded_len(geometry.ny(), 1.3),
         ];
         let image_blc = [
-            (grid_shape[0] - geometry.nx() + usize::from(grid_shape[0] % 2 == 0)) / 2,
-            (grid_shape[1] - geometry.ny() + usize::from(grid_shape[1] % 2 == 0)) / 2,
+            (grid_shape[0] - geometry.nx() + usize::from(grid_shape[0].is_multiple_of(2))) / 2,
+            (grid_shape[1] - geometry.ny() + usize::from(grid_shape[1].is_multiple_of(2))) / 2,
         ];
         let oversampling = 100usize;
         let mut kernel_table = vec![0.0f32; oversampling * (GRIDDER_SUPPORT + 1)];
@@ -424,7 +424,11 @@ fn padded_len(image_len: usize, padding_factor: f64) -> usize {
     let padded = (padding_factor * image_len as f64 - 0.5)
         .floor()
         .max(image_len as f64) as usize;
-    if padded % 2 == 0 { padded } else { padded + 1 }
+    if padded.is_multiple_of(2) {
+        padded
+    } else {
+        padded + 1
+    }
 }
 
 fn casa_composite_padded_len(image_len: usize, padding_factor: f64) -> usize {
@@ -437,7 +441,7 @@ fn casa_composite_padded_len(image_len: usize, padding_factor: f64) -> usize {
 
 fn is_casa_composite_len(mut value: usize) -> bool {
     for factor in [2, 3, 5] {
-        while value > 1 && value % factor == 0 {
+        while value > 1 && value.is_multiple_of(factor) {
             value /= factor;
         }
     }

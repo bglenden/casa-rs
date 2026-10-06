@@ -42,7 +42,6 @@ use crate::{
     primary_beam::PreparedPrimaryBeamPower,
     spectral_sampling::{
         CasaLinearOutputGrid, CasaLinearRowCursor, CasaLinearSample, interpolate_complex_pair,
-        next_f64_down, next_f64_up,
     },
     trace_complex_values,
     weighting::{
@@ -3517,7 +3516,7 @@ fn scatter_chart_planes<T: Copy>(
 ) -> Result<(), SpectralOperatorError> {
     let parent_cells = checked_cells(parent_shape)?;
     let chart_cells = checked_cells(chart_shape)?;
-    if source.len() % chart_cells != 0
+    if !source.len().is_multiple_of(chart_cells)
         || destination.len() != parent_cells * (source.len() / chart_cells)
     {
         return Err(SpectralOperatorError::DomainProjectionMismatch);
@@ -5587,14 +5586,13 @@ impl CompleteDataOwnerState {
         self.replay_owner = Some(block.replay_id());
         self.predicted_selected.clear();
         for group in block.correlation_groups() {
-            if OBSERVE {
-                if let Some(probe) = self
+            if OBSERVE
+                && let Some(probe) = self
                     .science_probe
                     .as_mut()
                     .and_then(|probe| probe.cumulative.as_mut())
-                {
-                    probe.observe_inputs(group)?;
-                }
+            {
+                probe.observe_inputs(group)?;
             }
             self.consume_correlation_group::<OBSERVE>(group)?;
             if self.stage_initial_planes
@@ -5903,26 +5901,27 @@ impl CompleteDataOwnerState {
                         mueller,
                         selected.density_uvw_m[2],
                     )?;
-                    if OBSERVE && chart_ordinal == 0 && spectral_ordinal == 0 {
-                        if let Some(probe) = self
+                    if OBSERVE
+                        && chart_ordinal == 0
+                        && spectral_ordinal == 0
+                        && let Some(probe) = self
                             .science_probe
                             .as_ref()
                             .and_then(|probe| probe.cumulative.as_ref())
-                        {
-                            let input = weighted.selected();
-                            if probe.config.slot(input.address())?.is_some() {
-                                eprintln!(
-                                    "hand_sample\t{}\t{}\t{}\t{:.17e}\t{:.17e}\t{raw_weight:.17e}\t{weight:.17e}\t{}\t{}\t{}",
-                                    input.address().physical_row,
-                                    input.address().channel_index,
-                                    input.address().correlation_index,
-                                    input.raw_input_weight,
-                                    input.input_weight,
-                                    u8::from(input.row_flag),
-                                    u8::from(input.channel_flag),
-                                    u8::from(flags[row]),
-                                );
-                            }
+                    {
+                        let input = weighted.selected();
+                        if probe.config.slot(input.address())?.is_some() {
+                            eprintln!(
+                                "hand_sample\t{}\t{}\t{}\t{:.17e}\t{:.17e}\t{raw_weight:.17e}\t{weight:.17e}\t{}\t{}\t{}",
+                                input.address().physical_row,
+                                input.address().channel_index,
+                                input.address().correlation_index,
+                                input.raw_input_weight,
+                                input.input_weight,
+                                u8::from(input.row_flag),
+                                u8::from(input.channel_flag),
+                                u8::from(flags[row]),
+                            );
                         }
                     }
                     if OBSERVE && active && weight > 0.0 {
@@ -5958,14 +5957,14 @@ impl CompleteDataOwnerState {
                                 .science_probe
                                 .as_mut()
                                 .expect("observed path has probe");
-                            if chart_ordinal == 0 {
-                                if let Some(cumulative) = &mut probe.cumulative {
-                                    cumulative.observe_aw(
-                                        weighted.selected().address(),
-                                        sample,
-                                        &aw,
-                                    )?;
-                                }
+                            if chart_ordinal == 0
+                                && let Some(cumulative) = &mut probe.cumulative
+                            {
+                                cumulative.observe_aw(
+                                    weighted.selected().address(),
+                                    sample,
+                                    &aw,
+                                )?;
                             }
                             if let Some(plan) = polynomial {
                                 probe.observe_polynomial_aw(
@@ -7096,8 +7095,8 @@ impl CompleteDataOwnerState {
             || frequencies[self.specification.slab.core_range()]
                 .iter()
                 .any(|frequency| {
-                    next_f64_down(*frequency - half_width) < next_f64_down(bounds[0])
-                        || next_f64_up(*frequency + half_width) > next_f64_up(bounds[1])
+                    f64::next_down(*frequency - half_width) < f64::next_down(bounds[0])
+                        || f64::next_up(*frequency + half_width) > f64::next_up(bounds[1])
                 })
         {
             return Err(SpectralOperatorError::IncompleteCoverage);
@@ -7149,12 +7148,12 @@ impl CompleteDataOwnerState {
         let first_centre = frequencies[range.start];
         let last_centre = frequencies[range.end - 1];
         Some([
-            next_f64_down(
+            f64::next_down(
                 first
                     .min(last)
                     .min(first_centre.min(last_centre) - half_width),
             ),
-            next_f64_up(
+            f64::next_up(
                 first
                     .max(last)
                     .max(first_centre.max(last_centre) + half_width),
@@ -11377,7 +11376,7 @@ impl WProjectionConvolution {
             1.0
         };
         let conv_size = geometry.grid_shape.into_iter().max().unwrap_or(0);
-        if conv_size < 4 || conv_size % 2 != 0 {
+        if conv_size < 4 || !conv_size.is_multiple_of(2) {
             return Err(SpectralOperatorError::UnsupportedGeometry);
         }
         let inner = (conv_size / sampling).max(2);
@@ -12065,7 +12064,7 @@ pub(crate) fn grdsf(nu: f64) -> f64 {
 
 fn casa_composite_padded_len(image_len: usize, factor: f64) -> usize {
     let mut padded = ((factor * image_len as f64 - 0.5).floor() as usize).max(image_len);
-    if padded % 2 != 0 {
+    if !padded.is_multiple_of(2) {
         padded += 1;
     }
     while !is_casa_composite_len(padded) {
@@ -12076,7 +12075,7 @@ fn casa_composite_padded_len(image_len: usize, factor: f64) -> usize {
 
 fn is_casa_composite_len(mut value: usize) -> bool {
     for factor in [2, 3, 5] {
-        while value > 1 && value % factor == 0 {
+        while value > 1 && value.is_multiple_of(factor) {
             value /= factor;
         }
     }

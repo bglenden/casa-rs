@@ -46,16 +46,6 @@ This directory holds stable project documentation.
   [`casa-vla-importvla-parity.md`](casa-vla-importvla-parity.md)
 - tutorial learning packs:
   [`tutorial-parity/tutorial-learning-packs.md`](tutorial-parity/tutorial-learning-packs.md)
-- ImPerformance Wave 1 mode selection:
-  [`tutorial-parity/imperformance-wave-1-mode-selection.md`](tutorial-parity/imperformance-wave-1-mode-selection.md)
-- ImPerformance Wave 1 simulated dataset plan:
-  [`tutorial-parity/imperformance-wave-1-datasets.md`](tutorial-parity/imperformance-wave-1-datasets.md)
-- ImPerformance Wave 1 benchmark harness:
-  [`tutorial-parity/imperformance-wave-1-benchmark-harness.md`](tutorial-parity/imperformance-wave-1-benchmark-harness.md)
-- ImPerformance Wave 1 stage instrumentation:
-  [`tutorial-parity/imperformance-wave-1-stage-instrumentation.md`](tutorial-parity/imperformance-wave-1-stage-instrumentation.md)
-- ImPerformance Wave 1 baseline matrix:
-  [`tutorial-parity/imperformance-wave-1-baseline-matrix.md`](tutorial-parity/imperformance-wave-1-baseline-matrix.md)
 
 ## Agent And Developer Reference
 
@@ -68,21 +58,14 @@ This directory holds stable project documentation.
 - [`apps/casars-mac/AGENTS.md`](https://github.com/bglenden/casa-rs/blob/main/apps/casars-mac/AGENTS.md)
   - scoped native macOS workbench contract
 
-## Planning And Program Reference
+## Program Reference
 
-Historical phase plans and program-reference docs live under:
+`docs/tutorial-parity/` keeps the tutorial-parity reference material that is
+still in use. Retired phase plans and finished-wave evidence were removed on
+2026-10-05; retrieve them from git history at commit `08542713b7`.
 
-- `docs/tutorial-parity/`
-- `docs/Planning/Phase 2 - Table fillout/`
-- `docs/Planning/Phase 3 - Quanta Measures Coordinates/`
-- `docs/Planning/Phase 4 - MeasurementSet and Derived Calibration Workflows/`
-- `docs/Planning/Phase 5 - Lattices Coordinates Images/`
-
-Canonical active planning and work status live in GitHub issues, pull requests,
-and the Project `Status` view.
-Treat the planning directories as historical or program-reference docs rather
-than the live backlog. The imaging parity program remains useful reference
-material, but it is not the canonical status surface.
+Canonical active planning and work status live in GitHub issues and pull
+requests.
 
 ## Documentation conventions
 

@@ -13,8 +13,10 @@ fn captured_first_minor_matches_casa_clark_component_positions() {
         let bytes = std::fs::read(root.join(name)).expect("captured f64 plane");
         assert_eq!(bytes.len(), 1024 * 1024 * 8);
         bytes
-            .chunks_exact(8)
-            .map(|value| f64::from_le_bytes(value.try_into().unwrap()))
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|value| f64::from_le_bytes(*value))
             .collect::<Vec<_>>()
     };
     let dirty = load("native-dirty.f64le");

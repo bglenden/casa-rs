@@ -51,7 +51,7 @@ fn t55_q_band_rebaseline_preflight() {
     let expected_rows: usize = std::env::var("CASA_RS_T55_PREFLIGHT_ROWS")
         .map(|value| value.parse().expect("positive diagnostic row count"))
         .unwrap_or(351);
-    assert!(expected_rows > 0 && expected_rows <= 84_240 && expected_rows % 351 == 0);
+    assert!(expected_rows > 0 && expected_rows <= 84_240 && expected_rows.is_multiple_of(351));
     run_q_band_cube(expected_rows, image_size, false);
 }
 

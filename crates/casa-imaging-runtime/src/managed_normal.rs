@@ -56,7 +56,7 @@ impl NormalStorageFactory for ManagedNormalFactory {
     ) -> Result<Box<dyn NormalArrayStorage>, SpectralOperatorError> {
         let cells = self.axes[0] * self.axes[1];
         let complex = scalars / 2;
-        if scalars == 0 || scalars % 2 != 0 || complex % cells != 0 {
+        if scalars == 0 || !scalars.is_multiple_of(2) || !complex.is_multiple_of(cells) {
             return Err(storage_error(
                 "normal scalar extent is not a whole image plane",
             ));
@@ -108,7 +108,7 @@ impl ManagedNormal {
             std::ops::Range<usize>,
         ) -> Result<(), SpectralOperatorError>,
     ) -> Result<(), SpectralOperatorError> {
-        if start % 2 != 0
+        if !start.is_multiple_of(2)
             || start
                 .checked_add(values.saturating_mul(2))
                 .is_none_or(|end| end > self.scalars)
@@ -134,7 +134,7 @@ impl NormalArrayStorage for ManagedNormal {
     }
 
     fn read(&self, start: usize, len: usize) -> Result<Cow<'_, [f64]>, SpectralOperatorError> {
-        if len % 2 != 0 {
+        if !len.is_multiple_of(2) {
             return Err(SpectralOperatorError::InvalidSlab);
         }
         let mut result = vec![0.0; len];
@@ -150,10 +150,11 @@ impl NormalArrayStorage for ManagedNormal {
                 .array
                 .read(&pins, plane, in_plane)
                 .map_err(storage_error)?;
-            for (&value, target) in values
-                .iter()
-                .zip(result[output.start * 2..output.end * 2].chunks_exact_mut(2))
-            {
+            for (&value, target) in values.iter().zip(
+                result[output.start * 2..output.end * 2]
+                    .as_chunks_mut::<2>()
+                    .0,
+            ) {
                 target[0] = f64::from(value);
             }
             Ok(())
@@ -212,7 +213,7 @@ impl NormalArrayStorage for ManagedNormal {
     }
 
     fn write(&mut self, start: usize, values: &[f64]) -> Result<(), SpectralOperatorError> {
-        if values.len() % 2 != 0 {
+        if !values.len().is_multiple_of(2) {
             return Err(SpectralOperatorError::InvalidSlab);
         }
         self.for_each_window(start, values.len() / 2, |plane, in_plane, input| {
@@ -229,7 +230,7 @@ impl NormalArrayStorage for ManagedNormal {
                 .map_err(storage_error)?;
             for (target, pair) in destination
                 .iter_mut()
-                .zip(values[input.start * 2..input.end * 2].chunks_exact(2))
+                .zip(values[input.start * 2..input.end * 2].as_chunks::<2>().0)
             {
                 let value = pair[0] as f32;
                 if !value.is_finite() {

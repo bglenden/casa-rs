@@ -690,14 +690,14 @@ impl AwPreparedCellProvider for PreparedAwCellProvider {
                 drop(state);
                 return Ok(self.lease(cell, AwPreparedCellDisposition::Resident, evicted, 0));
             }
-            if reload_sample.is_none() {
-                if let Some(probe) = state.reload_probe.as_mut() {
-                    reload_sample = Some(
-                        probe
-                            .begin(prepared.descriptor().identity().as_bytes(), bytes)
-                            .map_err(|_| AwOperatorError::MeasurementOverflow)?,
-                    );
-                }
+            if reload_sample.is_none()
+                && let Some(probe) = state.reload_probe.as_mut()
+            {
+                reload_sample = Some(
+                    probe
+                        .begin(prepared.descriptor().identity().as_bytes(), bytes)
+                        .map_err(|_| AwOperatorError::MeasurementOverflow)?,
+                );
             }
             if state.loading.contains(&identity) {
                 observe_reload(&mut reload_sample, ReloadStage::LoadingWait, || {
@@ -1218,11 +1218,12 @@ fn decode_complex32_plane(
     bytes: Vec<u8>,
     layout: AwKernelLayout,
 ) -> Result<Array2<Complex32>, AwOperatorError> {
-    let chunks = bytes.chunks_exact(8);
-    if !chunks.remainder().is_empty() {
+    let (chunks, remainder) = bytes.as_chunks::<8>();
+    if !remainder.is_empty() {
         return Err(AwOperatorError::InvalidKernelLayout);
     }
     let values = chunks
+        .iter()
         .map(|chunk| {
             Complex32::new(
                 f32::from_le_bytes(chunk[..4].try_into().expect("four bytes")),

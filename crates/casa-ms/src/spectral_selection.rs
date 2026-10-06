@@ -2389,19 +2389,17 @@ fn casa_grid_frequency_channel_map(
         );
     }
 
-    if min_image_hz < min_vis_hz {
-        if let Some(value) =
+    if min_image_hz < min_vis_hz
+        && let Some(value) =
             nearest_bracketed_output_frequency(output_channel_frequencies_hz, min_vis_hz)
-        {
-            min_image_hz = value;
-        }
+    {
+        min_image_hz = value;
     }
-    if max_image_hz > max_vis_hz {
-        if let Some(value) =
+    if max_image_hz > max_vis_hz
+        && let Some(value) =
             nearest_bracketed_output_frequency(output_channel_frequencies_hz, max_vis_hz)
-        {
-            max_image_hz = value;
-        }
+    {
+        max_image_hz = value;
     }
 
     let interp_width_hz = (image_width_hz / width.floor()).copysign(source_increment_hz);

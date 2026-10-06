@@ -1282,11 +1282,7 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
         .iter()
         .any(|arg| matches!(arg.to_str(), Some("-h" | "--help")))
     {
-        println!(
-            "{}\n{}",
-            command_schema("casars-imager").render_help(),
-            casa_task_runtime::task_cli_machine_help("ImagerTaskRequest")
-        );
+        println!("{}", schema::render_help("casars-imager"));
         return Ok(());
     }
     let request = request_from_parameter_cli_args(&args)?;

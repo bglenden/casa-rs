@@ -151,7 +151,7 @@ impl EvlaAwCellRequest {
     /// Validate a cell before numerical generation or scientific identity minting.
     pub fn validate(&self) -> Result<(), NativeAwRequestError> {
         if self.size < 8
-            || self.size % 2 != 0
+            || !self.size.is_multiple_of(2)
             || self
                 .size
                 .checked_mul(self.size)

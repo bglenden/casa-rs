@@ -144,11 +144,11 @@ fn storage_profile_enabled() -> bool {
 fn log_storage_profile(context: &str, phase: &str, delta: f64, total: f64, detail: Option<&str>) {
     let mut line =
         format!("[casa-tables profile] {context} phase={phase} dt={delta:.3}s total={total:.3}s");
-    if let Some(detail) = detail {
-        if !detail.is_empty() {
-            line.push(' ');
-            line.push_str(detail);
-        }
+    if let Some(detail) = detail
+        && !detail.is_empty()
+    {
+        line.push(' ');
+        line.push_str(detail);
     }
     eprintln!("{line}");
 }
@@ -564,10 +564,10 @@ fn project_column_values_for_group<'a>(
 ) -> Vec<Option<&'a Value>> {
     rows.iter()
         .map(|row| {
-            if let Some(idx) = field_index {
-                if let Some(field) = row.fields().get(idx).filter(|field| field.name == col_name) {
-                    return Some(&field.value);
-                }
+            if let Some(idx) = field_index
+                && let Some(field) = row.fields().get(idx).filter(|field| field.name == col_name)
+            {
+                return Some(&field.value);
             }
             row.get(col_name)
         })
@@ -643,14 +643,14 @@ impl StorageManager for CompositeStorage {
 
         // Clean up old data files before re-saving to prevent stale data
         // from a previous save with a different storage manager.
-        if table_path.is_dir() {
-            if let Ok(entries) = fs::read_dir(table_path) {
-                for entry in entries.flatten() {
-                    let name = entry.file_name();
-                    let name_str = name.to_string_lossy();
-                    if name_str.starts_with("table.f") {
-                        let _ = fs::remove_file(entry.path());
-                    }
+        if table_path.is_dir()
+            && let Ok(entries) = fs::read_dir(table_path)
+        {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with("table.f") {
+                    let _ = fs::remove_file(entry.path());
                 }
             }
         }
@@ -912,14 +912,14 @@ impl CompositeStorage {
     ) -> Result<(), StorageError> {
         use crate::table::DataManagerKind;
 
-        if table_path.is_dir() {
-            if let Ok(entries) = fs::read_dir(table_path) {
-                for entry in entries.flatten() {
-                    let name = entry.file_name();
-                    let name_str = name.to_string_lossy();
-                    if name_str.starts_with("table.f") {
-                        let _ = fs::remove_file(entry.path());
-                    }
+        if table_path.is_dir()
+            && let Ok(entries) = fs::read_dir(table_path)
+        {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with("table.f") {
+                    let _ = fs::remove_file(entry.path());
                 }
             }
         }
@@ -5290,11 +5290,11 @@ pub(crate) fn strip_directory(target_path: &Path, from_path: &Path) -> String {
     }
 
     // Check if they share the same parent directory (./ convention).
-    if let (Some(from_parent), Some(target_parent)) = (from_abs.parent(), target_abs.parent()) {
-        if from_parent == target_parent {
-            let name = target_abs.file_name().unwrap_or_default().to_string_lossy();
-            return format!("./{name}");
-        }
+    if let (Some(from_parent), Some(target_parent)) = (from_abs.parent(), target_abs.parent())
+        && from_parent == target_parent
+    {
+        let name = target_abs.file_name().unwrap_or_default().to_string_lossy();
+        return format!("./{name}");
     }
 
     // Fallback: absolute path.

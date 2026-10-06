@@ -1383,12 +1383,12 @@ fn validate_analytic_spectrum(spectrum: &SyntheticAnalyticSpectrum) -> MsResult<
             "analytic spectrum values must be finite".to_string(),
         ));
     }
-    if let Some(reference_frequency_hz) = spectrum.reference_frequency_hz {
-        if reference_frequency_hz <= 0.0 || !reference_frequency_hz.is_finite() {
-            return Err(MsError::SyntheticObservation(
-                "analytic spectrum reference_frequency_hz must be positive".to_string(),
-            ));
-        }
+    if let Some(reference_frequency_hz) = spectrum.reference_frequency_hz
+        && (reference_frequency_hz <= 0.0 || !reference_frequency_hz.is_finite())
+    {
+        return Err(MsError::SyntheticObservation(
+            "analytic spectrum reference_frequency_hz must be positive".to_string(),
+        ));
     }
     if spectrum.line_peak_jy != 0.0 && spectrum.line_sigma_fraction <= 0.0 {
         return Err(MsError::SyntheticObservation(
@@ -1571,12 +1571,12 @@ fn validate_request(request: &SyntheticObservationRequest) -> MsResult<()> {
     if let Some(corruption) = &request.corruption {
         validate_corruption(corruption)?;
     }
-    if let Some(model_peak_jy_per_pixel) = request.model_peak_jy_per_pixel {
-        if !(model_peak_jy_per_pixel.is_finite() && model_peak_jy_per_pixel > 0.0) {
-            return Err(MsError::SyntheticObservation(
-                "model_peak_jy_per_pixel must be finite and positive".to_string(),
-            ));
-        }
+    if let Some(model_peak_jy_per_pixel) = request.model_peak_jy_per_pixel
+        && !(model_peak_jy_per_pixel.is_finite() && model_peak_jy_per_pixel > 0.0)
+    {
+        return Err(MsError::SyntheticObservation(
+            "model_peak_jy_per_pixel must be finite and positive".to_string(),
+        ));
     }
     Ok(())
 }
@@ -1680,28 +1680,27 @@ fn applied_corruption_names(corruption: Option<&SyntheticCorruptionConfig>) -> V
     {
         names.push("noise".to_string());
     }
-    if let Some(gain) = &corruption.gain {
-        if gain.amplitude.iter().any(|value| *value > 0.0) {
-            names.push("gain".to_string());
-        }
+    if let Some(gain) = &corruption.gain
+        && gain.amplitude.iter().any(|value| *value > 0.0)
+    {
+        names.push("gain".to_string());
     }
-    if let Some(bandpass) = &corruption.bandpass {
-        if bandpass.amplitude.iter().any(|value| *value > 0.0) {
-            names.push("bandpass".to_string());
-        }
+    if let Some(bandpass) = &corruption.bandpass
+        && bandpass.amplitude.iter().any(|value| *value > 0.0)
+    {
+        names.push("bandpass".to_string());
     }
-    if let Some(leakage) = &corruption.leakage {
-        if leakage.amplitude.iter().any(|value| *value > 0.0)
-            || leakage.offset.iter().any(|value| *value != 0.0)
-        {
-            names.push("leakage".to_string());
-        }
+    if let Some(leakage) = &corruption.leakage
+        && (leakage.amplitude.iter().any(|value| *value > 0.0)
+            || leakage.offset.iter().any(|value| *value != 0.0))
+    {
+        names.push("leakage".to_string());
     }
-    if let Some(pointing) = &corruption.pointing {
-        if pointing.apply_pointing_offsets && pointing.offset_rad.iter().any(|value| *value != 0.0)
-        {
-            names.push("pointing".to_string());
-        }
+    if let Some(pointing) = &corruption.pointing
+        && pointing.apply_pointing_offsets
+        && pointing.offset_rad.iter().any(|value| *value != 0.0)
+    {
+        names.push("pointing".to_string());
     }
     names
 }
@@ -6359,7 +6358,7 @@ mod tests {
     fn trace_casa_composite_padded_len(image_len: usize, padding_factor: f64) -> usize {
         let padded = (padding_factor * image_len as f64 - 0.5).floor() as usize;
         let mut padded = padded.max(image_len);
-        if padded % 2 != 0 {
+        if !padded.is_multiple_of(2) {
             padded += 1;
         }
         while !trace_is_casa_composite_len(padded) {
@@ -6370,7 +6369,7 @@ mod tests {
 
     fn trace_is_casa_composite_len(mut value: usize) -> bool {
         for factor in [2, 3, 5] {
-            while value > 1 && value % factor == 0 {
+            while value > 1 && value.is_multiple_of(factor) {
                 value /= factor;
             }
         }

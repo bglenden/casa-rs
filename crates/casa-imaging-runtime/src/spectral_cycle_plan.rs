@@ -910,7 +910,7 @@ impl SpectralCyclePlan {
             .is_some_and(|replay| replay.has_resident_source())
             && !candidates
                 .iter()
-                .map(|candidate| fits(candidate))
+                .map(fits)
                 .collect::<Result<Vec<_>, _>>()?
                 .into_iter()
                 .any(|fits| fits)

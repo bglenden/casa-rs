@@ -1739,14 +1739,13 @@ impl RecordingExecutor {
                     Vec::new(),
                 )
             });
-        if context.node().kind == WorkKind::Publication {
-            if let Some(sealed) = self
+        if context.node().kind == WorkKind::Publication
+            && let Some(sealed) = self
                 .sealed_measurements
                 .clone()
                 .or_else(|| self.native_sealed_measurements())
-            {
-                artifacts = sealed;
-            }
+        {
+            artifacts = sealed;
         }
         if context.node().kind == WorkKind::Publication && artifacts.is_empty() {
             artifacts = context

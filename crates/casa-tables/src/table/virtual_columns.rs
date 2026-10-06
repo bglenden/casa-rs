@@ -38,12 +38,12 @@ impl Table {
         column: &str,
         ref_table: &Path,
     ) -> Result<(), TableError> {
-        if let Some(schema) = self.inner.schema() {
-            if !schema.columns().iter().any(|c| c.name() == column) {
-                return Err(TableError::SchemaColumnUnknown {
-                    column: column.to_string(),
-                });
-            }
+        if let Some(schema) = self.inner.schema()
+            && !schema.columns().iter().any(|c| c.name() == column)
+        {
+            return Err(TableError::SchemaColumnUnknown {
+                column: column.to_string(),
+            });
         }
         self.virtual_columns.insert(column.to_string());
         self.virtual_bindings.push(VirtualColumnBinding::Forward {
@@ -267,12 +267,12 @@ impl Table {
         ref_table: &Path,
         row_column: &str,
     ) -> Result<(), TableError> {
-        if let Some(schema) = self.inner.schema() {
-            if !schema.columns().iter().any(|c| c.name() == column) {
-                return Err(TableError::SchemaColumnUnknown {
-                    column: column.to_string(),
-                });
-            }
+        if let Some(schema) = self.inner.schema()
+            && !schema.columns().iter().any(|c| c.name() == column)
+        {
+            return Err(TableError::SchemaColumnUnknown {
+                column: column.to_string(),
+            });
         }
         self.virtual_columns.insert(column.to_string());
         self.virtual_bindings
@@ -298,12 +298,12 @@ impl Table {
     /// Returns [`TableError::SchemaColumnUnknown`] if the column is not in
     /// the schema.
     pub fn bind_taql_column(&mut self, column: &str, expression: &str) -> Result<(), TableError> {
-        if let Some(schema) = self.inner.schema() {
-            if !schema.columns().iter().any(|c| c.name() == column) {
-                return Err(TableError::SchemaColumnUnknown {
-                    column: column.to_string(),
-                });
-            }
+        if let Some(schema) = self.inner.schema()
+            && !schema.columns().iter().any(|c| c.name() == column)
+        {
+            return Err(TableError::SchemaColumnUnknown {
+                column: column.to_string(),
+            });
         }
         self.virtual_columns.insert(column.to_string());
         self.virtual_bindings

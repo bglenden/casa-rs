@@ -281,14 +281,13 @@ impl KittyMovieOverlay {
         }
         app.set_image_movie_direct_overlay(false);
         app.set_image_movie_terminal_looping(false);
-        if let Some(manager) = &self.manager {
-            if self.mode == KittyMovieOverlayMode::KittyAnimation {
-                if let Some(handle) = self.handle {
-                    manager
-                        .clear_and_delete(out, handle)
-                        .map_err(map_kitty_error)?;
-                }
-            }
+        if let Some(manager) = &self.manager
+            && self.mode == KittyMovieOverlayMode::KittyAnimation
+            && let Some(handle) = self.handle
+        {
+            manager
+                .clear_and_delete(out, handle)
+                .map_err(map_kitty_error)?;
         }
         if let Some(store) = &mut self.software_store {
             if let Some(slots) = self.software_slots {

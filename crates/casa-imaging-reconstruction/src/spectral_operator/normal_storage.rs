@@ -84,7 +84,7 @@ pub trait NormalArrayStorage: fmt::Debug + Send + Sync {
     /// implementations may widen through their scalar interface; the managed
     /// cube backing writes Float planes directly.
     fn write_real(&mut self, start: usize, values: &[f32]) -> Result<(), SpectralOperatorError> {
-        if start % 2 != 0 {
+        if !start.is_multiple_of(2) {
             return Err(SpectralOperatorError::InvalidSlab);
         }
         let mut widened = [0.0_f64; 512];
@@ -93,7 +93,7 @@ pub trait NormalArrayStorage: fmt::Debug + Send + Sync {
                 .checked_mul(widened.len())
                 .and_then(|offset| start.checked_add(offset))
                 .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-            for (pair, &value) in widened.chunks_exact_mut(2).zip(chunk) {
+            for (pair, &value) in widened.as_chunks_mut::<2>().0.iter_mut().zip(chunk) {
                 pair[0] = f64::from(value);
             }
             self.write(offset, &widened[..chunk.len() * 2])?;

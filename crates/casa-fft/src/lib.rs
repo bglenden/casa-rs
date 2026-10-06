@@ -613,7 +613,7 @@ mod tests {
                 for y in 0..shape[1] {
                     let offset = x * stride + y;
                     let value = initial[x * shape[1] + y].re;
-                    if offset % 2 == 0 {
+                    if offset.is_multiple_of(2) {
                         storage[offset / 2].re = value;
                     } else {
                         storage[offset / 2].im = value;
@@ -633,7 +633,7 @@ mod tests {
             for x in 0..shape[0] {
                 for y in 0..shape[1] {
                     let offset = x * stride + y;
-                    let actual = if offset % 2 == 0 {
+                    let actual = if offset.is_multiple_of(2) {
                         storage[offset / 2].re
                     } else {
                         storage[offset / 2].im

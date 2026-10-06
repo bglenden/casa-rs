@@ -908,12 +908,12 @@ struct AwTimingCall<'a> {
 
 impl AwTimingCall<'_> {
     fn mark(call: &mut Option<Self>, stage: usize) {
-        if let Some(call) = call {
-            if let Some(previous) = call.previous {
-                let now = Instant::now();
-                call.nanos[stage] = Some(now.duration_since(previous).as_nanos());
-                call.previous = Some(now);
-            }
+        if let Some(call) = call
+            && let Some(previous) = call.previous
+        {
+            let now = Instant::now();
+            call.nanos[stage] = Some(now.duration_since(previous).as_nanos());
+            call.previous = Some(now);
         }
     }
 
@@ -943,11 +943,11 @@ impl Drop for AwTimingCall<'_> {
                 totals.sampled_nanos[stage] += nanos;
             }
         }
-        if self.provider_loaded {
-            if let Some(nanos) = self.nanos[1] {
-                totals.sampled_provider_loaded_calls += 1;
-                totals.sampled_provider_loaded_nanos += nanos;
-            }
+        if self.provider_loaded
+            && let Some(nanos) = self.nanos[1]
+        {
+            totals.sampled_provider_loaded_calls += 1;
+            totals.sampled_provider_loaded_nanos += nanos;
         }
     }
 }
@@ -2272,7 +2272,9 @@ mod tests {
                     AwConvolutionKernel::new(
                         layout,
                         bytes
-                            .chunks_exact(8)
+                            .as_chunks::<8>()
+                            .0
+                            .iter()
                             .map(|v| {
                                 Complex64::new(
                                     f64::from(f32::from_le_bytes(v[..4].try_into().unwrap())),

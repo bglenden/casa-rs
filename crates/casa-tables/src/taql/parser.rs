@@ -91,13 +91,13 @@ impl<'src> Parser<'src> {
         };
         // Allow (but don't require) a trailing semicolon.
         // (not a real token — just skip any leftover)
-        if !self.lexer.is_eof() {
-            if let Some((tok, span)) = self.lexer.next_token() {
-                return Err(TaqlError::parse(
-                    self.lexer.position(span.start),
-                    format!("unexpected token after statement: {tok}"),
-                ));
-            }
+        if !self.lexer.is_eof()
+            && let Some((tok, span)) = self.lexer.next_token()
+        {
+            return Err(TaqlError::parse(
+                self.lexer.position(span.start),
+                format!("unexpected token after statement: {tok}"),
+            ));
         }
         Ok(stmt)
     }
@@ -925,24 +925,24 @@ impl<'src> Parser<'src> {
         let name = self.parse_ident_string()?;
 
         // Check for g-prefixed aggregate function names (e.g. gmin, gcount)
-        if self.lexer.peek() == Some(&Token::LParen) {
-            if let Some(agg) = aggregate_from_name(&name) {
-                self.lexer.next_token(); // consume (
-                let arg = if self.lexer.peek() == Some(&Token::RParen) {
-                    // Zero-arg aggregate: gcount(), growid(), etc.
-                    Expr::Star
-                } else if self.lexer.peek() == Some(&Token::Star) {
-                    self.lexer.next_token();
-                    Expr::Star
-                } else {
-                    self.parse_expr()?
-                };
-                self.lexer.expect(&Token::RParen)?;
-                return Ok(Expr::Aggregate {
-                    func: agg,
-                    arg: Box::new(arg),
-                });
-            }
+        if self.lexer.peek() == Some(&Token::LParen)
+            && let Some(agg) = aggregate_from_name(&name)
+        {
+            self.lexer.next_token(); // consume (
+            let arg = if self.lexer.peek() == Some(&Token::RParen) {
+                // Zero-arg aggregate: gcount(), growid(), etc.
+                Expr::Star
+            } else if self.lexer.peek() == Some(&Token::Star) {
+                self.lexer.next_token();
+                Expr::Star
+            } else {
+                self.parse_expr()?
+            };
+            self.lexer.expect(&Token::RParen)?;
+            return Ok(Expr::Aggregate {
+                func: agg,
+                arg: Box::new(arg),
+            });
         }
 
         // Function call: name(...)

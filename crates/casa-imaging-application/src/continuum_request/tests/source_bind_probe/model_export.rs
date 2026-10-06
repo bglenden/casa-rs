@@ -178,7 +178,7 @@ fn model_export_preserves_f64_bits_and_independent_support() {
     let mut payload = Vec::new();
     let summary = write_samples(&samples, &mut payload).unwrap();
     assert_eq!(payload.len(), 27);
-    for (record, sample) in payload.chunks_exact(9).zip(samples) {
+    for (record, sample) in payload.as_chunks::<9>().0.iter().zip(samples) {
         assert_eq!(
             u64::from_le_bytes(record[..8].try_into().unwrap()),
             sample.value().value().to_bits(),

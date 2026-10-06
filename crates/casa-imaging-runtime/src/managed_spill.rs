@@ -1324,7 +1324,7 @@ impl ManagedSpillArtifact {
             .ok_or(ManagedSpillError::ArithmeticOverflow(
                 "retained artifact metadata",
             ))?;
-        Ok(ManagedSpillRetainedBlockSource {
+        ManagedSpillRetainedBlockSource {
             backing: Arc::new(ManagedSpillRetainedBacking {
                 windows: windows.into_boxed_slice(),
                 seal: self.seal,
@@ -1338,7 +1338,7 @@ impl ManagedSpillArtifact {
             frames_filled: 0,
             peak_window_bytes: 0,
         }
-        .validate_schedule()?)
+        .validate_schedule()
     }
 }
 

@@ -2012,9 +2012,10 @@ impl FrozenGriddedNormalReplay {
             ));
         }
         if let Some(prepared) = self.metal_source.as_ref().map(Arc::clone) {
-            let GriddedNormalReplayState::Metal(state, binding) = state else {
+            let GriddedNormalReplayState::Metal(device) = state else {
                 return Err(io::Error::other("device replay cannot bind a CPU operator"));
             };
+            let (state, binding) = *device;
             if !prepared.matches(&binding) || window_plan.has_selected_windows() {
                 return Err(io::Error::other("device replay batch binding changed"));
             }
@@ -2071,12 +2072,13 @@ impl FrozenGriddedNormalReplay {
                 pass_ordinal,
                 source,
                 GriddedNormalReplayKernel {
-                    state,
+                    state: *state,
                     record_bytes,
                     timings: GriddedNormalReplayTimings::new(pass_ordinal, workers),
                 },
             ),
-            GriddedNormalReplayState::Metal(state, binding) => {
+            GriddedNormalReplayState::Metal(device) => {
+                let (state, binding) = *device;
                 let runtime = context.metal_execution().map_err(io::Error::other)?;
                 let access = runtime.batch_access(context).map_err(io::Error::other)?;
                 if self.backing.program.record_count() == 0 {
@@ -3907,10 +3909,10 @@ impl CompleteDataPlanFragment {
         if !replay.fences.contains(&FenceKind::Io) {
             return Err(CompleteDataPlanError::ReplayWithoutTerminalFence);
         }
-        if let Some(reader) = &reader {
-            if reader.implementation() != &replay.implementation {
-                return Err(CompleteDataPlanError::PlanMismatch);
-            }
+        if let Some(reader) = &reader
+            && reader.implementation() != &replay.implementation
+        {
+            return Err(CompleteDataPlanError::PlanMismatch);
         }
         let preparation = WorkNode {
             id: self.preparation_node.clone(),
@@ -5021,14 +5023,14 @@ impl CompleteDataPreparedState {
                 .map_err(|error| {
                     CompleteDataPlanError::Operator(CompleteDataOperatorError::Owner(error))
                 })?;
-            return Ok(GriddedNormalReplayState::Metal(
+            return Ok(GriddedNormalReplayState::Metal(Box::new((
                 metal_normal::DeviceNormalOperatorState {
                     state,
                     backing: Arc::clone(&artifact.backing),
                     binding,
                 },
                 plan.clone(),
-            ));
+            ))));
         }
         let window_plan = artifact
             .window_plan()
@@ -5074,11 +5076,13 @@ impl CompleteDataPreparedState {
         .map_err(|error| {
             CompleteDataPlanError::Operator(CompleteDataOperatorError::Owner(error))
         })?;
-        Ok(GriddedNormalReplayState::Cpu(GriddedNormalOperatorState {
-            state,
-            backing: Arc::clone(&artifact.backing),
-            binding,
-        }))
+        Ok(GriddedNormalReplayState::Cpu(Box::new(
+            GriddedNormalOperatorState {
+                state,
+                backing: Arc::clone(&artifact.backing),
+                binding,
+            },
+        )))
     }
 }
 
@@ -5089,8 +5093,9 @@ pub(crate) struct GriddedNormalOperatorState {
 }
 
 pub(crate) enum GriddedNormalReplayState {
-    Cpu(GriddedNormalOperatorState),
-    Metal(metal_normal::DeviceNormalOperatorState, MetalNormalPlan),
+    // Both states are kilobytes in size; boxing keeps the enum pointer-sized.
+    Cpu(Box<GriddedNormalOperatorState>),
+    Metal(Box<(metal_normal::DeviceNormalOperatorState, MetalNormalPlan)>),
 }
 
 impl GriddedNormalOperatorState {

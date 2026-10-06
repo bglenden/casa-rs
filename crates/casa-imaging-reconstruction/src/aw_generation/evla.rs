@@ -141,7 +141,7 @@ impl EvlaApertureGrid {
         parallactic_angle_rad: f64,
     ) -> Result<Self, NativeAwGenerationError> {
         if size < 4
-            || size % 2 != 0
+            || !size.is_multiple_of(2)
             || subpixels == 0
             || size
                 .checked_mul(size)
@@ -535,7 +535,7 @@ mod tests {
         let mut maximum_error = 0.0_f64;
         let mut reference_peak = 0.0_f64;
         let mut support_mismatches = 0;
-        for (value, bytes) in aperture.iter().zip(bytes.chunks_exact(8)) {
+        for (value, bytes) in aperture.iter().zip(bytes.as_chunks::<8>().0) {
             let reference = Complex32::new(
                 f32::from_le_bytes(bytes[..4].try_into().unwrap()),
                 f32::from_le_bytes(bytes[4..].try_into().unwrap()),

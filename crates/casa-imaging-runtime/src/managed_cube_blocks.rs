@@ -1153,14 +1153,12 @@ impl<T: LatticeElement + TilePixel> ManagedPlaneArray<T> {
         let backend = state.backends[&backend_id].backend.clone();
         let open = state.backends[&backend_id].open;
         drop(state);
-        if open {
-            if let Err(error) = backend.close() {
-                let mut state = manager.state.lock().map_err(poison)?;
-                state.admitting = false;
-                state.version += 1;
-                manager.wake.notify_all();
-                return Err(error);
-            }
+        if open && let Err(error) = backend.close() {
+            let mut state = manager.state.lock().map_err(poison)?;
+            state.admitting = false;
+            state.version += 1;
+            manager.wake.notify_all();
+            return Err(error);
         }
         let mut state = manager.state.lock().map_err(poison)?;
         let mut released = 0;

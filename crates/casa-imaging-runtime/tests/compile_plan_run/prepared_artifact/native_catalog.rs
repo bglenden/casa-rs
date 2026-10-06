@@ -77,8 +77,8 @@ impl PreparedArtifactGenerator for Generator {
         _: u64,
         output: &mut [u8],
     ) -> Result<(), PreparedArtifactError> {
-        for scalar in output.chunks_exact_mut(4) {
-            scalar.copy_from_slice(&self.settings.value.to_le_bytes());
+        for scalar in output.as_chunks_mut::<4>().0 {
+            *scalar = self.settings.value.to_le_bytes();
         }
         Ok(())
     }

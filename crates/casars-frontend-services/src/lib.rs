@@ -9286,14 +9286,14 @@ fn image_direction_diagnostics(coords: &CoordinateSystem, shape: &[usize]) -> Ve
                 center_pixel_coordinate(x_len),
                 center_pixel_coordinate(y_len),
             ];
-            if let Ok(world) = coord.to_world(&center_pixel) {
-                if world.len() >= 2 {
-                    diagnostics.push(format!(
-                        "Center: RA {} Dec {}",
-                        format_right_ascension_labeled(world[0], 3),
-                        format_declination_labeled(world[1], 2)
-                    ));
-                }
+            if let Ok(world) = coord.to_world(&center_pixel)
+                && world.len() >= 2
+            {
+                diagnostics.push(format!(
+                    "Center: RA {} Dec {}",
+                    format_right_ascension_labeled(world[0], 3),
+                    format_declination_labeled(world[1], 2)
+                ));
             }
             break;
         }
@@ -9321,13 +9321,13 @@ fn image_spectral_diagnostics(coords: &CoordinateSystem, shape: &[usize]) -> Vec
                 .first()
                 .cloned()
                 .unwrap_or_else(|| "Hz".to_string());
-            if let Ok(world) = coord.to_world(&center_pixel) {
-                if let Some(center) = world.first().copied() {
-                    diagnostics.push(format!(
-                        "Cube center frequency: {}",
-                        format_frequency_like_value(center, &unit)
-                    ));
-                }
+            if let Ok(world) = coord.to_world(&center_pixel)
+                && let Some(center) = world.first().copied()
+            {
+                diagnostics.push(format!(
+                    "Cube center frequency: {}",
+                    format_frequency_like_value(center, &unit)
+                ));
             }
             let channel_separation = coord
                 .increment()
@@ -9382,21 +9382,20 @@ fn image_beam_diagnostics(info: &ImageInfo) -> Vec<String> {
         channels,
         stokes
     )];
-    if let Some(beam) = beam_set.median_area_beam() {
-        if !beam.is_null() {
-            if let (Ok(major), Ok(minor), Ok(pa)) = (
-                beam.major_in("arcsec"),
-                beam.minor_in("arcsec"),
-                beam.position_angle_in("deg"),
-            ) {
-                diagnostics.push(format!(
-                    "Median beam: {} x {} arcsec, PA {} deg",
-                    format_compact_float(major),
-                    format_compact_float(minor),
-                    format_compact_float(pa)
-                ));
-            }
-        }
+    if let Some(beam) = beam_set.median_area_beam()
+        && !beam.is_null()
+        && let (Ok(major), Ok(minor), Ok(pa)) = (
+            beam.major_in("arcsec"),
+            beam.minor_in("arcsec"),
+            beam.position_angle_in("deg"),
+        )
+    {
+        diagnostics.push(format!(
+            "Median beam: {} x {} arcsec, PA {} deg",
+            format_compact_float(major),
+            format_compact_float(minor),
+            format_compact_float(pa)
+        ));
     }
     diagnostics
 }

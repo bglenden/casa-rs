@@ -236,7 +236,7 @@ impl NativeEvlaAwCache {
             ));
         }
         if self.working_size < 8
-            || self.working_size % 2 != 0
+            || !self.working_size.is_multiple_of(2)
             || self
                 .working_size
                 .checked_mul(self.working_size)

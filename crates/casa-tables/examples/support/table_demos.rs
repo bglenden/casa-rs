@@ -974,11 +974,11 @@ fn demo_tiled_storage(out: &mut String) -> Result<(), TableError> {
             let expected: Vec<f32> = (0..nelem).map(|k| base + k as f32).collect();
             let expected_arr =
                 ndarray::Array::from_shape_vec(IxDyn(&[2, 3]).f(), expected).unwrap();
-            if let ArrayValue::Float32(actual) = arr {
-                if *actual != expected_arr {
-                    appendln(out, &format!("  MISMATCH row {i}"));
-                    ok = false;
-                }
+            if let ArrayValue::Float32(actual) = arr
+                && *actual != expected_arr
+            {
+                appendln(out, &format!("  MISMATCH row {i}"));
+                ok = false;
             }
         }
         appendln(out, &format!("  all cells match: {ok}"));
@@ -1028,11 +1028,11 @@ fn demo_tiled_storage(out: &mut String) -> Result<(), TableError> {
             let base = (i * 10) as f32;
             let expected: Vec<f32> = (0..nelem).map(|k| base + k as f32).collect();
             let expected_arr = ndarray::Array::from_shape_vec(IxDyn(shape).f(), expected).unwrap();
-            if let ArrayValue::Float32(actual) = arr {
-                if *actual != expected_arr {
-                    appendln(out, &format!("  MISMATCH row {i}"));
-                    ok = false;
-                }
+            if let ArrayValue::Float32(actual) = arr
+                && *actual != expected_arr
+            {
+                appendln(out, &format!("  MISMATCH row {i}"));
+                ok = false;
             }
         }
         appendln(out, &format!("  all cells match: {ok}"));
@@ -1082,11 +1082,11 @@ fn demo_tiled_storage(out: &mut String) -> Result<(), TableError> {
             let base = (i * 10) as f32;
             let expected: Vec<f32> = (0..nelem).map(|k| base + k as f32).collect();
             let expected_arr = ndarray::Array::from_shape_vec(IxDyn(shape).f(), expected).unwrap();
-            if let ArrayValue::Float32(actual) = arr {
-                if *actual != expected_arr {
-                    appendln(out, &format!("  MISMATCH row {i}"));
-                    ok = false;
-                }
+            if let ArrayValue::Float32(actual) = arr
+                && *actual != expected_arr
+            {
+                appendln(out, &format!("  MISMATCH row {i}"));
+                ok = false;
             }
         }
         appendln(out, &format!("  all cells match: {ok}"));
@@ -1192,10 +1192,10 @@ fn demo_virtual_columns(out: &mut String) -> Result<(), TableError> {
             }
             let got_data = reopened.cell_accessor(i, "data")?.array()?;
             let expected = Array::from_shape_vec(IxDyn(&[3]), arr.to_vec()).unwrap();
-            if let ArrayValue::Float32(v) = got_data {
-                if *v != expected {
-                    ok = false;
-                }
+            if let ArrayValue::Float32(v) = got_data
+                && *v != expected
+            {
+                ok = false;
             }
             if !reopened.is_virtual_column("id") {
                 ok = false;

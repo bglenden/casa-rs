@@ -1528,7 +1528,7 @@ impl MeasurementSetWriteSession {
             )));
         }
         sent_rows
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |sent| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |sent| {
                 sent.checked_add(batch_rows)
                     .filter(|total| *total <= self.plan.row_count)
             })
@@ -2459,7 +2459,9 @@ mod tests {
         assert!(plan.batch_rows > 0);
         assert!(
             plan.batch_rows == plan.row_count
-                || plan.batch_rows % plan.visibility_tile_shape[2] == 0
+                || plan
+                    .batch_rows
+                    .is_multiple_of(plan.visibility_tile_shape[2])
         );
         assert!(plan.maximum_resident_bytes <= 64 * 1024 * 1024);
         assert!(plan.queue_capacity <= 2);

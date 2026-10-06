@@ -1426,7 +1426,7 @@ fn decode_array_value(
 
 fn decode_complex32_values(raw: &[u8], nelem: usize, big_endian: bool) -> Vec<Complex32> {
     let mut values = Vec::with_capacity(nelem);
-    for chunk in raw[..nelem * 8].chunks_exact(8) {
+    for chunk in raw[..nelem * 8].as_chunks::<8>().0 {
         values.push(decode_complex32_scalar(chunk, big_endian));
     }
     values
@@ -1478,7 +1478,7 @@ fn decode_complex64_scalar(raw: &[u8], big_endian: bool) -> Complex64 {
 
 fn decode_complex64_values(raw: &[u8], nelem: usize, big_endian: bool) -> Vec<Complex64> {
     let mut values = Vec::with_capacity(nelem);
-    for chunk in raw[..nelem * 16].chunks_exact(16) {
+    for chunk in raw[..nelem * 16].as_chunks::<16>().0 {
         values.push(decode_complex64_scalar(chunk, big_endian));
     }
     values
@@ -5487,7 +5487,7 @@ impl StreamingTiledPrimitiveWriter {
             let rows = remaining.min(self.rows_per_tile - row_in_tile);
             self.rows_written += rows;
             remaining -= rows;
-            if self.rows_written % self.rows_per_tile == 0 {
+            if self.rows_written.is_multiple_of(self.rows_per_tile) {
                 self.flush_tile_row_block()?;
             }
         }
@@ -5559,7 +5559,7 @@ impl StreamingTiledPrimitiveWriter {
             self.fill_rows_into_tile_buffers(row_in_tile, rows, 1);
             self.rows_written += rows;
             remaining -= rows;
-            if self.rows_written % self.rows_per_tile == 0 {
+            if self.rows_written.is_multiple_of(self.rows_per_tile) {
                 self.flush_tile_row_block()?;
             }
         }
@@ -5642,7 +5642,7 @@ impl StreamingTiledPrimitiveWriter {
                 }
                 self.rows_written += batch_rows;
                 source_start += batch_rows;
-                if self.rows_written % self.rows_per_tile == 0 {
+                if self.rows_written.is_multiple_of(self.rows_per_tile) {
                     self.flush_tile_row_block()?;
                 }
             }
@@ -5771,7 +5771,7 @@ impl StreamingTiledPrimitiveWriter {
             debug_assert_eq!(end, start + rows * row_bytes);
             self.rows_written += rows;
             remaining -= rows;
-            if self.rows_written % self.rows_per_tile == 0 {
+            if self.rows_written.is_multiple_of(self.rows_per_tile) {
                 self.flush_tile_row_block()?;
             }
         }
@@ -5890,7 +5890,7 @@ impl StreamingTiledPrimitiveWriter {
                 self.rows_written, self.row_count
             )));
         }
-        if self.rows_written > 0 && self.rows_written % self.rows_per_tile != 0 {
+        if self.rows_written > 0 && !self.rows_written.is_multiple_of(self.rows_per_tile) {
             self.flush_tile_row_block()?;
         }
         let write_started = Instant::now();
@@ -6365,7 +6365,7 @@ impl StreamingTiledShapeComplex32Writer {
             }
             self.rows_written += rows;
             remaining -= rows;
-            if self.rows_written % self.rows_per_tile == 0 {
+            if self.rows_written.is_multiple_of(self.rows_per_tile) {
                 self.flush_tile_row_block()?;
             }
         }
@@ -6408,7 +6408,7 @@ impl StreamingTiledShapeComplex32Writer {
                 self.rows_written, self.row_count
             )));
         }
-        if self.rows_written > 0 && self.rows_written % self.rows_per_tile != 0 {
+        if self.rows_written > 0 && !self.rows_written.is_multiple_of(self.rows_per_tile) {
             self.flush_tile_row_block()?;
         }
         let write_started = Instant::now();
@@ -8788,12 +8788,11 @@ fn save_tiled_cell_stman(
                 let dt = col_data_types[col_idx];
                 let elem_size = tile_element_size(dt);
                 let mut cube_bytes = vec![0u8; cell_nelem * elem_size];
-                if let Some(value) = row.get(&col_desc.col_name) {
-                    if let Ok((encoded, _)) = encode_array_value(value, big_endian) {
-                        if encoded.len() == cube_bytes.len() {
-                            cube_bytes = encoded;
-                        }
-                    }
+                if let Some(value) = row.get(&col_desc.col_name)
+                    && let Ok((encoded, _)) = encode_array_value(value, big_endian)
+                    && encoded.len() == cube_bytes.len()
+                {
+                    cube_bytes = encoded;
                 }
                 cube_bytes
             })
@@ -10846,26 +10845,24 @@ impl TiledFileIO {
                             let is_dirty = tile_index < self.nr_tiles && flat.dirty[tile_index];
                             if is_dirty && run_start.is_none() {
                                 run_start = Some(tile_index);
-                            } else if !is_dirty {
-                                if let Some(start) = run_start {
-                                    let byte_start = self.file_offset + start * tile_bytes;
-                                    let src_start = start * tile_bytes;
-                                    let src_end = tile_index * tile_bytes;
-                                    f.seek(SeekFrom::Start(byte_start as u64))?;
-                                    f.write_all(&flat.data[src_start..src_end])?;
-                                    self.stats.flat_flush_write_tiles = self
-                                        .stats
-                                        .flat_flush_write_tiles
-                                        .saturating_add(tile_index.saturating_sub(start));
-                                    self.stats.flat_flush_write_bytes = self
-                                        .stats
-                                        .flat_flush_write_bytes
-                                        .saturating_add(src_end.saturating_sub(src_start));
-                                    for written_tile in start..tile_index {
-                                        self.tile_on_disk[written_tile] = true;
-                                    }
-                                    run_start = None;
+                            } else if !is_dirty && let Some(start) = run_start {
+                                let byte_start = self.file_offset + start * tile_bytes;
+                                let src_start = start * tile_bytes;
+                                let src_end = tile_index * tile_bytes;
+                                f.seek(SeekFrom::Start(byte_start as u64))?;
+                                f.write_all(&flat.data[src_start..src_end])?;
+                                self.stats.flat_flush_write_tiles = self
+                                    .stats
+                                    .flat_flush_write_tiles
+                                    .saturating_add(tile_index.saturating_sub(start));
+                                self.stats.flat_flush_write_bytes = self
+                                    .stats
+                                    .flat_flush_write_bytes
+                                    .saturating_add(src_end.saturating_sub(src_start));
+                                for written_tile in start..tile_index {
+                                    self.tile_on_disk[written_tile] = true;
                                 }
+                                run_start = None;
                             }
                         }
                     }
@@ -11069,14 +11066,14 @@ impl TiledFileIO {
             || shape[0] != self.cube_shape[0]
             || shape[1] != self.cube_shape[1]
             || shape[2] != self.cube_shape[2]
-            || shape[0] % self.tile_shape[0] != 0
-            || shape[1] % self.tile_shape[1] != 0
+            || !shape[0].is_multiple_of(self.tile_shape[0])
+            || !shape[1].is_multiple_of(self.tile_shape[1])
         {
             return Ok(false);
         }
         for d in 0..ndim {
             if start[d].saturating_add(shape[d]) > self.cube_shape[d]
-                || start[d] % self.tile_shape[d] != 0
+                || !start[d].is_multiple_of(self.tile_shape[d])
             {
                 return Ok(false);
             }
@@ -11217,14 +11214,14 @@ impl TiledFileIO {
             || shape[0] != self.cube_shape[0]
             || shape[1] != self.cube_shape[1]
             || shape[2] != self.cube_shape[2]
-            || shape[0] % self.tile_shape[0] != 0
-            || shape[1] % self.tile_shape[1] != 0
+            || !shape[0].is_multiple_of(self.tile_shape[0])
+            || !shape[1].is_multiple_of(self.tile_shape[1])
         {
             return Ok(false);
         }
         for d in 0..ndim {
             if start[d].saturating_add(shape[d]) > self.cube_shape[d]
-                || start[d] % self.tile_shape[d] != 0
+                || !start[d].is_multiple_of(self.tile_shape[d])
             {
                 return Ok(false);
             }
@@ -12586,13 +12583,13 @@ fn tile_as_typed_mut<T: TilePixel>(bytes: &mut [u8]) -> &mut [T] {
 fn swap_bytes_inplace(data: &mut [u8], component_size: usize) {
     match component_size {
         4 => {
-            for chunk in data.chunks_exact_mut(4) {
+            for chunk in data.as_chunks_mut::<4>().0 {
                 chunk.swap(0, 3);
                 chunk.swap(1, 2);
             }
         }
         8 => {
-            for chunk in data.chunks_exact_mut(8) {
+            for chunk in data.as_chunks_mut::<8>().0 {
                 chunk.swap(0, 7);
                 chunk.swap(1, 6);
                 chunk.swap(2, 5);
@@ -12651,7 +12648,7 @@ mod tests {
     use crate::{ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema};
 
     fn make_bool_tile_pattern(base: usize) -> Vec<bool> {
-        (0..4).map(|i| (base + i) % 3 == 0).collect()
+        (0..4).map(|i| (base + i).is_multiple_of(3)).collect()
     }
 
     fn shared_table_cache_test_guard() -> std::sync::MutexGuard<'static, ()> {
@@ -12703,7 +12700,9 @@ mod tests {
             .expect("encode row");
 
         let decoded = encoded
-            .chunks_exact(8)
+            .as_chunks::<8>()
+            .0
+            .iter()
             .map(|chunk| {
                 let re = f32::from_le_bytes(chunk[0..4].try_into().unwrap());
                 let im = f32::from_le_bytes(chunk[4..8].try_into().unwrap());
@@ -13139,7 +13138,9 @@ mod tests {
         )
         .expect("reconstruct bool cube");
         let actual = raw
-            .chunks_exact(6)
+            .as_chunks::<6>()
+            .0
+            .iter()
             .map(|row| row.iter().map(|&value| value != 0).collect::<Vec<_>>())
             .collect::<Vec<_>>();
         assert_eq!(actual, expected);

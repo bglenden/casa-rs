@@ -2297,7 +2297,7 @@ mod tests {
                     }
                     bytes[16..20].copy_from_slice(&1.25_f32.to_ne_bytes());
                     bytes[20..24].copy_from_slice(&(-0.5_f32).to_ne_bytes());
-                    for value in bytes[64..92].chunks_exact_mut(4) {
+                    for value in bytes[64..92].as_chunks_mut::<4>().0 {
                         value.copy_from_slice(&1.0_f32.to_ne_bytes());
                     }
                 })
@@ -2420,10 +2420,10 @@ mod tests {
                     }));
                     bytes[96..100].copy_from_slice(&50.0_f32.to_ne_bytes());
                     bytes[104..108].copy_from_slice(&1.0_f32.to_ne_bytes());
-                    for weight in bytes[128..156].chunks_exact_mut(4) {
+                    for weight in bytes[128..156].as_chunks_mut::<4>().0 {
                         weight.copy_from_slice(&1.0_f32.to_ne_bytes());
                     }
-                    for cell in bytes[256..2304].chunks_exact_mut(8) {
+                    for cell in bytes[256..2304].as_chunks_mut::<8>().0 {
                         cell[..4].copy_from_slice(&1.0_f32.to_ne_bytes());
                     }
                 })
@@ -2660,7 +2660,7 @@ mod tests {
                 }));
                 bytes[40..48]
                     .copy_from_slice(bytemuck::bytes_of(&DeviceNormalGroup { start: 0, end: 1 }));
-                for weight in bytes[64..64 + weights_bytes].chunks_exact_mut(4) {
+                for weight in bytes[64..64 + weights_bytes].as_chunks_mut::<4>().0 {
                     weight.copy_from_slice(&1.0_f32.to_ne_bytes());
                 }
             })

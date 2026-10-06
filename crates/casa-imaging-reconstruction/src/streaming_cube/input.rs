@@ -429,7 +429,10 @@ impl NativeInput {
         mut emit: impl FnMut(&NativeBlock) -> io::Result<()>,
     ) -> io::Result<(u64, NativeLayout)> {
         let row_samples = self.block.channels * self.block.correlations;
-        if self.failed || self.next % row_samples != 0 || (self.rows == 0 && self.next == 0) {
+        if self.failed
+            || !self.next.is_multiple_of(row_samples)
+            || (self.rows == 0 && self.next == 0)
+        {
             return Err(invalid("failed, empty or incomplete native input"));
         }
         if self.next != 0 {

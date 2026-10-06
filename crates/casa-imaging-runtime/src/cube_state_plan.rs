@@ -107,7 +107,7 @@ impl CubeStatePlan {
         };
         let [width, height] = domain.pixels();
         let cells = width.checked_mul(height).ok_or_else(overflow)?;
-        if cells == 0 || workers == 0 || shape.sample_count() % cells != 0 {
+        if cells == 0 || workers == 0 || !shape.sample_count().is_multiple_of(cells) {
             return Err(overflow());
         }
         let planes = shape.sample_count() / cells;

@@ -32,7 +32,7 @@ static NEXT_REPLAY_OWNER: AtomicU64 = AtomicU64::new(1);
 
 fn next_owner(counter: &AtomicU64) -> Result<u64, WeightingError> {
     counter
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
             value.checked_add(1)
         })
         .map_err(|_| WeightingError::ReplayIdentityExhausted)

@@ -1222,10 +1222,10 @@ fn plane_axis_ticks(
     if axis.sampled_len == 0 || geometry_len == 0 {
         return Vec::new();
     }
-    if let Some(ticks) = plane_axis_nice_ticks(axis, probe, geometry_len, reverse) {
-        if !ticks.is_empty() {
-            return ticks;
-        }
+    if let Some(ticks) = plane_axis_nice_ticks(axis, probe, geometry_len, reverse)
+        && !ticks.is_empty()
+    {
+        return ticks;
     }
     let tick_count: usize = if geometry_len >= 520 {
         5

@@ -810,15 +810,14 @@ impl Table {
                             table_dat.big_endian,
                         )?)
                     };
-                    if let Some(dm_data) = dm_data {
-                        if let Some(entry) = table_dat
+                    if let Some(dm_data) = dm_data
+                        && let Some(entry) = table_dat
                             .column_set
                             .data_managers
                             .iter_mut()
                             .find(|entry| entry.seq_nr == group.seq_nr)
-                        {
-                            entry.data = dm_data;
-                        }
+                    {
+                        entry.data = dm_data;
                     }
                 }
                 "TiledColumnStMan" | "TiledShapeStMan" | "TiledCellStMan" | "TiledDataStMan" => {

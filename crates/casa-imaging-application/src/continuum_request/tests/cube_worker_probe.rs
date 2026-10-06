@@ -393,7 +393,7 @@ fn fixed_nonzero_residual() {
         if let Some(baseline) = &mut baseline {
             baseline.read_exact(&mut bytes).unwrap();
         }
-        for (value, cell) in values.iter().zip(bytes.chunks_exact_mut(16)) {
+        for (value, cell) in values.iter().zip(bytes.as_chunks_mut::<16>().0) {
             assert!(value.re.is_finite() && value.im.is_finite());
             if baseline.is_some() {
                 let re = f64::from_le_bytes(cell[..8].try_into().unwrap());

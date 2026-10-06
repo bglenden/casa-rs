@@ -230,29 +230,29 @@ impl EpochBand<'_> {
                         continue;
                     }
                     refill.requested_predictions += 1;
-                    if unique[term.plane] == u32::MAX {
-                        if let Some(taps) = w.convolution.taps([
+                    if unique[term.plane] == u32::MAX
+                        && let Some(taps) = w.convolution.taps([
                             row.uvw_m[0] * term.wavelength_scale,
                             row.uvw_m[1] * term.wavelength_scale,
-                        ]) {
-                            let rotation = phase(row.phase_shift_m, term.frequency_hz).conj();
-                            unique[term.plane] = refill.counts[0]
-                                .try_into()
-                                .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
-                            *refill
-                                .predictions
-                                .get_mut(refill.counts[0])
-                                .ok_or(SpectralOperatorError::ResidencyOverflow)? =
-                                ResidualPrediction {
-                                    tap: SpatialTap::new(
-                                        taps,
-                                        Complex32::new(rotation.re as f32, rotation.im as f32),
-                                    )?,
-                                    plane: term.plane as u32,
-                                    padding: 0,
-                                };
-                            refill.counts[0] += 1;
-                        }
+                        ])
+                    {
+                        let rotation = phase(row.phase_shift_m, term.frequency_hz).conj();
+                        unique[term.plane] = refill.counts[0]
+                            .try_into()
+                            .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
+                        *refill
+                            .predictions
+                            .get_mut(refill.counts[0])
+                            .ok_or(SpectralOperatorError::ResidencyOverflow)? =
+                            ResidualPrediction {
+                                tap: SpatialTap::new(
+                                    taps,
+                                    Complex32::new(rotation.re as f32, rotation.im as f32),
+                                )?,
+                                plane: term.plane as u32,
+                                padding: 0,
+                            };
+                        refill.counts[0] += 1;
                     }
                     refill.native[first + channel].indices[index] = unique[term.plane];
                     refill.native[first + channel].factors[index] = term.factor as f32;

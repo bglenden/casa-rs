@@ -2572,13 +2572,13 @@ fn resolve_mask_table_path(image_path: &Path, stored_path: &str) -> PathBuf {
         return stored;
     }
 
-    if let Some(image_name) = image_path.file_name() {
-        if stored.starts_with(Path::new(image_name)) {
-            return image_path
-                .parent()
-                .map(|parent| parent.join(&stored))
-                .unwrap_or(stored);
-        }
+    if let Some(image_name) = image_path.file_name()
+        && stored.starts_with(Path::new(image_name))
+    {
+        return image_path
+            .parent()
+            .map(|parent| parent.join(&stored))
+            .unwrap_or(stored);
     }
 
     image_path.join(stored)

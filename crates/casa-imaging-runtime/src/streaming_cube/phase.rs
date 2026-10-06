@@ -532,23 +532,23 @@ fn plan_with_cache_reclaim(
         }
         Err(error) => return Err(error),
     };
-    if plan.workspace_bytes < plan.worker_wave_bytes {
-        if let Some(run) = run {
-            let current = run.residency.limit_bytes();
-            let target = cache_target_for_worker_wave(
-                current,
-                minimum,
-                plan.workspace_bytes,
-                plan.worker_wave_bytes,
-            )?
-            .expect("worker wave is short of workspace");
-            run.shrink_cache_to(target)?;
-            eprintln!(
-                "streaming_cube_cache_reclaimed ordinal={ordinal} previous_bytes={current} retained_bytes={target} returned_bytes={}",
-                current - target
-            );
-            plan = plan_native()?;
-        }
+    if plan.workspace_bytes < plan.worker_wave_bytes
+        && let Some(run) = run
+    {
+        let current = run.residency.limit_bytes();
+        let target = cache_target_for_worker_wave(
+            current,
+            minimum,
+            plan.workspace_bytes,
+            plan.worker_wave_bytes,
+        )?
+        .expect("worker wave is short of workspace");
+        run.shrink_cache_to(target)?;
+        eprintln!(
+            "streaming_cube_cache_reclaimed ordinal={ordinal} previous_bytes={current} retained_bytes={target} returned_bytes={}",
+            current - target
+        );
+        plan = plan_native()?;
     }
     if plan.workspace_bytes < plan.worker_wave_bytes {
         return Err(io::Error::other(format!(

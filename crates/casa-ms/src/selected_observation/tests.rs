@@ -404,7 +404,7 @@ fn t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles() {
 
     let mut minimum = [f64::INFINITY; 2];
     let mut maximum = [f64::NEG_INFINITY; 2];
-    for row_samples in samples.chunks_exact(4) {
+    for row_samples in samples.as_chunks::<4>().0 {
         let expected = row_samples[0].coordinates.parallactic_angles_rad.unwrap();
         assert!(expected.iter().all(|angle| angle.is_finite()));
         assert!(
@@ -4174,7 +4174,9 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
     );
     assert_eq!(
         one_row_samples
-            .chunks_exact(8)
+            .as_chunks::<8>()
+            .0
+            .iter()
             .map(|samples| samples[0].0.address.measurement_set)
             .collect::<Vec<_>>(),
         problem

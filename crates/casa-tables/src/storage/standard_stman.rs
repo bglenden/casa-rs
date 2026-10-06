@@ -1336,7 +1336,7 @@ fn copy_ssm_required_scalar_range(
             if big_endian == cfg!(target_endian = "big") {
                 scalar_slice_as_bytes_mut(output).copy_from_slice(source);
             } else {
-                for (value, bytes) in output.iter_mut().zip(source.chunks_exact(4)) {
+                for (value, bytes) in output.iter_mut().zip(source.as_chunks::<4>().0) {
                     *value = read_i32_canonical(bytes, big_endian);
                 }
             }
@@ -1348,7 +1348,7 @@ fn copy_ssm_required_scalar_range(
             if big_endian == cfg!(target_endian = "big") {
                 scalar_slice_as_bytes_mut(output).copy_from_slice(source);
             } else {
-                for (value, bytes) in output.iter_mut().zip(source.chunks_exact(4)) {
+                for (value, bytes) in output.iter_mut().zip(source.as_chunks::<4>().0) {
                     *value = if big_endian {
                         read_f32_be(bytes)
                     } else {
@@ -1364,7 +1364,7 @@ fn copy_ssm_required_scalar_range(
             if big_endian == cfg!(target_endian = "big") {
                 scalar_slice_as_bytes_mut(output).copy_from_slice(source);
             } else {
-                for (value, bytes) in output.iter_mut().zip(source.chunks_exact(8)) {
+                for (value, bytes) in output.iter_mut().zip(source.as_chunks::<8>().0) {
                     *value = if big_endian {
                         read_f64_be(bytes)
                     } else {

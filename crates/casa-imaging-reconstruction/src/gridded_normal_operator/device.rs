@@ -248,7 +248,9 @@ impl DeviceNormalApply {
         let mut group = group_offset;
         let mut start = record_offset;
         for (ordinal, encoded) in encoded
-            .chunks_exact(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
+            .as_chunks::<GRIDDED_NORMAL_OPERATOR_RECORD_BYTES>()
+            .0
+            .iter()
             .enumerate()
         {
             let decoded = decode_record_for_shape(encoded, shape, 1)?;

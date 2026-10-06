@@ -860,7 +860,6 @@ backend selection available.
 
 ## Known current gaps / debt
 
-- GitHub Project/issue adoption is now the planning source of truth, but older `docs/Planning/` material still exists and may need incremental retirement or summarization.
 - `just` provides a stable command vocabulary, but some contributors may still use the underlying `cargo` and `scripts/*` commands directly until it is installed locally.
 - Imaging capabilities whose authoritative tickets have not landed are
   `TemporarilyUnavailable`; `casa-imaging-application` returns typed installed-

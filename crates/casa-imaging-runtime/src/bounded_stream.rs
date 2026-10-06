@@ -2102,7 +2102,7 @@ where
                             return;
                         }
                         if ready_queue_capacity > 0 {
-                            let current_queued = match producer_ready_current_bytes.fetch_update(
+                            let current_queued = match producer_ready_current_bytes.try_update(
                                 Ordering::AcqRel,
                                 Ordering::Acquire,
                                 |bytes| bytes.checked_add(resident_current_bytes),
@@ -2113,7 +2113,7 @@ where
                                     return;
                                 }
                             };
-                            let capacity_queued = match producer_ready_capacity_bytes.fetch_update(
+                            let capacity_queued = match producer_ready_capacity_bytes.try_update(
                                 Ordering::AcqRel,
                                 Ordering::Acquire,
                                 |bytes| bytes.checked_add(resident_capacity_bytes),
@@ -2271,12 +2271,12 @@ where
                     if ready_queue_capacity > 0 {
                         ready_count.fetch_sub(1, Ordering::AcqRel);
                         if ready_current_bytes
-                            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |bytes| {
+                            .try_update(Ordering::AcqRel, Ordering::Acquire, |bytes| {
                                 bytes.checked_sub(lease.resident_current_bytes)
                             })
                             .is_err()
                             || ready_capacity_bytes
-                                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |bytes| {
+                                .try_update(Ordering::AcqRel, Ordering::Acquire, |bytes| {
                                     bytes.checked_sub(lease.resident_capacity_bytes)
                                 })
                                 .is_err()

@@ -11,24 +11,6 @@ use casa_imaging_model::{
 use smallvec::SmallVec;
 use thiserror::Error;
 
-/// The next representable value toward positive infinity, including subnormals.
-/// This is the bit-exact `f64::next_up` operation for the Rust 1.85 MSRV.
-pub(crate) fn next_f64_up(value: f64) -> f64 {
-    if value.is_nan() || value == f64::INFINITY {
-        return value;
-    }
-    if value == 0.0 {
-        return f64::from_bits(1);
-    }
-    let bits = value.to_bits();
-    f64::from_bits(if value > 0.0 { bits + 1 } else { bits - 1 })
-}
-
-/// The next representable value toward negative infinity, preserving NaN bits.
-pub(crate) fn next_f64_down(value: f64) -> f64 {
-    -next_f64_up(-value)
-}
-
 /// Keep the observed/predicted pair interpolation in the same arithmetic order.
 pub(crate) fn interpolate_complex_pair(
     left: num_complex::Complex64,
@@ -1216,8 +1198,8 @@ mod tests {
             (f64::INFINITY, f64::MAX, f64::INFINITY),
             (f64::NEG_INFINITY, f64::NEG_INFINITY, -f64::MAX),
         ] {
-            assert_eq!(next_f64_down(value).to_bits(), down.to_bits());
-            assert_eq!(next_f64_up(value).to_bits(), up.to_bits());
+            assert_eq!(f64::next_down(value).to_bits(), down.to_bits());
+            assert_eq!(f64::next_up(value).to_bits(), up.to_bits());
         }
         for bits in [
             0x7ff8_0000_0000_0001,
@@ -1225,8 +1207,8 @@ mod tests {
             0x7ff0_0000_0000_0001,
         ] {
             let value = f64::from_bits(bits);
-            assert_eq!(next_f64_down(value).to_bits(), bits);
-            assert_eq!(next_f64_up(value).to_bits(), bits);
+            assert_eq!(f64::next_down(value).to_bits(), bits);
+            assert_eq!(f64::next_up(value).to_bits(), bits);
         }
     }
 
@@ -1290,9 +1272,9 @@ mod tests {
                     for target in [0, 1, count / 2, count - 1, count] {
                         let centre = grid.fine_frequency_hz(target);
                         for left in [
-                            next_f64_down(centre),
+                            f64::next_down(centre),
                             centre,
-                            next_f64_up(centre),
+                            f64::next_up(centre),
                             centre + 0.25 * native_increment,
                         ] {
                             for start in [0, target / 2, target.min(count), count] {

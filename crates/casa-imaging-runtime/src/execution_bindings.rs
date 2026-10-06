@@ -3757,17 +3757,16 @@ fn validate_measurements(
             });
         }
     }
-    if require_complete {
-        if let Some(((resource, lifetime), _)) = claims
+    if require_complete
+        && let Some(((resource, lifetime), _)) = claims
             .iter()
             .find(|(key, _)| !measured_claims.contains_key(*key))
-        {
-            return Err(ExecutionEvidenceError::MissingResource {
-                node: node.clone(),
-                resource: resource.clone(),
-                lifetime: lifetime.clone(),
-            });
-        }
+    {
+        return Err(ExecutionEvidenceError::MissingResource {
+            node: node.clone(),
+            resource: resource.clone(),
+            lifetime: lifetime.clone(),
+        });
     }
 
     let predicted_io = plan.prediction.stages[node]
@@ -3793,16 +3792,15 @@ fn validate_measurements(
             });
         }
     }
-    if require_complete {
-        if let Some(kind) = predicted_io
+    if require_complete
+        && let Some(kind) = predicted_io
             .keys()
             .find(|kind| !measured_io.contains_key(kind))
-        {
-            return Err(ExecutionEvidenceError::MissingIo {
-                node: node.clone(),
-                kind: *kind,
-            });
-        }
+    {
+        return Err(ExecutionEvidenceError::MissingIo {
+            node: node.clone(),
+            kind: *kind,
+        });
     }
 
     let planned_artifacts = plan

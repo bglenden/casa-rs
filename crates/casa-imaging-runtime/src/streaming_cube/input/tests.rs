@@ -27,7 +27,11 @@ fn fill(block: &mut NativeBlock, first_row: u64) {
     for (row, metadata) in block.metadata.iter_mut().enumerate() {
         let source_row = first_row + row as u64;
         let start = 1e9 + source_row as f64 * 0.25e6;
-        let step = if source_row % 2 == 0 { 1e6 } else { -1e6 };
+        let step = if source_row.is_multiple_of(2) {
+            1e6
+        } else {
+            -1e6
+        };
         *metadata = RowMetadata {
             physical_row: source_row * 2 + 100,
             uvw_m: [source_row as f64 * -0.5, 2.0, -3.2],
