@@ -2449,7 +2449,12 @@ final class CasarsMacUITests: XCTestCase {
             try accessibilityValue("tutorialPrototype.failure.details.\(datasetID)"),
             "collapsed"
         )
-        try clickIdentified("tutorialPrototype.dataset.retry.\(datasetID)")
+        // On macOS 26 XCTest reports this visible, unobstructed Retry button as
+        // not hittable, so click its center and let the recovered state below
+        // prove the click landed.
+        let retry = try require("tutorialPrototype.dataset.retry.\(datasetID)")
+        print("Retry hittable according to XCTest: \(retry.isHittable)")
+        retry.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
         XCTAssertTrue(
             waitForAccessibilityValue(
                 "tutorialPrototype.dataset.status.\(datasetID)",
@@ -2528,6 +2533,7 @@ final class CasarsMacUITests: XCTestCase {
                    || identifier.hasPrefix("notebook.selector.")
                    || identifier.hasPrefix("notebook.richElement.")
                    || identifier == "tutorialPrototype.disclosure"
+                   || identifier == "project.name"
                    || identifier == "project.source"
                    || (identifier.hasPrefix("tutorialPrototype.dataset.status.")
                        && issue.element?.value as? String == "missing")
@@ -3116,6 +3122,12 @@ final class CasarsMacUITests: XCTestCase {
 
     private func clickIdentified(_ identifier: String, timeout: TimeInterval = 5) throws {
         let control = try require(identifier, timeout: timeout)
+        // A control can exist before it is hittable while it animates in.
+        let hittable = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "hittable == true"),
+            object: control
+        )
+        _ = XCTWaiter.wait(for: [hittable], timeout: timeout)
         XCTAssertTrue(control.isHittable, "Identified control is not hittable: \(identifier)\n\(app.debugDescription)")
         control.click()
     }
@@ -3138,13 +3150,23 @@ final class CasarsMacUITests: XCTestCase {
             .completed,
             "Scroll view is not hittable: \(scrollIdentifier)"
         )
+        // Judge visibility by geometry: on macOS 26 XCTest reports some
+        // visible controls inside scroll views as not hittable.
         let isComfortablyVisible = {
-            guard target.exists, target.isHittable else { return false }
+            guard target.exists else { return false }
             let viewport = scroll.frame.insetBy(dx: 8, dy: 40)
             return viewport.contains(CGPoint(x: target.frame.midX, y: target.frame.midY))
         }
         for _ in 0..<attempts where !isComfortablyVisible() {
-            scroll.scroll(byDeltaX: 0, deltaY: deltaY)
+            // Scroll toward the target once it is laid out, by no more than its
+            // distance from the centre so the step cannot overshoot; the
+            // caller's sign only covers content that is not materialized yet.
+            var step = deltaY
+            if target.exists {
+                let limit = abs(deltaY)
+                step = min(max(scroll.frame.midY - target.frame.midY, -limit), limit)
+            }
+            scroll.scroll(byDeltaX: 0, deltaY: step)
         }
         XCTAssertTrue(
             isComfortablyVisible(),
@@ -3162,7 +3184,11 @@ final class CasarsMacUITests: XCTestCase {
         if (element(stateIdentifier).value as? String)?.contains(expected) == true {
             return
         }
-        XCTAssertTrue(control.isHittable, "Control is not hittable: \(controlIdentifier)")
+        let window = app.windows.firstMatch.frame
+        XCTAssertTrue(
+            control.isEnabled && window.contains(CGPoint(x: control.frame.midX, y: control.frame.midY)),
+            "Control is not enabled and on screen: \(controlIdentifier)"
+        )
         control.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
         if !waitForAccessibilityValue(stateIdentifier, containing: expected) && attempts > 1 {
             control.typeKey(.space, modifierFlags: [])

@@ -122,11 +122,10 @@ The retained result bundle is
 `apps/casars-mac/.gui-test/CasarsMacUITests.xcresult`; failing workflows attach
 an app screenshot and accessibility hierarchy there, and the harness writes
 `gui-test.evidence.json` beside it. Delete `.gui-test/` to
-force a clean Xcode build. The gate was established locally with Xcode 26.2
-(17C52) on macOS 26.5.2 arm64. Pull-request CI runs the same command on the
-supported `macos-15` runner, selects Xcode 26.2 explicitly so its compiler
-matches the established local gate, and uploads the result bundle whether the
-job passes or fails.
+force a clean Xcode build. Pull-request CI runs the same command on the
+`macos-26` runner with Xcode 26.6 selected explicitly (the newest Xcode on
+GitHub-hosted runners; local development may be on a newer Xcode), and uploads
+the result bundle whether the job passes or fails.
 
 The app shell keeps left dock collapse/restore, inspector restore,
 command/search routing, dock mode selection, Python ownership, and task/AI
