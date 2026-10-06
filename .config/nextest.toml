@@ -1,0 +1,6 @@
+# cargo-nextest runs each test in its own process, so process-global state
+# (such as the imager progress observer) needs no test-level serialization.
+
+[profile.ci]
+# Report every failure in one CI run instead of stopping at the first.
+fail-fast = false
