@@ -19,6 +19,10 @@ env:
 jobs:
   lint_test:
     runs-on: ubuntu-latest
+    env:
+      # Line tables keep file:line in panic backtraces while avoiding full
+      # debug info in ~130 linked test binaries.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -45,9 +49,6 @@ jobs:
 
       - name: Lint
         run: cargo clippy --workspace --all-targets -- -D warnings
-
-      - name: Free lint build artifacts
-        run: cargo clean
 
       - name: Install explicit measures runtime for integration tests
         run: |
