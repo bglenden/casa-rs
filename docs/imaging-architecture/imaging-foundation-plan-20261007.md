@@ -1,10 +1,11 @@
 # Imaging foundation: review and phased refactor plan
 
-Truth class: proposed normative plan (becomes normative on owner approval)
+Truth class: normative plan
 Date: 2026-10-07
 Branch: `claude/imaging-foundation` (cut from `codex/t55-full-size-validation`
 at `e714fd2339`)
-Status: DRAFT, awaiting owner approval
+Status: APPROVED by the owner on 2026-10-07 (decisions D1–D10 and closure of
+the #486 family included)
 Reviewed sources: six read-only deep dives over the imaging crates, the
 RadioAstronomyOracle corpus (NRAO 2024/2026 synthesis workshop slides,
 Synthesis Imaging II), CASA `synthesis/` C++, LibRA/HPG, and issues #486,
@@ -118,7 +119,7 @@ unless the owner strikes one.
   that links this plan, the final T55 commit, the durable evidence roots on
   GLENDENNING and the NAS, and the IF ticket that inherits its outcome. #625
   closes into IF-10 (its serial AW/MT-MFS time bar becomes an IF-10
-  acceptance row). #341 closes into IF-5; #217 into IF-9. The VLASS wave
+  acceptance row). #341 closes into IF-5; #217 into IF-8. The VLASS wave
   #445–#450 stays open with a comment that IF-3/IF-10 are its route.
 - **D8 Request layer.** One `ImagingRequest` serde struct, defaulted and
   validated from the provider-contracts catalog, replaces `CliConfig`,
