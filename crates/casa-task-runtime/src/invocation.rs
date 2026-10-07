@@ -607,8 +607,8 @@ mod tests {
     }
 
     #[test]
-    fn simulator_auto_geometry_is_omitted_but_real_pairs_are_projected() {
-        let bundle = builtin_surface_bundle("simanalyze").unwrap();
+    fn auto_sentinel_is_omitted_but_a_real_value_is_projected() {
+        let bundle = builtin_surface_bundle("imexplore").unwrap();
         let mut session = ParameterSession::defaults(bundle).unwrap();
         let invocation = project_provider_invocation(&session, |_family, _values, direct| {
             Ok(ProviderInvocationAdaptation::direct(direct))
@@ -618,27 +618,11 @@ mod tests {
             !invocation
                 .args
                 .iter()
-                .any(|argument| argument == "--imsize")
+                .any(|argument| argument == "--movieaxis")
         );
-        assert!(!invocation.args.iter().any(|argument| argument == "--cell"));
 
         session
-            .set(
-                "imsize",
-                ParameterValue::Array(vec![
-                    ParameterValue::Integer(256),
-                    ParameterValue::Integer(128),
-                ]),
-            )
-            .unwrap();
-        session
-            .set(
-                "cell",
-                ParameterValue::Array(vec![
-                    ParameterValue::String("1arcsec".into()),
-                    ParameterValue::String("2arcsec".into()),
-                ]),
-            )
+            .set("movieaxis", ParameterValue::String("spectral".into()))
             .unwrap();
         let invocation = project_provider_invocation(&session, |_family, _values, direct| {
             Ok(ProviderInvocationAdaptation::direct(direct))
@@ -648,14 +632,53 @@ mod tests {
             invocation
                 .args
                 .windows(2)
-                .any(|pair| pair == ["--imsize", "256,128"])
+                .any(|pair| pair == ["--movieaxis", "spectral"])
         );
-        assert!(
-            invocation
-                .args
-                .windows(2)
-                .any(|pair| pair == ["--cell", "1arcsec,2arcsec"])
+    }
+
+    #[test]
+    fn real_geometry_pairs_are_projected_as_one_collection_argument() {
+        let pair = ParameterValue::Array(vec![
+            ParameterValue::Integer(256),
+            ParameterValue::Integer(128),
+        ]);
+        assert!(!parameter_value_is_omitted(
+            &pair,
+            Some(&ValueAdapter::OmitNone)
+        ));
+        assert_eq!(scalar_or_collection_string(&pair).unwrap(), "256,128");
+        let cell = ParameterValue::Array(vec![
+            ParameterValue::String("1arcsec".into()),
+            ParameterValue::String("2arcsec".into()),
+        ]);
+        assert_eq!(
+            scalar_or_collection_string(&cell).unwrap(),
+            "1arcsec,2arcsec"
         );
+    }
+
+    #[test]
+    fn omit_none_drops_scalar_and_collection_absence_sentinels_only() {
+        let omit = Some(&ValueAdapter::OmitNone);
+        let auto = || ParameterValue::String("auto".into());
+        assert!(parameter_value_is_omitted(&auto(), omit));
+        assert!(parameter_value_is_omitted(
+            &ParameterValue::String("none".into()),
+            omit
+        ));
+        assert!(parameter_value_is_omitted(
+            &ParameterValue::Array(vec![auto(), auto()]),
+            omit
+        ));
+        assert!(parameter_value_is_omitted(
+            &ParameterValue::Array(Vec::new()),
+            None
+        ));
+        assert!(!parameter_value_is_omitted(&auto(), None));
+        assert!(!parameter_value_is_omitted(
+            &ParameterValue::Array(vec![auto(), ParameterValue::String("1arcsec".into())]),
+            omit
+        ));
     }
 
     #[test]

@@ -53,6 +53,10 @@ When sources disagree: code/tests/CI > ADRs > ARCHITECTURE/TESTING > issues.
 - Before implementing casacore/CASA behaviour, read the upstream C++ and keep
   its semantics unless there is a stated reason to diverge. For parity
   differences, instrument both implementations; do not guess.
+- casa-rs tasks are native implementations. CASA is a test and evidence
+  oracle only; never ship a task, app, or surface that delegates to CASA
+  (casatasks, casatools, or a CASA install) at runtime
+  (`scripts/check-no-casa-runtime.py` enforces this).
 - Idiomatic Rust, not a C++ API mirror. Search for existing behaviour before
   adding code.
 - Crate names: `casa-*` for libraries, `casars-*` for apps and runtimes.

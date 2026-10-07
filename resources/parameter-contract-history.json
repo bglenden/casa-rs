@@ -2729,6 +2729,11 @@
       "fingerprint": "271973e482c9f80cfd7e5257a70fff82243ac9e05aa0e290b16621fd7d76e074"
     },
     {
+      "id": "plotcal",
+      "contract_version": 4,
+      "fingerprint": "49122b241da6bb61b1088aae5886772896c36500b195d440ac3c83a52b1f7da3"
+    },
+    {
       "id": "plotms",
       "contract_version": 1,
       "fingerprint": "a6cf65225d409aaf9badfcf8d232d36113430cbb208ff4ef5f5e968f0a98c012"
@@ -2792,6 +2797,11 @@
       "id": "simobserve",
       "contract_version": 3,
       "fingerprint": "8d23de0f9ea89994491bbb24d76783b506a86e72f41e1867398d27a43630e87d"
+    },
+    {
+      "id": "simobserve",
+      "contract_version": 4,
+      "fingerprint": "1f194ee4c981adf072722faa6e563ee2e3d96fc5788ed38c18e72cd2e7e11349"
     },
     {
       "id": "split",

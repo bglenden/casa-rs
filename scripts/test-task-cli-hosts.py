@@ -31,7 +31,7 @@ HOSTED_TASKS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("impv", ()),
     ("imregrid", ()),
     ("imsubimage", ()),
-    ("casars-casa-task", ("--task", "plotcal")),
+    ("casars-plotcal", ()),
 )
 
 

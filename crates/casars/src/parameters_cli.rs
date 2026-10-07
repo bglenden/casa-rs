@@ -820,27 +820,25 @@ mod tests {
     }
 
     #[test]
-    fn catalog_input_mutation_rules_gate_adapter_tasks() {
-        for surface in ["statwt", "clearcal", "delmod", "ft"] {
-            let bundle = builtin_surface_bundle(surface).unwrap();
-            let mut options = parse_surface_options(&bundle, &[], true).unwrap();
-            let session = ParameterRuntime::default()
-                .open_session(open_session_request(bundle, &options))
-                .unwrap();
-            let error = enforce_runtime_confirmations(&session, &options).unwrap_err();
-            assert!(error.contains("--confirm-mutation"), "{surface}: {error}");
-            options.confirm_mutation = true;
-            enforce_runtime_confirmations(&session, &options).unwrap();
-        }
+    fn catalog_input_mutation_rules_gate_mutating_tasks() {
+        let surface = "applycal";
+        let bundle = builtin_surface_bundle(surface).unwrap();
+        let mut options = parse_surface_options(&bundle, &[], true).unwrap();
+        let session = ParameterRuntime::default()
+            .open_session(open_session_request(bundle, &options))
+            .unwrap();
+        let error = enforce_runtime_confirmations(&session, &options).unwrap_err();
+        assert!(error.contains("--confirm-mutation"), "{surface}: {error}");
+        options.confirm_mutation = true;
+        enforce_runtime_confirmations(&session, &options).unwrap();
     }
 
     #[test]
     fn describe_uses_shared_concept_catalog() {
-        let text = describe("imsize").unwrap();
-        assert!(text.contains("image.geometry.imsize@r1"));
-        assert!(text.contains("imager"));
-        assert!(text.contains("simanalyze"));
-        assert!(text.contains("simalma"));
+        let text = describe("width").unwrap();
+        assert!(text.contains("ms.transform.width@r1"));
+        assert!(text.contains("mstransform"));
+        assert!(text.contains("split"));
     }
 
     #[test]

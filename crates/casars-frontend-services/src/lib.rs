@@ -9808,7 +9808,7 @@ mod tests {
     fn application_catalog_exposes_canonical_frontend_projection() {
         let catalog = application_catalog().expect("application catalog");
         let applications = catalog.applications;
-        assert_eq!(applications.len(), 42);
+        assert_eq!(applications.len(), 30);
         assert!(applications.iter().any(|application| {
             application.id == "imager"
                 && application.kind == "task"
@@ -9845,13 +9845,13 @@ mod tests {
         let catalog =
             casa_provider_contracts::builtin_surface_catalog().expect("parameter catalog");
         let surfaces = &catalog.surfaces;
-        assert_eq!(surfaces.len(), 41);
+        assert_eq!(surfaces.len(), 29);
         assert_eq!(
             surfaces
                 .iter()
                 .filter(|surface| surface.kind() == SurfaceKind::Task)
                 .count(),
-            39
+            27
         );
         assert_eq!(
             surfaces

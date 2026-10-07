@@ -661,7 +661,7 @@ mod tests {
             }
         }
         surfaces.sort();
-        assert_eq!(surfaces, ["imager", "simalma", "simanalyze"]);
+        assert_eq!(surfaces, ["imager"]);
     }
 
     #[test]
