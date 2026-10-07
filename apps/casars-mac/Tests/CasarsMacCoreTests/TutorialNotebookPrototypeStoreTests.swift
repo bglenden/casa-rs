@@ -50,16 +50,16 @@ final class TutorialNotebookPrototypeStoreTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(store.state.prototypeTutorial).learnerNotebook.isDirty)
 
         store.setTutorialPrototypeViewMode(.rich)
-        var richDocument = PrototypeNotebookRichDocument(
+        var richDocument = try PrototypeNotebookRichProjectionAdapter.document(
             markdown: try XCTUnwrap(
                 store.state.prototypeTutorial?.learnerNotebook.draftMarkdown
             )
         )
-        let noteElement = try XCTUnwrap(richDocument.elements.first {
+        let noteElement = try XCTUnwrap(richDocument.blocks.first {
             $0.editableSource?.contains("Raw-mode note") == true
         })
         XCTAssertTrue(richDocument.replaceEditableSource(
-            elementID: noteElement.id,
+            blockID: noteElement.id,
             with: "Rich-mode note: compare calibrated amplitudes and phases before imaging."
         ))
         store.setTutorialPrototypeDraft(richDocument.markdown)

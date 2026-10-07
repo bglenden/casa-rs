@@ -16,7 +16,11 @@ if [[ "$mode" == "check" ]]; then
   out_root="$(mktemp -d "${TMPDIR:-/tmp}/casars-frontend-bindings.XXXXXX")"
   trap 'rm -rf "$out_root"' EXIT
 else
-  out_root="${1:-$repo_root/target/frontend-bindings}"
+  cargo_target_dir="${CARGO_TARGET_DIR:-$repo_root/target}"
+  if [[ "$cargo_target_dir" != /* ]]; then
+    cargo_target_dir="$repo_root/$cargo_target_dir"
+  fi
+  out_root="${1:-$cargo_target_dir/frontend-bindings}"
 fi
 python_out="$out_root/python"
 swift_out="$out_root/swift"
@@ -36,7 +40,11 @@ case "$(uname -s)" in
     ;;
 esac
 
-lib_path="$repo_root/target/debug/$lib_name"
+cargo_target_dir="${CARGO_TARGET_DIR:-$repo_root/target}"
+if [[ "$cargo_target_dir" != /* ]]; then
+  cargo_target_dir="$repo_root/$cargo_target_dir"
+fi
+lib_path="$cargo_target_dir/debug/$lib_name"
 
 echo "==> Building Rust frontend services"
 cargo build -p casars-frontend-services

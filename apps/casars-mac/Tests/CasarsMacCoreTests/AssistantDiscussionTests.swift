@@ -98,7 +98,7 @@ final class AssistantDiscussionTests: XCTestCase {
     }
 
     func testResourcePlannerRepresentativeMeasurementFixture() throws {
-        let capacity = AssistantModelCapacity(inputUnits: 32_768, outputReserveUnits: 4_096)
+        let capacity = AssistantModelCapacity.fromReportedContextWindow(32_768)
         let reservations = [
             AssistantResourceReservation(id: "runtime_instructions", units: 1_900),
             AssistantResourceReservation(id: "conversation_history", units: 4_096),
@@ -140,12 +140,12 @@ final class AssistantDiscussionTests: XCTestCase {
                 + "allocations=\(plan.contextUnits) corpus=\(plan.corpusUnits)"
         )
 
-        XCTAssertEqual(plan.contextUnits["notebook"], 11_534)
+        XCTAssertEqual(plan.contextUnits["notebook"], 4_554)
         XCTAssertEqual(plan.contextUnits["task"], 512)
-        XCTAssertEqual(plan.contextUnits["python"], 4_096)
+        XCTAssertEqual(plan.contextUnits["python"], 2_277)
         XCTAssertNil(plan.contextUnits["unselected-history"])
-        XCTAssertEqual(plan.corpusUnits, 5_766)
-        XCTAssertEqual(plan.contextUnits.values.reduce(0, +) + plan.corpusUnits, 21_908)
+        XCTAssertEqual(plan.corpusUnits, 2_277)
+        XCTAssertEqual(plan.contextUnits.values.reduce(0, +) + plan.corpusUnits, 9_620)
     }
 
     func testAssistantControllerUsesInjectedClockAndSchedulerWithoutSleeping() {
@@ -190,6 +190,22 @@ final class AssistantDiscussionTests: XCTestCase {
             contexts: [],
             corpusDesiredUnits: 0
         ))
+    }
+
+    func testRuntimeContextWindowCreatesScaleDependentResourceEnvelope() {
+        let capacity = AssistantModelCapacity.fromReportedContextWindow(100)
+        XCTAssertEqual(capacity.inputUnits, 100)
+        XCTAssertEqual(capacity.outputReserveUnits, 50)
+
+        let controller = AssistantController()
+        var discussion = AssistantDiscussionState()
+        let effects = controller.handle(.contextWindow(262_144), discussion: &discussion)
+
+        XCTAssertEqual(discussion.contextWindowUnits, 262_144)
+        XCTAssertEqual(effects, [.refreshResourcePlan])
+        XCTAssertTrue(
+            controller.handle(.contextWindow(262_144), discussion: &discussion).isEmpty
+        )
     }
 
     func testAuthorityPresetsMapToNativeCodexControls() {
@@ -341,6 +357,65 @@ final class AssistantDiscussionTests: XCTestCase {
         )
 
         XCTAssertEqual(capabilities["experimentalApi"], true)
+    }
+
+    func testAppServerAcceptsCurrentModelSchemaAndReportsLiveThreadContextWindow() throws {
+        let session = CodexAppServerSession(configuration: AgentSessionConfiguration(
+            agentExecutable: "/usr/bin/false",
+            projectMCPExecutable: "/project/bin/casars-project-mcp"
+        ))
+        let modelsReceived = expectation(description: "current models received")
+        let contextWindowReceived = expectation(description: "context window received")
+        session.onEvent { event in
+            switch event {
+            case let .models(models):
+                XCTAssertEqual(models, [AgentModelDescriptor(
+                    id: "gpt-current",
+                    label: "GPT Current",
+                    defaultEffort: "medium",
+                    supportedEfforts: ["low", "medium"],
+                    isDefault: true
+                )])
+                modelsReceived.fulfill()
+            case let .contextWindow(units):
+                XCTAssertEqual(units, 262_144)
+                contextWindowReceived.fulfill()
+            default:
+                break
+            }
+        }
+
+        try session.registerRequestForTesting(requestID: 17, method: "model/list")
+        try session.receiveJSONLineForTesting([
+            "id": 17,
+            "result": [
+                "data": [[
+                    "id": "gpt-current",
+                    "displayName": "GPT Current",
+                    "defaultReasoningEffort": "medium",
+                    "supportedReasoningEfforts": [
+                        ["reasoningEffort": "low"],
+                        ["reasoningEffort": "medium"],
+                    ],
+                    "isDefault": true,
+                ]],
+                "nextCursor": NSNull(),
+            ],
+        ])
+        try session.receiveJSONLineForTesting([
+            "method": "thread/tokenUsage/updated",
+            "params": [
+                "threadId": "thread",
+                "turnId": "turn",
+                "tokenUsage": [
+                    "modelContextWindow": 262_144,
+                    "last": [:],
+                    "total": [:],
+                ],
+            ],
+        ])
+
+        wait(for: [modelsReceived, contextWindowReceived], timeout: 1)
     }
 
     func testAppServerTurnStartErrorBecomesVisibleAgentError() throws {
@@ -1321,6 +1396,44 @@ final class AssistantDiscussionTests: XCTestCase {
             projectRoot: project.path,
             transcript: try XCTUnwrap(store.state.assistantDiscussion?.activeConversation)
         )
+    }
+
+    func testLiveContextWindowRefreshesSharedProjectionBeforeCorpusTool() throws {
+        let project = try temporaryProject()
+        defer { try? FileManager.default.removeItem(at: project) }
+        let client = UniFFIAssistantPersistenceClient()
+        let conversation = try client.createConversation(
+            projectRoot: project.path,
+            title: "Analysis",
+            attachment: AssistantAttachmentState(
+                kind: "notebook",
+                identifier: "Analysis.md",
+                label: "Analysis",
+                primary: true
+            ),
+            profile: AssistantSessionProfileState()
+        )
+        var discussion = AssistantDiscussionState()
+        discussion.conversations = [conversation]
+        discussion.activeConversationID = conversation.id
+        var state = FixtureWorkbench.makeState()
+        state.project.rootPath = project.path
+        state.assistantDiscussion = discussion
+        let store = WorkbenchStore(state: state)
+        store.refreshAssistantDiscussionContexts()
+        let agent = FixtureAgentSession()
+        store.installAgentSessionForTesting(agent, sessionNonce: String(repeating: "n", count: 32))
+
+        agent.emit(.contextWindow(32_768))
+
+        let projectionData = try Data(contentsOf: project
+            .appendingPathComponent(".casa-rs/assistant-context.json"))
+        let projection = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: projectionData) as? [String: Any]
+        )
+        let plan = try XCTUnwrap(projection["resource_plan"] as? [String: Any])
+        XCTAssertGreaterThan(try XCTUnwrap(plan["corpus_text_units"] as? NSNumber).uint64Value, 0)
+        XCTAssertEqual(plan["diagnostics"] as? [String], [])
     }
 
     func testFailureCancellationRateLimitAndApprovalDoNotWidenAuthority() throws {

@@ -6,7 +6,8 @@ import SwiftUI
 struct ScientificNotebookView: View {
     @ObservedObject var store: WorkbenchStore
     @State private var expandedExecutionIDs: Set<String> = []
-    @State private var richDocument = PrototypeNotebookRichDocument(markdown: "")
+    @State private var richDocument = NotebookRichDocument.empty
+    @State private var richProjectionError: String?
 
     var body: some View {
         Group {
@@ -240,26 +241,21 @@ struct ScientificNotebookView: View {
                     }
                 }
 
-                ForEach(richDocument.elements) { element in
-                    if let receiptID = element.taskID,
-                       let receipt = notebook.task(receiptID: receiptID) {
-                        inlineTaskBlock(receipt)
-                    } else if element.taskID != nil {
-                        Text(element.source)
-                            .font(.system(size: 12, design: .monospaced))
-                            .textSelection(.enabled)
-                            .padding(10)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.secondary.opacity(0.065))
-                            .clipShape(RoundedRectangle(cornerRadius: 5))
-                    } else {
-                        RichMarkdownBlockEditor(
-                            source: richElementBinding(element.id),
-                            headingLevel: element.headingLevel,
-                            isInsertionSurface: element.isInsertionSurface,
-                            accessibilityID: "notebook.richElement.\(element.id)"
-                        )
-                    }
+                if let richProjectionError {
+                    NotebookRichStructuralErrorView(
+                        message: richProjectionError,
+                        onSwitchToRaw: { store.setPrototypeNotebookViewMode(.raw) }
+                    )
+                } else {
+                    NotebookRichDocumentView(
+                        document: $richDocument,
+                        onMarkdownChange: { store.setPrototypeNotebookDraft($0) },
+                        resolvedManagedCell: { cellID in
+                            guard let receipt = notebook.task(receiptID: cellID) else { return nil }
+                            return AnyView(inlineTaskBlock(receipt))
+                        },
+                        afterBlock: { _ in nil }
+                    )
                 }
             }
         }
@@ -272,26 +268,15 @@ struct ScientificNotebookView: View {
         )
     }
 
-    private func richElementBinding(_ elementID: String) -> Binding<String> {
-        Binding(
-            get: {
-                richDocument.elements
-                    .first(where: { $0.id == elementID })?
-                    .editableSource ?? ""
-            },
-            set: { value in
-                var updated = richDocument
-                guard updated.replaceEditableSource(elementID: elementID, with: value) else {
-                    return
-                }
-                richDocument = updated
-                store.setPrototypeNotebookDraft(updated.markdown)
-            }
-        )
-    }
-
     private func loadRichDocument(_ notebook: PrototypeScientificNotebookProjection) {
-        richDocument = PrototypeNotebookRichDocument(markdown: notebook.draftMarkdown)
+        do {
+            richDocument = try PrototypeNotebookRichProjectionAdapter.document(
+                markdown: notebook.draftMarkdown
+            )
+            richProjectionError = nil
+        } catch {
+            richProjectionError = String(describing: error)
+        }
     }
 
     private func inlineTaskBlock(_ receipt: PrototypeNotebookTaskProjection) -> some View {
@@ -672,6 +657,7 @@ struct PrototypeNotebookTaskView: View {
 }
 
 struct RichMarkdownBlockEditor: View {
+    @Environment(\.workbenchFontSize) private var workbenchFontSize
     @Binding var source: String
     let headingLevel: Int?
     let isInsertionSurface: Bool
@@ -686,7 +672,7 @@ struct RichMarkdownBlockEditor: View {
                 set: { source = $0 }
             ))
             .textFieldStyle(.plain)
-            .font(headingFont(level: headingLevel))
+            .font(.system(size: headingPointSize(level: headingLevel)))
             .fontWeight(.semibold)
             .accessibilityIdentifier(accessibilityID)
         } else {
@@ -694,12 +680,13 @@ struct RichMarkdownBlockEditor: View {
                 ZStack(alignment: .topLeading) {
                     if source.isEmpty {
                         Text(isInsertionSurface ? "Add notes here…" : "Continue writing notes…")
+                            .font(.system(size: bodyPointSize))
                             .foregroundStyle(.tertiary)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 8)
                     }
                     TextEditor(text: $source)
-                        .font(.system(size: 15))
+                        .font(.system(size: bodyPointSize))
                         .scrollContentBackground(.hidden)
                         .frame(minHeight: editorHeight)
                         .fixedSize(horizontal: false, vertical: true)
@@ -713,9 +700,9 @@ struct RichMarkdownBlockEditor: View {
                 .onChange(of: editorFocused) { focused in
                     if !focused, !source.isEmpty { isEditing = false }
                 }
-            } else if let rendered = NotebookMarkdownPresentation.attributedString(source) {
-                Text(rendered)
-                    .font(.system(size: 15))
+            } else {
+                WorkbenchMarkdownText(source: NotebookVisibleMarkdown.source(source))
+                    .font(.system(size: bodyPointSize))
                     .foregroundStyle(Color(nsColor: .labelColor))
                     .frame(maxWidth: .infinity, minHeight: 32, alignment: .topLeading)
                     .contentShape(Rectangle())
@@ -725,25 +712,42 @@ struct RichMarkdownBlockEditor: View {
                     .help("Click to edit this Markdown block")
                     .accessibilityIdentifier(accessibilityID)
                     .accessibilityHint("Click to edit this Markdown block")
-            } else {
-                // Metadata-only fragments remain in the Markdown source but do
-                // not occupy visible space in Rich mode.
-                EmptyView()
             }
         }
     }
 
-    private func headingFont(level: Int) -> Font {
-        switch level {
-        case 1: .title
-        case 2: .title2
-        case 3: .title3
-        default: .headline
+    private var bodyPointSize: CGFloat {
+        CGFloat(workbenchFontSize + 2)
+    }
+
+    private func headingPointSize(level: Int) -> CGFloat {
+        let offset: Double = switch level {
+        case 1: 15
+        case 2: 9
+        case 3: 7
+        default: 1
         }
+        return CGFloat(workbenchFontSize + offset)
+    }
+
+    private var editorLineHeight: CGFloat {
+        bodyPointSize + 8
+    }
+
+    private var editorMinimumHeight: CGFloat {
+        bodyPointSize * (46.0 / 15.0)
+    }
+
+    private var editorVerticalPadding: CGFloat {
+        bodyPointSize * (18.0 / 15.0)
     }
 
     private var editorHeight: CGFloat {
-        max(46, CGFloat(source.components(separatedBy: .newlines).count) * 23 + 18)
+        max(
+            editorMinimumHeight,
+            CGFloat(source.components(separatedBy: .newlines).count) * editorLineHeight
+                + editorVerticalPadding
+        )
     }
 }
 

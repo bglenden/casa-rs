@@ -222,7 +222,7 @@ pub(super) struct MeasurementSetFixtureOptions {
 }
 
 impl MeasurementSetFixtureOptions {
-    const fn new(
+    pub(super) const fn new(
         polarized: bool,
         flag_cross_hand: bool,
         channel_count: usize,
@@ -276,7 +276,7 @@ impl MeasurementSetFixtureOptions {
         self
     }
 
-    const fn with_two_fields(mut self) -> Self {
+    pub(super) const fn with_two_fields(mut self) -> Self {
         self.field_count = 2;
         self
     }

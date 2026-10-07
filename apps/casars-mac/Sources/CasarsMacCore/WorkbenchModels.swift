@@ -236,6 +236,19 @@ public enum WorkbenchTabKind: String, Codable, Equatable {
     case history
 }
 
+package enum MeasurementSetExplorerMode: String, CaseIterable, Equatable {
+    case summary
+    case plots
+}
+
+package struct WorkbenchTabPresentationState: Equatable {
+    package var measurementSetExplorerMode: MeasurementSetExplorerMode?
+
+    package init(measurementSetExplorerMode: MeasurementSetExplorerMode? = nil) {
+        self.measurementSetExplorerMode = measurementSetExplorerMode
+    }
+}
+
 public struct WorkbenchTab: Identifiable, Codable, Equatable {
     public let id: String
     public var title: String

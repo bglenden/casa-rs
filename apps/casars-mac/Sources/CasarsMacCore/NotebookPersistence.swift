@@ -156,7 +156,45 @@ extension NotebookExecutionReceipt: Identifiable {
     public var id: String { "\(runId)-\(revision)" }
 }
 
-extension NotebookCellState: Identifiable {}
+extension NotebookCellProjection: Identifiable {}
+
+extension NotebookCellProjection {
+    /// Returns the exact Rust-owned body slice for this source revision.
+    package func bodySource(in source: String) -> String? {
+        guard let range = bodyStringRange(in: source) else { return nil }
+        return String(source[range])
+    }
+
+    package func fullSource(in source: String) -> String? {
+        guard let fullStart = Int(exactly: fullStart),
+              let fullEnd = Int(exactly: fullEnd),
+              fullStart <= fullEnd,
+              fullStart <= source.utf8.count,
+              fullEnd <= source.utf8.count,
+              let lower = Self.stringIndex(in: source, utf8Offset: fullStart),
+              let upper = Self.stringIndex(in: source, utf8Offset: fullEnd)
+        else { return nil }
+        return String(source[lower..<upper])
+    }
+
+    package func bodyStringRange(in source: String) -> Range<String.Index>? {
+        guard let bodyStart = Int(exactly: bodyStart),
+              let bodyEnd = Int(exactly: bodyEnd),
+              bodyStart <= bodyEnd,
+              bodyStart <= source.utf8.count,
+              bodyEnd <= source.utf8.count,
+              let lower = Self.stringIndex(in: source, utf8Offset: bodyStart),
+              let upper = Self.stringIndex(in: source, utf8Offset: bodyEnd)
+        else { return nil }
+        return lower..<upper
+    }
+
+    private static func stringIndex(in source: String, utf8Offset: Int) -> String.Index? {
+        guard utf8Offset >= 0, utf8Offset <= source.utf8.count else { return nil }
+        let utf8Index = source.utf8.index(source.utf8.startIndex, offsetBy: utf8Offset)
+        return String.Index(utf8Index, within: source)
+    }
+}
 extension NotebookPythonOutputEvent: Identifiable {
     public var id: String { "\(order)-\(channel)" }
 }
@@ -189,12 +227,15 @@ package struct NotebookDocumentState: Codable, Equatable, Identifiable {
     package var filename: String
     package var source: String
     package var contentHash: String
-    package var cells: [NotebookCellState]
+    package var cells: [NotebookCellProjection]
     package var receipts: [NotebookExecutionReceipt]
     package var visualizations: [NotebookVisualizationSnapshot]
     package var draftSource: String
     package var viewMode: NotebookDocumentViewMode
     package var conflict: NotebookConflictState?
+    /// A failed Rust projection for the current raw draft. This is transient
+    /// UI state and intentionally is not persisted with notebook metadata.
+    package var projectionError: String?
 
     private enum CodingKeys: String, CodingKey {
         case id, filename, source, contentHash, cells, receipts, visualizations
@@ -206,7 +247,7 @@ package struct NotebookDocumentState: Codable, Equatable, Identifiable {
         filename = try values.decode(String.self, forKey: .filename)
         source = try values.decode(String.self, forKey: .source)
         contentHash = try values.decode(String.self, forKey: .contentHash)
-        cells = try values.decodeIfPresent([NotebookCellState].self, forKey: .cells) ?? []
+        cells = try values.decodeIfPresent([NotebookCellProjection].self, forKey: .cells) ?? []
         receipts = try values.decode([NotebookExecutionReceipt].self, forKey: .receipts)
         visualizations = try values.decodeIfPresent(
             [NotebookVisualizationSnapshot].self,
@@ -215,6 +256,7 @@ package struct NotebookDocumentState: Codable, Equatable, Identifiable {
         draftSource = source
         viewMode = .rich
         conflict = nil
+        projectionError = nil
     }
 
     package init(projection: NotebookDocumentProjection) {
@@ -228,6 +270,7 @@ package struct NotebookDocumentState: Codable, Equatable, Identifiable {
         draftSource = projection.source
         viewMode = .rich
         conflict = nil
+        projectionError = nil
     }
 
     package var isDirty: Bool { draftSource != source }
@@ -285,7 +328,7 @@ package enum NotebookSaveResult: Equatable {
 }
 
 package protocol NotebookPersistenceClient {
-    func projectCells(source: String) throws -> [NotebookCellState]
+    func projectCells(source: String) throws -> [NotebookCellProjection]
     func loadProject(projectRoot: String) throws -> ScientificNotebookProjectState
     func create(projectRoot: String, filename: String?, title: String) throws -> NotebookDocumentState
     func save(
@@ -301,7 +344,7 @@ package protocol NotebookPersistenceClient {
 package struct UniFFINotebookPersistenceClient: NotebookPersistenceClient {
     package init() {}
 
-    package func projectCells(source: String) throws -> [NotebookCellState] {
+    package func projectCells(source: String) throws -> [NotebookCellProjection] {
         try CasarsFrontendServices.notebookCells(source: source)
     }
 

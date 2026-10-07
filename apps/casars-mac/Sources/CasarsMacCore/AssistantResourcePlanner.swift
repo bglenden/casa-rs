@@ -2,13 +2,19 @@
 
 import Foundation
 
-/// Capacity reported by the active backend model. Units are deliberately
+/// Resource envelope supplied to the planner. Units are deliberately
 /// conservative: one UTF-8 byte in encoded JSON content consumes one capacity
-/// unit, so planning does not depend on a provider tokenizer or a machine-tuned
-/// conversion factor.
+/// unit, so planning does not depend on a provider tokenizer.
 package struct AssistantModelCapacity: Equatable {
     package var inputUnits: UInt64
     package var outputReserveUnits: UInt64
+
+    /// CASA-RS owns at most half of the context window reported for the live
+    /// thread. The other half remains available for backend instructions, tool
+    /// exchanges, and the response without maintaining a model-specific table.
+    package static func fromReportedContextWindow(_ units: UInt64) -> Self {
+        Self(inputUnits: units, outputReserveUnits: units / 2)
+    }
 }
 
 package struct AssistantResourceReservation: Equatable {

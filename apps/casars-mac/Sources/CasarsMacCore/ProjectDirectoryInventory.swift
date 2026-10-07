@@ -59,4 +59,15 @@ public struct ProjectFileNode: Identifiable, Hashable {
         }
         return children("")
     }
+
+    /// Depth-first lookup of the node at `path` in a presentation tree.
+    public static func find(path: String, in nodes: [ProjectFileNode]) -> ProjectFileNode? {
+        for node in nodes {
+            if node.path == path { return node }
+            if let children = node.children, let match = find(path: path, in: children) {
+                return match
+            }
+        }
+        return nil
+    }
 }

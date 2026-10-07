@@ -21,6 +21,11 @@
 		00000000000000000000004B /* TutorialNotebookPrototypeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000019 /* TutorialNotebookPrototypeView.swift */; };
 		00000000000000000000004C /* AIChatPrototypeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000001A /* AIChatPrototypeView.swift */; };
 		00000000000000000000004D /* AssistantDiscussionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000001B /* AssistantDiscussionView.swift */; };
+		00000000000000000000004E /* FirstRunOnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000001C /* FirstRunOnboardingView.swift */; };
+		00000000000000000000004F /* tutorials in Resources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000001D /* tutorials */; };
+		0000000000000000000000B5 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 0000000000000000000000B6 /* Assets.xcassets */; };
+		0000000000000000000000B3 /* NotebookRichDocumentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000001E /* NotebookRichDocumentView.swift */; };
+		0000000000000000000000B4 /* WorkbenchMarkdownText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000001F /* WorkbenchMarkdownText.swift */; };
 		0000000000000000000000B2 /* CasarsMacCore in Frameworks */ = {isa = PBXBuildFile; productRef = 0000000000000000000000B1 /* CasarsMacCore */; };
 /* End PBXBuildFile section */
 
@@ -47,7 +52,12 @@
 		000000000000000000000019 /* TutorialNotebookPrototypeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorialNotebookPrototypeView.swift; sourceTree = "<group>"; };
 		00000000000000000000001A /* AIChatPrototypeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatPrototypeView.swift; sourceTree = "<group>"; };
 		00000000000000000000001B /* AssistantDiscussionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantDiscussionView.swift; sourceTree = "<group>"; };
+		00000000000000000000001C /* FirstRunOnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirstRunOnboardingView.swift; sourceTree = "<group>"; };
+		00000000000000000000001D /* tutorials */ = {isa = PBXFileReference; lastKnownFileType = folder; name = tutorials; path = ../../resources/tutorials; sourceTree = "<group>"; };
+		00000000000000000000001E /* NotebookRichDocumentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotebookRichDocumentView.swift; sourceTree = "<group>"; };
+		00000000000000000000001F /* WorkbenchMarkdownText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkbenchMarkdownText.swift; sourceTree = "<group>"; };
 		000000000000000000000020 /* CasarsMacUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CasarsMacUITests.swift; sourceTree = "<group>"; };
+		0000000000000000000000B6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Resources/Assets.xcassets; sourceTree = "<group>"; };
 		000000000000000000000030 /* casars-mac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = casars-mac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		000000000000000000000031 /* CasarsMacUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CasarsMacUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		000000000000000000000032 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
@@ -77,6 +87,8 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000004 /* CasarsMacApp */,
+				00000000000000000000001D /* tutorials */,
+				0000000000000000000000B6 /* Assets.xcassets */,
 				000000000000000000000005 /* UITests */,
 				000000000000000000000032 /* XCTest.framework */,
 				000000000000000000000003 /* Products */,
@@ -104,6 +116,9 @@
 				000000000000000000000019 /* TutorialNotebookPrototypeView.swift */,
 				00000000000000000000001A /* AIChatPrototypeView.swift */,
 				00000000000000000000001B /* AssistantDiscussionView.swift */,
+				00000000000000000000001C /* FirstRunOnboardingView.swift */,
+				00000000000000000000001E /* NotebookRichDocumentView.swift */,
+				00000000000000000000001F /* WorkbenchMarkdownText.swift */,
 				000000000000000000000014 /* WorkbenchFont.swift */,
 				000000000000000000000015 /* WorkbenchPlotView.swift */,
 				000000000000000000000016 /* WorkbenchView.swift */,
@@ -210,6 +225,8 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				00000000000000000000004F /* tutorials in Resources */,
+				0000000000000000000000B5 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -242,7 +259,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "set -euo pipefail\nsource_dylib=\"$SRCROOT/../../target/debug/libcasars_frontend_services.dylib\"\ndestination=\"$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/libcasars_frontend_services.dylib\"\napp_binary=\"$TARGET_BUILD_DIR/$EXECUTABLE_PATH\"\nmkdir -p \"$(dirname \"$destination\")\"\ncp \"$source_dylib\" \"$destination\"\nfrontend_dependency=\"$(otool -L \"$app_binary\" | awk '/libcasars_frontend_services\\.dylib/ {print $1; exit}')\"\nif [[ -n \"$frontend_dependency\" ]]; then\n  install_name_tool -change \"$frontend_dependency\" \"@executable_path/../Frameworks/libcasars_frontend_services.dylib\" \"$app_binary\"\nfi\ncodesign --force --sign - \"$destination\" >/dev/null\n";
+			shellScript = "set -euo pipefail\nrepo_root=\"$SRCROOT/../..\"\ncargo_target_dir=\"${CARGO_TARGET_DIR:-$repo_root/target}\"\nif [[ \"$cargo_target_dir\" != /* ]]; then\n  cargo_target_dir=\"$repo_root/$cargo_target_dir\"\nfi\nsource_dylib=\"$cargo_target_dir/debug/libcasars_frontend_services.dylib\"\ndestination=\"$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/libcasars_frontend_services.dylib\"\napp_binary=\"$TARGET_BUILD_DIR/$EXECUTABLE_PATH\"\nmkdir -p \"$(dirname \"$destination\")\"\ncp \"$source_dylib\" \"$destination\"\nfrontend_dependency=\"$(otool -L \"$app_binary\" | awk '/libcasars_frontend_services\\.dylib/ {print $1; exit}')\"\nif [[ -n \"$frontend_dependency\" ]]; then\n  install_name_tool -change \"$frontend_dependency\" \"@executable_path/../Frameworks/libcasars_frontend_services.dylib\" \"$app_binary\"\nfi\ncodesign --force --sign - \"$destination\" >/dev/null\n";
 		};
 		000000000000000000000054 /* Stage project MCP */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -263,7 +280,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "set -euo pipefail\ncd \"$SRCROOT/../..\"\nCARGO_INCREMENTAL=0 cargo build -p casars-frontend-services --bin casars-project-mcp\ndestination=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/bin\"\nmkdir -p \"$destination\"\ncp target/debug/casars-project-mcp \"$destination/casars-project-mcp\"\n";
+			shellScript = "set -euo pipefail\nrepo_root=\"$SRCROOT/../..\"\ncargo_target_dir=\"${CARGO_TARGET_DIR:-$repo_root/target}\"\nif [[ \"$cargo_target_dir\" != /* ]]; then\n  cargo_target_dir=\"$repo_root/$cargo_target_dir\"\nfi\ncd \"$repo_root\"\nCARGO_INCREMENTAL=0 cargo build -p casars-frontend-services --bin casars-project-mcp\ndestination=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/bin\"\nmkdir -p \"$destination\"\ncp \"$cargo_target_dir/debug/casars-project-mcp\" \"$destination/casars-project-mcp\"\n";
 		};
 		000000000000000000000055 /* Stage source corpus */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -302,6 +319,9 @@
 				00000000000000000000004B /* TutorialNotebookPrototypeView.swift in Sources */,
 				00000000000000000000004C /* AIChatPrototypeView.swift in Sources */,
 				00000000000000000000004D /* AssistantDiscussionView.swift in Sources */,
+				00000000000000000000004E /* FirstRunOnboardingView.swift in Sources */,
+				0000000000000000000000B3 /* NotebookRichDocumentView.swift in Sources */,
+				0000000000000000000000B4 /* WorkbenchMarkdownText.swift in Sources */,
 				000000000000000000000044 /* WorkbenchFont.swift in Sources */,
 				000000000000000000000045 /* WorkbenchPlotView.swift in Sources */,
 				000000000000000000000046 /* WorkbenchView.swift in Sources */,
@@ -351,6 +371,7 @@
 		0000000000000000000000A2 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 1;
@@ -378,6 +399,7 @@
 		0000000000000000000000A3 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 1;
