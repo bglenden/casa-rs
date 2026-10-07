@@ -232,7 +232,7 @@
     },
     {
       "issue": 446,
-      "required_outcome": "Evidence retains two manifest identities, archive SHA b80d5e9830ce3835837175ccd786de581bf39312a402b7acf89ac0cbf5df353a, CASA 6.7.5.9 fiducials, cold/warm roles, and complete product inventories.",
+      "required_outcome": "Evidence retains two manifest identities, archive SHA b80d5e87487ab8ab01faa064c4cd48db6d93446fd0add208c051dd574e0d353a, CASA 6.7.5.9 fiducials, cold/warm roles, and complete product inventories.",
       "current_owner": "imaging performance evidence harness",
       "destination_tickets": ["T01", "T12"],
       "acceptance_gates": ["frozen manifests", "content receipts", "CASA-version identity", "declared cold and warm roles"],

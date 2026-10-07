@@ -48,7 +48,7 @@ ACCEPTED_MIGRATION_ISSUES = frozenset(
 # is enforced directly from the small readable policy below, not by opaque
 # digests or frozen exception inventories.
 ACCEPTED_ISSUE_OUTCOMES_SHA256 = (
-    "1d2a77232fdc25a50053097b644b64cbdf0d21e1970590ec4180de6dce29738d"
+    "ba649538bb493767f562ca96871c62e5ef28aaf41b0b340ada5f4a2c57274ee8"
 )
 ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "f992a51a25a086e44cbd9be28453a8a345f7dbd0c6bce0cfc44fb8a6796db2c0"
