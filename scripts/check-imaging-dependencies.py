@@ -89,9 +89,128 @@ def check_layering(policy: dict, metadata: dict) -> list[str]:
     return failures
 
 
+TEST_GATE = re.compile(r"(?m)^[ \t]*#\[cfg\(test\)\][ \t]*\n")
+ATTRIBUTE = re.compile(r"[ \t]*#\[[^\n]*\][ \t]*\n")
+CHAR_LITERAL = re.compile(r"'(?:\\.|[^\\'])'")
+
+
+def skip_string(source: str, start: int) -> int:
+    """Return the index just past the string literal starting at `start`."""
+    raw = re.match(r"b?r(#*)\"", source[start:])
+    if raw:
+        terminator = '"' + raw.group(1)
+        end = source.find(terminator, start + raw.end())
+        return len(source) if end == -1 else end + len(terminator)
+    i = start + 1
+    while i < len(source):
+        if source[i] == "\\":
+            i += 2
+            continue
+        if source[i] == '"':
+            return i + 1
+        i += 1
+    return len(source)
+
+
+def item_end(source: str, start: int) -> int:
+    """Return the index just past the Rust item that begins at `start`.
+
+    The item ends at the first `;` at brace depth zero, or at the brace that
+    closes its first block. Comments, string and char literals are skipped.
+    """
+    depth = 0
+    i = start
+    n = len(source)
+    while i < n:
+        if source.startswith("//", i):
+            newline = source.find("\n", i)
+            i = n if newline == -1 else newline + 1
+            continue
+        if source.startswith("/*", i):
+            close = source.find("*/", i + 2)
+            i = n if close == -1 else close + 2
+            continue
+        c = source[i]
+        if c == '"' or source.startswith('r"', i) or source.startswith('r#', i) or source.startswith('b"', i):
+            i = skip_string(source, i if c == '"' else i + (1 if c in "rb" else 0))
+            continue
+        if c == "'":
+            literal = CHAR_LITERAL.match(source, i)
+            i = literal.end() if literal else i + 1
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        elif c == ";" and depth == 0:
+            return i + 1
+        i += 1
+    return n
+
+
 def strip_inline_tests(source: str) -> str:
-    marker = re.search(r"(?m)^#\[cfg\(test\)\]\s*$", source)
-    return source if marker is None else source[: marker.start()]
+    """Remove every item gated by `#[cfg(test)]`, keeping the production code
+    around it (a test module, a test-only import, constant or function may be
+    followed by production items)."""
+    out: list[str] = []
+    i = 0
+    while True:
+        gate = TEST_GATE.search(source, i)
+        if gate is None:
+            out.append(source[i:])
+            return "".join(out)
+        out.append(source[i : gate.start()])
+        j = gate.end()
+        while True:
+            attribute = ATTRIBUTE.match(source, j)
+            if attribute is None:
+                break
+            j = attribute.end()
+        i = item_end(source, j)
+
+
+SELF_TEST_CASES = [
+    (
+        "production after a test module is checked",
+        "fn production() { let _ = std::env::var(\"X\"); }\n#[cfg(test)]\nmod tests { fn t() { let _ = std::env::var(\"Y\"); } }\n",
+        True,
+    ),
+    (
+        "production after a test-gated constant is checked",
+        "#[cfg(test)]\nconst TEST_HELPER: u32 = 1;\npub fn production() { let _ = std::env::var(\"EXAMPLE\"); }\n",
+        True,
+    ),
+    (
+        "production after a test-gated import is checked",
+        "#[cfg(test)]\nuse std::collections::BTreeMap;\nfn production() { let _ = std::env::var(\"Z\"); }\n",
+        True,
+    ),
+    (
+        "an access only inside the test module is ignored",
+        "fn production() {}\n#[cfg(test)]\nmod tests { fn t() { let _ = std::env::var(\"Y\"); } }\n",
+        False,
+    ),
+    (
+        "braces in strings do not end the test module early",
+        "#[cfg(test)]\nmod tests { const S: &str = \"}\"; fn t() { let _ = std::env::var(\"Y\"); } }\n",
+        False,
+    ),
+]
+
+
+def self_test() -> int:
+    pattern = re.compile(r"\benv::var(?:_os)?\s*\(|\bstd::env\b")
+    failures = 0
+    for name, source, expected in SELF_TEST_CASES:
+        found = pattern.search(strip_inline_tests(source)) is not None
+        if found != expected:
+            failures += 1
+            print(f"imaging-dependencies self-test failed: {name}", file=sys.stderr)
+    if failures == 0:
+        print("imaging-dependencies: self-test ok")
+    return 1 if failures else 0
 
 
 def rule_files(rule: dict) -> list[Path]:
@@ -144,7 +263,10 @@ def print_grandfather(policy: dict) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--grandfather", action="store_true", help="print current violations in policy form")
+    parser.add_argument("--self-test", action="store_true", help="check the test-stripping logic")
     args = parser.parse_args()
+    if args.self_test:
+        return self_test()
     policy = json.loads(POLICY.read_text(encoding="utf-8"))
     if args.grandfather:
         print_grandfather(policy)

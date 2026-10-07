@@ -31,6 +31,7 @@ done
 python3 scripts/check-parameter-surface-catalog.py
 python3 scripts/check-parameter-contract-history.py
 python3 scripts/check-no-casa-runtime.py
+python3 scripts/check-imaging-dependencies.py --self-test
 python3 scripts/check-imaging-dependencies.py
 
 for heading in "${required_sections[@]}"; do

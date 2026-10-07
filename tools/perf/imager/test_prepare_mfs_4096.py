@@ -29,6 +29,7 @@ class WorkloadDesignTests(unittest.TestCase):
                     gridder="standard",
                     spw=spw,
                     niter=10000,
+                    threshold_jy=0.005,
                 )
                 with (
                     patch.dict("sys.modules", casatasks=casa),
