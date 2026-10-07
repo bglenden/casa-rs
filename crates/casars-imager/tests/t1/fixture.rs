@@ -181,7 +181,6 @@ impl Observation {
             "image_name": image_name,
             "image_size": IMAGE_SIZE,
             "cell_arcsec": CELL_ARCSEC,
-            "write_preview_pngs": false,
         });
         let fields = request.as_object_mut().expect("request object");
         for (key, value) in controls.as_object().expect("controls object") {
