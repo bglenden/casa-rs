@@ -225,6 +225,9 @@ existing no-cache I/O path and does not require this Linux-specific setup.
 ## Default commands
 
 - Fast local gate: `just quick`
+- Imaging T1 end-to-end tier (synthetic MeasurementSet through the production
+  `casars-imager` route; each case under ten minutes):
+  `CARGO_INCREMENTAL=0 cargo test -p casars-imager --test t1`
 - Full default pre-review gate: `just verify`
 - Smoke/release gate: `just smoke`
 - Blocking C++ interop release gate: `just release-cpp-interop`
