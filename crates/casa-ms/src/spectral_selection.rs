@@ -590,14 +590,44 @@ fn casa_transformed_channel_mode_output_centers(
         transformed_widths_hz[0] * f64::from(width_channels.unsigned_abs());
     let output_bandwidth_hz = output_channel_width_hz * nchan as f64;
     let first_channel = usize::try_from(first_channel).expect("validated channel index");
-    let start_edge_hz = if start_is_end {
+    // CASA `MSTransformRegridder::regridChanBounds` ("freq" regridding)
+    // moves the start edge to the band centre, steps the channel bounds out
+    // from the centre channel by repeated subtraction and addition of the
+    // width, and `calcChanFreqs` takes each centre as `(lo + hi)/2`. The
+    // rounding of that sequence decides whether an output channel lies
+    // exactly on a transformed source channel, which
+    // `FTMachine::interpolateFrequencyTogrid` keeps and a frequency one ulp
+    // below it discards.
+    let centre_hz = if start_is_end {
         transformed_frequencies_hz[first_channel] + transformed_widths_hz[first_channel] / 2.0
-            - output_bandwidth_hz
+            - output_bandwidth_hz / 2.0
     } else {
         transformed_frequencies_hz[first_channel] - transformed_widths_hz[first_channel] / 2.0
+            + output_bandwidth_hz / 2.0
     };
-    let mut centers_hz = (0..nchan)
-        .map(|index| start_edge_hz + (index as f64 + 0.5) * output_channel_width_hz)
+    // An even channel count puts the band centre on the lower edge of the
+    // centre channel, an odd one on its centre.
+    let centre_channel = if nchan % 2 == 1 {
+        (
+            centre_hz - output_channel_width_hz / 2.0,
+            centre_hz + output_channel_width_hz / 2.0,
+        )
+    } else {
+        (centre_hz, centre_hz + output_channel_width_hz)
+    };
+    let below = nchan / 2;
+    let mut bounds_hz = vec![centre_channel; nchan];
+    for index in (0..below).rev() {
+        let high_hz = bounds_hz[index + 1].0;
+        bounds_hz[index] = (high_hz - output_channel_width_hz, high_hz);
+    }
+    for index in below + 1..nchan {
+        let low_hz = bounds_hz[index - 1].1;
+        bounds_hz[index] = (low_hz, low_hz + output_channel_width_hz);
+    }
+    let mut centers_hz = bounds_hz
+        .iter()
+        .map(|(low_hz, high_hz)| (low_hz + high_hz) / 2.0)
         .collect::<Vec<_>>();
     if descending ^ (width_channels < 0) {
         centers_hz.reverse();
@@ -3204,6 +3234,31 @@ mod tests {
         )
         .unwrap();
         assert_eq!(centers, vec![10.9995, 11.9995, 12.9995]);
+    }
+
+    #[test]
+    fn casa_transformed_channel_mode_output_centers_round_like_casa_regrid_bounds() {
+        // refim_point.ms: native channel 0 in LSRK at the first row time and
+        // its transformed width. CASA's bound sequence puts output channel 0
+        // one ulp below the source frequency (tclean's image reference value
+        // 999988750.387257218 Hz), so the rows at that time fall outside
+        // the interpolation range and CASA leaves the channel blank.
+        let first_hz = 999_988_750.387_257_3;
+        let width_hz = 49_999_437.519_362_69;
+        let frequencies_hz = (0..20)
+            .map(|channel| first_hz + f64::from(channel) * width_hz)
+            .collect::<Vec<_>>();
+        let centers = casa_transformed_channel_mode_output_centers(
+            &frequencies_hz,
+            &[width_hz; 20],
+            0,
+            1,
+            20,
+        )
+        .unwrap();
+        assert_eq!(centers[0], 999_988_750.387_257_2);
+        assert!(centers[0] < first_hz);
+        assert_eq!(centers[19], 1_949_978_063.255_148_4);
     }
 
     #[test]
