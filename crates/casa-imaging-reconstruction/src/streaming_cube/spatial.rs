@@ -151,6 +151,17 @@ impl BandPlan {
             .ok_or(SpectralOperatorError::ResidencyOverflow)
     }
 
+    /// Output-field contributions per row with `fine` entries per coarse output
+    /// plane. Each CASA fine sample emits one, as in the residual descriptor bound.
+    fn spatial_contributions_per_row(&self, fine: usize) -> Option<usize> {
+        let outputs = match self.phase {
+            BandPhase::InitialZero => 2,
+            BandPhase::Full => 3,
+            BandPhase::Residual => 1,
+        };
+        self.core.len().checked_mul(fine)?.checked_mul(outputs)
+    }
+
     /// Maximum packed requests across a band's command batch for an input refill.
     pub fn spatial_request_capacity(&self, rows: usize) -> Result<usize, SpectralOperatorError> {
         let native = if self.phase == BandPhase::InitialZero {
@@ -158,13 +169,8 @@ impl BandPlan {
         } else {
             self.support.native.len()
         };
-        let outputs = match self.phase {
-            BandPhase::InitialZero => 2,
-            BandPhase::Full => 3,
-            BandPhase::Residual => 1,
-        };
         let predictions = native.checked_mul(2);
-        let contributions = self.core.len().checked_mul(outputs);
+        let contributions = self.spatial_contributions_per_row(self.fine_per_output);
         predictions
             .zip(contributions)
             .and_then(|(a, b)| rows.checked_mul(a.max(b).max(1)))
@@ -185,13 +191,19 @@ impl BandPlan {
         };
         // Two spectral terms per native channel. Growing request/destination
         // vectors may have up to twice their live length; results are exact-sized.
+        // Grid batches start at one request per row and double to hold every
+        // fine sample of their coarse output plane.
+        let contributions = self
+            .spatial_contributions_per_row(self.fine_per_output.next_power_of_two())
+            .and_then(|n| n.checked_mul(size_of::<SpatialTap>()));
         let samples = native
             .checked_mul(
                 4 * (size_of::<SpatialTap>() + size_of::<PredictionDestination>())
                     + 2 * size_of::<Complex32>(),
             )
             .and_then(|n| n.checked_add(native * size_of::<Complex64>()))
-            .and_then(|n| n.checked_add(outputs * self.core.len() * size_of::<SpatialTap>()))
+            .zip(contributions)
+            .and_then(|(n, c)| n.checked_add(c))
             .and_then(|n| n.checked_mul(rows))
             .ok_or(SpectralOperatorError::ResidencyOverflow)?;
         let headers = self

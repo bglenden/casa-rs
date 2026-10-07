@@ -8,78 +8,87 @@ use casa_imaging_model::{
 };
 use ndarray::{Array2, s};
 
+/// CPU spatial double that also records each dispatch's per-batch tap counts.
+struct Backend {
+    convolution: StandardConvolution,
+    grids: [Array3<Complex32>; 4],
+    dispatches: Vec<Vec<usize>>,
+}
+
+impl CubeSpatialBackend for Backend {
+    fn initialize(
+        &mut self,
+        shape: [usize; 2],
+        weights: &[[f32; 7]],
+        fields: [usize; 4],
+        model: &[Complex32],
+    ) -> Result<(), SpectralOperatorError> {
+        assert_eq!(weights, self.convolution.float_weights());
+        self.grids = fields.map(|planes| Array3::zeros((planes, shape[0], shape[1])));
+        self.grids[3].as_slice_mut().unwrap().copy_from_slice(model);
+        Ok(())
+    }
+    fn degrid(
+        &mut self,
+        batches: &mut [SpatialPredictionBatch],
+    ) -> Result<(), SpectralOperatorError> {
+        self.dispatches
+            .push(batches.iter().map(|b| b.taps.len()).collect());
+        for batch in batches {
+            for (tap, value) in batch.taps.iter().zip(&mut batch.values) {
+                *value = self
+                    .convolution
+                    .degrid_float(&self.grids[3].index_axis(Axis(0), batch.plane), unpack(tap));
+            }
+        }
+        Ok(())
+    }
+    fn grid(&mut self, batches: &[SpatialGridBatch]) -> Result<(), SpectralOperatorError> {
+        self.dispatches
+            .push(batches.iter().map(|b| b.taps.len()).collect());
+        for batch in batches {
+            let index = match batch.field {
+                SpatialField::Dirty => 0,
+                SpatialField::Residual => 1,
+                SpatialField::Psf => 2,
+                SpatialField::Model => 3,
+            };
+            for tap in &batch.taps {
+                self.convolution.grid_float(
+                    &mut self.grids[index].index_axis_mut(Axis(0), batch.plane),
+                    unpack(tap),
+                    Complex32::new(tap.value[0], tap.value[1]),
+                );
+            }
+        }
+        Ok(())
+    }
+    fn download(
+        &mut self,
+        _: SpatialField,
+        _: usize,
+        _: &mut [Complex32],
+    ) -> Result<(), SpectralOperatorError> {
+        unreachable!()
+    }
+}
+
+fn unpack(tap: &SpatialTap) -> crate::spectral_operator::SampleTaps {
+    use crate::spectral_operator::{SampleTaps, TapSpan};
+    SampleTaps {
+        x: TapSpan {
+            start: tap.x as usize,
+            weight_index: tap.x_weights as usize,
+        },
+        y: TapSpan {
+            start: tap.y as usize,
+            weight_index: tap.y_weights as usize,
+        },
+    }
+}
+
 #[test]
 fn batched_spatial_preparation_matches_cpu_for_flags_phase_and_nonzero_model() {
-    struct Backend {
-        convolution: StandardConvolution,
-        grids: [Array3<Complex32>; 4],
-    }
-    impl CubeSpatialBackend for Backend {
-        fn initialize(
-            &mut self,
-            shape: [usize; 2],
-            weights: &[[f32; 7]],
-            fields: [usize; 4],
-            model: &[Complex32],
-        ) -> Result<(), SpectralOperatorError> {
-            assert_eq!(weights, self.convolution.float_weights());
-            self.grids = fields.map(|planes| Array3::zeros((planes, shape[0], shape[1])));
-            self.grids[3].as_slice_mut().unwrap().copy_from_slice(model);
-            Ok(())
-        }
-        fn degrid(
-            &mut self,
-            batches: &mut [SpatialPredictionBatch],
-        ) -> Result<(), SpectralOperatorError> {
-            for batch in batches {
-                for (tap, value) in batch.taps.iter().zip(&mut batch.values) {
-                    *value = self
-                        .convolution
-                        .degrid_float(&self.grids[3].index_axis(Axis(0), batch.plane), unpack(tap));
-                }
-            }
-            Ok(())
-        }
-        fn grid(&mut self, batches: &[SpatialGridBatch]) -> Result<(), SpectralOperatorError> {
-            for batch in batches {
-                let index = match batch.field {
-                    SpatialField::Dirty => 0,
-                    SpatialField::Residual => 1,
-                    SpatialField::Psf => 2,
-                    SpatialField::Model => 3,
-                };
-                for tap in &batch.taps {
-                    self.convolution.grid_float(
-                        &mut self.grids[index].index_axis_mut(Axis(0), batch.plane),
-                        unpack(tap),
-                        Complex32::new(tap.value[0], tap.value[1]),
-                    );
-                }
-            }
-            Ok(())
-        }
-        fn download(
-            &mut self,
-            _: SpatialField,
-            _: usize,
-            _: &mut [Complex32],
-        ) -> Result<(), SpectralOperatorError> {
-            unreachable!()
-        }
-    }
-    fn unpack(tap: &SpatialTap) -> crate::spectral_operator::SampleTaps {
-        use crate::spectral_operator::{SampleTaps, TapSpan};
-        SampleTaps {
-            x: TapSpan {
-                start: tap.x as usize,
-                weight_index: tap.x_weights as usize,
-            },
-            y: TapSpan {
-                start: tap.y as usize,
-                weight_index: tap.y_weights as usize,
-            },
-        }
-    }
     let output = [1e9, 1.002e9, 1.004e9, 1.006e9];
     let mut block = NativeBlock::new(4, 12, 2).unwrap();
     let mut layout = None;
@@ -136,6 +145,7 @@ fn batched_spatial_preparation_matches_cpu_for_flags_phase_and_nonzero_model() {
         let mut backend = Backend {
             convolution: StandardConvolution::new(&geometry()),
             grids: std::array::from_fn(|_| Array3::zeros((0, 10, 10))),
+            dispatches: Vec::new(),
         };
         backend
             .initialize(
@@ -199,6 +209,124 @@ fn spatial_memory_includes_initialization_for_empty_source() {
     };
     assert!(plan.spatial_host_bytes(0).unwrap() >= BandPlan::spatial_weight_bytes());
     assert_eq!(plan.spatial_request_capacity(0).unwrap(), 0);
+}
+
+#[test]
+fn spatial_request_capacity_counts_fine_samples_of_coarse_output_planes() {
+    // 1 MHz native channels under 2 MHz outputs: two CASA fine samples per
+    // row and coarse plane, all bracketed by the unflagged in-grid native row.
+    let output = [1e9, 1.002e9, 1.004e9, 1.006e9];
+    let mut input = Input::new((0..12).map(|ch| 0.996e9 + ch as f64 * 1e6).collect());
+    input.weights.fill(1.0);
+    input.flags.fill(false);
+    input.weight_flags.fill(false);
+    let row = input.row(0..12);
+    let layout = NativeLayout::new(
+        row.address,
+        input.channels.clone(),
+        smallvec::smallvec![
+            (0, CorrelationType::CircularRr),
+            (1, CorrelationType::CircularLl),
+        ],
+    )
+    .unwrap();
+    let rows = 3;
+    let mut block = NativeBlock::new(rows, 12, 2).unwrap();
+    for r in 0..rows {
+        block.metadata[r] = super::super::input::RowMetadata {
+            physical_row: r as u64,
+            uvw_m: row.uvw_m,
+            phase_shift_m: row.phase_shift_m,
+            original_pair_hz: row.original_pair_hz,
+        };
+        block.frequencies_hz[r * 12..(r + 1) * 12].copy_from_slice(row.frequencies_hz);
+        block.values[r * 24..(r + 1) * 24].copy_from_slice(row.values);
+        block.weights[r * 24..(r + 1) * 24].copy_from_slice(row.weights);
+        block.flags[r * 24..(r + 1) * 24].copy_from_slice(row.flags);
+        block.weight_flags[r * 24..(r + 1) * 24].copy_from_slice(row.weight_flags);
+    }
+    let raw = model();
+    let polarization = polarization();
+    for (phase, fields) in [
+        (BandPhase::InitialZero, 2),
+        (BandPhase::Full, 3),
+        (BandPhase::Residual, 1),
+    ] {
+        let mut plan = BandPlan {
+            geometry: geometry(),
+            core: 0..4,
+            total_channels: 4,
+            fine_per_output: 1,
+            single_channel: None,
+            phase,
+            support: BandSupport {
+                native: 0..0,
+                model: Vec::new(),
+            },
+        };
+        BandPlan::observe_all(std::slice::from_mut(&mut plan), &block, &output).unwrap();
+        assert_eq!(plan.fine_per_output, 2);
+        assert_eq!(plan.support.model, [0, 1, 2, 3]);
+        let capacity = plan.spatial_request_capacity(rows).unwrap();
+        // Host preparation retains at least every packed request it can emit.
+        let many = 1 << 12;
+        assert!(
+            plan.spatial_host_bytes(many).unwrap()
+                >= plan.spatial_request_capacity(many).unwrap() * size_of::<SpatialTap>()
+        );
+        let mut workspace = BandWorkspace::new(
+            geometry(),
+            plan.core(),
+            plan.support.model.clone(),
+            PreparedFft::new([10, 10], 7690, 1).unwrap(),
+            phase,
+            None,
+        );
+        if phase != BandPhase::InitialZero {
+            workspace.prepare_model(raw.view()).unwrap();
+        }
+        let mut backend = Backend {
+            convolution: StandardConvolution::new(&geometry()),
+            grids: std::array::from_fn(|_| Array3::zeros((0, 10, 10))),
+            dispatches: Vec::new(),
+        };
+        backend
+            .initialize(
+                [10, 10],
+                &workspace.convolution.float_weights(),
+                [
+                    workspace.dirty.len_of(Axis(0)),
+                    workspace.residual.len_of(Axis(0)),
+                    workspace.psf.len_of(Axis(0)),
+                    workspace.forward.len_of(Axis(0)),
+                ],
+                workspace.forward.as_slice().unwrap(),
+            )
+            .unwrap();
+        workspace
+            .consume_spatial(
+                block.view().unwrap(),
+                &layout,
+                plan.native_range(),
+                &output,
+                &polarization,
+                &mut backend,
+            )
+            .unwrap();
+        let grid = backend.dispatches.last().unwrap();
+        assert_eq!(grid.len(), fields * 4);
+        assert!(
+            grid.iter().all(|&taps| taps == rows * 2),
+            "{phase:?}: {grid:?}"
+        );
+        for dispatch in &backend.dispatches {
+            assert!(dispatch.iter().sum::<usize>() <= capacity);
+        }
+        if phase != BandPhase::Residual {
+            // Contributions, not native predictions, bound these phases.
+            assert_eq!(grid.iter().sum::<usize>(), capacity);
+        }
+    }
 }
 
 fn geometry() -> SpectralOperatorGeometry {
