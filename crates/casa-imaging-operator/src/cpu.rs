@@ -2,7 +2,7 @@
 //! The CPU gridding backend: support-generic kernels over both tap layouts
 //! with a specialised seven-tap separable path.
 
-mod kernel;
+pub(crate) mod kernel;
 
 use num_complex::{Complex, Complex32, Complex64};
 
@@ -18,10 +18,14 @@ use crate::sample::{Placement, SampleBlock};
 /// Grids are addressed through the shared accumulator layout; each sample
 /// is located once with [`GridGeometry::locate`](crate::GridGeometry::locate)
 /// and spread or gathered through the Mueller table its `w` sign selects.
+/// A prediction sums the numerator and the kernel norm over every routed
+/// Mueller plane and divides once, as CASA's `AWVisResampler` does; a zero
+/// norm predicts zero.
 #[derive(Debug, Default)]
 pub struct CpuBackend {
     powers: Vec<f64>,
     prediction: Vec<Complex64>,
+    norms: Vec<Complex64>,
     residual: Vec<Complex32>,
 }
 
@@ -152,7 +156,9 @@ impl CpuBackend {
     }
 
     /// Fill `self.prediction` with the raw prediction `P` per visibility
-    /// polarization (no phase-centre phasor) for one placement.
+    /// polarization (no phase-centre phasor) for one placement:
+    /// `Σ_t s^t Σ_{gpol,m} Σ conj(tap'_m) · model[t][gpol]` divided once by
+    /// `Σ_{gpol,m} norm_m`.
     fn predict_sample<T: GridScalar>(
         &mut self,
         cf: &dyn ConvolutionFunctionSet,
@@ -175,15 +181,18 @@ impl CpuBackend {
         spectral_powers(&mut self.powers, placement.spectral, terms.len());
         self.prediction.clear();
         self.prediction.resize(npol, Complex64::default());
+        self.norms.clear();
+        self.norms.resize(npol, Complex64::default());
         for (gpol, row) in table.iter().enumerate() {
             for (vpol, mueller_plane) in row.iter().enumerate() {
                 let Some(mueller) = *mueller_plane else {
                     continue;
                 };
+                self.norms[vpol] += kernel::norm(&taps, location, mueller, !w_positive);
                 for (power, term) in self.powers.iter().zip(terms.clone()) {
                     let offset = layout.block_offset(plane, gpol, term);
                     let grid = &cells[offset..offset + layout.block_cells()];
-                    let (sum, tap_sum) = kernel::gather::<T>(
+                    let sum = kernel::gather::<T>(
                         grid,
                         layout.tile(),
                         location,
@@ -192,9 +201,16 @@ impl CpuBackend {
                         !w_positive,
                         placement.gradient,
                     );
-                    self.prediction[vpol] += sum / tap_sum * *power;
+                    self.prediction[vpol] += sum * *power;
                 }
             }
+        }
+        for (prediction, norm) in self.prediction.iter_mut().zip(&self.norms) {
+            *prediction = if *norm == Complex64::default() {
+                Complex64::default()
+            } else {
+                *prediction / norm
+            };
         }
     }
 }
@@ -234,8 +250,12 @@ impl GridBackend for CpuBackend {
                     "model grids and accumulator must share a precision"
                 );
                 match acc.precision() {
-                    GridPrecision::F32 => self.residual::<f32>(block, cf, model, acc, residual_out),
-                    GridPrecision::F64 => self.residual::<f64>(block, cf, model, acc, residual_out),
+                    GridPrecision::F32 => {
+                        self.residual::<f32>(block, cf, model, acc, residual_out);
+                    }
+                    GridPrecision::F64 => {
+                        self.residual::<f64>(block, cf, model, acc, residual_out);
+                    }
                 }
                 Ok(())
             }
@@ -244,7 +264,7 @@ impl GridBackend for CpuBackend {
 }
 
 /// Spread one placement's values through every routed (grid pol,
-/// visibility pol) pair and term, accumulating `sumwt`.
+/// visibility pol) pair and term, accumulating `sumwt += W · s^t · |norm|`.
 #[allow(clippy::too_many_arguments)]
 fn spread_sample<T: GridScalar>(
     layout: &AccumulatorLayout,
@@ -277,13 +297,14 @@ fn spread_sample<T: GridScalar>(
                 Mode::Data => values[vpol],
                 Mode::Psf | Mode::Weight => Complex32::new(weight, 0.0),
             };
+            let norm = kernel::norm(taps, location, mueller, !w_positive).norm();
             for (power, term) in powers.iter().zip(terms.clone()) {
                 let value = Complex::new(
                     T::from_f64(f64::from(base.re) * power),
                     T::from_f64(f64::from(base.im) * power),
                 );
                 let offset = layout.block_offset(plane, gpol, term);
-                let tap_sum = kernel::spread::<T>(
+                kernel::spread::<T>(
                     &mut cells[offset..offset + block_cells],
                     layout.tile(),
                     location,
@@ -293,7 +314,7 @@ fn spread_sample<T: GridScalar>(
                     placement.gradient,
                     value,
                 );
-                sumwt[layout.block_index(plane, gpol, term)] += f64::from(weight) * power * tap_sum;
+                sumwt[layout.block_index(plane, gpol, term)] += f64::from(weight) * power * norm;
             }
         }
     }

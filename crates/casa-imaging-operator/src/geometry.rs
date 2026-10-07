@@ -97,15 +97,22 @@ impl GridGeometry {
                 reason: "grid extent must be even",
             });
         }
-        let image_origin = [
-            grid_shape[0] / 2 - image.reference_pixel[0],
-            grid_shape[1] / 2 - image.reference_pixel[1],
-        ];
-        if image_origin[0] + nx > grid_shape[0] || image_origin[1] + ny > grid_shape[1] {
+        // The reference pixel sits on the grid centre; the image must fit
+        // on both sides of it.
+        let origin = |extent: usize, reference: usize, size: usize| {
+            (extent / 2)
+                .checked_sub(reference)
+                .filter(|origin| origin + size <= extent)
+        };
+        let (Some(x0), Some(y0)) = (
+            origin(grid_shape[0], image.reference_pixel[0], nx),
+            origin(grid_shape[1], image.reference_pixel[1], ny),
+        ) else {
             return Err(OperatorError::Geometry {
                 reason: "image does not fit the grid around its reference pixel",
             });
-        }
+        };
+        let image_origin = [x0, y0];
         Ok(Self {
             image,
             grid_shape,
@@ -293,5 +300,38 @@ mod tests {
             GridPadding::None,
         );
         assert!(matches!(outside, Err(OperatorError::Geometry { .. })));
+    }
+
+    #[test]
+    fn rejects_a_reference_pixel_beyond_the_padded_grid_midpoint() {
+        // 64 pixels pad to 80; the reference pixel can be at most 40 from
+        // the left edge and at least 24 from the right edge.
+        for reference in [[41, 32], [32, 41], [23, 32]] {
+            let geometry = GridGeometry::new(
+                ImageExtent {
+                    shape: [64, 64],
+                    increment_rad: [-1.0e-5, 1.0e-5],
+                    reference_pixel: reference,
+                },
+                GridPadding::CasaComposite,
+            );
+            assert_eq!(
+                geometry,
+                Err(OperatorError::Geometry {
+                    reason: "image does not fit the grid around its reference pixel"
+                }),
+                "reference {reference:?}"
+            );
+        }
+        let edge = GridGeometry::new(
+            ImageExtent {
+                shape: [64, 64],
+                increment_rad: [-1.0e-5, 1.0e-5],
+                reference_pixel: [40, 24],
+            },
+            GridPadding::CasaComposite,
+        )
+        .expect("fits exactly");
+        assert_eq!(edge.image_origin(), [0, 16]);
     }
 }

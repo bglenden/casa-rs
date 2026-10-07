@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Tap loops over one `[y][x]` block: spread (adjoint) and gather (forward).
+//! Tap loops over one `[y][x]` block: spread (adjoint), gather (forward)
+//! and the kernel norm.
+//!
+//! `tap' = (conjugate ? conj(t) : t) · e^{i(k_x g_x + k_y g_y)}`. The norm
+//! is `Σ (conjugate ? conj(t) : t)` over the same taps without the pointing
+//! ramp, which is how CASA's `AWVisResampler` accumulates it
+//! (`faccumulateFromGrid`: `norm += wt` before the phase gradient).
 //!
 //! Every function takes the location the shared rounding rule produced and
 //! trusts that the support lies inside the tile; the debug assertions name
@@ -11,10 +17,8 @@ use crate::accumulator::{GridScalar, Tile};
 use crate::convolution::TapLayout;
 use crate::geometry::CellLocation;
 
-/// `tap' = (conjugate ? conj(t) : t) · e^{i(k_x g_x + k_y g_y)}`.
-///
-/// Adds `value · tap'` over the support into `grid` through Mueller plane
-/// `mueller` and returns `|Σ tap'|` for `sumwt`.
+/// Add `value · tap'` over the support into `grid` through Mueller plane
+/// `mueller`.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn spread<T: GridScalar>(
     grid: &mut [Complex<T>],
@@ -25,7 +29,7 @@ pub(super) fn spread<T: GridScalar>(
     conjugate: bool,
     gradient: [f32; 2],
     value: Complex<T>,
-) -> f64 {
+) {
     match *taps {
         TapLayout::SeparableReal {
             rows,
@@ -64,24 +68,20 @@ pub(super) fn spread<T: GridScalar>(
             let [sx, sy] = [usize::from(support[0]), usize::from(support[1])];
             let (x0, y0) = block_origin(tile, location, [sx / 2, sy / 2]);
             let nx = tile.shape[0];
-            let mut sum = Complex64::default();
             for iy in 0..sy {
                 let row = &mut grid[(y0 + iy) * nx + x0..][..sx];
                 let tap_row = &tile_taps[iy * sx..][..sx];
                 for (ix, (cell, tap)) in row.iter_mut().zip(tap_row).enumerate() {
                     let tap = dense_tap(*tap, conjugate, gradient, ix, iy, sx, sy);
-                    sum += tap;
                     let tap = Complex::new(T::from_f64(tap.re), T::from_f64(tap.im));
                     *cell = *cell + value * tap;
                 }
             }
-            sum.norm()
         }
     }
 }
 
-/// `Σ conj(tap') · grid` over the support through Mueller plane `mueller`,
-/// with `Σ tap'` for the forward normalisation.
+/// `Σ conj(tap') · grid` over the support through Mueller plane `mueller`.
 pub(super) fn gather<T: GridScalar>(
     grid: &[Complex<T>],
     tile: Tile,
@@ -90,7 +90,7 @@ pub(super) fn gather<T: GridScalar>(
     mueller: u8,
     conjugate: bool,
     gradient: [f32; 2],
-) -> (Complex64, Complex64) {
+) -> Complex64 {
     match *taps {
         TapLayout::SeparableReal {
             rows,
@@ -104,13 +104,7 @@ pub(super) fn gather<T: GridScalar>(
             let (x0, y0) = block_origin(tile, location, [support / 2, support / 2]);
             let nx = tile.shape[0];
             let mut sum = Complex::<T>::default();
-            let mut sum_x = 0.0_f64;
-            let mut sum_y = 0.0_f64;
-            for tap in rx {
-                sum_x += f64::from(*tap);
-            }
             for (iy, wy) in ry.iter().enumerate() {
-                sum_y += f64::from(*wy);
                 let row = &grid[(y0 + iy) * nx + x0..][..support];
                 let mut row_sum = Complex::<T>::default();
                 for (cell, wx) in row.iter().zip(rx) {
@@ -118,10 +112,7 @@ pub(super) fn gather<T: GridScalar>(
                 }
                 sum = sum + row_sum * T::from_f32(*wy);
             }
-            (
-                Complex64::new(sum.re.into_f64(), sum.im.into_f64()),
-                Complex64::new(sum_x * sum_y, 0.0),
-            )
+            Complex64::new(sum.re.into_f64(), sum.im.into_f64())
         }
         TapLayout::Dense {
             data,
@@ -141,18 +132,63 @@ pub(super) fn gather<T: GridScalar>(
             let (x0, y0) = block_origin(tile, location, [sx / 2, sy / 2]);
             let nx = tile.shape[0];
             let mut sum = Complex64::default();
-            let mut tap_sum = Complex64::default();
             for iy in 0..sy {
                 let row = &grid[(y0 + iy) * nx + x0..][..sx];
                 let tap_row = &tile_taps[iy * sx..][..sx];
                 for (ix, (cell, tap)) in row.iter().zip(tap_row).enumerate() {
                     let tap = dense_tap(*tap, conjugate, gradient, ix, iy, sx, sy);
-                    tap_sum += tap;
                     let cell = Complex64::new(cell.re.into_f64(), cell.im.into_f64());
                     sum += tap.conj() * cell;
                 }
             }
-            (sum, tap_sum)
+            sum
+        }
+    }
+}
+
+/// `Σ (conjugate ? conj(t) : t)` over the support of Mueller plane
+/// `mueller` at the sample's fine offset, without the pointing ramp: the
+/// forward normalisation, whose magnitude `sumwt` accumulates.
+pub(crate) fn norm(
+    taps: &TapLayout<'_>,
+    location: CellLocation,
+    mueller: u8,
+    conjugate: bool,
+) -> Complex64 {
+    match *taps {
+        TapLayout::SeparableReal {
+            rows,
+            support,
+            oversampling: _,
+        } => {
+            debug_assert_eq!(mueller, 0, "separable kernels have one Mueller plane");
+            let support = usize::from(support);
+            let axis_sum = |offset: u16| {
+                rows[usize::from(offset) * support..][..support]
+                    .iter()
+                    .map(|tap| f64::from(*tap))
+                    .sum::<f64>()
+            };
+            Complex64::new(axis_sum(location.ox) * axis_sum(location.oy), 0.0)
+        }
+        TapLayout::Dense {
+            data,
+            support,
+            oversampling,
+            mueller_planes,
+        } => {
+            let sum = dense_tile(
+                data,
+                support,
+                oversampling,
+                mueller_planes,
+                location,
+                mueller,
+            )
+            .iter()
+            .map(|tap| Complex64::new(f64::from(tap.re), f64::from(tap.im)))
+            .sum::<Complex64>();
+            if conjugate { sum.conj() } else { sum }
         }
     }
 }
@@ -179,16 +215,12 @@ fn spread_separable<T: GridScalar, const S: usize>(
     rx: &[f32],
     ry: &[f32],
     value: Complex<T>,
-) -> f64 {
+) {
     let mut taps_x = [T::zero(); S];
-    let mut sum_x = 0.0_f64;
     for (target, tap) in taps_x.iter_mut().zip(rx) {
         *target = T::from_f32(*tap);
-        sum_x += f64::from(*tap);
     }
-    let mut sum_y = 0.0_f64;
     for (iy, wy) in ry.iter().enumerate() {
-        sum_y += f64::from(*wy);
         let scaled = value * T::from_f32(*wy);
         let row: &mut [Complex<T>; S] = (&mut grid[(y0 + iy) * nx + x0..][..S])
             .try_into()
@@ -197,7 +229,6 @@ fn spread_separable<T: GridScalar, const S: usize>(
             *cell = *cell + scaled * *tap;
         }
     }
-    sum_x * sum_y
 }
 
 fn spread_separable_dyn<T: GridScalar>(
@@ -208,19 +239,15 @@ fn spread_separable_dyn<T: GridScalar>(
     rx: &[f32],
     ry: &[f32],
     value: Complex<T>,
-) -> f64 {
+) {
     let support = rx.len();
-    let sum_x = rx.iter().map(|tap| f64::from(*tap)).sum::<f64>();
-    let mut sum_y = 0.0_f64;
     for (iy, wy) in ry.iter().enumerate() {
-        sum_y += f64::from(*wy);
         let scaled = value * T::from_f32(*wy);
         let row = &mut grid[(y0 + iy) * nx + x0..][..support];
         for (cell, tap) in row.iter_mut().zip(rx) {
             *cell = *cell + scaled * T::from_f32(*tap);
         }
     }
-    sum_x * sum_y
 }
 
 /// The `sy × sx` tile of one Mueller plane at the sample's fine offset.

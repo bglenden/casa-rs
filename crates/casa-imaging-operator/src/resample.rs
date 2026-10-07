@@ -2,12 +2,12 @@
 //! The single spectral resampler: native rows to placements.
 //!
 //! A constant or Taylor basis grids every native channel on plane 0. A
-//! channel-local basis follows CASA: `nearest` maps a native channel to the
-//! output channel its rounded spectral pixel names (`FTMachine::matchChannel`);
-//! `linear` interpolates adjacent native visibilities onto CASA's fine
-//! frequency grid, keeps the nearer channel's weight and ORs the flags
-//! (`FTMachine::interpolateFrequencyTogrid`). A one-channel image bypasses
-//! interpolation and accepts native channels inside the channel.
+//! channel-local basis follows CASA `FTMachine`: `nearest` maps a native
+//! channel to the output channel its rounded spectral pixel names
+//! (`matchChannel`); `linear` interpolates adjacent native visibilities onto
+//! CASA's fine frequency grid, keeps the nearer channel's weight and ORs the
+//! flags (`interpolateFrequencyTogrid`), except that a one-channel image or
+//! a one-channel row bypasses interpolation and maps like `nearest`.
 
 use num_complex::{Complex32, Complex64};
 
@@ -54,44 +54,37 @@ pub enum SpectralKernel {
     Linear,
 }
 
-/// Uniform output spectral axis.
+/// The uniform output spectral axis of a channel-local basis: first channel
+/// centre, signed channel width and channel count. The width matters even
+/// for one channel, because it decides which native channels the channel
+/// accepts.
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct OutputAxis {
+pub struct SpectralAxis {
     first_hz: f64,
     increment_hz: f64,
-    channels: usize,
+    channels: u32,
 }
 
-impl OutputAxis {
-    fn compile(centres_hz: &[f64]) -> Result<Self, OperatorError> {
-        let channels = centres_hz.len();
-        let Some(first_hz) = centres_hz.first().copied() else {
+impl SpectralAxis {
+    /// An axis of `channels` channels of width `increment_hz` starting at
+    /// `first_hz`; the frequency must be finite and positive, the increment
+    /// finite and non-zero, and there must be at least one channel.
+    pub fn new(first_hz: f64, increment_hz: f64, channels: u32) -> Result<Self, OperatorError> {
+        if !first_hz.is_finite() || first_hz <= 0.0 {
             return Err(OperatorError::SpectralAxis {
-                reason: "output axis has no channels",
-            });
-        };
-        if centres_hz
-            .iter()
-            .any(|centre| !centre.is_finite() || *centre <= 0.0)
-        {
-            return Err(OperatorError::SpectralAxis {
-                reason: "output channel centres must be finite and positive",
+                reason: "the first channel centre must be finite and positive",
             });
         }
-        let increment_hz = if channels > 1 {
-            let increment = centres_hz[1] - first_hz;
-            let uniform = centres_hz
-                .windows(2)
-                .all(|pair| ((pair[1] - pair[0]) - increment).abs() <= 1.0e-6 * increment.abs());
-            if increment == 0.0 || !uniform {
-                return Err(OperatorError::SpectralAxis {
-                    reason: "output channel centres must be uniformly spaced",
-                });
-            }
-            increment
-        } else {
-            0.0
-        };
+        if !increment_hz.is_finite() || increment_hz == 0.0 {
+            return Err(OperatorError::SpectralAxis {
+                reason: "the channel width must be finite and non-zero",
+            });
+        }
+        if channels == 0 {
+            return Err(OperatorError::SpectralAxis {
+                reason: "the axis has no channels",
+            });
+        }
         Ok(Self {
             first_hz,
             increment_hz,
@@ -99,14 +92,40 @@ impl OutputAxis {
         })
     }
 
-    fn last_hz(self) -> f64 {
-        self.first_hz + (self.channels - 1) as f64 * self.increment_hz
+    /// Centre of the first channel in Hz.
+    #[must_use]
+    pub const fn first_hz(self) -> f64 {
+        self.first_hz
     }
 
-    /// `FTMachine::matchChannel`: the output channel of a rounded spectral pixel.
-    fn nearest_channel(self, frequency_hz: f64) -> Option<usize> {
+    /// Signed channel width in Hz.
+    #[must_use]
+    pub const fn increment_hz(self) -> f64 {
+        self.increment_hz
+    }
+
+    /// Number of channels.
+    #[must_use]
+    pub const fn channels(self) -> u32 {
+        self.channels
+    }
+
+    /// Centre of `channel` in Hz.
+    #[must_use]
+    pub fn centre_hz(self, channel: u32) -> f64 {
+        self.first_hz + f64::from(channel) * self.increment_hz
+    }
+
+    fn last_hz(self) -> f64 {
+        self.centre_hz(self.channels - 1)
+    }
+
+    /// `FTMachine::matchChannel`: the channel whose rounded spectral pixel
+    /// `floor((ν − ν₀)/Δν + 0.5)` lies on the axis.
+    #[must_use]
+    pub fn nearest_channel(self, frequency_hz: f64) -> Option<u32> {
         let pixel = ((frequency_hz - self.first_hz) / self.increment_hz + 0.5).floor();
-        (pixel >= 0.0 && pixel < self.channels as f64).then_some(pixel as usize)
+        (pixel >= 0.0 && pixel < f64::from(self.channels)).then_some(pixel as u32)
     }
 }
 
@@ -118,16 +137,14 @@ struct FineGrid {
     start_hz: f64,
     increment_hz: f64,
     per_output: usize,
-    output: OutputAxis,
+    output: SpectralAxis,
 }
 
 impl FineGrid {
-    fn compile(output: OutputAxis, native_increment_hz: f64) -> Result<Self, OperatorError> {
+    fn compile(output: SpectralAxis, native_increment_hz: f64) -> Option<Self> {
         let output_increment_hz = output.increment_hz;
-        if output_increment_hz == 0.0 || native_increment_hz == 0.0 {
-            return Err(OperatorError::SpectralAxis {
-                reason: "linear interpolation needs non-zero increments",
-            });
+        if native_increment_hz == 0.0 || !native_increment_hz.is_finite() {
+            return None;
         }
         let width = output_increment_hz.abs() / native_increment_hz.abs();
         if width <= 1.0 {
@@ -137,7 +154,7 @@ impl FineGrid {
             } else {
                 output.last_hz()
             };
-            return Ok(Self {
+            return Some(Self {
                 start_hz,
                 increment_hz,
                 per_output: 1,
@@ -156,7 +173,7 @@ impl FineGrid {
         } else {
             high_edge - fine_abs / 2.0
         };
-        Ok(Self {
+        Some(Self {
             start_hz,
             increment_hz,
             per_output,
@@ -165,15 +182,15 @@ impl FineGrid {
     }
 
     fn count(self) -> usize {
-        self.per_output * self.output.channels
+        self.per_output * self.output.channels as usize
     }
 
     fn frequency_hz(self, ordinal: usize) -> f64 {
         self.start_hz + ordinal as f64 * self.increment_hz
     }
 
-    fn output_channel(self, ordinal: usize) -> usize {
-        let output_ordinal = ordinal / self.per_output;
+    fn output_channel(self, ordinal: usize) -> u32 {
+        let output_ordinal = (ordinal / self.per_output) as u32;
         if self.increment_hz.signum() == self.output.increment_hz.signum() {
             output_ordinal
         } else {
@@ -185,12 +202,11 @@ impl FineGrid {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Sampling {
     Direct,
-    Nearest(OutputAxis),
-    Linear(OutputAxis),
-    SingleChannel { centre_hz: f64, increment_hz: f64 },
+    Nearest(SpectralAxis),
+    Linear(SpectralAxis),
 }
 
-/// One spectral sample of a row: its plane, frequency and native source.
+/// One spectral sample of a row: its native source.
 #[derive(Clone, Copy, Debug)]
 enum Source {
     Channel(usize),
@@ -198,41 +214,46 @@ enum Source {
 }
 
 /// Turns native rows into placed, weighted samples for one operator.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SpectralResampler {
     sampling: Sampling,
     basis: Basis,
 }
 
 impl SpectralResampler {
-    /// Resampler for `basis`. A channel-local basis needs the uniform output
-    /// channel centres (one per plane) and the mapping `kernel`; the
-    /// centres are ignored for the other bases.
-    pub fn new(
-        basis: Basis,
-        output_centres_hz: &[f64],
-        kernel: SpectralKernel,
-    ) -> Result<Self, OperatorError> {
-        let sampling = match basis {
-            Basis::Constant | Basis::Taylor { .. } => Sampling::Direct,
-            Basis::ChannelLocal { planes } => {
-                let output = OutputAxis::compile(output_centres_hz)?;
-                if output.channels != planes as usize {
-                    return Err(OperatorError::SpectralAxis {
-                        reason: "output channel count must equal the basis planes",
-                    });
-                }
-                match kernel {
-                    SpectralKernel::Nearest => Sampling::Nearest(output),
-                    SpectralKernel::Linear if output.channels == 1 => Sampling::SingleChannel {
-                        centre_hz: output.first_hz,
-                        increment_hz: output.increment_hz,
-                    },
-                    SpectralKernel::Linear => Sampling::Linear(output),
-                }
-            }
-        };
-        Ok(Self { sampling, basis })
+    /// Resampler for a constant or Taylor basis: every native channel is a
+    /// sample on plane 0.
+    pub fn direct(basis: Basis) -> Result<Self, OperatorError> {
+        if matches!(basis, Basis::ChannelLocal { .. }) {
+            return Err(OperatorError::SpectralAxis {
+                reason: "a channel-local basis needs its output axis and kernel",
+            });
+        }
+        Ok(Self {
+            sampling: Sampling::Direct,
+            basis,
+        })
+    }
+
+    /// Resampler for the channel-local basis whose planes are the channels
+    /// of `output`, mapped by `kernel`.
+    #[must_use]
+    pub fn channel_local(output: SpectralAxis, kernel: SpectralKernel) -> Self {
+        Self {
+            sampling: match kernel {
+                SpectralKernel::Nearest => Sampling::Nearest(output),
+                SpectralKernel::Linear => Sampling::Linear(output),
+            },
+            basis: Basis::ChannelLocal {
+                planes: output.channels,
+            },
+        }
+    }
+
+    /// The basis the resampler produces placements for.
+    #[must_use]
+    pub const fn basis(&self) -> Basis {
+        self.basis
     }
 
     /// Place one row's unflagged samples with imaging weights into `out`.
@@ -301,7 +322,7 @@ impl SpectralResampler {
         out: &mut SampleBuffer,
     ) -> Result<(), OperatorError> {
         let npol = operator.polarization().correlations().len();
-        self.validate_row(row, npol)?;
+        self.validate_row(operator, row, npol)?;
         if out.npol() != 1 {
             return Err(OperatorError::NativeRow {
                 reason: "density buffers carry one polarization",
@@ -341,11 +362,21 @@ impl SpectralResampler {
                 reason: "buffer polarizations must match the operator",
             });
         }
-        self.validate_row(row, npol)?;
+        self.validate_row(operator, row, npol)?;
         Ok(npol)
     }
 
-    fn validate_row(&self, row: &NativeRow<'_>, npol: usize) -> Result<(), OperatorError> {
+    fn validate_row(
+        &self,
+        operator: &MeasurementOperator,
+        row: &NativeRow<'_>,
+        npol: usize,
+    ) -> Result<(), OperatorError> {
+        assert_eq!(
+            self.basis,
+            operator.basis(),
+            "the resampler and the operator must share a basis"
+        );
         let channels = row.frequencies_hz.len();
         if channels == 0 {
             return Err(OperatorError::NativeRow {
@@ -360,47 +391,32 @@ impl SpectralResampler {
                 reason: "values, weights and flags must be channels × correlations",
             });
         }
-        if matches!(self.sampling, Sampling::Linear(_)) && channels < 2 {
-            return Err(OperatorError::SpectralAxis {
-                reason: "linear interpolation needs at least two native channels",
-            });
-        }
         Ok(())
     }
 
     /// Visit every spectral sample of the row as `(plane, frequency, source)`.
     fn for_each_sample(&self, row: &NativeRow<'_>, mut visit: impl FnMut(u32, f64, Source)) {
+        let native = row.frequencies_hz;
+        let nearest = |axis: SpectralAxis, visit: &mut dyn FnMut(u32, f64, Source)| {
+            for (channel, frequency_hz) in native.iter().enumerate() {
+                if let Some(plane) = axis.nearest_channel(*frequency_hz) {
+                    visit(plane, *frequency_hz, Source::Channel(channel));
+                }
+            }
+        };
         match self.sampling {
             Sampling::Direct => {
-                for (channel, frequency_hz) in row.frequencies_hz.iter().enumerate() {
+                for (channel, frequency_hz) in native.iter().enumerate() {
                     visit(0, *frequency_hz, Source::Channel(channel));
                 }
             }
-            Sampling::Nearest(output) => {
-                for (channel, frequency_hz) in row.frequencies_hz.iter().enumerate() {
-                    if let Some(plane) = output.nearest_channel(*frequency_hz) {
-                        visit(plane as u32, *frequency_hz, Source::Channel(channel));
-                    }
-                }
+            Sampling::Nearest(axis) => nearest(axis, &mut visit),
+            // CASA bypasses interpolation for a one-channel image or row.
+            Sampling::Linear(axis) if axis.channels == 1 || native.len() == 1 => {
+                nearest(axis, &mut visit);
             }
-            Sampling::SingleChannel {
-                centre_hz,
-                increment_hz,
-            } => {
-                for (channel, frequency_hz) in row.frequencies_hz.iter().enumerate() {
-                    let inside = if increment_hz == 0.0 {
-                        *frequency_hz == centre_hz
-                    } else {
-                        ((frequency_hz - centre_hz) / increment_hz + 0.5).floor() == 0.0
-                    };
-                    if inside {
-                        visit(0, *frequency_hz, Source::Channel(channel));
-                    }
-                }
-            }
-            Sampling::Linear(output) => {
-                let native = row.frequencies_hz;
-                let Ok(grid) = FineGrid::compile(output, native[1] - native[0]) else {
+            Sampling::Linear(axis) => {
+                let Some(grid) = FineGrid::compile(axis, native[1] - native[0]) else {
                     return;
                 };
                 let count = grid.count();
@@ -431,7 +447,7 @@ impl SpectralResampler {
                         }
                         let right_factor = ((frequency_hz - left_hz) / span).clamp(0.0, 1.0);
                         visit(
-                            grid.output_channel(next) as u32,
+                            grid.output_channel(next),
                             frequency_hz,
                             Source::Pair { left, right_factor },
                         );

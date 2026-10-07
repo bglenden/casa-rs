@@ -47,6 +47,7 @@ pub struct PolarizationRouting {
     pol_map: Vec<Option<u8>>,
     feed: FeedBasis,
     to_requested: Vec<Complex64>,
+    to_requested_psf: Vec<Complex64>,
     from_requested: Vec<Complex64>,
     sumwt_source: Vec<usize>,
 }
@@ -136,6 +137,13 @@ impl PolarizationRouting {
                     .map(|plane| to_coefficient(feed, *coordinate, *plane))
             })
             .collect();
+        let to_requested_psf = requested
+            .iter()
+            .flat_map(|coordinate| {
+                grid.iter()
+                    .map(|plane| psf_coefficient(feed, requested, *coordinate, *plane))
+            })
+            .collect();
         let from_requested = grid
             .iter()
             .flat_map(|plane| {
@@ -165,6 +173,7 @@ impl PolarizationRouting {
             pol_map,
             feed,
             to_requested,
+            to_requested_psf,
             from_requested,
             sumwt_source,
         })
@@ -211,6 +220,16 @@ impl PolarizationRouting {
     #[must_use]
     pub fn to_requested(&self, requested: usize, gpol: usize) -> Complex64 {
         self.to_requested[requested * self.grid.len() + gpol]
+    }
+
+    /// Coefficient of grid plane `gpol` in the PSF (and weight) image of
+    /// requested plane `requested` (CASA `StokesImageUtil::ToStokesPSF`):
+    /// with one or two requested Stokes parameters every plane takes the
+    /// parallel-hand sum, or the cross-hand sum for U and V on linear feeds
+    /// and Q and U on circular feeds; otherwise the data conversion.
+    #[must_use]
+    pub fn to_requested_psf(&self, requested: usize, gpol: usize) -> Complex64 {
+        self.to_requested_psf[requested * self.grid.len() + gpol]
     }
 
     /// Coefficient of requested model plane `requested` in grid plane `gpol`.
@@ -389,6 +408,42 @@ fn to_coefficient(
         }
         _ => Complex64::default(),
     }
+}
+
+/// `StokesImageUtil::ToStokesPSF`: with one or two requested Stokes
+/// parameters on physical feeds, both PSF planes come from one Stokes row
+/// of the data conversion (CASA applies the cross-hand rule to both planes
+/// whenever either requested parameter is a cross-hand one); with three or
+/// four, the data conversion applies plane by plane.
+fn psf_coefficient(
+    feed: FeedBasis,
+    requested_all: &[PolarizationCoordinate],
+    requested: PolarizationCoordinate,
+    plane: GridPolarization,
+) -> Complex64 {
+    use PolarizationCoordinate::{StokesI, StokesQ, StokesU, StokesV};
+    if feed == FeedBasis::Stokes
+        || plane == GridPolarization::StokesI
+        || requested_all.len() > 2
+        || !requested_all
+            .iter()
+            .all(|coordinate| is_stokes(*coordinate))
+    {
+        return to_coefficient(feed, requested, plane);
+    }
+    let cross_hand = |coordinate: &PolarizationCoordinate| match feed {
+        FeedBasis::Linear => matches!(coordinate, StokesU | StokesV),
+        FeedBasis::Circular | FeedBasis::Stokes => matches!(coordinate, StokesQ | StokesU),
+    };
+    let row = if requested_all.iter().any(cross_hand) {
+        match feed {
+            FeedBasis::Linear => StokesU,
+            FeedBasis::Circular | FeedBasis::Stokes => StokesQ,
+        }
+    } else {
+        StokesI
+    };
+    to_coefficient(feed, row, plane)
 }
 
 /// `StokesImageUtil::From` (`CStokesVector::applySlin` / `applyScirc`): the

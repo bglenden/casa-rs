@@ -481,3 +481,88 @@ fn residual_grid_of_the_predicted_model_is_empty() {
         "residual image peak {residual_peak}"
     );
 }
+
+/// A Stokes Q point source observed on linear feeds: the Q dirty image is
+/// flux × the Q PSF, the I dirty image vanishes, and the Q PSF equals the
+/// I PSF because CASA's `ToStokesPSF` builds both from the parallel hands.
+#[test]
+fn polarized_point_source_matches_the_casa_stokes_psf() {
+    let requested = [
+        PolarizationCoordinate::StokesI,
+        PolarizationCoordinate::StokesQ,
+    ];
+    let operator = operator(GridPrecision::F64, Basis::Constant, &XX_YY, &requested);
+    let mut rng = Rng::new(17);
+    let placed = placements(operator.geometry(), 300, 1, &mut rng);
+    let weights = (0..placed.len())
+        .flat_map(|_| {
+            let weight = 0.5 + rng.unit();
+            [weight, weight]
+        })
+        .collect::<Vec<_>>();
+    let flux = 1.5;
+    let shift = [-4_i64, 6_i64];
+    let l = shift[0] as f64 * INCREMENT_RAD[0];
+    let m = shift[1] as f64 * INCREMENT_RAD[1];
+    // XX = I + Q = Q, YY = I − Q = −Q for a pure Q source.
+    let values = placed
+        .iter()
+        .flat_map(|p| {
+            let value =
+                Complex64::from_polar(flux, std::f64::consts::TAU * (p.u * l + p.v * m) - p.phase);
+            [value, -value]
+        })
+        .collect::<Vec<_>>();
+    let block = buffer(&placed, &values, &weights, 2);
+    let mut backend = CpuBackend::new();
+    let mut acc = operator.accumulator(PlaneRange::single(0), None, ModeSet::DATA_PSF);
+    for mode in [Mode::Data, Mode::Psf] {
+        backend
+            .apply(
+                &block.block(),
+                operator.cf(),
+                Work::Grid {
+                    mode,
+                    acc: &mut acc,
+                },
+            )
+            .expect("grid");
+    }
+    let normal = operator.finish(acc).expect("finish");
+    let sumwt = normal.psf_sumwt(0, 0, 1);
+    assert_eq!(
+        normal.psf_sumwt(0, 0, 0),
+        sumwt,
+        "both Stokes planes carry grid plane 0's sumwt"
+    );
+    let psf_i = normal.psf(0, 0, 0);
+    let psf_q = normal.psf(0, 0, 1);
+    assert_eq!(
+        psf_i, psf_q,
+        "ToStokesPSF: I and Q PSFs are both (XX + YY)/2"
+    );
+    let centre = IMAGE / 2;
+    assert!((f64::from(psf_q[(centre, centre)]) / sumwt - 1.0).abs() < 1.0e-3);
+    let dirty_i = normal.data(0, 0, 0);
+    let dirty_q = normal.data(0, 0, 1);
+    assert!(
+        max_abs(dirty_i.iter().copied()) / sumwt < 1.0e-6 * flux,
+        "no Stokes I leakage"
+    );
+    let mut worst = 0.0_f64;
+    for y in 0..IMAGE as i64 {
+        for x in 0..IMAGE as i64 {
+            let (sx, sy) = (x - shift[0], y - shift[1]);
+            if sx < 0 || sy < 0 || sx >= IMAGE as i64 || sy >= IMAGE as i64 {
+                continue;
+            }
+            let expected = flux * f64::from(psf_q[(sy as usize, sx as usize)]) / sumwt;
+            let actual = f64::from(dirty_q[(y as usize, x as usize)]) / sumwt;
+            worst = worst.max((expected - actual).abs());
+        }
+    }
+    assert!(
+        worst < 1.0e-3 * flux,
+        "Q dirty image differs from the shifted Q PSF by {worst}"
+    );
+}

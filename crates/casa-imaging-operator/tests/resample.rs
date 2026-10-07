@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The spectral resampler: direct, nearest and CASA linear channel mapping
-//! with flags, weights and the phase-centre phasor.
+//! with flags, weights, the phase-centre phasor and CASA's one-channel
+//! bypasses.
 
 mod common;
 
 use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 use casa_imaging_operator::{
-    Basis, GridPrecision, NativeRow, OperatorError, RowContext, SampleBuffer, SpectralKernel,
-    SpectralResampler, WeightingGeneration,
+    Basis, GridPrecision, NativeRow, OperatorError, RowContext, SampleBuffer, SpectralAxis,
+    SpectralKernel, SpectralResampler, WeightingGeneration,
 };
 use common::operator;
 use num_complex::Complex32;
@@ -30,11 +31,55 @@ fn natural() -> WeightingGeneration {
     WeightingGeneration::Natural { taper: None }
 }
 
+fn axis(first_ghz: f64, width_ghz: f64, channels: u32) -> SpectralAxis {
+    SpectralAxis::new(first_ghz * 1.0e9, width_ghz * 1.0e9, channels).expect("axis")
+}
+
+/// A row of unit visibilities and weights at `frequencies_ghz` on a short
+/// baseline, placed by `resampler`; returns the planes and frequencies.
+fn planes_of(
+    resampler: &SpectralResampler,
+    frequencies_ghz: &[f64],
+    density: bool,
+) -> Vec<(u32, f64)> {
+    let operator = operator(GridPrecision::F64, resampler.basis(), &XX_YY, &STOKES_I);
+    let frequencies = frequencies_ghz
+        .iter()
+        .map(|f| f * 1.0e9)
+        .collect::<Vec<_>>();
+    let values = vec![Complex32::new(1.0, 0.0); frequencies.len() * 2];
+    let weights = vec![1.0; frequencies.len() * 2];
+    let flags = vec![false; frequencies.len() * 2];
+    let row = NativeRow {
+        uvw_m: [10.0, 10.0, 0.0],
+        phase_shift_m: 0.0,
+        frequencies_hz: &frequencies,
+        values: &values,
+        weights: &weights,
+        flags: &flags,
+        row_flag: false,
+        context: context(),
+    };
+    let mut out = SampleBuffer::new(if density { 1 } else { 2 });
+    if density {
+        resampler
+            .place_density(&operator, &row, &mut out)
+            .expect("density");
+    } else {
+        resampler
+            .place(&operator, &natural(), &row, &mut out)
+            .expect("place");
+    }
+    out.placements()
+        .iter()
+        .map(|p| (p.plane, (p.u * C / 10.0 / 1.0e6).round() / 1.0e3))
+        .collect()
+}
+
 #[test]
 fn direct_sampling_places_every_unflagged_channel_on_plane_zero() {
     let operator = operator(GridPrecision::F64, Basis::Constant, &XX_YY, &STOKES_I);
-    let resampler =
-        SpectralResampler::new(Basis::Constant, &[], SpectralKernel::Nearest).expect("resampler");
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("resampler");
     let frequencies = [1.0e9, 1.1e9, 1.2e9];
     let values = [
         Complex32::new(1.0, 0.0),
@@ -91,13 +136,16 @@ fn direct_sampling_places_every_unflagged_channel_on_plane_zero() {
         .place(&operator, &natural(), &flagged_row, &mut out)
         .expect("place");
     assert!(out.is_empty());
+    assert!(matches!(
+        SpectralResampler::direct(Basis::ChannelLocal { planes: 2 }),
+        Err(OperatorError::SpectralAxis { .. })
+    ));
 }
 
 #[test]
 fn samples_whose_support_leaves_the_grid_are_dropped() {
     let operator = operator(GridPrecision::F64, Basis::Constant, &XX_YY, &STOKES_I);
-    let resampler =
-        SpectralResampler::new(Basis::Constant, &[], SpectralKernel::Nearest).expect("resampler");
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("resampler");
     let frequencies = [1.0e9];
     let values = [Complex32::new(1.0, 0.0); 2];
     let weights = [1.0; 2];
@@ -130,7 +178,7 @@ fn taylor_basis_sets_the_spectral_variable() {
         reference_hz: 1.0e9,
     };
     let operator = operator(GridPrecision::F64, basis, &XX_YY, &STOKES_I);
-    let resampler = SpectralResampler::new(basis, &[], SpectralKernel::Nearest).expect("resampler");
+    let resampler = SpectralResampler::direct(basis).expect("resampler");
     let frequencies = [0.9e9, 1.1e9];
     let values = [Complex32::new(1.0, 0.0); 4];
     let weights = [1.0; 4];
@@ -160,47 +208,19 @@ fn taylor_basis_sets_the_spectral_variable() {
 
 #[test]
 fn nearest_mapping_rounds_the_spectral_pixel() {
-    let basis = Basis::ChannelLocal { planes: 3 };
-    let operator = operator(GridPrecision::F64, basis, &XX_YY, &STOKES_I);
-    let resampler = SpectralResampler::new(basis, &[1.0e9, 1.1e9, 1.2e9], SpectralKernel::Nearest)
-        .expect("resampler");
-    let frequencies = [0.94e9, 0.96e9, 1.04e9, 1.149e9, 1.151e9, 1.26e9];
-    let values = [Complex32::new(1.0, 0.0); 12];
-    let weights = [1.0; 12];
-    let flags = [false; 12];
-    let row = NativeRow {
-        uvw_m: [10.0, 10.0, 0.0],
-        phase_shift_m: 0.0,
-        frequencies_hz: &frequencies,
-        values: &values,
-        weights: &weights,
-        flags: &flags,
-        row_flag: false,
-        context: context(),
-    };
-    let mut out = SampleBuffer::new(2);
-    resampler
-        .place(&operator, &natural(), &row, &mut out)
-        .expect("place");
-    let planes = out.placements().iter().map(|p| p.plane).collect::<Vec<_>>();
+    let resampler = SpectralResampler::channel_local(axis(1.0, 0.1, 3), SpectralKernel::Nearest);
+    let placed = planes_of(&resampler, &[0.94, 0.96, 1.04, 1.149, 1.151, 1.26], false);
     assert_eq!(
-        planes,
-        [0, 0, 1, 2],
-        "0.94 and 1.26 GHz lie outside the axis"
-    );
-    let placed = out.placements();
-    assert!(
-        (placed[0].u - 10.0 * 0.96e9 / C).abs() < 1e-12,
-        "samples keep their native frequency"
+        placed,
+        [(0, 0.96), (0, 1.04), (1, 1.149), (2, 1.151)],
+        "0.94 and 1.26 GHz lie outside the axis; samples keep their native frequency"
     );
 }
 
 #[test]
 fn linear_mapping_interpolates_values_keeps_the_nearer_weight_and_ors_flags() {
-    let basis = Basis::ChannelLocal { planes: 2 };
-    let operator = operator(GridPrecision::F64, basis, &XX_YY, &STOKES_I);
-    let resampler = SpectralResampler::new(basis, &[1.05e9, 1.15e9], SpectralKernel::Linear)
-        .expect("resampler");
+    let resampler = SpectralResampler::channel_local(axis(1.05, 0.1, 2), SpectralKernel::Linear);
+    let operator = operator(GridPrecision::F64, resampler.basis(), &XX_YY, &STOKES_I);
     let frequencies = [1.0e9, 1.1e9, 1.2e9];
     let values = [
         Complex32::new(1.0, 0.0),
@@ -256,18 +276,35 @@ fn linear_mapping_interpolates_values_keeps_the_nearer_weight_and_ors_flags() {
         out.is_empty(),
         "a flag on either neighbour flags both interpolated samples"
     );
+}
 
-    let single = [1.0e9];
-    let row = NativeRow {
-        frequencies_hz: &single,
-        values: &values[..2],
-        weights: &weights[..2],
-        flags: &flags[..2],
-        ..row
-    };
-    out.clear();
+#[test]
+fn a_one_channel_row_bypasses_linear_interpolation() {
+    // CASA `interpolateFrequencyTogrid`: with one native channel the row
+    // maps like `nearest`, keeping its own frequency and weight.
+    let resampler = SpectralResampler::channel_local(axis(1.0, 0.1, 3), SpectralKernel::Linear);
+    assert_eq!(planes_of(&resampler, &[1.1], false), [(1, 1.1)]);
+    assert_eq!(planes_of(&resampler, &[1.1], true), [(1, 1.1)]);
+    assert_eq!(planes_of(&resampler, &[1.26], false), []);
+}
+
+#[test]
+fn a_one_channel_image_accepts_native_channels_within_its_width() {
+    // A 1 GHz channel 100 MHz wide accepts 0.99, 1.00 and 1.01 GHz and
+    // rejects 1.06 GHz, under either kernel and for the density pass.
+    for kernel in [SpectralKernel::Nearest, SpectralKernel::Linear] {
+        let resampler = SpectralResampler::channel_local(axis(1.0, 0.1, 1), kernel);
+        for density in [false, true] {
+            let placed = planes_of(&resampler, &[0.94, 0.99, 1.0, 1.01, 1.06], density);
+            assert_eq!(
+                placed,
+                [(0, 0.99), (0, 1.0), (0, 1.01)],
+                "kernel {kernel:?} density {density}"
+            );
+        }
+    }
     assert!(matches!(
-        resampler.place(&operator, &natural(), &row, &mut out),
+        SpectralAxis::new(1.0e9, 0.0, 1),
         Err(OperatorError::SpectralAxis { .. })
     ));
 }
@@ -276,41 +313,15 @@ fn linear_mapping_interpolates_values_keeps_the_nearer_weight_and_ors_flags() {
 fn wide_output_channels_use_casa_fine_grid_points() {
     // Output channels twice as wide as native ones: two fine points per
     // output channel at the quarter positions.
-    let basis = Basis::ChannelLocal { planes: 2 };
-    let operator = operator(GridPrecision::F64, basis, &XX_YY, &STOKES_I);
-    let resampler =
-        SpectralResampler::new(basis, &[1.1e9, 1.3e9], SpectralKernel::Linear).expect("resampler");
-    let frequencies = [1.0e9, 1.1e9, 1.2e9, 1.3e9, 1.4e9];
-    let values = [Complex32::new(1.0, 0.0); 10];
-    let weights = [1.0; 10];
-    let flags = [false; 10];
-    let row = NativeRow {
-        uvw_m: [10.0, 0.0, 0.0],
-        phase_shift_m: 0.0,
-        frequencies_hz: &frequencies,
-        values: &values,
-        weights: &weights,
-        flags: &flags,
-        row_flag: false,
-        context: context(),
-    };
-    let mut out = SampleBuffer::new(2);
-    resampler
-        .place(&operator, &natural(), &row, &mut out)
-        .expect("place");
-    let fine = out
-        .placements()
-        .iter()
-        .map(|p| ((p.u * C / 10.0 / 1.0e6).round() as i64, p.plane))
-        .collect::<Vec<_>>();
-    assert_eq!(fine, [(1050, 0), (1150, 0), (1250, 1), (1350, 1)]);
+    let resampler = SpectralResampler::channel_local(axis(1.1, 0.2, 2), SpectralKernel::Linear);
+    let placed = planes_of(&resampler, &[1.0, 1.1, 1.2, 1.3, 1.4], false);
+    assert_eq!(placed, [(0, 1.05), (0, 1.15), (1, 1.25), (1, 1.35)]);
 }
 
 #[test]
 fn density_pass_carries_the_unpolarized_weight_without_a_support_test() {
     let operator = operator(GridPrecision::F64, Basis::Constant, &XX_YY, &STOKES_I);
-    let resampler =
-        SpectralResampler::new(Basis::Constant, &[], SpectralKernel::Nearest).expect("resampler");
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("resampler");
     let frequencies = [1.0e9];
     let values = [Complex32::new(1.0, 0.0); 2];
     let weights = [2.0, 6.0];

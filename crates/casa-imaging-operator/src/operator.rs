@@ -15,6 +15,7 @@ use crate::error::OperatorError;
 use crate::fft::PlaneFft;
 use crate::geometry::GridGeometry;
 use crate::polarization::PolarizationRouting;
+use crate::sample::Placement;
 
 /// Frequency-domain model basis.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -258,6 +259,28 @@ impl MeasurementOperator {
         self.precision
     }
 
+    /// The kernel norm a prediction of `placement`'s visibility
+    /// polarization `vpol` is divided by: the sum, over the Mueller planes
+    /// the forward table routes to `vpol`, of the w-conjugated taps at the
+    /// sample's fine offset, without the pointing ramp. `sumwt` accumulates
+    /// `W · |norm|` on the adjoint side, so the operator pair is exactly
+    /// adjoint once each sample's data are divided by the conjugate norm.
+    #[must_use]
+    pub fn prediction_norm(&self, placement: &Placement, vpol: usize) -> Complex64 {
+        let taps = self.cf.taps(placement.cf);
+        let location = self
+            .geometry
+            .locate(placement.u, placement.v, taps.oversampling());
+        let w_positive = placement.w > 0.0;
+        self.cf
+            .mueller()
+            .table(w_positive, true)
+            .iter()
+            .filter_map(|row| row[vpol])
+            .map(|mueller| crate::cpu::kernel::norm(&taps, location, mueller, !w_positive))
+            .sum()
+    }
+
     /// The layout of an accumulator holding `modes` over `planes`, covering
     /// `tile` or the whole grid.
     ///
@@ -456,7 +479,7 @@ impl MeasurementOperator {
                         *image = self.cropped_image(&work);
                     }
                     for pol in 0..pols {
-                        images[slot].push(self.requested_image(pol, &gpol_images));
+                        images[slot].push(self.requested_image(pol, &gpol_images, mode));
                         sumwt.push(acc.sumwt_at(
                             plane_local,
                             self.polarization.sumwt_source(pol),
@@ -504,12 +527,21 @@ impl MeasurementOperator {
     }
 
     /// Real part of the polarization basis conversion of the cropped grid
-    /// planes into requested plane `pol`.
-    fn requested_image(&self, pol: usize, gpol_images: &[Vec<Complex64>]) -> Array2<f32> {
+    /// planes into requested plane `pol`: the data conversion for data
+    /// images, CASA's PSF conversion for PSF and weight images.
+    fn requested_image(
+        &self,
+        pol: usize,
+        gpol_images: &[Vec<Complex64>],
+        mode: Mode,
+    ) -> Array2<f32> {
         let [width, height] = self.geometry.image().shape;
         let mut image = Array2::<f32>::zeros((height, width));
         for (gpol, grid_image) in gpol_images.iter().enumerate() {
-            let coefficient = self.polarization.to_requested(pol, gpol);
+            let coefficient = match mode {
+                Mode::Data => self.polarization.to_requested(pol, gpol),
+                Mode::Psf | Mode::Weight => self.polarization.to_requested_psf(pol, gpol),
+            };
             if coefficient == Complex64::default() {
                 continue;
             }
