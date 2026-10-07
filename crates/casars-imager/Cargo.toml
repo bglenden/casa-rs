@@ -8,10 +8,6 @@ description = "MeasurementSet-backed CASA-compatible imaging application"
 repository.workspace = true
 publish = false
 
-[features]
-default = []
-slow-tests = []
-
 [lints]
 workspace = true
 
