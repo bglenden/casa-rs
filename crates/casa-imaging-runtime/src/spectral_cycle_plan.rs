@@ -3156,9 +3156,12 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
         .serialization_bytes
         .checked_add(serialization_bytes)
         .ok_or(SpectralCyclePlanError::Overflow)?;
-    let page_cache_bytes =
-        crate::managed_spill::page_cache_window_bytes(bytes_per_slot, source_slots)
-            .map_err(|_| SpectralCyclePlanError::Overflow)?;
+    let page_cache_bytes = crate::managed_spill::page_cache_window_bytes(
+        bytes_per_slot,
+        source_slots,
+        policy.authority.topology().page_bytes,
+    )
+    .map_err(|_| SpectralCyclePlanError::Overflow)?;
     let page_cache_headroom = alternative
         .headroom
         .memory_bytes

@@ -2680,11 +2680,18 @@ fn verify_page_cache_release(
     Ok(())
 }
 
+/// Page-cache window the planner charges for `source_slots` slots of
+/// `bytes_per_slot`, each rounded up to the declared `page_bytes`.
 pub(crate) fn page_cache_window_bytes(
     bytes_per_slot: u64,
     source_slots: u64,
+    page_bytes: u64,
 ) -> Result<u64, ManagedSpillError> {
-    let page_bytes = system_page_bytes()?;
+    if page_bytes == 0 {
+        return Err(ManagedSpillError::InvalidBudget(
+            "the declared page size is zero",
+        ));
+    }
     bytes_per_slot
         .div_ceil(page_bytes)
         .checked_mul(page_bytes)
@@ -2935,6 +2942,7 @@ mod tests {
             queue_resources: vec![QueueResource::new(queue.clone(), 1)],
             logical_cpu_threads: 1,
             native_thread_stack_bytes: 512 << 10,
+            page_bytes: 16 << 10,
             performance_cpu_cores: CpuClassCapacity::Known(1),
             cache_capacity_bytes: 1 << 20,
             lock_capacity: 0,

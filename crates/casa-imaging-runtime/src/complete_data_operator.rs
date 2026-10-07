@@ -5841,6 +5841,7 @@ mod tests {
                     queue_resources: Vec::new(),
                     logical_cpu_threads: 1,
                     native_thread_stack_bytes: 512 << 10,
+                    page_bytes: 16 << 10,
                     performance_cpu_cores: CpuClassCapacity::Known(1),
                     cache_capacity_bytes: available,
                     lock_capacity: 1,

@@ -343,6 +343,9 @@ pub struct ResourceTopology {
     /// Stack reservation of one native thread created with default
     /// attributes, which is what FFTW's worker pool uses.
     pub native_thread_stack_bytes: u64,
+    /// Virtual-memory page size, which rounds every page-cache window the
+    /// planner charges.
+    pub page_bytes: u64,
     /// Performance-oriented CPU cores available to the process.
     pub performance_cpu_cores: CpuClassCapacity,
     /// Process-wide resident-cache capacity.
@@ -779,6 +782,7 @@ impl HostInventory {
             .map_err(|error| ResourceError::Detection(error.to_string()))?
             .get() as u64;
         let native_thread_stack_bytes = detect_native_thread_stack_bytes()?;
+        let page_bytes = detect_page_bytes()?;
         let performance_cpu_cores = detect_performance_cpu_cores()
             .map(|cores| CpuClassCapacity::Known(cores.clamp(1, logical_cpu_threads)))
             .unwrap_or(CpuClassCapacity::Unknown);
@@ -845,6 +849,7 @@ impl HostInventory {
             queue_resources,
             logical_cpu_threads,
             native_thread_stack_bytes,
+            page_bytes,
             performance_cpu_cores,
             cache_capacity_bytes: physical_memory_bytes,
             // Table and synchronization capacity has no portable detector.
@@ -4690,6 +4695,23 @@ fn detect_native_thread_stack_bytes() -> Result<u64, ResourceError> {
 fn detect_native_thread_stack_bytes() -> Result<u64, ResourceError> {
     Err(ResourceError::Detection(
         "native thread stack size is unavailable".to_string(),
+    ))
+}
+
+/// Query the virtual-memory page size the kernel rounds mappings to.
+#[cfg(unix)]
+fn detect_page_bytes() -> Result<u64, ResourceError> {
+    let bytes = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    u64::try_from(bytes)
+        .ok()
+        .filter(|bytes| *bytes > 0)
+        .ok_or_else(|| ResourceError::Detection("page size is unavailable".to_string()))
+}
+
+#[cfg(not(unix))]
+fn detect_page_bytes() -> Result<u64, ResourceError> {
+    Err(ResourceError::Detection(
+        "page size is unavailable".to_string(),
     ))
 }
 
