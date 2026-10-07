@@ -21,3 +21,7 @@ autoresearch-results
 # developer launches casars from a crate directory.
 **/.casa-rs/parameters/
 docs/generated/cargo-metadata.json
+
+# Claude Code session state
+.claude/worktrees/
+.claude/settings.local.json
