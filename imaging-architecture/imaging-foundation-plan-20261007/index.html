@@ -1021,13 +1021,13 @@ the direction-dependent Mueller response (primary beam, parallactic angle,
 leakage), and w(n−1) the w-term. Let x be the model coefficients on the pixel
 grid and d the selected unweighted visibility samples. The forward operator
 A : X → D and its adjoint A* are composed as</p>
-<div class="codehilite"><pre><span></span><code>A   = Degrid ∘ Fft ∘ Correction⁻¹ ∘ PolBasis⁻¹ ∘ ModelPrescale
-A*  = PolBasis ∘ Correction ∘ Fft⁻¹ ∘ Grid
-W   = diag(input weight · taper · density weight), flags removed from D
-b   = A* W d          dirty image (unnormalised)
-H   = A* W A          normal operator; PSF = A* W 1
-g(x)= A* W (d − A x)  residual image, formed by gridding residual samples
-sumwt(plane,pol) = Σ W  (AW: Σ W·|Σ taps|)
+<div class="codehilite"><pre><span></span><code><span class="nt">A</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="nt">Degrid</span><span class="w"> </span><span class="err">∘</span><span class="w"> </span><span class="nt">Fft</span><span class="w"> </span><span class="err">∘</span><span class="w"> </span><span class="nt">Correction</span><span class="w"> </span><span class="err">∘</span><span class="w"> </span><span class="nt">PolBasis</span><span class="err">⁻</span><span class="nt">¹</span><span class="w"> </span><span class="err">∘</span><span class="w"> </span><span class="nt">ModelPrescale</span><span class="w">   </span><span class="o">(</span><span class="nt">R1</span><span class="o">:</span><span class="w"> </span><span class="nt">the</span><span class="w"> </span><span class="nt">same</span><span class="w"> </span><span class="nt">diagonal</span><span class="w"> </span><span class="nt">1</span><span class="o">/</span><span class="nt">grdsf</span><span class="w"> </span><span class="nt">on</span><span class="w"> </span><span class="nt">both</span><span class="w"> </span><span class="nt">sides</span><span class="o">,</span><span class="w"> </span><span class="nt">CASA</span><span class="w"> </span><span class="nt">GridFT</span><span class="o">)</span>
+<span class="nt">A</span><span class="o">*</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="nt">PolBasis</span><span class="w"> </span><span class="err">∘</span><span class="w"> </span><span class="nt">Correction</span><span class="w"> </span><span class="err">∘</span><span class="w"> </span><span class="nt">Fft</span><span class="err">⁻</span><span class="nt">¹</span><span class="w"> </span><span class="err">∘</span><span class="w"> </span><span class="nt">Grid</span>
+<span class="nt">W</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="nt">diag</span><span class="o">(</span><span class="nt">input</span><span class="w"> </span><span class="nt">weight</span><span class="w"> </span><span class="err">·</span><span class="w"> </span><span class="nt">taper</span><span class="w"> </span><span class="err">·</span><span class="w"> </span><span class="nt">density</span><span class="w"> </span><span class="nt">weight</span><span class="o">),</span><span class="w"> </span><span class="nt">flags</span><span class="w"> </span><span class="nt">removed</span><span class="w"> </span><span class="nt">from</span><span class="w"> </span><span class="nt">D</span>
+<span class="nt">b</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="nt">A</span><span class="o">*</span><span class="w"> </span><span class="nt">W</span><span class="w"> </span><span class="nt">d</span><span class="w">          </span><span class="nt">dirty</span><span class="w"> </span><span class="nt">image</span><span class="w"> </span><span class="o">(</span><span class="nt">unnormalised</span><span class="o">)</span>
+<span class="nt">H</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="nt">A</span><span class="o">*</span><span class="w"> </span><span class="nt">W</span><span class="w"> </span><span class="nt">A</span><span class="w">          </span><span class="nt">normal</span><span class="w"> </span><span class="nt">operator</span><span class="o">;</span><span class="w"> </span><span class="nt">PSF</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nt">A</span><span class="o">*</span><span class="w"> </span><span class="nt">W</span><span class="w"> </span><span class="nt">1</span>
+<span class="nt">g</span><span class="o">(</span><span class="nt">x</span><span class="o">)=</span><span class="w"> </span><span class="nt">A</span><span class="o">*</span><span class="w"> </span><span class="nt">W</span><span class="w"> </span><span class="o">(</span><span class="nt">d</span><span class="w"> </span><span class="err">−</span><span class="w"> </span><span class="nt">A</span><span class="w"> </span><span class="nt">x</span><span class="o">)</span><span class="w">  </span><span class="nt">residual</span><span class="w"> </span><span class="nt">image</span><span class="o">,</span><span class="w"> </span><span class="nt">formed</span><span class="w"> </span><span class="nt">by</span><span class="w"> </span><span class="nt">gridding</span><span class="w"> </span><span class="nt">residual</span><span class="w"> </span><span class="nt">samples</span>
+<span class="nt">sumwt</span><span class="o">(</span><span class="nt">plane</span><span class="o">,</span><span class="nt">pol</span><span class="o">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nt">Σ</span><span class="w"> </span><span class="nt">W</span><span class="w">  </span><span class="o">(</span><span class="nt">AW</span><span class="o">:</span><span class="w"> </span><span class="nt">Σ</span><span class="w"> </span><span class="nt">W</span><span class="err">·</span><span class="o">|</span><span class="nt">Σ</span><span class="w"> </span><span class="nt">taps</span><span class="o">|)</span>
 </code></pre></div>
 
 <p>Capability-specific factors and the per-sample data they need:</p>
@@ -1185,11 +1185,14 @@ device API; no crate but <code>casars-imager</code> and <code>application</code>
 <span class="w">    </span><span class="sd">/// oversampling-major so one fractional offset is one contiguous row.</span>
 <span class="w">    </span><span class="n">SeparableReal</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">rows</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="o">'</span><span class="na">a</span><span class="w"> </span><span class="p">[</span><span class="kt">f32</span><span class="p">],</span><span class="w"> </span><span class="n">support</span><span class="p">:</span><span class="w"> </span><span class="kt">u16</span><span class="p">,</span><span class="w"> </span><span class="n">oversampling</span><span class="p">:</span><span class="w"> </span><span class="kt">u16</span><span class="w"> </span><span class="p">},</span>
 <span class="w">    </span><span class="sd">/// W, AW, mosaic: dense complex kernel ordered `[oy][ox][mueller][iy][ix]`</span>
-<span class="w">    </span><span class="sd">/// (x fastest; one fractional offset contiguous), with `padding` major</span>
-<span class="w">    </span><span class="sd">/// cells per edge so the fine-offset sign selects the major index without</span>
-<span class="w">    </span><span class="sd">/// a branch (HPG layout). `mueller_planes` is 1 for scalar kernels.</span>
+<span class="w">    </span><span class="sd">/// (x fastest; one fractional offset contiguous) with `oversampling + 1`</span>
+<span class="w">    </span><span class="sd">/// fractional rows per axis and no padding cells (R1): `GridGeometry::locate`</span>
+<span class="w">    </span><span class="sd">/// is the one rounding rule (anchor = nearest cell, offset =</span>
+<span class="w">    </span><span class="sd">/// round((anchor − coordinate)·oversampling) + oversampling/2, even</span>
+<span class="w">    </span><span class="sd">/// oversampling), under which the fine-offset sign never changes the</span>
+<span class="w">    </span><span class="sd">/// major index. `mueller_planes` is 1 for scalar kernels.</span>
 <span class="w">    </span><span class="n">Dense</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">data</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="o">'</span><span class="na">a</span><span class="w"> </span><span class="p">[</span><span class="n">Complex32</span><span class="p">],</span><span class="w"> </span><span class="n">support</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="kt">u16</span><span class="p">;</span><span class="w"> </span><span class="mi">2</span><span class="p">],</span><span class="w"> </span><span class="n">oversampling</span><span class="p">:</span><span class="w"> </span><span class="kt">u16</span><span class="p">,</span>
-<span class="w">            </span><span class="n">padding</span><span class="p">:</span><span class="w"> </span><span class="kt">u8</span><span class="p">,</span><span class="w"> </span><span class="n">mueller_planes</span><span class="p">:</span><span class="w"> </span><span class="kt">u8</span><span class="w"> </span><span class="p">},</span>
+<span class="w">            </span><span class="n">mueller_planes</span><span class="p">:</span><span class="w"> </span><span class="kt">u8</span><span class="w"> </span><span class="p">},</span>
 <span class="p">}</span>
 
 <span class="sd">/// Which CF Mueller plane serves each (grid pol, visibility pol) pair, for</span>
@@ -1224,15 +1227,30 @@ fine-offset coordinates are rounded in the kernel once per sample from
 <span class="s1">            grid[plane, gpol][v0+iy, u0+ix] += V'</span><span class="n">_vpol</span><span class="w"> </span><span class="err">·</span><span class="w"> </span><span class="n">tap</span><span class="s1">'                 (Data; V'</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">W</span><span class="err">·</span><span class="n">V</span><span class="err">·</span><span class="n">e</span><span class="o">^</span><span class="err">{</span><span class="n">iφ</span><span class="err">}</span><span class="p">)</span>
 <span class="w">                                             </span><span class="o">+=</span><span class="w"> </span><span class="n">W_vpol</span><span class="w"> </span><span class="err">·</span><span class="w"> </span><span class="n">tap</span><span class="s1">'                 (Psf: V = 1)</span>
 <span class="s1">                                             += W_vpol · weight_tap'</span><span class="w"> </span><span class="k">at</span><span class="w"> </span><span class="n">uvw</span><span class="o">=</span><span class="mi">0</span><span class="w"> </span><span class="p">(</span><span class="n">Weight</span><span class="p">)</span>
-<span class="w">            </span><span class="n">sumwt</span><span class="o">[</span><span class="n">plane, gpol</span><span class="o">]</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">W_vpol</span><span class="w"> </span><span class="err">·</span><span class="w"> </span><span class="o">|</span><span class="n">Σ</span><span class="w"> </span><span class="n">taps</span><span class="w"> </span><span class="n">used</span><span class="o">|</span>
+<span class="w">            </span><span class="n">sumwt</span><span class="o">[</span><span class="n">plane, gpol</span><span class="o">]</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">W_vpol</span><span class="w"> </span><span class="err">·</span><span class="w"> </span><span class="o">|</span><span class="n">Σ</span><span class="w"> </span><span class="p">(</span><span class="n">w</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="vm">?</span><span class="w"> </span><span class="n">t</span><span class="w"> </span><span class="err">:</span><span class="w"> </span><span class="n">conj</span><span class="p">(</span><span class="n">t</span><span class="p">))</span><span class="o">[</span><span class="n">m</span><span class="o">]|</span><span class="w">   </span><span class="p">(</span><span class="n">the</span><span class="w"> </span><span class="n">norm</span><span class="p">,</span><span class="w"> </span><span class="k">before</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="n">gradient</span><span class="p">)</span>
 <span class="w">          </span><span class="nl">Taylor</span><span class="p">:</span><span class="w"> </span><span class="n">term</span><span class="w"> </span><span class="n">t</span><span class="w"> </span><span class="n">grid</span><span class="w"> </span><span class="n">receives</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="n">same</span><span class="w"> </span><span class="k">with</span><span class="w"> </span><span class="n">W</span><span class="w"> </span><span class="err">·</span><span class="w"> </span><span class="n">s</span><span class="o">^</span><span class="n">t</span><span class="w"> </span><span class="p">(</span><span class="k">data</span><span class="err">:</span><span class="w"> </span><span class="n">t</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">N_t</span><span class="p">;</span><span class="w"> </span><span class="nl">psf</span><span class="p">:</span><span class="w"> </span><span class="n">t</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">2</span><span class="n">N_t</span><span class="err">−</span><span class="mi">1</span><span class="p">)</span>
 <span class="nl">forward</span><span class="p">:</span><span class="w">  </span><span class="nc">table</span><span class="w"> </span><span class="n">swapped</span><span class="w"> </span><span class="p">(</span><span class="n">w</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="vm">?</span><span class="w"> </span><span class="n">conjugate</span><span class="w"> </span><span class="err">:</span><span class="w"> </span><span class="n">direct</span><span class="p">);</span><span class="w"> </span><span class="n">tap</span><span class="s1">' conjugated</span>
 <span class="s1">          V_pred_vpol = e^{−iφ} · Σ_t s^t · Σ_{gpol,ix,iy} conj(tap'</span><span class="n">_t</span><span class="p">)</span><span class="w"> </span><span class="err">·</span><span class="w"> </span><span class="n">model</span><span class="o">[</span><span class="n">t</span><span class="o">][</span><span class="n">gpol</span><span class="o">][</span><span class="n">v0+iy, u0+ix</span><span class="o">]</span>
-<span class="w">                        </span><span class="err">÷</span><span class="w"> </span><span class="n">Σ</span><span class="w"> </span><span class="n">taps</span><span class="w"> </span><span class="n">used</span><span class="w"> </span><span class="p">(</span><span class="n">unconjugated</span><span class="p">)</span>
+<span class="w">                        </span><span class="err">÷</span><span class="w"> </span><span class="n">N_vpol</span><span class="p">,</span><span class="w">   </span><span class="n">N_vpol</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Σ_</span><span class="err">{</span><span class="nl">gpol</span><span class="p">:</span><span class="w"> </span><span class="nc">table</span><span class="o">[</span><span class="n">gpol</span><span class="o">][</span><span class="n">vpol</span><span class="o">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="ow">Some</span><span class="p">(</span><span class="n">m</span><span class="p">)</span><span class="err">}</span><span class="w"> </span><span class="n">Σ_</span><span class="err">{</span><span class="n">ix</span><span class="p">,</span><span class="n">iy</span><span class="err">}</span><span class="w"> </span><span class="p">(</span><span class="n">w</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="vm">?</span><span class="w"> </span><span class="n">t</span><span class="w"> </span><span class="err">:</span><span class="w"> </span><span class="n">conj</span><span class="p">(</span><span class="n">t</span><span class="p">))</span><span class="o">[</span><span class="n">m</span><span class="o">]</span>
+<span class="w">                        </span><span class="p">(</span><span class="nl">R1</span><span class="p">:</span><span class="w"> </span><span class="n">one</span><span class="w"> </span><span class="n">division</span><span class="w"> </span><span class="n">per</span><span class="w"> </span><span class="n">visibility</span><span class="w"> </span><span class="k">over</span><span class="w"> </span><span class="k">every</span><span class="w"> </span><span class="n">routed</span><span class="w"> </span><span class="n">Mueller</span><span class="w"> </span><span class="n">plane</span><span class="p">;</span><span class="w"> </span><span class="n">the</span>
+<span class="w">                         </span><span class="n">norm</span><span class="w"> </span><span class="n">omits</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="n">pointing</span><span class="w"> </span><span class="n">gradient</span><span class="p">;</span><span class="w"> </span><span class="n">N</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="n">predicts</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="err">—</span>
+<span class="w">                         </span><span class="n">CASA</span><span class="w"> </span><span class="err">`</span><span class="nl">AWVisResampler</span><span class="p">:</span><span class="err">:</span><span class="n">GridToData</span><span class="err">`</span><span class="p">,</span><span class="w"> </span><span class="err">`</span><span class="n">faccumulateFromGrid</span><span class="err">`</span><span class="p">)</span>
 <span class="nl">residual</span><span class="p">:</span><span class="w"> </span><span class="n">V</span><span class="w"> </span><span class="err">−</span><span class="w"> </span><span class="n">V_pred</span><span class="p">,</span><span class="w"> </span><span class="k">then</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="n">adjoint</span><span class="w"> </span><span class="k">on</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="n">residual</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="n">same</span><span class="w"> </span><span class="n">dispatch</span>
 </code></pre></div>
 
+<p>Adjoint law (R1): with <code>N</code> the per-visibility norm above, the pair is
+exactly adjoint once each sample's data are divided by the conjugate norm,
+<code>⟨A x, d⟩_W = ⟨x, A*(W d ⊘ conj N)⟩</code>; <code>MeasurementOperator::prediction_norm</code>
+exposes <code>N</code> and <code>sumwt</code> accumulates <code>W·|N|</code>. The unnormalised law
+<code>⟨A x, d⟩_W = ⟨x, A* W d⟩</code> is the special case <code>N ≡ 1</code> (unit-sum spheroidal
+rows). The image-domain polarization conversion is CASA's <code>½·Sᴴ</code>
+(<code>StokesImageUtil::From</code>), so a Stokes request from correlation planes
+carries CASA's factor (2 for <code>[I, Q]</code> from <code>[XX, YY]</code>); the T0 tests pin both.</p>
 <div class="codehilite"><pre><span></span><code><span class="k">pub</span><span class="w"> </span><span class="k">enum</span><span class="w"> </span><span class="nc">Mode</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">Data</span><span class="p">,</span><span class="w"> </span><span class="n">Psf</span><span class="p">,</span><span class="w"> </span><span class="n">Weight</span><span class="w"> </span><span class="p">}</span>
+<span class="sd">/// The modes one pass accumulates (`DATA`, `PSF`, `DATA_PSF`, `ALL`); sizes</span>
+<span class="sd">/// the accumulator so a later major cycle never pays for PSF terms and the</span>
+<span class="sd">/// planner knows what it charges (R1).</span>
+<span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">ModeSet</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">pub</span><span class="w"> </span><span class="n">data</span><span class="p">:</span><span class="w"> </span><span class="kt">bool</span><span class="p">,</span><span class="w"> </span><span class="k">pub</span><span class="w"> </span><span class="n">psf</span><span class="p">:</span><span class="w"> </span><span class="kt">bool</span><span class="p">,</span><span class="w"> </span><span class="k">pub</span><span class="w"> </span><span class="n">weight</span><span class="p">:</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="p">}</span>
 <span class="k">pub</span><span class="w"> </span><span class="k">enum</span><span class="w"> </span><span class="nc">GridPrecision</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">F32</span><span class="p">,</span><span class="w"> </span><span class="n">F64</span><span class="w"> </span><span class="p">}</span>
 
 <span class="sd">/// Per-worker grid storage: `[plane][pol][term][y][x]`, x fastest, interleaved</span>
@@ -1270,7 +1288,13 @@ kernels and <code>float2</code> dense kernel storage.</p>
 <span class="w">    </span><span class="n">precision</span><span class="p">:</span><span class="w"> </span><span class="nc">GridPrecision</span><span class="p">,</span>
 <span class="p">}</span>
 <span class="k">impl</span><span class="w"> </span><span class="n">MeasurementOperator</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">accumulator</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">planes</span><span class="p">:</span><span class="w"> </span><span class="nc">PlaneRange</span><span class="p">,</span><span class="w"> </span><span class="n">tile</span><span class="p">:</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="n">Tile</span><span class="o">&gt;</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">GridAccumulator</span><span class="p">;</span>
+<span class="w">    </span><span class="sd">/// Planner input (R1): the layout of the pass a caller intends; admission</span>
+<span class="w">    </span><span class="sd">/// charges `layout.bytes(precision)` before anything is allocated.</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">accumulator_layout</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">planes</span><span class="p">:</span><span class="w"> </span><span class="nc">PlaneRange</span><span class="p">,</span><span class="w"> </span><span class="n">tile</span><span class="p">:</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="n">Tile</span><span class="o">&gt;</span><span class="p">,</span><span class="w"> </span><span class="n">modes</span><span class="p">:</span><span class="w"> </span><span class="nc">ModeSet</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">AccumulatorLayout</span><span class="p">;</span>
+<span class="w">    </span><span class="sd">/// Allocates exactly `accumulator_layout(planes, tile, modes)`, zeroed.</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">accumulator</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">planes</span><span class="p">:</span><span class="w"> </span><span class="nc">PlaneRange</span><span class="p">,</span><span class="w"> </span><span class="n">tile</span><span class="p">:</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="n">Tile</span><span class="o">&gt;</span><span class="p">,</span><span class="w"> </span><span class="n">modes</span><span class="p">:</span><span class="w"> </span><span class="nc">ModeSet</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">GridAccumulator</span><span class="p">;</span>
+<span class="w">    </span><span class="sd">/// The kernel norm `N` of one placement for one visibility polarization (R1 law).</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">prediction_norm</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">placement</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">Placement</span><span class="p">,</span><span class="w"> </span><span class="n">vpol</span><span class="p">:</span><span class="w"> </span><span class="kt">usize</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">Complex64</span><span class="p">;</span>
 <span class="w">    </span><span class="sd">/// model (× PB prescale when the product contract says flatnoise) ÷ correction → FFT</span>
 <span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">prepare_model</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">model</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">ModelImages</span><span class="p">,</span><span class="w"> </span><span class="n">prescale</span><span class="p">:</span><span class="w"> </span><span class="nc">ModelPrescale</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">PreparedModelGrids</span><span class="p">;</span>
 <span class="w">    </span><span class="sd">/// FFT⁻¹, × correction, crop: unnormalised dirty/psf/weight planes + sumwt</span>
@@ -1279,19 +1303,24 @@ kernels and <code>float2</code> dense kernel storage.</p>
 
 <span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">NormalImages</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">planes</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">NormalPlane</span><span class="o">&gt;</span><span class="p">,</span><span class="w">  </span><span class="c1">// one per output plane; Taylor terms inside</span>
+<span class="w">    </span><span class="c1">// plus `first_plane`, `pols`, `data_terms`, `psf_terms`; indexing goes through</span>
+<span class="w">    </span><span class="c1">// `data(plane, term, pol)`, `psf`, `weight` and the `*_sumwt` accessors (R1)</span>
 <span class="p">}</span>
 <span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">NormalPlane</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">data</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">Array2</span><span class="o">&lt;</span><span class="kt">f32</span><span class="o">&gt;&gt;</span><span class="p">,</span><span class="w">    </span><span class="c1">// residual/dirty per term (N_t) and pol</span>
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">psf</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">Array2</span><span class="o">&lt;</span><span class="kt">f32</span><span class="o">&gt;&gt;</span><span class="p">,</span><span class="w">     </span><span class="c1">// 2N_t−1 terms</span>
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">weight</span><span class="p">:</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="n">Array2</span><span class="o">&lt;</span><span class="kt">f32</span><span class="o">&gt;&gt;</span><span class="p">,</span><span class="w"> </span><span class="c1">// mosaic/AW sensitivity</span>
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">sumwt</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="kt">f64</span><span class="o">&gt;</span><span class="p">,</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">data</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">Array2</span><span class="o">&lt;</span><span class="kt">f32</span><span class="o">&gt;&gt;</span><span class="p">,</span><span class="w">    </span><span class="c1">// residual/dirty, `[term][pol]` (N_t terms)</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">psf</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">Array2</span><span class="o">&lt;</span><span class="kt">f32</span><span class="o">&gt;&gt;</span><span class="p">,</span><span class="w">     </span><span class="c1">// `[term][pol]`, 2N_t−1 terms</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">weight</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">Array2</span><span class="o">&lt;</span><span class="kt">f32</span><span class="o">&gt;&gt;</span><span class="p">,</span><span class="w">  </span><span class="c1">// mosaic/AW sensitivity, one per pol; empty otherwise</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">sumwt</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="kt">f64</span><span class="o">&gt;</span><span class="p">,</span><span class="w">           </span><span class="c1">// one per image, in the order data, psf, weight (R1)</span>
 <span class="p">}</span>
 </code></pre></div>
 
 <p>Weighting:</p>
 <div class="codehilite"><pre><span></span><code><span class="k">pub</span><span class="w"> </span><span class="k">enum</span><span class="w"> </span><span class="nc">WeightingGeneration</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="n">Natural</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">taper</span><span class="p">:</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="n">Taper</span><span class="o">&gt;</span><span class="w"> </span><span class="p">},</span>
-<span class="w">    </span><span class="n">Density</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">grid</span><span class="p">:</span><span class="w"> </span><span class="nc">DensityGrid</span><span class="p">,</span><span class="w"> </span><span class="n">robust</span><span class="p">:</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="kt">f64</span><span class="o">&gt;</span><span class="p">,</span><span class="w"> </span><span class="n">taper</span><span class="p">:</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="n">Taper</span><span class="o">&gt;</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="sd">/// `robust: None` is uniform; `bandwidth` is CASA `briggsbwtaper`</span>
+<span class="w">    </span><span class="sd">/// (`BriggsCubeWeightor::uvDistanceFactor`) and needs `robust` (R1).</span>
+<span class="w">    </span><span class="n">Density</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">grid</span><span class="p">:</span><span class="w"> </span><span class="nc">DensityGrid</span><span class="p">,</span><span class="w"> </span><span class="n">robust</span><span class="p">:</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="n">RobustFactors</span><span class="o">&gt;</span><span class="p">,</span>
+<span class="w">              </span><span class="n">bandwidth</span><span class="p">:</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="n">BandwidthTaper</span><span class="o">&gt;</span><span class="p">,</span><span class="w"> </span><span class="n">taper</span><span class="p">:</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="n">Taper</span><span class="o">&gt;</span><span class="w"> </span><span class="p">},</span>
 <span class="p">}</span>
 <span class="k">impl</span><span class="w"> </span><span class="n">WeightingGeneration</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="sd">/// Pure per-sample function; CASA cell rules live in `DensityGrid::lookup`.</span>
@@ -1575,7 +1604,10 @@ before adoption:</p>
   (Obit <code>ObitUVGridSetup</code>, <code>ThreadFlip</code>, <code>ThreadMerge</code>): halves grid memory
   and FFT work for Hermitian plane sets only; needs a T0 law (half-plane =
   full-plane to 1e-6) and a rule that cross-hand correlation grids are
-  excluded. Decided at gate R1 whether <code>GridAccumulator</code> reserves the layout.</li>
+  excluded. R1: <code>GridAccumulator</code> neither reserves nor excludes it; all
+  addressing goes through <code>AccumulatorLayout::block_offset</code> and <code>Tile</code>, so
+  the layout is a <code>Tile</code> variant plus a conjugate fold in <code>finish</code>, with no
+  change to <code>GridBackend::apply</code>.</li>
 <li>Replica-merge partition (planes × sample chunks with private grids and an
   O(grid) merge per replica; Obit <code>ObitThreadGridSetupMF</code>): a third
   decomposition between <code>Planes</code> and <code>Regions</code>, measured against <code>Regions</code>
@@ -1798,9 +1830,14 @@ totals, product list. It is the only runtime record. If
   warnings</code> on touched crates, the checker (D6), T0 for touched operators,
   T1 for touched capabilities, and <code>just quick</code> at ticket end. T1.5 runs
   before review for science-bearing tickets.</li>
-<li>Review per ticket: one contract review (owner or Fable) against the issue's
-  outcome, deletion rows and section 10. Preferences cannot block; a cited
-  rule or a failing acceptance test can.</li>
+<li>Review per ticket: one independent review by a separate agent or person
+  (so far OpenAI Astra, posted under the owner's login) against the issue's
+  outcome, deletion rows, section 10 and the CASA source. Preferences cannot
+  block; a cited rule or a failing acceptance test can. Once the gates are
+  green, the review's findings are resolved and no deviation is open for the
+  owner, the implementer marks the PR ready and arms auto-merge without
+  asking (AGENTS.md, Merging); the owner is consulted only for section 3
+  decisions, external contracts and the Ask First list.</li>
 <li>Intermediate breakage is accepted and stated: between IF-2 and IF-4 Metal
   is unavailable; between IF-2 and IF-3 W, AW and mosaic are unavailable.
   <code>availability::check</code> rejects them with a typed reason during that window.</li>
@@ -1910,10 +1947,14 @@ closed.</p>
 <p>Order: IF-0 → IF-1 → IF-2 → IF-4 → IF-3 → IF-5 → IF-6 → IF-7 → IF-8 → IF-9 →
 IF-10 → IF-11. IF-5 may run in parallel with IF-3/IF-4 (different crate).</p>
 <h3 id="93-review-gates">9.3 Review gates<a class="headerlink" href="#93-review-gates" title="Permanent link">&para;</a></h3>
-<p>Each gate is a scheduled review by the owner with Fable and (probably) OpenAI
-Astra. The implementer prepares the inputs; the reviewers answer the
-questions; the owner records the outcome as a dated section appended to this
-document (<code>## Gate Rn outcome — date</code>), including any replanning. A gate that
+<p>Each gate is the independent review of the gate ticket's PR plus the owner's
+decisions on the deviations recorded on that ticket. The implementer
+prepares the inputs below, posts deviations as they occur and asks the owner
+only what needs the owner (section 3 decisions, external contracts); the
+reviewer answers the gate questions; the implementer records the outcome as
+a dated section appended to this document (<code>## Gate Rn outcome — date</code>),
+including any replanning. The gate closes when that section is on <code>main</code>
+and the ticket's PR is merged under the AGENTS.md merge rule. A gate that
 replans edits the affected ticket bodies before the next ticket starts.</p>
 <p>Inputs for every gate: the merged PR list with diff stats; current non-test
 and test line counts per imaging crate; T0/T1/T1.5 results; the union of the
@@ -2035,11 +2076,124 @@ Philosophy of Software Design</em> (deep modules; define errors out of existence
   tables) lives under <code>/Volumes/GLENDENNING/casa-rs-evidence/if/&lt;ticket&gt;/</code>
   with a <code>README.md</code> naming the commit, command and result. Nothing
   restart-critical under <code>/tmp</code>.</li>
-<li>Merge, cleanup and release remain owner-authorised actions. Closing the
-  #486 family (D7) happens in IF-0 after this plan is approved.</li>
+<li>A ticket PR merges without asking once its gates are green, its
+  independent review is resolved and no deviation is open for the owner
+  (AGENTS.md, Merging; decided at R1). Cleanup and release remain
+  owner-authorised actions. Closing the #486 family (D7) happened in IF-0.</li>
 <li>AGENTS.md is updated in IF-0 to point programme text at this plan and
   remove the #486-specific rules.</li>
 </ul>
+<h2 id="gate-r1-outcome-2026-10-07">Gate R1 outcome — 2026-10-07<a class="headerlink" href="#gate-r1-outcome-2026-10-07" title="Permanent link">&para;</a></h2>
+<p>Gate ticket IF-1 (#650), PR #662 on <code>claude/if-1-operator-core</code>, final
+commit 71a27e7cd4. Reviewers: OpenAI Astra (independent review of the PR at
+45386478de, posted under the owner's login, five findings), the owner
+(deviation decisions, the normalisation decision), Fable (implementer).</p>
+<h3 id="inputs">Inputs<a class="headerlink" href="#inputs" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Input</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PR</td>
+<td>#662: 4 commits, 24 files, +6,636 / −4 lines, base <code>main</code></td>
+</tr>
+<tr>
+<td><code>casa-imaging-operator</code></td>
+<td>4,443 non-test lines (<code>src/</code>, largest file 589), 2,201 test lines</td>
+</tr>
+<tr>
+<td>Tests</td>
+<td>46 (9 unit, 37 integration), each under a second, both precisions; <code>just quick</code> green at 71a27e7cd4: 4,514 passed, 68 skipped</td>
+</tr>
+<tr>
+<td>T1 / T1.5</td>
+<td>none (no production caller until IF-2)</td>
+</tr>
+<tr>
+<td>Pilot W4 time</td>
+<td>none yet; IF-2 records the first</td>
+</tr>
+<tr>
+<td>Deviations</td>
+<td>eleven on #650, each with an owner decision</td>
+</tr>
+<tr>
+<td>Implementer note</td>
+<td>the IF-1 retrospective on #648 (eight rules, applied to IF-2 … IF-11 as per-ticket comments)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="answers-to-the-r1-questions">Answers to the R1 questions<a class="headerlink" href="#answers-to-the-r1-questions" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong><code>Placement</code>/<code>SampleBlock</code> sufficient for W, AW, mosaic and Taylor
+  without extension.</strong> Yes. <code>w</code> and <code>CfKey { group, cube }</code> carry the
+  W-plane and AW cell, <code>gradient</code> the mosaic pointing phasor, <code>phase</code> the
+  phase-centre shift, <code>spectral</code> the Taylor power; <code>RowContext</code> carries
+  time, antennas, parallactic angles, field and pointing offset for <code>key()</code>.
+  The dense kernel laws run with complex taps, gradients and a two-plane
+  Mueller routing. IF-3 confirms this against the CASA AW and mosaic
+  machines.</li>
+<li><strong><code>GridBackend::apply</code> with <code>Work</code> fits the Metal plan.</strong> Yes. The
+  accumulator layout <code>[plane][pol][term][y][x]</code>, interleaved complex, is the
+  device buffer and <code>AccumulatorLayout::bytes(precision)</code> sizes it exactly.
+  Metal accumulates in f32, so <code>gridprecision = f64</code> with the Metal backend
+  is a typed rejection (IF-4); the rounding rule in <code>GridGeometry::locate</code>
+  is shared by both backends.</li>
+<li><strong>CASA-pinned rules placed where IF-3 expects them.</strong> <code>key()</code> on the CF
+  set (cache index, conjugate-beam frequency map), <code>MuellerRouting::table</code>
+  (the w-sign and direction swap), <code>Placement::gradient</code> and <code>phase</code> (the
+  pointing phasor), <code>CpuBackend</code> with <code>kernel::norm</code> and <code>prediction_norm</code>
+  (the AW normalisation). Each rule's rustdoc names the CASA function
+  (<code>StokesImageUtil</code>, <code>VisImagingWeight</code>, <code>BriggsCubeWeightor</code>,
+  <code>FTMachine::matchChannel</code>, <code>interpolateFrequencyTogrid</code>,
+  <code>AWVisResampler::GridToData</code>, <code>faccumulateFromGrid</code>).</li>
+<li><strong>Hermitian half plane.</strong> Neither reserved nor excluded (section 5.9): a
+  <code>Tile</code> variant plus a conjugate fold in <code>finish</code>; stays an IF-10 candidate.</li>
+<li><strong>T0 law set strong enough to replace the fixture tests IF-2 deletes.</strong>
+  After the review, yes. Three of the five findings came from laws tested on
+  the convenient case (real unit-sum taps, equal XX/YY weights, several
+  channels); the fix added the general-case laws (complex taps with
+  gradients and leakage routing, polarized PSF, one-channel image and
+  one-channel row). Retrospective rule 2 makes that the standard for every
+  later ticket.</li>
+</ul>
+<h3 id="decisions">Decisions<a class="headerlink" href="#decisions" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Deviations 1–11 on #650: <code>ModeSet</code> on <code>accumulator</code> plus
+  <code>accumulator_layout</code> as the planner's memory input (kept); HPG padding
+  dropped; <code>NormalSection</code> dropped for the plan's vectors with one <code>sumwt</code>
+  per image; <code>briggsbwtaper</code> kept as <code>BandwidthTaper</code>; operator-local input
+  types; the paired correction on both sides; polarization pinned to CASA
+  <code>StokesImageUtil</code>; CASA's unpolarized weight and any-correlation-flagged
+  rule; the density pass on the resampler's blocks; the Hermitian layout
+  neither reserved nor excluded.</li>
+<li>Normalisation (the review's contract question): CASA's normalisation
+  kept; the law is "exactly adjoint once each sample's data are divided by
+  the conjugate kernel norm", with the unnormalised law as the <code>N ≡ 1</code> case.</li>
+<li>The five review findings fixed in 71a27e7cd4 and answered inline on the PR.</li>
+</ul>
+<h3 id="replanning">Replanning<a class="headerlink" href="#replanning" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Section 5.3 amended in place (marked R1): <code>TapLayout::Dense</code> without
+  padding, the kernel contract's single division by the norm and the
+  adjoint law, <code>ModeSet</code>, <code>accumulator_layout</code>/<code>accumulator</code>/
+  <code>prediction_norm</code>, <code>NormalPlane</code>/<code>NormalImages</code>,
+  <code>WeightingGeneration::Density</code>. Section 5.9's Hermitian row records the
+  decision.</li>
+<li>Ticket bodies: IF-2 … IF-11 each carry a "Learnings from IF-1" comment
+  with the interfaces to build on; IF-3 is reassigned to Fable (the densest
+  CASA-pinned science); IF-4 notes that Metal implies f32 accumulation and
+  that the rounding-rule choice is separate.</li>
+<li>Process: a ticket PR merges without an owner consult once its gates are
+  green, its independent review is resolved and no deviation is open for the
+  owner (AGENTS.md, Merging; sections 9.1, 9.3 and 11 amended). Gates R2 to
+  R4 close the same way: outcome section on <code>main</code>, PR merged.</li>
+</ul>
+<p>Gate closed: #662 marked ready and auto-merge armed on 2026-10-07.</p>
 
 
 
