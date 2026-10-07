@@ -14,9 +14,6 @@ use std::{
     time::Instant,
 };
 
-#[cfg(test)]
-use std::time::Duration;
-
 use casa_imaging_model::{
     CompiledGeometryId, CompiledProblem, CompiledProblemId, ModelDeltaTerm, ModelSample,
     NumericsContractId, WeightingCommitmentId,
@@ -897,19 +894,6 @@ pub(crate) struct GriddedNormalReplayCompilation {
     compiler: GriddedNormalOperatorCompiler,
     writer: Option<ManagedSpillWriter>,
     spill: Option<GriddedNormalSpillArtifact>,
-    #[cfg(test)]
-    stage_timings: Option<GriddedNormalCompilationStageTimings>,
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct GriddedNormalCompilationStageTimings {
-    pub(crate) record_key_construction: Duration,
-    pub(crate) grouping_reduction: Duration,
-    pub(crate) encoding: Duration,
-    pub(crate) payload_movement: Duration,
-    pub(crate) artifact_writes: Duration,
-    pub(crate) completion: Duration,
 }
 
 impl GriddedNormalReplayCompilation {
@@ -1009,28 +993,7 @@ impl GriddedNormalReplayCompilation {
                 .map_err(io::Error::other)?,
             ),
             spill: None,
-            #[cfg(test)]
-            stage_timings: None,
         })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn new_stage_local_probe(
-        problem: &CompiledProblem,
-        storage: &ManagedSpillStorage,
-        max_block_samples: usize,
-        observe_timings: bool,
-    ) -> io::Result<Self> {
-        let admission = project_gridded_normal_compilation(problem, max_block_samples)?;
-        let mut compilation = Self::create(
-            problem,
-            storage,
-            admission,
-            SourceCardinalityObservation::Enabled,
-        )?;
-        compilation.stage_timings =
-            observe_timings.then_some(GriddedNormalCompilationStageTimings::default());
-        Ok(compilation)
     }
 
     pub(crate) fn consume_block(
@@ -1042,15 +1005,9 @@ impl GriddedNormalReplayCompilation {
             .as_mut()
             .ok_or_else(|| io::Error::other("gridded-normal writer already sealed"))?;
         let mut frame_error = None;
-        let result = self.compiler.consume_source(
-            block,
-            &mut spill_frame_sink(
-                writer,
-                #[cfg(test)]
-                self.stage_timings.as_mut(),
-                &mut frame_error,
-            ),
-        );
+        let result = self
+            .compiler
+            .consume_source(block, &mut spill_frame_sink(writer, &mut frame_error));
         result
             .map(|_| ())
             .map_err(|error| frame_error.unwrap_or_else(|| io::Error::other(error)))
@@ -1072,45 +1029,21 @@ impl GriddedNormalReplayCompilation {
         self.compiler.measurements()
     }
 
-    #[cfg(test)]
-    pub(crate) fn stage_timings(&self) -> Option<GriddedNormalCompilationStageTimings> {
-        self.stage_timings.map(|mut timings| {
-            let compiler = self.compiler.stage_timings();
-            timings.record_key_construction += compiler.record_key_construction;
-            timings.grouping_reduction += compiler.grouping_reduction;
-            timings.encoding += compiler.encoding;
-            timings.completion += compiler.completion;
-            timings
-        })
-    }
-
     pub(crate) fn seal(&mut self) -> io::Result<()> {
         let writer = self
             .writer
             .as_mut()
             .ok_or_else(|| io::Error::other("gridded-normal writer already sealed"))?;
         let mut frame_error = None;
-        let result = self.compiler.finish_rows_and_frames(&mut spill_frame_sink(
-            writer,
-            #[cfg(test)]
-            self.stage_timings.as_mut(),
-            &mut frame_error,
-        ));
+        let result = self
+            .compiler
+            .finish_rows_and_frames(&mut spill_frame_sink(writer, &mut frame_error));
         result.map_err(|error| frame_error.unwrap_or_else(|| io::Error::other(error)))?;
-        #[cfg(test)]
-        let started = self
-            .stage_timings
-            .as_ref()
-            .map(|_| std::time::Instant::now());
         let writer = self
             .writer
             .take()
             .ok_or_else(|| io::Error::other("gridded-normal writer already sealed"))?;
         self.spill = Some(writer.seal().map_err(io::Error::other)?);
-        #[cfg(test)]
-        if let (Some(started), Some(timings)) = (started, self.stage_timings.as_mut()) {
-            timings.completion += started.elapsed();
-        }
         Ok(())
     }
 
@@ -1119,14 +1052,6 @@ impl GriddedNormalReplayCompilation {
         replay: &WeightingReplayCompletion,
     ) -> io::Result<FrozenGriddedNormalReplay> {
         self.complete_parts(replay.reconstruction_summary())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn complete_stage_local_probe(
-        self,
-        replay: &casa_imaging_reconstruction::WeightingReplaySummary,
-    ) -> io::Result<FrozenGriddedNormalReplay> {
-        self.complete_parts(replay)
     }
 
     fn complete_parts(
@@ -1175,32 +1100,9 @@ impl GriddedNormalReplayCompilation {
 
 fn spill_frame_sink<'a>(
     writer: &'a mut ManagedSpillWriter,
-    #[cfg(test)] mut timings: Option<&'a mut GriddedNormalCompilationStageTimings>,
     error: &'a mut Option<io::Error>,
 ) -> impl FnMut(GriddedNormalOperatorFrame<'_>) -> Result<(), SpectralOperatorError> + 'a {
     move |frame| {
-        #[cfg(test)]
-        let result = if let Some(timings) = timings.as_deref_mut() {
-            writer
-                .append_frame_observed(
-                    frame.sequence(),
-                    frame.record_count(),
-                    frame.encoded_bytes(),
-                )
-                .map(|measured| {
-                    timings.encoding += measured.encoding;
-                    timings.payload_movement += measured.payload_movement;
-                    timings.artifact_writes += measured.artifact_writes;
-                    timings.completion += measured.completion;
-                })
-        } else {
-            writer.append_frame(
-                frame.sequence(),
-                frame.record_count(),
-                frame.encoded_bytes(),
-            )
-        };
-        #[cfg(not(test))]
         let result = writer.append_frame(
             frame.sequence(),
             frame.record_count(),
@@ -1398,11 +1300,6 @@ impl FrozenGriddedNormalReplay {
         &self,
     ) -> &[casa_imaging_reconstruction::runtime_adapter::WProjectionDiagnostics] {
         self.backing.program.w_projection_diagnostics()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn stage_local_artifact_seal(&self) -> crate::managed_spill::ManagedSpillSeal {
-        self.backing.spill.seal()
     }
 
     pub(crate) fn preview_windows(
@@ -2405,8 +2302,6 @@ impl PartitionedKernel<ManagedSpillWindowStorage> for GriddedNormalReplayKernel 
         storage: &ManagedSpillWindowStorage,
         partition: &Self::Partition,
     ) -> Result<Self::Partial, Self::Error> {
-        let _reload_role =
-            crate::reload_probe::RoleScope::enter(self.timings.pass_ordinal, partition.phase());
         let started = self.timings.enabled.then(Instant::now);
         let result = self
             .state

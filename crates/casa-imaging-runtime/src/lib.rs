@@ -95,7 +95,6 @@ pub use observation_transaction::{
     BoundObservationTransaction, ObservationTransactionPlanError,
     ObservationTransactionPublicationScope, ObservationTransactionWork,
 };
-pub use prepared_artifact::reload_probe;
 pub use prepared_artifact::{
     PreparedArtifact, PreparedArtifactBudget, PreparedArtifactCatalogEntryOutcome,
     PreparedArtifactCatalogPlanFragment, PreparedArtifactCatalogReuseOutcome,

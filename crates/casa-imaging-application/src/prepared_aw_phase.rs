@@ -648,8 +648,6 @@ fn aw_attempt(base: ExecutionAttemptId, phase: u64) -> ExecutionAttemptId {
 
 #[cfg(test)]
 mod tests {
-    mod catalog_scale_probe;
-    mod cold_load_probe;
     mod native_generation;
 
     use std::{collections::BTreeSet, path::Path};

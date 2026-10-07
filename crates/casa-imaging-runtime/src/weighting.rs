@@ -4329,9 +4329,6 @@ impl FrozenWeightingReservation {
     }
 }
 
-#[cfg(test)]
-mod serial_compute_probe;
-
 impl FrozenWeightingArtifact {
     /// Rebind this artifact's pass-back-only selected proof through a fresh
     /// casa-ms owner access. No selected generation is exposed by the artifact.

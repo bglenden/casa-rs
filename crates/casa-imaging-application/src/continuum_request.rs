@@ -3546,10 +3546,7 @@ fn boxed(message: impl Into<String>) -> crate::ApplicationError {
 
 #[cfg(test)]
 mod tests {
-    mod cube_worker_probe;
-    mod mfs_memory_probe;
-    #[cfg(unix)]
-    mod source_bind_probe;
+    mod native_aw_preflight;
 
     use casa_coordinates::{CoordinateModel, CoordinateType, StokesType};
     use casa_imaging_model::{

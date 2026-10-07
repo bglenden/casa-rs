@@ -9,7 +9,6 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
-use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
 use tempfile::{Builder, NamedTempFile, TempPath};
@@ -29,14 +28,6 @@ pub(crate) const FRAME_HEADER_BYTES: usize = 40;
 const FOOTER_BYTES: usize = 48;
 const ARTIFACT_PREFIX: &str = ".casa-rs-managed-spill-";
 const ARTIFACT_RANDOM_BYTES: usize = 6;
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct ManagedSpillStageTimings {
-    pub(crate) encoding: Duration,
-    pub(crate) payload_movement: Duration,
-    pub(crate) artifact_writes: Duration,
-    pub(crate) completion: Duration,
-}
 
 struct PreparedFrame {
     header: [u8; FRAME_HEADER_BYTES],
@@ -767,22 +758,6 @@ impl ManagedSpillWriter {
         result
     }
 
-    pub(crate) fn append_frame_observed(
-        &mut self,
-        sequence: u64,
-        record_count: u64,
-        payload: &[u8],
-    ) -> Result<ManagedSpillStageTimings, ManagedSpillError> {
-        if self.poisoned {
-            return Err(ManagedSpillError::WriterPoisoned);
-        }
-        let result = self.append_frame_observed_inner(sequence, record_count, payload);
-        if result.is_err() {
-            self.poisoned = true;
-        }
-        result
-    }
-
     pub(crate) fn measurements(&self) -> ManagedSpillMeasurements {
         ManagedSpillMeasurements {
             direction: ManagedSpillIoDirection::Write,
@@ -811,28 +786,6 @@ impl ManagedSpillWriter {
         self.write_prepared_frame(&prepared)?;
         self.commit_prepared_frame(&prepared);
         Ok(())
-    }
-
-    fn append_frame_observed_inner(
-        &mut self,
-        sequence: u64,
-        record_count: u64,
-        payload: &[u8],
-    ) -> Result<ManagedSpillStageTimings, ManagedSpillError> {
-        let mut timings = ManagedSpillStageTimings::default();
-        let started = Instant::now();
-        let prepared = self.prepare_frame(sequence, record_count, payload)?;
-        timings.encoding = started.elapsed();
-        let started = Instant::now();
-        self.copy_frame_payload(&prepared, payload);
-        timings.payload_movement = started.elapsed();
-        let started = Instant::now();
-        self.write_prepared_frame(&prepared)?;
-        timings.artifact_writes = started.elapsed();
-        let started = Instant::now();
-        self.commit_prepared_frame(&prepared);
-        timings.completion = started.elapsed();
-        Ok(timings)
     }
 
     fn prepare_frame(

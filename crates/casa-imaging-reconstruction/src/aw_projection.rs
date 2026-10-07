@@ -1504,9 +1504,6 @@ fn finite(value: Complex64) -> bool {
 }
 
 #[cfg(test)]
-mod locality_probe;
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use casa_imaging_model::{PreparedArtifactAwInterpretation, PreparedArtifactCellSemantics};
@@ -3133,5 +3130,61 @@ mod tests {
         assert_eq!(first.diagnostics().provider_loads, 1);
         assert_eq!(second.diagnostics().provider_loads, 1);
         assert_eq!(prepared.resident_byte_ceiling(), 64 * 1024);
+    }
+
+    fn support_kernel(support: [usize; 2]) -> AwConvolutionKernel {
+        let layout = AwKernelLayout::new(
+            support,
+            1,
+            support.map(|value| 2 * value + 3),
+            support.map(|value| value + 1),
+        )
+        .unwrap();
+        AwConvolutionKernel::new(
+            layout,
+            (0..layout.shape[0] * layout.shape[1])
+                .map(|index| {
+                    Complex64::new(1.0 + (index % 17) as f64 / 17.0, (index % 7) as f64 / 9.0)
+                })
+                .collect(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn grid_plan_locality_preserves_normalization_and_per_cell_arithmetic() {
+        let shape = [40, 32];
+        let kernel = support_kernel([2, 3]);
+        let sample =
+            AwVisibilitySample::new(10.0, 10.0, 1.0, 0, 0.0, [17.35, 11.65], [0.2, -0.3]).unwrap();
+        let taps = fused_taps(&kernel, shape, sample, true).unwrap();
+        let plan = AwGridPlan::new(
+            shape,
+            FusedTaps {
+                values: taps.values.clone(),
+                normalization: taps.normalization,
+            },
+        );
+        assert_eq!(plan.normalization, taps.normalization);
+        let mut expected = (0..shape[0] * shape[1])
+            .map(|index| Complex64::new(index as f64 / 13.0, index as f64 / 7.0))
+            .collect::<Vec<_>>();
+        let mut actual = expected.clone();
+        for value in [
+            Complex64::new(0.5, -1.5),
+            Complex64::new(-1e6, 0.03),
+            Complex64::new(1e-9, 9.0),
+        ] {
+            for tap in &taps.values {
+                expected[tap.index] += tap.coefficient * value;
+            }
+            plan.grid(&mut actual, value).unwrap();
+        }
+        assert_eq!(actual, expected);
+        assert!(
+            plan.taps
+                .windows(2)
+                .all(|pair| pair[0].index < pair[1].index)
+        );
     }
 }
