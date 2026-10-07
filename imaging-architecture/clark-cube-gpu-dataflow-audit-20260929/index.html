@@ -1,0 +1,1500 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Clark cube imaging: fresh GPU math and dataflow audit - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#clark-cube-imaging-fresh-gpu-math-and-dataflow-audit" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Clark cube imaging: fresh GPU math and dataflow audit
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scientific Workbench
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Scientific Workbench
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../scientific-notebooks-and-assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Notebooks, Tutorials, Python, and AI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mac-native-gui-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native macOS Product Spec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#conclusion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conclusion
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Conclusion">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#implementation-follow-through" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation follow-through
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#evidence-and-timing-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Evidence and timing boundary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-math-and-essential-dependencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Math and essential dependencies
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-current-dataflow-and-gpu-suitability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Current dataflow and GPU suitability
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Current dataflow and GPU suitability">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#representation-audit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Representation audit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#repeated-prediction-across-neighboring-bands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Repeated prediction across neighboring bands
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-fft-and-half-plane-conclusions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. FFT and half-plane conclusions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-recommended-next-course-before-implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Recommended next course, before implementation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#acceptance-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Acceptance / limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#oracle-review" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Oracle review
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Oracle review">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#focused-follow-up-final-amendments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Focused follow-up: final amendments
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resulting-concrete-next-milestone" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resulting concrete next milestone
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="clark-cube-imaging-fresh-gpu-math-and-dataflow-audit">Clark cube imaging: fresh GPU math and dataflow audit<a class="headerlink" href="#clark-cube-imaging-fresh-gpu-math-and-dataflow-audit" title="Permanent link">&para;</a></h1>
+<p>Truth class: non-normative analysis and measured evidence
+Last reality check: 2026-09-29
+Source checkpoint: <code>1ba394d169d6becefb49b2974bd51c29477266f3</code>
+Verification: read-only call-chain/source audit and existing exact-run evidence;
+no new timing trial or implementation in this audit. Oracle main review and
+focused prediction-reuse/precision follow-up completed and checked locally.</p>
+<h2 id="conclusion">Conclusion<a class="headerlink" href="#conclusion" title="Permanent link">&para;</a></h2>
+<p>The current flat numerical buffers and memory-bounded plane waves are a sound
+base. The present <strong>spatial-tap-only GPU interface is not yet a good final
+GPU dataflow</strong>. It preserves science well, but exports the innermost CPU
+convolution loops after the CPU has already performed and materialized most
+of the visibility operator. Each nonzero-model refill crosses back to the CPU
+between prediction and residual accumulation. This is an integration proof,
+not evidence that Clark cube imaging is intrinsically unsuitable for GPUs.</p>
+<p>The strongest next architectural hypothesis is a <strong>bounded GPU visibility
+residual operator</strong>: native visibility block + compact shared-science mapping
+descriptors + resident model grids -&gt; resident residual grids, with prediction,
+residual formation and accumulation connected without a host prediction
+round trip. Keep the existing CLEAN controller and CPU FFTW initially.
+Keep the existing atomic scatter in the first proof; a locality-aware gridding
+change needs a demonstrated remaining bottleneck. No GPU speedup is promised.</p>
+<h3 id="implementation-follow-through">Implementation follow-through<a class="headerlink" href="#implementation-follow-through" title="Permanent link">&para;</a></h3>
+<p>The owner subsequently approved this path. The connected residual candidate
+now completes the full-row deep32 application in 171.954 s versus a fresh
+248.858-s CPU W4 control (single observations, 30.90% lower elapsed time).
+The fixed-model residual normalized RMS is 5.637273e-6. The unchanged deep
+CASA science assessment has zero hard failures but still requires numerical
+alert review; this is not full T55/T57 acceptance. The original audit and
+historical timings below are retained, not relabeled as current measurements.</p>
+<p>Exact source checkpoints, binaries, logs, comparisons and inspected panels:
+<code>/Users/brianglendenning/SoftwareProjects/casa-rs-evidence/t57/cube-metal-first-path-20260929/CONNECTED-GPU-RESIDUAL-CHECKPOINT.md</code>.</p>
+<h2 id="evidence-and-timing-boundary">Evidence and timing boundary<a class="headerlink" href="#evidence-and-timing-boundary" title="Permanent link">&para;</a></h2>
+<p>Durable bundle:
+<code>/Users/brianglendenning/SoftwareProjects/casa-rs-evidence/t57/cube-metal-first-path-20260929</code>.
+See <code>METAL-CUBE-APPLICATION-CHECKPOINT.md</code>, <code>CPU-ROW-PROFILE-REPAIR.md</code>
+and the retained exact binaries/logs/resource receipts there.</p>
+<p>Deep32: 4,094,064 rows, 512 stored channels, output 240-271, 32 x 1024²;
+natural Stokes I, standard convolutional gridder, existing Clark, 0.5 mJy,
+640,000 global iteration ceiling and unchanged mask/LSRK science.
+Elapsed time includes selected preparation, initial imaging, all visibility
+residual refreshes, intermediate I/O, restoration and publication, plus
+first-use device setup. It excludes build/input copying/process startup/
+comparison. Single observations, not controlled cold-cache experiments.</p>
+<table>
+<thead>
+<tr>
+<th>Observation</th>
+<th style="text-align: right;">End-to-end s</th>
+<th style="text-align: right;">Peak aggregate RSS, decimal GB</th>
+<th>Note</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Earlier integrated CPU W4</td>
+<td style="text-align: right;">270.134</td>
+<td style="text-align: right;">2.301</td>
+<td>Matched with the old Metal candidate</td>
+</tr>
+<tr>
+<td>Metal, four host packing workers</td>
+<td style="text-align: right;">345.067</td>
+<td style="text-align: right;">3.558</td>
+<td>Spatial grid/degrid only; 17 passes</td>
+</tr>
+<tr>
+<td>Repaired current CPU W1</td>
+<td style="text-align: right;">566.441</td>
+<td style="text-align: right;">2.271</td>
+<td>Recovers CPU integration regression</td>
+</tr>
+<tr>
+<td>Repaired current CPU W4</td>
+<td style="text-align: right;">279.292</td>
+<td style="text-align: right;">2.321</td>
+<td>Deep W4 preservation remains unresolved</td>
+</tr>
+</tbody>
+</table>
+<p>The corrected code has <strong>not</strong> been retimed with Metal. Do not compare old
+Metal against new CPU as a matched pair. No matched CASA deep32 timer exists:
+the exact CASA reference is a window of retained full512 products.</p>
+<p>In the matched old CPU/Metal pair, exclusive input+imaging is
+239.682/314.878 s, minor cycles 22.951/23.005 s, other control
+0.210/0.238 s and remaining boundary 7.292/6.947 s.
+The slowdown is in the visibility/imaging path, not demonstrated FFT or
+Clark slowdown.</p>
+<p>Metal submitted 159,456 command batches, 2,358,180,864 grid requests and
+4,257,826,560 degrid requests. GPU command duration 143.435 s is nested
+inside 184.863 s submit/wait, itself inside input/imaging. The 41.428-s
+difference is not a separately additive phase and not necessarily all
+removable launch overhead. Overlapped host-worker sums are not wall time.</p>
+<p>The submit/wait clock starts after dispatch validation and encoding, and after
+acquiring the runtime mutex (<code>metal_runtime.rs:533,1270</code>). It excludes tap
+packing/copying, tap validation, encoding and waiting to acquire that mutex.
+Those costs are still in the complete consumer/application time. GPU command
+start/end timestamps cover a command-buffer interval, not per-kernel active
+instruction time. Neither subtraction nor a count-times-average extrapolation
+is a whole critical-path attribution.</p>
+<p>The 24-byte tap representation implies 158.784 GB of cumulative staging
+memcpy; prediction result copies imply another 34.063 GB. These are
+executed-count-derived memory-copy bytes, <strong>not PCIe transfers, peak memory,
+or measured DRAM traffic</strong>. Apple unified memory does not eliminate copies
+between different allocations in our implementation.</p>
+<h2 id="1-math-and-essential-dependencies">1. Math and essential dependencies<a class="headerlink" href="#1-math-and-essential-dependencies" title="Permanent link">&para;</a></h2>
+<p>Let <code>A</code> denote the implemented model-to-native-visibility prediction,
+including image correction/FFT, convolutional degridding, model-channel
+interpolation, phase rotation and polarization projection. Let <code>B</code> denote
+the implemented visibility-to-image operator, including native-to-output
+spectral resampling, flags/weight semantics, polarization reduction,
+phase rotation, weighted convolutional gridding, FFT and normalization.</p>
+<p>Then the expensive refresh is conceptually:</p>
+<div class="codehilite"><pre><span></span><code>model M -&gt; A(M) = predicted native visibilities
+native observed V -&gt; V - A(M) -&gt; B(V - A(M)) = refreshed residual image
+</code></pre></div>
+
+<p>Dirty image is <code>B(V)</code>; PSF uses the existing unit-response/weight path.
+<code>B(V - A(M))</code> is schematic notation, not permission to change operation order.
+The executing cursor interpolates observed and predicted endpoints separately,
+applies paired flags/nearest weights and polarization reduction, THEN subtracts
+the reduced values and applies phase/weight in <code>grid_sample_with</code>
+(<code>band.rs:1612-1670,1248-1307</code>). Preserve this literal ordering in a device
+implementation; native subtraction followed by interpolation is not assumed
+equivalent merely because interpolation is linear.
+This notation does NOT assert that our finite-support, resampling and
+normalization implementations are exact mathematical adjoints. That identity
+must not be assumed to justify reordering or dropping interpolation.</p>
+<p>Spatial gridding for one prepared sample is a 7 x 7 weighted scatter:
+<code>G[x+i,y+j] += z * Cx[i] * Cy[j]</code>. Degridding is the corresponding 49-cell
+read/reduction for a prepared model-plane request. The separable convolution
+table, UV wavelength scale, grid bounds and center/crop conventions are shared.
+Code: <code>spectral_operator.rs:11840</code>, <code>band.rs:1139,1248</code>;
+GPU shaders <code>metal_cube.rs:29,48</code>.</p>
+<p>Residual prediction is evaluated at native sample frequencies BEFORE
+native-to-output interpolation and polarization/weight reduction. Prediction
+can draw on neighboring model planes: spectral halos are real mathematical
+dependencies, not bookkeeping. Planes have independent spatial grids, but
+"one completely independent end-to-end pipeline per output plane" cannot
+ignore those halos, shared source ownership or the existing cycle-threshold
+and iteration/stopping policy.</p>
+<p>More precisely, the resulting prediction is indexed by native frequency, but
+each contributing model-plane degrid and phase uses that term's COARSE
+evaluation frequency (<code>spectral_sampling.rs:1019-1075</code>, <code>band.rs:814-830</code>).
+Do not substitute the native frequency's UV wavelength scale/phase for every
+coarse term. This distinction also permits reuse of a model-plane prediction
+at one row across several native interpolation destinations.</p>
+<p>Clark performs sequential decisions within a subcycle: pick the current
+peak within one plane's active pixels, apply a gain-scaled component, subtract the small
+PSF patch from active values, then choose the next peak. Each choice depends
+on the previous subtraction. It accumulates pending components and periodically
+refreshes the full residual by alias-free FFT convolution. That Clark image
+refresh is NOT the much more expensive visibility-domain major refresh.
+The current compact active list and batched refresh must be preserved;
+a full-image scan/subtraction or GPU submission per component would undo Clark.</p>
+<p>The cube controller has a shared entry-statistics/threshold prepass, then runs
+one independent minor solver per channel/polarization, concurrently when
+admitted. It does NOT choose a cube-wide best component between those solvers.
+Each solver has its own Clark state/controller; results commit in canonical
+order. Source: <code>reconstruction_cycle.rs:792-907</code>,
+<code>reconstruction_executor.rs:150-175</code>, <code>minor_cycle.rs:2650-2687</code>.
+This gives genuine across-plane GPU parallelism without changing CLEAN;
+unequal plane difficulty still produces load imbalance. Within-plane peak
+selection/update could stay on-device for a subcycle, but requires a suitable
+reduction/active-list strategy rather than a CPU round trip per component.</p>
+<p>CASA/LibRA's inspected <code>ClarkCleanModel.cc:601-671</code> uses the same
+peak -&gt; component -&gt; active-list subtraction -&gt; next-peak dependency.
+The <a href="https://casadocs.readthedocs.io/en/stable/api/tt/casatasks.imaging.tclean.html#deconvolver">CASA tclean documentation</a>
+also separates major/minor cycles. Scientific dependency does not prescribe
+our current CPU/GPU boundary or request representation.</p>
+<h2 id="2-current-dataflow-and-gpu-suitability">2. Current dataflow and GPU suitability<a class="headerlink" href="#2-current-dataflow-and-gpu-suitability" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Work</th>
+<th>GPU fit of the math</th>
+<th>Current structure and consequence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tiled source reading/decoding</td>
+<td>CPU/I/O task; parallel preparation can overlap GPU</td>
+<td>Existing selected-channel bulk source, reusable blocks, no replay store: retain</td>
+</tr>
+<tr>
+<td>Spectral/phase/polarization/weight work</td>
+<td>Many independent sample calculations; suitable for broad GPU kernels if precision and branching are controlled</td>
+<td>Host row stencils, SmallVec terms and callbacks are CPU-native; do not upload Rust object graphs</td>
+</tr>
+<tr>
+<td>Model degridding</td>
+<td>Independent output per request; no output atomics; many identical 49-cell gathers</td>
+<td>Flat resident Complex32 grids/table are suitable; one GPU thread per request is a reasonable starting point, locality still matters</td>
+</tr>
+<tr>
+<td>Residual formation then gridding</td>
+<td>Fusion can avoid materializing prediction/residual arrays on CPU</td>
+<td>Present boundary forces prediction download, double-precision host combination, another row traversal and tap repacking</td>
+</tr>
+<tr>
+<td>Convolutional gridding</td>
+<td>Parallel but competing scatter writes; memory locality/accumulation determine performance</td>
+<td>One sample thread executes 98 global scalar atomic additions; no local aggregation. GPU bottleneck attribution not yet measured</td>
+</tr>
+<tr>
+<td>Image FFT / Clark batch convolution</td>
+<td>Regular transforms and elementwise products; good abstract GPU workload</td>
+<td>NEON FFTW is already strong. Full operation/boundary cost, not naked FFT time, decides</td>
+</tr>
+<tr>
+<td>Clark active-pixel update/peak</td>
+<td>Update/reduction parallel across pixels; component choices serial within a plane</td>
+<td>Compact CPU list suits current small active sets; per-component GPU/CPU synchronization is a poor boundary</td>
+</tr>
+<tr>
+<td>Restoration/publication</td>
+<td>Some image calculations parallel; persisted writing stays existing writer</td>
+<td>Small measured share here; moving writer is not the high-impact opportunity</td>
+</tr>
+</tbody>
+</table>
+<p>Apple's <a href="https://developer.apple.com/documentation/xcode/analyzing-apple-gpu-performance-using-a-visual-timeline">GPU timeline guidance</a>
+specifically recommends avoiding many small passes and unnecessary
+serialization. Its <a href="https://developer.apple.com/documentation/xcode/finding-your-metal-apps-gpu-occupancy">occupancy guidance</a>
+warns that occupancy alone does not establish efficient work: access patterns
+and cache/resource pressure matter. We have not captured those counters for
+this workload, so atomic contention, bandwidth saturation and occupancy are
+hypotheses, not measurements.</p>
+<p><a href="https://astron.nl/~romein/papers/ICS-12/gridding.pdf">Romein's 2012 gridding paper</a>
+establishes the relevance of a GPU-specific work distribution that reduces
+device-memory accesses without requiring a full data sort. Its old hardware
+speedups are not predictions for this Mac. Only the search-accessible
+author abstract/introduction was available during this audit; direct PDF
+fetch returned 404. Do not infer a reviewed implementation from that access.</p>
+<p>LibRA's locally inspected HPG adapter also presents a combined operation:
+<code>AWVisResamplerHPG::sendData</code> moves a populated visibility bucket into
+<code>degrid_grid_visibilities</code>, or <code>grid_visibilities</code> for a zero model. Its
+finalization flushes partial buckets, fences, applies the device grid FFT,
+then gathers images. See <a href="https://github.com/bglenden/libRA/blob/0ab99e261878334d6588eafa360cef3b673e897f/src/synthesis/TransformMachines2/AWVisResamplerHPG.cc#L622">pinned LibRA source</a>
+and lines 241-284. This is a concrete precedent for the larger operator seam,
+not evidence of Apple performance, equivalent cube interpolation, or authority
+to copy its buffering, precision policy, or FFT selection. The actual HPG
+kernel internals were not inspected here.</p>
+<h3 id="representation-audit">Representation audit<a class="headerlink" href="#representation-audit" title="Permanent link">&para;</a></h3>
+<p>Good and worth retaining:</p>
+<ul>
+<li>Plain contiguous Complex32 grids, separable small convolution tables and
+  bounded plane groups, not a full-cube allocation.</li>
+<li>Borrowed native blocks: values/weights/flags in flat arrays, row metadata
+  separate, correlation-fastest then channel then row. No visibility object
+  copying is needed to invoke the CPU science operator.</li>
+<li>Resident GPU model/output grids reused across all source refills in a wave.
+  Models upload and output grids download at wave boundaries, not every refill.</li>
+<li>Existing phase-aware memory admission, restricted-channel source reads,
+  shared controller, FFTW and persisted product writer.</li>
+</ul>
+<p>Weak as a long-term GPU structure:</p>
+<ul>
+<li><code>CubeSpatialBackend</code> exposes <code>initialize/degrid/grid/download</code>
+  after host preparation. <code>SpatialPredictionBatch</code> owns a separate taps and
+  result Vec per model plane; destinations carry host index/Complex64 factor.
+  <code>consume_spatial</code> allocates a rows x native-window Complex64 prediction
+  array, traverses rows to pack prediction geometry, waits/downloads/results,
+  then traverses rows again to pack output contributions.</li>
+<li><code>metal_wave.rs:268-329,371-399</code> copies packed taps into another shared
+  allocation and copies predicted Complex32 values back into host Vecs.
+  Runtime <code>metal_runtime.rs:1190-1218</code> scans packed tap bounds again.
+  Required bounds validation remains, but a typed/checked producer could
+  establish those bounds at introduction rather than rescan a trusted list.</li>
+<li><code>MetalBatchAccess::execute</code> holds the shared runtime mutex through native
+  submission and <code>waitUntilCompleted</code>. Four host workers are packing
+  lanes, not four independent GPU streams; separate plane kernels are encoded
+  into a batch, then synchronously drained before reuse.</li>
+<li>Host FFT grid arrays and GPU grid storage are different physical allocations.
+  Shared-memory mode alone does not make them alias. A single accounted
+  shared backing may be possible; FFTW alignment/layout/lifetime safety must
+  be established rather than assuming every Vec can be a Metal buffer.</li>
+</ul>
+<p><a href="https://developer.apple.com/documentation/metal/mtlstoragemode/shared">Apple shared-storage documentation</a>
+requires synchronization before the other processor accesses modified memory.
+An asynchronous design therefore needs bounded owned in-flight slots, not
+passing a borrowed refill to the GPU and immediately reusing its storage.</p>
+<h3 id="repeated-prediction-across-neighboring-bands">Repeated prediction across neighboring bands<a class="headerlink" href="#repeated-prediction-across-neighboring-bands" title="Permanent link">&para;</a></h3>
+<p><code>RowStencil::compile</code> calls <code>casa_linear_prediction_terms(output_hz,
+row_native_frequency, original_pair_hz)</code> independently of the output core;
+<code>prepare_prediction_terms</code> then resolves the same global model-channel identity
+to a band's local grid ordinal (<code>band.rs:814-864</code>). Neighboring bands can share
+native support. Thus their identical model/sample terms and halo FFT grids
+can be computed/stored repeatedly. A wave-level identity map can share unique
+model grids and native predictions within the admitted wave, without assuming
+an entire cube fits or reusing stale row-dependent geometry. The exact unique
+request count/saving is not measured. The retained log reports 266,114,160
+degrids per residual phase: an aggregate mean of 65 requests per physical row,
+for a 32-output-plane wave. Since a term evaluates at its coarse plane frequency, the wave could
+evaluate each unique model-plane/row geometry once, then apply its different
+spectral factors. Identical global plane content, FFT geometry, phase and
+mapping must be established before sharing; total request counts alone do not
+prove a factor-of-two kernel or application speedup. This is another reason
+to consider a wave/block operator rather than only a larger collection of
+per-band taps.</p>
+<p>Native layout is correlation-fastest, then channel, then row
+(<code>streaming_cube/input.rs:105-119</code>). Device work should exploit those flat strides;
+one warp/SIMD-group per plane marching across rows would otherwise stride across
+all channels. No array-of-Rust-objects upload or mandatory transpose is implied:
+choose the thread mapping and only introduce another layout if its complete
+cost is demonstrably lower.</p>
+<h2 id="3-fft-and-half-plane-conclusions">3. FFT and half-plane conclusions<a class="headerlink" href="#3-fft-and-half-plane-conclusions" title="Permanent link">&para;</a></h2>
+<p>There are two different Hermitian opportunities:</p>
+<ol>
+<li>Real Clark component/PSF image convolution: already migrated to in-place
+   real/half-spectrum FFTW. For a 1536-square workspace, the two main arrays
+   shrink from 36 to 18.0234 MiB. Existing exact-convolution tests cover
+   asymmetric PSFs, crop, edges and off-center origins.</li>
+<li>Visibility grids: do NOT truncate the complex grid to half a plane merely
+   because the final sky image is real. Correct conjugate folding, DC/Nyquist,
+   normalization and the real-adjoint/prediction convention are required.
+   Arbitrarily flagged/resampled complex visibilities need not directly
+   populate an exactly Hermitian stored grid. This is not the same cutover.</li>
+</ol>
+<p>Measured complete Clark convolution, ms/update or four-plane joined batch:</p>
+<table>
+<thead>
+<tr>
+<th>Implementation</th>
+<th style="text-align: right;">One plane</th>
+<th style="text-align: right;">Four concurrent planes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Full-complex NEON FFTW</td>
+<td style="text-align: right;">13.675</td>
+<td style="text-align: right;">23.564</td>
+</tr>
+<tr>
+<td>Half-spectrum NEON FFTW</td>
+<td style="text-align: right;">6.653</td>
+<td style="text-align: right;">9.033</td>
+</tr>
+<tr>
+<td>Half-spectrum Metal MPSGraph</td>
+<td style="text-align: right;">4.255</td>
+<td style="text-align: right;">12.663</td>
+</tr>
+</tbody>
+</table>
+<p>These include component preparation, cached PSF multiply, inverse,
+crop/normalization, CPU-visible residual and reset. Metal wins one plane
+but loses to half-spectrum CPU at four planes. FFT is therefore NOT currently
+the easiest demonstrated GPU win. Do not revive a blanket FFT replacement.</p>
+<h2 id="4-recommended-next-course-before-implementation">4. Recommended next course, before implementation<a class="headerlink" href="#4-recommended-next-course-before-implementation" title="Permanent link">&para;</a></h2>
+<p>Ask Oracle to challenge the operator boundary and select a single bounded
+proof, rather than seed another collection of local tap/launch tweaks.</p>
+<p>Proposed GPU-facing state remains simple:</p>
+<div class="codehilite"><pre><span></span><code>bounded native block (owned in-flight slot, flat arrays)
++ compact spectral/geometry/polarization descriptors from shared science
++ bounded resident model grid/halo and output grid views
+    -&gt; GPU native prediction -&gt; separate observed/predicted interpolation
+    -&gt; flags/weights/polarization reduction -&gt; residual/phase -&gt; accumulation
+    -&gt; completed residual grids at wave boundary -&gt; existing CPU FFTW/CLEAN
+</code></pre></div>
+
+<p>Descriptors must encode existing row-dependent frequency support, flag and
+weight rules, phase sign/geometry, spectral ordering and valid grid bounds.
+Do not treat cached mapping as invariant when row geometry/frequency changes.
+The desired seam is the visibility residual OPERATION, not a second science
+definition or an uploaded tree of CPU per-sample objects.</p>
+<p>An operation boundary does not require one giant kernel. Dependent kernels
+can run in one GPU command chain, with device-side intermediate scratch and
+the proper ordering, without reading predictions on the CPU. Prefer this
+over fusion that explodes register use or duplicates endpoint predictions.</p>
+<p>Start with a representative frozen nonzero model and one COMPLETE residual
+refresh across the selected full-row deep32 input, including model setup/FFT,
+all refills, packing, synchronization, final CPU-visible residual images and
+bounded storage. Prepared-refill microchecks may assist diagnosis but are not
+performance acceptance. Discriminator: can eliminating the host prediction
+round trip and extra request materialization clearly beat current CPU W4's
+complete refresh, followed by a corresponding deep32 application benefit?
+Record separate grid/degrid GPU durations and only the relevant counters
+on that wave to determine whether scatter locality must change too.
+This is a narrow missing measurement, not a new broad profiling campaign.
+Before implementing, decide precision explicitly: the current host combines
+Complex32 degrids in Complex64 with double-precision phase factors.
+Do not silently replace that with unrestricted Float arithmetic. Shared
+science descriptors/range reduction and existing numerical gates must show
+any ordinary precision change is adequate.</p>
+<p>If this proof demonstrates a remaining gridding bottleneck, reassess a separate
+tile/work-distribution accumulation hypothesis that
+preserves the SAME seven-tap convolution while reducing global writes.
+Conjugation, resampling, PSF normalization, Clark policy and weighting must
+not be changed to obtain a speedup. Binning/sorting is not automatically free;
+its cost/storage belongs in the complete-operator boundary.
+The current atomic shader is a correctness comparator, not a permanent
+fallback or a benchmark baseline padded to flatter the candidate.</p>
+<p>Do not port the controller or all FFTs first. Old Metal's matched visibility
+penalty is about 75 s, while old CPU W4 minor cycles total only about 23 s.
+Even eliminating those minor cycles would not close that penalty.
+Similarly eliminating the 41-s submit/wait-minus-GPU interval alone cannot
+justify claiming the old Metal implementation beats matched CPU W4.
+Changes must save end-to-end critical-path work, not merely a large sum of
+overlapped lane times.</p>
+<h2 id="acceptance-limits">Acceptance / limits<a class="headerlink" href="#acceptance-limits" title="Permanent link">&para;</a></h2>
+<p>This audit does not accept a new implementation or waive alerts. All restored
+planes in the current deep32 observations satisfy approximately 1e-3 agreement;
+zero hard failures, but 16 review alerts remain and raw model/residual
+diagnostics remain outside 1e-3 under the existing gate. Full T55/T57
+acceptance is not complete. CPU deep-W4 preservation and corrected Metal
+timing are separate unresolved evidence.</p>
+<p>Any next proof retains selected bulk tiled reads, restricted spectral halos,
+bounded native planning and aggregate RSS 16 GiB, two Cargo jobs, existing
+seven-product/nine-check CASA comparisons and inspected panels.
+No second CLEAN controller, permanent fallback, unbounded cube residency,
+attestation, weakened science, MFS expansion, W8 tuning, full512/full32GB
+restart, installation, push, merge, release or cleanup is authorized here.</p>
+<p>Audit method: parent reviewed the numerical/source/runtime path and checked
+the plane-controller findings locally. A bounded read-only source inventory
+requested Luna Max; the subagent runtime did not expose its model/effort, so
+that selection cannot be independently confirmed. No acceptance decisions
+were delegated.</p>
+<h2 id="oracle-review">Oracle review<a class="headerlink" href="#oracle-review" title="Permanent link">&para;</a></h2>
+<p>Oracle: <a href="https://chatgpt.com/c/6abc3a60-5e04-83e8-92f1-24489fa665e6">ChatGPT 6 Pro review</a>,
+highest visible Pro setting (5/5), submitted through the signed-in Chrome
+session. Main response completed after 11m52s; focused follow-up completed
+after 2m51s.</p>
+<p>It reviewed the audit and all six attached executing source files. The exact
+GitHub commit lookup returned "No commit found"; attachments, not a remotely
+accessible checkpoint, were its current-code basis. It did not independently
+see the full controller, reader, helpers, writer/gate, logs or panels. Those
+facts are supplied evidence verified locally here.</p>
+<p>Accepted findings and consequential refinements:</p>
+<ul>
+<li>Use the admitted <strong>wave</strong>, not a per-band tap batch, as the GPU work unit.
+  The old counts are consistent with 151 refills x 32 bands x
+  (one initial batch + two batches x 16 residual refreshes) = 159,456 commands.
+  This count identity supports the call chain; it is not a measured speedup.</li>
+<li>Use two connected device passes, with legitimate bounded prediction scratch;
+  do not recompute both endpoint predictions independently for every output.
+  Keep the existing seven-tap scatter in the first proof. Atomic dominance
+  is not measured, and simultaneous locality changes would confound the result.</li>
+<li>Preserve the literal interpolation/flags/weights/polarization/subtraction
+  ordering. Retain CPU decisions for discrete tap/table indices initially:
+  floating-point geometry can change an index, not only an accumulated value.</li>
+<li>The runtime mutex is part of today's unsafe Send/lifetime proof. Removing the
+  GPU wait while keeping unrestricted mutable <code>with_bytes</code> access is unsafe.
+  Replace that access model with a bounded wave owner and owned input slots,
+  completion tickets, and allocation pinning. Initialize the shared convolution
+  table once before any dependent work, not per-band writes while GPU readers
+  may be active.</li>
+<li>One queue permits CPU preparation of a later slot while the GPU consumes
+  an earlier one; it does not require a second device/queue authority.
+  Start with two charged reusable slots, one ordered GPU-only prediction
+  scratch region, resident immutable model/halo grids and residual grids.
+  Slot states are free/filling/ready/in-flight: <strong>ready means ownership</strong>, not
+  a content seal or attestation. On failure stop submission, drain commands,
+  preserve buffers until safe and propagate failure; never retry a partly
+  accumulated block into the same grid or silently switch backend.
+  See <a href="https://developer.apple.com/library/archive/documentation/Miscellaneous/Conceptual/MetalProgrammingGuide/Cmd-Submiss/Cmd-Submiss.html">Apple's command model</a>
+  and <a href="https://developer.apple.com/library/archive/documentation/3DDrawing/Conceptual/MTLBestPracticesGuide/TripleBuffering.html">bounded buffering guidance</a>.</li>
+<li>Native-input staging may add an actual copy. Replacement descriptors may
+  be larger/costlier than taps. Count these honestly; 158.784-GB removed
+  staging is not automatically time saved. Defer FFTW/Metal backing-store
+  aliasing in this proof rather than add another lifetime/layout change.</li>
+<li>First milestone must be a <strong>complete frozen-model residual refresh</strong> across
+  the selected full-row deep32 input, including model prep/FFT, all refills,
+  descriptor work, staging, setup, synchronization, final download and inverse
+  FFT. Select the retained cancellation-heavy epoch before looking at timing.
+  A prepared-refill microcheck is useful diagnosis but not milestone acceptance.
+  Compare to current CPU W4 and the old tap operator; then run the unchanged
+  deep32 application/gate/panels against a contemporaneous CPU control.</li>
+<li>Go only on a clear complete-refresh advantage over CPU W4 and corresponding
+  complete-application benefit with unchanged science/resources. Beating the
+  inefficient tap backend alone is not enough. If efficient compliant device
+  arithmetic or that advantage is unsupported, pause this cutover instead of
+  automatically expanding into GPU FFT, GPU Clark or new gridding algorithms.</li>
+</ul>
+<p>Locally verified the unsafe-owner comment (<code>metal_runtime.rs:456-463</code>),
+shared-table writes (<code>metal_wave.rs:348-351</code>), timing exclusions and interpolation
+order. Oracle's initial numerical proposal was a scoped hi/lo Float32 bridge;
+we did <strong>not</strong> adopt that as an unconditional requirement. After the focused
+follow-up supplied the missing coarse-frequency helper and precision-policy
+constraints, Oracle endorsed coarse-plane prediction reuse and ordinary
+Float32 first, with extra precision only for demonstrated scientific need.</p>
+<p>Oracle's break-even arithmetic is sound but not a prediction: recovering
+74.933 s requires about 23.8% off old Metal's input/imaging boundary if the
+remaining boundary is held fixed. The 143.435-s GPU interval and 41.428-s
+submit/wait-minus-GPU gap do not identify the missing mechanism's savings.
+No acceptance alert, CPU preservation deficit or missing matched timer is waived.</p>
+<h3 id="focused-follow-up-final-amendments">Focused follow-up: final amendments<a class="headerlink" href="#focused-follow-up-final-amendments" title="Permanent link">&para;</a></h3>
+<p>The <a href="https://chatgpt.com/c/6abc3a60-5e04-83e8-92f1-24489fa665e6">same Oracle conversation</a>
+completed the two-question follow-up in 2m51s, still at the highest visible
+ChatGPT 6 Pro setting. Both amendments are adopted and checked locally.</p>
+<ol>
+<li>
+<p><strong>Reuse coarse-plane predictions in the first proof.</strong> The supplied helper
+   establishes that multi-channel CASA-linear prediction evaluates at
+   <code>centres[global_model_channel]</code> (<code>spectral_sampling.rs:1019-1075</code>).
+   Compute the degrid result times conjugate phase once per required
+   source-row/coarse-model-plane pair. Then form each native destination using
+   its original ordered spectral-factor sum and existing polarization
+   projection. An immutable wave owner fixes the model epoch/domain/Stokes,
+   source identity/layout, global frequency axis, corrected FFT/grid
+   conventions, convolution table and row UV/phase. Within that owner, the
+   lookup needs only refill-generation row index and union-plane index,
+   not hashes or heavy per-sample identity objects. Keep the union bounded
+   to the admitted wave/refill and deduplicate model halo grids as well.
+   <strong>Exception:</strong> <code>CasaSingleChannel</code> evaluates at native frequency
+   (<code>band.rs:1116-1135</code>); this reuse rule is not universal. Residual scattering
+   also evaluates at the fine output frequency, not the coarse prediction
+   frequency. The logged 65 requests per row is an aggregate mean, not a
+   unique-key count or proof that every row has the same work. Measure actual
+   requested and unique prediction counts in the proof.</p>
+</li>
+<li>
+<p><strong>Float32 first; precision only for demonstrated scientific need.</strong> Oracle
+   withdrew its default hi/lo Float32 requirement: the supplied evidence does
+   not establish a failure requiring it. Retain CPU geometry/table-index
+   decisions and host phase/range reduction initially, with ordinary Float32
+   device arithmetic. Include coefficient rounding in fixed-model,
+   cancellation-heavy checks. Preserve literal interpolation/reduction order
+   and keep current fast-math disabled for the first proof. Run stricter
+   existing fixed-model checks before the application comparison. If these
+   pass, do not buy closer agreement or identical bits with extra precision.
+   If they fail, distinguish mapping/order/lifetime faults from arithmetic,
+   then use targeted precision only where a scientific need is demonstrated,
+   or stop the cutover. No generic software-double framework is proposed.
+   The CPU reference computes <code>(gather * phase) * factor</code>
+   (<code>band.rs:1165</code>), while the old spatial adapter uses
+   <code>gather * (phase * factor)</code> (<code>spatial.rs:372,385</code>).
+   Preserve the reference order without inventing a bitwise-output contract.</p>
+</li>
+</ol>
+<h3 id="resulting-concrete-next-milestone">Resulting concrete next milestone<a class="headerlink" href="#resulting-concrete-next-milestone" title="Permanent link">&para;</a></h3>
+<p>Implement one bounded, wave-wide nonzero-model residual refresh: unique
+coarse-plane predictions in device scratch, followed by device-side native
+endpoint combination, observed/predicted interpolation, flags/weights/
+polarization reduction, subtraction, output phase/weight and the existing
+seven-tap scatter. Keep CPU FFTW, efficient batched Clark, initial imaging and
+the writer unchanged in this first proof. Use two owned reusable input slots
+and explicit completion lifetimes; do not expose mutable in-flight buffers.
+Keep source tiling/channel restriction and all shape, memory and error checks.</p>
+<p>The performance deliverable is a <strong>complete frozen-model residual refresh</strong>
+on the existing full-row deep32 workload, including preparation/FFT,
+descriptors, staging, all refills, first-use setup, synchronization, final
+download and inverse FFT. Compare contemporaneously with CPU W4, not just
+the slower tap backend. Record actual requested/unique predictions, copies,
+read counts/bytes, peak memory and complete elapsed time. If that establishes
+a clear advantage with unchanged fixed-model checks, run the existing deep32
+application, seven-product/nine-check CASA comparison and panels against a
+contemporaneous CPU control. A refill/kernel-only win is not acceptance.</p>
+<p>No new implementation, benchmark or acceptance waiver occurred in this audit.
+The existing review alerts and CPU deep-W4 preservation uncertainty remain.
+The report is a reviewed next direction, not a measured GPU improvement.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

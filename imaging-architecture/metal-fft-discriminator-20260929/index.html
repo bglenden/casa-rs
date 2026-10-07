@@ -1,0 +1,1406 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Metal FFT discriminator — 2026-09-29 - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#metal-fft-discriminator-2026-09-29" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Metal FFT discriminator — 2026-09-29
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scientific Workbench
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Scientific Workbench
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../scientific-notebooks-and-assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Notebooks, Tutorials, Python, and AI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mac-native-gui-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native macOS Product Spec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#current-complete-convolution-discriminator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current: complete convolution discriminator
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Current: complete convolution discriminator">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#matched-application-checkpoint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Matched application checkpoint
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scientific-status-and-verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scientific status and verification
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#next-action-and-durable-restart" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Next action and durable restart
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#earlier-raw-fft-screen-and-reasoning-superseded-where-noted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Earlier raw-FFT screen and reasoning (superseded where noted)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#historical-evidence-depth-dependence-is-not-established" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Historical evidence: depth dependence is not established
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-code-and-scale" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current code and scale
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#new-standalone-library-measurements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        New standalone library measurements
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#libraries-and-implementation-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Libraries and implementation options
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reproduction-and-retained-limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reproduction and retained limitations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#follow-up-hermitian-half-planes-2026-09-29" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Follow-up: Hermitian half-planes — 2026-09-29
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="metal-fft-discriminator-2026-09-29">Metal FFT discriminator — 2026-09-29<a class="headerlink" href="#metal-fft-discriminator-2026-09-29" title="Permanent link">&para;</a></h1>
+<p>Truth class: non-normative measured research
+Last reality check: 2026-09-29
+Verification: six complete-convolution cases, six guarded application runs,
+unchanged CASA checks/panels and focused tests; numerical review remains open.</p>
+<p>The later <a href="../cube-metal-application-checkpoint-20260929/">complete Metal cube application checkpoint</a>
+supersedes future-tense application proposals below. It preserves the FFT
+discriminator results and rejected candidates; Metal spatial application timing
+is now available and is not a win over CPU W4.</p>
+<h2 id="current-complete-convolution-discriminator">Current: complete convolution discriminator<a class="headerlink" href="#current-complete-convolution-discriminator" title="Permanent link">&para;</a></h2>
+<p>The formerly proposed test below has now run. Complete update time includes
+component accumulation, forward transform, cached PSF multiplication, inverse,
+crop, normalization, CPU-visible residual subtraction and workspace reset.
+Each plane executes 32 updates of 128 components after two warmups; the PSF has
+asymmetric sidelobes and the component list exercises edges and corners.
+These are standalone operation timings, not application acceptance.</p>
+<table>
+<thead>
+<tr>
+<th>Implementation</th>
+<th style="text-align: right;">One plane, ms/update</th>
+<th style="text-align: right;">Four concurrent planes, ms/batch</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Existing full-complex NEON FFTW</td>
+<td style="text-align: right;">13.675</td>
+<td style="text-align: right;">23.564</td>
+</tr>
+<tr>
+<td>Hermitian half-spectrum NEON FFTW</td>
+<td style="text-align: right;">6.653</td>
+<td style="text-align: right;">9.033</td>
+</tr>
+<tr>
+<td>Hermitian half-spectrum Metal (MPSGraph)</td>
+<td style="text-align: right;">4.255</td>
+<td style="text-align: right;">12.663</td>
+</tr>
+</tbody>
+</table>
+<p>The four-plane CPU number is actual dispatch-to-join batch wall time using
+persistent numerical threads, not the previous raw-FFT maximum-lane proxy.
+CPU and GPU both cache the PSF spectrum and reuse workspace. GPU execution,
+shared-buffer input preparation, output visibility and CPU normalization are
+included. Metal uses one batched graph, not one submission per CLEAN component.
+Setup/first-use is separately logged; application timing will include setup.
+All six complete-operation checks against full-complex FFTW have relative L2
+below 5.38e-7 and peak-normalized error below 3.14e-7.</p>
+<p><strong>Decision:</strong> try the CPU half-spectrum implementation first. It halves the
+two primary Clark buffers (36 -&gt; 18.0234 MiB per 1536-square padded workspace)
+and wins both concurrency cases. Metal wins this single-plane operation but
+is about 40% slower than half-spectrum CPU for the four-plane batch. Do not
+install Metal FFT as a blanket CPU replacement from this evidence. This does
+not retire the complete Metal grid/degrid application milestone.</p>
+<p>The production candidate uses one in-place real/half-spectrum component buffer
+and one cached PSF half-spectrum, through the existing serialized FFTW planner
+and reusable plan cache. No new dependency or FFT implementation. Batched
+Clark refresh, padding, off-center origins, crop, normalization, CLEAN policy
+and scientific thresholds are unchanged. Explicit planner buffer accounting
+shrinks, but the existing conservative native-FFT allowance is retained.
+Seven FFT tests and 297 reconstruction tests pass (19 gated tests ignored),
+including odd/even rectangular transforms, concurrent plan reuse, asymmetric
+off-center edge convolution and deep batched Clark behavior.</p>
+<h3 id="matched-application-checkpoint">Matched application checkpoint<a class="headerlink" href="#matched-application-checkpoint" title="Permanent link">&para;</a></h3>
+<p>Parent: <code>3957b41fac7aefa9c74661b8637a667b78e8e929</code>. All 4,094,064 rows,
+output channels 240-271 (32), 1024-square, natural/Clark, 0.5 mJy, unchanged
+mask and 640000-component limit. All runs converged in 17 major phases,
+187665-187710 components and 2293-2319 Clark refreshes. Times include selected
+input preparation through publication and intermediate I/O, excluding build,
+process startup and comparison. Existing CASA reference reused; no new CASA run.</p>
+<table>
+<thead>
+<tr>
+<th>Run / order</th>
+<th style="text-align: right;">Application s</th>
+<th style="text-align: right;">Read/imaging s</th>
+<th style="text-align: right;">Minor s</th>
+<th style="text-align: right;">Sampled peak RSS bytes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>W1 parent</td>
+<td style="text-align: right;">579.585</td>
+<td style="text-align: right;">497.676</td>
+<td style="text-align: right;">75.701</td>
+<td style="text-align: right;">2244722688</td>
+</tr>
+<tr>
+<td>W1 half-spectrum</td>
+<td style="text-align: right;">551.357</td>
+<td style="text-align: right;">493.083</td>
+<td style="text-align: right;">52.318</td>
+<td style="text-align: right;">2264612864</td>
+</tr>
+<tr>
+<td>W4 first pair: parent first</td>
+<td style="text-align: right;">241.359</td>
+<td style="text-align: right;">202.332</td>
+<td style="text-align: right;">33.280</td>
+<td style="text-align: right;">2313060352</td>
+</tr>
+<tr>
+<td>W4 first pair: half-spectrum second</td>
+<td style="text-align: right;">265.187</td>
+<td style="text-align: right;">231.970</td>
+<td style="text-align: right;">25.548</td>
+<td style="text-align: right;">2298675200</td>
+</tr>
+<tr>
+<td>W4 reversed pair: half-spectrum first</td>
+<td style="text-align: right;">264.898</td>
+<td style="text-align: right;">232.718</td>
+<td style="text-align: right;">24.103</td>
+<td style="text-align: right;">2278227968</td>
+</tr>
+<tr>
+<td>W4 reversed pair: parent second</td>
+<td style="text-align: right;">335.879</td>
+<td style="text-align: right;">276.383</td>
+<td style="text-align: right;">50.835</td>
+<td style="text-align: right;">2340749312</td>
+</tr>
+</tbody>
+</table>
+<p>W1 improves 4.87% end to end in one observation; minor work falls 30.89%.
+The smaller Clark buffers do not reduce the aggregate peak, which is elsewhere:
+all peaks are about 2.09-2.18 GiB against the 16-GiB cap.</p>
+<p><strong>W4 total benefit is unresolved.</strong> The identical control moved 241.36 -&gt;
+335.88 s, while the candidate repeated at 265.19/264.90 s. Preserve the first
+negative pair; do not advertise the favorable reversed pair, a pooled average
+or a W4 scaling gain. Row bounds (180883), channel windows and wave counts
+match. Minor-stage savings are consistent, but input/imaging variation
+overwhelms a precise total-speed conclusion. pmset recorded no thermal or
+performance warning; this is not proof of stable clocks. One process snapshot
+during confirmation showed the benchmark near 381% CPU plus desktop/Codex
+activity; causation is not established. No machine settings changed. Only one
+reversed pair was added; no further timing campaign is running.</p>
+<p>Retain the coherent CPU half-spectrum candidate locally for the measured W1
+gain, smaller explicit buffers and faster complete convolution/minor stages.
+No conclusive repeatable W4 regression is established either. This is not
+full acceptance, a W4 speed claim, or authority to push/merge. Do not turn this
+into local W8/core tuning.</p>
+<h3 id="scientific-status-and-verification">Scientific status and verification<a class="headerlink" href="#scientific-status-and-verification" title="Permanent link">&para;</a></h3>
+<p>All six exact outputs completed the unchanged full-array seven-product,
+nine-check comparison and all-32-plane science assessment: zero hard failures.
+Every restored-image plane is below 1e-3 (worst about 9.476e-4); inventory,
+masks, finite topology, WCS/metadata, deterministic products, convergence and
+beam checks remain intact. Raw component/residual comparison deviations remain
+diagnostic outliers under the existing policy, not relaxed criteria.
+All six science statuses are still <code>review_required</code>, not unconditional passes.</p>
+<ul>
+<li>W1: parent has 15 alert channels; candidate 16. Channel 257 residual-peak
+  difference goes 0.496208 -&gt; 0.504065 CASA RMS against the 0.5 review line.
+  Its residual RMS and restored-image agreement improve.</li>
+<li>Initial W4: parent has 15 alert channels; candidate 16. Additional channel
+  245 is <strong>restored-component</strong> NRMSE 0.000775067 -&gt; 0.001009012 against 0.001,
+  not a residual-peak alert.</li>
+<li>Reversed W4: parent and candidate have the same 16-channel alert set,
+  including channel 257. The control also exhibits alert-boundary variability;
+  that does not waive any exact output's alerts.</li>
+<li>Direct W1 candidate/parent restored-image NRMSE is 0.000284983; PSF, PB,
+  mask and sumwt differences are zero. Nonlinear model/residual differences
+  are separately retained.</li>
+<li>Inspected the restored-image comparison and all six alert panels. Similar
+  field/beam-scale residual structure remains, without an apparent gross new
+  positional or morphology defect. The listed alerts remain acceptance items.</li>
+</ul>
+<p>Seven FFT and 297 reconstruction tests pass (19 gated tests ignored).
+Both release builds use retained NEON FFTW (376 codelets each). Formatting,
+diff checks and docs-check pass. The first reconstruction compile error
+(test qualification) and final test-line formatting repair were repaired,
+with earlier evidence preserved. No broad just-verify or new full-T55/full-512
+gate ran for this bounded candidate. No full-T55 or Metal-application completion.</p>
+<h3 id="next-action-and-durable-restart">Next action and durable restart<a class="headerlink" href="#next-action-and-durable-restart" title="Permanent link">&para;</a></h3>
+<p>Finish the approved complete Metal grid/degrid application using shared science
+preparation, bounded resident batches and repaired runtime fences, keeping CPU
+FFTW/Clark and the existing writer. Input/imaging still occupies about 88-89%
+of candidate wall time; it is not all I/O or FFT. Then qualify the connected
+path with the approved dirty/shallow/deep turnaround and unchanged CASA checks.
+No new FFT-library sweep, full-512 run, installation or local W8 tuning.
+Visibility half-grids still require conjugate folding and correct real-adjoint
+semantics; the Clark change does not truncate visibility grids.</p>
+<p>All owned runs finished. Source remains uncommitted in three files; the research
+note is untracked. No push/merge/cleanup. <code>half-spectrum-candidate-v1.patch</code>
+matches the frozen binaries; <code>half-spectrum-candidate-final-v3.patch</code> adds only
+documentation and test-line formatting. Earlier snapshots are preserved.
+The durable bundle contains frozen binaries, exact commands, resource receipts,
+all six application logs, science JSONs and alert PNGs. Reproduction:
+<code>half_spectrum_application.py run|compare parent|candidate 1|4 [confirm-v2]</code>;
+existing labels are exclusive, never overwrite or rerun unchanged labels.</p>
+<p>Full comparison JSONs/panels are in corresponding
+<code>half-spectrum-*-casa-comparison</code> directories under
+<code>/Users/brianglendenning/SoftwareProjects/casa-rs-evidence/t55/spectral-full-20260924/bulk-imaging-plan-20260927/</code>.
+Native planning/sampled aggregate RSS stay 16 GiB, other work 8 GiB, two
+Cargo jobs and one FFTW thread per numerical worker.</p>
+<p>Evidence under the durable bundle below:
+- <code>clark_convolution_probe.mm</code>, <code>clark-convolution-build-v1-command.json</code>.
+- <code>clark-convolution-{full,half,metal}-b{1,4}-v1.log</code> and command/resource JSONs.
+- <code>half-spectrum-candidate-v1.patch</code>: exact source candidate.
+- <code>half-spectrum-fft-tests-v1.log</code>, <code>half-spectrum-reconstruction-tests-v2.log</code>.
+- <code>half_spectrum_application.py</code>: explicit matched build-freezing, application,
+  comparison and panel stages; exclusive evidence paths, no automatic full run.
+- The v1 reconstruction log preserves a repaired test-module qualification
+  build failure, not a rejected numerical result.</p>
+<h2 id="earlier-raw-fft-screen-and-reasoning-superseded-where-noted">Earlier raw-FFT screen and reasoning (superseded where noted)<a class="headerlink" href="#earlier-raw-fft-screen-and-reasoning-superseded-where-noted" title="Permanent link">&para;</a></h2>
+<p>Metal FFT is a plausible targeted addition, not an established blanket win over
+today's NEON FFTW. The current Clark convolution dimensions benefit for a single
+plane, but the current visibility-imaging dimensions do not clearly benefit.
+Four-plane results show that host copies can erase the benefit. Do not replace
+every FFT, resurrect the old FFT stack, or infer an application speedup from this
+screen. Preserve the complete Metal application milestone.</p>
+<p>The next FFT-specific discriminator should be <strong>one complete existing Clark
+batched convolution</strong>: cached PSF spectrum, component forward FFT, spectrum
+multiply, inverse FFT, existing crop/normalization and CPU-visible residual.
+Keep its intermediate arrays GPU-resident; do not dispatch once per CLEAN
+component. Compare against the existing full CPU convolution, not naked FFTW,
+including setup, native/library memory and all boundary copies. Only if that
+wins should it enter the application candidate. This does not authorize changing
+Clark's subcycle/major-cycle policy, precision requirements, or science checks.</p>
+<p>For the connected application compare dirty (no CLEAN), shallow CLEAN and the
+existing deep 0.5-mJy turnaround, with identical rows/channels/image dimensions
+for CPU and Metal. Reuse the approved full-row 32-channel 1024-square workload;
+no new full-512 run. Start CPU versus Metal grid/degrid with CPU FFTW, and add the
+qualified FFT variant on the deep case to isolate its incremental contribution.
+Do not require a full factorial sweep or fixed six-pair repetition campaign.
+Record actual iterations, Clark refreshes and visibility major phases: equal
+niter limits alone do not prove equal work. Use the unchanged deep CASA product
+comparison and panels; the microcheck below is not scientific acceptance.</p>
+<h2 id="historical-evidence-depth-dependence-is-not-established">Historical evidence: depth dependence is not established<a class="headerlink" href="#historical-evidence-depth-dependence-is-not-established" title="Permanent link">&para;</a></h2>
+<p>Bounded history search found no retained matched shallow/deep Metal FFT pair.
+The decisive July FFT comparisons have niter=0 and a <strong>RustFFT</strong>, not FFTW,
+CPU baseline.</p>
+<table>
+<thead>
+<tr>
+<th>Historical case</th>
+<th style="text-align: right;">CPU total-wall median</th>
+<th style="text-align: right;">Metal total-wall median</th>
+<th>Qualification</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ALMA mosaic MFS, 7 fields x 16 selected channels, 1280-square, f32</td>
+<td style="text-align: right;">46.789 s</td>
+<td style="text-align: right;">38.664 s</td>
+<td>Six observations each; high variance and mixed paired signs</td>
+</tr>
+<tr>
+<td>Same large mosaic, MT-MFS nterms=2</td>
+<td style="text-align: right;">130.133 s</td>
+<td style="text-align: right;">37.167 s</td>
+<td>Six observations each; CPU maximum 374.497 s</td>
+</tr>
+</tbody>
+</table>
+<p>For the MFS case, the narrower frontend timer was 40.240 -&gt; 27.864 s and the
+PSF FFT timer 116.542 -&gt; 27.152 ms. <strong>Do not label frontend time as total wall.</strong>
+The large MT-MFS result is evidence of that old dirty-product route, not a
+prediction for current single-term spectral cubes or deep CLEAN.</p>
+<p>Checked-in artifacts:
+- <code>tools/perf/imager/evidence/artifacts/20260710T152434Z-wave352-mfs-cpu-metal-counterbalanced.json</code>
+- <code>tools/perf/imager/evidence/artifacts/20260710T154201Z-wave352-mtmfs-cpu-metal-counterbalanced.json</code></p>
+<p>At <code>fff9c2d553eace4b6a57b1df9ded4773f2263ceb^</code>,
+<code>crates/casa-imaging/src/apple_fft.rs</code> used cached MPSGraph complex-f32 2D/batch
+plans. The ordinary path packed, allocated, executed, exported, synchronized and
+unpacked; its resident dirty-product route reduced boundaries and fused some
+postprocessing. Reuse the lesson, not the removed implementation. Production
+RustFFT was replaced with FFTW at <code>dab142dbec</code>. No old Metal-versus-current-FFTW
+benchmark was found. Synthetic historical residual-kernel screens are unmatched
+and cannot establish a deep-application win.</p>
+<h2 id="current-code-and-scale">Current code and scale<a class="headerlink" href="#current-code-and-scale" title="Permanent link">&para;</a></h2>
+<p>Inspected source <code>3957b41fac7aefa9c74661b8637a667b78e8e929</code>:
+- <code>casa-fft/src/lib.rs</code>: cached measured, direct in-place rank-2 FFTW plans,
+  single native thread per numerical worker, complex f32/f64.
+- <code>casa-imaging-reconstruction/src/streaming_cube/band.rs</code>: model forward FFT
+  and grid-to-image inverse FFT; current complex-f32 major-cycle grid is
+  1250-square for the standard 1024-square image (1.2 padding plus composite rounding).
+- <code>casa-imaging-reconstruction/src/minor_cycle/clark.rs</code>: batched linear
+  convolution, cached PSF spectrum, two FFTs per refresh. A centered 1024-square
+  PSF uses 1536-square alias-free padding. <strong>Not one FFT per CLEAN component.</strong>
+- <code>spectral_operator.rs::PreparedFft</code> also owns centering; a Metal replacement
+  must preserve axes, signs, normalization, padding and centering exactly in meaning.</p>
+<p>Existing retained full W4 log sums: read/imaging stages 3516.71 s, minor-cycle
+stages 570.381 s, total application 4124.730 s. All minor cycles are only 13.83%
+of total: making the entire minor stage free would save at most that fraction
+at unchanged convergence, and FFT acceleration saves only part of it.
+The 16 minor summaries report 30400 Clark refreshes. Major-cycle FFTs are inside
+the read/imaging stages; those stages are not all FFT time. The recent four-second
+W8 profile samples early model/FFT setup and is not whole-run FFT attribution.</p>
+<p>Full-run evidence:
+<code>/Users/brianglendenning/SoftwareProjects/casa-rs-evidence/t55/spectral-full-20260924/full512-band-local-20260929-v1/native-w4.log</code>.
+No new full run or profile was launched.</p>
+<h2 id="new-standalone-library-measurements">New standalone library measurements<a class="headerlink" href="#new-standalone-library-measurements" title="Permanent link">&para;</a></h2>
+<p>Apple M4, macOS 27.0; linked retained <code>fftw-3.3.11-neon</code> static library.
+Input/output are interleaved complex-f32, deterministic dense complex input.
+Forward and inverse are <strong>unnormalized</strong>, matching the existing FFTW primitive.
+All eight numerical checks passed: relative L2 error below 5.20e-7 and
+maximum coefficient error/reference peak below 8.81e-7. This is transform
+qualification only, not image/CASA acceptance.</p>
+<p>Each cell below is median milliseconds for five short warm invocations. Cold
+planning/first use is logged separately. Forward and inverse were measured
+separately, not as a fused pair.</p>
+<table>
+<thead>
+<tr>
+<th>Actual FFT extent</th>
+<th style="text-align: right;">Planes</th>
+<th>Direction</th>
+<th style="text-align: right;">CPU FFTW</th>
+<th style="text-align: right;">Metal resident buffers</th>
+<th style="text-align: right;">Metal plus host input/output copies</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1250-square imaging grid</td>
+<td style="text-align: right;">1</td>
+<td>forward</td>
+<td style="text-align: right;">4.78</td>
+<td style="text-align: right;">4.75</td>
+<td style="text-align: right;">5.24</td>
+</tr>
+<tr>
+<td>1250-square imaging grid</td>
+<td style="text-align: right;">1</td>
+<td>inverse</td>
+<td style="text-align: right;">5.08</td>
+<td style="text-align: right;">4.86</td>
+<td style="text-align: right;">7.90</td>
+</tr>
+<tr>
+<td>1250-square imaging grid</td>
+<td style="text-align: right;">4</td>
+<td>forward</td>
+<td style="text-align: right;">6.39</td>
+<td style="text-align: right;">14.72</td>
+<td style="text-align: right;">18.78</td>
+</tr>
+<tr>
+<td>1250-square imaging grid</td>
+<td style="text-align: right;">4</td>
+<td>inverse</td>
+<td style="text-align: right;">7.56</td>
+<td style="text-align: right;">16.20</td>
+<td style="text-align: right;">19.63</td>
+</tr>
+<tr>
+<td>1536-square Clark padding</td>
+<td style="text-align: right;">1</td>
+<td>forward</td>
+<td style="text-align: right;">6.19</td>
+<td style="text-align: right;">4.16</td>
+<td style="text-align: right;">4.62</td>
+</tr>
+<tr>
+<td>1536-square Clark padding</td>
+<td style="text-align: right;">1</td>
+<td>inverse</td>
+<td style="text-align: right;">6.47</td>
+<td style="text-align: right;">3.26</td>
+<td style="text-align: right;">3.85</td>
+</tr>
+<tr>
+<td>1536-square Clark padding</td>
+<td style="text-align: right;">4</td>
+<td>forward</td>
+<td style="text-align: right;">11.98</td>
+<td style="text-align: right;">9.60</td>
+<td style="text-align: right;">16.48</td>
+</tr>
+<tr>
+<td>1536-square Clark padding</td>
+<td style="text-align: right;">4</td>
+<td>inverse</td>
+<td style="text-align: right;">10.42</td>
+<td style="text-align: right;">8.61</td>
+<td style="text-align: right;">15.41</td>
+</tr>
+</tbody>
+</table>
+<p>Boundary cautions:
+- GPU numbers use a cached MPSGraph executable, preallocated shared MTLBuffers,
+  caller-supplied output and synchronous CPU-visible completion. They are not
+  submission-only or GPU-timestamp-only timings. Internal library work/copies
+  remain included; shared memory is not a promise of zero traffic.
+- One-plane CPU work executes directly. Four-plane CPU uses four persistent
+  workers, one FFTW thread each, shared immutable plan and separate arrays.
+  CPU column reports the maximum per-lane execution time, excluding sleeping
+  worker startup skew; actual dispatch-to-join wall time is separately logged.
+  This is a deliberately favorable active-CPU comparator, <strong>not a measured W4
+  application stage time</strong>. Do not claim precise W4 speed ratios from this table.
+- CPU input reset is outside timing; GPU host-copy variant includes two explicit
+  full complex-buffer copies. The resident variant includes neither host copy.
+  A fused convolution will have different, potentially smaller boundary traffic.
+- This is a first discriminator with visible noise, not a statistical acceptance
+  result. A repeat of 1536/batch4/inverse for OS memory measurement gave
+  8.39 ms CPU, 8.22 ms resident GPU, 14.05 ms host-roundtrip GPU. This confirms
+  that the small apparent resident batch4 gain is not established.
+- No claim is made about 2048/4096 output images or different Apple GPUs.</p>
+<p>Memory: in the largest case, explicit GPU input/output total 144 MiB;
+Metal's allocation counter after execution reports 288.48 MiB (includes
+additional library allocations, not a separately established scratch peak).
+The OS-confirmation process had 382.06 MiB maximum RSS and 555.27 MiB peak memory
+footprint, including CPU reference/test buffers. The sampled aggregate guard
+stayed below 0.4 GiB against its 8-GiB cap; subsecond sampled peaks alone are
+insufficient. GPU library memory must enter production admission if integrated.
+CPU plan time was about 0.14–0.29 s; GPU first-use times varied with cached
+driver compilation, so these are not pristine system-cold-cache benchmarks.</p>
+<h2 id="libraries-and-implementation-options">Libraries and implementation options<a class="headerlink" href="#libraries-and-implementation-options" title="Permanent link">&para;</a></h2>
+<p><a href="https://developer.apple.com/documentation/metalperformanceshadersgraph/mpsgraph/fastfouriertransform(_:axes:descriptor:name:)">Apple MPSGraph FFT</a>
+supports complex multidimensional forward/inverse transforms and explicit
+scaling. Installed SDK headers expose wrapping MTLBuffer input/output and
+cached executable execution. No installation or third-party dependency was
+needed for this probe. MPSGraph's command-buffer encoding documentation warns
+that it may commit-and-continue internally; integrate completion through actual
+runtime fences, not an assumed untouched command buffer.</p>
+<p><a href="https://github.com/DTolm/VkFFT">VkFFT</a> is another library-owned multidimensional,
+batched Metal FFT option with caller buffer/command integration and MIT licensing.
+It was researched, not installed or benchmarked. Do not expand this into a
+library bake-off unless the next complete-operation test shows a specific
+MPSGraph limitation worth resolving. No handwritten FFT implementation.</p>
+<h2 id="reproduction-and-retained-limitations">Reproduction and retained limitations<a class="headerlink" href="#reproduction-and-retained-limitations" title="Permanent link">&para;</a></h2>
+<p>Durable bundle:
+<code>/Users/brianglendenning/SoftwareProjects/casa-rs-evidence/t57/cube-metal-first-path-20260929/</code></p>
+<ul>
+<li><code>fft_library_probe.mm</code>, <code>run_fft_probe.py</code>: isolated diagnostic, not repo runtime.</li>
+<li><code>fft-library-probe-build-v3-command.json</code>: exact successful build and linked library.</li>
+<li><code>fft-probe-{1250,1536}-b{1,4}-{forward,inverse}-v2.log</code>, command and resource JSONs:
+  all eight cases. <code>python3 run_fft_probe.py</code> reproduces commands but uses exclusive
+  log creation; choose fresh labels before rerunning, never overwrite old evidence.</li>
+<li><code>fft-probe-1536-b4-inverse-peak-v1.log</code>: OS high-water confirmation.</li>
+<li>Initial build v1 hit existing Xcode/compiler vs macOS27 SDK mismatch; v2/v3
+  used the installed macOS26.5 SDK. No installation or global SDK change.</li>
+<li>Initial 1250/b1/forward v1 included sleeping-worker wake-up time and is
+  superseded by v2; keep it as harness history, not performance evidence.</li>
+<li>No production FFT/backend/scientific code changed, no application benchmark
+  or CASA comparison ran, and no acceptance target was completed.</li>
+</ul>
+<p>A bounded search was requested with GPT-6 Luna Max; root verified timing
+boundaries and corrected an initial confusion between frontend and total wall.
+Runtime/source interpretation and acceptance remain with the root reviewer.</p>
+<h2 id="follow-up-hermitian-half-planes-2026-09-29">Follow-up: Hermitian half-planes — 2026-09-29<a class="headerlink" href="#follow-up-hermitian-half-planes-2026-09-29" title="Permanent link">&para;</a></h2>
+<p>Yes, especially for the current Clark convolution. This is an exact real-signal
+representation change, not reduced image size, dropped visibilities, approximate
+FFT arithmetic or a change to CLEAN. A real image has conjugate-related Fourier
+coefficients; retain N x (floor(N/2)+1) complex coefficients, including the
+boundary column, rather than a full N x N complex plane.
+<a href="https://www.fftw.org/fftw3_doc/Real_002ddata-DFT-Array-Format.html">FFTW storage definition</a>
+and <a href="https://www.fftw.org/fftw3_doc/Multi_002dDimensional-DFTs-of-Real-Data.html">real multidimensional transforms</a>.</p>
+<p>Current <code>minor_cycle/clark.rs::LinearRefresh</code> constructs real PSF and real
+component arrays but stores both as full complex-f32 planes. A cached
+half-spectrum PSF plus one reusable in-place R2C/C2R component buffer would
+reduce their primary storage at 1536-square from <strong>36 MiB to 18.0234 MiB per
+live Clark workspace</strong>. This excludes unchanged image/residual/active-pixel
+buffers and library plans/scratch, and assumes in-place buffer reuse rather
+than adding separate real and complex arrays. It also nearly halves spectral
+multiplications and spectrum traffic; real FFT arithmetic should decrease,
+but elapsed speedup is unmeasured. Zero/Nyquist bins, row padding, off-center PSF
+padding and normalization still require exact semantic handling.</p>
+<p>This is supported by known-good science code, not only an Obit analogy:
+CASA's local <code>casacore/lattices/LatticeMath/LatticeConvolver.tcc:185-240</code>
+uses a reduced Fourier shape and real-to-complex transform for real convolution.
+Obit's pinned
+<a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitUVGrid.c">UV-grid implementation</a>
+folds negative-u contributions to conjugate cells (lines474/641) and uses
+half-plane complex-to-real FFTs (lines876-925). Its CPU fold/merge details
+should not be copied mechanically.</p>
+<p>The visibility-imaging opportunity is broader but not a drop-in truncation:
+current <code>BandWorkspace::grid_sample</code> and <code>StandardConvolution::grid_float</code>
+deposit into a full, not explicitly Hermitian grid, and <code>finish_images</code> takes
+the real image component. A half-grid replacement must reproduce that real
+adjoint through correct conjugate folding and normalization, and preserve
+prediction, phase rotations, interpolation and convolution-boundary behavior.
+Simply dropping negative frequencies is incorrect. For the current
+1250-square grid, one full complex-f32 grid is 11.921 MiB versus 5.970 MiB for
+the half-spectrum, excluding folding margins and other arrays. Smaller grids
+could admit more bands and reduce MS traversals, but that secondary benefit
+needs the real phase-admission calculation; it is not automatically 2x.
+Do not generalize to arbitrary complex intermediate fields or all W/AW and
+polarization modes without proving the particular operator's symmetry.</p>
+<p>Both CPU FFTW and
+<a href="https://developer.apple.com/documentation/metalperformanceshadersgraph/mpsgraph/realtohermiteanfft(_:axes:descriptor:name:)">Apple MPSGraph</a>
+provide R2C/C2R operations. <strong>Refine the next complete Clark convolution
+comparison to include half-spectrum CPU FFTW versus half-spectrum Metal.</strong>
+The previous dense-complex FFT probe remains valid for its stated representation
+but does not select the best implementation for real convolution. GPU plans and
+intermediates still need bounded residency and actual memory accounting.
+This follow-up is source-backed design advice, not a new implementation or
+benchmark, and does not claim halving total application memory or runtime.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

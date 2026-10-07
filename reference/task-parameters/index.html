@@ -1451,9 +1451,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 410</li>
+<li>Concepts: 399</li>
 <li>Surfaces: 29 (27 task, 2 session)</li>
-<li>Surface bindings: 581</li>
+<li>Surface bindings: 570</li>
 </ul>
 <table>
 <thead>
@@ -1494,9 +1494,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-imager">Imager</a><br><code>imager</code></td>
 <td>task</td>
-<td style="text-align: right;">16</td>
+<td style="text-align: right;">18</td>
 <td><code>imager</code></td>
-<td style="text-align: right;">102</td>
+<td style="text-align: right;">91</td>
 <td>Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet</td>
 </tr>
 <tr>
@@ -2806,7 +2806,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="imager-imager">Imager (<code>imager</code>)<a class="headerlink" href="#imager-imager" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>16</code></li>
+<li>Contract version: <code>18</code></li>
 <li>Category: Imaging</li>
 <li>Provider family: <code>imager</code></li>
 <li>Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet</li>
@@ -3056,14 +3056,6 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Major-cycle limit; -1 keeps CASA's unlimited default</td>
 </tr>
 <tr>
-<td><code>fullsummary</code></td>
-<td><code>parameter.fullsummary@r1</code></td>
-<td><code>bool</code></td>
-<td><code>false</code>; optional</td>
-<td>Stage Parameters</td>
-<td>Include long-form CASA-compatible summaryminor rows</td>
-</tr>
-<tr>
 <td><code>gain</code></td>
 <td><code>parameter.gain@r1</code></td>
 <td><code>float</code></td>
@@ -3272,14 +3264,6 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Gaussian UV taper: MAJOR[,MINOR[,PA]]</td>
 </tr>
 <tr>
-<td><code>write_preview_pngs</code></td>
-<td><code>parameter.write_preview_pngs@r1</code></td>
-<td><code>bool</code></td>
-<td><code>true</code>; optional</td>
-<td>Products</td>
-<td>Write PNG sidecars for the main CASA image products</td>
-</tr>
-<tr>
 <td><code>write_pb</code></td>
 <td><code>parameter.write_pb@r1</code></td>
 <td><code>bool</code></td>
@@ -3334,30 +3318,6 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>"none"</code>; optional</td>
 <td>Stages</td>
 <td>Permit planned local parallel or accelerated execution; false forces the serial CPU comparison surface</td>
-</tr>
-<tr>
-<td><code>imaging_read_ahead_blocks</code></td>
-<td><code>parameter.imaging_read_ahead_blocks@r1</code></td>
-<td><code>optional&lt;integer&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Stages</td>
-<td>Maximum number of live source row blocks used for bounded read and prepare overlap<br><em>Surface:</em> The runtime rejects zero; Auto defaults are selected from mode and memory geometry.</td>
-</tr>
-<tr>
-<td><code>imaging_fft_backend</code></td>
-<td><code>parameter.imaging_fft_backend@r1</code></td>
-<td><code>choice (4 values)</code></td>
-<td><code>"rustfft"</code>; optional</td>
-<td>Stages</td>
-<td>Backend policy for dirty and residual product FFT transforms</td>
-</tr>
-<tr>
-<td><code>chanchunks</code></td>
-<td><code>parameter.chanchunks@r1</code></td>
-<td><code>optional&lt;integer&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Stages</td>
-<td>Requested number of top-level spectral channel chunks; the memory planner may select a larger active plane group when it fits<br><em>Surface:</em> Applies to cube and cubedata imaging; the runtime rejects zero and MFS use.</td>
 </tr>
 <tr>
 <td><code>uvrange</code></td>
@@ -3491,49 +3451,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>imaging_memory_target_mb</code></td>
 <td><code>parameter.imaging_memory_target_mb@r2</code></td>
 <td><code>optional&lt;integer&gt; (states: none); unit dimension: data_size</code></td>
-<td><code>"none"</code>; required when imaging_memory_pressure_policy="oversubscribe"</td>
-<td>Execution Resources</td>
-<td>Optional shared imaging memory target in MiB<br><em>Surface:</em> none delegates to the resource-adaptive planner. auto and conservative-no-swap cap to no-swap headroom; aggressive caps to the physical process ceiling. oversubscribe requires an explicit target and alone may retain it beyond measured headroom.</td>
-</tr>
-<tr>
-<td><code>imaging_memory_pressure_policy</code></td>
-<td><code>parameter.imaging_memory_pressure_policy@r2</code></td>
-<td><code>choice (4 values)</code></td>
-<td><code>"auto"</code>; optional</td>
-<td>Execution Resources</td>
-<td>Imaging memory-pressure policy<br><em>Surface:</em> auto is the safe resource-adaptive default. conservative-no-swap and aggressive select bounded production admission behavior. oversubscribe is experimental and requires an explicit memory target.</td>
-</tr>
-<tr>
-<td><code>imaging_prepare_buffer_mb</code></td>
-<td><code>parameter.imaging_prepare_buffer_mb@r1</code></td>
-<td><code>optional&lt;integer&gt; (states: none); unit dimension: data_size</code></td>
 <td><code>"none"</code>; optional</td>
 <td>Execution Resources</td>
-<td>Optional source-stream preparation buffer in MiB</td>
-</tr>
-<tr>
-<td><code>imaging_row_block_rows</code></td>
-<td><code>parameter.imaging_row_block_rows@r1</code></td>
-<td><code>optional&lt;integer&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Execution Resources</td>
-<td>Optional bounded source-stream row-block override</td>
-</tr>
-<tr>
-<td><code>imaging_prepare_workers</code></td>
-<td><code>parameter.imaging_prepare_workers@r1</code></td>
-<td><code>optional&lt;integer&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Execution Resources</td>
-<td>Optional source-stream preparation worker count</td>
-</tr>
-<tr>
-<td><code>imaging_fft_precision</code></td>
-<td><code>parameter.imaging_fft_precision@r1</code></td>
-<td><code>choice (3 values)</code></td>
-<td><code>"auto"</code>; optional</td>
-<td>Execution Resources</td>
-<td>Imaging-wide FFT precision policy<br><em>Surface:</em> auto selects only a correctness-qualified FFT precision and reports any fallback.</td>
+<td>Optional shared imaging memory target in MiB<br><em>Surface:</em> none delegates to the resource-adaptive planner.</td>
 </tr>
 <tr>
 <td><code>projection</code></td>
@@ -3542,14 +3462,6 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>"SIN"</code>; optional</td>
 <td>Stage Parameters</td>
 <td>Sky projection used for the image direction coordinate<br><em>Surface:</em> Unsupported projections fail before imaging; the value is never silently rewritten to SIN.</td>
-</tr>
-<tr>
-<td><code>standard_mfs_grid_threads</code></td>
-<td><code>parameter.standard_mfs_grid_threads@r1</code></td>
-<td><code>optional&lt;integer&gt; (states: auto)</code></td>
-<td><code>"auto"</code>; optional</td>
-<td>Execution Resources</td>
-<td>Grid-stage worker selection for standard, mosaic, and AWProject MFS imaging<br><em>Surface:</em> auto delegates to the resource-adaptive execution planner; a positive integer is an explicit override.</td>
 </tr>
 <tr>
 <td><code>fitspw</code></td>

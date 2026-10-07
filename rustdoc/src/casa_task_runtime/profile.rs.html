@@ -1191,8 +1191,8 @@
 <a href=#1191 id=1191 data-nosnippet>1191</a>                (<span class="string">"nterms"</span>, ParameterValue::Integer(<span class="number">2</span>)),
 <a href=#1192 id=1192 data-nosnippet>1192</a>                (<span class="string">"parallel"</span>, ParameterValue::Bool(<span class="bool-val">false</span>)),
 <a href=#1193 id=1193 data-nosnippet>1193</a>                (
-<a href=#1194 id=1194 data-nosnippet>1194</a>                    <span class="string">"imaging_memory_pressure_policy"</span>,
-<a href=#1195 id=1195 data-nosnippet>1195</a>                    ParameterValue::String(<span class="string">"auto"</span>.into()),
+<a href=#1194 id=1194 data-nosnippet>1194</a>                    <span class="string">"standard_mfs_acceleration"</span>,
+<a href=#1195 id=1195 data-nosnippet>1195</a>                    ParameterValue::String(<span class="string">"cpu"</span>.into()),
 <a href=#1196 id=1196 data-nosnippet>1196</a>                ),
 <a href=#1197 id=1197 data-nosnippet>1197</a>            ] {
 <a href=#1198 id=1198 data-nosnippet>1198</a>                <span class="macro">assert_eq!</span>(resolved.values[name], expected, <span class="string">"{label}.{name}"</span>);
@@ -1200,8 +1200,8 @@
 <a href=#1200 id=1200 data-nosnippet>1200</a>            <span class="macro">assert!</span>(
 <a href=#1201 id=1201 data-nosnippet>1201</a>                !resolved
 <a href=#1202 id=1202 data-nosnippet>1202</a>                    .explicit_overrides
-<a href=#1203 id=1203 data-nosnippet>1203</a>                    .contains_key(<span class="string">"imaging_memory_pressure_policy"</span>),
-<a href=#1204 id=1204 data-nosnippet>1204</a>                <span class="string">"{label}.imaging_memory_pressure_policy must adopt the current default"
+<a href=#1203 id=1203 data-nosnippet>1203</a>                    .contains_key(<span class="string">"standard_mfs_acceleration"</span>),
+<a href=#1204 id=1204 data-nosnippet>1204</a>                <span class="string">"{label}.standard_mfs_acceleration must adopt the current default"
 <a href=#1205 id=1205 data-nosnippet>1205</a>            </span>);
 <a href=#1206 id=1206 data-nosnippet>1206</a>            <span class="kw">for </span>name <span class="kw">in </span>[<span class="string">"cfcache"</span>, <span class="string">"cf_resident_mb"</span>, <span class="string">"wprojplanes"</span>, <span class="string">"usepointing"</span>] {
 <a href=#1207 id=1207 data-nosnippet>1207</a>                <span class="macro">assert!</span>(

@@ -1940,37 +1940,28 @@
 <a href=#1940 id=1940 data-nosnippet>1940</a>    }
 <a href=#1941 id=1941 data-nosnippet>1941</a>}
 <a href=#1942 id=1942 data-nosnippet>1942</a>
-<a href=#1943 id=1943 data-nosnippet>1943</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const fn </span>time_scale_tag(scale: TimeScale) -&gt; u8 {
-<a href=#1944 id=1944 data-nosnippet>1944</a>    <span class="kw">match </span>scale {
-<a href=#1945 id=1945 data-nosnippet>1945</a>        TimeScale::Utc =&gt; <span class="number">0</span>,
-<a href=#1946 id=1946 data-nosnippet>1946</a>        TimeScale::Tai =&gt; <span class="number">1</span>,
-<a href=#1947 id=1947 data-nosnippet>1947</a>        TimeScale::Tt =&gt; <span class="number">2</span>,
-<a href=#1948 id=1948 data-nosnippet>1948</a>        TimeScale::Tdb =&gt; <span class="number">3</span>,
-<a href=#1949 id=1949 data-nosnippet>1949</a>    }
-<a href=#1950 id=1950 data-nosnippet>1950</a>}
-<a href=#1951 id=1951 data-nosnippet>1951</a>
-<a href=#1952 id=1952 data-nosnippet>1952</a><span class="kw">fn </span>canonical_longitude(longitude: f64) -&gt; f64 {
-<a href=#1953 id=1953 data-nosnippet>1953</a>    canonical_zero(longitude.rem_euclid(TAU))
-<a href=#1954 id=1954 data-nosnippet>1954</a>}
-<a href=#1955 id=1955 data-nosnippet>1955</a>
-<a href=#1956 id=1956 data-nosnippet>1956</a><span class="kw">fn </span>canonical_degrees(degrees: f64) -&gt; f64 {
-<a href=#1957 id=1957 data-nosnippet>1957</a>    canonical_zero(degrees.rem_euclid(<span class="number">360.0</span>))
-<a href=#1958 id=1958 data-nosnippet>1958</a>}
-<a href=#1959 id=1959 data-nosnippet>1959</a>
-<a href=#1960 id=1960 data-nosnippet>1960</a><span class="kw">fn </span>canonical_zero(value: f64) -&gt; f64 {
-<a href=#1961 id=1961 data-nosnippet>1961</a>    <span class="kw">if </span>value == <span class="number">0.0 </span>{ <span class="number">0.0 </span>} <span class="kw">else </span>{ value }
-<a href=#1962 id=1962 data-nosnippet>1962</a>}
-<a href=#1963 id=1963 data-nosnippet>1963</a>
-<a href=#1964 id=1964 data-nosnippet>1964</a><span class="kw">fn </span>canonicalize_f64_slice(values: <span class="kw-2">&amp;mut </span>[f64]) {
-<a href=#1965 id=1965 data-nosnippet>1965</a>    <span class="kw">for </span>value <span class="kw">in </span>values {
-<a href=#1966 id=1966 data-nosnippet>1966</a>        <span class="kw-2">*</span>value = canonical_zero(<span class="kw-2">*</span>value);
-<a href=#1967 id=1967 data-nosnippet>1967</a>    }
-<a href=#1968 id=1968 data-nosnippet>1968</a>}
-<a href=#1969 id=1969 data-nosnippet>1969</a>
-<a href=#1970 id=1970 data-nosnippet>1970</a><span class="kw">fn </span>write_hex(formatter: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;, bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; fmt::Result {
-<a href=#1971 id=1971 data-nosnippet>1971</a>    <span class="kw">for </span>byte <span class="kw">in </span>bytes {
-<a href=#1972 id=1972 data-nosnippet>1972</a>        <span class="macro">write!</span>(formatter, <span class="string">"{byte:02x}"</span>)<span class="question-mark">?</span>;
-<a href=#1973 id=1973 data-nosnippet>1973</a>    }
-<a href=#1974 id=1974 data-nosnippet>1974</a>    <span class="prelude-val">Ok</span>(())
-<a href=#1975 id=1975 data-nosnippet>1975</a>}
+<a href=#1943 id=1943 data-nosnippet>1943</a><span class="kw">fn </span>canonical_longitude(longitude: f64) -&gt; f64 {
+<a href=#1944 id=1944 data-nosnippet>1944</a>    canonical_zero(longitude.rem_euclid(TAU))
+<a href=#1945 id=1945 data-nosnippet>1945</a>}
+<a href=#1946 id=1946 data-nosnippet>1946</a>
+<a href=#1947 id=1947 data-nosnippet>1947</a><span class="kw">fn </span>canonical_degrees(degrees: f64) -&gt; f64 {
+<a href=#1948 id=1948 data-nosnippet>1948</a>    canonical_zero(degrees.rem_euclid(<span class="number">360.0</span>))
+<a href=#1949 id=1949 data-nosnippet>1949</a>}
+<a href=#1950 id=1950 data-nosnippet>1950</a>
+<a href=#1951 id=1951 data-nosnippet>1951</a><span class="kw">fn </span>canonical_zero(value: f64) -&gt; f64 {
+<a href=#1952 id=1952 data-nosnippet>1952</a>    <span class="kw">if </span>value == <span class="number">0.0 </span>{ <span class="number">0.0 </span>} <span class="kw">else </span>{ value }
+<a href=#1953 id=1953 data-nosnippet>1953</a>}
+<a href=#1954 id=1954 data-nosnippet>1954</a>
+<a href=#1955 id=1955 data-nosnippet>1955</a><span class="kw">fn </span>canonicalize_f64_slice(values: <span class="kw-2">&amp;mut </span>[f64]) {
+<a href=#1956 id=1956 data-nosnippet>1956</a>    <span class="kw">for </span>value <span class="kw">in </span>values {
+<a href=#1957 id=1957 data-nosnippet>1957</a>        <span class="kw-2">*</span>value = canonical_zero(<span class="kw-2">*</span>value);
+<a href=#1958 id=1958 data-nosnippet>1958</a>    }
+<a href=#1959 id=1959 data-nosnippet>1959</a>}
+<a href=#1960 id=1960 data-nosnippet>1960</a>
+<a href=#1961 id=1961 data-nosnippet>1961</a><span class="kw">fn </span>write_hex(formatter: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;, bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; fmt::Result {
+<a href=#1962 id=1962 data-nosnippet>1962</a>    <span class="kw">for </span>byte <span class="kw">in </span>bytes {
+<a href=#1963 id=1963 data-nosnippet>1963</a>        <span class="macro">write!</span>(formatter, <span class="string">"{byte:02x}"</span>)<span class="question-mark">?</span>;
+<a href=#1964 id=1964 data-nosnippet>1964</a>    }
+<a href=#1965 id=1965 data-nosnippet>1965</a>    <span class="prelude-val">Ok</span>(())
+<a href=#1966 id=1966 data-nosnippet>1966</a>}
 </code></pre></div></section></main></body></html>

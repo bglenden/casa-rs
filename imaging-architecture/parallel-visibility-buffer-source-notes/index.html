@@ -1,0 +1,985 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Parallel visibility buffers: upstream lessons - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#parallel-visibility-buffers-upstream-lessons" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Parallel visibility buffers: upstream lessons
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scientific Workbench
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Scientific Workbench
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../scientific-notebooks-and-assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Notebooks, Tutorials, Python, and AI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mac-native-gui-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native macOS Product Spec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#conclusion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conclusion
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sources-and-provenance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sources and provenance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#obit-preparation-in-workers-followed-by-tight-channel-loops" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Obit: preparation in workers, followed by tight channel loops
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#libra-borrowed-block-views-and-persistent-synchronized-workers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LibRA: borrowed block views and persistent, synchronized workers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#casa-parallel-block-preparation-qualified-lookahead-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CASA: parallel block preparation; qualified lookahead example
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-existing-casa-rs-log-discriminates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the existing casa-rs log discriminates
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="parallel-visibility-buffers-upstream-lessons">Parallel visibility buffers: upstream lessons<a class="headerlink" href="#parallel-visibility-buffers-upstream-lessons" title="Permanent link">&para;</a></h1>
+<p>Truth class: non-normative primary-source research
+Last reality check: 2026-09-28
+Verification: revision-pinned source inspection and existing W4 log counters; no new imaging run</p>
+<h2 id="conclusion">Conclusion<a class="headerlink" href="#conclusion" title="Permanent link">&para;</a></h2>
+<p>Shared, bounded visibility buffers and simple numerical workers are well-supported
+upstream patterns. Independently advancing consumers are a possible design, not
+an established requirement for good scaling: the inspected Obit and LibRA CPU
+paths explicitly join their workers between work batches. The most immediately
+transferable mechanisms are parallel preparation, setup reuse, borrowed array
+views, and clear grid ownership. Do not infer that a per-block barrier explains
+casa-rs's remaining scaling loss merely because the barrier exists.</p>
+<p>This qualifies the preceding discussion's emphasis on independently progressing
+workers. Correct admission and redundant reads remain concrete targets; a new
+consumer scheduling architecture needs evidence of the relevant wait/imbalance.</p>
+<h2 id="sources-and-provenance">Sources and provenance<a class="headerlink" href="#sources-and-provenance" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Obit: <code>ebc1c229e5e3870b5ce3c342bddb7313d986a06f</code>, local core sources in
+  <code>/Users/brianglendenning/SoftwareProjects/casa-rs-evidence/t55/obit-build/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/core</code>.</li>
+<li>LibRA: <code>0ab99e261878334d6588eafa360cef3b673e897f</code>, local checkout
+  <code>/Users/brianglendenning/SoftwareProjects/libRA</code>; the cited files match HEAD.</li>
+<li>CASA: <code>61020062cee290f5466cffed5ec5032e0c7a3434</code>, local checkout
+  <code>/Users/brianglendenning/SoftwareProjects/casa</code>. <code>GridFT.cc</code> has existing local
+  diagnostic changes, so its cited revision line numbers were checked with
+  <code>git show HEAD:casatools/src/code/synthesis/TransformMachines/GridFT.cc</code>.
+  The cited VI/async files match HEAD.</li>
+<li>casa-rs: <code>02d337171120c5b5b07b15c30a927e27567585e4</code>; full-512 W4 evidence
+  under <code>/Users/brianglendenning/SoftwareProjects/casa-rs-evidence/t55/spectral-full-20260924/full512-retained-20260928-exec-v1</code>.</li>
+</ul>
+<p>These are inspected implementations, not claims that every mode or the benchmark
+binaries exercised every listed path. Remote source pages were unavailable to
+the web fetcher; code claims below were verified from local sources. The Obit
+memo and CASA public API documentation were also read online.</p>
+<h2 id="obit-preparation-in-workers-followed-by-tight-channel-loops">Obit: preparation in workers, followed by tight channel loops<a class="headerlink" href="#obit-preparation-in-workers-followed-by-tight-channel-loops" title="Permanent link">&para;</a></h2>
+<p><code>ObitUVGridReadUVPar</code> reads one UV buffer, invokes the CPU gridder, and then reads
+the next buffer. <code>ObitThreadGridGrid</code> dispatches batches through
+<code>ObitThreadIterator</code>, which submits work to a retained pool and waits for all
+completion messages. This is not a pipeline of channel consumers independently
+advancing through several prepared UV buffers.</p>
+<p>Sources: <a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitUVGrid.c#L596-L619">ObitUVGrid.c, 596-619</a>,
+<a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitThreadGrid.c#L827-L866">ObitThreadGrid.c, 827-866</a>,
+<a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitThread.c#L487-L552">ObitThread.c, 487-552</a>.</p>
+<p>Each gridding worker runs <code>fast_prep_grid</code> for its visibility and selected
+channels, then the channel stencil loop. Preparation rotates UVW once per
+visibility for that worker/facet and stores weighted complex samples, cell
+locations and convolution-table pointers in reusable scratch. This is not one
+global serial preparation step. It is also not proof that all setup is shared
+once across every facet or replica.</p>
+<p>Sources: <a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitThreadGrid.c#L960-L985">ThreadGrid, 960-985</a>,
+<a href="https://github.com/bill-cotton/Obit/blob/ebc1c229e5e3870b5ce3c342bddb7313d986a06f/ObitSystem/Obit/src/ObitThreadGrid.c#L1263-L1387">fast_prep_grid, 1263-1387</a>.</p>
+<p>The base path points workers at the same input buffer but uses private grid
+replicas and a later merge. Transfer the input-sharing and preparation/locality
+ideas, not unbounded grid replication. See the fuller
+<a href="../obit-data-structure-source-notes/">Obit source study</a>, particularly its
+distinction between base CPU gridding and grouped spectral CLEAN.</p>
+<p>Cotton's <a href="https://www.cv.nrao.edu/~bcotton/ObitDoc/DoubleBuffer.pdf">Memo 57, sections II-IV</a>
+tested explicit double buffering of a large image cube and found no significant
+improvement on those systems. That was an image-plane read/compute experiment,
+not a benchmark of our MS pipeline, and does not rule out useful buffering here.
+It does caution against treating additional queues as a performance result.</p>
+<h2 id="libra-borrowed-block-views-and-persistent-synchronized-workers">LibRA: borrowed block views and persistent, synchronized workers<a class="headerlink" href="#libra-borrowed-block-views-and-persistent-synchronized-workers" title="Permanent link">&para;</a></h2>
+<p><code>MultiThreadedVisibilityResampler::scatter</code> references the same <code>VBStore</code> arrays
+and assigns contiguous row intervals. Workers persist, but each gridding,
+degridding or residual request dispatches work and then waits for completion.
+<code>ThreadCoordinator</code> also has an explicit worker barrier. These sources support
+coarse work on simple borrowed buffers, not independently progressing channel
+pipelines.</p>
+<p>Sources: <a href="https://github.com/bglenden/libRA/blob/0ab99e261878334d6588eafa360cef3b673e897f/src/synthesis/MeasurementComponents/MultiThreadedVisResampler.cc#L310-L321">shared views and row partition, 310-321</a>,
+<a href="https://github.com/bglenden/libRA/blob/0ab99e261878334d6588eafa360cef3b673e897f/src/synthesis/MeasurementComponents/MultiThreadedVisResampler.cc#L451-L559">dispatch/join, 451-559</a>,
+<a href="https://github.com/bglenden/libRA/blob/0ab99e261878334d6588eafa360cef3b673e897f/src/synthesis/Utilities/ThreadCoordinator.cc#L103-L168">ThreadCoordinator.cc, 103-168</a>.</p>
+<p>This gridding implementation maintains worker-private accumulators and gathers
+them later; degridding supplies workers a common read-only Fourier grid. Its
+plain <code>VisibilityResampler</code> obtains array storage pointers, dimensions and
+strides before the row/channel loop. Borrow those ownership/locality ideas,
+not its full-grid-per-worker allocation strategy for the memory-limited cube.</p>
+<p>Sources: <a href="https://github.com/bglenden/libRA/blob/0ab99e261878334d6588eafa360cef3b673e897f/src/synthesis/MeasurementComponents/MultiThreadedVisResampler.cc#L362-L445">grid initialization/gather, 362-445</a>,
+<a href="https://github.com/bglenden/libRA/blob/0ab99e261878334d6588eafa360cef3b673e897f/src/synthesis/MeasurementComponents/MultiThreadedVisResampler.cc#L511-L533">shared prediction input, 511-533</a>,
+<a href="https://github.com/bglenden/libRA/blob/0ab99e261878334d6588eafa360cef3b673e897f/src/synthesis/TransformMachines/VisibilityResampler.cc#L114-L168">VisibilityResampler.cc, 114-168</a>.</p>
+<h2 id="casa-parallel-block-preparation-qualified-lookahead-example">CASA: parallel block preparation; qualified lookahead example<a class="headerlink" href="#casa-parallel-block-preparation-qualified-lookahead-example" title="Permanent link">&para;</a></h2>
+<p>The pinned <code>GridFT::put</code> forms block-local cell-location, convolution-offset and
+phasor arrays. It parallelizes <code>locuvw</code> over rows with OpenMP, then uses those
+arrays in gridding. The spatial-section gridder assigns disjoint grid regions;
+this is a different decomposition from our cube's plane ownership, not a reason
+to replace it. The immediate lesson is that expensive preparation need not be
+serial just because one reader owns MS access. OpenMP execution depends on the
+build/settings; this inspection does not establish the benchmark's thread count.</p>
+<p>Source: <a href="https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/TransformMachines/GridFT.cc?at=61020062cee290f5466cffed5ec5032e0c7a3434">pinned GridFT.cc</a>,
+lines 763-816 for preparation and 875-985 for section gridding.</p>
+<p>The older <code>VLAT</code> implementation is a useful bounded producer/consumer example:
+it fills requested <code>VisBuffer</code> components and detaches the buffer from its
+iterator before publishing it. <code>VlaData</code> bounds lookahead by <code>MaxNBuffers</code> and
+signals on queue availability. But this is one consuming iterator, not proof of
+multi-consumer channel scheduling. More importantly, in the pinned newer VI2,
+the asynchronous constructor implementation is commented out and
+<code>isAsynchronous()</code> returns false. Do not attribute CASA's measured speed to an
+active asynchronous VI2 based on its header documentation.</p>
+<p>Sources: local <code>casatools/src/code/msvis/MSVis/VLAT.cc:320-347,616-665</code>,
+<code>AsynchronousInterface.cc:613-675,827-860</code>,
+<code>VisibilityIterator2.cc:201-222,298-305</code>, at the CASA revision above.
+The <a href="https://casa.nrao.edu/doxygen/VisibilityIterator2_8h_source.html">public VI2 documentation</a>
+describes the intended prefetch interface, but the executable implementation
+qualification is essential.</p>
+<h2 id="what-the-existing-casa-rs-log-discriminates">What the existing casa-rs log discriminates<a class="headerlink" href="#what-the-existing-casa-rs-log-discriminates" title="Permanent link">&para;</a></h2>
+<p>Summing <code>source_starved_nanos</code> on the 71 <code>bulk_cube_wave</code> records in
+<code>native-w4.log</code> gives <strong>1.472297 seconds</strong>; their summed stream wall time is
+<strong>5529.744 seconds</strong>, within the <strong>6198.327-second</strong> application. This timer
+measures the ordered consumer's wait for a raw source block, not worker idle
+time inside preparation, dispatch or gridding. Source filling also consumes CPU
+and bandwidth even while its wall latency is overlapped.</p>
+<p>Reproduction (run in the full-512 evidence directory):</p>
+<div class="codehilite"><pre><span></span><code>perl<span class="w"> </span>-ne<span class="w"> </span><span class="s1">'if (/^bulk_cube_wave/) { $waves++; $wait += $1 if /source_starved_nanos: (\d+)/; $wall += $1 if /wall_nanos: (\d+)/; } END { printf "waves=%d source_starved_seconds=%.6f summed_stream_wall_seconds=%.3f\n", $waves, $wait/1e9, $wall/1e9; }'</span><span class="w"> </span>native-w4.log
+</code></pre></div>
+
+<p>Counter semantics: casa-rs <code>bounded_stream.rs:2202-2224</code> measures the blocking
+receive before processing a block; <code>bulk_source.rs:125-263</code> performs preparation
+before invoking <code>BulkWave::consume</code>; <code>bulk_wave.rs:81-112</code> joins numerical jobs.</p>
+<p><strong>Inference:</strong> a deeper raw-data queue alone is a weak first target. Parallel or
+reused preparation has stronger direct source support. Neither the upstream
+barriers nor this receive-wait counter resolves numerical-worker imbalance,
+cache/bandwidth saturation or core placement. A matched residual-wave profile
+must distinguish those before changing the scheduling architecture.</p>
+<p>Recommended sequence remains: correct the demonstrated phase/shared-memory
+admission mismatch; address repeated full-width first-wave preparation where
+coverage semantics permit; use the existing numerical path with bounded,
+parallel/reused preparation rather than serial object work. Introduce independent
+consumer progress only if measured intra-compute waits justify that complexity.
+This is a research recommendation, not an implementation authorization or a
+promise of a particular speedup. No new imaging, installation, push or merge.</p>
+<p>The source study used two bounded Luna Max checks (Obit and LibRA), with the
+main agent independently verifying the call chains, inspecting CASA, extracting
+the current W4 wait counter and making the synthesis. The research and imaging-
+performance skills required the source-linked record and separation of measured
+behavior from proposed changes. <code>just docs-check</code> passed.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

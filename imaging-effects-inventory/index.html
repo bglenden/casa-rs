@@ -869,10 +869,10 @@ Capabilities not yet transferred to that composition are
 <td>implemented for single-MS standard MFS and cube paths; MTMFS and multi-MS requests are rejected; source seam is CASA <code>SynthesisImager::runMajorCycle</code> / <code>SynthesisImager::predictModel</code> writing <code>VisibilityIterator::Model</code></td>
 </tr>
 <tr>
-<td>CASA <code>nmajor</code> / <code>fullsummary</code></td>
-<td>major-cycle limit and returned minor-cycle summary detail</td>
-<td><code>casars-imager --nmajor</code>; task contract <code>nmajor</code>, <code>fullsummary</code>, <code>iterdone</code>, <code>nmajordone</code>, <code>stopcode</code>, and <code>summaryminor</code> rows</td>
-<td>#221 implements source-backed task parity: <code>nmajor=-1</code> is unlimited, <code>nmajor=0</code> stops after the initial residual, positive <code>nmajor</code> limits post-minor-cycle residual refreshes and reports CASA stop code 9. <code>fullsummary=false</code> keeps short minor-cycle rows; <code>fullsummary=true</code> adds start-iteration, start-peak, no-mask peak, and per-block stop-code fields. Slow parity on <code>unittest/tclean/refim_twochan.ms</code> matched CASA <code>iterdone=30</code>, <code>nmajordone=4</code>, <code>stopcode=9</code>, and 3 <code>summaryminor</code> rows for <code>niter=100</code>, <code>cycleniter=10</code>, <code>nmajor=3</code>, <code>threshold=0.01Jy</code>; image-product evidence recorded model peak <code>(50,50)</code> in both products, identical top 11 model components to CASA within <code>1e-5</code>, model RMS/max/corr <code>1.47e-4</code> / <code>8.84e-3</code> / <code>0.999871</code>, residual RMS/max/corr <code>1.05e-3</code> / <code>1.56e-2</code> / <code>0.998221</code>, and restored-image RMS/max/corr <code>4.94e-4</code> / <code>2.96e-3</code> / <code>0.999950</code></td>
+<td>CASA <code>nmajor</code></td>
+<td>major-cycle limit and returned minor-cycle summary</td>
+<td><code>casars-imager --nmajor</code>; task contract <code>nmajor</code>, <code>iterdone</code>, <code>nmajordone</code>, <code>stopcode</code>, and <code>summaryminor</code> rows</td>
+<td>#221 implements source-backed task parity: <code>nmajor=-1</code> is unlimited, <code>nmajor=0</code> stops after the initial residual, positive <code>nmajor</code> limits post-minor-cycle residual refreshes and reports CASA stop code 9. The long-form CASA <code>fullsummary</code> rows are not a task parameter. Slow parity on <code>unittest/tclean/refim_twochan.ms</code> matched CASA <code>iterdone=30</code>, <code>nmajordone=4</code>, <code>stopcode=9</code>, and 3 <code>summaryminor</code> rows for <code>niter=100</code>, <code>cycleniter=10</code>, <code>nmajor=3</code>, <code>threshold=0.01Jy</code>; image-product evidence recorded model peak <code>(50,50)</code> in both products, identical top 11 model components to CASA within <code>1e-5</code>, model RMS/max/corr <code>1.47e-4</code> / <code>8.84e-3</code> / <code>0.999871</code>, residual RMS/max/corr <code>1.05e-3</code> / <code>1.56e-2</code> / <code>0.998221</code>, and restored-image RMS/max/corr <code>4.94e-4</code> / <code>2.96e-3</code> / <code>0.999950</code></td>
 </tr>
 </tbody>
 </table>
@@ -949,10 +949,10 @@ Capabilities not yet transferred to that composition are
 </table>
 <h2 id="historical-runtime-effects">Historical Runtime Effects<a class="headerlink" href="#historical-runtime-effects" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Imager task protocol v3 carries <code>parallel</code>, <code>chanchunks</code>, shared source
-  memory/prepare/row-block/read-ahead controls, and dirty-product FFT precision
-  and backend policy. <code>parallel=false</code> forces one source block, one prepare/grid
-  worker, CPU acceleration, and RustFFT for a reproducible serial comparison.</li>
+<li>Imager task protocol v9 carries <code>parallel</code>, <code>chanchunks</code>, shared source
+  memory/prepare/row-block/read-ahead controls, and dirty-product FFT precision.
+  <code>parallel=false</code> forces one source block, one prepare/grid worker, and CPU
+  acceleration for a reproducible serial comparison. FFTW is the sole FFT.</li>
 <li>Diagnostic progress reports planned/tracked/high-water memory, source bytes,
   effective read bandwidth, producer/consumer blocked time and overlap, queue
   and worker state, stage timings, GPU eligibility/selection, device/host bytes,

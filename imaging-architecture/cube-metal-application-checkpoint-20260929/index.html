@@ -1,0 +1,959 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Complete Metal cube application checkpoint — 2026-09-29 - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#complete-metal-cube-application-checkpoint-2026-09-29" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Complete Metal cube application checkpoint — 2026-09-29
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scientific Workbench
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Scientific Workbench
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../scientific-notebooks-and-assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Notebooks, Tutorials, Python, and AI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mac-native-gui-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native macOS Product Spec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#working-implementation-is-not-a-performance-success" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Working implementation is not a performance success
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#restart-and-next-decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Restart and next decision
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="complete-metal-cube-application-checkpoint-2026-09-29">Complete Metal cube application checkpoint — 2026-09-29<a class="headerlink" href="#complete-metal-cube-application-checkpoint-2026-09-29" title="Permanent link">&para;</a></h1>
+<p>Truth class: non-normative measured evidence
+Last reality check: 2026-09-29
+Verification: guarded application observations, unchanged CASA comparisons,
+actual-device tests and reviewed panels; numerical disposition remains open.</p>
+<h2 id="working-implementation-is-not-a-performance-success">Working implementation is not a performance success<a class="headerlink" href="#working-implementation-is-not-a-performance-success" title="Permanent link">&para;</a></h2>
+<p>The explicitly selected natural, standard, channel-local Stokes-I cube path
+now connects tiled input, initial imaging, the existing Clark controller,
+repeated nonzero-model visibility residual refresh and the existing writer.
+Only spatial grid/degrid moves to Metal. NEON FFTW, batched Clark and shared
+scientific/runtime machinery remain. Unsupported modes fail explicitly;
+there is no automatic CPU fallback, second controller or visibility replay store.
+Rust uses objc2-metal directly; no Objective-C source or Swift bridge was added.</p>
+<p>Representative observations: 4,094,064 rows, 512 stored channels, output
+240–271 (32 planes), 1024², natural Clark, unchanged mask, 0.5-mJy threshold,
+640,000 global iteration ceiling. Time includes preparation, all refreshes,
+intermediate I/O and publication, plus first-use setup. No build/comparison
+concurrency, controlled cold-cache claim or statistically significant claim.</p>
+<table>
+<thead>
+<tr>
+<th>Deep32 implementation</th>
+<th style="text-align: right;">Application seconds</th>
+<th style="text-align: right;">Sampled aggregate peak GiB</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CPU W1, before preservation correction</td>
+<td style="text-align: right;">629.3643</td>
+<td style="text-align: right;">2.1132</td>
+</tr>
+<tr>
+<td>CPU W4</td>
+<td style="text-align: right;">270.1336</td>
+<td style="text-align: right;">2.1427</td>
+</tr>
+<tr>
+<td>Metal, four host preparation workers</td>
+<td style="text-align: right;">345.0674</td>
+<td style="text-align: right;">3.3139</td>
+</tr>
+<tr>
+<td>Fresh pre-Metal CPU W1 control</td>
+<td style="text-align: right;">570.9800</td>
+<td style="text-align: right;">2.0943</td>
+</tr>
+<tr>
+<td>Rejected CPU inlining correction</td>
+<td style="text-align: right;">634.7065</td>
+<td style="text-align: right;">2.1058</td>
+</tr>
+<tr>
+<td>Borrowed-row CPU W1 preservation correction</td>
+<td style="text-align: right;">566.4413</td>
+<td style="text-align: right;">2.1149</td>
+</tr>
+<tr>
+<td>Borrowed-row CPU W4 check</td>
+<td style="text-align: right;">279.2921</td>
+<td style="text-align: right;">2.1615</td>
+</tr>
+<tr>
+<td>Matched CASA deep32 time</td>
+<td style="text-align: right;">unavailable</td>
+<td style="text-align: right;">unavailable</td>
+</tr>
+</tbody>
+</table>
+<p>The CASA products are an exact window of the existing full512 reference;
+extraction time and divided full512 wall time are not matched CASA timings.
+The fresh CPU control exposes a 10.23% integration regression. Compiled code
+shows newly out-of-line row access/cursor setup, but removing those calls in
+one bounded correction does not help end-to-end (634.7065 versus 629.3643 s).
+That correction is removed; its exact binary/source, commands and logs remain.
+It converged in 17 passes/187,702 iterations; rejected output was not submitted
+as scientific acceptance. The subsequent borrowed-row/window correction binds
+selection once per block, narrows slices in place and lets the cursor borrow
+the row view. Its compiled loop removes the 424-byte per-row cursor memcpy.
+Deep W1 completes in 566.4413 s, 17 passes/187,690 iterations: it recovers the
+10.0% regression and restores parity with the fresh pre-Metal control. The 0.8%
+difference from that control is not a statistical gain claim. Do not inflate
+scaling by using the regressed serial baseline. The exact frozen executable and
+patch are <code>cpu-borrowed-row-application-v1</code> in the durable evidence directory.</p>
+<p>Metal is 27.7% slower than CPU W4. Input/imaging accounts for the entire gap;
+minor cycles take approximately 23 seconds for each. Metal issues 159,456
+batches. Its 143.435-s GPU total nests inside 184.863-s submit/wait, not another
+exclusive stage. Executed request counts imply 158.784 GB cumulative tap
+staging and 34.063 GB prediction copyback, not peak allocations or PCIe traffic.
+Both W4 observations have restricted channel reads, reusable source buffers,
+zero copied visibility samples and the same 17 source traversals.</p>
+<p>The 2-GiB-planning Metal dirty check passes three waves of 14/13/5 planes,
+with source windows 39/14/6 channels, peak RSS 1.164 GiB and all six dirty
+products/eight CPU checks passing. This is not deep multi-wave performance.</p>
+<p>All 32 deep planes have zero hard scientific failures against the unchanged
+CASA assessment; restored planes stay below 1e-3. Exact outputs still require
+owner review: 15 CPU alerts and 16 Metal alerts, including added channel 257.
+Raw model/residual RMS are diagnostic-only under the existing unchanged gate.
+First/middle/last and all alerted Metal panels were inspected. No alert was
+waived and no full T55/T57 acceptance or performance-goal completion is claimed.</p>
+<p>The corrected CPU W1 also has zero hard failures; maximum restored-plane RMS
+9.476e-4. It has 16 review alerts, adding channel 257's residual-maximum ratio
+0.5041 against the unchanged 0.5 review threshold (previous CPU W1: 0.4962).
+All alerted panels were inspected; the added alert is not automatically waived.
+The raw seven-product/nine-check report remains out_of_tolerance for the existing
+model/residual diagnostics, not a wholly green numerical report.
+Corrected W4 also has zero hard failures and 16 review alerts. Its 279.2921-s
+deep observation is 3.4% slower than the earlier integrated W4: deep W4
+preservation is not established. One short matched W4 control/repair check
+(35.6176/31.7732 s, two passes/958 iterations) favors the repair by 10.8%, but
+does not settle the deep result. Current observed W1/W4 is 2.028×, not the ratio
+against the regressed W1. These are single observations, not significance claims.</p>
+<h2 id="restart-and-next-decision">Restart and next decision<a class="headerlink" href="#restart-and-next-decision" title="Permanent link">&para;</a></h2>
+<p>CPU hot-loop preservation now has a complete deep serial result and a bounded
+four-worker check, with the deeper W4 uncertainty recorded. Numerical-consumer
+work accounts for 58.111 of the 58.384-s fresh parent/new W1 gap; preparation
+and Clark are essentially unchanged. The failed inlining trial rules out those
+two call boundaries alone as a sufficient repair, not every compiler/data-layout
+effect of the shared backend seam. The retained correction removes repeated
+view reconstruction and aggregate ownership transfers while keeping scientific
+primitives shared and backend selection at the wave boundary. Focused cube tests
+and the actual-device initial/CLEAN/two-refresh/publication application pass.
+No further CPU candidate or Metal optimization is started by this checkpoint.
+If deep W4 preservation needs a conclusive decision, the specific missing datum
+is a fresh matched deep W4 control, not another broad inventory or speculative
+candidate. Metal performance after the shared-view correction is unmeasured.</p>
+<p>The retained CPU observation is faster than the earlier Metal W4 observation;
+this is not a new matched Metal timing after the view repair. A later useful
+Metal effort must address
+spatial batching/dataflow, not blanket FFT replacement or small launch tweaks.
+Eliminating all non-GPU submit/wait overhead would still leave Metal slower;
+even halving GPU time alone would not clearly beat the CPU observation.
+Before a new redesign, grid-versus-degrid GPU time on one representative wave
+is the specific missing discriminator. This checkpoint does not start it.</p>
+<p>Durable <a href="/Users/brianglendenning/SoftwareProjects/casa-rs-evidence/t57/cube-metal-first-path-20260929/METAL-CUBE-APPLICATION-CHECKPOINT.md">detailed report and reproduction handles</a>
+include exact commands, binaries/source snapshots, resource receipts, rejected
+results, comparisons, panels and remaining checks. The only CURRENT summary is
+<code>/Users/brianglendenning/SoftwareProjects/casa-rs-evidence/t55/tranche5-20260916/CURRENT.md</code>.
+The subsequent <a href="/Users/brianglendenning/SoftwareProjects/casa-rs-evidence/t57/cube-metal-first-path-20260929/CPU-ROW-PROFILE-REPAIR.md">CPU profile and preservation report</a>
+preserves the rejected tuple-layout attempt, residual-wave profiles, assembly
+evidence, corrected timings and exact numerical disposition.</p>
+<p>Final corrected-source checks pass: 299 reconstruction and 341 runtime release
+tests (19/10 ignored), focused cube shape/cursor checks, actual-device complete
+application, formatting and docs-check. The directly affected contract tests
+remain intact. These checks do not dispose of the 16 numerical review alerts or
+establish deep W4 preservation.</p>
+<p>Legacy architecture checks fail unchanged HEAD manifest/T18 assertions; do not
+weaken them. Numerical disposition, wider programme acceptance and any future
+full-size Metal validation remain open. Preserve 16-GiB native planning/RSS,
+8-GiB other-work guards and two Cargo jobs. No push, merge, release, cleanup,
+full512 restart, MFS expansion or local W8 tuning is authorized by this record.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

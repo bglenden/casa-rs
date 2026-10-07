@@ -1,0 +1,1885 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Within-plane MFS CPU parallelism: research and proposed next slice - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#within-plane-mfs-cpu-parallelism-research-and-proposed-next-slice" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Within-plane MFS CPU parallelism: research and proposed next slice
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scientific Workbench
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Scientific Workbench
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../scientific-notebooks-and-assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Notebooks, Tutorials, Python, and AI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mac-native-gui-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native macOS Product Spec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#decision-in-brief" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision in brief
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Decision in brief">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#main-environment-handoff-2026-09-30" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Main-environment handoff (2026-09-30)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#generation-pilot-application-preflights" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Generation pilot: application preflights
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Generation pilot: application preflights">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#psfpb-normalization-repair-2026-09-23" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PSF/PB normalization repair, 2026-09-23
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#initial-workload-checkpoint-sky-and-geometry-prepared" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Initial workload checkpoint: sky and geometry prepared
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#revised-workload-proposal-substantial-source-rich-4096-square-continuum" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Revised workload proposal: substantial, source-rich 4096-square continuum
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Revised workload proposal: substantial, source-rich 4096-square continuum">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#native-spectral-setup-must-correspond-to-a-real-vla-resource" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Native spectral setup must correspond to a real VLA resource
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#authority-and-evidence-boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Authority and evidence boundaries
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#actual-application-path-and-reusable-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Actual application path and reusable code
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#upstream-mechanisms-what-transfers-and-what-does-not" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Upstream mechanisms: what transfers, and what does not
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Upstream mechanisms: what transfers, and what does not">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#casa-libra" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CASA / libRA
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#obit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Obit
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#proposed-ownership-and-numerical-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Proposed ownership and numerical contract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#memory-and-data-movement-calculated-not-measured" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory and data movement: calculated, not measured
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives-and-the-smallest-decision-producing-experiment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternatives and the smallest decision-producing experiment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#approval-required-before-implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Approval required before implementation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#independent-oracle-challenge-and-disposition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Independent Oracle challenge and disposition
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#source-index" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Source index
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="within-plane-mfs-cpu-parallelism-research-and-proposed-next-slice">Within-plane MFS CPU parallelism: research and proposed next slice<a class="headerlink" href="#within-plane-mfs-cpu-parallelism-research-and-proposed-next-slice" title="Permanent link">&para;</a></h1>
+<p>Truth class: non-normative research and proposal; not implementation authority
+Last reality check: 2026-09-30
+Work issue: <a href="https://github.com/bglenden/casa-rs/issues/541">T55 / #541</a>
+Source: <code>405d01adc58c6a4844c41924dbef62c984091492</code></p>
+<h2 id="decision-in-brief">Decision in brief<a class="headerlink" href="#decision-in-brief" title="Permanent link">&para;</a></h2>
+<p><strong>Implementation checkpoint, 2026-09-30 (Linux focused checks only).</strong> The
+existing weighted-stream executor now schedules the empty-model, standard,
+single-term Stokes-I MFS initial pass over disjoint 64-row strips of its shared
+dirty and PSF grids. It retains uniform-density generation, multi-SPW selection,
+the shared Clark controller and bounded residual replay. Routing storage is
+bounded by the admitted sample batch; each standard stencil reaches at most
+two strips, and workers borrow existing grid storage without private full grids.
+W1 uses the same routed numerical kernel. Worker admission follows available
+regions and the resource policy, including the existing replay compiler.</p>
+<p>Focused checks compare W1/W4/W8 strip execution with the original scalar
+single-term operator, including boundary crossings and flags. A small four-SPW
+uniform-weighted Clark application case admits W1 and W4 in both major phases
+and compares all emitted products at normalized error &lt;= 1e-6, with exact mask,
+shape and unit checks. These are correctness checks, not a timing result or a
+replacement for the approved 4096-square workload and matched CASA comparison.
+macOS execution remains unverified for this checkpoint. The historical
+two-worker initial-consumer limitation below describes the parent revision.</p>
+<p><strong>Forward-model preparation checkpoint, 2026-09-30.</strong> A bounded follow-up
+uses the existing four-SPW, uniform, 256-square Clark application test (24 rows,
+8 channels/SPW), on Linux with the existing debug/test profile and unchanged
+FFTW 3.3.10 static f32/f64 SIMD libraries. The existing stage trace switch now
+separates gridded model preparation, execution including finish, and window
+folding. These timings are per window and exclude earlier FFT preparation;
+stream worker timers are nested within execution, not additive to it.</p>
+<p>The measured residual replay processes 27 reduced prediction groups. In the
+first current control, stream numerical execution was 0.86/0.73 ms for W1/W4,
+versus 33.8/44.0 ms stream wall time. Instrumented model preparation was
+48.7/37.8 ms, with execution including finish at 36.8/34.2 ms. The tiny fixture
+therefore does not measure the target's visibility-throughput scaling.</p>
+<p><code>SpectralSlabOperator::prepare_forward_generation</code> formerly reconstructed and
+validated a canonical <code>ModelCell</code> index for every pixel. It now validates both
+ends of each row, then uses contiguous canonical indices within that row.
+This retains model-window bounds, sample/support and domain-ownership checks,
+correction arithmetic, FFTs and nonfinite rejection; no buffer or worker state
+is added. At 256 square it reduces shape lookups from 65,536 to 512 per plane.
+The old <code>fff9c2d</code> serial MFS path was inspected: it likewise prepared a model
+grid before the paired prediction/residual operation. No old package is restored.</p>
+<p>Observed model-preparation times in milliseconds (W1/W4): parent 48.7/37.8,
+candidate 52.3/43.8; a subsequent parent control 69.4/35.9, candidate 40.8/34.4.
+These are individual debug observations, with W4 following W1 in each process;
+filesystem caches were not flushed and initial FFT planning has a cold-start
+cost. They do not establish a speedup, and no release or full-workload claim
+follows from the deterministic reduction in indexing work. The source change
+uses the same path for W1/W4 and both operating systems; macOS is not executed.</p>
+<p>The directly affected checks pass: the uniform multi-SPW W1/W4 application
+comparison (all six products at normalized error &lt;= 1e-6, exact masks/shapes/units),
+nonempty-model continuation, and delta composition into the next major cycle.
+Candidate build/application peak sampled aggregate RSS was 2,400,899,072 bytes;
+the standalone candidate application control peaked at 73,056,256 bytes. These
+small-fixture peaks do not establish 4096-square residency.</p>
+<p>Evidence resides in <code>/workspace/casa-rs-tools/logs/mfs-refresh-*.log</code>; the
+instrumented parent test executable is retained outside the repository as
+<code>/workspace/casa-rs-tools/mfs-refresh-parent-test</code>. Builds use two jobs,
+<code>CARGO_INCREMENTAL=0</code> and an 8-GiB aggregate RSS guard. The exact 4096-square
+fixture is still unavailable in this executor, and a matched CASA reference
+is still required for full numerical/visual and performance acceptance.</p>
+<h3 id="main-environment-handoff-2026-09-30">Main-environment handoff (2026-09-30)<a class="headerlink" href="#main-environment-handoff-2026-09-30" title="Permanent link">&para;</a></h3>
+<p>The development branch is <code>codex/mfs-cpu-optimization</code>, based on approved
+<code>64ae6f1f6837bd6f690da17f7b0d1ebbe5a8579c</code> from
+<code>codex/t55-full-size-validation</code>. Implementation checkpoints are <code>bbf54e6d</code>
+(worker reporting/Linux setup), <code>2d17324a</code> (bounded shared-grid MFS regions),
+and <code>14cd1754</code> (forward-model indexing and residual-stage timing). This is an
+interim development checkpoint, not completed T55 acceptance. The <code>Source</code>
+revision at the top identifies the historical research below.</p>
+<p>Start in <code>SpectralCycleExecutor</code>, the initial weighted consumer in <code>weighting.rs</code>,
+and <code>spectral_operator/initial_planes/mfs_regions.rs</code>. The uniform multi-SPW
+application takes this spectral path; do not route it through the cube executor
+or assume the legacy bulk MFS consumer is the running path. Residual refresh
+uses the existing gridded-normal prediction/replay path. Requested/admitted
+worker counts are not measured concurrency; use actual execution telemetry.</p>
+<p>Focused commands, if relevant after subsequent changes:</p>
+<div class="codehilite"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">CARGO_INCREMENTAL</span><span class="o">=</span><span class="m">0</span><span class="w"> </span><span class="nv">CARGO_BUILD_JOBS</span><span class="o">=</span><span class="m">2</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">RUST_MIN_STACK</span><span class="o">=</span><span class="m">33554432</span><span class="w"> </span><span class="nv">RUST_TEST_THREADS</span><span class="o">=</span><span class="m">1</span>
+cargo<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--locked<span class="w"> </span>-p<span class="w"> </span>casa-imaging-reconstruction<span class="w"> </span>--lib<span class="w"> </span>initial_planes
+cargo<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--locked<span class="w"> </span>-p<span class="w"> </span>casa-imaging-application<span class="w"> </span>--test<span class="w"> </span>continuum_application<span class="w"> </span>uniform_multi_spw_mfs_clark_matches_serial_with_four_admitted_workers<span class="w"> </span>--<span class="w"> </span>--exact<span class="w"> </span>--nocapture
+cargo<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--locked<span class="w"> </span>-p<span class="w"> </span>casa-imaging-reconstruction<span class="w"> </span>--test<span class="w"> </span>minor_cycle<span class="w"> </span>next_major_cycle
+</code></pre></div>
+
+<p>Apply the agreed 8-GiB aggregate RSS build/comparison guard around these
+commands. Reuse existing green evidence for unaffected work. The Linux build,
+linked CLI smoke, five initial-grid tests, uniform W1/W4 application comparison,
+serial/Clark controls and two nonempty-model continuation tests passed. Clippy
+and docs checks passed with existing warnings; broad <code>just verify</code> and macOS
+execution were not run. Main-environment macOS validation is still needed,
+with coordination before using resources occupied by the cube campaign.</p>
+<p>The full fixture has not reached this cloud executor. Its original verified
+location is
+<code>/Volumes/GLENDENNING/casa-rs-evidence/t55/mfs-4096-workload-20260923/intermediate-90-evla-v1/pilot.ms</code>;
+verify current availability before running. The transfer package is
+<code>casa-rs-mfs-intermediate-90-evla-v1.tar</code>, 4,380,395,520 bytes, SHA-256
+<code>ab1f07491217e5abf13ec38568a55948b6c2c82416465c4de462a0bcd6d4e7b7</code>.
+It preserves 2,021,760 rows and 32 SPWs of 64 channels. Do not substitute a
+new simulation. NAS/VPN/WebDAV setup is handled separately; credentials and
+network configuration are not part of this branch.</p>
+<p>After fixture verification, use the existing opt-in
+<code>t55_mfs_pilot::full_field_application</code> harness in <code>continuum_application</code>.
+Set <code>CASA_RS_MFS_MS</code> to the verified MS, <code>CASA_RS_MFS_OUTPUT</code> to a fresh durable
+directory, <code>CASA_RS_MFS_WORKERS=4</code> (then 1 for the control),
+<code>CASA_RS_MFS_TERMS=1</code>, <code>CASA_RS_MFS_GRIDDER=standard</code>, and
+<code>CASA_RS_MFS_NITER=10000</code>. Build before timing with the 8-GiB build guard; execute
+the test binary with the 16-GiB aggregate native RSS guard and check planned
+admission against that same cap. Preserve all rows/channels, 4096 square,
+0.05 arcsec, the intended 6-GHz reference, global uniform weighting, Stokes I,
+Clark gain 0.1, 5-mJy threshold and 1000 cycle iterations. Verify the resolved
+reference frequency and matched CASA request instead of assuming defaults.
+The harness's shape/unit-PSF smoke is not the full scientific comparison.</p>
+<p>Reach a complete W4 application run, obtain W1 and matched CASA serial controls,
+then use dominant measured costs to choose the next intervention. Compare every
+required product numerically and visually, retaining approximately 1e-3
+normalized agreement and stricter existing checks. The historical CASA
+415.481-second W-projection/nterms=2 run is not a reference for this milestone.
+Keep FFTW precision/SIMD linkage matched, batched Clark, bounded input/grid
+residency and the common W1/multiworker scientific path. ADR-0014 publication
+attestation remains prohibited. No Metal, MT-MFS, W/AW, mosaics, cube tuning,
+restart of the stopped full512 campaign, release or cleanup is implied.</p>
+<p>The local handoff archive <code>/workspace/mfs-handoff-14cd1754.tar.gz</code> preserves the
+three implementation commits, bootstrap scripts and essential logs through
+<code>14cd1754</code>; it predates this documentation handoff and is not stored in Git.
+Cloud setup scripts/tools and raw logs are workspace-local and do not accompany
+a branch fetch. On macOS use the existing development setup; on Linux follow
+<code>TESTING.md</code> for workspace-backed spill storage. Preserve the original workspace
+until any separately requested archive transfer/restoration has been verified.</p>
+<p><strong>Owner update, 2026-09-24: simple imaging baseline.</strong> Reformulate the existing
+90-time/configuration, DATA-only intermediate as single-term MFS, Clark CLEAN,
+standard gridding, Stokes I and uniform weighting. Preserve all selected rows
+and channels, 4096-square / 0.05-arcsec geometry, gain 0.1, 5-mJy threshold,
+1000 cycle iterations and 10000 total iterations. No W-projection, Taylor
+coupling, facets, additional data columns or new simulator run. The existing
+sky is chromatic and contains nonzero w; this is a matched-implementation
+baseline, not exact intrinsic-sky recovery. Both CASA and native harnesses now
+default to this simple gridder; the old advanced case remains explicitly
+selectable and its evidence is retained.</p>
+<p>A production-plan-only probe gives an initial native reservation of
+8,889,167,767 bytes (8.279 GiB) for W1, versus 18,978,355,077 bytes (17.675 GiB)
+for the previous W32/two-term case. These are reservations, not measured
+imaging RSS or complete-run peak predictions. A four-worker request produces
+only two-worker initial consumers plus a one-worker alternative; this is not
+four-way gridding. The source comparison with LibRA and Obit is recorded in
+<code>mfs-4096-workload-20260923/simple-memory-20260924/memory-comparison.md</code> under
+the durable evidence root. No simple-case imaging/timing or CASA acceptance
+has run yet. This update supersedes earlier next-action/status text below;
+historical workload and rejected-run evidence remain intact.</p>
+<p><strong>Owner clarification, 2026-09-24: numerical acceptance, not identical bits.</strong>
+Do not spend memory or execution time solely to make floating-point results
+bit-identical across worker counts, reduction orders or compiler optimization
+settings. Ordinary rounding variation is acceptable under the existing
+scientific accuracy tolerances. Remove reproducibility-only accumulation
+machinery and corresponding exact-equality requirements; retain scientific,
+shape, mask, metadata, ownership and I/O checks. Extra precision or compensated
+summation needs a demonstrated accuracy purpose, not an assumed bitwise
+reproducibility requirement. The 8.279-GiB census describes current code before
+that removal; it does not establish that those costs are required.</p>
+<p><strong>Owner update, 2026-09-23: dataset first.</strong> Brian challenged the previous
+approach and requested a substantial input with a source-rich image around
+4096 square, then explicitly confirmed 4096 as realistic. The image size is
+therefore fixed at 4096 x 4096. The next deliverable is a scientifically suitable workload and
+its sky/UV/beam checks, not an FFT implementation. The FFT-first recommendation
+below is an earlier conditional hypothesis, not a committed optimization order.
+Choose the intervention from the complete application's measured costs on the
+new workload; do not design the workload to make FFT parallelism look good.</p>
+<p>Extend the existing reconstruction-owned MFS operator through the existing
+application phase interface. Do not force MFS into the cube implementation,
+restore the old imager, or create another CLEAN controller. The desired unit of
+parallel ownership is <strong>a bounded portion of one grid</strong>, not an output image.</p>
+<p>There are two distinct questions: parallel coverage of the complete application,
+and grid residency at large image sizes. Current residual replay already has
+within-image parallelism. Initial MFS gridding and within-image FFTs do not have
+the corresponding coverage. The existing tiled replay also retains substantially
+more than one full-grid equivalent, despite being independent of worker count.
+These are source observations, not a measured current MFS bottleneck ranking.</p>
+<p><strong>Earlier candidate, conditional on the new workload: within-plane FFT scheduling only</strong>, connected
+to the complete application. Keep current initial gridding, prediction,
+tile/shard accumulation and reduction order. First measure their existing
+complete-application phase shares on the approved MFS selection; implement the
+FFT experiment only if its optimistic end-to-end saving is useful. Do not bundle
+new gridding ownership, transpose algorithms and residency redesign into it.
+The exclusive-region design below is the conditional next architecture, not
+an instruction to implement all of it now.</p>
+<p>The initial workload preparation added a diagnostic script, focused tests and
+sky/UV previews. The subsequently approved generation pilot now exercises CASA
+and the current native application; its bounded observation-label repair is
+described below. No optimization campaign, installation, commit, push, merge or
+cleanup is part of this pilot. The closed channel-276 near-tie investigation
+stays closed; efficient batched Clark updates stay unchanged. Pre-existing
+<code>work/</code> is preserved.</p>
+<h2 id="generation-pilot-application-preflights">Generation pilot: application preflights<a class="headerlink" href="#generation-pilot-application-preflights" title="Permanent link">&para;</a></h2>
+<p><strong>Owner clarification, 2026-09-23:</strong> proceed with the 90-time/configuration
+intermediate as an explicitly idealized matched-application fixture. The
+component-center PB and time/channel-center approximations do not block this
+comparison: both imagers consume identical DATA. The measured 0.07146-arcsec
+PB-weighted centroid shift is a rendered-sky calculation, not an observed
+reconstruction error. Physical finite-bin/intrinsic-sky truth acceptance is
+not claimed. This supersedes the earlier prerequisite below to resolve those
+approximations before larger comparison generation; no oversampled simulation
+or new forward-model implementation is included in this intermediate.</p>
+<p>The <a href="https://github.com/bglenden/casa-rs/blob/0dc50a57162126ca334b3ec6386b3051e20959db/tools/perf/imager/mfs_4096_pilot.py">CASA fixture driver</a> creates
+separate A/C observations, concatenates them, flags the approved channel edges
+and predicts the analytic sky. The
+<a href="https://github.com/bglenden/casa-rs/blob/0dc50a57162126ca334b3ec6386b3051e20959db/crates/casa-imaging-application/tests/continuum_application/t55_mfs_pilot.rs">native diagnostic</a>
+calls the existing <code>execute_continuum</code> entry with explicit one/four-worker and
+16-GiB planning settings. It does not add a new imaging implementation.</p>
+<ul>
+<li>The 36-time-sample/configuration pilot has 808,704 rows, 72 distinct times,
+  2-second exposure/interval, 32 SPWs and 54 antennas. CASA concat produces 63
+  valid DDIDs referencing the 32 SPWs; the fixture now follows the explicit
+  DATA_DESCRIPTION mapping rather than assuming DDID equals SPW ID.</li>
+<li>Its actual CASA uniform/W-projection PSF at 4096 square has a fitted beam
+  0.21208 x 0.20698 arcsec (4.24 x 4.14 pixels). This PSF-only task took
+  27.31 seconds and the guarded process peaked at 2.40 GB. This is not a
+  deconvolution or performance-parity result.</li>
+<li>Measured storage is about 4.8 GiB for the concatenated pilot MS, plus 2.4 GiB
+  for each retained source configuration. CASA includes MODEL_DATA and
+  CORRECTED_DATA as well as DATA. Thus the full concatenated fixture would be
+  roughly 48 GiB with this storage layout, not the 18.56-GiB basic-payload
+  estimate. Retaining source MSes would approximately double that. No full
+  fixture has been generated. <strong>Owner correction:</strong> retain only DATA. Removed
+  MODEL_DATA and CORRECTED_DATA from the corrected EVLA smoke's three MSes after
+  all imaging handles closed. Its concatenated MS shrank from 282,341,376 to
+  98,013,184 allocated bytes; row counts and three sampled DATA cells per MS
+  were unchanged. That projects to about 17.6 GB for the full concatenated MS,
+  subject to measured tile overhead. The driver now performs this removal
+  automatically after CASA prediction, which internally writes scratch columns.</li>
+<li>A two-time/configuration, full-band smoke contains 44,928 rows. It first
+  exposed an application rejection of multiple OBSERVATION_IDs solely for
+  image telescope/observer labels. The bounded repair permits matching labels
+  across observations and retains rejection of conflicting labels. The
+  production-path regression verifies publication and both conflict cases.</li>
+<li>The next native preflight rejected the legacy <code>VLA</code> beam model at 6 GHz.
+  CASA's prediction log also showed legacy VLA_NVSS/Airy selection. The modern
+  WIDAR fixture must use CASA's <strong>EVLA</strong> telescope identity and beam model.
+  The driver is corrected; original VLA-labelled datasets/results are retained
+  as rejected input-model evidence, not silently relabelled or accepted.</li>
+<li>The corrected EVLA smoke completes the real 4096-square uniform/W-projection
+  dirty imaging and publication path in both applications. CASA task time is
+  16.021 s; casa-rs W1 application time is 25.017 s, sampled native peak 4.83 GB.
+  These are single smoke measurements, not the full benchmark. Full-field
+  residual maximum difference is 5.96e-8 Jy/beam (relative L2 3.62e-7); PSF
+  maximum difference is 7.75e-7; sumwt agrees exactly. Peaks coincide. The PB
+  initial difference was structured and reached 0.0031014 absolute response;
+  the PSF/PB correction below supersedes that discrepancy. The <code>comparison-dirty-v2</code>
+  panels have been inspected. Only two timestamps per configuration were used:
+  their strong sidelobes are not evidence about the full track's sky recovery.</li>
+<li>CASA's component predictor evaluates time/channel centers and applies the
+  beam at component centers. It does <strong>not</strong> implement finite 2-second/2-MHz
+  averaging or spatial PB variation across an extended Gaussian. Current
+  prediction/image runs are explicit application smoke tests. Resolve these
+  approximations, together with the Taylor-order/deep-clean contract, before
+  promoting any fixture to full sky-truth acceptance.</li>
+</ul>
+<p>Durable pilot source snapshots, binaries, commands, guard results and failures
+are in <code>mfs-4096-workload-20260923/pilot-runs/</code> under the evidence root below.
+The original frozen measures snapshot was missing IERS payload files; a fresh
+snapshot from intact installed CASA data is preserved at <code>pilot-runs/reference/</code>.
+It does not overwrite or repair historical evidence. All CASA stages use that
+snapshot with auto-updates disabled. Resource limits remain 8 GiB for CASA/setup,
+16 GiB native planning and sampled RSS, and two Cargo build jobs.
+The current restart point is the DATA-only <code>smoke-evla-v1/pilot.ms</code>, not the
+rejected legacy-VLA inputs. Before larger prediction/deep CLEAN: resolve the
+finite-bin/extended-component forward-model
+approximations, then settle Taylor order and thresholds. No process is left
+running at this checkpoint. Focused metadata publication/conflict checks,
+single-observation/pointing controls, eight Python fixture checks, Ruff,
+<code>cargo fmt --all --check</code>, and <code>just docs-check</code> passed; this is not full T55
+or new-workload science acceptance.</p>
+<h3 id="psfpb-normalization-repair-2026-09-23">PSF/PB normalization repair, 2026-09-23<a class="headerlink" href="#psfpb-normalization-repair-2026-09-23" title="Permanent link">&para;</a></h3>
+<p>At the owner's direction, product catalog v10 publishes each ordinary valid
+PSF plane with an exact unit peak, independently by channel, polarization and
+domain. The common publication path covers MFS, streaming cubes, W/AW projection,
+mosaics and facets. Taylor/MVC moments and joint normal blocks share the peak of
+their principal term; independently normalizing higher terms would corrupt their
+relative amplitudes. Empty planes remain zero. Raw normal states, CLEAN and the
+restoration Hessian are unchanged; Taylor publication scaling is fused into its
+existing payload copy.</p>
+<p>EVLA PB evaluation now follows CASA's upper-frequency midpoint tie, Float radial
+table indexing and Float voltage squaring. The frequency fix alone left 680
+radial-bin outliers; source-matched arithmetic explained every one exactly.
+The final full-resolution 4096-square rerun has PSF peak exactly 1, maximum PSF
+difference 1.1921e-7, and <strong>zero PB difference</strong> across all 16,777,216 pixels.
+Residual/model/restored/sumwt pixels, masks, coordinates, beams and units are
+bit-identical or exactly equal to the pre-fix native smoke. Native W1 application
+time is 24.938 s with 4.831 GB sampled peak RSS (prior 25.017 s; no speed claim).</p>
+<p>Verification: 53 product tests and 50 application tests pass, including
+one/two/four-worker exact cube products. One existing channel-window fixture
+fails identically on the saved pre-fix binary: its 9,534,052-byte budget cannot
+admit an 11,668,298-byte plan. It is explicitly excluded, not weakened or fixed
+as part of this repair. Nine external/diagnostic application tests remain ignored;
+the 4096-square pilot was run explicitly. Formatting, Ruff and docs checks pass.
+The DATA-only fixture's stale owner keyword was archived and reinitialized using
+the standard owner initializer after the earlier authorized column removal;
+visibility data were not changed.</p>
+<p>Durable details: <code>mfs-4096-workload-20260923/pilot-runs/psf-pb-normalization-report.md</code>;
+final source/binary: <code>source-psf-pb-v2</code>; final output: <code>native-dirty-w1-psf-pb-v3</code>;
+panels: <code>comparison-psf-pb-v2</code>. This fixes publication normalization, not full
+new-workload CLEAN, sky-model, W4 performance or T55 acceptance. No push/merge.</p>
+<h2 id="initial-workload-checkpoint-sky-and-geometry-prepared">Initial workload checkpoint: sky and geometry prepared<a class="headerlink" href="#initial-workload-checkpoint-sky-and-geometry-prepared" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/bglenden/casa-rs/blob/0dc50a57162126ca334b3ec6386b3051e20959db/tools/perf/imager/prepare_mfs_4096.py">preview script</a> and
+<a href="https://github.com/bglenden/casa-rs/blob/0dc50a57162126ca334b3ec6386b3051e20959db/tools/perf/imager/test_prepare_mfs_4096.py">focused checks</a> implement
+the proposed recipe. At this initial checkpoint there was no generated MS or
+CLEAN result; the generation pilot above supersedes that status.
+Durable scripts, array snapshots, commands, logs and images live under
+<code>/Users/brianglendenning/SoftwareProjects/casa-rs-evidence/t55/mfs-4096-workload-20260923</code>.
+Use <code>preview-ac-v4/recipe-and-checks.json</code>, <code>sky-preview.png</code> and
+<code>uv-psf-preview.png</code>; v1--v3 are retained preliminary records.</p>
+<ul>
+<li>Geometry: 4096 x 4096, 0.05 arcsec pixels, 204.8 arcsec field, J2000
+  12h +30 degrees. Actual CASA <code>vla.a.cfg</code> and <code>vla.c.cfg</code>, 27 antennas each,
+  physical baselines 793--36,623 m and 78--3,387 m. These specific configurations,
+  rather than the generic observatory table, define the fixture. Their ranges
+  overlap; no A+C coverage hole requiring a third configuration was identified
+  in this preliminary diagnostic.</li>
+<li>Sampling, revised after owner feedback: <strong>360 separate 2-second integrations
+  per configuration, evenly spanning HA -3 to +3 h</strong>. Centers are about
+  60 seconds apart, but the exposure/averaging duration remains 2 seconds,
+  never 60 seconds. This replaces the v1--v3 clusters of twelve one-minute
+  scans. Total exposure remains 24 minutes across both configurations and row
+  count is unchanged. Use separate epochs with correct antenna positions,
+  not simultaneous arrays sharing one antenna table. The actual CASA PSF
+  still needs checking; denser HA samples do not prove deconvolution fidelity.</li>
+<li>Sensitivity: explicitly <strong>noise-free</strong> for the initial algorithmic fixture,
+  with finite equal weights on unflagged samples, not infinite inverse-noise
+  weights. It is a time-sampled synthesis test, not a claim about the sensitivity
+  of a real 24-minute observation of this sky. Preserve channel/time averaging,
+  PB and w physics. No noise has been removed from an existing dataset.</li>
+<li>Sky: <strong>79 point sources and 12 extended complexes</strong>, built from 325 analytic
+  point/Gaussian components: rings, jets, curved filaments and diffuse emission
+  with compact knots. Intrinsic total flux is 8.7266 / 6.6948 / 5.5990 Jy at
+  4/6/8 GHz, with component-dependent power laws. The display uses a common
+  0.35-arcsec smoothing beam, not a fitted restoring beam. The field contains
+  the rendered analytic flux to better than 0.0001%; compact sources extend
+  to about 88 arcsec radius.</li>
+<li>Channelization: 32 x 128-MHz SPWs, each 64 x 2-MHz channels, RR/RL/LR/LL.
+  Nominal baseband centers 5 and 7 GHz give 3.976--8.024 GHz coverage with
+  48 MHz overlap. Flag two channels at each SPW edge and channels outside
+  4--8 GHz: 1,900 unflagged stored frequency channels, 1,880 unique centers.
+  This is an explicit simulator tuning on a real WIDAR resource structure,
+  <strong>not an exported RCT resource or observed dataset</strong>. Keep LSRK as the
+  approved simulation convention; do not relabel an existing TOPO dataset.</li>
+<li>Size: 8,087,040 cross-correlation MS rows, 2,070,282,240 stored complex samples;
+  16.56 GB DATA, approximately <strong>19.93 GB (18.56 GiB)</strong> basic column payload.
+  This excludes table/tile overhead and MODEL_DATA/CORRECTED_DATA duplicates;
+  flags may be packed. Stokes I uses 960,336,000 unflagged parallel-hand samples,
+  not all four stored correlations. Measure actual disk size in the generation
+  pilot. Checked headroom: 115 GiB internal and 1.2 TiB external.</li>
+<li>Beam/field: nearest-cell, SPW-center geometric uniform-density axis-cut FWHM
+  is 0.216/0.222 arcsec (4.3--4.4 pixels), versus 1.42/1.22 arcsec under natural
+  density weighting. The latter has a broad pedestal, so natural weighting
+  is not the intended high-resolution endpoint. These are <strong>not CASA fitted
+  beams</strong>. At 90 arcsec, rectangular channel/time averaging worst-baseline
+  peak-loss bounds are 1.86%/0.635%; ignored sampled w phase reaches 0.360 rad.
+  Gaussian PB response is about 0.797 at 8 GHz. Preserve wide-field and
+  chromatic-PB effects, including spectral-index bias.</li>
+<li>Spectral-model check: least-squares fits to the component power laws on the
+  selected frequencies give worst relative errors 12.39% / 2.71% / 0.561%
+  for 2/3/4 Taylor terms. These are spectral fits, not measured MT-MFS image
+  errors. Do not mistake their unmodelled curvature for a code defect. Keep
+  a separate flat-spectrum one-term control; select the coupled case's Taylor
+  order and truth tolerances before its deep-clean acceptance.</li>
+</ul>
+<p><strong>Next:</strong> a small CASA generation/PSF pilot with this sky, SPW identities and
+real configuration positions. Verify frames, scan/antenna association,
+finite weights, averaging and the PB/w model; measure storage per sample and
+inspect the actual weighted beam. Fix the deconvolution threshold and
+Taylor-order acceptance there before bulk generation. The native simulator
+currently exposes one SPW per request; use a fixture driver and existing tools,
+not a speculative public-API expansion. No bulk MS generation or performance
+campaign has started. The 16-GiB native and 8-GiB diagnostic limits remain;
+the old full-32GB dataset is unrelated and still excluded.</p>
+<p>The performance skill kept this at the representative-workload boundary; the
+radio corpus review prompted explicit sparse-track, smearing, w/PB and Taylor
+caveats. V1 produced figures but failed serializing a NumPy float32 beam width;
+an explicit Python-float conversion and regression test repaired the diagnostic.
+Failed and successful records are retained.
+Final preview v4 completed in 7.64 seconds with sampled peak aggregate RSS
+2.02 GB under the 8-GiB diagnostic guard; six focused tests, Ruff and
+<code>just docs-check</code> passed. That time is preview generation, <strong>not imaging</strong>.</p>
+<h2 id="revised-workload-proposal-substantial-source-rich-4096-square-continuum">Revised workload proposal: substantial, source-rich 4096-square continuum<a class="headerlink" href="#revised-workload-proposal-substantial-source-rich-4096-square-continuum" title="Permanent link">&para;</a></h2>
+<p>Read-only inspection on 2026-09-23 found that simply enlarging the old control
+would not satisfy the owner's intent:</p>
+<ul>
+<li><code>issue607-standard-mfs-representative.json</code> selects 24 channels, a 512-square
+  image and only 25 Hogbom iterations. Its stored simulation request starts at
+  8 GHz with 2-MHz channels; <code>du -sk</code> reports 1,088,364 KiB (about 1.04 GiB) for
+  the existing small MS. These are the inspected files and allocated disk size,
+  not a new measurement of selected unflagged samples.</li>
+<li>The Wave 1 source generator has a 512-square structured sky with arms/ring/
+  halo and three Gaussian compact features. Its cube generator multiplies the
+  same spatial plane by a channel-dependent scalar; it does not supply a rich
+  spatially varying broad-band spectral-index truth model. Keep it as a
+  regression control, not the new large-image performance benchmark.</li>
+<li>The C-array Q-band fixture was designed for line-plus-continuum cube work at
+  1024 square over 44--45.022 GHz. Its interesting line morphology is not an
+  adequate substitute for a broad-band continuum/MT-MFS truth sky.</li>
+</ul>
+<p>Evidence: <a href="https://github.com/bglenden/casa-rs/blob/0dc50a57162126ca334b3ec6386b3051e20959db/tools/perf/imager/workloads/issue607-standard-mfs-representative.json">control manifest</a>,
+<a href="https://github.com/bglenden/casa-rs/blob/0dc50a57162126ca334b3ec6386b3051e20959db/tools/perf/imager/wave1_dataset_registry.json">registry</a>,
+<a href="https://github.com/bglenden/casa-rs/blob/0dc50a57162126ca334b3ec6386b3051e20959db/tools/perf/imager/stage_wave1_datasets.py">Wave 1 source generator</a>,
+<a href="https://github.com/bglenden/casa-rs/blob/0dc50a57162126ca334b3ec6386b3051e20959db/tools/perf/imager/stage_t55_c_array.py">C-array source generator</a>.
+The existing on-disk request and MS are under
+<code>/Volumes/GLENDENNING/casa-rs-imperformance/wave1/vla/single/small/</code>.
+No existing input has been changed.</p>
+<p>The 4096-square image size is owner-approved. Other design criteria below are
+proposed, not an already approved or generated observing manifest:</p>
+<ul>
+<li><strong>4096 x 4096 output</strong>, with roughly 4--6 pixels across the narrowest measured
+  synthesized beam. Choose frequency/configuration/cell together. Distribute
+  emission through a substantial usable field; neither empty padding nor
+  excessive oversampling counts as a representative large image.</li>
+<li><strong>A populated deterministic continuum sky:</strong> roughly 50--100 unresolved or
+  barely resolved sources, plus 10--20 structured extended complexes including
+  jets/lobes, filaments, rings and diffuse emission. Include several bright and
+  many fainter features with varied positions and orientations, not copies of
+  one Gaussian. These counts are proposed construction ranges, not acceptance
+  thresholds or claims of an observed population.</li>
+<li><strong>Recoverable scales:</strong> extended structures should span several to tens of
+  synthesized beams, with enough short baselines to constrain them. The
+  primary-beam field and largest recoverable scale are different constraints.
+  Use actual VLA configurations and, if necessary, a justified combination;
+  inspect UV coverage and the PSF before freezing the choice. Check frequency-
+  dependent PB, time/channel averaging and the w term; do not force a standard
+  gridder or narrow field merely to match the earlier proposal. NRAO's
+  <a href="https://science.nrao.edu/facilities/vla/docs/manuals/oss/performance/resolution">resolution guidance</a>
+  and <a href="https://science.nrao.edu/facilities/vla/docs/manuals/oss/performance/fov">field-of-view guidance</a>
+  describe these independent limitations.</li>
+<li><strong>Substantial actual input:</strong> aim initially at several hundred million
+  correlation-channel samples and a roughly 5--15-GiB MS, with sustained
+  hour-angle coverage and scientifically suitable time/channel resolution.
+  Record actual rows, channels, correlations, unflagged sample count and bytes;
+  do not inflate file size using unused columns, repeated rows or duplicated
+  channel data. As arithmetic only, 1.5 million rows x 128 channels x two
+  correlations is 384 million complex samples, or 3.072 GB for Complex32 DATA
+  alone; total MS size depends on the stored columns and cannot be inferred
+  from that number. Exact design may change after this accounting.</li>
+<li><strong>MFS and MT-MFS controls are distinct.</strong> Use a flat-spectrum or otherwise
+  explicitly defined one-term control, and a genuinely broad-band case with
+  spatially varying known spectra for coupled MT-MFS. Account for Taylor
+  approximation error and the chromatic beam. Do not confuse unmodelled source
+  spectra with an implementation failure or reuse the line-cube exception rule.</li>
+<li><strong>Real deconvolution:</strong> the initial noise-free sky has enough flux/structure
+  for deep cleaning and repeated visibility-domain major refreshes. This is not
+  a real-observation sensitivity claim. Stop at a scientifically specified
+  residual threshold with a safety iteration limit, rather than a token 25-
+  component run or inflated iteration count. Record residual convergence,
+  component/major counts and recovered morphology/flux.</li>
+</ul>
+<p>Next sequence: specify the exact observing/sky manifest and storage estimate;
+inspect truth panels, UV/beam and smearing checks; then obtain the matched
+complete CASA and native W1/W4 measurements under the existing resource limits.
+Choose the optimization only after those results. A small smoke fixture may
+validate generation, but cannot become the performance endpoint. Generating
+the new MS or starting imaging has not been done by this read-only assessment.
+The no-full-32GB, no additional Obit install and no push/merge/release/cleanup
+boundaries remain. Preserve historical inputs and acceptance evidence.</p>
+<h3 id="native-spectral-setup-must-correspond-to-a-real-vla-resource">Native spectral setup must correspond to a real VLA resource<a class="headerlink" href="#native-spectral-setup-must-correspond-to-a-real-vla-resource" title="Permanent link">&para;</a></h3>
+<p>Brian additionally requires explicit, realistic MS channelization. Proposed
+continuum parent setup: VLA C band, nominally 4--8 GHz with the 3-bit samplers,
+32 spectral windows of 128 MHz each, 64 channels per window at 2 MHz, full
+RR/RL/LR/LL correlations. That is <strong>2048 frequency channels per correlation</strong>
+across the windows, not 2048 channels in every MS row and not 8192 distinct
+frequencies. Each cross-correlation MS row belongs to one DATA_DESC_ID/SPW and
+contains its 64 x 4 samples. This proposal fixes the correlator structure for
+the recipe discussion, not the yet-unverified exact tuning or configuration.</p>
+<p>NRAO's <a href="https://science.nrao.edu/facilities/vla/docs/manuals/obsguide/presubmission-checklists">resource guidance</a>
+specifies 32 subbands for C/X 3-bit continuum and distinguishes integration
+defaults by array. The
+<a href="https://science.nrao.edu/facilities/vla/docs/manuals/opt-manual/referencemanual-all-pages">OPT manual</a>,
+under NRAO Defaults / Wide Band Continuum Resources, explicitly describes
+64 channels per 128-MHz full-polarization window (its worked example's total
+window count is K-band-specific, not our C-band count). The sum
+of nominal subband widths is 4.096 GHz; this is not a claim of 4.096 GHz unique
+usable sky coverage inside a nominal 4--8-GHz receiver band. Copy verified
+baseband/subband tunings and record overlap, band-edge exclusions and flags
+before generating the MS. Explicitly specify the actual frequency reference
+frame and its conversion; do not relabel coordinates merely to match a frame.</p>
+<p>Any reduced-resolution imaging MS must be labelled as an averaged derivative
+of that parent setup. Set the averaging from the longest baselines and furthest
+science source's allowed bandwidth/time smearing, retaining SPW identity and
+actual channel widths. Do not silently replace this with an arbitrary total
+of 128 or 256 channels to fit a target file size. The earlier 5--15-GiB estimate
+is provisional: realistic channelization and track length may require a larger
+input and a separately agreed resource/storage decision. No such expanded run
+is authorized or launched by this proposal.</p>
+<h2 id="authority-and-evidence-boundaries">Authority and evidence boundaries<a class="headerlink" href="#authority-and-evidence-boundaries" title="Permanent link">&para;</a></h2>
+<p>The live top section of <a href="https://github.com/bglenden/casa-rs/issues/541">#541</a> explicitly requires within-one-image MFS and
+coupled MT-MFS, complete-application W1/W2/W4 evidence, reuse of #581/PR #585,
+unchanged scientific checks, and no per-worker full grids. It requires the
+workload, numerical performance acceptance, and resources to be recorded before
+a campaign. The cube's revised &gt;=2x criterion is <strong>not</strong> an MFS criterion.</p>
+<p><a href="https://github.com/bglenden/casa-rs/issues/625">#625</a> is a separate, queued AW/MT-MFS full-dataset science and serial-parity
+obligation: 4096-square, 63 fields, 16 SPWs; frozen CASA 9073.69128 s; its own
+32-GiB ceiling. <a href="https://github.com/bglenden/casa-rs/issues/449">#449</a> retains separate frozen VLASS four-row 10x and final
+warm-run obligations. Neither is activated, satisfied, or weakened here. This
+proposal uses the current task's <strong>16-GiB native aggregate planning/RSS limit</strong>,
+8-GiB build/diagnostic guard, two Cargo jobs, and no full-32GB run. A short new
+diagnostic does not replace either ticket's final selection or run protocol.</p>
+<p>Live checkout verification: branch <code>codex/t55-full-size-validation</code>, HEAD
+<code>405d01adc58c6a4844c41924dbef62c984091492</code>; tracked source clean, <code>work/</code> untracked.
+The current work summary records the pushed source checkpoint and accepted
+C-array v3 result. Those cube results are not evidence of MFS speed.</p>
+<h2 id="actual-application-path-and-reusable-code">Actual application path and reusable code<a class="headerlink" href="#actual-application-path-and-reusable-code" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>Current executing owner</th>
+<th>Consequence for the proposal</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Selection/request</td>
+<td><code>execute_continuum</code> prepares, then <code>execute</code> resolves/compiles/validates the selected observation.</td>
+<td>Retain selection, weighting, flags, coordinates and capability checks.</td>
+</tr>
+<tr>
+<td>Application lifecycle</td>
+<td><code>run_native</code> selects <code>CubePhase</code> only for its supported channel-local capability; MFS/Taylor use <code>SpectralCycleExecutor</code>. Both implement <code>MajorCyclePhase</code>.</td>
+<td>Extend the MFS implementation behind this existing seam; do not introduce a public mode switch or error fallback.</td>
+</tr>
+<tr>
+<td>Initial imaging</td>
+<td><code>run_stream</code> consumes bounded weighted chunks and can overlap science with replay compilation. <code>InitialPlaneBatch</code> only supports certified-zero channel-local, non-AW/non-mosaic work.</td>
+<td>MFS/Taylor cannot inherit cube initial-plane parallelism simply by requesting four workers. Preparation overlap is not within-plane gridding.</td>
+</tr>
+<tr>
+<td>CLEAN</td>
+<td>One loop in application <code>lib.rs</code> consumes reconstruction completion, controls continued cleaning and requests the final major refresh.</td>
+<td>Preserve the existing Clark/MT-MFS controller and component-order dependencies.</td>
+</tr>
+<tr>
+<td>Residual refresh</td>
+<td><code>run_gridded_replay</code> binds the model/prior state, executes bounded frozen replay, then returns ordinary scientific completion.</td>
+<td>Preserve the proven <code>dirty - A* W A model</code> computation and reusable PSF/normal state; do not require rereading the original MS each major.</td>
+</tr>
+<tr>
+<td>Publication</td>
+<td><code>publish_products</code> admits existing product windows and the serial CASA-compatible sink.</td>
+<td>Keep bounded preparation/restoration and ordered writing, masks/WCS/beams and individual-image atomic replacement.</td>
+</tr>
+</tbody>
+</table>
+<p>Source locations: <a href="https://github.com/bglenden/casa-rs/blob/405d01adc58c6a4844c41924dbef62c984091492/crates/casa-imaging-application/src/continuum_request.rs#L474-L512">request</a>, <a href="https://github.com/bglenden/casa-rs/blob/405d01adc58c6a4844c41924dbef62c984091492/crates/casa-imaging-application/src/lib.rs#L330-L829">application and CLEAN loop</a>,
+<a href="https://github.com/bglenden/casa-rs/blob/405d01adc58c6a4844c41924dbef62c984091492/crates/casa-imaging-application/src/major_cycle.rs#L19-L238">phase interface</a>, <a href="https://github.com/bglenden/casa-rs/blob/405d01adc58c6a4844c41924dbef62c984091492/crates/casa-imaging-runtime/src/streaming_cube/phase.rs#L97-L139">cube eligibility</a>,
+<a href="https://github.com/bglenden/casa-rs/blob/405d01adc58c6a4844c41924dbef62c984091492/crates/casa-imaging-runtime/src/spectral_cycle.rs#L1780-L2158">runtime initial and refresh</a>, <a href="https://github.com/bglenden/casa-rs/blob/405d01adc58c6a4844c41924dbef62c984091492/crates/casa-imaging-reconstruction/src/spectral_operator/initial_planes.rs#L61-L113">initial-plane eligibility</a>,
+<a href="https://github.com/bglenden/casa-rs/blob/405d01adc58c6a4844c41924dbef62c984091492/crates/casa-imaging-application/src/lib.rs#L995-L1134">publication</a>. <code>GridThreads</code> exists as a historical task requirement
+but is not in the installed supported-task list; use the existing explicit
+resource worker policy rather than assume an old flag activates a path
+(<a href="https://github.com/bglenden/casa-rs/blob/405d01adc58c6a4844c41924dbef62c984091492/crates/casa-imaging-application/src/availability.rs#L499-L523">availability</a>).</p>
+<p>The current replay is not a blank slate. It has four worker-count-independent
+prediction lanes, then four accumulation lanes. It classifies a bounded record
+window, counts/prefix-routes records into tiles, subdivides hot tiles into at most
+four shards with at most three additional shards globally, assigns by tap load,
+and merges in canonical tile/shard order. Prediction reads shared forward grids.
+Taylor records preserve their moment width. Existing tests check identical work
+and commit identities and worker-independent grid residency. The production
+merge is ordered but visits all active tile/shard accumulators on the committing
+thread. Its storage pool is bounded by the <strong>window and tile catalog</strong>, not by
+the number of workers. <a href="https://github.com/bglenden/casa-rs/blob/405d01adc58c6a4844c41924dbef62c984091492/crates/casa-imaging-reconstruction/src/gridded_normal_operator/two_domain.rs#L1138-L1253">Routing/merge</a>, <a href="https://github.com/bglenden/casa-rs/blob/405d01adc58c6a4844c41924dbef62c984091492/crates/casa-imaging-reconstruction/src/gridded_normal_operator.rs#L303-L416">layout</a>, <a href="https://github.com/bglenden/casa-rs/blob/405d01adc58c6a4844c41924dbef62c984091492/crates/casa-imaging-runtime/src/complete_data_parallel_mfs_tests.rs#L467-L489">tests</a>.</p>
+<p><code>PreparedFft</code> currently gathers every axis lane into one scratch lane, transforms
+it, then scatters it back; both axes and the surrounding shifts are serial.
+Forward-model construction and residual completion loop through term grids
+serially. Parallelizing independent cube planes does not parallelize these
+operations on one MFS image. <a href="https://github.com/bglenden/casa-rs/blob/405d01adc58c6a4844c41924dbef62c984091492/crates/casa-imaging-reconstruction/src/spectral_operator.rs#L11836-L11953">FFT</a>, <a href="https://github.com/bglenden/casa-rs/blob/405d01adc58c6a4844c41924dbef62c984091492/crates/casa-imaging-reconstruction/src/spectral_operator.rs#L8821-L8909">forward model</a>,
+<a href="https://github.com/bglenden/casa-rs/blob/405d01adc58c6a4844c41924dbef62c984091492/crates/casa-imaging-reconstruction/src/spectral_operator.rs#L10441-L10492">residual completion</a>.</p>
+<h2 id="upstream-mechanisms-what-transfers-and-what-does-not">Upstream mechanisms: what transfers, and what does not<a class="headerlink" href="#upstream-mechanisms-what-transfers-and-what-does-not" title="Permanent link">&para;</a></h2>
+<h3 id="casa-libra">CASA / libRA<a class="headerlink" href="#casa-libra" title="Permanent link">&para;</a></h3>
+<p>Inspected libRA revision: <code>0ab99e261878334d6588eafa360cef3b673e897f</code>, local fork of
+ARDG-NRAO/LibRA. Its tracked source is unchanged apart from an unrelated deleted
+Python cache file. CASA science was checked using <code>git show</code> at
+<code>61020062cee290f5466cffed5ec5032e0c7a3434</code>, not the locally instrumented working
+files.</p>
+<ul>
+<li>libRA <code>GridFT::put</code> prepares row geometry in parallel and dispatches sectors
+  into <strong>one shared grid</strong>. The Fortran kernel clips each stencil to its owned
+  rectangle. It scans the visibility buffer for each sector; this is a useful
+  ownership example, not a recommendation to reproduce repeated scans.
+  Sum weights are separately accumulated/reduced. <code>get</code> assigns visibility row
+  ranges that read the shared forward grid. <a href="https://github.com/bglenden/libRA/blob/0ab99e261878334d6588eafa360cef3b673e897f/src/synthesis/TransformMachines2/GridFT.cc#L790-L1185">GridFT</a>,
+  <a href="https://github.com/bglenden/libRA/blob/0ab99e261878334d6588eafa360cef3b673e897f/src/synthesis/fortran/fgridft.f#L220-L346">clipped kernel</a>.</li>
+<li><code>MultiTermFTNew</code> makes T model/residual terms and 2T-1 PSF moments. Prediction
+  sums term contributions before returning model visibilities; gridding loops
+  terms with spectral weights. This is coupled science, not independent CLEANs
+  or evidence that its outer term loop scales. <a href="https://github.com/bglenden/libRA/blob/0ab99e261878334d6588eafa360cef3b673e897f/src/synthesis/TransformMachines2/MultiTermFTNew.cc#L315-L468">libRA Taylor</a>,
+  <a href="https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/TransformMachines2/MultiTermFTNew.cc?at=61020062cee290f5466cffed5ec5032e0c7a3434">pinned CASA counterpart</a>.</li>
+<li><code>FFT2D</code> can request threaded FFTW. Any future Rust FFT work should use the
+  already admitted team or an explicitly charged exclusive FFT team, not nest
+  W FFT threads inside W workers. This research does not propose an FFTW
+  dependency. <a href="https://github.com/bglenden/libRA/blob/0ab99e261878334d6588eafa360cef3b673e897f/src/synthesis/Utilities/FFT2D.cc#L60-L79">libRA FFT</a>.</li>
+<li>libRA also contains a different <code>MultiThreadedVisibilityResampler</code> with
+  per-resampler grid storage and a full-grid gather, and HPG-backed device
+  gridding with bounded visibility buckets. Neither GPU/distributed results
+  nor the replicated-grid path establish an acceptable laptop CPU architecture.
+  <a href="https://github.com/bglenden/libRA/blob/0ab99e261878334d6588eafa360cef3b673e897f/src/synthesis/MeasurementComponents/MultiThreadedVisResampler.cc#L326-L381">replicated gather</a>, <a href="https://github.com/bglenden/libRA/blob/0ab99e261878334d6588eafa360cef3b673e897f/src/synthesis/TransformMachines2/AWVisResamplerHPG.cc#L100-L282">HPG</a>.</li>
+</ul>
+<h3 id="obit">Obit<a class="headerlink" href="#obit" title="Permanent link">&para;</a></h3>
+<p>The <a href="https://www.cv.nrao.edu/~bcotton/Obit.html">developer site</a> points to Bill Cotton's upstream repository;
+the live master pin is <code>ebc1c229e5e3870b5ce3c342bddb7313d986a06f</code>.
+Existing <a href="../obit-data-structure-source-notes/">local source notes</a> distinguish
+flat shared visibility buffers from private gridding arrays. Its previously
+recorded dirty/CLEAN timings concern a cube and different products/precision;
+they are <strong>not an MFS scaling baseline</strong>. No installation is needed to examine
+the source.</p>
+<h2 id="proposed-ownership-and-numerical-contract">Proposed ownership and numerical contract<a class="headerlink" href="#proposed-ownership-and-numerical-contract" title="Permanent link">&para;</a></h2>
+<p>The target is a deep reconstruction module with simple numeric buffers behind
+the existing phase interface, not more caller-visible stages:</p>
+<ol>
+<li><strong>Shared bounded input.</strong> Retain the existing weighted-source and frozen
+   replay contracts. Decode/precompute geometry once per bounded block. Keep
+   numeric arrays and borrowed views; do not recreate per-sample object graphs,
+   copy an entire MS, or duplicate CF payloads. Freeze row/channel/tap facts at
+   their scientifically valid lifetime, not across changed selection/weighting.</li>
+<li><strong>Prediction ownership.</strong> Workers own disjoint complete prediction groups,
+   sharing immutable model grids for the current model epoch. Preserve group
+   coupling across correlations/domains/Taylor terms. Only bounded predicted
+   values are exchanged with accumulation.</li>
+<li><strong>Output ownership.</strong> The preferred large-grid design has non-overlapping
+   output regions of shared value and compensation arrays. Route a small record
+   reference to every region intersected by its support; each owner updates only
+   its cells. Clip work, <strong>not the mathematical kernel or its normalization</strong>.
+   Do not assign solely by stencil centre and lose boundary taps. For standard
+   support narrower than a rectangular tile, at most four tile memberships are
+   needed; W/AW support requires the actual intersection bound, not this shortcut.</li>
+<li><strong>Order and skew.</strong> Stable count/prefix/scatter retains source order in each
+   cell across bounded blocks; logical regions do not change with W. Scheduling
+   can vary without changing that order. No cell atomics or locks in the hot
+   stencil loop. Fine regions and tap-cost scheduling mitigate central-UV skew;
+   they cannot parallelize every contribution to one hot cell. A bounded hot-tile
+   shard exception would require an explicit fixed reduction tree and measured
+   benefit, not a hidden return to replicated full grids. Initially use a block
+   barrier; do not invent a complex pipelined scheduler.</li>
+<li><strong>Taylor coupling.</strong> Keep <code>BlockNormalPlan</code>: T coefficients and 2T-1 moments,
+   with normal block entry <code>(a,b)</code> using moment <code>a+b</code>. Reuse the current rounding,
+   weights, flags and conjugate/normalization kernels. Term waves can bound
+   storage, but must include <strong>every cross term</strong> before the existing coupled
+   minor solve. Inverse transforms may be scheduled independently; choosing
+   separate CLEAN components per term is not valid. <a href="https://github.com/bglenden/casa-rs/blob/405d01adc58c6a4844c41924dbef62c984091492/crates/casa-imaging-reconstruction/src/block_normal.rs#L26-L180">algebra</a>.</li>
+<li><strong>FFT and image work.</strong> Parallelize disjoint rows/lanes and correction blocks
+   with an axis barrier on the admitted team. Prefer bounded blocked gathers or
+   in-place blocked transpose over an uncharged second full grid. This changes
+   traversal, not the transform convention or precision. Keep component selection
+   and MT-MFS solves coupled; only legally independent pixel work may parallelize.
+   Reuse existing product preparation and writer; do not replace them merely
+   because publication has some serial work.</li>
+<li><strong>Major-cycle reuse and deletion.</strong> Reuse weighting, PSF/normal state and
+   geometry/replay; rebuild only model-dependent prediction. Integrate initial
+   imaging and subsequent refresh through the same reconstruction kernel surface
+   where their algebra agrees. Replace covered tile/merge or serial dispatch code
+   after acceptance; comparison code is temporary, not a second production route.
+   Do not prematurely delete owners still serving W/AW, mosaic or other bases.</li>
+</ol>
+<p>Changing the accumulation tree can legitimately differ from the old code while
+remaining deterministic across W; it must pass the existing science checks and
+be described honestly. Bitwise equality with an old tree is not assumed. Avoid
+fast-math, precision changes, revised tolerances, new attestation, or extra
+verification-only array passes in this work.</p>
+<h2 id="memory-and-data-movement-calculated-not-measured">Memory and data movement: calculated, not measured<a class="headerlink" href="#memory-and-data-movement-calculated-not-measured" title="Permanent link">&para;</a></h2>
+<p>Let <code>P=Nx*Ny</code>, <code>G=Gx*Gy</code> after the existing padding, <code>T</code> be coefficient count,
+and <code>B=16G</code> bytes for one <code>Complex64</code> grid. Current standard padding is 1.2,
+rounded to an even 2/3/5-smooth length; shapes below apply to that standard
+one-domain, Stokes-I case, <strong>not automatically to AW/VLASS geometry</strong>.
+<a href="https://github.com/bglenden/casa-rs/blob/405d01adc58c6a4844c41924dbef62c984091492/crates/casa-imaging-reconstruction/src/spectral_operator.rs#L7740-L7888">allocation</a>, <a href="https://github.com/bglenden/casa-rs/blob/405d01adc58c6a4844c41924dbef62c984091492/crates/casa-imaging-reconstruction/src/spectral_operator.rs#L12055-L12075">padding</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Output side</th>
+<th>Padded side</th>
+<th>One f64 image (GiB)</th>
+<th>B (GiB)</th>
+<th>One private grid each: W1 / W2 / W4 (GiB)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>4096</td>
+<td>5000</td>
+<td>0.125</td>
+<td>0.373</td>
+<td>0.373 / 0.745 / 1.490</td>
+</tr>
+<tr>
+<td>8192</td>
+<td>10000</td>
+<td>0.500</td>
+<td>1.490</td>
+<td>1.490 / 2.980 / 5.960</td>
+</tr>
+<tr>
+<td>12150</td>
+<td>14580</td>
+<td>1.100</td>
+<td>3.168</td>
+<td>3.168 / 6.335 / 12.671</td>
+</tr>
+<tr>
+<td>16384</td>
+<td>20000</td>
+<td>2.000</td>
+<td>5.960</td>
+<td>5.960 / 11.921 / 23.842</td>
+</tr>
+</tbody>
+</table>
+<p>The private-grid column is <strong>only one grid per worker</strong>, excluding the final
+shared grid, model, compensation, images and all other state. It demonstrates
+why that approach is unacceptable; it is not an RSS prediction.</p>
+<p>Current standard initial allocation is <code>(7T-2)B</code>: value+compensation for T dirty
+and 2T-1 PSF grids, plus T forward grids (allocated even for an empty initial
+model). At 8192 and T=2 this is <strong>17.881 GiB of grids alone</strong>. Current replay adds
+<code>32*T*(G + A*min(R,K+3))</code> bytes of merge/pool arrays, where K is tile count, A
+the maximum halo-tile capacity, R maximum simultaneous records; T forward grids,
+routes and retained scientific state are additional. This is not <code>W*G</code>, but
+still a substantial footprint. <a href="https://github.com/bglenden/casa-rs/blob/405d01adc58c6a4844c41924dbef62c984091492/crates/casa-imaging-reconstruction/src/spectral_operator.rs#L7740-L7888">allocation</a>, <a href="https://github.com/bglenden/casa-rs/blob/405d01adc58c6a4844c41924dbef62c984091492/crates/casa-imaging-reconstruction/src/gridded_normal_operator.rs#L303-L416">layout</a>.</p>
+<p>Initial formation is more expensive than those grid-only figures: it crops
+complex dirty and PSF arrays, builds f64 sensitivity, and clones dirty into
+<code>invariant_dirty</code> while the operator still owns its grids. A source-derived
+payload lower bound for this case is
+<code>(7T-2)*16G + (4T-1)*16P + (2T-1)*8P</code> bytes. It gives 2.738 GiB (4096,T1),
+6.595 GiB (4096,T2), 10.951 GiB (8192,T1), <strong>26.381 GiB (8192,T2)</strong> and
+<strong>23.537 GiB (12150,T1)</strong>, excluding FFT, input, compiler, masks and other
+runtime state. The current whole-plane schedule therefore cannot admit the last
+two under 16 GiB even if refresh tile storage vanished. These are calculated
+allocation lower bounds, not measured RSS or a planner-failure diagnosis.
+<a href="https://github.com/bglenden/casa-rs/blob/405d01adc58c6a4844c41924dbef62c984091492/crates/casa-imaging-reconstruction/src/spectral_operator.rs#L10712-L10903">initial formation</a>.</p>
+<p>For the proposed shared-owner design, an explicit conservative phase formula is:</p>
+<div class="codehilite"><pre><span></span><code>M_peak = max over phases p of [
+  enclosing_live(p) + retained_science(p) + CF_cache(p)
+  + 16*G*(q_p + 2*r_p) + FFT_plans(p)
+  + source_and_replay_buffers(p) + route_capacity(p) + writer_windows(p)
+  + W * (FFT_lane_and_scratch(p) + thread_stack + bounded_kernel_scratch(p))
+]
+</code></pre></div>
+
+<p><code>q_p</code> counts resident model/forward grids and <code>r_p</code> resident accumulation grids;
+the factor two preserves value+compensation. Charge any distinct FFT output or
+transpose buffer explicitly, never as free scratch. Retained science includes
+actual model/support arrays, dirty/residual/PSF/Taylor normal planes, masks, and
+coupled minor-cycle workspace (use the existing <a href="https://github.com/bglenden/casa-rs/blob/405d01adc58c6a4844c41924dbef62c984091492/crates/casa-imaging-reconstruction/src/minor_cycle.rs#L44-L200">solver workspace formula</a>).
+Use actual retained capacities and storage permits; do not price every model
+sample as one f64, subtract allocations still live, or double-count shared Arcs.
+Paged state still has live read windows and I/O buffers. The RSS guard remains
+necessary because this is a planned allocation bound, not a promise about RSS.</p>
+<p>For fully resident refresh, <code>q=T,r=T</code>: <strong>3TB</strong>, the same grid term for W1/W2/W4.
+At 8192 this is 4.470 GiB for T1 or 8.941 GiB for T2 before other live state.
+At 12150 it is 9.503/19.006 GiB. Thus T2 at 12150 cannot fit the 16-GiB limit by
+this schedule, and even T1 at 16384 requires 17.881 GiB before other state.
+T1 at 12150 is only conditionally feasible for a <strong>redesigned refresh schedule</strong>;
+the current initial schedule already exceeds the limit as shown above.</p>
+<p>For oversized Taylor cases, use admitted term/moment waves and existing paged
+normal/model storage, preserving all cross terms. This trades memory for
+replay/FFT/I/O and needs measurement; it is not implemented or free. Initial
+zero-model work should not require forward grids. If the minimum resident grid
+set plus CLEAN state still exceeds 16 GiB, fail admission and return for a
+separate out-of-core FFT/solver design or resource decision. Tiles do not make
+arbitrarily large images fit, nor does lowering W fix worker-independent arrays.</p>
+<p>A full-grid copy costs B extra live bytes and at least 2B bytes of read/write
+traffic. At 12150 that is 3.168 GiB live and 6.335 GiB traffic. Each current FFT's
+two explicit grid shifts touch approximately 4B of grid read/write traffic;
+two gather/scatter axis traversals add another 4B, excluding scratch and FFT
+arithmetic traffic. These are source-derived traffic counts, not elapsed-time
+predictions. Remove unnecessary movement before assuming more threads hide it.</p>
+<h2 id="alternatives-and-the-smallest-decision-producing-experiment">Alternatives and the smallest decision-producing experiment<a class="headerlink" href="#alternatives-and-the-smallest-decision-producing-experiment" title="Permanent link">&para;</a></h2>
+<p>Reject full-grid-per-worker and global atomic gridding: the former violates the
+large-image memory requirement, the latter introduces hot-cell contention and
+worker-dependent arithmetic. Independent planes/terms cannot satisfy one-image
+MFS scaling. Do not copy libRA's repeated whole-buffer sector scans or Obit's
+replicated accumulator architecture. Do not replace the replay algebra with
+raw visibility rereads without demonstrating a complete-application benefit.</p>
+<p>Retaining the existing bounded tile/shard merge is a legitimate comparator,
+not a rejected correctness design. It already handles hot tiles and is tested.
+Exclusive ownership must earn its integration by reducing actual memory/merge
+cost without losing more to routing and skew. There is no current matched
+large-image MFS phase measurement here establishing that grid merging is the
+dominant wall-time cost.</p>
+<p>Before a larger campaign, propose one production-connected standard-MFS slice:
+same source selection, W1/W2/W4, one output image, real CLEAN, initial imaging,
+at least one subsequent/final residual refresh, and existing writer. Capture one
+parent observation using the existing phase/stream counters, not a broad new
+instrumentation project. Let F be non-overlapping critical-path FFT wall time;
+even ideal W4 FFT scheduling can save at most <code>0.75*F</code>. Stop before coding if
+that ceiling cannot meet the agreed useful benefit; do not automatically start
+a different optimization. No elapsed-time benefit is asserted by this research.</p>
+<p>For the FFT prototype, retain the same RustFFT plans, axis-0 then axis-1 order,
+gather/FFT/scatter loops, shifts, image layout and precision. Process one plane
+at a time, splitting disjoint lane groups over W1/W2/W4 with an axis barrier.
+Reconstruction owns borrowed numeric work; runtime dispatches it. In particular,
+<code>GriddedNormalReplayKernel::complete(self, _execution)</code> already receives but
+ignores the bounded execution capability. Thread that capability through the
+necessary model-forward, initial-inverse and residual-inverse call sites,
+following the existing borrowed-work convention. Preserve dependency direction;
+do not import runtime into reconstruction or create a second pool. The
+corresponding phase leases must cover worker dispatch, including completion and
+error joins, not just the earlier gridding workers. <a href="https://github.com/bglenden/casa-rs/blob/405d01adc58c6a4844c41924dbef62c984091492/crates/casa-imaging-runtime/src/complete_data_operator.rs#L2215-L2240">completion seam</a>,
+<a href="https://github.com/bglenden/casa-rs/blob/405d01adc58c6a4844c41924dbef62c984091492/crates/casa-imaging-runtime/src/bounded_stream.rs#L330-L377">admitted dispatch</a>.</p>
+<p>For maximum axis length L and actual plan scratch S, charge <code>16*W*(L+S)</code> bytes
+for lane/scratch, plus shared plans/descriptors/stacks. The incremental increase
+over the one-workspace parent is <code>16*(W-1)*(L+S)</code>, not W full images. A task's
+borrowed arrays cannot outlive the dispatch, including on failure. Do not add
+an in-place transpose, shift fusion, initial-grid parallelism, term waves, or
+allocation-lifetime repair to this first candidate. Leaving strided access
+unchanged deliberately distinguishes scheduling benefit from a layout change.</p>
+<p>Reuse the <code>issue607-standard-mfs-representative.json</code> application/science harness
+as a control, not a performance endpoint. Its 512-square, 24-channel Briggs
+fixture has full product/WCS/beam checks. A proposed performance selection is
+one source-bearing standard single-field MFS image at 4096, then 8192 only if
+the full live set fits; select cell/field and enough actual input samples to
+exercise realistic UV coverage, not empty pixels merely to inflate FFT time.
+This is a <strong>new workload proposal requiring a recorded manifest</strong>, not a claim
+that an existing 4096/8192 MFS reference has passed. Do not use the 32-GB-medium
+turnaround manifest under the current no-full-32GB authority.</p>
+<p>MT-MFS needs a separate broad-band, known-spectrum control with nonzero higher
+terms, off-centre sources, PSF cross moments, alpha and masks. The C-array
+line-rich 44–45.022-GHz cube is not a convincing broad-band MT-MFS truth case.
+Existing MT-MFS normal/minor/application oracle fixtures are the reuse starting
+point, not a substitute for complete large-image application evidence.</p>
+<p>Required discriminator: initial and refresh operator results, support-boundary
+and concentrated-UV cases, all coupled terms, canonical W1/W2/W4 reductions,
+failure/cancellation propagation, exact bounded allocation formulas, and no
+growth of full-grid residency with W. Then unchanged mode-appropriate CASA and
+serial/parallel product, mask, metadata/WCS, beam, flux and panel checks. The
+C-array-specific reviewed-discrepancy policy is not automatically applicable.</p>
+<p>For the first scheduling-only FFT change, specifically test rectangular shapes,
+off-centre impulses, Fourier modes, random forward/inverse data, omitted or
+duplicated lanes, axis barriers and worker failure. Bitwise transform equality
+across W is expected because each lane performs unchanged arithmetic. The
+support-boundary/hot-tile reduction tests become directly affected tests if the
+later accumulation design is pursued, not extra work invented for an FFT-only
+candidate.</p>
+<p>Time from selected input/preparation through publication; include replay writes,
+reads and FFT/model setup. Report exclusive phase wall time, worker activity,
+RSS, I/O and term/grid passes. Do not sum overlapping worker times as wall time.
+CASA single-process does not necessarily mean one CPU thread: record the actual
+OpenMP/FFT configuration and honor any frozen reference's timing convention.
+One matched observation first; repeat if noise makes the decision ambiguous.
+This does not waive #449's separately prescribed final repetitions.</p>
+<h2 id="approval-required-before-implementation">Approval required before implementation<a class="headerlink" href="#approval-required-before-implementation" title="Permanent link">&para;</a></h2>
+<p>Approve the bounded within-plane FFT integration experiment through the existing
+owners; record its
+specific data selection, geometry, CLEAN controls and resource allowance.
+Record a minimum worthwhile end-to-end benefit for this experiment and a
+numerical MFS scaling target before a wider campaign. A subsequent exclusive-grid
+ownership or out-of-core change needs its own explicit architectural approval.
+Do not silently import the cube's 2x target or promise 3x from source
+inspection. Keep serial independently competitive with its matched CASA
+reference; do not pad serial to improve a scaling ratio.</p>
+<p>No approval is requested for another architecture inventory, new public format,
+second controller, precision change, additional Obit install, full-size run,
+push/merge/release or cleanup. None has been performed.</p>
+<h2 id="independent-oracle-challenge-and-disposition">Independent Oracle challenge and disposition<a class="headerlink" href="#independent-oracle-challenge-and-disposition" title="Permanent link">&para;</a></h2>
+<p><a href="https://chatgpt.com/c/6ab45466-fb7c-83e8-8c3b-4e1c8f17c8ea">Completed review</a>,
+Chrome, signed-in account, visible <strong>6 Pro</strong> with Latest selected and Pro effort.
+Two bounded primary-source searches used GPT-6 Luna Max; source interpretation
+and synthesis remained in the main task. No model was silently substituted.</p>
+<p>Oracle independently inspected the pinned current application/runtime/operator
+and libRA sector sources. It did not inspect the local tree, full historical
+ticket discussion, current Obit, or every restoration lifetime. The prompt
+included the issue/scope, revision URLs, decisive source excerpts, constraints,
+memory arithmetic and the proposed alternatives. Its advice is not benchmark
+evidence.</p>
+<p>Adopted after local verification: one FFT-only prototype first; preserve existing
+accumulator arithmetic; use the existing completion dispatch seam; account for
+coexisting cropped arrays and dirty cloning, not just grids. The source-derived
+initial-formation formula above was checked against <code>finish_bound_recycled</code> and
+recalculated locally. The review's final table gives 26.38 GiB for 8192,T2; an
+earlier thinking-progress estimate was not used.</p>
+<p>Deferred pending measurements: exclusive-region gridding, transpose/layout
+changes, initial-grid parallelism and term-wave residency. Validity of those
+designs does not establish a useful application-level speedup. Additional traps
+incorporated into this proposal: route fan-out must not multiply sum weights or
+coverage counts; stable parallel scatter needs deterministic offsets rather
+than race-ordered atomic cursors; compensation persists across blocks; free
+memory is credited only after actual owner release.</p>
+<h2 id="source-index">Source index<a class="headerlink" href="#source-index" title="Permanent link">&para;</a></h2>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

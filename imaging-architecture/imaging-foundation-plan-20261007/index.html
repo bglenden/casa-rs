@@ -1,0 +1,2099 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Imaging foundation: review and phased refactor plan - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#imaging-foundation-review-and-phased-refactor-plan" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Imaging foundation: review and phased refactor plan
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scientific Workbench
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Scientific Workbench
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../scientific-notebooks-and-assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Notebooks, Tutorials, Python, and AI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mac-native-gui-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native macOS Product Spec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="imaging-foundation-review-and-phased-refactor-plan">Imaging foundation: review and phased refactor plan<a class="headerlink" href="#imaging-foundation-review-and-phased-refactor-plan" title="Permanent link">&para;</a></h1>
+<p>Truth class: normative plan
+Date: 2026-10-07
+Branch: <code>claude/imaging-foundation</code> (cut from <code>codex/t55-full-size-validation</code>
+at <code>e714fd2339</code>)
+Status: APPROVED by the owner on 2026-10-07 (decisions D1–D10 and closure of
+the #486 family included)
+Reviewed sources: six read-only deep dives over the imaging crates, the
+RadioAstronomyOracle corpus (NRAO 2024/2026 synthesis workshop slides,
+Synthesis Imaging II), CASA <code>synthesis/</code> C++, LibRA/HPG, and issues #486,</p>
+<h1 id="541-543-546-552554-625-445450-341-217">541, #543, #546, #552–#554, #625, #445–#450, #341, #217.<a class="headerlink" href="#541-543-546-552554-625-445450-341-217" title="Permanent link">&para;</a></h1>
+<h2 id="1-purpose">1. Purpose<a class="headerlink" href="#1-purpose" title="Permanent link">&para;</a></h2>
+<p>Review the cube, MFS, Clark, multi-worker and Metal imaging code added under
+programme #486 and define one refactor that leaves a single mathematical
+imaging foundation. After it, standard, W-projection, AW-projection, mosaic,
+MT-MFS, cube and MFS imaging are parameterisations of one measurement
+operator, one major-cycle pass, one deconvolution driver and one execution
+model, on CPU or Metal. Performance and memory stay within the measured
+checkpoints. Code that exists only to re-verify, re-hash, re-validate or
+re-describe what the type system or an earlier layer already guarantees is
+removed.</p>
+<p>This document is written so that a different implementer (Opus) can execute
+each ticket from the text without re-deriving the design. Where a signature is
+given, it is the intended signature. Where a file is named for deletion, the
+ticket is not done until the file is gone.</p>
+<p>Section 2 records owner decisions already made. Section 3 lists decisions
+this plan asks the owner to confirm. Section 4 is the review. Sections 5 to 8
+are the design, deletion list and test strategy. Section 9 is the ticket set
+with the review gates. Section 10 is the anti-slop rule set every ticket is
+reviewed against. Section 11 is process.</p>
+<h2 id="2-owner-decisions-recorded-2026-10-07">2. Owner decisions recorded 2026-10-07<a class="headerlink" href="#2-owner-decisions-recorded-2026-10-07" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Base: branch from the T55 tip, not <code>main</code>. T55 stays unmerged; the first
+  merged ticket of this plan carries its content to <code>main</code>.</li>
+<li>Plan first, then tickets. Opus implements most tickets; Fable lands the
+  foundation tickets (IF-0, IF-1) so later tickets have a concrete pattern.</li>
+<li>Breadth first: convert all imaging code to the shared design using tests
+  that take at most about ten minutes each, then run one systematic
+  performance and memory pass against the representative datasets.</li>
+<li>Shrink runtime bookkeeping (receipts, evidence, ledgers, resource authority)
+  to what admission, cancellation, Metal fences, bounded streaming and atomic
+  publication need. ADR text is superseded where required.</li>
+<li>Move mosaic, W and AW onto the shared operator now and thoroughly, so no
+  second refactor follows.</li>
+<li>Prefer fewer law-based tests over fixture-heavy tests. Each guaranteed
+  behaviour keeps coverage; the count of tests is not a goal.</li>
+<li>Programme #486 and its subsidiary tickets may be closed as superseded, with a
+  new ticket set, provided no work or evidence is lost.</li>
+<li>Resource limits: 16 GiB native, two Cargo jobs. GLENDENNING is mounted; CASA
+  is at <code>/opt/homebrew/bin/casa</code>.</li>
+<li>Review gates: at logical points the owner has Fable and (probably) OpenAI
+  Astra review the implementation for drift from these goals and replan from
+  discoveries. Section 9.3 defines them.</li>
+<li>D2 agreed, with the addition that CPU f32 grids are a user-selectable
+  switch for large problems. Obit and LibRA are to be surveyed for processing
+  techniques worth adopting; adopted ones are recorded in section 5.9.</li>
+</ul>
+<h2 id="3-decisions-requested-from-the-owner">3. Decisions requested from the owner<a class="headerlink" href="#3-decisions-requested-from-the-owner" title="Permanent link">&para;</a></h2>
+<p>Each is stated with the recommendation. Approval of the plan approves these
+unless the owner strikes one.</p>
+<ul>
+<li><strong>D1 Replay cache.</strong> Delete the gridded-normal replay subsystem
+  (<code>gridded_normal_operator*</code>, <code>complete_data_operator.rs</code>, <code>metal_normal.rs</code>,
+  the replay half of <code>managed_spill.rs</code>; about 20k lines). Later major cycles
+  re-traverse the MeasurementSet and grid <code>V − A·m</code> per sample, as CASA does.
+  Reason: the cache is not scientifically required; it stores about 40 bytes
+  per row-channel sample, which for the Wave3 workload is an 86 GB scratch
+  reservation against a 36 GB input; it is valid only while weighting is
+  frozen; and it forms the residual as a difference of two large f64 images
+  rather than gridding the residual visibilities. The performance pass (IF-10)
+  may add a bounded tap-plan cache as an execution strategy over the same
+  operator if measurement shows it pays.</li>
+<li><strong>D2 Grid precision (owner agreed 2026-10-07).</strong> Metal is one
+  implementation of the backend trait and accumulates in f32 with atomic adds
+  (nondeterministic order). The CPU accumulates in f64 by default. This is
+  consistent with the owner's 2026-09-24 numerical direction: acceptance is
+  the 1e-3 normalised tolerance, not bitwise agreement. Grid precision is a
+  user-selectable request field, <code>gridprecision = auto | f32 | f64</code>, exposed
+  in the parameter catalog. <code>auto</code> selects f64 for constant and Taylor bases
+  on CPU and f32 for channel-local cubes and for Metal. <code>f32</code> halves grid and
+  accumulator memory so large problems become tractable on this workstation;
+  the CPU backend supports both precisions for every convolution-function set.</li>
+<li><strong>D3 AW convolution-function cache.</strong> Replace the private content-addressed
+  prepared-artifact store (manifest schema 7, 18 hash domains, eviction
+  ledger; about 15k lines across <code>aw_cache.rs</code>, <code>prepared_aw_phase.rs</code>,
+  <code>prepared_artifact*</code>) with: read CASA <code>CFS_*</code>/<code>WTCFS_*</code> images directly
+  into an in-memory LRU of cells; native EVLA CF generation writes CASA-format
+  CF images into a cache directory, so one loader serves both. Payload
+  checksums on an importable, regenerable cache are dropped.</li>
+<li><strong>D4 Crate layout.</strong> Split <code>casa-imaging-reconstruction</code> into
+  <code>casa-imaging-operator</code> (measurement operator, convolution functions,
+  weighting, normal images) and <code>casa-imaging-deconvolution</code> (minor-cycle
+  driver, solvers, PSF summary, masks). Add <code>casa-imaging-metal</code> (macOS only)
+  implementing the backend trait. Move the CASA image writer into
+  <code>casa-imaging-products</code>. Delete <code>casa-imaging-reconstruction</code> when empty.</li>
+<li><strong>D5 Runtime core.</strong> Replace receipts (schema 25), the execution DAG,
+  execution bindings, the resource-authority topology, observation
+  transactions and the cost model with: <code>HostResources</code>, one <code>admit()</code> per
+  phase returning an RAII reservation, a sequential phase list with a cancel
+  token, the trimmed Metal execution state, the bounded worker team, and an
+  O(1)-per-phase <code>RunSummary</code>. ADR-0010 is superseded by a new ADR-0016.</li>
+<li><strong>D6 Architecture checker.</strong> Retire <code>scripts/check-imaging-architecture.py</code>
+  (3,578 lines; hashes Rust function bodies and pins four SHA-256 ratchets),
+  <code>test-imaging-architecture-structural.py</code>, <code>migration-matrix.json</code>,
+  <code>baselines/</code> and the representative-science receipt registry. Replace with a
+  dependency-direction check (about 150 lines) over <code>cargo metadata</code> plus a
+  forbidden-import grep (device APIs only in <code>casa-imaging-metal</code>; no
+  <code>std::env</code> in library crates; no <code>sha2</code>/<code>crc</code> in imaging crates outside
+  external-format readers).</li>
+<li><strong>D7 Programme closure.</strong> Close #486 and T-tickets #541, #543, #546, #552,
+  #553, #554 as superseded by the IF ticket set, each with a closing comment
+  that links this plan, the final T55 commit, the durable evidence roots on
+  GLENDENNING and the NAS, and the IF ticket that inherits its outcome. #625
+  closes into IF-10 (its serial AW/MT-MFS time bar becomes an IF-10
+  acceptance row). #341 closes into IF-5; #217 into IF-8. The VLASS wave
+  #445–#450 stays open with a comment that IF-3/IF-10 are its route.</li>
+<li><strong>D8 Request layer.</strong> One <code>ImagingRequest</code> serde struct, defaulted and
+  validated from the provider-contracts catalog, replaces <code>CliConfig</code>,
+  <code>ImagerRunTaskRequest</code>'s mirror types, <code>ContinuumImagingRequest</code> and
+  <code>ApplicationRequest</code>. Dead and always-rejected task requirements are removed
+  from the catalog, not merely from the Rust enum.</li>
+<li><strong>D9 Diagnostics.</strong> Library crates read no environment variables. Diagnostic
+  switches become fields of <code>ImagingRequest.diagnostics</code> (stage timing, Metal
+  stage profiling, science trace); everything is emitted through <code>tracing</code>
+  via <code>casa-logging</code>. The required <code>CASA_RS_IMAGING_SPILL_*_BYTES_PER_SECOND</code>
+  variables and the same-filesystem requirement disappear with the cost model.</li>
+<li><strong>D10 Cube state paging.</strong> Keep one paged cube-state implementation
+  (<code>managed_cube_blocks</code> + <code>managed_model</code>/<code>managed_normal</code>); delete
+  <code>paged_cube_state.rs</code>.</li>
+</ul>
+<h2 id="4-review-findings">4. Review findings<a class="headerlink" href="#4-review-findings" title="Permanent link">&para;</a></h2>
+<h3 id="41-shape-of-the-code-today">4.1 Shape of the code today<a class="headerlink" href="#41-shape-of-the-code-today" title="Permanent link">&para;</a></h3>
+<p>Imaging source (non-test) is about 200k lines across six crates; tests add
+about 65k. Twenty-two files exceed 3,000 lines; <code>spectral_operator.rs</code> is
+15,182 lines and <code>receipt.rs</code> is 8,455.</p>
+<p>The runtime split is not cube versus MFS. It is a fast cube path
+(<code>BulkCubePhase</code>: natural weighting, no start model, no visibility transform,
+one SPW/field/polarisation layout, CPU gridding loop in
+<code>reconstruction/src/streaming_cube/band.rs</code>) versus a general path
+(<code>SpectralCycleExecutor</code>) serving MFS, MT-MFS, Briggs/uniform cubes, mosaic
+and any <code>MODEL_DATA</code> write. Both plug into one application-level
+<code>MajorCyclePhase</code> loop (<code>application/src/lib.rs:404-864</code>) and converge on
+<code>run_reconstruction_cycle</code> (<code>runtime/src/spectral_cycle.rs:3357</code>).</p>
+<p>Four CPU drivers implement the same grid/degrid mathematics:</p>
+<table>
+<thead>
+<tr>
+<th>Driver</th>
+<th>Lines</th>
+<th>Capabilities</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>cube band loop <code>streaming_cube/band.rs</code></td>
+<td>1,712</td>
+<td>standard CF, natural weighting, f32 grids, one SPW layout</td>
+</tr>
+<tr>
+<td><code>SpectralSlabOperator</code> in <code>spectral_operator.rs:7542-10871</code></td>
+<td>~3,300</td>
+<td>standard, W, AW, mosaic via enum <code>match</code>; sample-serial on one f64 grid; a Mutex per AW sample</td>
+</tr>
+<tr>
+<td>gridded-normal replay <code>gridded_normal_operator*</code> + runtime <code>complete_data_operator.rs</code> + <code>managed_spill.rs</code></td>
+<td>~11,300 + 6,400 + 4,200</td>
+<td>residual major cycles over spilled 40-byte records; fixed 4+4 logical lanes; six record layouts; a legacy sector path compiled only under <code>cfg(test)</code></td>
+</tr>
+<tr>
+<td>initial MFS planes <code>spectral_operator/initial_planes*</code></td>
+<td>~1,100</td>
+<td>initial pass with empty model only; 64-row strips</td>
+</tr>
+</tbody>
+</table>
+<p>Metal has two more drivers (<code>streaming_cube/metal_wave.rs</code> 1,068 and
+<code>complete_data_operator/metal_normal.rs</code> 647) over one runtime
+(<code>metal_runtime.rs</code> 3,113) with six MSL kernels in one inline string
+(<code>metal_cube.rs:19-268</code>). The kernels hard-code seven separable real taps and
+oversampling 100, accumulate with relaxed f32 atomics, and re-implement the
+CPU row interpolation and Stokes reduction in MSL. Three double-buffer ticket
+rings and two arena layout schemes are duplicated across the drivers. FFTs are
+FFTW everywhere; CLEAN, normalisation and publication are CPU.</p>
+<p>Gridders are closed enums (<code>ConvolutionOperator{Standard,WProjection}</code>,
+<code>OperatorTaps{Standard,Aw,Mosaic}</code>) matched at about twenty sites. AW
+(<code>aw_projection.rs</code> 3,137) and mosaic (<code>mosaic.rs</code> 1,593) are separate code
+paths that neither the fast cube path nor the Metal kernels can use. CASA's
+linear channel resampling is implemented five times; the Stokes-I reducer four
+times; the standard seven-tap loop six times; model FFT preparation and image
+formation twice each; seven different per-sample transport structs exist.</p>
+<p>Clark is one implementation (<code>minor_cycle/clark.rs</code>) with sparse and FFT
+refresh. But one dispatch (<code>run_reconstruction_cycle</code>) feeds four separate
+CLEAN loops (per-plane Hogbom/Clark/multiscale, image-domain Hogbom, Taylor,
+joint) with four copies of the threshold formula, four of mask validation and
+three of evidence minting. Peak search exists at about nine sites and PSF
+subtraction at about eight. The Taylor and joint candidate selectors are
+about 80% identical. The circular residual refreshes are O(iterations ×
+samples × N²) where an FFT refresh exists already. Clark's sparse refresh
+spawns raw <code>std::thread::scope</code> threads outside the worker team. Known
+inconsistencies: Clark admits peaks at or below threshold where the others
+require strictly below; the 1% global-convergence check runs only for
+single-plane and Taylor runs; divergence tests differ per solver; and the
+multi-plane cycle-threshold prepass filters the residual by mask only while
+the in-solve peak uses mask plus valid support, which changes the shared
+threshold in PB-limited fields.</p>
+<h3 id="42-bookkeeping-and-process-machinery">4.2 Bookkeeping and process machinery<a class="headerlink" href="#42-bookkeeping-and-process-machinery" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Execution is sequential: <code>run_inner</code> starts no threads; <code>next_action</code>
+  dispatches the first ready DAG node in id order. Parallelism exists only
+  inside a node (<code>FixedWorkerTeam</code>) plus asynchronous Metal/IO fences. A
+  Hogbom run with N major cycles builds N+2 plans, each admitted, run,
+  receipted and reopened.</li>
+<li>Receipts are write-only. The single production read is the planned worker
+  count, which the plan already holds. Each phase reopens its receipt, which
+  does a payload SHA-256, about 86 integrity checks and a full DAG rebuild and
+  rehash. <code>receipt.rs</code> (8,316 production lines) defines about fifty
+  projection structs. External readers: one manual tool
+  (<code>tools/perf/imager/intermediate_profile_evidence.py</code>). The Mac app, TUI and
+  <code>casars-imager</code> read none.</li>
+<li>Admission happens twice (<code>plan()</code> acquires and releases a lease; the
+  scheduler acquires again). Host memory is layered at least eight times over
+  one number. "Preferred" is always set equal to "hard". About 120
+  budget/claim-style type names exist. The time prediction that orders worker
+  candidates is a constant 1 ms per stage, so the search is a sort by node
+  count. <code>cost_model.rs</code> (804 lines) is only ever bootstrapped.</li>
+<li>Cancellation is not wired: the controller returns Continue or Adapt; there
+  is no SIGINT handler. The low-memory adaptation is unreachable from
+  <code>casars-imager</code>.</li>
+<li>ADR-0015 violation on the hot path: <code>bounded_stream.rs</code> finalises a SHA-256
+  per partition per worker, then per block, then per window
+  (<code>:863-1370</code>); nothing reads them but <code>eprintln!</code> and tests.</li>
+<li>Probable bug: attempt ids are deterministic over paths, image size, cell and
+  phase centre; <code>begin()</code> refuses an existing receipt, so re-running into the
+  same image name should fail until retention prunes the old receipt. It goes
+  away with receipts.</li>
+<li>Native runs require two environment variables for storage rates and that
+  input and output share a filesystem.</li>
+<li>About 163 distinct <code>CASA_RS_*</code> names exist; 12 are read in production
+  (section 8.3). There are about 120 production <code>eprintln!</code> sites. No imaging
+  crate depends on <code>tracing</code> although <code>casa-logging</code> exists.</li>
+<li>Request parameters are carried by eight struct types between the command
+  line and <code>CompiledProblem</code>; <code>specmode</code> has seven spellings; AW controls
+  have five. Defaults drifted between the CLI and JSON paths (<code>gridder</code>,
+  <code>write_preview_pngs</code>). <code>task_contract.rs</code> (5,033 lines) is about 65% mirror
+  types, restated defaults and their round-trip tests; its progress schema is
+  emitted by no Rust code. Of 38 <code>TaskRequirement</code> variants, 21 are dead or
+  always rejected, and 12 catalog parameters exist only to be rejected when
+  set. <code>JointContinuumLine</code> is unreachable. About 1,950 lines compute SHA-256
+  identities over contracts that are only compared with themselves in one
+  process. The selected-row sequence is re-hashed per sample in production.</li>
+<li>Three tests on the T55 branch have stale fixture budgets after T55's
+  accounting changes (issue #541, 2026-10-06 comment).</li>
+<li><code>scripts/check-imaging-architecture.py</code> hashes Rust function bodies and
+  struct fields and pins four SHA-256 ratchets over a 115 KB migration matrix
+  (77 rows, contract revision 93). It would fight every commit of this
+  refactor. ADR-0009's dependency-direction rule is the only part to keep.</li>
+<li>Representative-science evidence: 18 of 19 matrix rows have lost their
+  external CASA receipts (<code>--require-external</code> fails), so T2 oracles must be
+  regenerated during IF-10. <code>scripts/test-imaging-parity.sh</code> runs a deleted
+  test binary.</li>
+</ul>
+<h3 id="43-what-is-worth-keeping">4.3 What is worth keeping<a class="headerlink" href="#43-what-is-worth-keeping" title="Permanent link">&para;</a></h3>
+<ul>
+<li>ADR-0009's mathematical contract (A, A<em>, W, H = A</em>WA, paired operators,
+  spectral law/sampling/basis/coupling, product contract). The refactor
+  implements it rather than replacing it.</li>
+<li>The CPU seven-tap kernel maths, the W-plane kernel construction, the AW cell
+  selection rules (conjugate frequency, Mueller swap on w sign, pointing
+  phasor, division by norm on degrid only), the mosaic PB-phased kernels and
+  the density-weighting cell rules. These are CASA-pinned science and are
+  moved, not rewritten.</li>
+<li>One Clark implementation with sparse and FFT refresh; the half-spectrum
+  <code>RealFft2&lt;f32&gt;</code> refresh.</li>
+<li><code>FixedWorkerTeam</code>, <code>execute_bounded</code>/<code>execute_overlapped</code> and the one or two
+  slot producer/consumer stream in <code>bounded_stream.rs</code>, without measurements
+  and digests.</li>
+<li><code>MetalExecutionState</code> device, queue, buffer residency, submit/wait/drain.</li>
+<li>The managed spill v4 framed writer/reader (same-run, no CRC) for cube
+  inputs; one paged cube-state backend.</li>
+<li>Atomic individual-image replacement in <code>casa_product_sink.rs</code>.</li>
+<li><code>generate_synthetic_observation_ms</code> in <code>casa-ms</code> (analytic point and
+  Gaussian skies, multiple pointings, full polarisation; extended to several
+  spectral windows in IF-0).</li>
+<li>The CASA comparison tooling (<code>tools/perf/imager/perf_harness/image_compare.py</code>,
+  <code>tolerances.py</code>, <code>run_workload.py</code>, <code>mfs_4096_pilot.py</code>), the golden datasets
+  on GLENDENNING and the NAS archive.</li>
+<li>Measured checkpoints as the acceptance bars for IF-10: cube Metal W4 deep32
+  109.95 s; MFS intermediate-90 four-SPW pilot CPU W1 29.80 s / W4 15.82 s /
+  Metal W4 14.80 s versus CASA 52.82 s; MFS 512-channel 512² W1 48.46 s / W4
+  20.25 s; C-array 512-channel cube CASA 6.0 h; Wave3 4096² MFS CASA 7,268 s.</li>
+</ul>
+<h2 id="5-target-architecture">5. Target architecture<a class="headerlink" href="#5-target-architecture" title="Permanent link">&para;</a></h2>
+<h3 id="51-formalism-normative-vocabulary-for-code-and-docs">5.1 Formalism (normative vocabulary for code and docs)<a class="headerlink" href="#51-formalism-normative-vocabulary-for-code-and-docs" title="Permanent link">&para;</a></h3>
+<p>Per baseline, frequency ν and time, the measurement equation is</p>
+<div class="codehilite"><pre><span></span><code>V_ij(ν,t) = M_ij · S · ∬ M^S_ij(l,m,ν,t) I(l,m,ν) e^{-2πi(ul+vm+w(n-1))} dl dm / n
+</code></pre></div>
+
+<p>with M_ij direction-independent gains (calibration, outside imaging), M^S_ij
+the direction-dependent Mueller response (primary beam, parallactic angle,
+leakage), and w(n−1) the w-term. Let x be the model coefficients on the pixel
+grid and d the selected unweighted visibility samples. The forward operator
+A : X → D and its adjoint A* are composed as</p>
+<div class="codehilite"><pre><span></span><code>A   = Degrid ∘ Fft ∘ Correction⁻¹ ∘ PolBasis⁻¹ ∘ ModelPrescale
+A*  = PolBasis ∘ Correction ∘ Fft⁻¹ ∘ Grid
+W   = diag(input weight · taper · density weight), flags removed from D
+b   = A* W d          dirty image (unnormalised)
+H   = A* W A          normal operator; PSF = A* W 1
+g(x)= A* W (d − A x)  residual image, formed by gridding residual samples
+sumwt(plane,pol) = Σ W  (AW: Σ W·|Σ taps|)
+</code></pre></div>
+
+<p>Capability-specific factors and the per-sample data they need:</p>
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th>What changes</th>
+<th>Per-sample / per-row data</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Standard</td>
+<td>kernel = prolate spheroidal, real, separable, support 3, oversampling 100</td>
+<td>u,v,w,ν, weight, flag, polarisation</td>
+</tr>
+<tr>
+<td>W-projection</td>
+<td>kernel = C ⋆ FT[e^{2πi w(√(1−l²−m²)−1)}] per w-plane; complex; support grows with</td>
+<td>w</td>
+</tr>
+<tr>
+<td>A-projection</td>
+<td>kernel = FT[A_i ⊗ A_j*]; image divided by PB response afterwards</td>
+<td>PA cell, antenna-type pair, frequency cell, Mueller row</td>
+</tr>
+<tr>
+<td>AW (wideband)</td>
+<td>both; conjugate-beam frequency √(2ν0²−ν²) when conjbeams</td>
+<td>w, PA, frequency, Mueller, pointing phase gradient</td>
+</tr>
+<tr>
+<td>Mosaic</td>
+<td>kernel = FT[PB] with phase ramp e^{2πi(uΔl_k+vΔm_k)}; weight image from FT[PB²]</td>
+<td>per-row pointing offset → phase gradient</td>
+</tr>
+<tr>
+<td>MT-MFS</td>
+<td>A_t = A·diag(((ν−ν0)/ν0)^t); 2N_t−1 PSFs, N_t residuals</td>
+<td>per-sample spectral factor s = (ν−ν0)/ν0</td>
+</tr>
+<tr>
+<td>Cube</td>
+<td>same A per plane; chanMap routes samples to planes</td>
+<td>plane index</td>
+</tr>
+<tr>
+<td>Stokes/Mueller</td>
+<td>polMap correlation → grid pol; Mueller row maps swap between forward and adjoint</td>
+<td>Mueller row per direction</td>
+</tr>
+</tbody>
+</table>
+<p>Paired (same choice in forward and adjoint, ADR-0009): the kernel set,
+support and oversampling; the gridding correction; the conjugation convention
+(w sign, Mueller row swap); the phase gradient (ramp vs conj ramp); the
+phase-centre phasor; chanMap/polMap; Taylor factors; the FT[PB]/FT[PB²] pair.
+Data-only: flags, W, density weights, sumwt. Image-only, owned by the product
+contract and never folded into A*: PB normalisation (<code>flatnoise</code>, <code>flatsky</code>,
+<code>pbsquare</code>), pblimit blanking, restoring beam, pbcor. CASA's normalisation
+conventions are tabulated in section 5.7 and are the acceptance reference.</p>
+<h3 id="52-crate-ownership">5.2 Crate ownership<a class="headerlink" href="#52-crate-ownership" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Crate</th>
+<th>Owns</th>
+<th>Depends on</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>casa-imaging-model</code></td>
+<td><code>ImagingRequest</code>, <code>CompiledProblem</code> (geometry, spectral law/sampling/basis, weighting spec, operator spec, polarisation, product contract, selection, write set, visibility transform, model target), typed errors</td>
+<td>ecosystem only</td>
+</tr>
+<tr>
+<td><code>casa-imaging-operator</code></td>
+<td><code>Placement</code>, <code>SampleBlock</code>, <code>ConvolutionFunctionSet</code> + four implementations, <code>GridBackend</code> trait + <code>CpuBackend</code>, <code>GridAccumulator</code>, <code>MeasurementOperator</code>, <code>WeightingGeneration</code>, <code>NormalImages</code>, FFT and correction operators, polarisation routing, spectral resampling (one implementation)</td>
+<td>model, casa-fft, casa-numerics</td>
+</tr>
+<tr>
+<td><code>casa-imaging-deconvolution</code></td>
+<td><code>MinorCycleView</code>, <code>Driver</code>, <code>Solver</code> trait + Hogbom/Clark/Multiscale/Taylor solvers, <code>PsfSummary</code>, masks and automask, <code>ModelDelta</code></td>
+<td>model, casa-numerics, casa-fft</td>
+</tr>
+<tr>
+<td><code>casa-imaging-products</code></td>
+<td>normalisation (section 5.7), restoration, Taylor products (alpha, error), PB/pbcor, product list and metadata, CASA image writer with atomic replacement</td>
+<td>model, operator, deconvolution, casa-images</td>
+</tr>
+<tr>
+<td><code>casa-imaging-metal</code> (macOS)</td>
+<td><code>MetalBackend: GridBackend</code>, MSL kernels, device/queue/buffer/fence state</td>
+<td>operator, objc/metal crates</td>
+</tr>
+<tr>
+<td><code>casa-imaging-runtime</code></td>
+<td><code>HostResources</code>, <code>admit()</code>, <code>Phase</code>/<code>run_phase</code>, cancel token, <code>WorkerTeam</code> + bounded stream, <code>Partition</code>, <code>Residency</code>, <code>MajorCyclePass</code>, cube state paging, managed spill (same-run), <code>RunSummary</code></td>
+<td>model, operator, deconvolution, products, metal (cfg macos), casa-ms</td>
+</tr>
+<tr>
+<td><code>casa-imaging-application</code></td>
+<td>compile → plan → run composition, MeasurementSet access and selection, availability of installed capabilities, publication orchestration</td>
+<td>all of the above</td>
+</tr>
+<tr>
+<td><code>casars-imager</code></td>
+<td>CLI parsing via the catalog, request projection, progress and result presentation</td>
+<td>application, provider contracts</td>
+</tr>
+</tbody>
+</table>
+<p>Dependency direction is enforced by the replacement checker (D6). No crate
+below <code>application</code> reads a MeasurementSet; no crate but <code>metal</code> imports a
+device API; no crate but <code>casars-imager</code> and <code>application</code> reads <code>std::env</code>.</p>
+<h3 id="53-the-operator-core-casa-imaging-operator">5.3 The operator core (<code>casa-imaging-operator</code>)<a class="headerlink" href="#53-the-operator-core-casa-imaging-operator" title="Permanent link">&para;</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="sd">/// One selected row×channel sample after flagging, phase-centre shift and</span>
+<span class="sd">/// correlation routing. Flagged samples are not placed; samples whose kernel</span>
+<span class="sd">/// support would leave the padded grid are dropped here (CASA rule), so the</span>
+<span class="sd">/// kernels have no bounds tests.</span>
+<span class="cp">#[derive(Clone, Copy)]</span>
+<span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">Placement</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">u</span><span class="p">:</span><span class="w"> </span><span class="kt">f64</span><span class="p">,</span><span class="w"> </span><span class="k">pub</span><span class="w"> </span><span class="n">v</span><span class="p">:</span><span class="w"> </span><span class="kt">f64</span><span class="p">,</span><span class="w"> </span><span class="k">pub</span><span class="w"> </span><span class="n">w</span><span class="p">:</span><span class="w"> </span><span class="kt">f64</span><span class="p">,</span><span class="w">  </span><span class="c1">// wavelengths at this sample's frequency</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">phase</span><span class="p">:</span><span class="w"> </span><span class="kt">f64</span><span class="p">,</span><span class="w">                      </span><span class="c1">// phase-centre shift argument (rad); 0 when none</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">plane</span><span class="p">:</span><span class="w"> </span><span class="kt">u32</span><span class="p">,</span><span class="w">                      </span><span class="c1">// target grid plane (channel-local); 0 for constant basis</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">spectral</span><span class="p">:</span><span class="w"> </span><span class="kt">f32</span><span class="p">,</span><span class="w">                   </span><span class="c1">// (ν−ν0)/ν0; read only by a Taylor basis</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">cf</span><span class="p">:</span><span class="w"> </span><span class="nc">CfKey</span><span class="p">,</span><span class="w">                       </span><span class="c1">// opaque to the kernel; resolved by the CF set</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">gradient</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="kt">f32</span><span class="p">;</span><span class="w"> </span><span class="mi">2</span><span class="p">],</span><span class="w">              </span><span class="c1">// pointing phase gradient (rad per cell); 0 otherwise</span>
+<span class="p">}</span>
+
+<span class="sd">/// Two-level cell key (HPG `CFSimpleIndexer`): `group` linearises the</span>
+<span class="sd">/// variable-support axes (w-plane, frequency cell, PA cell, antenna-type</span>
+<span class="sd">/// pair); `cube` indexes fixed-size slices inside the group. Mueller planes</span>
+<span class="sd">/// live inside the cell, not in the key. Conjugation is decided in the</span>
+<span class="sd">/// kernel from `sign(w)` and the direction; baseline-order conjugation for</span>
+<span class="sd">/// heterogeneous arrays is baked into the cell by the CF set.</span>
+<span class="cp">#[derive(Clone, Copy, PartialEq, Eq, Hash)]</span>
+<span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">CfKey</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">pub</span><span class="w"> </span><span class="n">group</span><span class="p">:</span><span class="w"> </span><span class="kt">u16</span><span class="p">,</span><span class="w"> </span><span class="k">pub</span><span class="w"> </span><span class="n">cube</span><span class="p">:</span><span class="w"> </span><span class="kt">u16</span><span class="w"> </span><span class="p">}</span>
+
+<span class="sd">/// Structure-of-arrays view of one bounded block. `values` and `weights` are</span>
+<span class="sd">/// `npol × n`, sample-major. Weight 0 never appears (flagged samples are dropped).</span>
+<span class="sd">/// Values are pre-multiplied by the phase-centre phasor and the weight once,</span>
+<span class="sd">/// here, not per tap.</span>
+<span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">SampleBlock</span><span class="o">&lt;'</span><span class="na">a</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">placements</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="o">'</span><span class="na">a</span><span class="w"> </span><span class="p">[</span><span class="n">Placement</span><span class="p">],</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">values</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="o">'</span><span class="na">a</span><span class="w"> </span><span class="p">[</span><span class="n">Complex32</span><span class="p">],</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">weights</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="o">'</span><span class="na">a</span><span class="w"> </span><span class="p">[</span><span class="kt">f32</span><span class="p">],</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">npol</span><span class="p">:</span><span class="w"> </span><span class="kt">usize</span><span class="p">,</span>
+<span class="p">}</span>
+
+<span class="k">pub</span><span class="w"> </span><span class="k">enum</span><span class="w"> </span><span class="nc">TapLayout</span><span class="o">&lt;'</span><span class="na">a</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="sd">/// Standard: one real row per oversampled offset, `rows[offset*support + i]`,</span>
+<span class="w">    </span><span class="sd">/// oversampling-major so one fractional offset is one contiguous row.</span>
+<span class="w">    </span><span class="n">SeparableReal</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">rows</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="o">'</span><span class="na">a</span><span class="w"> </span><span class="p">[</span><span class="kt">f32</span><span class="p">],</span><span class="w"> </span><span class="n">support</span><span class="p">:</span><span class="w"> </span><span class="kt">u16</span><span class="p">,</span><span class="w"> </span><span class="n">oversampling</span><span class="p">:</span><span class="w"> </span><span class="kt">u16</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="sd">/// W, AW, mosaic: dense complex kernel ordered `[oy][ox][mueller][iy][ix]`</span>
+<span class="w">    </span><span class="sd">/// (x fastest; one fractional offset contiguous), with `padding` major</span>
+<span class="w">    </span><span class="sd">/// cells per edge so the fine-offset sign selects the major index without</span>
+<span class="w">    </span><span class="sd">/// a branch (HPG layout). `mueller_planes` is 1 for scalar kernels.</span>
+<span class="w">    </span><span class="n">Dense</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">data</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="o">'</span><span class="na">a</span><span class="w"> </span><span class="p">[</span><span class="n">Complex32</span><span class="p">],</span><span class="w"> </span><span class="n">support</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="kt">u16</span><span class="p">;</span><span class="w"> </span><span class="mi">2</span><span class="p">],</span><span class="w"> </span><span class="n">oversampling</span><span class="p">:</span><span class="w"> </span><span class="kt">u16</span><span class="p">,</span>
+<span class="w">            </span><span class="n">padding</span><span class="p">:</span><span class="w"> </span><span class="kt">u8</span><span class="p">,</span><span class="w"> </span><span class="n">mueller_planes</span><span class="p">:</span><span class="w"> </span><span class="kt">u8</span><span class="w"> </span><span class="p">},</span>
+<span class="p">}</span>
+
+<span class="sd">/// Which CF Mueller plane serves each (grid pol, visibility pol) pair, for</span>
+<span class="sd">/// the adjoint with w &gt; 0 (`direct`) and its conjugate partner. The kernel</span>
+<span class="sd">/// swaps tables on `sign(w)` and on direction and flips the imaginary part</span>
+<span class="sd">/// (HPG `mueller_indexes` / `conjugate_mueller_indexes`). `None` skips a pair.</span>
+<span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">MuellerRouting</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">pub</span><span class="w"> </span><span class="n">direct</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="nb">Vec</span><span class="o">&lt;</span><span class="nb">Option</span><span class="o">&lt;</span><span class="kt">u8</span><span class="o">&gt;&gt;&gt;</span><span class="p">,</span><span class="w"> </span><span class="k">pub</span><span class="w"> </span><span class="n">conjugate</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="nb">Vec</span><span class="o">&lt;</span><span class="nb">Option</span><span class="o">&lt;</span><span class="kt">u8</span><span class="o">&gt;&gt;&gt;</span><span class="w"> </span><span class="p">}</span>
+
+<span class="k">pub</span><span class="w"> </span><span class="k">trait</span><span class="w"> </span><span class="n">ConvolutionFunctionSet</span><span class="p">:</span><span class="w"> </span><span class="nb">Send</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">Sync</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="sd">/// Pure. Row context carries PA, antenna pair, field pointing offset, time.</span>
+<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">key</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">row</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">RowContext</span><span class="p">,</span><span class="w"> </span><span class="n">freq_hz</span><span class="p">:</span><span class="w"> </span><span class="kt">f64</span><span class="p">,</span><span class="w"> </span><span class="n">w_lambda</span><span class="p">:</span><span class="w"> </span><span class="kt">f64</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">CfKey</span><span class="p">;</span>
+<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">taps</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">key</span><span class="p">:</span><span class="w"> </span><span class="nc">CfKey</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">TapLayout</span><span class="o">&lt;'</span><span class="nb">_</span><span class="o">&gt;</span><span class="p">;</span>
+<span class="w">    </span><span class="sd">/// FT[PB²] taps for the weight/sensitivity image (mosaic, AW); None otherwise.</span>
+<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">weight_taps</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">key</span><span class="p">:</span><span class="w"> </span><span class="nc">CfKey</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="n">TapLayout</span><span class="o">&lt;'</span><span class="nb">_</span><span class="o">&gt;&gt;</span><span class="p">;</span>
+<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">mueller</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">MuellerRouting</span><span class="p">;</span>
+<span class="w">    </span><span class="sd">/// Paired image-domain gridding correction (separable 1-D vectors per axis).</span>
+<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">image_correction</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">ImageCorrection</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>Implementations: <code>Spheroidal</code> (standard), <code>WPlanes</code>, <code>AwCatalog</code> (CASA
+<code>CFS_</code>/<code>WTCFS_</code> import or native EVLA generation, in-memory LRU of cells,
+section 5.6), <code>MosaicPb</code> (per frequency and antenna-class pair, Lanczos
+oversampling 10, re-phased per pointing). Each keeps the CASA-pinned
+rounding and conjugation rules listed in section 4.3 in its own <code>key()</code>.</p>
+<p>Kernel contract (both backends implement exactly this; integer grid and
+fine-offset coordinates are rounded in the kernel once per sample from
+(u, v, ν) with one rule shared by CPU and Metal):</p>
+<div class="codehilite"><pre><span></span><code><span class="nl">adjoint</span><span class="p">:</span><span class="w">  </span><span class="nc">table</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">w</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="vm">?</span><span class="w"> </span><span class="n">mueller</span><span class="p">.</span><span class="n">direct</span><span class="w"> </span><span class="err">:</span><span class="w"> </span><span class="n">mueller</span><span class="p">.</span><span class="n">conjugate</span>
+<span class="w">          </span><span class="k">for</span><span class="w"> </span><span class="k">each</span><span class="w"> </span><span class="p">(</span><span class="n">gpol</span><span class="p">,</span><span class="w"> </span><span class="n">vpol</span><span class="p">)</span><span class="w"> </span><span class="k">with</span><span class="w"> </span><span class="nc">table</span><span class="o">[</span><span class="n">gpol</span><span class="o">][</span><span class="n">vpol</span><span class="o">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="ow">Some</span><span class="p">(</span><span class="n">m</span><span class="p">)</span><span class="err">:</span>
+<span class="w">            </span><span class="n">tap</span><span class="s1">' = (w &gt; 0 ? t : conj(t))[m] · e^{i(ix·gx + iy·gy)}</span>
+<span class="s1">            grid[plane, gpol][v0+iy, u0+ix] += V'</span><span class="n">_vpol</span><span class="w"> </span><span class="err">·</span><span class="w"> </span><span class="n">tap</span><span class="s1">'                 (Data; V'</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">W</span><span class="err">·</span><span class="n">V</span><span class="err">·</span><span class="n">e</span><span class="o">^</span><span class="err">{</span><span class="n">iφ</span><span class="err">}</span><span class="p">)</span>
+<span class="w">                                             </span><span class="o">+=</span><span class="w"> </span><span class="n">W_vpol</span><span class="w"> </span><span class="err">·</span><span class="w"> </span><span class="n">tap</span><span class="s1">'                 (Psf: V = 1)</span>
+<span class="s1">                                             += W_vpol · weight_tap'</span><span class="w"> </span><span class="k">at</span><span class="w"> </span><span class="n">uvw</span><span class="o">=</span><span class="mi">0</span><span class="w"> </span><span class="p">(</span><span class="n">Weight</span><span class="p">)</span>
+<span class="w">            </span><span class="n">sumwt</span><span class="o">[</span><span class="n">plane, gpol</span><span class="o">]</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">W_vpol</span><span class="w"> </span><span class="err">·</span><span class="w"> </span><span class="o">|</span><span class="n">Σ</span><span class="w"> </span><span class="n">taps</span><span class="w"> </span><span class="n">used</span><span class="o">|</span>
+<span class="w">          </span><span class="nl">Taylor</span><span class="p">:</span><span class="w"> </span><span class="n">term</span><span class="w"> </span><span class="n">t</span><span class="w"> </span><span class="n">grid</span><span class="w"> </span><span class="n">receives</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="n">same</span><span class="w"> </span><span class="k">with</span><span class="w"> </span><span class="n">W</span><span class="w"> </span><span class="err">·</span><span class="w"> </span><span class="n">s</span><span class="o">^</span><span class="n">t</span><span class="w"> </span><span class="p">(</span><span class="k">data</span><span class="err">:</span><span class="w"> </span><span class="n">t</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">N_t</span><span class="p">;</span><span class="w"> </span><span class="nl">psf</span><span class="p">:</span><span class="w"> </span><span class="n">t</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">2</span><span class="n">N_t</span><span class="err">−</span><span class="mi">1</span><span class="p">)</span>
+<span class="nl">forward</span><span class="p">:</span><span class="w">  </span><span class="nc">table</span><span class="w"> </span><span class="n">swapped</span><span class="w"> </span><span class="p">(</span><span class="n">w</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="vm">?</span><span class="w"> </span><span class="n">conjugate</span><span class="w"> </span><span class="err">:</span><span class="w"> </span><span class="n">direct</span><span class="p">);</span><span class="w"> </span><span class="n">tap</span><span class="s1">' conjugated</span>
+<span class="s1">          V_pred_vpol = e^{−iφ} · Σ_t s^t · Σ_{gpol,ix,iy} conj(tap'</span><span class="n">_t</span><span class="p">)</span><span class="w"> </span><span class="err">·</span><span class="w"> </span><span class="n">model</span><span class="o">[</span><span class="n">t</span><span class="o">][</span><span class="n">gpol</span><span class="o">][</span><span class="n">v0+iy, u0+ix</span><span class="o">]</span>
+<span class="w">                        </span><span class="err">÷</span><span class="w"> </span><span class="n">Σ</span><span class="w"> </span><span class="n">taps</span><span class="w"> </span><span class="n">used</span><span class="w"> </span><span class="p">(</span><span class="n">unconjugated</span><span class="p">)</span>
+<span class="nl">residual</span><span class="p">:</span><span class="w"> </span><span class="n">V</span><span class="w"> </span><span class="err">−</span><span class="w"> </span><span class="n">V_pred</span><span class="p">,</span><span class="w"> </span><span class="k">then</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="n">adjoint</span><span class="w"> </span><span class="k">on</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="n">residual</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="n">same</span><span class="w"> </span><span class="n">dispatch</span>
+</code></pre></div>
+
+<div class="codehilite"><pre><span></span><code><span class="k">pub</span><span class="w"> </span><span class="k">enum</span><span class="w"> </span><span class="nc">Mode</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">Data</span><span class="p">,</span><span class="w"> </span><span class="n">Psf</span><span class="p">,</span><span class="w"> </span><span class="n">Weight</span><span class="w"> </span><span class="p">}</span>
+<span class="k">pub</span><span class="w"> </span><span class="k">enum</span><span class="w"> </span><span class="nc">GridPrecision</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">F32</span><span class="p">,</span><span class="w"> </span><span class="n">F64</span><span class="w"> </span><span class="p">}</span>
+
+<span class="sd">/// Per-worker grid storage: `[plane][pol][term][y][x]`, x fastest, interleaved</span>
+<span class="sd">/// complex, over a whole plane or a tile with halo. Owns `sumwt` as f64.</span>
+<span class="sd">/// The same layout is the Metal buffer, so a device copy is one memcpy.</span>
+<span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">GridAccumulator</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* private */</span><span class="w"> </span><span class="p">}</span>
+
+<span class="k">pub</span><span class="w"> </span><span class="k">enum</span><span class="w"> </span><span class="nc">Work</span><span class="o">&lt;'</span><span class="na">a</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">Grid</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">mode</span><span class="p">:</span><span class="w"> </span><span class="nc">Mode</span><span class="p">,</span><span class="w"> </span><span class="n">acc</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="o">'</span><span class="na">a</span><span class="w"> </span><span class="nc">mut</span><span class="w"> </span><span class="n">GridAccumulator</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="n">Predict</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">model</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="o">'</span><span class="na">a</span><span class="w"> </span><span class="nc">PreparedModelGrids</span><span class="p">,</span><span class="w"> </span><span class="n">out</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="o">'</span><span class="na">a</span><span class="w"> </span><span class="nc">mut</span><span class="w"> </span><span class="p">[</span><span class="n">Complex32</span><span class="p">]</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="sd">/// Predict, subtract, grid the residual in one dispatch; optionally hand</span>
+<span class="w">    </span><span class="sd">/// the residual samples back (final pass writing MODEL_DATA/CORRECTED).</span>
+<span class="w">    </span><span class="n">ResidualGrid</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">model</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="o">'</span><span class="na">a</span><span class="w"> </span><span class="nc">PreparedModelGrids</span><span class="p">,</span><span class="w"> </span><span class="n">acc</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="o">'</span><span class="na">a</span><span class="w"> </span><span class="nc">mut</span><span class="w"> </span><span class="n">GridAccumulator</span><span class="p">,</span>
+<span class="w">                   </span><span class="n">residual_out</span><span class="p">:</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;&amp;'</span><span class="na">a</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="p">[</span><span class="n">Complex32</span><span class="p">]</span><span class="o">&gt;</span><span class="w"> </span><span class="p">},</span>
+<span class="p">}</span>
+
+<span class="k">pub</span><span class="w"> </span><span class="k">trait</span><span class="w"> </span><span class="n">GridBackend</span><span class="p">:</span><span class="w"> </span><span class="nb">Send</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">apply</span><span class="p">(</span><span class="o">&amp;</span><span class="k">mut</span><span class="w"> </span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">block</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">SampleBlock</span><span class="p">,</span><span class="w"> </span><span class="n">cf</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">dyn</span><span class="w"> </span><span class="n">ConvolutionFunctionSet</span><span class="p">,</span>
+<span class="w">             </span><span class="n">work</span><span class="p">:</span><span class="w"> </span><span class="nc">Work</span><span class="o">&lt;'</span><span class="nb">_</span><span class="o">&gt;</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="p">(),</span><span class="w"> </span><span class="n">OperatorError</span><span class="o">&gt;</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><code>CpuBackend</code> is support-generic over both tap layouts with a specialised
+seven-tap separable path whose inner loop is one vector multiply-add per v
+row over the interleaved, x-contiguous grid row (Obit <code>fast_grid7</code> shape on
+NEON). <code>MetalBackend</code> (IF-4) implements the same trait with support-generic
+kernels and <code>float2</code> dense kernel storage.</p>
+<div class="codehilite"><pre><span></span><code><span class="k">pub</span><span class="w"> </span><span class="k">enum</span><span class="w"> </span><span class="nc">Basis</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">Constant</span><span class="p">,</span><span class="w"> </span><span class="n">ChannelLocal</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">planes</span><span class="p">:</span><span class="w"> </span><span class="kt">u32</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="n">Taylor</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">terms</span><span class="p">:</span><span class="w"> </span><span class="kt">u32</span><span class="p">,</span><span class="w"> </span><span class="n">reference_hz</span><span class="p">:</span><span class="w"> </span><span class="kt">f64</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
+
+<span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">MeasurementOperator</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">geometry</span><span class="p">:</span><span class="w"> </span><span class="nc">GridGeometry</span><span class="p">,</span><span class="w">           </span><span class="c1">// padded grid, cell, image crop, FFT plan</span>
+<span class="w">    </span><span class="n">basis</span><span class="p">:</span><span class="w"> </span><span class="nc">Basis</span><span class="p">,</span>
+<span class="w">    </span><span class="n">polarization</span><span class="p">:</span><span class="w"> </span><span class="nc">PolarizationRouting</span><span class="p">,</span><span class="w"> </span><span class="c1">// correlation → Stokes/Mueller rows, both directions</span>
+<span class="w">    </span><span class="n">cf</span><span class="p">:</span><span class="w"> </span><span class="nb">Box</span><span class="o">&lt;</span><span class="k">dyn</span><span class="w"> </span><span class="n">ConvolutionFunctionSet</span><span class="o">&gt;</span><span class="p">,</span>
+<span class="w">    </span><span class="n">precision</span><span class="p">:</span><span class="w"> </span><span class="nc">GridPrecision</span><span class="p">,</span>
+<span class="p">}</span>
+<span class="k">impl</span><span class="w"> </span><span class="n">MeasurementOperator</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">accumulator</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">planes</span><span class="p">:</span><span class="w"> </span><span class="nc">PlaneRange</span><span class="p">,</span><span class="w"> </span><span class="n">tile</span><span class="p">:</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="n">Tile</span><span class="o">&gt;</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">GridAccumulator</span><span class="p">;</span>
+<span class="w">    </span><span class="sd">/// model (× PB prescale when the product contract says flatnoise) ÷ correction → FFT</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">prepare_model</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">model</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">ModelImages</span><span class="p">,</span><span class="w"> </span><span class="n">prescale</span><span class="p">:</span><span class="w"> </span><span class="nc">ModelPrescale</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">PreparedModelGrids</span><span class="p">;</span>
+<span class="w">    </span><span class="sd">/// FFT⁻¹, × correction, crop: unnormalised dirty/psf/weight planes + sumwt</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">finish</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">acc</span><span class="p">:</span><span class="w"> </span><span class="nc">GridAccumulator</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">NormalImages</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">NormalImages</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">planes</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">NormalPlane</span><span class="o">&gt;</span><span class="p">,</span><span class="w">  </span><span class="c1">// one per output plane; Taylor terms inside</span>
+<span class="p">}</span>
+<span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">NormalPlane</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">data</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">Array2</span><span class="o">&lt;</span><span class="kt">f32</span><span class="o">&gt;&gt;</span><span class="p">,</span><span class="w">    </span><span class="c1">// residual/dirty per term (N_t) and pol</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">psf</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">Array2</span><span class="o">&lt;</span><span class="kt">f32</span><span class="o">&gt;&gt;</span><span class="p">,</span><span class="w">     </span><span class="c1">// 2N_t−1 terms</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">weight</span><span class="p">:</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="n">Array2</span><span class="o">&lt;</span><span class="kt">f32</span><span class="o">&gt;&gt;</span><span class="p">,</span><span class="w"> </span><span class="c1">// mosaic/AW sensitivity</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">sumwt</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="kt">f64</span><span class="o">&gt;</span><span class="p">,</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>Weighting:</p>
+<div class="codehilite"><pre><span></span><code><span class="k">pub</span><span class="w"> </span><span class="k">enum</span><span class="w"> </span><span class="nc">WeightingGeneration</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">Natural</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">taper</span><span class="p">:</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="n">Taper</span><span class="o">&gt;</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="n">Density</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">grid</span><span class="p">:</span><span class="w"> </span><span class="nc">DensityGrid</span><span class="p">,</span><span class="w"> </span><span class="n">robust</span><span class="p">:</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="kt">f64</span><span class="o">&gt;</span><span class="p">,</span><span class="w"> </span><span class="n">taper</span><span class="p">:</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="n">Taper</span><span class="o">&gt;</span><span class="w"> </span><span class="p">},</span>
+<span class="p">}</span>
+<span class="k">impl</span><span class="w"> </span><span class="n">WeightingGeneration</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="sd">/// Pure per-sample function; CASA cell rules live in `DensityGrid::lookup`.</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">imaging_weight</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">p</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">Placement</span><span class="p">,</span><span class="w"> </span><span class="n">input_weight</span><span class="p">:</span><span class="w"> </span><span class="kt">f32</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="kt">f32</span><span class="p">;</span>
+<span class="p">}</span>
+<span class="k">pub</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">build_density_grid</span><span class="p">(</span><span class="n">source</span><span class="p">:</span><span class="w"> </span><span class="nc">impl</span><span class="w"> </span><span class="nb">Iterator</span><span class="o">&lt;</span><span class="n">Item</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">SampleBlock</span><span class="o">&gt;</span><span class="p">,</span><span class="w"> </span><span class="n">shape</span><span class="p">:</span><span class="w"> </span><span class="nc">DensityGridShape</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">DensityGrid</span><span class="p">;</span>
+</code></pre></div>
+
+<p>Spectral resampling (CASA linear pairing with nearest weight and linear
+flags) is one function producing <code>Placement</code>s and values from a native block;
+cube density weighting consumes the same function.</p>
+<h3 id="54-execution-casa-imaging-runtime">5.4 Execution (<code>casa-imaging-runtime</code>)<a class="headerlink" href="#54-execution-casa-imaging-runtime" title="Permanent link">&para;</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">HostResources</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">pub</span><span class="w"> </span><span class="n">threads</span><span class="p">:</span><span class="w"> </span><span class="kt">usize</span><span class="p">,</span><span class="w"> </span><span class="k">pub</span><span class="w"> </span><span class="n">performance_cores</span><span class="p">:</span><span class="w"> </span><span class="kt">usize</span><span class="p">,</span>
+<span class="w">                           </span><span class="k">pub</span><span class="w"> </span><span class="n">available_memory</span><span class="p">:</span><span class="w"> </span><span class="kt">u64</span><span class="p">,</span><span class="w"> </span><span class="k">pub</span><span class="w"> </span><span class="n">fd_limit</span><span class="p">:</span><span class="w"> </span><span class="kt">u64</span><span class="p">,</span><span class="w"> </span><span class="k">pub</span><span class="w"> </span><span class="n">metal</span><span class="p">:</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="p">}</span>
+<span class="k">pub</span><span class="w"> </span><span class="k">enum</span><span class="w"> </span><span class="nc">ResourcePolicy</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">Interactive</span><span class="p">,</span><span class="w"> </span><span class="n">Balanced</span><span class="p">,</span><span class="w"> </span><span class="n">Exclusive</span><span class="p">,</span><span class="w"> </span><span class="n">Explicit</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">workers</span><span class="p">:</span><span class="w"> </span><span class="kt">usize</span><span class="p">,</span><span class="w"> </span><span class="n">memory</span><span class="p">:</span><span class="w"> </span><span class="kt">u64</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
+<span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">Reservation</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* RAII; releases on drop */</span><span class="w"> </span><span class="p">}</span>
+<span class="k">pub</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">admit</span><span class="p">(</span><span class="n">host</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">HostResources</span><span class="p">,</span><span class="w"> </span><span class="n">policy</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">ResourcePolicy</span><span class="p">,</span><span class="w"> </span><span class="n">demand</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">Demand</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="n">Reservation</span><span class="p">,</span><span class="w"> </span><span class="n">Admission</span><span class="o">&gt;</span><span class="p">;</span>
+
+<span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">Cancel</span><span class="p">(</span><span class="n">Arc</span><span class="o">&lt;</span><span class="n">AtomicBool</span><span class="o">&gt;</span><span class="p">);</span><span class="w">        </span><span class="c1">// set by SIGINT handler in casars-imager</span>
+<span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">Phase</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">pub</span><span class="w"> </span><span class="n">name</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="o">'</span><span class="nb">static</span><span class="w"> </span><span class="kt">str</span><span class="p">,</span><span class="w"> </span><span class="k">pub</span><span class="w"> </span><span class="n">steps</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">Step</span><span class="o">&gt;</span><span class="w"> </span><span class="p">}</span>
+<span class="k">pub</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">run_phase</span><span class="p">(</span><span class="n">phase</span><span class="p">:</span><span class="w"> </span><span class="nc">Phase</span><span class="p">,</span><span class="w"> </span><span class="n">team</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">WorkerTeam</span><span class="p">,</span><span class="w"> </span><span class="n">cancel</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">Cancel</span><span class="p">,</span><span class="w"> </span><span class="n">summary</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">mut</span><span class="w"> </span><span class="n">RunSummary</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="p">(),</span><span class="w"> </span><span class="n">RuntimeError</span><span class="o">&gt;</span><span class="p">;</span>
+
+<span class="k">pub</span><span class="w"> </span><span class="k">enum</span><span class="w"> </span><span class="nc">Partition</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="sd">/// Each worker owns a disjoint set of planes; no merge.</span>
+<span class="w">    </span><span class="n">Planes</span><span class="p">(</span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">PlaneRange</span><span class="o">&gt;</span><span class="p">),</span>
+<span class="w">    </span><span class="sd">/// Each worker owns disjoint output regions (tiles with halo or row strips);</span>
+<span class="w">    </span><span class="sd">/// a sample is routed to every region its support touches; merge in region order.</span>
+<span class="w">    </span><span class="n">Regions</span><span class="p">(</span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">Region</span><span class="o">&gt;</span><span class="p">),</span>
+<span class="p">}</span>
+<span class="k">pub</span><span class="w"> </span><span class="k">enum</span><span class="w"> </span><span class="nc">Residency</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">All</span><span class="p">,</span><span class="w"> </span><span class="n">Waves</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">planes_per_wave</span><span class="p">:</span><span class="w"> </span><span class="kt">u32</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
+
+<span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">MajorCyclePass</span><span class="o">&lt;'</span><span class="na">a</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">operator</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="o">'</span><span class="na">a</span><span class="w"> </span><span class="nc">MeasurementOperator</span><span class="p">,</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">weighting</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="o">'</span><span class="na">a</span><span class="w"> </span><span class="nc">WeightingGeneration</span><span class="p">,</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">model</span><span class="p">:</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;&amp;'</span><span class="na">a</span><span class="w"> </span><span class="n">PreparedModelGrids</span><span class="o">&gt;</span><span class="p">,</span><span class="w">   </span><span class="c1">// None: initial (dirty/psf/weight)</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">write_model_column</span><span class="p">:</span><span class="w"> </span><span class="kt">bool</span><span class="p">,</span><span class="w">                 </span><span class="c1">// final pass only</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">partition</span><span class="p">:</span><span class="w"> </span><span class="nc">Partition</span><span class="p">,</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">backend</span><span class="p">:</span><span class="w"> </span><span class="nc">BackendChoice</span><span class="p">,</span><span class="w">                   </span><span class="c1">// Cpu | Metal</span>
+<span class="p">}</span>
+<span class="k">pub</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">run_major_cycle</span><span class="p">(</span><span class="n">pass</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">MajorCyclePass</span><span class="p">,</span><span class="w"> </span><span class="n">source</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">mut</span><span class="w"> </span><span class="k">dyn</span><span class="w"> </span><span class="n">BoundedSource</span><span class="p">,</span>
+<span class="w">                       </span><span class="n">team</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">WorkerTeam</span><span class="p">,</span><span class="w"> </span><span class="n">cancel</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">Cancel</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="n">NormalImages</span><span class="p">,</span><span class="w"> </span><span class="n">RuntimeError</span><span class="o">&gt;</span><span class="p">;</span>
+</code></pre></div>
+
+<p>One pass serves initial, residual and final major cycles for every
+capability: read block → select, flag, phase-shift, route correlations →
+build <code>SampleBlock</code> → (predict with <code>backend.degrid</code> and form V − A·m when a
+model is present) → <code>backend.grid</code> into the worker's accumulator → merge →
+<code>operator.finish</code>. Cube waves are <code>Residency::Waves</code> with the source restricted
+to the wave's native channel window; the fast cube path becomes
+<code>Partition::Planes</code> + <code>Residency::Waves</code> + <code>GridPrecision::F32</code>.</p>
+<h3 id="55-deconvolution-casa-imaging-deconvolution">5.5 Deconvolution (<code>casa-imaging-deconvolution</code>)<a class="headerlink" href="#55-deconvolution-casa-imaging-deconvolution" title="Permanent link">&para;</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">MinorCycleView</span><span class="o">&lt;'</span><span class="na">a</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">residual</span><span class="p">:</span><span class="w"> </span><span class="nc">Planes</span><span class="o">&lt;'</span><span class="na">a</span><span class="o">&gt;</span><span class="p">,</span><span class="w">          </span><span class="c1">// N_t terms × pols × planes</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">psf</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="o">'</span><span class="na">a</span><span class="w"> </span><span class="nc">PsfSummary</span><span class="p">,</span><span class="w">           </span><span class="c1">// cached per PSF generation: peak, beam fit, sidelobe, Clark patch</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">support</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="o">'</span><span class="na">a</span><span class="w"> </span><span class="nc">BitMask</span><span class="p">,</span><span class="w">          </span><span class="c1">// mask ∧ valid support, built once</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">controls</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="o">'</span><span class="na">a</span><span class="w"> </span><span class="nc">CleanControls</span><span class="p">,</span><span class="w">   </span><span class="c1">// gain, niter, threshold, nsigma, cycleniter, cyclefactor, min/max psf fraction</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">budget</span><span class="p">:</span><span class="w"> </span><span class="nc">Budget</span><span class="p">,</span>
+<span class="p">}</span>
+<span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">Controller</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* global, cycle and effective thresholds; inclusive flag; 1% check; divergence */</span><span class="w"> </span><span class="p">}</span>
+
+<span class="sd">/// A pixel component today; a Gaussian "aspen" (amplitude, sub-pixel centre,</span>
+<span class="sd">/// width) when an ASP solver lands. `accept` may revise earlier accepted</span>
+<span class="sd">/// components (ASP re-fits its active set), so `Update` is a list.</span>
+<span class="k">pub</span><span class="w"> </span><span class="k">enum</span><span class="w"> </span><span class="nc">Candidate</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">Pixel</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">index</span><span class="p">:</span><span class="w"> </span><span class="kt">usize</span><span class="p">,</span><span class="w"> </span><span class="n">scale</span><span class="p">:</span><span class="w"> </span><span class="kt">u8</span><span class="p">,</span><span class="w"> </span><span class="n">flux</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="kt">f64</span><span class="o">&gt;</span><span class="w"> </span><span class="p">},</span>
+<span class="w">                     </span><span class="n">Gaussian</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">amplitude</span><span class="p">:</span><span class="w"> </span><span class="kt">f64</span><span class="p">,</span><span class="w"> </span><span class="n">centre</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="kt">f64</span><span class="p">;</span><span class="w"> </span><span class="mi">2</span><span class="p">],</span><span class="w"> </span><span class="n">width</span><span class="p">:</span><span class="w"> </span><span class="kt">f64</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
+
+<span class="k">pub</span><span class="w"> </span><span class="k">trait</span><span class="w"> </span><span class="n">Solver</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">State</span><span class="p">;</span>
+<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">initialize</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">view</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">MinorCycleView</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">Self</span><span class="p">::</span><span class="n">State</span><span class="p">;</span>
+<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">next</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">state</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">mut</span><span class="w"> </span><span class="bp">Self</span><span class="p">::</span><span class="n">State</span><span class="p">,</span><span class="w"> </span><span class="n">view</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">MinorCycleView</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="n">Candidate</span><span class="o">&gt;</span><span class="p">;</span>
+<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">accept</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">state</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">mut</span><span class="w"> </span><span class="bp">Self</span><span class="p">::</span><span class="n">State</span><span class="p">,</span><span class="w"> </span><span class="n">c</span><span class="p">:</span><span class="w"> </span><span class="nc">Candidate</span><span class="p">,</span><span class="w"> </span><span class="n">gain</span><span class="p">:</span><span class="w"> </span><span class="kt">f64</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">Update</span><span class="p">;</span>
+<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">finalize</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">state</span><span class="p">:</span><span class="w"> </span><span class="nc">Self</span><span class="p">::</span><span class="n">State</span><span class="p">,</span><span class="w"> </span><span class="n">residual</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">mut</span><span class="w"> </span><span class="n">Planes</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">ModelDelta</span><span class="p">;</span>
+<span class="p">}</span>
+<span class="k">pub</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">run_minor_cycle</span><span class="o">&lt;</span><span class="n">S</span><span class="p">:</span><span class="w"> </span><span class="nc">Solver</span><span class="o">&gt;</span><span class="p">(</span><span class="n">solver</span><span class="p">:</span><span class="w"> </span><span class="nc">S</span><span class="p">,</span><span class="w"> </span><span class="n">view</span><span class="p">:</span><span class="w"> </span><span class="nc">MinorCycleView</span><span class="p">,</span><span class="w"> </span><span class="n">ctl</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">mut</span><span class="w"> </span><span class="n">Controller</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="p">(</span><span class="n">ModelDelta</span><span class="p">,</span><span class="w"> </span><span class="n">StopReason</span><span class="p">);</span>
+</code></pre></div>
+
+<p>Solvers: <code>Hogbom</code>, <code>Clark</code> (active-list state), <code>Multiscale</code> (<code>ScaleBank</code>
+with one term), <code>Taylor</code> (<code>ScaleBank</code> with N_t terms and per-scale Hessian);
+image-domain multi-field Hogbom is the driver run over several views with a
+shared threshold. Shared primitives: <code>peak_search</code> (masked, windowed, scored),
+<code>patch_subtract</code> (clip | circular), <code>ScaleBank</code>, generalised <code>LinearRefresh</code>
+(FFT or sparse direct) used by Clark, the multiscale terminal refresh and the
+Taylor refresh. The controller is the one place for cycle threshold,
+<code>nsigma</code>, <code>cycleniter</code>, inclusive accounting, the 1% convergence check and the
+divergence rule (CASA stop codes 1–4, 6). Sparse refresh runs on the worker
+team, not raw threads. CASA auto <code>cycleniter</code> semantics (#341) are part of
+<code>Controller</code>.</p>
+<h3 id="56-aw-and-mosaic-convolution-functions">5.6 AW and mosaic convolution functions<a class="headerlink" href="#56-aw-and-mosaic-convolution-functions" title="Permanent link">&para;</a></h3>
+<p><code>AwCatalog::open_casa(path)</code> reads only the CF image headers at open
+(support, sampling, W, frequency, Mueller and PA lists; LibRA's lazy-fill
+<code>CFCache</code>) and reads cell pixels on demand into an in-memory LRU bounded by
+the reservation. <code>AwCatalog::generate_native(...)</code> (the existing native EVLA
+generation) writes CASA-format CF images into <code>&lt;cache&gt;/cfcache/</code> so the same
+loader serves both. No manifest, no payload hash, no eviction ledger. The
+index rules are pinned to LibRA/CASA: <code>w_index = clamp(round(√(wIncr·|w|)),
+0, nW−1)</code> with <code>wVal[i] = i²/dW</code>; frequency cell = nearest listed value,
+precomputed per (spw, channel) with the conjugate map at √(2f0²−f²); PA cell
+by <code>|PA − PA_cf| ≤ dPA</code>; each cell normalised by its un-oversampled area
+before use. For AW the bounded source iterates spectral-window-major so one
+CF group is resident at a time. <code>MosaicPb</code> builds projectors per (frequency,
+antenna-class pair) from the PB model and caches re-phased kernels per
+pointing pair.</p>
+<h3 id="57-products-and-normalisation-casa-imaging-products">5.7 Products and normalisation (<code>casa-imaging-products</code>)<a class="headerlink" href="#57-products-and-normalisation-casa-imaging-products" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Quantity</th>
+<th>Rule (CASA)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>sumwt</td>
+<td>Σ W per plane/pol; AW: Σ W·</td>
+</tr>
+<tr>
+<td>dirty/residual (standard)</td>
+<td>FFT⁻¹ grid ÷ correction × N_x N_y ÷ sumwt</td>
+</tr>
+<tr>
+<td>PSF</td>
+<td>each plane ÷ max of term-0 PSF; peak = 1</td>
+</tr>
+<tr>
+<td>weight image (mosaic/AW)</td>
+<td>gridded FT[PB²] at uvw = 0, FFT, Stokes convert, ÷ sumwt</td>
+</tr>
+<tr>
+<td>PB</td>
+<td>√weight ÷ pbmax, masked where &gt; pblimit</td>
+</tr>
+<tr>
+<td>residual, flatnoise (default)</td>
+<td>÷ (pbmax·√weight) where &gt; pblimit·pbmax², else 0</td>
+</tr>
+<tr>
+<td>residual, flatsky</td>
+<td>÷ weight where &gt; pblimit²·pbmax²</td>
+</tr>
+<tr>
+<td>model prescale before degrid (flatnoise)</td>
+<td>× √weight ÷ pbmax; undone after</td>
+</tr>
+<tr>
+<td>pbcor</td>
+<td>restored ÷ PB where PB &gt; 0</td>
+</tr>
+<tr>
+<td>MT-MFS</td>
+<td>each term ÷ term-0 sumwt and the same weight image; alpha and error products from terms</td>
+</tr>
+</tbody>
+</table>
+<p>The product list (image, residual, psf, sumwt, model, pb, mask, weight,
+alpha, alpha.error, pbcor) replaces the product graph topology. The CASA
+writer stages each image beside its target and promotes it with the existing
+atomic rename/swap and parent fsync. Standard-gridder PB product and pixel
+masks (#217) are rows in this table.</p>
+<h3 id="58-request-and-compile-casa-imaging-model-casa-imaging-application">5.8 Request and compile (<code>casa-imaging-model</code>, <code>casa-imaging-application</code>)<a class="headerlink" href="#58-request-and-compile-casa-imaging-model-casa-imaging-application" title="Permanent link">&para;</a></h3>
+<p><code>ImagingRequest</code> is one serde struct whose field names, choices and defaults
+are the provider-contracts catalog entries; <code>casars-imager</code> fills it from the
+resolved catalog values and nothing else. New catalog entries introduced by
+this plan: <code>gridprecision</code> (D2), <code>backend = cpu | metal</code> (IF-4), and the
+<code>diagnostics</code> group (section 8.1). Each is added to the catalog in the ticket
+that lands the behaviour, with the Python wrappers and parameter reference
+regenerated in the same PR. <code>validate()</code> runs once. <code>compile()</code>
+returns <code>CompiledProblem</code> with no identity hashes except the AW cache key.
+<code>availability::check(&amp;CompiledProblem, &amp;HostResources)</code> is the one gate for
+capabilities that are not installed (Taylor-basis mosaic, Metal on
+non-macOS, joint continuum-line). Capabilities that are rejected are not in
+the catalog.</p>
+<h3 id="59-techniques-adopted-from-obit-and-librahpg">5.9 Techniques adopted from Obit and LibRA/HPG<a class="headerlink" href="#59-techniques-adopted-from-obit-and-librahpg" title="Permanent link">&para;</a></h3>
+<p>Surveyed 2026-10-07 from the local Obit checkout (<code>ebc1c229</code>, GPL-2+, used as
+design reference only) and LibRA <code>0ab99e26</code> with vendored HPG 3.3.0. The
+section 5.3 signatures already reflect the "adopt now" rows.</p>
+<table>
+<thead>
+<tr>
+<th>Technique</th>
+<th>Source</th>
+<th>Where it lands</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Mueller routing tables (direct and conjugate) selected by sign(w) and direction in the kernel; no per-sample Mueller index</td>
+<td>HPG <code>gridding.hpp:605-680</code>, <code>hpg.hpp:1158</code></td>
+<td><code>MuellerRouting</code>, kernel contract (IF-1)</td>
+</tr>
+<tr>
+<td>Two-level CF key: variable-support <code>group</code>, fixed <code>cube</code>; Mueller planes inside the cell</td>
+<td>HPG <code>indexing.hpp:82-190</code></td>
+<td><code>CfKey</code> (IF-1), <code>AwCatalog</code> (IF-3)</td>
+</tr>
+<tr>
+<td>Dense CF layout <code>[oy][ox][mueller][iy][ix]</code>, two padding cells per edge so the fine-offset sign selects the major index without a branch</td>
+<td>HPG <code>impl.hpp:231-262</code>, <code>gridding.hpp:331-355</code></td>
+<td><code>TapLayout::Dense</code> (IF-1)</td>
+</tr>
+<tr>
+<td>Separable kernel tabulated oversampling-major so one fractional offset is one contiguous row; seven-tap row as one vector multiply-add over an interleaved, x-contiguous grid row</td>
+<td>Obit <code>ObitUVGrid.c:ConvFunc 1247-1438</code>, <code>fast_grid7 1902-1989</code></td>
+<td><code>TapLayout::SeparableReal</code>, <code>CpuBackend</code> (IF-1)</td>
+</tr>
+<tr>
+<td>Samples whose support leaves the padded grid are dropped at placement, so kernels have no bounds tests; zero-weight samples never reach the tap loop</td>
+<td>Obit <code>fast_prep_grid 1296-1348</code>; HPG <code>as_weight(flag)</code></td>
+<td><code>Placement</code> construction (IF-1)</td>
+</tr>
+<tr>
+<td>Values pre-multiplied by phasor and weight once per sample; one fused predict → residual → grid dispatch per block</td>
+<td>HPG <code>gridding.hpp:806-866</code></td>
+<td><code>SampleBlock</code>, <code>Work::ResidualGrid</code> (IF-1, IF-4)</td>
+</tr>
+<tr>
+<td>sumwt accumulated in the tap loop as <code>W·|Σ taps used|</code>; degrid divides by the unconjugated sum of the taps used</td>
+<td>HPG <code>gridding.hpp:590-680</code>; CASA <code>AWVisResampler.cc:404,558</code></td>
+<td>kernel contract (IF-1)</td>
+</tr>
+<tr>
+<td>Accumulator layout <code>[plane][pol][term][y][x]</code>, x fastest, shared by CPU and device so a device copy is one memcpy</td>
+<td>HPG LayoutLeft grid</td>
+<td><code>GridAccumulator</code> (IF-1), <code>MetalBackend</code> (IF-4)</td>
+</tr>
+<tr>
+<td>f64 grid with f32 CF and visibilities as the default; f32 grid as the production precision when memory demands it</td>
+<td>HPG <code>core.hpp:55-70</code>; Obit f32 grids with f64 phase</td>
+<td>D2, <code>GridPrecision</code></td>
+</tr>
+<tr>
+<td>Per-plane FFTs single-threaded on the worker team; FFTW threads never nested inside worker parallelism</td>
+<td>Obit <code>ObitUVGridFFT2ImPar 852-1047</code></td>
+<td><code>MajorCyclePass</code> finish rule (IF-2); FFTW threads only for the single-plane case, measured in IF-10</td>
+</tr>
+<tr>
+<td>Memory admission as one arithmetic formula over visibility buffer, grids and images</td>
+<td>Obit <code>ObitUVImagerGetNumPar 863-921</code></td>
+<td><code>admit()</code> (D5, IF-6)</td>
+</tr>
+<tr>
+<td>Metadata-first CF cache: read headers at open, cell pixels on demand; pinned index rules for w, frequency (with conjugate map), PA and area normalisation</td>
+<td>LibRA <code>CFCache.cc:231-560</code>, <code>CFBuffer.h:253-262</code>, <code>CFBuffer.cc:520-580</code>, <code>AWConvFunc.cc:463,546-553</code></td>
+<td><code>AwCatalog</code> (IF-3), section 5.6</td>
+</tr>
+<tr>
+<td>Spectral-window-major source order for AW so one CF group is resident at a time</td>
+<td>LibRA <code>DataBase.h:165-192</code></td>
+<td><code>BoundedSource</code> ordering (IF-3)</td>
+</tr>
+<tr>
+<td>Device stream rotation: upload of block k+1 overlaps gridding of block k; per-stream visibility buffers</td>
+<td>HPG <code>runtime.hpp:333-575, 2249-2262</code></td>
+<td><code>MetalBackend</code> buffer ring (IF-4)</td>
+</tr>
+<tr>
+<td>Weight image = visibility 1 at uvw 0 with the FT[PB²] set; PSF = visibility 1 at true uvw; same kernel, three accumulators in one pass</td>
+<td>LibRA roadrunner modes, <code>HPGVisBuffer.inc:160-220</code></td>
+<td><code>Mode::{Data,Psf,Weight}</code> (already planned)</td>
+</tr>
+<tr>
+<td><code>Candidate</code> as an enum with a Gaussian variant and <code>accept</code> allowed to revise earlier components, so an ASP solver can land without changing the trait</td>
+<td>LibRA <code>AspMatrixCleaner.cc</code></td>
+<td><code>Solver</code> (IF-5)</td>
+</tr>
+<tr>
+<td>sumwt image carries <code>useweightimage</code>/<code>imagingmode</code> miscinfo for CASA-tool compatibility</td>
+<td>LibRA <code>roadrunner.cc:878-918</code></td>
+<td>products (IF-8)</td>
+</tr>
+<tr>
+<td>Component merging at equal positions before prediction (already the behaviour of <code>ModelDelta</code>)</td>
+<td>Obit <code>ObitTableCCUtilMergeSel</code></td>
+<td>kept</td>
+</tr>
+</tbody>
+</table>
+<p>Performance-pass candidates (IF-10), each gated by a T0 law or a measurement
+before adoption:</p>
+<ul>
+<li>Hermitian half-plane gridding with guard columns and conjugate folding
+  (Obit <code>ObitUVGridSetup</code>, <code>ThreadFlip</code>, <code>ThreadMerge</code>): halves grid memory
+  and FFT work for Hermitian plane sets only; needs a T0 law (half-plane =
+  full-plane to 1e-6) and a rule that cross-hand correlation grids are
+  excluded. Decided at gate R1 whether <code>GridAccumulator</code> reserves the layout.</li>
+<li>Replica-merge partition (planes × sample chunks with private grids and an
+  O(grid) merge per replica; Obit <code>ObitThreadGridSetupMF</code>): a third
+  decomposition between <code>Planes</code> and <code>Regions</code>, measured against <code>Regions</code>
+  for single-plane MFS.</li>
+<li>Shared-grid atomics (HPG) versus region or lane ownership on Metal for
+  wide-support W/AW kernels.</li>
+<li>Vectorised sin/cos for the phase rotation (Obit <code>ObitSinCosVec</code>, Pommier
+  polynomial) only if profiling shows the phasor in the top costs.</li>
+<li>CF prefetch of the next spectral window on a helper thread (LibRA
+  <code>CFServer</code>).</li>
+<li>Bounded tap-plan cache as a <code>MajorCyclePass</code> strategy (D1 follow-up).</li>
+<li>Parallel active-list subtraction in Clark (Obit <code>ThreadCLEAN</code>: split the
+  pixel list across workers, each subtracts and finds a local peak, reduce).</li>
+<li>FFTW threading for single-plane 4096² MFS.</li>
+</ul>
+<p>Rejected for this plan, with reasons: Obit faceting as the W-term method
+(changes the product contract; VLASS parity uses AW); beam-peak
+normalisation (differs from CASA sumwt); DFT component prediction (loses to
+gridded prediction at 10⁷–10⁸ samples); the common-resolution frequency
+taper and joint subband CLEAN (not CASA MT-MFS semantics); Obit autoWindow
+(cheaper but weaker than CASA automask, and parity needs automask); Obit's
+"middle loop" of patch-only residual updates between major cycles (our Clark
+exact refresh already covers it); LibRA's disk-image process split per stage
+(full-image round trips per major cycle); the persistent in-place residual
+visibility file (pays only with DFT prediction of few components).</p>
+<h2 id="6-deletion-list">6. Deletion list<a class="headerlink" href="#6-deletion-list" title="Permanent link">&para;</a></h2>
+<p>Line counts are production lines from the deep dives, rounded. Each ticket in
+section 9 names which rows it owns. "Replaced by" names the section 5 type.</p>
+<table>
+<thead>
+<tr>
+<th>Delete</th>
+<th>Lines</th>
+<th>Replaced by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>reconstruction/src/streaming_cube/band.rs</code>, <code>spatial.rs</code>, <code>residual_device.rs</code>, <code>completion.rs</code>, <code>preparation.rs</code>, runtime <code>streaming_cube/{phase,plan,execute,input,prepare,bulk_phase,bulk_wave,metal_wave,metal_plan}.rs</code></td>
+<td>~9,000 (+2,650 cfg(test))</td>
+<td><code>MajorCyclePass</code> + <code>Partition::Planes</code> + <code>Residency::Waves</code></td>
+</tr>
+<tr>
+<td><code>SpectralSlabOperator</code> and the slab half of <code>spectral_operator.rs</code> (<code>:7542-10871</code>), <code>initial_planes*</code>, <code>OperatorTaps</code>/<code>GridOperatorTaps</code>/<code>grid_operator</code>/<code>degrid_operator</code>, <code>ConvolutionOperator</code> enum, <code>StandardConvolution::{grid,grid_rows,grid_float,degrid,degrid_float}</code></td>
+<td>~6,500</td>
+<td><code>CpuBackend</code>, <code>Spheroidal</code>, <code>WPlanes</code>, <code>MeasurementOperator</code></td>
+</tr>
+<tr>
+<td><code>gridded_normal_operator.rs</code> + <code>gridded_normal_operator/*</code>, runtime <code>complete_data_operator.rs</code> + <code>complete_data_operator/*</code>, <code>complete_data_parallel_mfs_tests.rs</code>, replay half of <code>managed_spill.rs</code></td>
+<td>~20,000</td>
+<td>re-traversal through <code>MajorCyclePass</code> (D1)</td>
+</tr>
+<tr>
+<td><code>aw_projection.rs</code> grid/degrid loops and lease provider, <code>aw_generation/paired.rs</code> duplication, <code>mosaic.rs</code> grid/degrid loops</td>
+<td>~3,000</td>
+<td><code>AwCatalog</code>, <code>MosaicPb</code> + <code>CpuBackend</code></td>
+</tr>
+<tr>
+<td>application <code>aw_cache.rs</code>, <code>prepared_aw_phase.rs</code>, runtime <code>prepared_artifact.rs</code> + <code>prepared_artifact/*</code>, model <code>prepared_artifact.rs</code> identity layers</td>
+<td>~15,000</td>
+<td><code>AwCatalog</code> (D3)</td>
+</tr>
+<tr>
+<td><code>metal_cube.rs</code> MSL <code>normal_*</code> and <code>cube_residual_connected</code>, <code>metal_wave.rs</code>, <code>metal_normal.rs</code>, three ticket rings and two layout schemes</td>
+<td>~2,500</td>
+<td><code>MetalBackend</code> with one dispatch path</td>
+</tr>
+<tr>
+<td><code>weighting.rs</code> (reconstruction 3,499 and runtime 5,133), <code>weighting/bulk_source.rs</code>, <code>serial_compute_probe.rs</code>; keep the density cell rules and robust factor (~500)</td>
+<td>~8,000</td>
+<td><code>WeightingGeneration</code>, <code>build_density_grid</code></td>
+</tr>
+<tr>
+<td>five CASA-linear resamplers, four Stokes-I reducers, seven transport structs</td>
+<td>~1,500</td>
+<td>one resampler, one router, <code>Placement</code>/<code>SampleBlock</code></td>
+</tr>
+<tr>
+<td><code>minor_cycle.rs</code> duplicates: <code>run_image_domain_hogbom_controllers</code>, <code>run_joint_block_minor_cycle</code>, <code>select_joint/taylor_candidate</code>, <code>principal_taylor_peak</code>, <code>*_kernel_fits</code>, <code>refresh_circular_residual</code>, <code>refresh_taylor_residuals</code>, <code>subtract_psf_circular</code>, <code>subtract_psf_patch</code>, the four threshold copies, four validation copies, three evidence blocks; <code>psf_beam.rs</code> duplicate peaks; <code>restore.rs:24</code></td>
+<td>~1,800</td>
+<td>driver, <code>Solver</code>, primitives</td>
+</tr>
+<tr>
+<td><code>receipt.rs</code>, <code>cost_model.rs</code>, <code>execution.rs</code> DAG/claims/slots/validators, <code>execution_bindings.rs</code>, <code>resource_authority.rs</code> topology/rates/queues/locks/certificates, <code>observation_transaction.rs</code>, <code>publication_layout.rs</code>, <code>product_publication.rs</code>, <code>serial_product_publication.rs</code>, <code>spectral_cycle_plan.rs</code> candidate search, <code>spectral_cycle.rs</code>, <code>paged_cube_state.rs</code>, bounded-stream measurements and digests, managed-spill measurements and retention identity, <code>reload_probe.rs</code>; tests <code>execution/tests.rs</code>, <code>resource_authority/tests.rs</code>, <code>compile_plan_run.rs</code> receipt and admission portions</td>
+<td>~40,000 (+30,000 tests)</td>
+<td>section 5.4 core (D5)</td>
+</tr>
+<tr>
+<td><code>task_contract.rs</code> mirror types, <code>From</code> impls, <code>default_*</code> fns, <code>from/to_cli_config</code>, <code>IMAGER_PROJECTED_PARAMETERS</code>, progress schema, round-trip tests; <code>CliConfig</code> and test-only <code>parse</code>; <code>ContinuumImagingRequest</code>, <code>ApplicationRequest</code>; <code>ManagedImagingOutput::from_run</code></td>
+<td>~4,000</td>
+<td><code>ImagingRequest</code> (D8)</td>
+</tr>
+<tr>
+<td>21 dead/always-rejected <code>TaskRequirement</code>s and 12 catalog parameters; <code>JointContinuumLine</code> end to end; four unreachable <code>UnsupportedRequirement</code> constraints; <code>PreviewPng</code></td>
+<td>~1,300</td>
+<td>nothing</td>
+</tr>
+<tr>
+<td>identity encoders (<code>compiled_problem.rs:3153-3825</code>, <code>geometry.rs:1721-1942</code>, <code>product_graph.rs:1176-1440</code>, <code>observation.rs:2865-3191</code>, <code>model_state.rs:1272-1600</code>), <code>validate_compiled_problem_identity</code>, selected-row sequence hashing and per-sample re-inspection, unused selection predicate families, duplicate row structs</td>
+<td>~2,500</td>
+<td>plain comparison; count + ascending-order check</td>
+</tr>
+<tr>
+<td>product graph <code>dependencies</code>/<code>schema</code>/<code>IndependentProductStoreProtocol</code>/<code>ProductMemberContract</code>, <code>demand.rs</code> residency re-checks</td>
+<td>~400</td>
+<td>product list (5.7)</td>
+</tr>
+<tr>
+<td><code>scripts/check-imaging-architecture.py</code>, <code>test-imaging-architecture-structural.py</code>, <code>resources/imaging-architecture/{migration-matrix.json,baselines,representative-science-evidence}</code>, <code>scripts/test-imaging-parity.sh</code></td>
+<td>~3,800 + data</td>
+<td><code>scripts/check-imaging-dependencies.py</code></td>
+</tr>
+<tr>
+<td>151 non-production <code>CASA_RS_*</code> names, <code>eprintln!</code> sites, module-level <code>#[allow(dead_code)]</code>, diagnostic probe modules</td>
+<td>~1,000</td>
+<td><code>tracing</code> via <code>casa-logging</code>; <code>diagnostics</code> request field</td>
+</tr>
+</tbody>
+</table>
+<p>Target after conversion: imaging non-test source under 70k lines (from about
+200k); stretch 50k. IF-11 records the final count.</p>
+<h2 id="7-test-strategy-and-tiers">7. Test strategy and tiers<a class="headerlink" href="#7-test-strategy-and-tiers" title="Permanent link">&para;</a></h2>
+<p>Build profile: add <code>[profile.dev.package."casa-imaging-*"] opt-level = 3</code>
+(debug assertions kept) so T1 runs at release speed under <code>cargo test</code>.</p>
+<p><strong>T0, laws (each under one minute; every ticket; CI).</strong> In-process synthetic
+MeasurementSets at 64–128 px with a few hundred rows via
+<code>generate_synthetic_observation_ms</code>. For every <code>ConvolutionFunctionSet</code> and
+both backends:</p>
+<ul>
+<li>adjoint dot-product test ⟨A x, y⟩ = ⟨x, A* y⟩ to 1e-6 relative (f64) or
+  1e-4 (f32/Metal);</li>
+<li>PSF peak = 1 after normalisation and PSF Hermitian symmetry;</li>
+<li>point-source dirty image = flux × shifted PSF within 1e-3;</li>
+<li>sumwt = Σ W (standard, mosaic) and the AW rule;</li>
+<li>worker-count invariance within tolerance (bitwise for CPU f64
+  <code>Partition::Planes</code>; 1e-6 for f64 <code>Regions</code>; 1e-4 for CPU f32 and Metal);</li>
+<li>f32 versus f64 CPU grids agree within 1e-4 normalised on every CF set;</li>
+<li>mosaic: weight image equals Σ_k PB_k² at the pointing centres; W: zero
+  |w| reduces to the standard kernel; AW: cold and warm catalogs give identical
+  keys and taps;</li>
+<li>deconvolution: each solver recovers a known two-component model from a
+  synthetic residual/PSF to the cycle threshold; controller stop codes;</li>
+<li>weighting: uniform density equals CASA cell rules on a hand-built grid.</li>
+</ul>
+<p><strong>T1, end to end per capability (under ten minutes each; CI subset).</strong>
+256–512 px, 1e5–1e6 samples, through <code>casars-imager</code>'s production route, with
+analytic point plus Gaussian skies: standard MFS (Hogbom, Clark, multiscale,
+box mask, automask, model-column write), 16-channel cube (natural, Briggs),
+mosaic (three overlapping fields), full Stokes (four correlations),
+W-projection (low declination, long baselines), MT-MFS (multi-SPW synthetic,
+two terms), Metal variants on macOS. Checks: recovered flux, position and beam
+within analytic tolerance, residual RMS bound, complete product inventory and
+WCS, worker invariance, bounded memory (planned ≤ observed peak RSS × 1.1).</p>
+<p><strong>T1.5, CASA-paired small fixtures (local only; run before a ticket's
+review).</strong> Copies of casatestdata <code>refim_point</code>, <code>refim_point_withline</code>,
+<code>refim_twochan</code>, <code>refim_alma_mosaic</code>, <code>refim_mawproject</code>,
+<code>vla_wideband_2ptg_w_squint</code>, <code>polcal_LINEAR_BASIS</code>, <code>ngc5921</code> with CASA
+references generated once into <code>/Volumes/GLENDENNING/casa-rs-evidence/if/</code>;
+plus the intermediate-90 four-SPW pilot (saved CASA reference, casa-rs W4
+about 16 s) as the quick timing regression. Comparison: existing
+<code>image_compare.py</code> with NRMS ≤ 1e-3 on every product, beam ≤ 1e-3, exact
+inventory and WCS.</p>
+<p><strong>T2, representative (hours; IF-10 only).</strong> The nineteen matrix scenarios
+(oracles regenerated), the intermediate-90 16-SPW and deeper variants, the
+C-array 512-channel cube (CASA 6.0 h), Wave3 4096² MFS (CASA 7,268 s), the
+VLASS fragment (#625 serial bar 9,073 s), full-360 once finalised.</p>
+<p>Tests that assert implementation details (batch sizes, receipt counts,
+internal ordering, measurement projections) are deleted with the code they
+describe. The three stale T55 tests are fixed in IF-0 by tightening their
+fixture budgets, and are then deleted in IF-7 with the admission machinery
+they exercise, once the IF-7 admission test covers the same guarantee
+(explicit ceiling rejects a run; one-frame window forces batch 1).</p>
+<h2 id="8-diagnostics-logging-and-configuration">8. Diagnostics, logging and configuration<a class="headerlink" href="#8-diagnostics-logging-and-configuration" title="Permanent link">&para;</a></h2>
+<h3 id="81-retained-switches-as-imagingrequestdiagnostics-fields">8.1 Retained switches (as <code>ImagingRequest.diagnostics</code> fields)<a class="headerlink" href="#81-retained-switches-as-imagingrequestdiagnostics-fields" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Replaces</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>stage_timing: bool</code></td>
+<td><code>CASA_RS_TRACE_IMAGING_STAGE_TIMING</code> (14 sites), <code>CASA_RS_PROFILE_CUBE</code>, <code>CASA_RS_PROFILE_PRODUCTS</code>, <code>CASA_RS_TRACE_CLARK_TIMING</code>, <code>CASA_RS_TRACE_AW_REPLAY_TIMING</code>, <code>CASA_RS_TRACE_MAJOR_CYCLE_ENVELOPES</code></td>
+</tr>
+<tr>
+<td><code>metal_stage_timing: bool</code></td>
+<td><code>CASA_RS_PROFILE_METAL_STAGES</code></td>
+</tr>
+<tr>
+<td><code>science_trace: bool</code></td>
+<td><code>CASA_RS_TRACE_IMAGING_SCIENCE</code>, <code>CASA_RS_IMAGING_SCIENCE_PROBE</code>, <code>CASA_RS_TRACE_AW_*</code></td>
+</tr>
+</tbody>
+</table>
+<p>All emission is <code>tracing</code> events at <code>info</code>/<code>debug</code> through <code>casa-logging</code>.
+Stage-timing consumers under <code>tools/perf/imager/</code> are updated to parse the
+structured log lines (the T51 pair driver was deleted in IF-0).</p>
+<h3 id="82-removed">8.2 Removed<a class="headerlink" href="#82-removed" title="Permanent link">&para;</a></h3>
+<p><code>CASA_RS_IMAGING_SPILL_READ/WRITE_BYTES_PER_SECOND</code> (required today),
+<code>CASA_RS_T51_RECEIPT_BOUNDARY_PROBE</code>, <code>CASA_RS_APPLICATION_ISOLATED_CASE</code>
+(subprocess re-exec in tests), and the roughly 150 test- and probe-only
+names. <code>eprintln!</code> in library crates is forbidden by the checker.</p>
+<h3 id="83-run-summary">8.3 Run summary<a class="headerlink" href="#83-run-summary" title="Permanent link">&para;</a></h3>
+<p><code>RunSummary</code> is a small JSON written beside the products: request echo,
+phases with wall time and peak RSS, worker count, backend, minor-cycle
+totals, product list. It is the only runtime record. If
+<code>intermediate_profile_evidence.py</code> is still wanted, it reads this.</p>
+<h2 id="9-ticket-set-and-review-gates">9. Ticket set and review gates<a class="headerlink" href="#9-ticket-set-and-review-gates" title="Permanent link">&para;</a></h2>
+<h3 id="91-conventions">9.1 Conventions<a class="headerlink" href="#91-conventions" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Issues are titled <code>[Imaging foundation] IF-n: &lt;outcome&gt;</code> under a new
+  umbrella issue <code>[Imaging foundation] IF: one measurement operator, one
+  pass, one driver</code>. Each issue body carries: outcome, in-scope files,
+  deletion rows from section 6, acceptance tests, non-goals, and a
+  <code>## Deviations</code> section the implementer fills when the plan and the code
+  disagree. Pull requests target <code>main</code> and carry <code>Work issue: #N</code>.</li>
+<li>Each PR passes: <code>cargo fmt --check</code>, <code>cargo clippy --all-targets -D
+  warnings</code> on touched crates, the checker (D6), T0 for touched operators,
+  T1 for touched capabilities, and <code>just quick</code> at ticket end. T1.5 runs
+  before review for science-bearing tickets.</li>
+<li>Review per ticket: one contract review (owner or Fable) against the issue's
+  outcome, deletion rows and section 10. Preferences cannot block; a cited
+  rule or a failing acceptance test can.</li>
+<li>Intermediate breakage is accepted and stated: between IF-2 and IF-4 Metal
+  is unavailable; between IF-2 and IF-3 W, AW and mosaic are unavailable.
+  <code>availability::check</code> rejects them with a typed reason during that window.</li>
+</ul>
+<h3 id="92-tickets">9.2 Tickets<a class="headerlink" href="#92-tickets" title="Permanent link">&para;</a></h3>
+<p><strong>IF-0 Foundation and process (Fable).</strong> Approve this plan; add ADR-0016
+(imaging foundation; supersedes ADR-0010 and the attestation wording of
+ADR-0009; records D1–D10). Retire the checker and matrix (D6) and land
+<code>check-imaging-dependencies.py</code> with a trimmed <code>dependency-policy.json</code>.
+Create the three crate skeletons (D4). Fix the three stale T55 tests. Delete
+dead code: cfg(test) legacy cube engine, <code>JointContinuumLine</code>, dead
+<code>TaskRequirement</code>s and catalog parameters, <code>cost_model.rs</code>, <code>reload_probe.rs</code>,
+diagnostic probe modules, <code>test-imaging-parity.sh</code>. Extend
+<code>generate_synthetic_observation_ms</code> to several spectral windows; add the T1
+harness (<code>crates/casa-imaging-application/tests/t1/</code>) and the dev-profile
+opt-level. Add <code>tracing</code> to the imaging crates and the checker rule against
+<code>std::env</code> and <code>eprintln!</code> (enforced from IF-1 on new code; old sites go with
+their files). Close the #486 family (D7) and open IF-1 … IF-11. Acceptance:
+<code>just quick</code> green; dependency checker green; test and line counts recorded in
+the umbrella issue.</p>
+<p><strong>IF-1 Operator core (Fable).</strong> <code>casa-imaging-operator</code>: <code>Placement</code>,
+<code>SampleBlock</code>, <code>CfKey</code>, <code>TapLayout</code>, <code>ConvolutionFunctionSet</code>, <code>Spheroidal</code>,
+<code>GridBackend</code>, <code>CpuBackend</code> (support-generic plus the specialised seven-tap
+path, both precisions, Taylor terms, Data/Psf/Weight modes),
+<code>GridAccumulator</code>, <code>MuellerRouting</code>, <code>Work</code>, <code>MeasurementOperator</code>
+(<code>accumulator</code>, <code>prepare_model</code>, <code>finish</code>), <code>ImageCorrection</code>, FFT centring
+(one implementation), <code>PolarizationRouting</code>, the single spectral resampler,
+<code>WeightingGeneration</code> and <code>build_density_grid</code> (moved cell rules). The
+section 5.9 "adopt now" rows for IF-1 are part of the contract. T0 laws for
+<code>Spheroidal</code> on <code>CpuBackend</code>, both precisions. No production caller yet; this
+is the pattern ticket.
+Deletions: none (IF-2 deletes the drivers). Acceptance: T0 green; rustdoc on
+every public item states the contract; file sizes under 1,500 lines.</p>
+<p><strong>IF-2 Major-cycle pass and migration of standard routes (Opus).</strong>
+<code>casa-imaging-runtime</code>: <code>WorkerTeam</code> + bounded stream trimmed, <code>Partition</code>,
+<code>Residency</code>, <code>MajorCyclePass</code>, <code>run_major_cycle</code>, model-column write in the
+final pass, cube state paging on one backend (D10). Migrate standard MFS,
+MT-MFS (Taylor basis), channel-local cube (all weightings, waves), dirty-only
+and model-column runs onto the pass. Delete the four CPU drivers, the replay
+subsystem (D1), <code>metal_normal.rs</code> and the runtime cube engine (section 6 rows
+1–3, 7, 8 partially). Acceptance: T0; T1 standard MFS (all deconvolvers),
+cube, MT-MFS, model-column; T1.5 <code>refim_point</code>, <code>refim_twochan</code>,
+intermediate-90 pilot within 1e-3 of the saved CASA reference; pilot W4 time
+recorded (no bar yet).</p>
+<p><strong>IF-3 W, mosaic and AW on the shared operator (Opus).</strong> <code>WPlanes</code>,
+<code>MosaicPb</code> (with <code>weight_taps</code> and phase gradients), <code>AwCatalog</code> (D3, section
+5.6, native EVLA generation writing CASA-format CF images). Delete
+<code>aw_projection.rs</code> loops, <code>mosaic.rs</code> loops, <code>aw_cache.rs</code>,
+<code>prepared_aw_phase.rs</code>, <code>prepared_artifact*</code> (section 6 rows 4, 5).
+Acceptance: T0 laws per CF set including the pairing pitfalls (w-sign
+conjugation, ramp conjugation, Mueller swap, conjugate-beam frequency); T1
+mosaic, W, AW synthetic; T1.5 <code>refim_alma_mosaic</code>, <code>refim_mawproject</code>,
+<code>vla_wideband_2ptg_w_squint</code>, <code>refim_point_withline</code> within 1e-3; cold and
+warm AW catalogs give identical products.</p>
+<p><strong>IF-4 Metal backend (Opus).</strong> <code>casa-imaging-metal</code>: <code>MetalBackend</code>
+implementing <code>GridBackend::apply</code> for both tap layouts and all three <code>Work</code>
+variants, support-generic kernels, one dispatch path (validate, map, commit,
+pending), a per-stream buffer ring with upload of block k+1 overlapping
+gridding of block k, status bits for errors, grids in the shared
+<code>GridAccumulator</code> layout. <code>BackendChoice::Metal</code> selectable from the request on macOS
+only. Delete the two Metal drivers and dead MSL kernels (section 6 row 6).
+Acceptance: T0 Metal versus CPU within 1e-4 for every CF set; T1 cube and MFS
+on Metal; T1.5 pilot Metal W4 time recorded.</p>
+<p><strong>IF-5 Deconvolution (Opus).</strong> <code>casa-imaging-deconvolution</code> per section 5.5,
+including the four controller inconsistencies fixed (prepass support filter,
+inclusive threshold, 1% check for all solvers, one divergence rule) and CASA
+auto <code>cycleniter</code> (#341). Sparse refresh on the worker team. Delete section 6
+row 9. Acceptance: T0 solver recovery and controller stop codes; T1 all
+deconvolvers; T1.5 <code>refim_point</code> Hogbom/Clark/multiscale and MT-MFS within
+1e-3; iteration counts per major cycle within ±5% of CASA on <code>refim_point</code>.</p>
+<p><strong>IF-6 Runtime core shrink (Opus).</strong> Section 5.4 types; SIGINT → <code>Cancel</code> in
+<code>casars-imager</code>; <code>RunSummary</code>; delete section 6 row 10 and the three T55
+tests once the new admission test exists. Acceptance: T1 all capabilities
+unchanged; admission test (explicit ceiling rejects; one-frame window forces
+batch 1); cancellation test (SIGINT during a pass leaves no staged products
+and returns within one block); no SHA-256 or CRC in runtime or application
+production code.</p>
+<p><strong>IF-7 Request and compile layer (Opus).</strong> D8 and section 5.8; delete
+section 6 rows 11–14; <code>prepare</code> deduplicated (five spectral-axis literals,
+three velocity mappings, five single-SPW guards, three IO budgets become one
+each); <code>availability::check</code> as the single gate. Acceptance: CLI and JSON
+paths produce identical products for identical parameters (T1 subset run both
+ways); catalog, Python wrappers and parameter reference regenerate with no
+diff beyond removed parameters; <code>task_contract.rs</code> under 1,200 lines.</p>
+<p><strong>IF-8 Products and publication (Opus).</strong> Section 5.7; product list replaces
+graph topology; writer moved into <code>casa-imaging-products</code>; standard-gridder
+PB product and pixel masks (#217). Delete section 6 row 15. Acceptance: T1
+product inventory, WCS and normalisation; T1.5 <code>refim_alma_mosaic</code> flatnoise
+and flatsky residual/pb/pbcor within 1e-3.</p>
+<p><strong>IF-9 Diagnostics and logging (Opus).</strong> Section 8; delete all <code>CASA_RS_*</code>
+reads and <code>eprintln!</code> in library crates; update the stage-timing consumers
+under <code>tools/perf/imager/</code>. Acceptance: checker green; T1 with
+<code>diagnostics.stage_timing</code> emits one line per phase.</p>
+<p><strong>IF-10 Performance and memory pass (Opus with owner).</strong> Regenerate T2 oracles;
+run every T2 row before and after each optimisation; bars: within 10% of the
+section 4.3 checkpoints for cube Metal W4, MFS pilot W1/W4/Metal, MFS 512²
+W1/W4, and the #625 serial AW/MT-MFS bar; peak RSS at or below the recorded
+values. Candidate optimisations only from measurement, taken from the
+section 5.9 candidate list in the order the profile suggests. Acceptance: a
+results table in the umbrella issue; no new abstraction without a measured
+win.</p>
+<p><strong>IF-11 Docs and closure (Fable).</strong> <code>ARCHITECTURE.md</code>, <code>TESTING.md</code>,
+<code>docs/agent-reference.md</code>, <code>.agents/skills</code>, ADR index; delete
+<code>casa-imaging-reconstruction</code> remnants and historical imaging-architecture
+docs that this plan supersedes; final line and test counts; umbrella issue
+closed.</p>
+<p>Order: IF-0 → IF-1 → IF-2 → IF-4 → IF-3 → IF-5 → IF-6 → IF-7 → IF-8 → IF-9 →
+IF-10 → IF-11. IF-5 may run in parallel with IF-3/IF-4 (different crate).</p>
+<h3 id="93-review-gates">9.3 Review gates<a class="headerlink" href="#93-review-gates" title="Permanent link">&para;</a></h3>
+<p>Each gate is a scheduled review by the owner with Fable and (probably) OpenAI
+Astra. The implementer prepares the inputs; the reviewers answer the
+questions; the owner records the outcome as a dated section appended to this
+document (<code>## Gate Rn outcome — date</code>), including any replanning. A gate that
+replans edits the affected ticket bodies before the next ticket starts.</p>
+<p>Inputs for every gate: the merged PR list with diff stats; current non-test
+and test line counts per imaging crate; T0/T1/T1.5 results; the union of the
+tickets' <code>## Deviations</code> sections; the intermediate-90 pilot W4 time; a
+one-page implementer note on what was harder or different than the plan
+expected.</p>
+<p>Questions for every gate: Is the code converging on the section 5 types, or
+has a parallel route or wrapper appeared? Did any deletion row survive, and
+why? Does every new trait have a second implementation in this plan? Are
+tests law-based or did fixture-specific expectations return? Is anything in
+section 10 being violated repeatedly, and does the rule need sharpening? Has a
+discovery invalidated a section 3 decision or a section 5 signature?</p>
+<ul>
+<li><strong>R1, after IF-1 (pattern gate).</strong> Reviews the operator core before any
+  caller depends on it. Specific questions: are <code>Placement</code>/<code>SampleBlock</code>
+  sufficient for W, AW, mosaic and Taylor without extension (check against
+  section 5.1's table and the HPG record); does <code>GridBackend::apply</code> with
+  <code>Work</code> fit the Metal kernel plan; are the CASA-pinned rules placed in
+  <code>key()</code> and <code>MuellerRouting</code> where IF-3 expects them; does
+  <code>GridAccumulator</code> reserve or exclude the Hermitian half-plane layout
+  (section 5.9 candidate); is the T0 law set strong enough to replace the
+  fixture tests IF-2 will delete. Replan output: amended signatures in
+  section 5.3, amended IF-2/IF-3/IF-4 bodies.</li>
+<li><strong>R2, after IF-4 (operator complete gate).</strong> All drivers deleted, both
+  backends live, replay gone. Specific questions: did D1 cost anything visible
+  on the pilot (W4 time versus 15.8 s) and is a tap cache now justified or
+  not; is Metal's f32 accumulation within tolerance on every T1.5 row; is
+  <code>Partition::Regions</code> merge deterministic and is the fixed-lane model gone;
+  has anything cube-specific survived outside <code>Residency::Waves</code>. Replan
+  output: IF-3/IF-5 adjustments; whether IF-10 should start earlier for one
+  capability.</li>
+<li><strong>R3, after IF-7 (core shrink gate).</strong> Runtime, request and product layers
+  shrunk. Specific questions: line count against the 70k target; does the
+  run summary cover what the owner needs to see after a run; is admission
+  correct on the 16 GiB machine for the pilot and the 512-channel cube
+  (planned versus observed RSS); did any receipt, identity or evidence type
+  come back under a new name; is the catalog now the single source of
+  defaults. Replan output: IF-8/IF-9 scope; the IF-10 workload list and bars.</li>
+<li><strong>R4, after IF-10 (closure gate).</strong> Performance and memory evidence against
+  the section 4.3 checkpoints and the #625 bar. Specific questions: which bars
+  are met, which regressed and why; is each retained optimisation justified by
+  a measurement; what remains for IF-11 docs; what the next programme (wider
+  VLASS parity, heterogeneous mosaic) should assume. Replan output: IF-11
+  scope and the closing state of #445–#450.</li>
+</ul>
+<h2 id="10-anti-slop-rules-for-every-ticket">10. Anti-slop rules for every ticket<a class="headerlink" href="#10-anti-slop-rules-for-every-ticket" title="Permanent link">&para;</a></h2>
+<p>Derived from Alexis King's "Parse, don't validate"
+(https://lexi-lambda.github.io/blog/2019/11/05/parse-don-t-validate/), the
+Rust typestate pattern (https://cliffle.com/blog/rust-typestate/), the
+fail-fast versus defensive-programming distinction, and John Ousterhout's <em>A
+Philosophy of Software Design</em> (deep modules; define errors out of existence).</p>
+<ol>
+<li><strong>Parse at the boundary, trust inside.</strong> Validate user input, MeasurementSet
+   contents and external files once, at the layer that reads them, and return a
+   type that carries the proof. No function below that layer re-checks shape,
+   finiteness, identity or ordering of data it received through a typed
+   argument. If a check must exist in two places, the type is wrong.</li>
+<li><strong>Typestate instead of runtime lifecycle checks.</strong> "Was X called before Y",
+   "is this bound to the current problem", "has this been sealed" are encoded
+   by consuming <code>self</code> and returning the next state, not by flags, generation
+   counters or <code>Result</code> returns that can only fail through programmer error.</li>
+<li><strong>No silent fallbacks on required data.</strong> <code>unwrap_or_default</code>,
+   <code>unwrap_or(0)</code>, <code>.ok()?</code> and <code>if let Some</code> that skips work are only allowed
+   for genuinely optional data, and the type must say it is optional.</li>
+<li><strong>No content hashing for trust.</strong> ADR-0014/0015 stand: no SHA-256/CRC over
+   scientific arrays, plans, receipts or same-run spill payloads. Identity is
+   ownership. External-format checksums where a format defines them are the
+   only exception.</li>
+<li><strong>One owner per invariant.</strong> Each fact (worker count, memory budget, grid
+   shape, channel map, weighting generation) is computed once, stored once and
+   passed by reference or by value. Duplicated projections of the same fact
+   into receipts, evidence and identities are deleted, not synchronised.</li>
+<li><strong>Bookkeeping must not scale with data.</strong> Telemetry and summaries are O(1)
+   per phase. Nothing serialises, hashes or walks whole plans, models, sample
+   streams or historical records for progress reporting.</li>
+<li><strong>No one-use abstractions.</strong> A trait with one production implementation, a
+   factory that builds one thing, a wrapper that forwards every method, or a
+   builder for a struct with public fields is removed. Keep a trait only where
+   a second implementation exists in this plan (<code>GridBackend</code>: CPU/Metal;
+   <code>ConvolutionFunctionSet</code>: four; <code>Solver</code>: four).</li>
+<li><strong>Errors are types, not strings.</strong> No <code>io::Error::other(format!(..))</code> for
+   domain failures. Each crate has one <code>Error</code> enum with variants a caller
+   could act on; everything else is a bug and panics with the invariant named.
+   <code>unreachable!</code>/<code>assert!</code> in production code state an invariant the type
+   system cannot express, with a message, and are rare.</li>
+<li><strong>No environment-variable behaviour switches in library crates.</strong> Diagnostic
+   switches live in <code>ImagingRequest.diagnostics</code>. A library reads no
+   <code>std::env</code>.</li>
+<li><strong>No narration.</strong> Comments say why, not what; no step numbering, no
+    restated signatures, no historical notes ("formerly", "T41 added").
+    Rustdoc on public items states the contract.</li>
+<li><strong>File and function size.</strong> A new or touched file over 1,500 lines or a
+    function over about 100 lines is split along a domain boundary in the same
+    ticket, unless the ticket names it as an accepted exception.</li>
+<li><strong>Delete in the same change.</strong> A replacement migrates callers and deletes
+    the displaced code, tests, docs and resources in one PR. Nothing is kept
+    "for reference" in the tree; git history is the reference.</li>
+<li><strong>Tests test laws and contracts.</strong> Prefer adjoint identities, conservation,
+    tolerance against a reference, and resource bounds over fixture-specific
+    expected numbers. A test that asserts an implementation detail is deleted
+    unless that detail is a promised contract.</li>
+<li><strong>No new mode, flag or route to preserve old machinery.</strong> If an existing
+    mechanism cannot be expressed through section 5 types, the ticket records
+    the gap in <code>## Deviations</code> for the next gate instead of keeping a second
+    path.</li>
+</ol>
+<h2 id="11-process">11. Process<a class="headerlink" href="#11-process" title="Permanent link">&para;</a></h2>
+<ul>
+<li>The first merge to <code>main</code> is IF-0 and carries the T55 branch content. From
+  then on every IF PR targets <code>main</code>; there is no long-lived integration
+  branch.</li>
+<li>One ticket active at a time, except IF-5 alongside IF-3/IF-4. A ticket is
+  active only with an open PR containing code.</li>
+<li>The implementer records deviations in the issue as they occur, not at the
+  end. A deviation that changes a section 3 decision or a section 5 signature
+  stops the ticket until the owner answers, unless it is clearly a
+  correction of an error in this document (then it is recorded and continued).</li>
+<li>Evidence that must survive (T1.5 CASA references, T2 oracles, timing
+  tables) lives under <code>/Volumes/GLENDENNING/casa-rs-evidence/if/&lt;ticket&gt;/</code>
+  with a <code>README.md</code> naming the commit, command and result. Nothing
+  restart-critical under <code>/tmp</code>.</li>
+<li>Merge, cleanup and release remain owner-authorised actions. Closing the
+  #486 family (D7) happens in IF-0 after this plan is approved.</li>
+<li>AGENTS.md is updated in IF-0 to point programme text at this plan and
+  remove the #486-specific rules.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

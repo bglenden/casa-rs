@@ -1,0 +1,1706 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Cube buffer refactor - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#cube-buffer-refactor" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Cube buffer refactor
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scientific Workbench
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Scientific Workbench
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../scientific-notebooks-and-assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Notebooks, Tutorials, Python, and AI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mac-native-gui-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native macOS Product Spec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#outcome-and-sequence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Outcome and sequence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scope-evidence-and-restart-handles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scope, evidence and restart handles
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-reduce-the-buffers-and-their-consumers-together" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Reduce the buffers and their consumers together
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-one-typed-storage-and-residency-mechanism" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. One typed storage and residency mechanism
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. One typed storage and residency mechanism">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#resolved-storage-decisions-for-implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resolved storage decisions for implementation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-planner-and-physical-residency-must-agree" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Planner and physical residency must agree
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Planner and physical residency must agree">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#resolved-phase-and-admission-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resolved phase and admission decisions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-integration-and-deletion-sequence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Integration and deletion sequence
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Integration and deletion sequence">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#exact-result-draining-connection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exact result-draining connection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#precision-and-transform-sequence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Precision and transform sequence
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#execution-recipe-and-evidence-reuse" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Execution recipe and evidence reuse
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#large-cube-design-condition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Large-cube design condition
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mandatory-review-stops-for-the-implementation-agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mandatory review stops for the implementation agent
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Mandatory review stops for the implementation agent">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#review-1-ownership-storage-and-admission-foundation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Review 1: ownership, storage and admission foundation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#review-2-complete-managed-cube-not-components" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Review 2: complete managed cube, not components
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#review-3-scale-simplification-and-accepted-result" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Review 3: scale, simplification and accepted result
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#acceptance-and-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Acceptance and limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="cube-buffer-refactor">Cube buffer refactor<a class="headerlink" href="#cube-buffer-refactor" title="Permanent link">&para;</a></h1>
+<p>Truth class: approved implementation plan; milestone-C review pending
+Last reality check: 2026-09-24
+Verification: focused reconstruction/runtime/application tests and matched CASA runs; see CURRENT</p>
+<p>The design and proposed-size sections below record the preimplementation decision.
+The current implementation and measured results are in the single T55 <code>CURRENT.md</code>
+and its linked Review-3 evidence. Passing this cube workload does not by itself
+complete T55 or migrate MFS.</p>
+<h2 id="outcome-and-sequence">Outcome and sequence<a class="headerlink" href="#outcome-and-sequence" title="Permanent link">&para;</a></h2>
+<p>Owner direction: first checkpoint active work, then reduce cube buffers and make
+inactive state systematically disk-backed; return to MFS afterwards. A larger
+buffer than LibRA/Obit needs a concrete scientific or measured runtime benefit.
+"Buffer" includes image arrays, grids, visibility blocks, caches and workspaces.
+No cost solely for bitwise numerical reproducibility is justified. Preserve the
+standard science and the numerical policy in AGENTS.md.</p>
+<p>Later owner instruction: present current/proposed buffers and the LibRA/Obit
+comparison before implementation. Production sources are restored to the
+checkpoint. An unbuilt compensation-removal edit is preserved separately as
+<code>unbuilt-compensation-removal-held.patch</code>; it is not an accepted candidate.
+The source study and unchanged-binary tracing are complete. The following plan
+consolidates the subsequent owner discussion; it is not an implementation or
+large-run authorization. The owner subsequently requested a detailed handoff for
+a less capable implementation agent, resolution of design choices before coding,
+and a few mandatory review stops. The decisions and stops below implement that
+request. Do not restart discovery or reinterpret a review stop as permission to
+launch another optimization campaign.</p>
+<p>Pre-refactor source is commit <code>10a544fffab22b4b3540dec771031847db51704a</code>.
+Its source archive, incremental Git bundle (base <code>405d01adc5</code>), and untracked
+diagnostic scripts are verified in the durable internal and GLENDENNING
+<code>casa-rs-evidence/t55/cube-buffers-20260924/checkpoint-10a544fffa</code> directories.
+The commit is a work-in-progress checkpoint, not completed MFS acceptance.</p>
+<h2 id="scope-evidence-and-restart-handles">Scope, evidence and restart handles<a class="headerlink" href="#scope-evidence-and-restart-handles" title="Permanent link">&para;</a></h2>
+<p>Start with the landed standard-grid, natural-weight, Stokes-I streaming cube:
+selected input, band imaging, the existing CLEAN controller, residual refresh,
+and the existing product writer. Preserve the capability selection; this work
+does not implement density weighting, W/AW, Taylor coupling or a second controller.</p>
+<p>Durable evidence root:
+<code>/Users/brianglendenning/SoftwareProjects/casa-rs-evidence/t55/cube-buffers-20260924/</code>.
+<code>buffer-proposal.md</code> contains the current/proposed/LibRA/Obit buffer census,
+revision-pinned source references and qualifications. <code>parent-w1-v2-*</code> and
+<code>parent-w4-v1-*</code> contain command, executable identity, logs and resource results.
+The durable copy of this plan is <code>implementation-plan.md</code>; the repository file
+is the editable source, and the durable copy must remain identical at handoff.
+The only live status summary remains
+<code>../tranche5-20260916/CURRENT.md</code> relative to the evidence root.</p>
+<p>Unchanged-binary diagnostic baseline: 42,120 rows, 512 channels, two correlations,
+512-square images, 640-square grids. W1: 57.850 s and 6.588 GiB aggregate RSS;
+W4: 23.105 s and 8.531 GiB. Tracing was enabled. Seven native W1/W4 fingerprints
+match, but this is not a fresh CASA acceptance or a clean performance baseline.
+Do not compare an uninstrumented candidate against these times as a measured win.</p>
+<h2 id="1-reduce-the-buffers-and-their-consumers-together">1. Reduce the buffers and their consumers together<a class="headerlink" href="#1-reduce-the-buffers-and-their-consumers-together" title="Permanent link">&para;</a></h2>
+<p>Sizes below are logical payloads for that workload, not summed process RSS.
+These representation targets are conditional on unchanged scientific acceptance.</p>
+<table>
+<thead>
+<tr>
+<th>Buffer</th>
+<th>Current</th>
+<th>Target and migration</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Current residual / dirty image</td>
+<td>2 GiB complex double</td>
+<td>0.5 GiB real float; migrate covered real-valued consumers, not arbitrary complex science modes</td>
+</tr>
+<tr>
+<td>PSF</td>
+<td>2 GiB complex double</td>
+<td>0.5 GiB real float; preserve normalization, support and beam semantics</td>
+</tr>
+<tr>
+<td>Natural-weight sensitivity</td>
+<td>1 GiB repeated double values</td>
+<td>One double/channel, 4 KiB; broadcast in consumers without constructing a dense cube</td>
+</tr>
+<tr>
+<td>Dense model values</td>
+<td>1 GiB disk-backed doubles</td>
+<td>0.5 GiB disk-backed floats with separately retained support; avoid per-pixel rich-object storage</td>
+</tr>
+<tr>
+<td>Initial gridding</td>
+<td>Four complex-double grids, 25 MiB/plane</td>
+<td>Remove two compensation grids; test two ordinary float grids, 6.25 MiB/plane; retain ordinary double accumulation only for demonstrated accuracy need</td>
+</tr>
+<tr>
+<td>Refresh / prediction grids</td>
+<td>Compensated double residual and double prediction</td>
+<td>Remove compensation; precision follows affected comparison, load only required model support planes</td>
+</tr>
+<tr>
+<td>Completed initial results</td>
+<td>10 MiB/channel, up to 5 GiB pending in W4</td>
+<td>Drain through the existing per-partition commit point; FFT is already dropped, so remove its obsolete retained reservation rather than claiming a new physical saving</td>
+</tr>
+<tr>
+<td>Prepared visibility replay</td>
+<td>About 1.207 GiB before framing</td>
+<td>Preserve input float complex samples/weights: about 0.725 GiB; retain double frequency/geometry where needed</td>
+</tr>
+<tr>
+<td>Clark transform workspace</td>
+<td>Two full complex-double arrays, 32 MiB/active plane</td>
+<td>Evaluate equivalent real/cropped-linear transforms, about 9 MiB of named scratch; retain batched Clark and verify crop/alignment semantics</td>
+</tr>
+</tbody>
+</table>
+<p>Remove intermediate widening/narrowing copies at their callers, not merely the
+final buffer types. Keep block operations and ordinary contiguous kernel slices.
+Normal-image getters borrow the actual real or complex representation; they
+must not initialize conversion caches. A loaded CLEAN plane owns exactly one
+representation, and byte-accounting queries inspect owned storage without
+materializing it. Explicit diagnostic fingerprints may iterate those views in
+tests/probes, but are not called by imaging, CLEAN, or publication. They are not
+an authorization or completion requirement.
+No bitwise reproducibility surcharge. Replace calculated-output bit-equality
+tests with existing scientific tolerance checks; exact storage round trips and
+shape/mask/metadata checks remain exact. A failed precision comparison justifies
+the affected precision, not restoration of unrelated compensation or copies.</p>
+<p>Two simultaneous dirty/PSF grids may remain when fused visibility traversal
+earns their memory cost. Do not split them solely to match another package's
+buffer count. Independently justified extra buffers must have an explicit
+scientific or measured I/O/runtime benefit in the final comparison.</p>
+<h2 id="2-one-typed-storage-and-residency-mechanism">2. One typed storage and residency mechanism<a class="headerlink" href="#2-one-typed-storage-and-residency-mechanism" title="Permanent link">&para;</a></h2>
+<p>Use composition, conceptually <code>Buffer&lt;T&gt;</code> plus bounded read/write window guards;
+these names are illustrative, not a new public application interface. All bulk
+numeric types use the same residency policy, including float, double and complex
+elements. The manager knows layout/bytes, pinning, dirty/backed state and reuse
+hints, not WCS, weighting, Taylor semantics or the meaning of a pixel.</p>
+<p>Reuse the existing <code>PagedArray&lt;T&gt;</code> tiled storage. Evolve/consolidate the
+<code>NormalArrayStorage</code> and <code>ModelSampleStorage</code> seams and their runtime adapters;
+do not preserve f64-only wrappers merely for internal compatibility. Keep
+scientific semantics in reconstruction and resource/residency policy in runtime,
+with storage below them through the existing dependency direction. A second
+memory system per imaging mode, a new standalone framework/crate, and a new
+dependency-direction change are not part of this plan.</p>
+<p>A pinned window exposes a typed contiguous slice for the kernel. Its lifetime
+prevents eviction while borrowed; conflicting writes are excluded. Releasing a
+guard unpins and records modification, but does not hide fallible I/O in Drop.
+Flush/eviction/read errors return through the ordinary run error path. No
+per-pixel cache dispatch, raw byte reinterpretation of arbitrary Rust objects,
+or global manager lock held through a numerical kernel or slow disk operation.</p>
+<table>
+<thead>
+<tr>
+<th>Buffer state</th>
+<th>Shared mechanism</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Active/pinned</td>
+<td>Resident until all current access guards release</td>
+</tr>
+<tr>
+<td>Inactive, needed later, dirty</td>
+<td>Retain if useful space remains; otherwise write a large block and release its actual allocation</td>
+</tr>
+<tr>
+<td>Inactive, valid disk copy</td>
+<td>Evict without writing; reload only required windows</td>
+</tr>
+<tr>
+<td>Dead</td>
+<td>Drop/recycle immediately; never spill just to preserve dead scratch</td>
+</tr>
+</tbody>
+</table>
+<p>Logical disk backing is available from creation for spillable state; creating
+such a buffer must not allocate the whole cube or necessarily write it all.
+Materialize backing blocks only as required. Enough memory means useful buffers
+can remain resident without obligatory intermediate I/O. Small metadata stays
+ordinary Rust data. Opaque FFT/library allocations use the same accounting but
+are non-evictable while live; release/reuse them rather than pretending arbitrary
+library objects can be serialized. Preserve existing persistence-boundary checks.</p>
+<p>Use known phase/next-use information for deterministic release and eviction.
+Use LRU only among remaining unpinned cache candidates; sequential one-pass
+access should not displace known-near-future data blindly. Do not build a general
+predictive scheduler: the existing execution sequence supplies these hints.</p>
+<h3 id="resolved-storage-decisions-for-implementation">Resolved storage decisions for implementation<a class="headerlink" href="#resolved-storage-decisions-for-implementation" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>One run-scoped residency coordinator in runtime.</strong> Reuse the current run's
+   memory authority; the coordinator is its physical-owner/cache policy, not a
+   second independent budget or a process-global singleton. Other modes supply
+   typed buffer descriptions and phase needs to this same mechanism. No new
+   top-level library or general-purpose virtual-memory framework.</li>
+<li><strong>Storage-agnostic typed capability on the reconstruction side.</strong> Generalize
+   the existing non-application-facing storage seam over the element type where
+   real reuse requires it. Runtime implements it with managed typed blocks and
+   existing persistence. Do not add reconstruction dependencies on runtime or
+   lattices. Scientific owners retain write authority; immutable generations
+   expose read access only. Avoid a universal enum of scientific buffer roles
+   in the residency manager and avoid arbitrary byte serialization of Rust
+   structs. Frame/run/shape associations stay with existing owners.</li>
+<li><strong>Plane-aligned blocks for this channel-local cube.</strong> One managed numeric
+   block is one spatial plane. Kernels use one plane at a time; a band's model
+   support is loaded as the required individual planes. Retain the existing
+   one-output-channel band decomposition initially. No new tuned band size or
+   automatic all-channel prefetch. Small product windows borrow a subrange of
+   a pinned plane; an operation that truly needs a contiguous multi-block window
+   must explicitly admit that gathering allocation. Other modes may declare a
+   different natural block shape without implementing another cache.</li>
+<li><strong>Resident blocks, not hidden slice copies.</strong> Read guards keep their resident
+   block pinned and can share immutable storage. Write access is exclusive and
+   marks the block dirty when mutably exposed. A guard must not permit a slice
+   to outlive the pin; no implicit copy-on-write. Reserve all required blocks
+   before entering an operation. Short per-buffer synchronization is acceptable;
+   do not hold the coordinator mutex while waiting for a block, doing I/O or
+   executing a kernel. Never wait for more residency while holding an incomplete
+   operation's pinned set.</li>
+<li><strong>Reuse tiled persistence with explicit, bounded codec staging.</strong> The current
+   <code>PagedArray::get_slice</code> always allocates/copies a result, has a mandatory
+   one-tile cache, and is not Sync without an outer lock. Add a typed transfer-
+   into-caller-storage operation at the existing <code>TiledArrayStorage</code> seam,
+   surfaced narrowly through casa-lattices. Use borrowed slices for writes;
+   remove runtime's extra <code>values.to_vec()</code>/ArrayD assembly. Reuse the existing
+   tile traversal, endian/boolean codecs and standard file format. An explicitly
+   counted one-tile backend staging buffer may coexist with the managed block;
+   do not retain a second multi-plane cache or claim this unavoidable decode
+   copy is zero-copy. Keep file/backend owners per array, not per plane. The
+   coordinator accounts and reclaims idle backend staging as well as its blocks.</li>
+<li><strong>Do not use cache budget zero as a no-cache trick.</strong> Public typed APIs reject
+   zero, and a lower private zero setting selects a whole-array flat cache.
+   Use an explicit positive one-tile staging budget. To reclaim it with the
+   current API, <code>temp_close()</code> flushes and drops the storage owner; <code>flush()</code>
+   alone does not free LRU capacity. Do not close/reopen on every hot cached
+   access. Reclaim idle backing handles at phase/pressure points, and account
+   reopen/resize overlap. A later cache-bypass extension needs review rather
+   than a second implementation silently added by the handoff agent.</li>
+<li><strong>Typed guard mechanics remain internal.</strong> The minimal acceptable design
+   is an owned resident block plus a pin token/typed view; use ordinary safe
+   borrowing or block-local locking to enforce read/write exclusion. A type-
+   erased control trait is allowed only in the coordinator's heterogeneous
+   registry, never inside pixel loops. Do not clone data merely to satisfy
+   lifetimes. The first review stop checks the actual small Rust interface
+   before it is propagated through callers.
+   Short-lived private grids/FFT scratch may remain ordinary Vec/Array storage
+   under the same admitted workspace owner; do not force cache registration or
+   disk backing onto scratch that is pinned for its entire useful lifetime.</li>
+<li><strong>Disk validity is separate from residency.</strong> A new model's known zero/default
+   blocks can be represented by a default-fill descriptor until first use;
+   generated residual/PSF blocks begin unwritten and must fail if read before
+   generation. Track written/initialized coverage by blocks/ranges, not by a
+   full-array scan. Writeback marks a block backed/clean only after successful
+   required I/O; on failure retain the dirty data until normal error teardown
+   and fail the run. No resume journal, checksum-attestation state machine or
+   hidden errors in destructor-based flush.</li>
+<li><strong>Preserve epoch ownership without RAM duplication.</strong> Keep old and new
+   residual backing distinct until the existing scientific owner accepts the
+   replacement; do not mutate a still-readable prior epoch in place. Old
+   unchanged PSF/normalization storage is shared, not copied. Old residual
+   residency may be evicted first. Release obsolete backing through ordinary
+   ownership teardown after transfer, not a new rollback protocol. Existing
+   run-owned scratch lifecycle is distinct from user evidence/worktree cleanup.</li>
+<li><strong>Eviction order is deterministic before it is LRU.</strong> Free dead scratch;
+    evict blocks whose declared next use is after the next phase; then choose
+    least-recently-used unpinned eligible blocks with a stable block-id tie
+    break. Dirty eviction is bounded writeback, clean eviction writes nothing.
+    Never evict pinned blocks. Preserve recently loaded data needed by the
+    imminent phase over a one-pass scan; supply next-use/one-pass hints at block
+    scheduling, not per pixel. This is not an exact floating-result order rule.</li>
+</ol>
+<p>These are decisions, not invitations for the implementation agent to invent
+multiple alternative backends. Stop at review 1 if the selected reuse seam
+cannot meet the contract without substantial additional architecture.</p>
+<h2 id="3-planner-and-physical-residency-must-agree">3. Planner and physical residency must agree<a class="headerlink" href="#3-planner-and-physical-residency-must-agree" title="Permanent link">&para;</a></h2>
+<p>Let N be pixels/plane, G padded grid cells, C channels, W active workers, B output
+planes per worker and H required prediction-support planes (including halos).
+Byte formulas use actual element widths, checked products and library scratch
+bounds. Shared allocations count once. Returned windows, conversion overlap,
+thread stacks, queues and I/O scratch count separately when genuinely live.</p>
+<p>For each legal overlap of execution phases, require:</p>
+<p><code>shared non-evictable bytes + active worker workspaces + bounded queues + I/O scratch + resident cache &lt;= usable memory budget</code>.</p>
+<p>Take the maximum over permitted overlaps, not a sum of all phases and not just
+the largest isolated phase. Workers and producer/writer I/O can occupy different
+phases concurrently. Retention permits must follow physical owners: returning
+an accounting permit without releasing/reusing its buffer is not a saving.</p>
+<p>Planning and admission rules:</p>
+<ol>
+<li>Compute one-worker minimum workspace and legal W/B/H choices from shape and
+   resources; expose the limiting buffers if no plan fits. Do not tune to the
+   512-square fixture or infer a cost from total cube volume alone.</li>
+<li>Allocate the shared cache from the remaining budget, not independent fractions
+   of free RAM per buffer. Account for underlying tiled caches AND returned
+   windows; do not stack hidden caches below the manager.</li>
+<li>Before a phase/job starts, reclaim eligible cache and reserve its full required
+   simultaneous pinned set plus progress-making I/O scratch. Do not pin half a
+   job and wait forever for the other half; bound pending work and release on
+   failure/cancellation. Reclaim cache before unnecessarily sacrificing workers.</li>
+<li>Bound completed-band storage and apply backpressure if its consumer is slow.
+   Preserve logical channel order/coverage without a full-wave result vector.</li>
+<li>Reduce admitted W/B when active minima require it, never as a replacement for
+   eviction. Do not rely on OOM recovery, OS swap or unaccounted mappings.</li>
+<li>Bound disk bytes and handles as well as RAM, including working state, replay,
+   output staging and any required old/new residual overlap. Disk-full/read/write
+   failures fail the run with existing publication semantics.</li>
+</ol>
+<h3 id="resolved-phase-and-admission-decisions">Resolved phase and admission decisions<a class="headerlink" href="#resolved-phase-and-admission-decisions" title="Permanent link">&para;</a></h3>
+<p>The current cube application does not overlap initial imaging, CLEAN, later
+major refresh and publication as independent pipelines. Preserve that sequencing.
+Within band execution, up to W jobs have different local preparation/accumulation/
+completion lifetimes. The existing bounded executor joins that worker wave and
+commits its results before starting the next; do not introduce background
+imaging/writeback overlap merely to justify a more complex planner. MS preparation
+has its existing separate bounded source overlap and must be counted as such.</p>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>Mandatory simultaneous owners</th>
+<th>Eligible to reclaim / avoid</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Input preparation</td>
+<td>Selected input slots, native preparation arrays, replay writer/frame and required metadata</td>
+<td>No image grids or all-channel image payload; previous run state is not a cache</td>
+</tr>
+<tr>
+<td>Initial imaging</td>
+<td>W band workspaces, W native input windows, shared replay cache, sink transfer/staging, geometry and small channel descriptors</td>
+<td>Completed results from previous worker waves; cold generated planes may spill</td>
+</tr>
+<tr>
+<td>Threshold/CLEAN</td>
+<td>Current normal/model/support windows, W actual solver workspaces when parallel, statistics/controller state</td>
+<td>Initial grids/input blocks and unused replay cache; cold channel planes</td>
+</tr>
+<tr>
+<td>Residual refresh</td>
+<td>W residual workspaces, required H model-support grids/windows, native input windows, sink staging; old epoch remains logically available</td>
+<td>Cold old residual pages, unchanged PSF payload copies, retired CLEAN scratch</td>
+</tr>
+<tr>
+<td>Product publication</td>
+<td>Bounded product-generation windows, writer buffers and the actual still-needed science inputs</td>
+<td>Grids/replay/solver scratch; already consumed planes with no further use</td>
+</tr>
+</tbody>
+</table>
+<p>Fix W to the largest requested concurrency whose mandatory working set fits
+after cache reclamation; do not maximize optional cache first and then suppress
+workers. Derive remaining cache capacity as budget minus mandatory live owners,
+rounded down to complete blocks, allowing zero managed cache beyond active pins.
+Cache capacity is a ceiling, not an eager allocation or instruction to load
+otherwise unused planes. Shrink it before entering a larger-workspace phase.
+Do not introduce arbitrary machine-specific fractions as a substitute for these
+owner-based formulas. Existing sampled RSS guard remains independent of planner
+claims and detects allocator/library/unmodeled-process overhead.</p>
+<p><strong>Four is a comparison point, not a system limit.</strong> W is bounded by the current
+request's worker allowance, existing CPU/topology allocation, independent ready
+jobs and the calculated working-set budget. With more usable CPU capacity and
+memory, admit more than four. Pending descriptors can cover thousands of planes;
+only admitted jobs allocate large workspaces. Test planner/queue arithmetic at
+W=1,2,4,8,16 and W&gt;C using synthetic topology/shape fixtures. Preserve existing
+runtime allocation authority, not a new hard-coded four-worker cap. Do not launch
+additional full-workload timing configurations merely because these planner
+tests cover larger W. I/O/bandwidth saturation is measured performance evidence,
+not an unexplained fixed concurrency limit.
+These are imaging workers. The separately authorized two Cargo build jobs stay
+unchanged; changing imaging concurrency does not increase build parallelism.</p>
+<p>At most W completed one-plane results wait at the current worker barrier. Drain
+them in order, transferring/moving their buffers into managed final storage.
+If a sink conversion must allocate, include its one-result overlap explicitly.
+Do not reserve a second W-sized queue after results have been moved. Source
+descriptors may scale with C, but completed pixel arrays and FFT scratch must not.</p>
+<p>Useful numerical checks (MiB; float-grid target, B=1, no model in initial phase):</p>
+<table>
+<thead>
+<tr>
+<th>Named initial-imaging payload / bound</th>
+<th style="text-align: right;">512-square W1</th>
+<th style="text-align: right;">512-square W4</th>
+<th style="text-align: right;">2048-square W1</th>
+<th style="text-align: right;">2048-square W4</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Two complex-float grids</td>
+<td style="text-align: right;">6.250</td>
+<td style="text-align: right;">25.000</td>
+<td style="text-align: right;">95.367</td>
+<td style="text-align: right;">381.470</td>
+</tr>
+<tr>
+<td>Existing conservative FFT resident bound, narrowed to float</td>
+<td style="text-align: right;">3.755</td>
+<td style="text-align: right;">15.020</td>
+<td style="text-align: right;">14.668</td>
+<td style="text-align: right;">58.670</td>
+</tr>
+<tr>
+<td>Completed dirty+PSF payload, separate worker-barrier phase</td>
+<td style="text-align: right;">2.000</td>
+<td style="text-align: right;">8.000</td>
+<td style="text-align: right;">32.000</td>
+<td style="text-align: right;">128.000</td>
+</tr>
+</tbody>
+</table>
+<p>The current padding formula gives 640 and 2500, not 2560. On this 64-bit host,
+the existing FFT bound is <code>769 * padded_axis * sizeof(complex element)</code> for a
+square grid; distinguish this conservative library allowance from measured heap.
+Initial grid+FFT named subtotal is 10.005/40.020 MiB for W1/W4 at 512, and
+110.035/440.140 MiB at 2048. Input windows, normal/model access, sink staging,
+convolution tables, metadata, stacks and cache remain additional named terms,
+not an arbitrary percentage. A final result can coexist with the last grid
+during conversion; compute that phase maximum from actual construction order.</p>
+<p>The previously quoted ~1.03-1.06 GiB small-case subtotal is NOT a total RSS
+estimate. Final exact owner/header capacities and empirically opaque library
+costs are verification facts for review 1, not unresolved architectural choices.
+Use the existing sizing functions as a starting point, delete only demonstrably
+dead/duplicate terms, and bind projected bounds to capacity tests. Never subtract
+every logical saving from measured 8.531 GiB RSS to manufacture a forecast.</p>
+<h2 id="4-integration-and-deletion-sequence">4. Integration and deletion sequence<a class="headerlink" href="#4-integration-and-deletion-sequence" title="Permanent link">&para;</a></h2>
+<p>Batch related edits/builds into runnable milestones, not a component-only campaign.</p>
+<table>
+<thead>
+<tr>
+<th>Milestone</th>
+<th>Concrete work and completion evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A: storage/planner foundation, then review 1</td>
+<td>Implement the selected minimal typed seam and transfer-into-storage operations with one shared budget, real eviction, multi-axis layout and focused tests; bind actual capacity formulas. Do not broadly migrate science callers before the review. The existing checkpoint/source study suffice.</td>
+</tr>
+<tr>
+<td>B: one complete compact, managed cube candidate, then review 2</td>
+<td>Batch initial gridding, ordered commit drain, scalar sensitivity, model/normal access, CLEAN, refresh and writer migration. Integrate shared cache/phase admission with actual owners. Reach the complete application in both comfortable and constrained memory; do not stop at another collection of components.</td>
+</tr>
+<tr>
+<td>C: remaining reductions, acceptance and deletion, then review 3</td>
+<td>Finish precision/input/FFT reductions with discriminating checks or present measured scientific reasons for retained costs. Remove obsolete internals, verify scaling of memory with W/spatial size/channel count and all scientific acceptance, report I/O/time/RSS. Do not silently drop approved scope.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="exact-result-draining-connection">Exact result-draining connection<a class="headerlink" href="#exact-result-draining-connection" title="Permanent link">&para;</a></h3>
+<p>Use <code>PartitionedKernel::commit</code>, which already runs after each completed
+at-most-W dispatch wave and before the next wave in <code>bounded_stream.rs:1315</code>.
+The indexed worker collection preserves job order; cube partitions use ascending
+channel ordinals and unique exclusive regions. No new source chunker, worker
+pool, writer thread or reorder map is required.</p>
+<p>Move the existing initial-fold/refresh-append consumer from the post-execute
+<code>for normal in wave.bands</code> loop into a sink owned or mutably borrowed by
+<code>BandKernel</code>. Resolve the execution binding on the caller before pool entry:
+<code>WorkExecutionContext</code> contains an Rc-backed scheduler context and must not be
+captured in this Send+Sync kernel. Split the existing initial
+<code>CompleteDataSlabResult::from_streaming_cube</code> operation at its current boundary:
+perform its predecessor fence, problem/attempt/node/lease, source generation and
+sample-count checks once before dispatch; keep the existing owned
+<code>CompleteDataExecutionBinding</code>, replay summary and selected/continuum generation
+IDs in the sink, not the execution context or a new replay payload. Each adopted
+band still validates its specification, shape, channel
+coverage and problem association through the existing reconstruction fold.
+This moves existing checks, not introduces an attestation object or permission
+protocol. <code>PendingCubeRefresh::new</code> already validates its context once and has a
+context-free <code>append</code>; use that same separation for initial results. Do not add
+unsafe Send/Sync implementations, globally replace scheduler Rc with Arc, or
+move the whole executor across threads to accommodate this connection.</p>
+<p>In <code>commit</code>,
+take the corresponding <code>Completed</code> result, append it to this sink, and release
+the result before the next worker wave. Keep explicit pending/completed/consumed
+coverage so skipped, duplicate or wrong-phase results fail; do not retain consumed
+pixel payloads for validation. Executor <code>complete</code> checks all jobs consumed and
+returns the pending fold/refresh plus compact measurements, not Vec<BandResult>.
+After the pool has joined, finish the fold against the caller's original replay
+and retain the current final replay-id/coverage checks. Finish refresh through
+its existing method at the same point. The terminal replay owner need not move
+into the pool. Test all moved binding rejection cases and compile-time Send/Sync
+bounds; a short mutex around sink state is acceptable if needed for its actual
+type, but the executor has exclusive commit access and no pixel-loop lock.
+Keep input descriptor/reader and immutable model lifetime through the same pool
+join. Reuse the existing fold's ordered shape/run/channel checks.</p>
+<p>Use Partial=usize: after storing a completed result, execute returns its band
+ordinal and commit consumes that existing job slot. <code>WorkIdentity</code> has private
+fields and no accessors; do not expand its API merely to recover that ordinal.
+The partial is one word of metadata, not another result owner or pixel queue.
+Check ordinal/order and completed-slot state before adoption and retain the
+existing failed-execution behavior so a missing result cannot become success.
+Remove whole-prefix pixel-retention charges only after the owner is drained.
+The current executor already drops FFT at execute.rs:382; correct the stale
+returned-FFT allowance without claiming that a live FFT was eliminated.</p>
+<h3 id="precision-and-transform-sequence">Precision and transform sequence<a class="headerlink" href="#precision-and-transform-sequence" title="Permanent link">&para;</a></h3>
+<p>The compact candidate targets real-f32 normal/model storage and ordinary-f32
+grid/prediction buffers together with direct narrow input storage. Frequency,
+coordinates and scalar sums/normalization may remain f64; scalar arithmetic
+precision is not the same as duplicating full arrays. For covered real-output
+modes, discard imaginary output only at the existing image formation seam,
+not before gridding/FFT. Other algorithms' genuinely complex/Taylor state must
+not be narrowed by a global substitution.</p>
+<p>If a scientific comparison fails, locate the first divergent stage and test
+the specific precision hypothesis once under the escalation contract. Do not
+toggle arbitrary tolerances or restore all old arrays. Ordinary f64 for an
+identified reduction can remain with recorded accuracy evidence, using the same
+pipeline and manager; no user-selectable legacy/precision fallback is introduced.</p>
+<p>Clark's equivalent real/cropped-linear transform work is evaluated after the
+complete managed cube exists, so it cannot delay integration of the large
+storage wins. Keep batched Clark component updates. Test an edge and off-centre
+impulse, asymmetric PSF, even/odd supported sizes and non-square shapes against
+the existing linear convolution at required tolerances before replacing it.
+Do not accept the ~9 MiB projection as proof that a particular FFT library API
+or crop convention is correct. Report a demonstrated retained cost at review 3;
+an unresolved design/science failure follows escalation, not silent deferral.</p>
+<p>Seed code, not an invitation to scan unrelated modules:</p>
+<ul>
+<li><code>casa-imaging-reconstruction/src/streaming_cube/{band,memory,completion}.rs</code>:
+  grid owners, byte formulas, field formation; <code>spectral_operator/normal_storage.rs</code>
+  and <code>model_storage.rs</code>: typed scientific access; <code>minor_cycle/clark.rs</code>: batched
+  CLEAN scratch and equivalent transform evaluation.</li>
+<li><code>casa-imaging-runtime/src/streaming_cube/{input,execute,phase,normal}.rs</code>:
+  replay precision/block access, result draining and allocation ownership;
+  <code>cube_state_plan.rs</code>, <code>paged_cube_state.rs</code> and existing resource authority:
+  shared admission, physical retention and backing/cache migration.</li>
+<li><code>casa-lattices/src/paged_array.rs</code> and its existing tiled backend: reuse storage
+  and cache controls, without importing imaging-specific policy into storage.</li>
+<li>Existing reconstruction-cycle consumers and product writer: migrate bounded
+  windows without a second CLEAN controller, full product materialization or
+  publication attestation.</li>
+</ul>
+<p>Read the selected MS in bounded blocks. Reuse the channel-oriented prepared
+store for required band/support ranges and later major cycles; do not repeatedly
+decode the whole MS for each plane. Keep replay preparation's cost visible in
+end-to-end timings. At no point must the entire MS or all image planes be resident.</p>
+<p>Delete displaced resident-versus-paged factory dispatch, duplicate accounting,
+f64-only conversion adapters, completed-result collections and obsolete tests
+when their replacements are connected. No permanent legacy path or compatibility
+shim. Audit directly affected comments/docs, including obsolete sealing/bitwise
+requirements; preserve history as non-normative. Accepted ADR changes still
+require the applicable explicit authority.</p>
+<p>After cube acceptance, return to the interrupted MFS work with the same storage
+mechanism. MFS supplies different buffer requirements and phase overlaps, not
+another residency manager. Preserve its checkpoint and census meanwhile; do not
+claim MFS is migrated or accepted because cube tests pass.</p>
+<h3 id="execution-recipe-and-evidence-reuse">Execution recipe and evidence reuse<a class="headerlink" href="#execution-recipe-and-evidence-reuse" title="Permanent link">&para;</a></h3>
+<p>Do not apply the held patch blindly or begin by rerunning the source census.
+Start each implementation milestone at the seed functions above. Set
+<code>CARGO_INCREMENTAL=0</code> and <code>CARGO_BUILD_JOBS=2</code>; run affected tests in
+<code>casa-tables</code>, <code>casa-lattices</code>, <code>casa-imaging-reconstruction</code> and
+<code>casa-imaging-runtime</code>, filtered to changed storage/cube/bounded-execution
+behavior. Batch the application build after related integration edits. The
+existing complete application test is
+<code>t55_real_cube::t55_q_band_rebaseline_preflight</code> in <code>continuum_application</code>,
+invoked with <code>--exact --ignored --nocapture --test-threads=1</code> by the harness.
+Do not run this ignored test naked with guessed environment variables.</p>
+<p>Use the full commands/environment in <code>parent-w1-v2-command.json</code> and
+<code>parent-w4-v1-command.json</code> in the evidence root. They invoke <code>scaling_4x.py</code> /
+<code>overnight_scaling.py</code> under the existing <code>finish_stage.py</code> aggregate-RSS guard.
+For a candidate, change only its unique output label, binary, requested worker
+count and deliberately selected memory budget; preserve input/science settings.
+Record those changes. The native input is under
+<code>/Volumes/GLENDENNING/casa-rs-evidence/t55/q-band-rebaseline-20260918/overnight-scaling-20260919/rows4x</code>.
+The valid frozen Measures/reference configuration is under
+<code>/Users/brianglendenning/SoftwareProjects/casa-rs-evidence/t55/mfs-4096-workload-20260923/pilot-runs/reference</code>;
+retain the command's <code>study.FROZEN</code> override. The old reference tree caused the
+already-recorded missing-table failure; repeating it is not a useful test.</p>
+<p>The same <code>scaling_4x.py compare</code> route uses the unchanged comparison contract in
+<code>tools/perf/imager/workloads/t55-clark-cube-development.json</code>. Resolve the
+existing CASA product label from the saved reference before comparison; do not
+create a new scientific oracle unnecessarily. Verify mount, input/reference
+availability and disk headroom before a run. Keep diagnostic flags matched
+between parent and candidate, or measure both without them. Evidence labels
+must not overwrite prior results. Store concise commands/results and logs in
+the durable evidence root; update the one CURRENT only at the review boundaries
+or on a material blocker.</p>
+<h2 id="large-cube-design-condition">Large-cube design condition<a class="headerlink" href="#large-cube-design-condition" title="Permanent link">&para;</a></h2>
+<p>2048x2048x2048 is a normal design case, not an authorized full execution now.
+One Float cube is 32 GiB, residual+PSF+model 96 GiB, an extra residual 32 GiB,
+and seven full Float products 224 GiB before masks/metadata/input/work storage.
+One Float plane is only 16 MiB. Full cube payload belongs on disk; active memory
+scales with W/B/H, spatial plane size and the shared cache, plus bounded metadata.</p>
+<p>Increasing channels must not force all images/grids/completed results into RAM.
+Increasing spatial size legitimately increases the minimum active workspace;
+if even W1/B1 plus required support does not fit, reject clearly. This plan does
+not promise arbitrary-size spatial FFTs out of core. Test channel counts and
+voxel/file offsets beyond 32-bit ranges with checked-layout tests and bounded
+storage fixtures; do not generate a huge dataset merely to test arithmetic.</p>
+<p>There is a confirmed pre-existing large-shape blocker: <code>CubeArrayLayout::new</code>
+stores <code>[logical_scalars]</code> as one axis, while <code>TiledArrayStorageLayout::new</code>
+requires each axis &lt;= i32::MAX. Thus 2048^3 is rejected despite file bytes fitting
+the format's signed-i64 size. Replace the flattened on-disk axis with existing
+multi-axis storage: for native plane order <code>x*ny+y</code>, use logical shape
+<code>[ny,nx,channels]</code>, tile <code>[ny,nx,1]</code> (axis zero fastest). The resulting native
+offset is <code>channel*nx*ny+x*ny+y</code>. Use additional real axes for other already
+supported dimensions, not a giant flattened axis. Change range-to-storage
+addressing with the layout; retaining old <code>[start],[len]</code> reads is incorrect.
+This uses the existing tiled format, not a new CASA format or weakened bound.
+Test axis orientation and channel boundaries on small fixtures, and 2048^3
+metadata/layout with no pixel allocation or dataset creation. Retain checked
+total byte products, per-axis format bounds and signed-i64 file-size bound.</p>
+<h2 id="mandatory-review-stops-for-the-implementation-agent">Mandatory review stops for the implementation agent<a class="headerlink" href="#mandatory-review-stops-for-the-implementation-agent" title="Permanent link">&para;</a></h2>
+<p>These are three logical review boundaries, not a review ceremony per commit.
+At each stop, update only CURRENT with source revision/diff, tests/commands,
+buffer/IO evidence, failures and next action; stop the turn and request review
+from the supervising Astra agent. Do not proceed to the next milestone until
+that reviewer records GO. A component test pass or the implementation agent's
+own assessment is not that review. Routine reversible repairs within a milestone
+remain autonomous; scope/science/resource/escalation stops still apply sooner.</p>
+<h3 id="review-1-ownership-storage-and-admission-foundation">Review 1: ownership, storage and admission foundation<a class="headerlink" href="#review-1-ownership-storage-and-admission-foundation" title="Permanent link">&para;</a></h3>
+<p>Required evidence:</p>
+<ul>
+<li>One typed manager handles at least f32 and complex-f32 with the same policy;
+  meaningful tests also exercise f64/packed support persistence, not just mocks.</li>
+<li>Real low-budget dirty eviction/reload and clean eviction; no extra write on
+  clean eviction; live bytes actually fall on reclamation; guard/pin exclusivity
+  and error/cancellation release are tested. No I/O error is swallowed in Drop.</li>
+<li>The one-tile codec staging and any returned windows are visible in the budget.
+  The common whole-operation admission test can progress when almost full,
+  rejects impossible requests before kernel work, and never deadlocks by partial
+  pinning. No fallback that allocates an entire array or default cache.</li>
+<li>2048^3 layout succeeds without huge allocation, the old flattened-axis failure
+  is covered, and small 3D fixtures bind orientation and linear-range mapping.</li>
+<li>W=1/2/4/8/16, unequal jobs, W&gt;C, minimum/just-below-minimum budgets and arithmetic
+  overflow tests; actual conservative byte formulas reconcile with capacities.</li>
+</ul>
+<p>Reviewer checks the small Rust interface, dependency direction, real allocation
+ownership, lock/I/O ordering and scope. STOP/REWORK if it adds a second manager,
+per-pixel virtualization, full-window copies hidden below a cache, unsafe lifetime
+escapes, unexplained buffer multipliers or a large framework. Do not demand
+application performance evidence before this bounded foundation review.</p>
+<h3 id="review-2-complete-managed-cube-not-components">Review 2: complete managed cube, not components<a class="headerlink" href="#review-2-complete-managed-cube-not-components" title="Permanent link">&para;</a></h3>
+<p>Required evidence:</p>
+<ul>
+<li>The existing selected-input -&gt; initial -&gt; CLEAN -&gt; residual refresh -&gt; product
+  writer path runs completely with the new compact storage and same controller.</li>
+<li>W1 and W4 on the approved 42,120-row/512-channel/512-square workload, with the
+  unchanged seven-product/nine-check CASA comparison and inspected panels.</li>
+<li>Repeat the candidate at a constrained budget that admits active W4 work but
+  cannot hold all its logical normal/model state. Compute that budget from the
+  now-verified formulas; record the chosen bytes before the run. Do not simply
+  lower workers or omit CLEAN/publication to claim out-of-core success.</li>
+<li>Actual queue peak &lt;= admitted W band results, no C-proportional completed
+  payload, bounded cache/IO and aggregate RSS, stable epoch association on refresh.</li>
+<li>One matched parent/candidate timing observation including preparation, replay,
+  imaging, CLEAN and publication; repeat only to resolve material uncertainty.</li>
+</ul>
+<p>STOP/REWORK if only an alternate test entry point works, spill is a permanent
+second science path, correctness fails, buffers are merely unaccounted, or a
+large new I/O/runtime penalty lacks an identified cause. Reviewer approves the
+remaining bounded reductions before milestone C; no open-ended optimization loop.</p>
+<h3 id="review-3-scale-simplification-and-accepted-result">Review 3: scale, simplification and accepted result<a class="headerlink" href="#review-3-scale-simplification-and-accepted-result" title="Permanent link">&para;</a></h3>
+<p>Required evidence:</p>
+<ul>
+<li>Larger spatial working-plane tests (2048 square), large logical channel counts
+  and 64-bit-offset checks; fixed-budget tests show payload residency depends on
+  active planes/cache rather than C. No unauthorized full-size run.</li>
+<li>Final affected tests, unchanged CASA comparisons/panels, and W1/W4 end-to-end
+  time/RSS at comfortable and constrained budgets. Retained f64/extra buffers
+  have concrete numerical or measured runtime/IO justification; precision and
+  FFT attempts have explicit results, including negatives.</li>
+<li>Obsolete cube resident/paged dispatch, f64-only conversions, batch pixel
+  collections and duplicate accounting deleted; tests/docs updated without
+  removing behavior coverage. Review changed/directly exposed code for over-
+  engineering. Existing unaffected scientific modes remain working.</li>
+<li>Updated current/measured buffer and phase-aggregate tables, disk bytes and
+  I/O counts. Clearly distinguish working implementation, scientific acceptance,
+  memory reduction and timing effects. Return to MFS next using the same manager.</li>
+</ul>
+<p>Reviewer returns GO, bounded repair, or architectural escalation with the exact
+deficit. No push, merge, release, cleanup or goal completion is implied by GO.</p>
+<h2 id="acceptance-and-limits">Acceptance and limits<a class="headerlink" href="#acceptance-and-limits" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Focused tests bind byte formulas to actual buffers across image sizes, channel
+  depths, worker counts, initial/refresh phases, and overflow cases.</li>
+<li>Disk-backed tests exercise eviction, dirty/clean reuse, bounded live windows,
+  pin safety, conflicting access, deterministic phase eviction, sequential-scan
+  cache behavior, slow-consumer backpressure, cancellation, capacity release,
+  I/O failure and shape/lifecycle preservation. Exact storage
+  round-trip bits remain appropriate; calculated images use scientific tolerance.</li>
+<li>Run the complete application at generous and constrained memory, including
+  real CLEAN, refresh and publication. Verify that increasing channel count does
+  not require all cube state resident. Include 2048-square working-plane tests
+  and large logical shape/offset tests within existing resource/run authority.
+  Count block I/O, copies and actual live bytes, not just reservation totals.</li>
+<li>Reuse the 42,120-row, 512-channel, 512-square CASA reference for the unchanged
+  seven-product/nine-check comparison and panels. Record current parent/candidate
+  W1/W4 time and sampled peak RSS, including preparation, I/O and publication.
+  Historical 49.166/20.289 s times are context, not a current parent measurement.
+  Match profiling/cache/timing boundaries; do not force a fixed repeated-run
+  count. Record any runtime cost of reduced residency and justify retained
+  larger buffers against the pinned LibRA/Obit source comparison. Do not claim
+  upstream matched RSS without measuring it.</li>
+<li>Retain 16-GiB native planning and aggregate sampled RSS, 8-GiB build/diagnostic
+  guards, two Cargo jobs, no fixed wall cutoff. No push, merge, release, cleanup,
+  new Obit installation, full 360-time MFS input or full-32GB run.</li>
+<li>Keep restart state in the existing single T55 <code>CURRENT.md</code>; source studies and
+  run logs live under the durable cube-buffer evidence root. A source buffer
+  census or passing component tests do not constitute completed acceptance.</li>
+</ul>
+<p>Scientific algorithm changes, acceptance relaxation, external API/format changes,
+or unresolved consequential design choices follow the existing escalation rules.
+The authorized storage-policy changes do not change CASA persisted formats or
+publication failure semantics.</p>
+<p>No numerical/storage changes are applied yet. The held patch is unbuilt evidence,
+not the next candidate to apply blindly. No active Goal was created. The existing
+escalation contract applies to unresolved consequential design/scientific issues;
+ordinary in-scope setup and integration repairs do not require new authority.</p>
+<p>Local design checks used two bounded Luna Max source inspections, reconciled
+against the executing code by the supervising agent. Oracle review has not run:
+the Chrome submission was blocked before any context was sent, and explicit
+permission to send local design/performance context is pending. Do not describe
+this document as Oracle-approved. That pending consultation does not erase the
+resolved decisions above or authorize the implementation agent to invent a
+different architecture without review.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

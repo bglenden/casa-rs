@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["FftError"],"struct":["Fft2","RealFft2"],"trait":["FftScalar"]};

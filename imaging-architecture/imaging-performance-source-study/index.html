@@ -711,6 +711,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#owner-supersession-2026-10-03" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Owner supersession, 2026-10-03
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#decision-summary" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -816,6 +827,12 @@
 
 
 <h1 id="first-imaging-performance-source-study">First imaging-performance source study<a class="headerlink" href="#first-imaging-performance-source-study" title="Permanent link">&para;</a></h1>
+<h2 id="owner-supersession-2026-10-03">Owner supersession, 2026-10-03<a class="headerlink" href="#owner-supersession-2026-10-03" title="Permanent link">&para;</a></h2>
+<p>ADR-0015 supersedes all content-generation/coverage proofs and private same-run
+spill checksum requirements in this record. Retain live owner/source state,
+shape/order/window/count and I/O checks. Historical proof encodings, checksum
+timings and implementation descriptions below are non-normative; do not restore
+them. Scientific acceptance, bounded streaming and CASA formats are unchanged.</p>
 <p>Truth class: primary-source implementation-boundary research
 Date: 2026-08-27
 Scope: complete-data, constant-basis MFS first slice</p>
@@ -1005,11 +1022,11 @@ workers, buffer leases, and actual measurements explicit.</p>
 <td><strong>Adapt.</strong> Prefer exclusive/tiled grid ownership or bounded partials; preserve deterministic halo/overlap semantics.</td>
 </tr>
 <tr>
-<td>Fixed-order reduction</td>
+<td>Ordered work commit</td>
 <td>CASA reduces sector sumweights in sector order (<code>GridFT.cc:928-930</code>, <code>976-978</code>). libRA gathers worker grids and sumweights in worker-index order (<code>MultiThreadedVisResampler.cc:326-381</code>).</td>
-<td>Weighting has deterministic partials and exact reductions; complete-data multi-worker merge is absent.</td>
+<td>At this study's original snapshot, weighting had exact reductions and complete-data multi-worker merge was absent. Ordinary weighting now uses finite <code>f64</code> reductions; runtime admits and commits bounded prepared work.</td>
 <td>Reconstruction/gridding</td>
-<td><strong>Retain concept.</strong> The kernel defines stable partition IDs and reduction order; runtime only enforces that order and records it.</td>
+<td><strong>Retain required work coverage and ownership, not bitwise reproduction.</strong> The owner's 2026-09-24 direction supersedes any exact/order-independent floating-output requirement. No extra precision, passes or buffers solely to reproduce reduction bits.</td>
 </tr>
 <tr>
 <td>Bounded tile cache with explicit eviction and statistics</td>

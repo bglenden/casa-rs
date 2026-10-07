@@ -94,9 +94,9 @@
 <a href=#94 id=94 data-nosnippet>94</a>    <span class="doccomment">/// Permit continuous tracks that include samples below the elevation limit.
 <a href=#95 id=95 data-nosnippet>95</a>    </span><span class="attr">#[serde(default)]
 <a href=#96 id=96 data-nosnippet>96</a>    </span><span class="kw">pub </span>allow_below_elevation_limit: bool,
-<a href=#97 id=97 data-nosnippet>97</a>    <span class="doccomment">/// Spectral-window setup. Defaults to the VLA ppdisk tutorial frequency.
+<a href=#97 id=97 data-nosnippet>97</a>    <span class="doccomment">/// Spectral windows. Empty selects the VLA ppdisk tutorial window.
 <a href=#98 id=98 data-nosnippet>98</a>    </span><span class="attr">#[serde(default)]
-<a href=#99 id=99 data-nosnippet>99</a>    </span><span class="kw">pub </span>spectral_setup: <span class="prelude-ty">Option</span>&lt;SyntheticSpectralSetup&gt;,
+<a href=#99 id=99 data-nosnippet>99</a>    </span><span class="kw">pub </span>spectral_windows: Vec&lt;SyntheticSpectralSetup&gt;,
 <a href=#100 id=100 data-nosnippet>100</a>    <span class="doccomment">/// Optional polarization/correlation setup.
 <a href=#101 id=101 data-nosnippet>101</a>    </span><span class="attr">#[serde(default)]
 <a href=#102 id=102 data-nosnippet>102</a>    </span><span class="kw">pub </span>polarization_setup: <span class="prelude-ty">Option</span>&lt;SyntheticPolarizationSetup&gt;,
@@ -174,8 +174,8 @@
 <a href=#174 id=174 data-nosnippet>174</a>            )
 <a href=#175 id=175 data-nosnippet>175</a>            .unwrap_or(request.phase_center_rad);
 <a href=#176 id=176 data-nosnippet>176</a>        }
-<a href=#177 id=177 data-nosnippet>177</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(spectral_setup) = <span class="kw-2">&amp;</span><span class="self">self</span>.spectral_setup {
-<a href=#178 id=178 data-nosnippet>178</a>            request.spectral_setup = spectral_setup.clone();
+<a href=#177 id=177 data-nosnippet>177</a>        <span class="kw">if </span>!<span class="self">self</span>.spectral_windows.is_empty() {
+<a href=#178 id=178 data-nosnippet>178</a>            request.spectral_windows = <span class="self">self</span>.spectral_windows.clone();
 <a href=#179 id=179 data-nosnippet>179</a>        }
 <a href=#180 id=180 data-nosnippet>180</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(polarization_setup) = <span class="kw-2">&amp;</span><span class="self">self</span>.polarization_setup {
 <a href=#181 id=181 data-nosnippet>181</a>            request.polarization_setup = polarization_setup.clone();
@@ -446,7 +446,7 @@
 <a href=#446 id=446 data-nosnippet>446</a>            integration_seconds: <span class="prelude-val">Some</span>(integration_seconds),
 <a href=#447 id=447 data-nosnippet>447</a>            elevation_limit_rad: <span class="prelude-val">Some</span>((-<span class="number">89.0_f64</span>).to_radians()),
 <a href=#448 id=448 data-nosnippet>448</a>            allow_below_elevation_limit: <span class="bool-val">true</span>,
-<a href=#449 id=449 data-nosnippet>449</a>            spectral_setup: <span class="prelude-val">Some</span>(spectral_setup),
+<a href=#449 id=449 data-nosnippet>449</a>            spectral_windows: <span class="macro">vec!</span>[spectral_setup],
 <a href=#450 id=450 data-nosnippet>450</a>            polarization_setup: <span class="prelude-val">Some</span>(polarization_setup),
 <a href=#451 id=451 data-nosnippet>451</a>            predict_model: <span class="bool-val">true</span>,
 <a href=#452 id=452 data-nosnippet>452</a>            corruption: <span class="prelude-val">None</span>,
@@ -1806,12 +1806,12 @@
 <a href=#1806 id=1806 data-nosnippet>1806</a>        integration_seconds,
 <a href=#1807 id=1807 data-nosnippet>1807</a>        elevation_limit_rad,
 <a href=#1808 id=1808 data-nosnippet>1808</a>        allow_below_elevation_limit: has_flag(args, <span class="string">"--allow-below-elevation-limit"</span>),
-<a href=#1809 id=1809 data-nosnippet>1809</a>        spectral_setup: <span class="prelude-val">Some</span>(SyntheticSpectralSetup {
+<a href=#1809 id=1809 data-nosnippet>1809</a>        spectral_windows: <span class="macro">vec!</span>[SyntheticSpectralSetup {
 <a href=#1810 id=1810 data-nosnippet>1810</a>            name: <span class="string">"band1"</span>.to_string(),
 <a href=#1811 id=1811 data-nosnippet>1811</a>            start_frequency_hz,
 <a href=#1812 id=1812 data-nosnippet>1812</a>            channel_width_hz,
 <a href=#1813 id=1813 data-nosnippet>1813</a>            channel_count,
-<a href=#1814 id=1814 data-nosnippet>1814</a>        }),
+<a href=#1814 id=1814 data-nosnippet>1814</a>        }],
 <a href=#1815 id=1815 data-nosnippet>1815</a>        polarization_setup: <span class="prelude-val">Some</span>(polarization_setup),
 <a href=#1816 id=1816 data-nosnippet>1816</a>        predict_model: !has_flag(args, <span class="string">"--no-predict-model"</span>),
 <a href=#1817 id=1817 data-nosnippet>1817</a>        corruption,

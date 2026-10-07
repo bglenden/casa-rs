@@ -1,0 +1,1092 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Oracle review for project: casa-rs — canonical bulk imaging - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#oracle-review-for-project-casa-rs-canonical-bulk-imaging" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Oracle review for project: casa-rs — canonical bulk imaging
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scientific Workbench
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Scientific Workbench
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../scientific-notebooks-and-assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Notebooks, Tutorials, Python, and AI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mac-native-gui-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native macOS Product Spec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#question-and-owner-direction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Question and owner direction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#constraints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Constraints
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#source-access-and-provenance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Source access and provenance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#evidence-current-full-workload-and-failed-candidate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Evidence: current full workload and failed candidate
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#evidence-preparation-and-data-layout-not-just-storage-calls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Evidence: preparation and data layout, not just storage calls
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#existing-mode-split-and-previous-promises" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Existing mode split and previous promises
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#specific-decisions-requested" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Specific decisions requested
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="oracle-review-for-project-casa-rs-canonical-bulk-imaging">Oracle review for project: casa-rs — canonical bulk imaging<a class="headerlink" href="#oracle-review-for-project-casa-rs-canonical-bulk-imaging" title="Permanent link">&para;</a></h1>
+<p>Initiated by Codex, 2026-09-27. This is a design review and implementation-plan
+request, not authorization to change scientific algorithms or launch benchmarks.</p>
+<h2 id="question-and-owner-direction">Question and owner direction<a class="headerlink" href="#question-and-owner-direction" title="Permanent link">&para;</a></h2>
+<p>The owner asks us to fix a recurring failure once: all imaging must use genuinely
+block-oriented input, preparation, numerical execution and storage, not bulk I/O
+that disintegrates into expensive per-sample adapter chains. Design one shared
+path, its migration/deletion sequence, and enforceable regression checks so that
+cube, MFS, MT-MFS, W/AW, mosaics, weighting and prediction do not rediscover the
+same mistakes independently. Prefer simple flat buffers and narrow, deep modules.
+Different scientific kernels are necessary; duplicated transport, resource and
+validation frameworks are not. Do not turn this into a universal tensor engine.</p>
+<p>Please challenge the proposed direction independently. Inspect accessible source
+call chains rather than trusting function names. State access gaps explicitly.
+Resolve the main design choices, especially the physical layout, replay versus MS
+reread, validation/integrity placement, and migration across ALL existing modes.
+Return a concrete plan with a few review stops and complete application slices,
+not a collection of individually tested but unwired components. Identify the
+smallest discriminating experiment for any genuinely unresolved choice.</p>
+<h2 id="constraints">Constraints<a class="headerlink" href="#constraints" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Preserve standard CASA scientific algorithms, selection, spectral frames and
+  interpolation/extrapolation, polarization, flags/weights, model prediction,
+  PSF/PB normalization, masks/WCS/beams, existing CLEAN and persisted writer.</li>
+<li>Preserve approximately 1e-3 normalized agreement and all stricter existing
+  scientific gates. Ordinary floating reduction-order differences are allowed;
+  bitwise reproducibility, compensation and extra precision need demonstrated
+  scientific necessity, not aesthetic justification.</li>
+<li>Bounded streaming, one existing resource authority/residency policy; 16 GiB
+  planning and sampled aggregate RSS, two Cargo build jobs. Do not materialize a
+  whole MS or duplicate whole cubes per worker. Huge cubes such as 2k x 2k x 2k
+  must work in principle with admitted output ranges and required source rereads.</li>
+<li>Existing product ownership rule forbids content hashing or full-array rereads
+  solely to authorize publication. Individual images replace atomically; failure
+  leaves an incomplete run requiring rerun, not whole-set rollback/recovery.</li>
+<li>Genuine external-input freshness and persistence-boundary integrity are
+  distinct requirements. Do not casually delete their guarantees, but challenge
+  expensive implementations and identify exact requirement changes if necessary.</li>
+<li>No fallback or permanent parallel old path. Temporary migration coexistence
+  needs an explicit mode matrix and deletion criterion. No second CLEAN loop.</li>
+<li>Planning only now. Failed full W1 was stopped at owner request; W4 prohibited.
+  No push/merge/release/cleanup/install/full-run authorization. Preserve failed
+  evidence and dirty work. Do not revive the failed cache candidate as a win.</li>
+</ul>
+<h2 id="source-access-and-provenance">Source access and provenance<a class="headerlink" href="#source-access-and-provenance" title="Permanent link">&para;</a></h2>
+<p>Public repository: https://github.com/bglenden/casa-rs
+Current HEAD: 3cb9252c19746c8386e5d1b1f7ff89c81415e1d5
+Branch: codex/t55-full-size-validation.</p>
+<p>Use these revision-pinned sources, and inspect callers/callees when useful:</p>
+<ul>
+<li>https://github.com/bglenden/casa-rs/blob/3cb9252c19746c8386e5d1b1f7ff89c81415e1d5/crates/casa-imaging-application/src/lib.rs</li>
+<li>https://github.com/bglenden/casa-rs/blob/3cb9252c19746c8386e5d1b1f7ff89c81415e1d5/crates/casa-imaging-runtime/src/weighting/native_preparation.rs</li>
+<li>https://github.com/bglenden/casa-rs/blob/3cb9252c19746c8386e5d1b1f7ff89c81415e1d5/crates/casa-ms/src/selected_observation/bound_observation.rs</li>
+<li>https://github.com/bglenden/casa-rs/blob/3cb9252c19746c8386e5d1b1f7ff89c81415e1d5/crates/casa-ms/src/selected_observation/indexed_block.rs</li>
+<li>https://github.com/bglenden/casa-rs/blob/3cb9252c19746c8386e5d1b1f7ff89c81415e1d5/crates/casa-imaging-reconstruction/src/streaming_cube/preparation.rs</li>
+<li>https://github.com/bglenden/casa-rs/blob/3cb9252c19746c8386e5d1b1f7ff89c81415e1d5/crates/casa-imaging-reconstruction/src/streaming_cube/input.rs</li>
+<li>https://github.com/bglenden/casa-rs/blob/3cb9252c19746c8386e5d1b1f7ff89c81415e1d5/crates/casa-imaging-runtime/src/streaming_cube/input.rs</li>
+<li>https://github.com/bglenden/casa-rs/blob/3cb9252c19746c8386e5d1b1f7ff89c81415e1d5/crates/casa-imaging-runtime/src/streaming_cube/execute.rs</li>
+<li>https://github.com/bglenden/casa-rs/blob/3cb9252c19746c8386e5d1b1f7ff89c81415e1d5/crates/casa-tables/src/storage/tiled_stman.rs</li>
+<li>https://github.com/bglenden/casa-rs/blob/3cb9252c19746c8386e5d1b1f7ff89c81415e1d5/docs/imaging-architecture/bounded-streaming-performance-spec.md</li>
+<li>https://github.com/bglenden/casa-rs/blob/3cb9252c19746c8386e5d1b1f7ff89c81415e1d5/docs/imaging-architecture/streaming-cube-replacement-plan.md</li>
+<li>https://github.com/bglenden/casa-rs/blob/3cb9252c19746c8386e5d1b1f7ff89c81415e1d5/docs/imaging-architecture/cube-buffer-refactor-20260924.md</li>
+<li>ADRs 0010 (one resource authority), 0011 (scientific coupling), 0013 (private
+  spill CRC32C), 0014 (trusted products without attestation) under the same pin.</li>
+</ul>
+<p>Known optimized ancestor is fff9c2d553eace4b6a57b1df9ded4773f2263ceb. Reuse useful
+mechanisms, not deleted packages or duplicate production routes. CASA/casacore
+define science semantics; LibRA/Obit can supply relevant buffer/loop techniques,
+not an obligatory new broad survey. Local code copies exist but are not visible
+to you; ask for a decisive missing excerpt, not an exhaustive new inventory.</p>
+<p>Current uncommitted changes are NOT visible at those URLs: cache admission now
+uses phase live workspace rather than preparation arena; native frame cache
+can grow from 331 to 3,228 slots (about 70 to 688 MB on this case), reclaiming
+optional image cache; TSM has a bounded selected-span read-ahead repair; tests and
+timers accompany these changes. Combined candidate failed full performance and
+is retired for promotion. It does not change the fundamental layouts or scalar
+call chain below. No source-selection override is present in production.</p>
+<h2 id="evidence-current-full-workload-and-failed-candidate">Evidence: current full workload and failed candidate<a class="headerlink" href="#evidence-current-full-workload-and-failed-candidate" title="Permanent link">&para;</a></h2>
+<p>VLA C-array simulated complex sky, LSRK, 4,094,064 rows, 512 channels, two
+correlations, 1024-square output, natural weighting, efficient batched Clark,
+0.5 mJy threshold, 10,240,000 component cap, no major-cycle cap. FFTW optimized
+NEON build; W1 FFT threads=1. Same selection/controller/writer across runs.</p>
+<ul>
+<li>Retained CASA serial: 21,622.668 s (about 6 h).</li>
+<li>Previous casa-rs W1: 26,620.317 s, peak RSS 6.90 GiB, 17 minor cycles and 18
+  imaging passes, 2,164,568 components. All hard per-plane checks passed; full
+  comparison still has 22 review alerts, no waiver. No full acceptance claim.</li>
+<li>Enlarged cache lowered reads per full refresh from 268.315 GB / 1,652,736
+  frame reads / zero hits to 75.693 GB / 551,988 reads / 1,100,748 hits.</li>
+<li>Corrected short 32-output test retained ALL source rows/channels/store geometry:
+  parent/candidate end-to-end 804.399/791.954 s, prep 671.233/669.070 s, initial
+  55.699/55.703 s, refresh 70.108/59.791 s. Refresh read wall 16.402 -&gt; 6.127 s.
+  All seven products/nine unchanged checks passed, worst normalized RMS 2.17e-6.
+  Diagnostic source-selection override existed only in both test snapshots.</li>
+<li>Full candidate instead took typical refreshes about 2,645 s vs old 1,290–1,573
+  s. Killed at 30,632 s, refresh 12 channel 329/512, RSS peak 10.47 GB. W4 never
+  started. Same byte/read counts per refresh, but read_exact_at time varies from
+  95.4 s (refresh 5) to 1,654–1,754 s in most later passes. These are requested
+  frame bytes and read wall, NOT physical device traffic. LRU, CRC and decoding
+  are outside that timer; about 900 s of non-read work also remains per refresh.</li>
+</ul>
+<p>Native replay file is 75,693,263,184 B, about 70.49 GiB, with 1,076 row blocks
+and 3,805 rows/block. Physical order is row block -&gt; row metadata frame -&gt; 512
+single-channel data frames. One data frame is rows<em>36+4 bytes, metadata rows</em>56+4.
+Execution visits output band -&gt; all row blocks -&gt; metadata plus two adjacent
+source-channel frames. Thus reads leap about 70.35 MB between successive row
+blocks. Spectral neighboring channels overlap, hence cache hits. Enlarging the
+cache removes repeated bytes but does NOT repair locality or explain variable
+latency. Source/store/image working-set and access order matter.</p>
+<p>A small read-only C replay on the ACTUAL retained file reproduces slow I/O:
+8 output channels (240–247), all 1,076 blocks, two passes, same F_NOCACHE and LRU.
+Per pass 1.556 GB requested, 10,760 pread calls, 15,064 hits; 30.258/30.241 s wall,
+0.522/0.513 s CPU, 30.175/30.159 s pread, p95 17.45 ms, p99 19.39 ms, RSS 690 MB.
+Disabling read-ahead only on this descriptor gives 30.318/30.741 s: no benefit.
+This isolates slow file reads in 30 s without CLEAN, but omits image-memory and
+CRC/decode/science costs. External storage is APFS on NVMe/PCI Express. Do not
+assert root cause is the device, OS cache, LRU, or CRC without discrimination.</p>
+<h2 id="evidence-preparation-and-data-layout-not-just-storage-calls">Evidence: preparation and data layout, not just storage calls<a class="headerlink" href="#evidence-preparation-and-data-layout-not-just-storage-calls" title="Permanent link">&para;</a></h2>
+<p>Measured full preparation summary: inspection 187.339653 s, preparation
+502.529188 s, ordered commit 43.758993 s, total 733.859 s. Actual MS source-read
+30.167 s and source-fill 31.536 s overlap this work and are not added to it.
+Native coverage counters: 222,987,289,914 encoded/hash bytes and 4,220,979,990
+hash update calls. Do not attribute all 503 s to hashing without a focused check.</p>
+<p>The MS source already uses bulk tiled column reads, not per-cell disk syscalls.
+DATA/FLAG tile shape is [2,20,3276], about 1 MiB DATA and 16 KiB FLAG. However
+tiled_stman::fill_typed_selected_2d_rows_by_copy does:</p>
+<div class="codehilite"><pre><span></span><code>for selected_row in row_patches:
+    for channel in overlap:
+        src = (channel_in_tile * tile_corr_count) * element_size
+        dst = (selected_channel * selected_row_count * corr_count
+               + output_row * corr_count) * element_size
+        copy_from_slice(corr_count * element_size)  # 16 bytes in this case
+</code></pre></div>
+
+<p>It produces <code>[channel][row][correlation]</code> memory. NativeBlock instead stores
+<code>[row][channel][correlation]</code>. Native writer then loops tile(channel), block part,
+row, tile channel, correlation and serializes individual little-endian values
+into per-channel frames. Therefore even a bulk source has tiny transpose/copy
+operations and a second layout transition before replay.</p>
+<p>Current runtime native preparation (simplified directly from source):</p>
+<div class="codehilite"><pre><span></span><code>NativeKernel::consume(storage, execution):
+    channels/runs/shape checks
+    consumer.inspect_block_range(storage, 0..runs)      # separate full walk
+    for admitted worker row range:
+        worker.projector.visit_block_range(problem, storage, range, |run|:
+            reported = run.samples().next()
+            initialize native worker/layout if needed
+            contributions = spectral.compile(reported.selected(),
+                                               reported.spectral_evaluation())
+            native.consume_channel(run.row(), run.channel(), run.correlations(),
+                                   reported.row_geometry(), output_hz,
+                                   contributions))
+    flush worker parts through one ordered commit
+</code></pre></div>
+
+<p><code>inspect_block_range</code> calls <code>visit_selected_sample_range</code> and
+<code>inspection.push_run(row, channel, correlations)</code> (or counts) for every run.
+<code>SelectedObservationProjector::visit_block_range</code> calls the same visitor, clears
+a bounded evaluations Vec, and for EACH correlation constructs a SampleView,
+projects spectral geometry, stores an evaluation, then calls the run callback.
+No heap allocation per sample is claimed: much scratch is reused. The repeated
+object/check/dispatch work is nevertheless real.</p>
+<p><code>NativePreparationWorker::consume_channel</code> checks lifecycle each call, shape,
+channel identity, source address, geometry.matches_sample and first-pair bits,
+row/channel sequence. Row metadata is installed once but many invariant checks
+are repeated per channel. It computes required group flags/weight/taper and
+contributions, copies the correlation slice into NativeBlock arrays, calls the
+coverage encoder per correlation, and finishes per-row digests. Scientific
+per-value checks cannot simply disappear; source/shape facts need correct scope.</p>
+<p>NativeBlock already uses simple arrays: Vec<RowMetadata> (physical row, UVW,
+phase shift, original frequency pair), Vec<f64> frequencies per row/channel,
+Vec<Complex32> values, Vec<f32> weights, Vec<bool> flags/weight_flags, dimensions.
+The problem is not merely replacing owned sample objects with borrowed ones.</p>
+<h2 id="existing-mode-split-and-previous-promises">Existing mode split and previous promises<a class="headerlink" href="#existing-mode-split-and-previous-promises" title="Permanent link">&para;</a></h2>
+<p>Application <code>run_native</code> currently selects CubePhase only if no MODEL_DATA or
+CORRECTED_DATA write and CubePhase::supports succeeds; otherwise it selects
+SpectralCycleExecutor. Shared <code>run_native_phases&lt;P: MajorCyclePhase&gt;</code> owns CLEAN
+and product publication. CubePhase supports natural weighting, channel-local
+basis, empty starting model, no visibility transform, single source/DD/SPW/pol,
+at least two input channels, and BandPlan-supported science. Other modes remain
+on the record-oriented spectral route. Prepared AW has additional ownership.</p>
+<p>The August bounded-streaming spec already promised one source -&gt; bounded runtime
+executor -&gt; partitioned kernel, no duplicate runner, compact views and block
+coverage. It measured borrowed scalar traversal 4.719 ns/sample, exactly the
+same as owned scalar, versus 3.373 for row/channel runs. That lesson did not
+prevent this recurrence. The later cube plan migrated only natural standard
+channel-local cube, leaving other modes behind a capability split.</p>
+<p>The buffer-refactor plan deliberately kept one-output-channel bands initially,
+with plane-aligned managed image buffers and resource-aware spilling. Its typed
+residency system is reusable and should not be replaced with a new memory
+manager. The new plan should supersede the narrow visibility/replay choices
+explicitly where needed, not undo the useful image-buffer work.</p>
+<p>Dependency ownership: model owns scientific meaning; reconstruction owns
+numerical algorithms; runtime composes MS source, execution/resource/residency;
+application owns sole production composition, CLEAN and publication. No new
+dependency inversion or giant all-purpose subsystem is desired.</p>
+<h2 id="specific-decisions-requested">Specific decisions requested<a class="headerlink" href="#specific-decisions-requested" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Choose a canonical block boundary, concrete minimal data layout and ownership
+   interface. Which facts bind once per source/selection, row, channel span,
+   worker and block? How do heterogeneous DD/SPW/polarization, gapped channels,
+   changing frame geometry and multiple fields/facets work without sample objects?</li>
+<li>Choose a locality-preserving consumption/storage plan. Should we use grouped
+   output-plane waves consuming each source block once, a channel-group-major
+   replay layout, direct tiled MS rereads, or a measured combination within one
+   canonical interface? Account for prediction halos and mandatory weighting
+   passes. Don't force every data set through an expanded 70-GB intermediate.</li>
+<li>Can one layout sensibly serve cube AND MFS/MT-MFS/W/AW? Distinguish shared
+   transport/validation from specialized tight scientific loops, and bounded
+   block transpose from hidden per-sample adaptation. Name deletion targets.</li>
+<li>Classify input generation proofs, coverage digests, block shape/lifecycle
+   checks and persistence CRCs by concrete consumer/failure model. Propose exact
+   scope/placement reductions; do not rebrand product attestation or silently
+   weaken external mutation detection. Flag any ADR/user decision needed.</li>
+<li>Provide a phased all-mode migration table, earliest complete application
+   deliverable (cube plus an MFS exercise to test generality), a few review
+   checkpoints, and eventual removal of displaced APIs/routes. Do not postpone
+   all integration until every primitive has been polished.</li>
+<li>Define architecture/performance regressions that prove real batching:
+   production-path call/copy/hash/allocation counts, actual selected tile bytes
+   and I/O geometry, absence of sample dispatch outside tight kernels, varying
+   block/worker sizes, sparse selections, I/O/cancellation errors and unchanged
+   scientific gates. Avoid wall-time CI thresholds and word bans.</li>
+<li>Name the one or two missing discriminating measurements, if any, before
+   implementing the chosen plan. What does this evidence genuinely support,
+   versus speculation? Do not promise a 2x CASA result from removed bytes alone.</li>
+</ol>
+<p>Please conclude with a recommended design, explicit disagreements/risks, and a
+restart-ready engineering sequence with clear exit criteria.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

@@ -711,6 +711,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#owner-supersession-2026-10-03" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Owner supersession, 2026-10-03
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#decision" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1170,6 +1181,12 @@
 
 
 <h1 id="bounded-streaming-imaging-performance-specification">Bounded streaming imaging performance specification<a class="headerlink" href="#bounded-streaming-imaging-performance-specification" title="Permanent link">&para;</a></h1>
+<h2 id="owner-supersession-2026-10-03">Owner supersession, 2026-10-03<a class="headerlink" href="#owner-supersession-2026-10-03" title="Permanent link">&para;</a></h2>
+<p>ADR-0015 supersedes all content-generation/coverage proofs and private same-run
+spill checksum requirements in this record. Retain live owner/source state,
+shape/order/window/count and I/O checks. Historical proof encodings, checksum
+timings and implementation descriptions below are non-normative; do not restore
+them. Scientific acceptance, bounded streaming and CASA formats are unchanged.</p>
 <p>Truth class: approved implementation handoff
 Date: 2026-08-27
 Parent programme: #486
@@ -2184,7 +2201,9 @@ that serial gate. Because each is a single pair, label the performance result
 provisional; do not claim repeatability or a statistical speedup distribution.
 The executable full-data gate is
 <code>tools/perf/imager/workloads/wave3-standard-mfs-single-term-heavy-wave2-serial.json</code>;
-it pins <code>parallel = false</code>, CPU standard-MFS execution, and the RustFFT backend.</p>
+it historically pinned <code>parallel = false</code>, CPU standard-MFS execution, and
+RustFFT. The old FFT pin is superseded by the FFTW-only implementation; its
+timing record remains historical, not a fresh FFTW performance measurement.</p>
 <p>The measured plan-owned structural production run at <code>b2bc3f7cd</code> completed that exact workload in
 486.349417 seconds, 40.802298 seconds or 7.74 percent faster than the prior
 Rust candidate and 202.647416 seconds or 29.41 percent below the frozen

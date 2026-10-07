@@ -750,7 +750,12 @@
 
 
 <h1 id="trusted-in-process-ownership-and-bounded-operational-telemetry">Trusted in-process ownership and bounded operational telemetry<a class="headerlink" href="#trusted-in-process-ownership-and-bounded-operational-telemetry" title="Permanent link">&para;</a></h1>
-<p>Status: Accepted by explicit user direction, 2026-09-18.</p>
+<p>Status: accepted
+Authority: explicit user direction, 2026-09-18</p>
+<p>Supersession note (2026-10-03): ADR-0015 supersedes the private same-run spill
+checksum exemptions below and extends ownership-only association to trusted
+imaging input/replay and reprojection targets. Those exemptions are historical,
+not normative. All other product/publication rules remain active.</p>
 <p>Trusted in-process scientific product generation must not hash product content
 or reread complete arrays solely to authorize publication. Product attestation
 does not provide an independently justified trust boundary between the generator
