@@ -11,6 +11,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+tracing.workspace = true
 casa-imaging-model = { path = "../casa-imaging-model" }
 casa-imaging-products = { path = "../casa-imaging-products" }
 casa-imaging-reconstruction = { path = "../casa-imaging-reconstruction" }

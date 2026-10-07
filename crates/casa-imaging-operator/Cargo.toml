@@ -1,9 +1,9 @@
 [package]
-name = "casa-imaging-products"
+name = "casa-imaging-operator"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "Native continuum product algorithms and bounded write-only generation"
+description = "Measurement operator: placement records, convolution functions, gridding backends and weighting"
 repository.workspace = true
 publish = false
 
@@ -11,12 +11,10 @@ publish = false
 workspace = true
 
 [dependencies]
-tracing.workspace = true
 casa-fft = { path = "../casa-fft" }
 casa-imaging-model = { path = "../casa-imaging-model" }
-casa-imaging-reconstruction = { path = "../casa-imaging-reconstruction" }
 casa-numerics = { path = "../casa-numerics" }
 ndarray.workspace = true
 num-complex.workspace = true
-sha2 = "0.10"
 thiserror.workspace = true
+tracing.workspace = true
