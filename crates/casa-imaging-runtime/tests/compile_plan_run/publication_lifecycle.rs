@@ -202,7 +202,7 @@ fn publication_lifecycle_rejects_duplicates_without_losing_completion() {
             PlanningBindings::new(
                 registry.registry_id(),
                 ResourcePolicy::Balanced,
-                planning_profile(4),
+                cost_model(4),
             ),
             authority(),
             &registry,

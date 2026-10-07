@@ -72,18 +72,17 @@ use casa_imaging_runtime::{
     MemoryDemand, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
     ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
     PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
-    PlannerCostModelProfileBootstrap, PlannerCostModelProfileId, PlanningBindings,
-    PredictionConfidence, PredictionUncertainty, PreparedArtifactBudget,
-    PreparedArtifactCatalogPlanFragment, PreparedArtifactDescriptor, PreparedArtifactError,
-    PreparedArtifactLoadSource, PreparedArtifactOperation, PreparedArtifactOrder,
-    PreparedArtifactPlanFragment, PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision,
-    PreparedArtifactRegistration, PreparedArtifactRejection, PreparedArtifactReuseOutcome,
-    PreparedArtifactSegmentDescriptor, PreparedArtifactSourceSegment, PreparedArtifactStore,
-    PreparedArtifactUvAffine, ProductPublicationPlan, ProductionStorageProfile,
-    PublicationLayoutLedger, PublicationMappedStaging, PublicationParticipant,
-    PublicationPhysicalLayout, PublicationResourceBounds, PublicationStaging, QueueDemand,
-    QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId,
-    RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus,
+    PlannerCostModelProfileId, PlanningBindings, PredictionConfidence, PredictionUncertainty,
+    PreparedArtifactBudget, PreparedArtifactCatalogPlanFragment, PreparedArtifactDescriptor,
+    PreparedArtifactError, PreparedArtifactLoadSource, PreparedArtifactOperation,
+    PreparedArtifactOrder, PreparedArtifactPlanFragment, PreparedArtifactPlaneDescriptor,
+    PreparedArtifactPrecision, PreparedArtifactRegistration, PreparedArtifactRejection,
+    PreparedArtifactReuseOutcome, PreparedArtifactSegmentDescriptor, PreparedArtifactSourceSegment,
+    PreparedArtifactStore, PreparedArtifactUvAffine, ProductPublicationPlan,
+    ProductionStorageProfile, PublicationLayoutLedger, PublicationMappedStaging,
+    PublicationParticipant, PublicationPhysicalLayout, PublicationResourceBounds,
+    PublicationStaging, QueueDemand, QueueResource, QueueResourceId, QuiescencePoint, RateDemand,
+    RateResource, RateResourceId, RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus,
     ReconstructionCyclePhaseCompletion, RedactedPath, ResourceAuthority, ResourceClaim,
     ResourceError, ResourceHeadroom, ResourceMeasurement, ResourceOverride, ResourcePolicy,
     ResourceTopology, RunBindings, RunController, RunDirective, RunError, RunToCompletion,
@@ -150,13 +149,8 @@ fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
     )
 }
 
-fn planning_profile(byte: u8) -> PlannerCostModelProfileBootstrap {
-    PlannerCostModelProfileBootstrap::new(cost_model(byte))
-}
-
 mod common;
 
-mod cost_model_profile;
 mod imaging_plan_selection;
 #[path = "compile_plan_run/publication_lifecycle.rs"]
 mod publication_lifecycle;
@@ -2881,7 +2875,7 @@ fn managed_spill_requires_artifact_capacity_inside_the_selected_policy_reserve()
     .expect("feasible receipt store");
     let execution_plan = runtime_plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         &feasible_authority,
         &implementation_registry,
         &feasible_receipts,
@@ -2920,7 +2914,7 @@ fn managed_spill_requires_artifact_capacity_inside_the_selected_policy_reserve()
     .expect("insufficient receipt store");
     let result = runtime_plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         &insufficient_authority,
         &implementation_registry,
         &insufficient_receipts,
@@ -3271,7 +3265,7 @@ fn failed_density_generation_receipt_uses_current_partial_stream_measurements() 
     let resource_policy = ResourcePolicy::Exclusive;
     let execution_plan = runtime_plan(
         &problem,
-        PlanningBindings::new(registry(74), resource_policy.clone(), planning_profile(4)),
+        PlanningBindings::new(registry(74), resource_policy.clone(), cost_model(4)),
         authority(),
         &planning_registry,
         &receipts,
@@ -3507,7 +3501,7 @@ fn execute_spectral_cycle_with_weighting_mode(
     .expect("receipt store");
     let execution_plan = runtime_plan(
         &problem,
-        PlanningBindings::new(registry(73), resource_policy.clone(), planning_profile(4)),
+        PlanningBindings::new(registry(73), resource_policy.clone(), cost_model(4)),
         authority(),
         &planning_registry,
         &receipts,
@@ -3740,7 +3734,7 @@ fn execute_spectral_cycle_with_weighting_mode(
         PlanningBindings::new(
             registry(73),
             final_resource_policy.clone(),
-            planning_profile(4),
+            cost_model(4),
         ),
         authority(),
         &planning_registry,
@@ -4399,11 +4393,7 @@ fn execute_planned_initial_reconstruction_cycle(
     .expect("receipt store");
     let execution_plan = runtime_plan(
         problem,
-        PlanningBindings::new(
-            registry(byte),
-            resource_policy.clone(),
-            planning_profile(byte),
-        ),
+        PlanningBindings::new(registry(byte), resource_policy.clone(), cost_model(byte)),
         authority,
         &planning_registry,
         &receipts,
@@ -4598,11 +4588,7 @@ fn execute_dirty_channel_local_slabs(
     .expect("receipt store");
     let execution_plan = runtime_plan(
         problem,
-        PlanningBindings::new(
-            registry(byte),
-            resource_policy.clone(),
-            planning_profile(byte),
-        ),
+        PlanningBindings::new(registry(byte), resource_policy.clone(), cost_model(byte)),
         authority(),
         &planning_registry,
         &receipts,
@@ -4846,7 +4832,7 @@ fn t55_small_cube_admits_owner_workspace_with_one_worker() {
     // budget, then admit the same fully charged minimum candidate within 1 MiB.
     let rejected = runtime_plan(
         &problem,
-        PlanningBindings::new(registry(78), undersized_policy, planning_profile(78)),
+        PlanningBindings::new(registry(78), undersized_policy, cost_model(78)),
         authority(),
         &planning_registry,
         &receipts,
@@ -4863,7 +4849,7 @@ fn t55_small_cube_admits_owner_workspace_with_one_worker() {
     ));
     let selected = runtime_plan(
         &problem,
-        PlanningBindings::new(registry(78), admission_policy, planning_profile(78)),
+        PlanningBindings::new(registry(78), admission_policy, cost_model(78)),
         authority(),
         &planning_registry,
         &receipts,
@@ -5332,7 +5318,7 @@ fn t55_exact_plane_candidates_resize_workspace_and_admit_the_serial_memory_floor
     .unwrap();
     let selected = runtime_plan(
         &problem,
-        PlanningBindings::new(registry(78), constrained, planning_profile(78)),
+        PlanningBindings::new(registry(78), constrained, cost_model(78)),
         &authority,
         &planning_registry,
         &receipts,
@@ -5821,7 +5807,7 @@ fn t607_clean_cycle_admits_bounded_channel_slabs_and_rejects_below_minimum() {
                 memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 800_000)]),
                 ..ResourceOverride::default()
             }),
-            planning_profile(80),
+            cost_model(80),
         ),
         authority(),
         &planning_registry,
@@ -5977,7 +5963,7 @@ fn t607_clean_cycle_admits_bounded_channel_slabs_and_rejects_below_minimum() {
     });
     let result = runtime_plan(
         &problem,
-        PlanningBindings::new(registry(80), rejection_policy, planning_profile(80)),
+        PlanningBindings::new(registry(80), rejection_policy, cost_model(80)),
         authority(),
         &planning_registry,
         &receipts,
@@ -8889,7 +8875,7 @@ fn run_rejects_artifact_dispositions_that_contradict_plan_semantics() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(evidenced_physical_work(6)),
     )
     .expect("physical planning");
@@ -8936,7 +8922,7 @@ fn run_can_invoke_only_the_implementation_identity_sealed_by_plan() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -8987,7 +8973,7 @@ fn initial_consistency_check_receives_the_exact_observation_transaction() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -9022,7 +9008,7 @@ fn generic_io_cannot_receive_observation_sources() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -9053,7 +9039,7 @@ fn run_rejects_a_registry_that_cannot_resolve_the_bound_implementation() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -9084,7 +9070,7 @@ fn run_rejects_a_different_implementation_returned_under_the_bound_key() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -9134,8 +9120,7 @@ fn plan_seals_physical_work_and_every_required_binding() {
     ))
     .expect("logical compilation");
     let expected_problem_id = problem.problem_id();
-    let bindings =
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4));
+    let bindings = PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4));
     let receipts = ExecutionReceiptStore::new(
         "/tmp/casa-rs-imaging-plan-id-regression",
         ReceiptRetention::new(4, 1_048_576).expect("plan-id retention"),
@@ -9288,14 +9273,14 @@ fn receipt_store_location_does_not_change_the_logical_plan_identity() {
         .expect("second receipt store");
     let first = plan_with_receipts(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         &first_receipts,
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("first physical planning");
     let second = plan_with_receipts(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         &second_receipts,
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
@@ -9315,7 +9300,7 @@ fn transaction_seal_rejects_omitted_product_graph_publication_member() {
     .expect("two-product logical compilation");
     plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |problem, _| Ok::<_, io::Error>(physical_work_for_problem(problem, 6)),
     )
     .expect("canonical complete two-product transaction seal");
@@ -9365,8 +9350,7 @@ fn transaction_seal_rejects_matching_ordinals_from_a_foreign_product_graph() {
 #[test]
 fn mapped_publication_staging_binds_its_producer_release_allocation_and_plan_identity() {
     let problem = compile(request(1)).expect("logical compilation");
-    let bindings =
-        || PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4));
+    let bindings = || PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4));
     let valid = mapped_publication_candidate(
         WorkNodeId::new("1-prepare-mapping"),
         WorkDependency::Work(WorkNodeId::new("2-release-mapping")),
@@ -9441,7 +9425,7 @@ fn transaction_seal_blocks_unbound_transaction_work() {
     .expect("physically valid but transaction-unbound candidate");
     let result = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, io::Error>(unbound),
     );
 
@@ -9456,7 +9440,7 @@ fn run_rejects_changed_registry_policy_and_cost_model_bindings() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -9498,8 +9482,7 @@ fn run_rejects_changed_registry_policy_and_cost_model_bindings() {
 #[test]
 fn run_rejects_every_stale_problem_input_before_calling_the_executor() {
     let problem = compile(request(1)).expect("logical compilation");
-    let bindings =
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4));
+    let bindings = PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4));
     let execution_plan = plan(&problem, bindings.clone(), |_, _| {
         Ok::<_, ()>(physical_work(6))
     })
@@ -9583,8 +9566,7 @@ fn run_rejects_every_stale_problem_input_before_calling_the_executor() {
 #[test]
 fn run_executes_one_exactly_bound_plan_without_routing_or_replanning() {
     let problem = compile(request(1)).expect("logical compilation");
-    let bindings =
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4));
+    let bindings = PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4));
     let execution_plan = plan(&problem, bindings.clone(), |_, _| {
         Ok::<_, ()>(physical_work(6))
     })
@@ -9621,7 +9603,7 @@ fn run_preserves_the_selected_executors_error_chain() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -9646,7 +9628,7 @@ fn rejected_post_launch_adaptation_drains_fences_before_returning() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -9689,7 +9671,7 @@ fn run_applies_an_eligible_transition_to_later_scheduled_work() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(adaptive_physical_work(6)),
     )
     .expect("adaptive physical planning");
@@ -9733,7 +9715,7 @@ fn run_cancellation_at_the_pre_read_cut_releases_authority_capacity() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -9821,7 +9803,7 @@ fn cancellation_cannot_report_cancelled_after_atomic_publication_is_irrevocable(
         let problem = compile(request(1)).expect("logical compilation");
         let execution_plan = plan(
             &problem,
-            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
             |_, _| Ok::<_, ()>(physical_work(6)),
         )
         .expect("physical planning");
@@ -9883,7 +9865,7 @@ fn controller_cannot_adapt_after_atomic_publication_is_irrevocable() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -9933,7 +9915,7 @@ fn publication_visibility_is_final_after_fence_and_scheduler_settlement() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -9980,7 +9962,7 @@ fn publication_does_not_lock_receipt_store_and_active_attempt_remains_exclusive(
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -10118,7 +10100,7 @@ fn earlier_acquired_publication_buffer_is_held_through_publish_and_then_released
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work_with_early_publication_buffer(6)),
     )
     .expect("earlier-acquired publication buffer is valid physical work");
@@ -10165,7 +10147,7 @@ fn observation_completion_is_attempt_node_and_fence_bound_after_successful_settl
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -10214,7 +10196,7 @@ fn settled_observation_completion_is_delivered_only_to_explicit_predecessor_cons
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -10264,7 +10246,7 @@ fn synchronous_observation_completion_is_exactly_once_attempt_node_and_lease_bou
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work_with_synchronous_observation_read(6)),
     )
     .expect("synchronous ObservationRead is valid physical work");
@@ -10344,7 +10326,7 @@ fn actual_bound_observation_traversals_drive_both_weighting_generation_passes() 
         .expect("production weighting physical work");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical),
     )
     .expect("production weighting execution plan");
@@ -10442,7 +10424,7 @@ fn failed_weighting_release_quarantines_the_actual_selected_observation_owner() 
         .expect("production weighting physical work");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical),
     )
     .expect("production weighting execution plan");
@@ -10555,7 +10537,7 @@ fn failed_weighting_lifecycle_cuts_run_the_scheduler_owned_release() {
             .expect("production weighting physical work");
         let execution_plan = plan(
             &problem,
-            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
             |_, _| Ok::<_, ()>(physical),
         )
         .expect("production weighting execution plan");
@@ -10669,7 +10651,7 @@ fn weighting_replay_rejects_a_fresh_binding_with_identical_selected_content() {
         .expect("production weighting physical work");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical),
     )
     .expect("production weighting execution plan");
@@ -10735,7 +10717,7 @@ fn weighting_generation_rejects_missing_direct_predecessor_before_state_exists()
         .expect("production weighting physical work");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical),
     )
     .expect("production weighting execution plan");
@@ -10800,7 +10782,7 @@ fn weighting_replay_rejects_mismatched_block_allocation_before_samples_emit() {
         .expect("production weighting physical work");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical),
     )
     .expect("production weighting execution plan");
@@ -10875,7 +10857,7 @@ fn assert_source_residency_mismatch_fails_before_traversal(
         .expect("planned source residency composes");
     let execution_plan = plan(
         problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical),
     )
     .expect("plan with mismatched runtime owner");
@@ -11010,7 +10992,7 @@ fn multi_source_weighting_receipts_certified_aggregate_residency_through_release
     );
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical),
     )
     .expect("plan owner-certified multi-source weighting");
@@ -11476,7 +11458,7 @@ fn t41_production_plan_schedules_planner_bounded_mvc_slabs_for_realistic_image_s
         PlanningBindings::new(
             registry.registry_id(),
             ResourcePolicy::Exclusive,
-            planning_profile(4),
+            cost_model(4),
         ),
         &mvc_authority,
         &registry,
@@ -11716,7 +11698,7 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
     .collect::<BTreeMap<_, _>>();
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical),
     )
     .expect("plan with production weighting lifecycle");
@@ -11957,7 +11939,7 @@ fn completion_from_a_different_compiled_observation_cannot_unlock_dependents() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work_with_synchronous_observation_read(6)),
     )
     .expect("synchronous ObservationRead is valid physical work");
@@ -12003,7 +11985,7 @@ fn failed_synchronous_observation_completion_prevents_dependent_work() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work_with_synchronous_observation_read(6)),
     )
     .expect("synchronous ObservationRead is valid physical work");
@@ -12059,7 +12041,7 @@ fn failed_observation_fence_cannot_mint_attempt_bound_completion() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -12136,7 +12118,7 @@ fn transaction_failures_leave_the_old_generation_visible() {
         let problem = compile(request(1)).expect("logical compilation");
         let execution_plan = plan(
             &problem,
-            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
             |_, _| Ok::<_, ()>(physical_work(6)),
         )
         .expect("physical planning");
@@ -12192,7 +12174,7 @@ fn transaction_failures_leave_the_old_generation_visible() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -12273,7 +12255,7 @@ fn transaction_failures_leave_the_old_generation_visible() {
     );
     let replay = runtime_plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         authority(),
         &replay_registry,
         &admission_receipts,
@@ -12305,7 +12287,7 @@ fn release_failures_drain_independent_fences_and_quarantine_only_failed_slots() 
     for fail_at_fence in [false, true] {
         let execution_plan = plan(
             &problem,
-            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
             |_, _| Ok::<_, ()>(release_failure_physical_work(6, 8, fail_at_fence)),
         )
         .expect("external-release failure planning");
@@ -12373,7 +12355,7 @@ fn release_failures_drain_independent_fences_and_quarantine_only_failed_slots() 
 
         let readmission_plan = plan(
             &problem,
-            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
             |_, _| Ok::<_, ()>(physical_work(6)),
         )
         .expect("post-quarantine planning");
@@ -12398,7 +12380,7 @@ fn run_persists_a_reopenable_receipt_with_exact_identities_and_every_plan_node()
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -12484,7 +12466,7 @@ fn receipt_rejects_checksum_valid_typed_projection_and_audit_forgery() {
     .expect("two-product logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |problem, _| Ok::<_, ()>(reconstruction_physical_work_for_problem(problem, 6)),
     )
     .expect("physical planning");
@@ -12766,7 +12748,7 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
     .expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |problem, _| Ok::<_, ()>(physical_work_for_problem(problem, 6)),
     )
     .expect("physical planning");
@@ -13006,7 +12988,7 @@ fn receipt_reopens_the_complete_selected_plan_projection() {
     });
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), policy.clone(), planning_profile(4)),
+        PlanningBindings::new(registry(3), policy.clone(), cost_model(4)),
         |_, _| Ok::<_, ()>(auditable_physical_work(&problem, 6)),
     )
     .expect("auditable physical planning");
@@ -13129,7 +13111,7 @@ fn receipt_records_only_the_atomically_selected_conditional_route() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(conditional_adaptive_physical_work(6)),
     )
     .expect("conditional adaptive physical planning");
@@ -13258,7 +13240,7 @@ fn receipt_compares_plan_predictions_with_actual_stage_resource_and_fence_use() 
     let read = WorkNodeId::new("read");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -13335,7 +13317,7 @@ fn receipt_compares_planned_and_actual_io_artifacts_and_never_persists_paths() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(evidenced_physical_work(6)),
     )
     .expect("physical planning");
@@ -13486,7 +13468,7 @@ fn failed_publication_fence_never_records_a_published_output() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(evidenced_physical_work(6)),
     )
     .expect("physical planning");
@@ -13567,7 +13549,7 @@ fn receipts_preserve_typed_terminal_outcomes_and_every_node_state() {
     let problem = compile(request(1)).expect("logical compilation");
     let balanced_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -13735,7 +13717,7 @@ fn stale_binding_uses_the_plan_receipt_store_for_mutation_evidence() {
     let problem = compile(request(1)).expect("logical compilation");
     let plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -13828,7 +13810,7 @@ fn t20_major_cycle_harness(
         .expect("T19 resources compose onto T18 replay");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical),
     )
     .expect("plan with production weighting and T19 lifecycle");
@@ -14584,7 +14566,7 @@ fn direct_product_publication_has_bounded_write_only_generation_and_one_terminal
             PlanningBindings::new(
                 registry.registry_id(),
                 ResourcePolicy::Balanced,
-                planning_profile(4),
+                cost_model(4),
             ),
             authority(),
             &registry,
@@ -14699,7 +14681,7 @@ fn production_storage_profile_admits_serial_scientific_and_publication_plans() {
 
     runtime_plan(
         &problem,
-        PlanningBindings::new(registry(81), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(81), ResourcePolicy::Balanced, cost_model(4)),
         &authority,
         &planning_registry,
         &receipts,
@@ -14709,7 +14691,7 @@ fn production_storage_profile_admits_serial_scientific_and_publication_plans() {
 
     runtime_plan(
         &problem,
-        PlanningBindings::new(registry(81), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(81), ResourcePolicy::Balanced, cost_model(4)),
         &authority,
         &planning_registry,
         &receipts,
@@ -14780,7 +14762,7 @@ fn profiled_serial_plans_bind_only_their_used_storage_identities() {
     let reject = |physical| {
         let result = runtime_plan(
             &problem,
-            PlanningBindings::new(registry(82), ResourcePolicy::Balanced, planning_profile(4)),
+            PlanningBindings::new(registry(82), ResourcePolicy::Balanced, cost_model(4)),
             &authority,
             &planning_registry,
             &receipts,
@@ -14830,7 +14812,7 @@ fn profiled_serial_plans_bind_only_their_used_storage_identities() {
         if index == 1 {
             runtime_plan(
                 &problem,
-                PlanningBindings::new(registry(82), ResourcePolicy::Balanced, planning_profile(4)),
+                PlanningBindings::new(registry(82), ResourcePolicy::Balanced, cost_model(4)),
                 &authority,
                 &planning_registry,
                 &receipts,

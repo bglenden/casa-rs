@@ -535,7 +535,7 @@ fn t51_full_aw_residual_phase_adapts_complete_allocations_and_rejects_below_floo
     let planning = PlanningBindings::new(
         registry.registry_id(),
         ResourcePolicy::Exclusive,
-        PlannerCostModelProfileBootstrap::new(PlannerCostModelProfileId::from_sha256([51; 32])),
+        PlannerCostModelProfileId::from_sha256([51; 32]),
     );
     crate::plan(
         &problem,

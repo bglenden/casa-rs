@@ -35,11 +35,10 @@ use crate::{
     ImplementationContractCatalog, ImplementationContractMetadata, ImplementationRegistryId,
     IoBufferDemand, IoBufferKind, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand,
     MemoryView, MemoryViewKind, ObservationTransactionWork, PhysicalWorkBinding,
-    PlannerCostModelProfileId, PlannerCostModelProfileRecord, PlanningBindings, QueueDemand,
-    QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId,
-    RateUnit, ResourceAuthority, ResourceHeadroom, ResourcePolicy, ResourceTopology,
-    RuntimeOverheadDemand, ScalingMetadata, StorageDemand, StorageDomain, StorageDomainId,
-    plan as authority_plan,
+    PlannerCostModelProfileId, PlanningBindings, QueueDemand, QueueResource, QueueResourceId,
+    QuiescencePoint, RateDemand, RateResource, RateResourceId, RateUnit, ResourceAuthority,
+    ResourceHeadroom, ResourcePolicy, ResourceTopology, RuntimeOverheadDemand, ScalingMetadata,
+    StorageDemand, StorageDomain, StorageDomainId, plan as authority_plan,
 };
 
 fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
@@ -524,7 +523,7 @@ fn bound_plan_with_authority(
         PlanningBindings::new(
             ImplementationRegistryId::from_sha256([7; 32]),
             ResourcePolicy::Exclusive,
-            PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
+            PlannerCostModelProfileId::from_sha256([8; 32]),
         ),
         authority,
         &registry,
@@ -1305,7 +1304,7 @@ fn malformed_store_owned_rejection_is_rejected_without_partial_receipt_mutation(
         PlanningBindings::new(
             ImplementationRegistryId::from_sha256([7; 32]),
             ResourcePolicy::Exclusive,
-            PlannerCostModelProfileRecord::initial(cost_model),
+            cost_model,
         ),
         &receipts,
         |_, _| Ok::<_, std::convert::Infallible>(physical),
@@ -1672,7 +1671,7 @@ fn execution_plan_owns_the_bound_physical_work_dag() {
     let bindings = PlanningBindings::new(
         ImplementationRegistryId::from_sha256([7; 32]),
         ResourcePolicy::Exclusive,
-        PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
+        PlannerCostModelProfileId::from_sha256([8; 32]),
     );
 
     let physical = physical_work_binding(dag);
@@ -1699,7 +1698,7 @@ fn execution_plan_owns_the_resource_policy_selected_during_planning() {
         PlanningBindings::new(
             ImplementationRegistryId::from_sha256([7; 32]),
             ResourcePolicy::Balanced,
-            PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
+            PlannerCostModelProfileId::from_sha256([8; 32]),
         ),
         |_, _| Ok::<_, std::convert::Infallible>(physical_work_binding(dag)),
     )
@@ -1798,7 +1797,7 @@ fn planning_seals_the_first_resource_authority_feasible_candidate() {
         PlanningBindings::new(
             ImplementationRegistryId::from_sha256([7; 32]),
             ResourcePolicy::Exclusive,
-            PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
+            PlannerCostModelProfileId::from_sha256([8; 32]),
         ),
         &io_authority(),
         &registry,
@@ -1857,7 +1856,7 @@ fn planning_selects_the_largest_feasible_exact_worker_variant() {
         PlanningBindings::new(
             ImplementationRegistryId::from_sha256([7; 32]),
             ResourcePolicy::Exclusive,
-            PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
+            PlannerCostModelProfileId::from_sha256([8; 32]),
         ),
         &io_authority_with_workers_and_memory(3, 64 << 20),
         &registry,
@@ -1905,7 +1904,7 @@ fn planning_fails_before_sealing_when_no_candidate_is_feasible() {
         PlanningBindings::new(
             ImplementationRegistryId::from_sha256([7; 32]),
             ResourcePolicy::Exclusive,
-            PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
+            PlannerCostModelProfileId::from_sha256([8; 32]),
         ),
         &cpu_authority(),
         &registry,
@@ -2016,7 +2015,7 @@ fn historical_failures_do_not_override_current_resource_admission() {
         PlanningBindings::new(
             ImplementationRegistryId::from_sha256([7; 32]),
             ResourcePolicy::Exclusive,
-            PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
+            PlannerCostModelProfileId::from_sha256([8; 32]),
         )
     };
     authority_plan(
@@ -2115,7 +2114,7 @@ fn planning_resolves_each_distinct_implementation_once() {
         PlanningBindings::new(
             registry.inner.id,
             ResourcePolicy::Exclusive,
-            PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
+            PlannerCostModelProfileId::from_sha256([8; 32]),
         ),
         &io_authority(),
         &registry,

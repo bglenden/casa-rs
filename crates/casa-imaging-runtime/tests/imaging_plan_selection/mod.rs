@@ -6,8 +6,7 @@
 use std::io;
 
 use casa_imaging_runtime::{
-    AlternativeRejectionReason, ExecutionPlan, ExecutionReceiptStore,
-    PlannerCostModelProfileBootstrap, ReceiptRetention,
+    AlternativeRejectionReason, ExecutionPlan, ExecutionReceiptStore, ReceiptRetention,
 };
 
 mod support;
@@ -108,11 +107,7 @@ fn multi_candidate_plan(
     );
     runtime_plan(
         problem,
-        PlanningBindings::new(
-            registry(3),
-            ResourcePolicy::Exclusive,
-            PlannerCostModelProfileBootstrap::new(cost_model(4)),
-        ),
+        PlanningBindings::new(registry(3), ResourcePolicy::Exclusive, cost_model(4)),
         authority(),
         &contract_registry,
         &receipts,

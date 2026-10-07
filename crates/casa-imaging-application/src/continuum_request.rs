@@ -3372,8 +3372,7 @@ fn runtime(
         gridded_normal_storage,
         confidence_parts_per_million: 900_000,
         resource_policy: request.resource_policy.clone(),
-        cost_model: PlannerCostModelProfileId::from_sha256(hash(b"spectral-cycle-cost-v1"))
-            .bootstrap(),
+        cost_model: PlannerCostModelProfileId::from_sha256(hash(b"spectral-cycle-cost-v1")),
         authority,
         receipts: ExecutionReceiptStore::new(receipts, ReceiptRetention::new(512, 256 << 20)?)?,
         build: BuildIdentity::from_sha256(hash(env!("CARGO_PKG_VERSION").as_bytes())),

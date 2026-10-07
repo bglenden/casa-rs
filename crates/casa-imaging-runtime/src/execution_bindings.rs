@@ -25,7 +25,6 @@ use crate::{
     ResourceAuthority, ResourceError, ResourceOverride, ResourcePolicy, WorkImplementationId,
     WorkKind, WorkNodeId,
     bounded_stream::BOUNDED_WORKER_STACK_BYTES,
-    cost_model::PlannerCostModelProfileRecord,
     execution::{
         ExecutionDag, ExecutionScheduler, PublicationReservation, SchedulerAction,
         SchedulerTerminal, WorkResult, io_buffer_kind_supports_work_kind, validate_topology,
@@ -86,16 +85,8 @@ digest_identity!(
 );
 digest_identity!(
     PlannerCostModelProfileId,
-    "Stable content identity of one reviewed planner cost-model profile."
+    "Deployment-selected planner cost-model profile identity bound into a plan."
 );
-
-impl PlannerCostModelProfileId {
-    /// Mark this deployment-selected identity as the initial planner baseline.
-    #[must_use]
-    pub const fn bootstrap(self) -> crate::PlannerCostModelProfileBootstrap {
-        crate::PlannerCostModelProfileBootstrap::new(self)
-    }
-}
 
 digest_identity!(
     PhysicalWorkId,
@@ -2243,10 +2234,6 @@ impl ResourcePolicyId {
     pub const fn as_bytes(self) -> [u8; 32] {
         self.0
     }
-
-    pub(crate) const fn from_sha256(digest: [u8; 32]) -> Self {
-        Self(digest)
-    }
 }
 
 impl fmt::Debug for ResourcePolicyId {
@@ -2298,26 +2285,23 @@ pub struct PlanningBindings {
     implementation_registry: ImplementationRegistryId,
     resource_policy: ResourcePolicy,
     resource_policy_id: ResourcePolicyId,
-    planner_cost_model_profile: PlannerCostModelProfileRecord,
+    planner_cost_model_profile: PlannerCostModelProfileId,
 }
 
 impl PlanningBindings {
-    /// Bind one registry snapshot, host-use policy, and reviewed cost model.
+    /// Bind one registry snapshot, host-use policy, and cost-model identity.
     #[must_use]
-    pub fn new<P>(
+    pub fn new(
         implementation_registry: ImplementationRegistryId,
         resource_policy: ResourcePolicy,
-        planner_cost_model_profile: P,
-    ) -> Self
-    where
-        P: Into<PlannerCostModelProfileRecord>,
-    {
+        planner_cost_model_profile: PlannerCostModelProfileId,
+    ) -> Self {
         let resource_policy_id = resource_policy_id(&resource_policy);
         Self {
             implementation_registry,
             resource_policy,
             resource_policy_id,
-            planner_cost_model_profile: planner_cost_model_profile.into(),
+            planner_cost_model_profile,
         }
     }
 
@@ -2339,16 +2323,10 @@ impl PlanningBindings {
         self.resource_policy_id
     }
 
-    /// Return the exact reviewed cost-model profile identity.
+    /// Return the exact cost-model profile identity.
     #[must_use]
     pub const fn planner_cost_model_profile_id(&self) -> PlannerCostModelProfileId {
-        self.planner_cost_model_profile.profile_id()
-    }
-
-    /// Return the reviewed or deployment-selected profile bound to planning.
-    #[must_use]
-    pub const fn planner_cost_model_profile(&self) -> &PlannerCostModelProfileRecord {
-        &self.planner_cost_model_profile
+        self.planner_cost_model_profile
     }
 }
 
@@ -2448,7 +2426,7 @@ impl ExecutionPlan {
         &self.resource_policy
     }
 
-    /// Return the exact reviewed cost-model profile identity.
+    /// Return the exact cost-model profile identity.
     #[must_use]
     pub const fn planner_cost_model_profile_id(&self) -> PlannerCostModelProfileId {
         self.planner_cost_model_profile

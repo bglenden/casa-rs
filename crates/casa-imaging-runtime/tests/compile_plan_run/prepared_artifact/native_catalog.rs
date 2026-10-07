@@ -253,7 +253,7 @@ fn execute(
 ) {
     let execution_plan = plan(
         problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(fixture.physical.clone()),
     )
     .unwrap();
@@ -706,7 +706,7 @@ fn execute_exact(
     .unwrap();
     let execution_plan = plan(
         problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical),
     )
     .unwrap();

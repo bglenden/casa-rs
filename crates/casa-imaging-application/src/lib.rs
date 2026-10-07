@@ -61,14 +61,13 @@ use casa_imaging_runtime::{
     ExecutionReceipt, ExecutionReceiptStore, ExecutionStatus, FenceKind, FinalVisibilityReplay,
     FrozenWeightingReservation, ImplementationContractMetadata, ImplementationRegistry,
     ImplementationRegistryId, ManagedSpillStorage, ObservationReadCompletionContext,
-    PlannerCostModelProfileBootstrap, PlanningBindings, PreparedArtifactRegistration,
-    ResourceAuthority, RunBindings, RunController, RunDirective,
-    SelectedObservationSourceResources, SerialProductPublicationExecutor,
-    SerialProductPublicationPlan, SerialProductPublicationPolicy, SerialProductPublicationRegistry,
-    SerialProductPublicationSink, SpectralCycleExecutionPolicy, SpectralCycleExecutor,
-    SpectralCyclePassInput, SpectralCyclePlan, SpectralCyclePlanParts, SpectralCyclePlanningLimits,
-    SpectralCycleRegistry, StorageIoResourceBinding, WorkExecutionContext, WorkImplementation,
-    WorkImplementationId, WorkMeasurements, plan, run,
+    PlannerCostModelProfileId, PlanningBindings, PreparedArtifactRegistration, ResourceAuthority,
+    RunBindings, RunController, RunDirective, SelectedObservationSourceResources,
+    SerialProductPublicationExecutor, SerialProductPublicationPlan, SerialProductPublicationPolicy,
+    SerialProductPublicationRegistry, SerialProductPublicationSink, SpectralCycleExecutionPolicy,
+    SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan, SpectralCyclePlanParts,
+    SpectralCyclePlanningLimits, SpectralCycleRegistry, StorageIoResourceBinding,
+    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkMeasurements, plan, run,
 };
 use casa_ms::{
     ResolvedSelectedObservationAccess, SelectedObservationResolutionRequest,
@@ -102,7 +101,7 @@ pub struct ApplicationRuntime {
     /// Host-use policy bound at planning and execution.
     pub resource_policy: ResourcePolicy,
     /// Deployment-selected cost-model profile.
-    pub cost_model: PlannerCostModelProfileBootstrap,
+    pub cost_model: PlannerCostModelProfileId,
     /// Process resource authority used for admission and execution.
     pub authority: ResourceAuthority,
     /// Durable bounded receipt store shared by all phases.
@@ -988,7 +987,7 @@ where
     let current = RunBindings::new(
         problem.inputs().clone(),
         &runtime.resource_policy,
-        runtime.cost_model.profile_id(),
+        runtime.cost_model,
     );
     let mut controller = application_controller(runtime);
     run(
@@ -1126,7 +1125,7 @@ where
     let current = RunBindings::new(
         problem.inputs().clone(),
         &runtime.resource_policy,
-        runtime.cost_model.profile_id(),
+        runtime.cost_model,
     );
     let mut controller = application_controller(&runtime);
     run(

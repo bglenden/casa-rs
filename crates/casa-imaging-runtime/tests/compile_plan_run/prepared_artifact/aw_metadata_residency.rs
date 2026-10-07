@@ -604,7 +604,7 @@ fn t51_aw_reader_replaces_only_pool_and_preserves_catalog_reservation() {
     .expect("cache-only generation plan");
     let plan = plan(
         &problem,
-        PlanningBindings::new(registry.id, ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry.id, ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(setup),
     )
     .expect("prepared generation plan");

@@ -562,7 +562,7 @@ impl ExecutionReceipt {
         parse_digest(&self.body.plan.resource_policy_identity)
     }
 
-    /// Return the bound reviewed cost-model profile identity.
+    /// Return the bound cost-model profile identity.
     #[must_use]
     pub fn cost_model_identity(&self) -> [u8; 32] {
         parse_digest(&self.body.plan.cost_model_identity)

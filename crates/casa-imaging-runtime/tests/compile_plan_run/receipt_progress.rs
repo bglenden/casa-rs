@@ -59,7 +59,7 @@ fn planning_and_retention_do_not_read_historical_receipt_contents() {
     );
     let plan = plan_with_receipts(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         &receipts,
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
@@ -163,7 +163,7 @@ fn final_persistence_failure_preserves_reservation_and_reports_io_error() {
     let store = ExecutionReceiptStore::new(directory.path(), retention).unwrap();
     let plan = plan_with_receipts(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         &store,
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
@@ -219,7 +219,7 @@ fn reopening_store_preserves_active_attempt_exclusivity_and_capacity() {
     );
     let plan = plan_with_receipts(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         &reopened,
         |_, _| Ok::<_, ()>(physical_work(6)),
     )

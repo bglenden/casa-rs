@@ -43,11 +43,7 @@ fn walking_skeleton() -> WalkingSkeleton {
     .expect("private synthetic logical compilation");
     let plan = plan(
         &problem,
-        PlanningBindings::new(
-            registry(3),
-            ResourcePolicy::Balanced,
-            cost_model(4).bootstrap(),
-        ),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |problem, _| Ok::<_, io::Error>(physical_work_for_problem(problem, 6)),
     )
     .expect("Resource Authority-backed physical planning");

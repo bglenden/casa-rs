@@ -12,14 +12,13 @@ use crate::{
     ExternalPressure, FenceKind, FrozenWeightingReservation, HostInventory,
     ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId,
     ManagedSpillStorage, MemoryCapacityDomain, MemoryCapacityKind, MemoryView, MemoryViewKind,
-    ObservationReadCompletionContext, PlannerCostModelProfileBootstrap, PlannerCostModelProfileId,
-    PlanningBindings, QueueResource, QueueResourceId, RateResource, RateResourceId, RateUnit,
-    ReceiptRetention, ResourceAuthority, ResourceOverride, ResourcePolicy, ResourceTopology,
-    RunBindings, RunToCompletion, SpectralCycleExecutionPolicy, SpectralCycleExecutor,
-    SpectralCyclePassInput, SpectralCyclePlan, SpectralCyclePlanParts, SpectralCyclePlanningLimits,
-    SpectralCycleRegistry, StorageDomain, StorageDomainId, StorageIoResourceBinding,
-    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkMeasurements,
-    plan as runtime_plan, run as runtime_run,
+    ObservationReadCompletionContext, PlannerCostModelProfileId, PlanningBindings, QueueResource,
+    QueueResourceId, RateResource, RateResourceId, RateUnit, ReceiptRetention, ResourceAuthority,
+    ResourceOverride, ResourcePolicy, ResourceTopology, RunBindings, RunToCompletion,
+    SpectralCycleExecutionPolicy, SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan,
+    SpectralCyclePlanParts, SpectralCyclePlanningLimits, SpectralCycleRegistry, StorageDomain,
+    StorageDomainId, StorageIoResourceBinding, WorkExecutionContext, WorkImplementation,
+    WorkImplementationId, WorkMeasurements, plan as runtime_plan, run as runtime_run,
 };
 use casa_imaging_model::{
     AntennaSelection, AxisOrder, CentreLaws, CorrelationProduct, CorrelationSelection,
@@ -307,11 +306,7 @@ fn t51_source_allocation_is_checked_before_deferred_open() {
             .unwrap();
     let plan = runtime_plan(
         &problem,
-        PlanningBindings::new(
-            registry_id(),
-            policy.clone(),
-            PlannerCostModelProfileBootstrap::new(cost_model_id()),
-        ),
+        PlanningBindings::new(registry_id(), policy.clone(), cost_model_id()),
         &authority,
         &planning_registry,
         &receipts,
@@ -849,11 +844,7 @@ fn execute_complete_data_mfs_with_policy(
     .expect("receipt store");
     let initial_plan = runtime_plan(
         &problem,
-        PlanningBindings::new(
-            registry_id(),
-            resource_policy.clone(),
-            PlannerCostModelProfileBootstrap::new(cost_model_id()),
-        ),
+        PlanningBindings::new(registry_id(), resource_policy.clone(), cost_model_id()),
         &authority,
         &planning_registry,
         &receipts,
@@ -965,11 +956,7 @@ fn execute_complete_data_mfs_with_policy(
     .expect("plan final gridded replay");
     let final_plan = runtime_plan(
         &problem,
-        PlanningBindings::new(
-            registry_id(),
-            resource_policy.clone(),
-            PlannerCostModelProfileBootstrap::new(cost_model_id()),
-        ),
+        PlanningBindings::new(registry_id(), resource_policy.clone(), cost_model_id()),
         &authority,
         &planning_registry,
         &receipts,

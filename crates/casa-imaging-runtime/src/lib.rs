@@ -7,7 +7,6 @@ mod complete_data_operator;
 #[cfg(test)]
 mod complete_data_parallel_mfs_tests;
 mod continuum_transform;
-mod cost_model;
 mod cube_state_plan;
 mod execution;
 mod execution_bindings;
@@ -72,10 +71,6 @@ pub use complete_data_operator::{
 pub use continuum_transform::{
     ContinuumTransformCompletion, ContinuumTransformError, ContinuumTransformRowPlan,
     ContinuumTransformStream, ContinuumTransformedSample, plan_continuum_transform_row,
-};
-pub use cost_model::{
-    PlannerCostModelProfileBootstrap, PlannerCostModelProfileRecord, ProfileEvidenceEntry,
-    ProfilePromotionError, ProfileReview, open_cost_model_profile, promote_cost_model_profile,
 };
 pub use execution::{
     AdaptationId, AdaptationTransition, AllocationAccess, AllocationDisposition, AllocationId,

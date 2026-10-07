@@ -24,13 +24,13 @@ use casa_imaging_runtime::{
     FrozenWeightingReservation, HostInventory, ImplementationContractMetadata,
     ImplementationRegistry, ImplementationRegistryId, ManagedSpillStorage, MemoryCapacityDomain,
     MemoryCapacityKind, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
-    PlannerCostModelProfileBootstrap, PlannerCostModelProfileId, PlanningBindings, QueueResource,
-    QueueResourceId, RateResource, RateResourceId, RateUnit, ReceiptRetention, ResourceAuthority,
-    ResourceOverride, ResourcePolicy, ResourceTopology, RunBindings, RunToCompletion,
-    SpectralCycleExecutionPolicy, SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan,
-    SpectralCyclePlanParts, SpectralCyclePlanningLimits, SpectralCycleRegistry, StorageDomain,
-    StorageDomainId, StorageIoResourceBinding, WorkExecutionContext, WorkImplementation,
-    WorkImplementationId, WorkMeasurements, plan as runtime_plan, run as runtime_run,
+    PlannerCostModelProfileId, PlanningBindings, QueueResource, QueueResourceId, RateResource,
+    RateResourceId, RateUnit, ReceiptRetention, ResourceAuthority, ResourceOverride,
+    ResourcePolicy, ResourceTopology, RunBindings, RunToCompletion, SpectralCycleExecutionPolicy,
+    SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan, SpectralCyclePlanParts,
+    SpectralCyclePlanningLimits, SpectralCycleRegistry, StorageDomain, StorageDomainId,
+    StorageIoResourceBinding, WorkExecutionContext, WorkImplementation, WorkImplementationId,
+    WorkMeasurements, plan as runtime_plan, run as runtime_run,
 };
 use serde_json::json;
 
@@ -220,11 +220,7 @@ fn execute_four_cycle_clean(t44_products: bool) -> Result<CleanRun, Box<dyn Erro
     )?;
     let plan = runtime_plan(
         &problem,
-        PlanningBindings::new(
-            registry_id(),
-            resource_policy.clone(),
-            PlannerCostModelProfileBootstrap::new(cost_model_id()),
-        ),
+        PlanningBindings::new(registry_id(), resource_policy.clone(), cost_model_id()),
         authority,
         &planning_registry,
         &receipts,
@@ -645,11 +641,7 @@ fn execute_continuing_cycle(
     )?;
     let plan = runtime_plan(
         problem,
-        PlanningBindings::new(
-            registry_id(),
-            resource_policy.clone(),
-            PlannerCostModelProfileBootstrap::new(cost_model_id()),
-        ),
+        PlanningBindings::new(registry_id(), resource_policy.clone(), cost_model_id()),
         authority,
         planning_registry,
         receipts,
@@ -727,11 +719,7 @@ fn execute_terminal_major(
     )?;
     let plan = runtime_plan(
         problem,
-        PlanningBindings::new(
-            registry_id(),
-            resource_policy.clone(),
-            PlannerCostModelProfileBootstrap::new(cost_model_id()),
-        ),
+        PlanningBindings::new(registry_id(), resource_policy.clone(), cost_model_id()),
         authority,
         planning_registry,
         receipts,

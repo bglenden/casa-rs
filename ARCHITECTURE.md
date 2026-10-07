@@ -453,8 +453,8 @@ reservations. The provisional selection lease is released before `plan` seals
 that one candidate and its transaction declaration to the exact compiled
 problem and
 geometry, the complete Observation Snapshot, Numerics Contract,
-implementation-registry snapshot, Resource Policy, and reviewed planner
-cost-model profile. The plan owns the complete immutable physical work DAG:
+implementation-registry snapshot, Resource Policy, and planner cost-model
+profile identity. The plan owns the complete immutable physical work DAG:
 explicit nodes and dependencies, per-node implementation identities, resource
 claims, logical allocation lifetimes, compatible reusable physical slots,
 asynchronous fences, quiescence points, and pre-authorized adaptations. `run`
