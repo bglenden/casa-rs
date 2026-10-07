@@ -180,7 +180,6 @@ imaging-t59-low-memory representative_ms casa_prefix:
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime --test compile_plan_run receipt_records_only_the_atomically_selected_conditional_route -- --exact
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime --test compile_plan_run t59_explicit_memory_policy_bounds_resident_and_streamed_replay -- --exact
     CASA_RS_ISSUE607_MTMFS_MS="{{representative_ms}}" CASA_RS_ISSUE607_MTMFS_CASA_PREFIX="{{casa_prefix}}" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test mtmfs_publication_oracle issue607_representative_mtmfs_matches_casa_products --release -- --ignored --exact --nocapture
-    python3 scripts/check-representative-science-matrix.py
 
 release-perf:
     bash scripts/test-release-perf.sh

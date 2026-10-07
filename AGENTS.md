@@ -181,14 +181,12 @@ unrelated personal data, or non-public external datasets.
   closed with its evidence recorded. Draft/readiness and review state live on
   the pull request. A merge does not mean done until the issue closes.
 
-For programme #486, the direct ticket closure policy in
-`docs/imaging-architecture/lessons-and-next-tranche.md` supersedes the generic
-state rule above. A ticket is active only with a linked open pull request
-containing a material code or acceptance-test commit, or while an issue-named
-gate is running. Worktrees, assignments, plans, reading, delegated agents, and
-intent are not activity. Normally one implementation ticket is active; a
-second is allowed only when both depend solely on merged interfaces and touch
-no common ownership surface.
+For the imaging foundation (#648, tickets IF-0 to IF-11), the owner-approved
+plan `docs/imaging-architecture/imaging-foundation-plan-20261007.md` and
+ADR-0016 are the work contract: ticket bodies carry outcome, deletion rows and
+acceptance; section 10 of the plan is the review checklist; section 9.3
+defines the review gates. One ticket is active at a time unless the plan says
+otherwise. Programme #486 and its rules are retired.
 
 ## Final Authority
 
@@ -206,14 +204,10 @@ and issue. The waiver does not change the accepted scientific, persistence, or
 interoperability contract and does not authorize release, branch/worktree
 cleanup, or another pull request.
 
-For programme #486, the single independent contract review defined by the
-direct ticket closure policy is the only review gate. When the issue-named
-gates are green and that review has no unresolved blocker, standing programme
-authority authorizes immediate merge and issue closure without another review
-or user approval. An exact instruction to merge or close a named pull request
-as-is overrides process after known deficits are reported; no repository rule
-may add another review or check. Cleanup, release, and branch/worktree deletion
-remain separate stop points.
+For imaging foundation tickets, the per-ticket contract review against the
+issue body and plan section 10 is the review; the gates R1–R4 in plan section
+9.3 are the only additional checkpoints. Cleanup, release, and branch/worktree
+deletion remain separate stop points.
 
 ## Stop And Ask Before
 
@@ -234,10 +228,10 @@ remain separate stop points.
   explicit user authorization and an independent final review, except for an
   exact merge covered by the informed as-is waiver above
 
-For programme #486, in-scope non-persistent Rust API changes are already
-approved, and intermediate merges are covered by the direct ticket closure
-policy. Persisted CASA-interoperable formats, cleanup, release, and
-branch/worktree deletion remain stop points.
+For imaging foundation tickets, the Rust API changes, deletions and
+dependency-direction changes written in the plan are already approved.
+Persisted CASA-interoperable formats, cleanup, release, and branch/worktree
+deletion remain stop points.
 
 ## Project Boundaries
 
@@ -267,10 +261,10 @@ branch/worktree deletion remain stop points.
 - Release/tag-only smoke, install, coverage, interoperability, and performance
   gates are not routine pull-request requirements unless requested or required
   by the approved work. `TESTING.md` owns the exact matrix.
-- For programme #486 T01-T68, routine `just verify` and generic workflow jobs
-  are not ticket gates. Run only the issue-named and directly affected focused
-  gates. Broad verification remains mandatory at the explicit full-wave and
-  final post-T68 milestones.
+- For imaging foundation tickets, the gates are the ticket's T0/T1/T1.5 tests,
+  `cargo clippy -D warnings` on touched crates, the dependency checker, and
+  `just quick` at ticket end (plan section 9.1). T2 datasets run only in the
+  performance pass (IF-10).
 
 ## Done
 
@@ -280,7 +274,6 @@ actual acceptance evidence; docs and ADRs match reality; and every
 approved-scope deferral records explicit user signoff. Merge, cleanup, and
 release remain separate independently reviewed actions.
 
-For programme #486, the direct ticket closure policy supersedes the generic
-`Done` rule above: issue-named focused gates and the single contract review are
-sufficient for ticket closure. Do not create a per-ticket `just verify`
-exclusion or another merge-authority review.
+For imaging foundation tickets, the ticket's acceptance tests, `just quick`
+and the contract review are sufficient for closure; `just verify` runs once at
+IF-11.

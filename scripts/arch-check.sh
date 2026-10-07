@@ -30,8 +30,7 @@ done
 
 python3 scripts/check-parameter-surface-catalog.py
 python3 scripts/check-parameter-contract-history.py
-python3 scripts/test-imaging-architecture-structural.py
-python3 scripts/check-imaging-architecture.py --self-test
+python3 scripts/check-imaging-dependencies.py
 
 for heading in "${required_sections[@]}"; do
   grep -Fq "$heading" ARCHITECTURE.md || {

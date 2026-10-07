@@ -28,9 +28,10 @@ Imaging evidence uses four non-substitutable tiers:
 - persistence/interoperability evidence proves durable CASA-compatible bytes,
   metadata, reopen behavior, and model-column effects.
 
-For programme #486, the reviewable and machine-checked coverage owner is
-`resources/imaging-architecture/representative-science-matrix.json`. Its
-validator is `scripts/check-representative-science-matrix.py`. A representative
+The representative scenario inventory is
+`resources/imaging-architecture/representative-science-matrix.json`; its
+rows are the T2 workloads of the imaging foundation performance pass (plan
+section 7, ticket IF-10), which regenerates their CASA oracles. A representative
 image-producing row normally has at least a 512x512 image and 1,000,000 selected
 correlation-channel samples, uses the production route, and exercises the
 mode's load-bearing dimensions. Full Stokes requires four correlations with
@@ -132,9 +133,9 @@ when the requested padded size differs from the rounded FFT grid.
 Current native-AW Taylor evidence may be reused only after checking code and
 input applicability. These rows retain the size, channel, complete-product,
 validity and resource limits above; diagnostic laws do not replace them.
-The checked-in [T53 receipt](resources/imaging-architecture/representative-science-evidence/w-multifield-cube-vla.json)
-binds the current W-cube result and the applicable standard, mosaic and native-AW
-supporting joins without replacing their individual scientific contracts.
+The historical T53 W-cube receipt is preserved under the T55 evidence roots on
+GLENDENNING; the imaging foundation performance pass (IF-10) regenerates it
+with the other T2 rows.
 
 T53 preserves the #478 named join gates
 `wproject_dirty_cube_products_track_casa_on_refim_point_withline_shared_phase_multifield`

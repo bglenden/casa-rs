@@ -170,9 +170,8 @@ release or export disposition. CASA-interoperable formats are unchanged.
 MeasurementSet observation authority, reconstruction, products, and physical
 execution. It compiles the logical request, checks it against the implementation
 installed in the build, and either invokes that implementation or returns a
-typed unavailable result before planning. The repository migration matrix is
-planning and acceptance evidence only and is never compiled or interpreted at
-runtime. A selected production failure is terminal; there is no alternate
+typed unavailable result before planning. A selected production failure is
+terminal; there is no alternate
 implementation, retry path, or stage-level delegation. `casars-imager` is a
 thin frontend projection over this interface:
 it owns parsing, unit and representation conversion, canonical request
@@ -265,8 +264,9 @@ Additional constraints:
   inspect hosts or devices, select imaging implementations, allocate work
   buffers, or define scientific products. Native model code depends on no
   MeasurementSet, backend, device, cache, or allocation API. The machine-
-  readable dependency policy and migration matrix under
-  `resources/imaging-architecture/` are enforced by `just arch-check`.
+  readable dependency policy under `resources/imaging-architecture/` is
+  enforced by `scripts/check-imaging-dependencies.py` in `just arch-check`
+  (ADR-0016).
 
 The native interface has one `ImagingRequest` contract (version 3) and exactly
 one `compile` / `plan` / `run` sequence. `compile` validates and canonicalizes
@@ -482,10 +482,10 @@ Typed I/O-buffer ceilings bound concurrent logical activity while MemoryDemand
 and plan-owned physical slots are the sole physical-byte charge, allowing
 compatible buffers from disjoint processing segments to reuse storage.
 Execution receipts retain the plan and outcome evidence defined by the runtime
-receipt schema; they do not embed the repository migration-matrix schema,
-contract revision, migration disposition, or row ledger. Installed-
-implementation availability is an application-owned pre-plan result, so a
-typed-unavailable request invokes no runtime and creates no execution receipt.
+receipt schema until ticket IF-6 replaces them with the run summary of
+ADR-0016. Installed-implementation availability is an application-owned
+pre-plan result, so a typed-unavailable request invokes no runtime and creates
+no execution receipt.
 Stores opened on the same canonical receipt root share one process-wide mutation lock and
 must agree on one registered retention policy, so pruning and persistence
 enforce one aggregate retention ceiling.
@@ -861,13 +861,19 @@ backend selection available.
 ## Known current gaps / debt
 
 - `just` provides a stable command vocabulary, but some contributors may still use the underlying `cargo` and `scripts/*` commands directly until it is installed locally.
-- Imaging capabilities whose authoritative tickets have not landed are
-  `TemporarilyUnavailable`; `casa-imaging-application` returns typed installed-
-  implementation unavailability before planning, and production never enters a
-  displaced implementation. `just arch-check` validates the repository
-  migration ledger and rejects runtime migration-matrix interpretation; it also
-  rejects unclassified workspace packages, non-exact native dependency sets,
-  forbidden Rust/Swift source imports, and unapproved dependency exceptions.
+- Imaging capabilities that are not installed return typed unavailability from
+  `casa-imaging-application` before planning; production never enters a
+  displaced implementation. `scripts/check-imaging-dependencies.py` (in `just
+  arch-check`) rejects crate edges outside the ADR-0016 layering, non-exact
+  native dependency sets, device APIs outside `casa-imaging-metal`, and
+  environment reads, `eprintln!` and content hashing in imaging crates. Its
+  grandfathered-file lists only shrink as tickets IF-1 to IF-9 delete the
+  listed files.
+- The imaging foundation refactor (#648, ADR-0016) is in progress. Until IF-2
+  lands, the four CPU gridding drivers, the replay cache and the receipt
+  runtime described above remain the production path; the plan in
+  `docs/imaging-architecture/imaging-foundation-plan-20261007.md` is the
+  target.
 
 ## ADR index
 
@@ -882,7 +888,10 @@ backend selection available.
 | 0007 | Scientific notebooks and assistant boundary | accepted |
 | 0008 | Casacore storage and bounded MeasurementSet writes | accepted |
 | 0009 | Mathematical imaging architecture | accepted |
-| 0010 | Unified imaging resource authority | accepted |
+| 0010 | Unified imaging resource authority | superseded |
 | 0011 | Distinct sequential and joint continuum-line reconstruction | accepted |
 | 0012 | Current-only sparse profile contracts | accepted |
 | 0013 | Non-cryptographic integrity for private run-scoped spill artifacts | accepted |
+| 0014 | Trusted product generation without content attestation | accepted |
+| 0015 | Run-local imaging ownership without content attestation | accepted |
+| 0016 | Imaging foundation | accepted |

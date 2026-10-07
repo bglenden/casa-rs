@@ -1,6 +1,6 @@
 {
- "schema_version": 1,
- "decision": "ADR-0009",
+ "schema_version": 2,
+ "decision": "ADR-0016",
  "layers": [
   "frontend",
   "application",
@@ -39,11 +39,12 @@
    "science",
    "observation",
    "reconstruction",
-   "product"
+   "product",
+   "backend"
   ],
   "backend": [
    "science",
-   "execution"
+   "reconstruction"
   ]
  },
  "package_layers": {
@@ -51,61 +52,30 @@
   "casa-ms": "observation",
   "casa-imaging-application": "application",
   "casa-imaging-model": "science",
-  "casa-imaging-products": "product",
+  "casa-imaging-operator": "reconstruction",
+  "casa-imaging-deconvolution": "reconstruction",
   "casa-imaging-reconstruction": "reconstruction",
+  "casa-imaging-products": "product",
   "casa-imaging-runtime": "execution",
+  "casa-imaging-metal": "backend",
   "casa-simulation-synthesis": "science",
   "casars": "frontend",
   "casars-frontend-services": "frontend",
   "casars-imager": "frontend",
   "casars-python": "frontend"
  },
- "workspace_package_classification": {
-  "casa-aipsio": "support",
-  "casa-calibration": "support",
-  "casa-coordinates": "support",
-  "casa-fft": "support",
-  "casa-images": "support",
-  "casa-imaging-application": "native",
-  "casa-imaging-model": "native",
-  "casa-imaging-products": "native",
-  "casa-imaging-reconstruction": "native",
-  "casa-imaging-runtime": "native",
-  "casa-lattices": "support",
-  "casa-logging": "support",
-  "casa-measures-data": "support",
-  "casa-measures-tools": "support",
-  "casa-ms": "surface",
-  "casa-simulation-synthesis": "native",
-  "casa-notebook": "support",
-  "casa-numerics": "support",
-  "casa-provider-contracts": "surface",
-  "casa-tables": "support",
-  "casa-task-runtime": "support",
-  "casa-test-support": "support",
-  "casa-types": "support",
-  "casa-values": "support",
-  "casa-vla": "support",
-  "casars": "surface",
-  "casars-frontend-services": "surface",
-  "casars-imagebrowser-protocol": "support",
-  "casars-imager": "surface",
-  "casars-python": "surface",
-  "casars-tablebrowser-protocol": "support",
-  "ratatui-graphics": "support"
- },
  "native_package_workspace_dependencies": {
-  "casa-imaging-application": [
-   "casa-coordinates",
-   "casa-images",
-   "casa-imaging-model",
-   "casa-imaging-products",
-   "casa-imaging-reconstruction",
-   "casa-imaging-runtime",
-   "casa-ms",
-   "casa-types"
-  ],
   "casa-imaging-model": [],
+  "casa-imaging-operator": [
+   "casa-fft",
+   "casa-imaging-model",
+   "casa-numerics"
+  ],
+  "casa-imaging-deconvolution": [
+   "casa-fft",
+   "casa-imaging-model",
+   "casa-numerics"
+  ],
   "casa-imaging-reconstruction": [
    "casa-fft",
    "casa-imaging-model",
@@ -117,6 +87,9 @@
    "casa-imaging-reconstruction",
    "casa-numerics"
   ],
+  "casa-imaging-metal": [
+   "casa-imaging-operator"
+  ],
   "casa-imaging-runtime": [
    "casa-imaging-model",
    "casa-imaging-products",
@@ -124,6 +97,16 @@
    "casa-lattices",
    "casa-ms",
    "casa-tables"
+  ],
+  "casa-imaging-application": [
+   "casa-coordinates",
+   "casa-images",
+   "casa-imaging-model",
+   "casa-imaging-products",
+   "casa-imaging-reconstruction",
+   "casa-imaging-runtime",
+   "casa-ms",
+   "casa-types"
   ],
   "casa-simulation-synthesis": [
    "casa-fft",
@@ -148,71 +131,17 @@
   "reconstruction",
   "product"
  ],
- "source_boundaries": [
+ "source_rules": [
   {
-   "id": "native-science-reconstruction-rust",
+   "id": "device-api-only-in-metal",
+   "message": "device APIs are confined to casa-imaging-metal",
    "roots": [
     "crates/casa-imaging-model/src",
-    "crates/casa-imaging-reconstruction/src"
-   ],
-   "extensions": [
-    ".rs"
-   ],
-   "forbidden_patterns": [
-    {
-     "regex": "(?m)^\\s*(?:pub\\s+)?(?:use|extern\\s+crate)\\s+(?:casa_imaging_runtime|casa_imaging|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)\\b|\\b(?:casa_imaging_runtime|casa_imaging|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)::",
-     "message": "native science or reconstruction Rust source imports an execution, backend, displaced, or device API"
-    }
-   ]
-  },
-  {
-   "id": "native-runtime-displaced-isolation",
-   "roots": [
-    "crates/casa-imaging-runtime/src"
-   ],
-   "extensions": [
-    ".rs"
-   ],
-   "forbidden_patterns": [
-    {
-     "regex": "(?m)^\\s*(?:pub\\s+)?(?:use|extern\\s+crate)\\s+(?:casa_imaging|casars_imager)\\b|\\b(?:casa_imaging|casars_imager)::",
-     "message": "native runtime imports a displaced imaging API"
-    }
-   ]
-  },
-  {
-   "id": "t17-selected-observation-provider-injection",
-   "roots": [
-    "crates/casa-ms/src/selected_observation"
-   ],
-   "extensions": [
-    ".rs"
-   ],
-   "forbidden_patterns": [
-    {
-     "regex": "\\bopen_measures_runtime\\b|\\bcasa_measures_data\\s*::\\s*(?:MeasuresRuntime|\\{[^}]*\\bMeasuresRuntime\\b)|\\bMeasuresRuntime::(?:open|open_discovered|discover_candidates)\\b|\\bopen_discovered\\b",
-     "message": "selected-observation source must receive an injected Measures provider and cannot discover MeasuresRuntime"
-    }
-   ]
-  },
-  {
-   "id": "t15-private-walking-skeleton",
-   "roots": [
-    "crates/casa-imaging-runtime/tests/walking_skeleton"
-   ],
-   "extensions": [
-    ".rs"
-   ],
-   "forbidden_patterns": [
-    {
-     "regex": "(?m)^\\s*pub\\s+(?:use|struct|enum|trait|type|fn|const|static|mod)\\b|\\binclude!\\s*\\(|#\\s*\\[\\s*path\\s*=",
-     "message": "T15 walking-skeleton evidence must remain private test code without redirected source"
-    }
-   ]
-  },
-  {
-   "id": "rust-imaging-frontends",
-   "roots": [
+    "crates/casa-imaging-operator/src",
+    "crates/casa-imaging-deconvolution/src",
+    "crates/casa-imaging-reconstruction/src",
+    "crates/casa-imaging-products/src",
+    "crates/casa-imaging-application/src",
     "crates/casa-provider-contracts/src",
     "crates/casars/src",
     "crates/casars-frontend-services/src",
@@ -222,19 +151,195 @@
    "extensions": [
     ".rs"
    ],
-   "forbidden_patterns": [
-    {
-     "regex": "(?m)^\\s*(?:pub\\s+)?(?:use|extern\\s+crate)\\s+(?:casa_imaging_runtime|casa_imaging|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)\\b|\\b(?:casa_imaging_runtime|casa_imaging|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)::",
-     "message": "Rust frontend imports an execution, displaced imaging backend, or device API"
-    },
-    {
-     "regex": "\\b(?:StandardMfsBackend|StandardMfsMinorCycleBackend)::[A-Za-z_][A-Za-z0-9_]*\\b|\\b(?:standard_mfs_metal_device_available|MTLCreateSystemDefaultDevice|MTLCopyAllDevices|MTLCopyAllDevicesWithObserver)\\s*\\(",
-     "message": "Rust frontend selects an imaging backend or inspects a device"
-    }
+   "regex": "(?m)^\\s*(?:pub\\s+)?(?:use|extern\\s+crate)\\s+(?:ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)\\b|\\b(?:ash|cudarc|objc2_metal|vulkano|wgpu)::|\\b(?:MTLCreateSystemDefaultDevice|MTLCopyAllDevices)\\s*\\(",
+   "grandfathered": []
+  },
+  {
+   "id": "no-displaced-imaging-imports",
+   "message": "native imaging crates and frontends must not import a displaced or execution API across the layer boundary",
+   "roots": [
+    "crates/casa-imaging-model/src",
+    "crates/casa-imaging-operator/src",
+    "crates/casa-imaging-deconvolution/src",
+    "crates/casa-imaging-reconstruction/src",
+    "crates/casa-provider-contracts/src",
+    "crates/casars/src",
+    "crates/casars-frontend-services/src",
+    "crates/casars-imager/src",
+    "crates/casars-python/src"
+   ],
+   "extensions": [
+    ".rs"
+   ],
+   "regex": "(?m)^\\s*(?:pub\\s+)?(?:use|extern\\s+crate)\\s+(?:casa_imaging_runtime|casa_imaging_metal)\\b|\\b(?:casa_imaging_runtime|casa_imaging_metal)::",
+   "grandfathered": []
+  },
+  {
+   "id": "no-env-in-imaging-libraries",
+   "message": "library crates read no environment variables; diagnostic switches are request fields (ADR-0016)",
+   "roots": [
+    "crates/casa-imaging-model/src",
+    "crates/casa-imaging-operator/src",
+    "crates/casa-imaging-deconvolution/src",
+    "crates/casa-imaging-reconstruction/src",
+    "crates/casa-imaging-products/src",
+    "crates/casa-imaging-runtime/src",
+    "crates/casa-imaging-metal/src"
+   ],
+   "extensions": [
+    ".rs"
+   ],
+   "regex": "\\benv::var(?:_os)?\\s*\\(|\\bstd::env\\b",
+   "grandfathered": [
+    "crates/casa-imaging-products/src/taylor.rs",
+    "crates/casa-imaging-reconstruction/src/aw_projection.rs",
+    "crates/casa-imaging-reconstruction/src/lib.rs",
+    "crates/casa-imaging-reconstruction/src/minor_cycle/clark.rs",
+    "crates/casa-imaging-reconstruction/src/minor_cycle/deep_clark_tests.rs",
+    "crates/casa-imaging-runtime/src/bounded_stream.rs",
+    "crates/casa-imaging-runtime/src/cube_state_plan.rs",
+    "crates/casa-imaging-runtime/src/metal_cube.rs",
+    "crates/casa-imaging-runtime/src/prepared_artifact/filesystem.rs",
+    "crates/casa-imaging-runtime/src/prepared_artifact/reload_probe.rs",
+    "crates/casa-imaging-runtime/src/prepared_artifact/transaction/occupancy_probe.rs",
+    "crates/casa-imaging-runtime/src/receipt.rs",
+    "crates/casa-imaging-runtime/src/reconstruction_executor.rs",
+    "crates/casa-imaging-runtime/src/resource_authority.rs",
+    "crates/casa-imaging-runtime/src/spectral_cycle.rs",
+    "crates/casa-imaging-runtime/src/spectral_cycle_plan.rs",
+    "crates/casa-imaging-runtime/src/streaming_cube/execute.rs",
+    "crates/casa-imaging-runtime/src/streaming_cube/metal_wave.rs",
+    "crates/casa-imaging-runtime/src/streaming_cube/plan.rs",
+    "crates/casa-imaging-runtime/src/weighting/serial_compute_probe.rs"
    ]
   },
   {
-   "id": "swift-imaging-frontends",
+   "id": "no-eprintln-in-imaging-crates",
+   "message": "imaging crates emit through tracing, never eprintln! (ADR-0016)",
+   "roots": [
+    "crates/casa-imaging-model/src",
+    "crates/casa-imaging-operator/src",
+    "crates/casa-imaging-deconvolution/src",
+    "crates/casa-imaging-reconstruction/src",
+    "crates/casa-imaging-products/src",
+    "crates/casa-imaging-runtime/src",
+    "crates/casa-imaging-metal/src",
+    "crates/casa-imaging-application/src"
+   ],
+   "extensions": [
+    ".rs"
+   ],
+   "regex": "\\beprintln!\\s*\\(",
+   "grandfathered": [
+    "crates/casa-imaging-application/src/aw_cache/encoding_probe.rs",
+    "crates/casa-imaging-application/src/aw_cache/ownership_transfer_probe.rs",
+    "crates/casa-imaging-application/src/casa_product_sink.rs",
+    "crates/casa-imaging-application/src/continuum_request/tests/cube_worker_probe.rs",
+    "crates/casa-imaging-application/src/continuum_request/tests/mfs_memory_probe.rs",
+    "crates/casa-imaging-application/src/continuum_request/tests/source_bind_probe.rs",
+    "crates/casa-imaging-application/src/continuum_request/tests/source_bind_probe/native_acceptance.rs",
+    "crates/casa-imaging-application/src/continuum_request/tests/source_bind_probe/representative_acceptance.rs",
+    "crates/casa-imaging-application/src/lib.rs",
+    "crates/casa-imaging-application/src/prepared_aw_phase.rs",
+    "crates/casa-imaging-application/src/prepared_aw_phase/native.rs",
+    "crates/casa-imaging-application/src/prepared_aw_phase/tests/catalog_scale_probe.rs",
+    "crates/casa-imaging-application/src/prepared_aw_phase/tests/cold_load_probe.rs",
+    "crates/casa-imaging-products/src/taylor.rs",
+    "crates/casa-imaging-reconstruction/src/aw_projection.rs",
+    "crates/casa-imaging-reconstruction/src/aw_projection/locality_probe.rs",
+    "crates/casa-imaging-reconstruction/src/lib.rs",
+    "crates/casa-imaging-reconstruction/src/minor_cycle.rs",
+    "crates/casa-imaging-reconstruction/src/minor_cycle/clark.rs",
+    "crates/casa-imaging-reconstruction/src/minor_cycle/deep_clark_tests.rs",
+    "crates/casa-imaging-runtime/src/bounded_stream.rs",
+    "crates/casa-imaging-runtime/src/complete_data_operator/metal_normal.rs",
+    "crates/casa-imaging-runtime/src/cube_state_plan.rs",
+    "crates/casa-imaging-runtime/src/prepared_artifact/reader.rs",
+    "crates/casa-imaging-runtime/src/prepared_artifact/reload_probe.rs",
+    "crates/casa-imaging-runtime/src/prepared_artifact/transaction/occupancy_probe.rs",
+    "crates/casa-imaging-runtime/src/receipt.rs",
+    "crates/casa-imaging-runtime/src/reconstruction_executor.rs",
+    "crates/casa-imaging-runtime/src/resource_authority.rs",
+    "crates/casa-imaging-runtime/src/spectral_cycle.rs",
+    "crates/casa-imaging-runtime/src/spectral_cycle_plan.rs",
+    "crates/casa-imaging-runtime/src/spectral_cycle_plan/admission_tests.rs",
+    "crates/casa-imaging-runtime/src/streaming_cube/bulk_phase.rs",
+    "crates/casa-imaging-runtime/src/streaming_cube/execute.rs",
+    "crates/casa-imaging-runtime/src/streaming_cube/metal_wave.rs",
+    "crates/casa-imaging-runtime/src/streaming_cube/plan.rs",
+    "crates/casa-imaging-runtime/src/streaming_cube/prepare.rs",
+    "crates/casa-imaging-runtime/src/weighting/bulk_source.rs",
+    "crates/casa-imaging-runtime/src/weighting/native_preparation.rs",
+    "crates/casa-imaging-runtime/src/weighting/numeric_preparation.rs",
+    "crates/casa-imaging-runtime/src/weighting/replay_preparation.rs"
+   ]
+  },
+  {
+   "id": "no-content-hashing-in-imaging-crates",
+   "message": "no SHA-256 or CRC over scientific arrays, plans, receipts or spill (ADR-0014/0015/0016)",
+   "roots": [
+    "crates/casa-imaging-model/src",
+    "crates/casa-imaging-operator/src",
+    "crates/casa-imaging-deconvolution/src",
+    "crates/casa-imaging-reconstruction/src",
+    "crates/casa-imaging-products/src",
+    "crates/casa-imaging-runtime/src",
+    "crates/casa-imaging-metal/src",
+    "crates/casa-imaging-application/src"
+   ],
+   "extensions": [
+    ".rs"
+   ],
+   "regex": "\\bsha2::|\\bSha256\\b|\\bcrc32c?::|\\bcrc::",
+   "grandfathered": [
+    "crates/casa-imaging-application/src/aw_cache/encoding_probe.rs",
+    "crates/casa-imaging-application/src/aw_cache/ownership_transfer_probe.rs",
+    "crates/casa-imaging-application/src/continuum_request.rs",
+    "crates/casa-imaging-application/src/continuum_request/tests/cube_worker_probe.rs",
+    "crates/casa-imaging-application/src/continuum_request/tests/source_bind_probe.rs",
+    "crates/casa-imaging-application/src/continuum_request/tests/source_bind_probe/model_export.rs",
+    "crates/casa-imaging-application/src/continuum_request/tests/source_bind_probe/representative_acceptance.rs",
+    "crates/casa-imaging-application/src/lib.rs",
+    "crates/casa-imaging-application/src/prepared_aw_phase.rs",
+    "crates/casa-imaging-application/src/prepared_aw_phase/tests/cold_load_probe.rs",
+    "crates/casa-imaging-model/src/compiled_problem.rs",
+    "crates/casa-imaging-model/src/measurement_equation.rs",
+    "crates/casa-imaging-model/src/native_aw.rs",
+    "crates/casa-imaging-model/src/prepared_artifact.rs",
+    "crates/casa-imaging-model/src/visibility_transform.rs",
+    "crates/casa-imaging-reconstruction/src/aw_projection/locality_probe.rs",
+    "crates/casa-imaging-reconstruction/src/lib.rs",
+    "crates/casa-imaging-runtime/src/bounded_stream.rs",
+    "crates/casa-imaging-runtime/src/cost_model.rs",
+    "crates/casa-imaging-runtime/src/execution/tests.rs",
+    "crates/casa-imaging-runtime/src/execution_bindings.rs",
+    "crates/casa-imaging-runtime/src/managed_spill.rs",
+    "crates/casa-imaging-runtime/src/prepared_artifact.rs",
+    "crates/casa-imaging-runtime/src/prepared_artifact/native.rs",
+    "crates/casa-imaging-runtime/src/prepared_artifact/reader.rs",
+    "crates/casa-imaging-runtime/src/product_publication.rs",
+    "crates/casa-imaging-runtime/src/receipt.rs",
+    "crates/casa-imaging-runtime/src/resource_authority.rs",
+    "crates/casa-imaging-runtime/src/serial_product_publication.rs",
+    "crates/casa-imaging-runtime/src/spectral_cycle.rs",
+    "crates/casa-imaging-runtime/src/weighting/serial_compute_probe.rs"
+   ]
+  },
+  {
+   "id": "selected-observation-provider-injection",
+   "message": "selected-observation source must receive an injected Measures provider and cannot discover MeasuresRuntime",
+   "roots": [
+    "crates/casa-ms/src/selected_observation"
+   ],
+   "extensions": [
+    ".rs"
+   ],
+   "regex": "\\bopen_measures_runtime\\b|\\bcasa_measures_data\\s*::\\s*(?:MeasuresRuntime|\\{[^}]*\\bMeasuresRuntime\\b)|\\bMeasuresRuntime::(?:open|open_discovered|discover_candidates)\\b|\\bopen_discovered\\b",
+   "grandfathered": []
+  },
+  {
+   "id": "swift-frontend-device-free",
+   "message": "Swift frontend inspects a device or selects an imaging backend",
    "roots": [
     "apps/casars-mac/Sources/CasarsMacApp",
     "apps/casars-mac/Sources/CasarsMacCore"
@@ -242,34 +347,9 @@
    "extensions": [
     ".swift"
    ],
-   "forbidden_patterns": [
-    {
-     "regex": "(?m)^\\s*import\\s+(?:Metal|MetalKit)\\b|\\b(?:MTLCreateSystemDefaultDevice|MTLCopyAllDevices|MTLCopyAllDevicesWithObserver|FftBackend|GridBackend|ImagingBackend|BackendEligibility|MetalBackend)\\b|\\bProcessInfo\\.processInfo\\.(?:activeProcessorCount|processorCount)\\b|\\b(?:sysctl|sysctlbyname|host_statistics|host_statistics64)\\s*\\(",
-     "message": "Swift frontend inspects a device or selects an imaging backend"
-    }
-   ]
+   "regex": "(?m)^\\s*import\\s+(?:Metal|MetalKit)\\b|\\b(?:MTLCreateSystemDefaultDevice|MTLCopyAllDevices|MTLCopyAllDevicesWithObserver|FftBackend|GridBackend|ImagingBackend|BackendEligibility|MetalBackend)\\b|\\bProcessInfo\\.processInfo\\.(?:activeProcessorCount|processorCount)\\b|\\b(?:sysctl|sysctlbyname|host_statistics|host_statistics64)\\s*\\(",
+   "ignore_inline_tests": false,
+   "grandfathered": []
   }
- ],
- "migration_matrix": "resources/imaging-architecture/migration-matrix.json",
- "required_migration_evidence_issues": [
-  35,
-  40,
-  42,
-  45,
-  52,
-  54,
-  55,
-  217,
-  319,
-  445,
-  446,
-  447,
-  448,
-  449,
-  450,
-  462,
-  466,
-  473,
-  478
  ]
 }
