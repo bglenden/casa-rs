@@ -377,7 +377,7 @@ package enum PrototypeAIChatFixtureAdapter {
             ),
             trustPreset: .work,
             pythonEnvironments: [
-                PrototypeAIPythonEnvironment(id: "casa-python", label: "CASA 6.7 Python", detail: "~/SoftwareProjects/casa-build/venv/bin/python · fixture"),
+                PrototypeAIPythonEnvironment(id: "casa-python", label: "CASA 6.7 Python", detail: "Local CASA installation Python · fixture"),
                 PrototypeAIPythonEnvironment(id: "login-python", label: "Login-shell Python", detail: "/usr/local/bin/python3 · fixture"),
             ],
             selectedPythonEnvironmentID: "casa-python",

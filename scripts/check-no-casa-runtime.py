@@ -13,8 +13,9 @@ It fails when:
   retired `casa_task_adapter` provider family;
 - an application's executable is not a Rust bin target of its declared cargo
   package (so every launched program is covered by the source scan below);
-- non-test Rust source under `crates/` mentions `casatasks`, `casatools`, or a
-  hard-coded CASA build environment on a code line.
+- shipped code mentions `casatasks`, `casatools`, `mpicasa`, or a hard-coded
+  CASA build environment on a code line: non-test Rust and scripts under
+  `crates/*/src`, the `casars` Python package, and `apps/*/Sources` Swift.
 
 Test code is exempt: `tests/` directories, `tests.rs` / `*_tests.rs` files,
 inline `#[cfg(test)] mod ...` blocks, and the dev-only `casa-test-support`
@@ -40,7 +41,7 @@ TEST_ONLY_CRATES = {"casa-test-support"}
 
 BRIDGE_NAME = re.compile(r"casa[-_]task(?![-_]runtime)", re.IGNORECASE)
 RETIRED_PROVIDER_FAMILIES = {"casa_task_adapter"}
-CASA_RUNTIME_CODE = re.compile(r"\bcasa(tasks|tools)\b")
+CASA_RUNTIME_CODE = re.compile(r"\b(casatasks|casatools|mpicasa)\b")
 CASA_INSTALL_PATH = re.compile(r"casa-build/venv")
 TEST_MODULE_START = re.compile(r"^\s*mod\s+\w+\s*\{")
 
@@ -109,7 +110,11 @@ def is_test_path(path: Path) -> bool:
         return True
     if any(part in {"tests", "benches", "examples"} for part in parts[1:-1]):
         return True
-    return path.name == "tests.rs" or path.name.endswith("_tests.rs")
+    return (
+        path.name == "tests.rs"
+        or path.name.endswith("_tests.rs")
+        or path.name.startswith("test_")
+    )
 
 
 def production_lines(path: Path) -> list[tuple[int, str]]:
@@ -138,23 +143,48 @@ def production_lines(path: Path) -> list[tuple[int, str]]:
     return kept
 
 
+# Shipped non-Rust sources: scripts embedded in crates (e.g. via include_str!),
+# the casars Python package, and the macOS app. Value is the comment prefix.
+SCRIPT_COMMENT_PREFIX = {".py": "#", ".sh": "#", ".js": "//", ".mjs": "//", ".ts": "//"}
+
+
+def shipped_sources() -> list[tuple[Path, list[tuple[int, str]], str]]:
+    sources: list[tuple[Path, list[tuple[int, str]], str]] = []
+    for path in sorted((REPO_ROOT / "crates").glob("*/src/**/*.rs")):
+        if not is_test_path(path):
+            sources.append((path, production_lines(path), "//"))
+    script_roots = [
+        *sorted((REPO_ROOT / "crates").glob("*/src")),
+        REPO_ROOT / "crates" / "casars-python" / "python" / "casars",
+    ]
+    for root in script_roots:
+        for path in sorted(root.rglob("*")):
+            prefix = SCRIPT_COMMENT_PREFIX.get(path.suffix)
+            if prefix is None or not path.is_file() or is_test_path(path):
+                continue
+            lines = path.read_text(encoding="utf-8").splitlines()
+            sources.append((path, list(enumerate(lines, start=1)), prefix))
+    for path in sorted((REPO_ROOT / "apps").glob("*/Sources/**/*.swift")):
+        lines = path.read_text(encoding="utf-8").splitlines()
+        sources.append((path, list(enumerate(lines, start=1)), "//"))
+    return sources
+
+
 def source_violations() -> list[str]:
     problems: list[str] = []
-    for path in sorted((REPO_ROOT / "crates").glob("*/src/**/*.rs")):
-        if is_test_path(path):
-            continue
-        for number, line in production_lines(path):
+    for path, lines, comment_prefix in shipped_sources():
+        for number, line in lines:
             if CASA_INSTALL_PATH.search(line):
                 problems.append(
                     f"{path.relative_to(REPO_ROOT)}:{number}: hard-coded CASA install path"
                 )
                 continue
-            if line.lstrip().startswith("//"):
+            if line.lstrip().startswith(comment_prefix):
                 continue
             if CASA_RUNTIME_CODE.search(line):
                 problems.append(
-                    f"{path.relative_to(REPO_ROOT)}:{number}: production code references "
-                    "CASA casatasks/casatools"
+                    f"{path.relative_to(REPO_ROOT)}:{number}: shipped code references "
+                    "CASA casatasks/casatools/mpicasa"
                 )
     return problems
 
