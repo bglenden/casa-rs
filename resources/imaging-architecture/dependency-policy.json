@@ -92,6 +92,7 @@
   ],
   "casa-imaging-runtime": [
    "casa-imaging-model",
+   "casa-imaging-operator",
    "casa-imaging-products",
    "casa-imaging-reconstruction",
    "casa-lattices",
@@ -102,6 +103,7 @@
    "casa-coordinates",
    "casa-images",
    "casa-imaging-model",
+   "casa-imaging-operator",
    "casa-imaging-products",
    "casa-imaging-reconstruction",
    "casa-imaging-runtime",

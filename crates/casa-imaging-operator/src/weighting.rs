@@ -111,6 +111,45 @@ pub struct DensityGrid {
 }
 
 impl DensityGrid {
+    /// An empty grid of `shape`, ready to [`DensityGrid::accumulate`] blocks.
+    #[must_use]
+    pub fn new(shape: DensityGridShape) -> Self {
+        Self {
+            cells: vec![0.0; shape.cells()],
+            sum_weights: vec![0.0; shape.planes],
+            shape,
+        }
+    }
+
+    /// Add one block of density samples.
+    ///
+    /// Blocks carry one polarization whose weight is CASA's unpolarized input
+    /// weight; each sample adds its weight at its cell and at the conjugate
+    /// cell, each when that cell lies inside the grid (CASA tests the two
+    /// independently), and once to the plane's weight sum when its own cell
+    /// does.
+    pub fn accumulate(&mut self, block: &SampleBlock<'_>) {
+        assert_eq!(block.npol, 1, "density blocks carry one unpolarized weight");
+        for (placement, weight) in block.placements.iter().zip(block.weights) {
+            if *weight <= 0.0 {
+                continue;
+            }
+            let Some(plane) = self.shape.plane_of(placement.plane) else {
+                continue;
+            };
+            let weight = f64::from(*weight);
+            let primary = self.shape.build_cell(plane, placement.u, placement.v);
+            let conjugate = self.shape.build_cell(plane, -placement.u, -placement.v);
+            if let Some(cell) = primary {
+                self.cells[cell] += weight;
+                self.sum_weights[plane] += weight;
+            }
+            if let Some(cell) = conjugate {
+                self.cells[cell] += weight;
+            }
+        }
+    }
+
     /// The shape.
     #[must_use]
     pub const fn shape(&self) -> &DensityGridShape {
@@ -190,45 +229,17 @@ impl RobustFactors {
     }
 }
 
-/// Accumulate the density grid from blocks of density samples.
-///
-/// Blocks carry one polarization whose weight is CASA's unpolarized input
-/// weight; each sample adds its weight at its cell and at the conjugate
-/// cell, each when that cell lies inside the grid (CASA tests the two
-/// independently), and once to the plane's weight sum when its own cell
-/// does.
+/// The density grid of every block from `source` (see
+/// [`DensityGrid::accumulate`]).
 pub fn build_density_grid<'a>(
     source: impl Iterator<Item = SampleBlock<'a>>,
     shape: DensityGridShape,
 ) -> DensityGrid {
-    let mut cells = vec![0.0; shape.cells()];
-    let mut sum_weights = vec![0.0; shape.planes];
+    let mut grid = DensityGrid::new(shape);
     for block in source {
-        assert_eq!(block.npol, 1, "density blocks carry one unpolarized weight");
-        for (placement, weight) in block.placements.iter().zip(block.weights) {
-            if *weight <= 0.0 {
-                continue;
-            }
-            let Some(plane) = shape.plane_of(placement.plane) else {
-                continue;
-            };
-            let weight = f64::from(*weight);
-            let primary = shape.build_cell(plane, placement.u, placement.v);
-            let conjugate = shape.build_cell(plane, -placement.u, -placement.v);
-            if let Some(cell) = primary {
-                cells[cell] += weight;
-                sum_weights[plane] += weight;
-            }
-            if let Some(cell) = conjugate {
-                cells[cell] += weight;
-            }
-        }
+        grid.accumulate(&block);
     }
-    DensityGrid {
-        shape,
-        cells,
-        sum_weights,
-    }
+    grid
 }
 
 /// CASA `briggsbwtaper` (CAS-13021): the fractional bandwidth

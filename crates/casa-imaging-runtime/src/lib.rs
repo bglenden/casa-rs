@@ -25,6 +25,7 @@ mod metal_cube;
 mod metal_runtime;
 mod observation_transaction;
 mod paged_cube_state;
+pub mod pass;
 mod prepared_artifact;
 pub mod product_publication;
 mod publication_layout;
