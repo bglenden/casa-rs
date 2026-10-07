@@ -101,50 +101,77 @@ pub enum ModelPrescale<'a> {
 
 /// Unnormalised image-domain results of one accumulator, in requested
 /// polarization coordinates.
+///
+/// Images are `[y][x]` over the image extent and indexed term-major:
+/// `data[term * pols + pol]` over `data_terms`, `psf[term * pols + pol]`
+/// over `psf_terms`, `weight[pol]`. A mode the accumulator did not hold
+/// leaves its vector empty. The accessors do the indexing.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NormalImages {
     /// Grid plane of `planes[0]`.
     pub first_plane: u32,
+    /// Requested polarizations per term.
+    pub pols: usize,
+    /// Data terms per plane; 0 when the data mode was not accumulated.
+    pub data_terms: usize,
+    /// PSF terms per plane; 0 when the PSF mode was not accumulated.
+    pub psf_terms: usize,
     /// One entry per accumulated plane.
     pub planes: Vec<NormalPlane>,
 }
 
-/// Images of one plane, one section per accumulated mode.
+/// Images of one plane with one `sumwt` per image.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NormalPlane {
-    /// Dirty or residual terms.
-    pub data: Option<NormalSection>,
-    /// Point-spread-function terms.
-    pub psf: Option<NormalSection>,
-    /// Sensitivity image.
-    pub weight: Option<NormalSection>,
-}
-
-/// Images of one mode: `images[term * pols + pol]` with the matching
-/// `sumwt`, each image `[y][x]` over the image extent.
-#[derive(Clone, Debug, PartialEq)]
-pub struct NormalSection {
-    /// Term-major, polarization-minor images.
-    pub images: Vec<Array2<f32>>,
-    /// `sumwt` per image (CASA: a Stokes plane carries grid plane 0's).
+    /// Dirty or residual images, `[term][pol]`.
+    pub data: Vec<Array2<f32>>,
+    /// Point-spread-function images, `[term][pol]`.
+    pub psf: Vec<Array2<f32>>,
+    /// Sensitivity images, one per polarization.
+    pub weight: Vec<Array2<f32>>,
+    /// One `sumwt` per image, in the order `data`, `psf`, `weight`. A
+    /// requested Stokes plane carries grid plane 0's `sumwt` (CASA
+    /// `ToStokesSumWt`).
     pub sumwt: Vec<f64>,
-    /// Terms.
-    pub terms: usize,
-    /// Requested polarizations.
-    pub pols: usize,
 }
 
-impl NormalSection {
-    /// Image of `(term, pol)`.
+impl NormalImages {
+    /// Data image `(term, pol)` of `plane`.
     #[must_use]
-    pub fn image(&self, term: usize, pol: usize) -> &Array2<f32> {
-        &self.images[term * self.pols + pol]
+    pub fn data(&self, plane: usize, term: usize, pol: usize) -> &Array2<f32> {
+        &self.planes[plane].data[term * self.pols + pol]
     }
 
-    /// `sumwt` of `(term, pol)`.
+    /// PSF image `(term, pol)` of `plane`.
     #[must_use]
-    pub fn sumwt_of(&self, term: usize, pol: usize) -> f64 {
-        self.sumwt[term * self.pols + pol]
+    pub fn psf(&self, plane: usize, term: usize, pol: usize) -> &Array2<f32> {
+        &self.planes[plane].psf[term * self.pols + pol]
+    }
+
+    /// Weight image of `pol` on `plane`, when the weight mode was accumulated.
+    #[must_use]
+    pub fn weight(&self, plane: usize, pol: usize) -> Option<&Array2<f32>> {
+        self.planes[plane].weight.get(pol)
+    }
+
+    /// `sumwt` of data image `(term, pol)` of `plane`.
+    #[must_use]
+    pub fn data_sumwt(&self, plane: usize, term: usize, pol: usize) -> f64 {
+        self.planes[plane].sumwt[term * self.pols + pol]
+    }
+
+    /// `sumwt` of PSF image `(term, pol)` of `plane`.
+    #[must_use]
+    pub fn psf_sumwt(&self, plane: usize, term: usize, pol: usize) -> f64 {
+        let plane = &self.planes[plane];
+        plane.sumwt[plane.data.len() + term * self.pols + pol]
+    }
+
+    /// `sumwt` of the weight image of `pol` on `plane`.
+    #[must_use]
+    pub fn weight_sumwt(&self, plane: usize, pol: usize) -> f64 {
+        let plane = &self.planes[plane];
+        plane.sumwt[plane.data.len() + plane.psf.len() + pol]
     }
 }
 
@@ -231,20 +258,24 @@ impl MeasurementOperator {
         self.precision
     }
 
-    /// A zeroed accumulator holding `modes` over `planes`, covering `tile`
-    /// or the whole grid.
+    /// The layout of an accumulator holding `modes` over `planes`, covering
+    /// `tile` or the whole grid.
+    ///
+    /// A planner charges `layout.bytes(precision)` for the pass it intends
+    /// to run before anything is allocated; the runtime then allocates
+    /// exactly that layout with [`MeasurementOperator::accumulator`].
     #[must_use]
-    pub fn accumulator(
+    pub fn accumulator_layout(
         &self,
         planes: PlaneRange,
         tile: Option<Tile>,
         modes: ModeSet,
-    ) -> GridAccumulator {
+    ) -> AccumulatorLayout {
         assert!(
             planes.end <= self.basis.planes(),
             "plane range exceeds the basis"
         );
-        let layout = AccumulatorLayout::new(
+        AccumulatorLayout::new(
             self.geometry.clone(),
             planes,
             self.polarization.grid_pols(),
@@ -252,8 +283,19 @@ impl MeasurementOperator {
             self.basis.data_terms(),
             self.basis.psf_terms(),
             tile,
-        );
-        GridAccumulator::new(layout, self.precision)
+        )
+    }
+
+    /// A zeroed accumulator with [`MeasurementOperator::accumulator_layout`]'s
+    /// layout at the operator's precision.
+    #[must_use]
+    pub fn accumulator(
+        &self,
+        planes: PlaneRange,
+        tile: Option<Tile>,
+        modes: ModeSet,
+    ) -> GridAccumulator {
+        GridAccumulator::new(self.accumulator_layout(planes, tile, modes), self.precision)
     }
 
     /// Prepare `model` for degridding: expand requested polarizations to
@@ -394,24 +436,27 @@ impl MeasurementOperator {
         let mut fft = PlaneFft::<T>::new([nx, ny])?;
         let mut work = vec![Complex::<T>::default(); nx * ny];
         let gpols = layout.pols();
+        let pols = self.polarization.requested().len();
         let mut gpol_images = vec![Vec::<Complex64>::new(); gpols];
         let mut planes = Vec::with_capacity(layout.planes().len());
         for plane_local in 0..layout.planes().len() {
-            let mut section = |mode: Mode| -> Result<Option<NormalSection>, OperatorError> {
+            let mut images = [Vec::new(), Vec::new(), Vec::new()];
+            let mut sumwt = Vec::new();
+            for (slot, mode) in [Mode::Data, Mode::Psf, Mode::Weight]
+                .into_iter()
+                .enumerate()
+            {
                 let Some(terms) = layout.term_range(mode) else {
-                    return Ok(None);
+                    continue;
                 };
-                let mut images =
-                    Vec::with_capacity(terms.len() * self.polarization.requested().len());
-                let mut sumwt = Vec::with_capacity(images.capacity());
-                for term in terms.clone() {
+                for term in terms {
                     for (gpol, image) in gpol_images.iter_mut().enumerate() {
                         work.copy_from_slice(acc.block::<T>(plane_local, gpol, term));
                         fft.transform(&mut work, true)?;
                         *image = self.cropped_image(&work);
                     }
-                    for pol in 0..self.polarization.requested().len() {
-                        images.push(self.requested_image(pol, &gpol_images));
+                    for pol in 0..pols {
+                        images[slot].push(self.requested_image(pol, &gpol_images));
                         sumwt.push(acc.sumwt_at(
                             plane_local,
                             self.polarization.sumwt_source(pol),
@@ -419,20 +464,20 @@ impl MeasurementOperator {
                         ));
                     }
                 }
-                Ok(Some(NormalSection {
-                    images,
-                    sumwt,
-                    terms: terms.len(),
-                    pols: self.polarization.requested().len(),
-                }))
-            };
-            let data = section(Mode::Data)?;
-            let psf = section(Mode::Psf)?;
-            let weight = section(Mode::Weight)?;
-            planes.push(NormalPlane { data, psf, weight });
+            }
+            let [data, psf, weight] = images;
+            planes.push(NormalPlane {
+                data,
+                psf,
+                weight,
+                sumwt,
+            });
         }
         Ok(NormalImages {
             first_plane: layout.planes().start,
+            pols,
+            data_terms: layout.term_range(Mode::Data).map_or(0, |terms| terms.len()),
+            psf_terms: layout.term_range(Mode::Psf).map_or(0, |terms| terms.len()),
             planes,
         })
     }

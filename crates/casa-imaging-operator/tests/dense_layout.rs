@@ -177,13 +177,10 @@ fn dirty_and_psf(operator: &MeasurementOperator, seed: u64) -> (Array2<f32>, Arr
             .expect("grid");
     }
     let normal = operator.finish(acc).expect("finish");
-    let plane = &normal.planes[0];
-    let data = plane.data.as_ref().expect("data");
-    let psf = plane.psf.as_ref().expect("psf");
     (
-        data.image(0, 0).clone(),
-        psf.image(0, 0).clone(),
-        psf.sumwt_of(0, 0),
+        normal.data(0, 0, 0).clone(),
+        normal.psf(0, 0, 0).clone(),
+        normal.psf_sumwt(0, 0, 0),
     )
 }
 
@@ -327,12 +324,7 @@ fn adjoint_law_holds_for_a_dense_kernel_set() {
         )
         .expect("grid");
     let normal = operator.finish(acc).expect("finish");
-    let image = normal.planes[0]
-        .data
-        .as_ref()
-        .expect("data")
-        .image(0, 0)
-        .clone();
+    let image = normal.data(0, 0, 0).clone();
     let image_side = image
         .iter()
         .zip(&model.planes[0].images[0])
@@ -383,9 +375,8 @@ fn weight_mode_places_the_weight_taps_at_the_origin() {
         )
         .expect("grid");
     let normal = operator.finish(acc).expect("finish");
-    let weight = normal.planes[0].weight.as_ref().expect("weight");
-    let image = weight.image(0, 0);
-    let sumwt = weight.sumwt_of(0, 0);
+    let image = normal.weight(0, 0).expect("weight");
+    let sumwt = normal.weight_sumwt(0, 0);
     assert!((sumwt - weights.iter().sum::<f64>()).abs() <= 1.0e-6 * sumwt);
     // Every sample lands on the origin, so the image is the kernel's
     // transform: flat to within the correction, maximal at the centre.

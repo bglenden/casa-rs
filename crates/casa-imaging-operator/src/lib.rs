@@ -57,13 +57,12 @@ pub use error::OperatorError;
 pub use geometry::{CellLocation, GridGeometry, GridPadding, ImageExtent};
 pub use operator::{
     Basis, MeasurementOperator, ModelImages, ModelPlane, ModelPrescale, NormalImages, NormalPlane,
-    NormalSection,
 };
 pub use polarization::{FeedBasis, GridPolarization, PolarizationRouting};
 pub use resample::{NativeRow, SpectralKernel, SpectralResampler};
 pub use sample::{CfKey, Placement, SampleBlock, SampleBuffer};
 pub use spheroidal::{SPHEROIDAL_OVERSAMPLING, SPHEROIDAL_SUPPORT, Spheroidal, grdsf};
 pub use weighting::{
-    DensityCellRule, DensityGrid, DensityGridShape, RobustFactors, Taper, WeightingGeneration,
-    build_density_grid,
+    BandwidthTaper, DensityCellRule, DensityGrid, DensityGridShape, RobustFactors, Taper,
+    WeightingGeneration, build_density_grid,
 };

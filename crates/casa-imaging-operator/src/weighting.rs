@@ -231,6 +231,55 @@ pub fn build_density_grid<'a>(
     }
 }
 
+/// CASA `briggsbwtaper` (CAS-13021): the fractional bandwidth
+/// `2(ν_last − ν_first)/(ν_last + ν_first)` of the image's spectral axis,
+/// which turns each sample's uv distance in cells into a divisor of the
+/// Briggs density term so every cube channel is weighted as if its uv
+/// coverage had the continuum's radial smearing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BandwidthTaper {
+    fractional_bandwidth: f64,
+}
+
+impl BandwidthTaper {
+    /// From the first and last channel centres of the image's spectral axis
+    /// (`SynthesisImagerVi2::weight`); the two must be finite, positive and
+    /// distinct.
+    pub fn from_frequency_range(first_hz: f64, last_hz: f64) -> Result<Self, OperatorError> {
+        let low = first_hz.min(last_hz);
+        let high = first_hz.max(last_hz);
+        if !(low.is_finite() && high.is_finite()) || low <= 0.0 || high <= low {
+            return Err(OperatorError::Weighting {
+                reason: "the bandwidth taper needs two distinct positive frequencies",
+            });
+        }
+        Ok(Self {
+            fractional_bandwidth: 2.0 * (high - low) / (high + low),
+        })
+    }
+
+    /// `2(ν_last − ν_first)/(ν_last + ν_first)`.
+    #[must_use]
+    pub const fn fractional_bandwidth(self) -> f64 {
+        self.fractional_bandwidth
+    }
+
+    /// CASA `uvDistanceFactor`: `n + 0.5`, or `(4 − n)/(4 − 2n)` when that is
+    /// below 1.5, with `n` the fractional bandwidth times the sample's
+    /// distance from the uv origin in grid cells.
+    fn uv_distance_factor(self, shape: &DensityGridShape, u: f64, v: f64) -> f64 {
+        let u_cells = u * shape.width as f64 * shape.increment_rad[0];
+        let v_cells = v * shape.height as f64 * shape.increment_rad[1];
+        let cells = self.fractional_bandwidth * u_cells.hypot(v_cells);
+        let factor = cells + 0.5;
+        if factor < 1.5 {
+            (4.0 - cells) / (4.0 - 2.0 * cells)
+        } else {
+            factor
+        }
+    }
+}
+
 /// The imaging-weight rule of one run.
 #[derive(Clone, Debug, PartialEq)]
 pub enum WeightingGeneration {
@@ -239,22 +288,26 @@ pub enum WeightingGeneration {
         /// Gaussian uv taper.
         taper: Option<Taper>,
     },
-    /// Uniform (`robust` absent) or Briggs density weighting.
+    /// Uniform (`robust` absent), Briggs or Briggs bandwidth-taper density
+    /// weighting.
     Density {
         /// Gridded weight density.
         grid: DensityGrid,
         /// Briggs factors; `None` for uniform weighting.
         robust: Option<RobustFactors>,
+        /// CASA `briggsbwtaper`; needs `robust`.
+        bandwidth: Option<BandwidthTaper>,
         /// Gaussian uv taper.
         taper: Option<Taper>,
     },
 }
 
 impl WeightingGeneration {
-    /// Uniform or Briggs weighting over `grid`.
+    /// Uniform, Briggs or Briggs bandwidth-taper weighting over `grid`.
     pub fn density(
         grid: DensityGrid,
         robust: Option<f64>,
+        bandwidth: Option<BandwidthTaper>,
         taper: Option<Taper>,
     ) -> Result<Self, OperatorError> {
         let robust = match robust {
@@ -266,9 +319,15 @@ impl WeightingGeneration {
             Some(robust) => Some(grid.robust_factors(robust)),
             None => None,
         };
+        if bandwidth.is_some() && robust.is_none() {
+            return Err(OperatorError::Weighting {
+                reason: "the bandwidth taper is a Briggs mode and needs a robustness",
+            });
+        }
         Ok(Self::Density {
             grid,
             robust,
+            bandwidth,
             taper,
         })
     }
@@ -286,6 +345,7 @@ impl WeightingGeneration {
             Self::Density {
                 grid,
                 robust,
+                bandwidth,
                 taper,
             } => {
                 let Some(plane) = grid.shape.plane_of(placement.plane) else {
@@ -306,7 +366,10 @@ impl WeightingGeneration {
                         if grid.shape.rule == DensityCellRule::Cube && density <= 0.0 {
                             return 0.0;
                         }
-                        input / (density * factors.factor(plane) + 1.0)
+                        let distance = bandwidth.map_or(1.0, |bandwidth| {
+                            bandwidth.uv_distance_factor(&grid.shape, placement.u, placement.v)
+                        });
+                        input / (density * factors.factor(plane) / distance + 1.0)
                     }
                 };
                 (weighted, *taper)

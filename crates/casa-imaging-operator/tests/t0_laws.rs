@@ -80,10 +80,10 @@ fn adjoint_law(precision: GridPrecision, requested: &[PolarizationCoordinate], b
         )
         .expect("grid");
     let normal = operator.finish(acc).expect("finish");
-    let data = normal.planes[0].data.as_ref().expect("data section");
     let image_side = (0..requested.len())
         .map(|pol| {
-            data.image(0, pol)
+            normal
+                .data(0, 0, pol)
                 .iter()
                 .zip(&model.planes[0].images[pol])
                 .map(|(image, model)| f64::from(*image) * f64::from(*model))
@@ -160,13 +160,12 @@ fn psf_and_dirty(precision: GridPrecision, flux: f64, shift: [i64; 2]) -> (Norma
 
 fn psf_laws(precision: GridPrecision) {
     let (normal, weight_sum) = psf_and_dirty(precision, 1.0, [0, 0]);
-    let psf = normal.planes[0].psf.as_ref().expect("psf section");
-    let sumwt = psf.sumwt_of(0, 0);
+    let sumwt = normal.psf_sumwt(0, 0, 0);
     assert!(
         (sumwt - weight_sum).abs() <= 1.0e-6 * weight_sum,
         "sumwt {sumwt} != ΣW {weight_sum}"
     );
-    let image = psf.image(0, 0);
+    let image = normal.psf(0, 0, 0);
     let centre = IMAGE / 2;
     let peak = f64::from(image[(centre, centre)]) / sumwt;
     assert!((peak - 1.0).abs() < 1.0e-3, "normalised PSF peak {peak}");
@@ -198,13 +197,10 @@ fn point_source_law(precision: GridPrecision) {
     let flux = 2.5;
     let shift = [5_i64, -3_i64];
     let (normal, _) = psf_and_dirty(precision, flux, shift);
-    let plane = &normal.planes[0];
-    let data = plane.data.as_ref().expect("data");
-    let psf = plane.psf.as_ref().expect("psf");
-    let sumwt = psf.sumwt_of(0, 0);
-    assert_eq!(data.sumwt_of(0, 0), sumwt);
-    let dirty = data.image(0, 0);
-    let psf = psf.image(0, 0);
+    let sumwt = normal.psf_sumwt(0, 0, 0);
+    assert_eq!(normal.data_sumwt(0, 0, 0), sumwt);
+    let dirty = normal.data(0, 0, 0);
+    let psf = normal.psf(0, 0, 0);
     let centre = (IMAGE / 2) as i64;
     let peak = dirty
         .indexed_iter()
@@ -375,16 +371,16 @@ fn tiled_partition_law(precision: GridPrecision) {
         merged.merge_from(&acc).expect("merge");
     }
     let merged = operator.finish(merged).expect("finish");
-    let expected = reference.planes[0].data.as_ref().expect("data");
-    let actual = merged.planes[0].data.as_ref().expect("data");
     assert!(
-        (expected.sumwt_of(0, 0) - actual.sumwt_of(0, 0)).abs() <= 1.0e-9 * expected.sumwt_of(0, 0)
+        (reference.data_sumwt(0, 0, 0) - merged.data_sumwt(0, 0, 0)).abs()
+            <= 1.0e-9 * reference.data_sumwt(0, 0, 0)
     );
-    let peak = max_abs(expected.image(0, 0).iter().copied());
+    let expected = reference.data(0, 0, 0);
+    let actual = merged.data(0, 0, 0);
+    let peak = max_abs(expected.iter().copied());
     let worst = expected
-        .image(0, 0)
         .iter()
-        .zip(actual.image(0, 0))
+        .zip(actual)
         .map(|(a, b)| f64::from((a - b).abs()))
         .fold(0.0_f64, f64::max);
     assert!(
@@ -406,18 +402,17 @@ fn f32_and_f64_grids_agree() {
         let (normal, _) = psf_and_dirty(precision, 1.7, [2, 4]);
         images.push(normal);
     }
-    for section in [
-        |plane: &casa_imaging_operator::NormalPlane| plane.data.clone(),
-        |plane: &casa_imaging_operator::NormalPlane| plane.psf.clone(),
+    let (f64_images, f32_images) = (&images[0], &images[1]);
+    let sumwt = f64_images.data_sumwt(0, 0, 0);
+    assert_eq!(f64_images.psf_sumwt(0, 0, 0), sumwt);
+    for (f64_image, f32_image) in [
+        (f64_images.data(0, 0, 0), f32_images.data(0, 0, 0)),
+        (f64_images.psf(0, 0, 0), f32_images.psf(0, 0, 0)),
     ] {
-        let f64_section = section(&images[0].planes[0]).expect("section");
-        let f32_section = section(&images[1].planes[0]).expect("section");
-        let sumwt = f64_section.sumwt_of(0, 0);
-        let peak = max_abs(f64_section.image(0, 0).iter().copied()) / sumwt;
-        let worst = f64_section
-            .image(0, 0)
+        let peak = max_abs(f64_image.iter().copied()) / sumwt;
+        let worst = f64_image
             .iter()
-            .zip(f32_section.image(0, 0))
+            .zip(f32_image)
             .map(|(a, b)| f64::from((a - b).abs()) / sumwt)
             .fold(0.0_f64, f64::max);
         assert!(
@@ -478,11 +473,9 @@ fn residual_grid_of_the_predicted_model_is_empty() {
             .all(|r| f64::from(r.norm()) <= 1.0e-5 * largest)
     );
     let normal = operator.finish(acc).expect("finish");
-    let data = normal.planes[0].data.as_ref().expect("data");
-    assert!(
-        (data.sumwt_of(0, 0) - weights.iter().sum::<f64>()).abs() < 1.0e-6 * data.sumwt_of(0, 0)
-    );
-    let residual_peak = max_abs(data.image(0, 0).iter().copied()) / data.sumwt_of(0, 0);
+    let sumwt = normal.data_sumwt(0, 0, 0);
+    assert!((sumwt - weights.iter().sum::<f64>()).abs() < 1.0e-6 * sumwt);
+    let residual_peak = max_abs(normal.data(0, 0, 0).iter().copied()) / sumwt;
     assert!(
         residual_peak <= 1.0e-5 * largest,
         "residual image peak {residual_peak}"
