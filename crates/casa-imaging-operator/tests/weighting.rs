@@ -45,7 +45,8 @@ fn density_buffer(samples: &[(f64, f64, f32)]) -> SampleBuffer {
 fn standard_cells_truncate_toward_zero_and_add_the_conjugate() {
     // (−250, 125) → (6, 5); (−212.5, 125) → (5.7, 5) → (5, 5); the
     // conjugates land at (2, 3) and (2.3, 3) → (2, 3). (0, 0) → (4, 4) twice.
-    // (−500, 0) → x = 8 is outside; (−437.5, 0) → x = 7.5 → 7 is inside.
+    // (−500, 0) → x = 8 is outside and so is its conjugate at 0.
+    // (−437.5, 0) → x = 7.5 → 7 is inside; its conjugate 0.5 → 0 is not.
     let buffer = density_buffer(&[
         (-250.0, 125.0, 1.0),
         (-212.5, 125.0, 2.0),
@@ -64,8 +65,8 @@ fn standard_cells_truncate_toward_zero_and_add_the_conjugate() {
     assert_eq!(at(2, 3), 3.0);
     assert_eq!(at(4, 4), 2.0);
     assert_eq!(at(7, 4), 1.0);
-    assert_eq!(at(1, 4), 1.0);
-    assert_eq!(cells.iter().sum::<f64>(), 10.0);
+    assert_eq!(at(1, 4), 0.0);
+    assert_eq!(cells.iter().sum::<f64>(), 9.0);
     assert_eq!(grid.sum_weights(), &[5.0]);
     assert_eq!(grid.lookup(0, -500.0, 0.0), None);
     assert_eq!(grid.lookup(0, 0.0, 0.0), Some(2.0));
@@ -82,7 +83,8 @@ fn uniform_and_briggs_weights_follow_the_casa_formulae() {
         std::iter::once(buffer.block()),
         shape(DensityCellRule::Standard),
     );
-    // Cells: (6,5) = 3, (2,3) = 3, (7,4) = 1, (1,4) = 1: Σd = 8, Σd² = 20.
+    // Cells: (6,5) = 3, (2,3) = 3, (7,4) = 1 (its conjugate falls on
+    // column 0): Σd = 7, Σd² = 19.
     let uniform = WeightingGeneration::density(grid.clone(), None, None).expect("uniform");
     assert!((uniform.imaging_weight(&placement(-250.0, 125.0), 1.5) - 0.5).abs() < 1e-7);
     assert_eq!(uniform.imaging_weight(&placement(-437.5, 0.0), 1.0), 1.0);
@@ -96,7 +98,7 @@ fn uniform_and_briggs_weights_follow_the_casa_formulae() {
         panic!("density weighting");
     };
     let f2 = robust.as_ref().expect("factors").factor(0);
-    assert!((f2 - 25.0 / 2.5).abs() < 1e-12, "f2 = {f2}");
+    assert!((f2 - 25.0 / (19.0 / 7.0)).abs() < 1e-12, "f2 = {f2}");
     let expected = 1.0 / (3.0 * f2 + 1.0);
     assert!(
         (f64::from(briggs.imaging_weight(&placement(-250.0, 125.0), 1.0)) - expected).abs() < 1e-7
@@ -107,29 +109,38 @@ fn uniform_and_briggs_weights_follow_the_casa_formulae() {
 
 #[test]
 fn cube_cells_round_and_mirror_v() {
-    // Build: x = round(4 − 8e-3·u + 1) − 1, y = round(4 − 8e-3·v + 1) − 1.
-    // (−250, 125) → (6, 3); (−187.5, 62.5) → (5.5 → round 6.5 − 1 = 6, 3.5 → 3).
-    let buffer = density_buffer(&[(-250.0, 125.0, 1.0), (-187.5, 62.5, 1.0)]);
+    // Build: x = round(4 − 8e-3·u + 1) − 1, y = round(4 − 8e-3·v + 1) − 1,
+    // away from rounding ties. (−250, 125) → (6, 3), conjugate (2, 5);
+    // (−200, 50) → (6.6 → 6, 4.6 → 4), conjugate (3.4 → 2, 5.4 → 4).
+    let buffer = density_buffer(&[(-250.0, 125.0, 1.0), (-200.0, 50.0, 1.0)]);
     let grid = build_density_grid(
         std::iter::once(buffer.block()),
         shape(DensityCellRule::Cube),
     );
     let cells = grid.plane(0);
     let at = |x: usize, y: usize| cells[y * 8 + x];
-    assert_eq!(at(6, 3), 2.0);
-    assert_eq!(at(2, 5), 2.0);
+    assert_eq!(at(6, 3), 1.0);
+    assert_eq!(at(2, 5), 1.0);
+    assert_eq!(at(6, 4), 1.0);
+    assert_eq!(at(2, 4), 1.0);
+    assert_eq!(cells.iter().sum::<f64>(), 4.0);
     assert_eq!(grid.sum_weights(), &[2.0]);
-    // Lookup rounds half away from zero in single precision: 5.5 → 6, 3.5 → 4.
-    assert_eq!(grid.lookup(0, -187.5, 62.5), Some(0.0));
-    assert_eq!(grid.lookup(0, -250.0, 125.0), Some(2.0));
+    // Lookup: x = round(4 − 8e-3·u), y = round(4 − 8e-3·v) in single precision.
+    assert_eq!(grid.lookup(0, -250.0, 125.0), Some(1.0));
+    assert_eq!(grid.lookup(0, -200.0, 50.0), Some(1.0));
+    assert_eq!(grid.lookup(0, 100.0, 100.0), Some(0.0));
     let briggs = WeightingGeneration::density(grid, Some(0.0), None).expect("briggs");
     // Cube Briggs uses 2·Σw for the density sum and zeroes empty cells.
     let WeightingGeneration::Density { robust, .. } = &briggs else {
         panic!("density weighting");
     };
     let f2 = robust.as_ref().expect("factors").factor(0);
-    assert!((f2 - 25.0 / (8.0 / 4.0)).abs() < 1e-12, "f2 = {f2}");
-    assert_eq!(briggs.imaging_weight(&placement(-187.5, 62.5), 1.0), 0.0);
+    assert!((f2 - 25.0 / (4.0 / 4.0)).abs() < 1e-12, "f2 = {f2}");
+    let expected = 1.0 / (f2 + 1.0);
+    assert!(
+        (f64::from(briggs.imaging_weight(&placement(-250.0, 125.0), 1.0)) - expected).abs() < 1e-7
+    );
+    assert_eq!(briggs.imaging_weight(&placement(100.0, 100.0), 1.0), 0.0);
 }
 
 #[test]

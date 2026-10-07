@@ -193,9 +193,10 @@ impl RobustFactors {
 /// Accumulate the density grid from blocks of density samples.
 ///
 /// Blocks carry one polarization whose weight is CASA's unpolarized input
-/// weight; each sample adds its weight (in single precision, as CASA does)
-/// at its cell and at the conjugate cell, and once to the plane's weight
-/// sum. Samples off the grid are ignored.
+/// weight; each sample adds its weight at its cell and at the conjugate
+/// cell, each when that cell lies inside the grid (CASA tests the two
+/// independently), and once to the plane's weight sum when its own cell
+/// does.
 pub fn build_density_grid<'a>(
     source: impl Iterator<Item = SampleBlock<'a>>,
     shape: DensityGridShape,
@@ -212,12 +213,14 @@ pub fn build_density_grid<'a>(
                 continue;
             };
             let weight = f64::from(*weight);
-            if let Some(cell) = shape.build_cell(plane, placement.u, placement.v) {
+            let primary = shape.build_cell(plane, placement.u, placement.v);
+            let conjugate = shape.build_cell(plane, -placement.u, -placement.v);
+            if let Some(cell) = primary {
                 cells[cell] += weight;
-                if let Some(conjugate) = shape.build_cell(plane, -placement.u, -placement.v) {
-                    cells[conjugate] += weight;
-                }
                 sum_weights[plane] += weight;
+            }
+            if let Some(cell) = conjugate {
+                cells[cell] += weight;
             }
         }
     }
