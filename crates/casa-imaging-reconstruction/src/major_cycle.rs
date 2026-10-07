@@ -113,6 +113,14 @@ pub struct FinalNormalState {
 }
 
 impl FinalNormalState {
+    pub(crate) const fn primitives(&self) -> &NormalStatePrimitives {
+        &self.primitives
+    }
+
+    pub(crate) fn into_primitives(self) -> NormalStatePrimitives {
+        self.primitives
+    }
+
     pub(crate) fn clark_workspace(
         &self,
     ) -> Option<&std::sync::Mutex<Option<crate::minor_cycle::ClarkRefreshWorkspace>>> {

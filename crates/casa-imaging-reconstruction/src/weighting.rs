@@ -43,6 +43,16 @@ fn next_owner(counter: &AtomicU64) -> Result<u64, WeightingError> {
 pub struct WeightingGenerationId(u64);
 
 impl WeightingGenerationId {
+    /// A fresh identity for one run's imaging-weight generation.
+    ///
+    /// # Panics
+    ///
+    /// When the process has minted `u64::MAX` generations.
+    #[must_use]
+    pub fn next() -> Self {
+        Self(next_owner(&NEXT_WEIGHTING_OWNER).expect("weighting identities exhausted"))
+    }
+
     pub(crate) const fn ordinal(self) -> u64 {
         self.0
     }
@@ -61,6 +71,16 @@ pub struct WeightingReplayId(u64);
 impl WeightingReplayId {
     pub(crate) fn new() -> Result<Self, WeightingError> {
         next_owner(&NEXT_REPLAY_OWNER).map(Self)
+    }
+
+    /// A fresh identity for one traversal of the selected visibilities.
+    ///
+    /// # Panics
+    ///
+    /// When the process has minted `u64::MAX` traversals.
+    #[must_use]
+    pub fn next() -> Self {
+        Self::new().expect("replay identities exhausted")
     }
     pub(crate) const fn ordinal(self) -> u64 {
         self.0

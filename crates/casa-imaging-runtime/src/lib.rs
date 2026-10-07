@@ -7,6 +7,7 @@ mod complete_data_operator;
 #[cfg(test)]
 mod complete_data_parallel_mfs_tests;
 mod continuum_transform;
+mod cube_state;
 mod cube_state_plan;
 mod execution;
 mod execution_bindings;
@@ -26,6 +27,9 @@ mod metal_runtime;
 mod observation_transaction;
 mod paged_cube_state;
 pub mod pass;
+pub use cube_state::CubeState;
+mod minor;
+pub use minor::{MinorCycleOutcome, MinorCycleRunError, run_minor_cycle};
 mod prepared_artifact;
 pub mod product_publication;
 mod publication_layout;

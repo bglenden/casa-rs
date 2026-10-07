@@ -73,7 +73,8 @@ impl ManagedSpillStorage {
     }
 
     /// Directory already certified against the Resource Authority's storage domain.
-    pub(crate) fn directory(&self) -> &Path {
+    #[must_use]
+    pub fn directory(&self) -> &Path {
         &self.directory
     }
 

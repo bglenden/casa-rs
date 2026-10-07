@@ -3,7 +3,9 @@
 
 use std::ops::Range;
 
-use casa_imaging_operator::{GridGeometry, MeasurementOperator, Placement, PlaneRange, Tile};
+use casa_imaging_operator::{
+    GridGeometry, MeasurementOperator, ModeSet, Placement, PlaneRange, Tile,
+};
 
 /// How one pass divides its grid accumulation among owners (one per worker).
 #[derive(Clone, Debug, PartialEq)]
@@ -80,6 +82,55 @@ pub enum Residency {
 }
 
 impl Residency {
+    /// The fewest waves whose planes fit `budget` bytes with `workers`
+    /// workers: per plane, its accumulator holding `modes`, its prepared
+    /// model grids when `with_model`, and its images twice (the operator's and
+    /// the normal state's copy); per worker, one transform plane and one image
+    /// per grid polarization.
+    pub fn plan(
+        operator: &MeasurementOperator,
+        modes: ModeSet,
+        with_model: bool,
+        workers: usize,
+        budget: u64,
+    ) -> Result<Self, super::PassError> {
+        let precision = operator.precision();
+        let one = PlaneRange::single(0);
+        let mut per_plane = operator
+            .accumulator_layout(one, None, modes)
+            .bytes(precision) as u64;
+        if with_model {
+            per_plane += operator
+                .accumulator_layout(one, None, ModeSet::DATA)
+                .bytes(precision) as u64;
+        }
+        let [width, height] = operator.geometry().image().shape;
+        let image_cells = (width * height) as u64;
+        let basis = operator.basis();
+        let pols = operator.polarization().requested().len() as u64;
+        let images = (basis.data_terms() + if modes.psf { basis.psf_terms() } else { 0 }) as u64;
+        per_plane += 2 * images * pols * image_cells * 4;
+        let grid_cells = operator.geometry().cells() as u64;
+        let gpols = operator.polarization().grid_pols() as u64;
+        let fixed = workers as u64 * (grid_cells * 16 + gpols * image_cells * 16);
+        let planes = basis.planes();
+        let available = budget.saturating_sub(fixed);
+        if per_plane > available {
+            return Err(super::PassError::Memory {
+                required: per_plane + fixed,
+                available: budget,
+            });
+        }
+        let fit = (available / per_plane).min(u64::from(planes)) as u32;
+        Ok(if fit >= planes {
+            Self::All
+        } else {
+            Self::Waves {
+                planes_per_wave: fit,
+            }
+        })
+    }
+
     /// The plane ranges of the waves over `planes` planes.
     #[must_use]
     pub fn waves(self, planes: u32) -> Vec<PlaneRange> {

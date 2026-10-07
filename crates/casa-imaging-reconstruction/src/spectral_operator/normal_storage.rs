@@ -1147,6 +1147,16 @@ pub(crate) struct NormalDomainMetadata<'a> {
 }
 
 impl NormalStatePrimitives {
+    /// The resident domains of a coupled coefficient family.
+    pub(crate) fn into_coupled(
+        self,
+    ) -> Result<Box<[SpectralDomainPrimitives]>, SpectralOperatorError> {
+        match self {
+            Self::Coupled(domains) => Ok(domains.domains),
+            Self::ChannelLocal(_) => Err(SpectralOperatorError::ProblemMismatch),
+        }
+    }
+
     pub(crate) fn retire_obsolete(self) -> Result<(), SpectralOperatorError> {
         if let Self::ChannelLocal(domains) = self {
             for domain in domains {
@@ -1714,7 +1724,7 @@ impl<'a> FinalNormalPlaneReader<'a> {
 }
 
 impl StoredChannelNormalDomain {
-    fn refresh(
+    pub(crate) fn refresh(
         &self,
         model: ModelGenerationId,
         plan: &NormalStoragePlan,
@@ -1759,7 +1769,26 @@ impl StoredChannelNormalDomain {
         &mut self,
         residual: &crate::streaming_cube::band::CubeResidual,
     ) -> Result<(), SpectralOperatorError> {
-        let range = &residual.core;
+        if residual.total_channels != self.total_channels {
+            return Err(SpectralOperatorError::ProblemMismatch);
+        }
+        self.append_residual_planes(
+            residual.core.clone(),
+            residual.shape,
+            residual.model,
+            &residual.values,
+        )
+    }
+
+    /// Write the refreshed residual planes `[channel][pol]` (x-major) of the
+    /// next channel range, formed with model generation `model`.
+    pub(crate) fn append_residual_planes(
+        &mut self,
+        range: Range<usize>,
+        shape: [usize; 2],
+        model: ModelGenerationId,
+        residual: &[f32],
+    ) -> Result<(), SpectralOperatorError> {
         if range.start != self.next_channel
             || range.start >= range.end
             || range.end > self.total_channels
@@ -1771,17 +1800,14 @@ impl StoredChannelNormalDomain {
                 "normal-state write exceeds the admitted channel window".into(),
             ));
         }
-        if residual.shape != self.shape
-            || residual.total_channels != self.total_channels
-            || self.residual_model != Some(residual.model)
-            || residual.values.len()
-                != range.len() * self.polarizations * checked_cells(self.shape)?
+        if shape != self.shape
+            || self.residual_model != Some(model)
+            || residual.len() != range.len() * self.polarizations * checked_cells(self.shape)?
         {
             return Err(SpectralOperatorError::ProblemMismatch);
         }
         let plane_values = self.polarizations * checked_cells(self.shape)?;
         for (index, values) in residual
-            .values
             .chunks(self.window_channels * plane_values)
             .enumerate()
         {

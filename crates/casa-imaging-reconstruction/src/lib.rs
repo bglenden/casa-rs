@@ -72,8 +72,9 @@ pub use aw_projection::{
 };
 pub use image_response::{ImageResponseError, MinorCycleImageResponse, MosaicSensitivity};
 pub use spectral_operator::{
-    SpectralChannelValidity, SpectralOperatorError, SpectralOperatorPrimitives,
-    SpectralOperatorSpecification, SpectralPrimitiveCatalog, SpectralSlabPlan,
+    PassImages, PassNormalState, SpectralChannelValidity, SpectralOperatorError,
+    SpectralOperatorPrimitives, SpectralOperatorSpecification, SpectralPrimitiveCatalog,
+    SpectralSlabPlan,
 };
 
 /// Internal composition surface used by `casa-imaging-runtime`.

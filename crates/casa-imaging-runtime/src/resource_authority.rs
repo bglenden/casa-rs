@@ -2193,6 +2193,17 @@ impl ResourceAuthority {
     /// policy reserves and active leases including their headroom. This is
     /// source-only feasibility: the complete plan's demand and additional
     /// headroom are checked by its later admission, not reserved by this quote.
+    /// Workers and host-memory bytes one imaging phase may use under
+    /// `policy`, after the leases already held.
+    pub fn phase_budget(&self, policy: &ResourcePolicy) -> Result<(usize, u64), ResourceError> {
+        let workers = usize::try_from(self.planning_worker_capacity(policy)?)
+            .map_err(|_| ResourceError::Invalid("worker capacity overflows usize".to_string()))?;
+        Ok((
+            workers.max(1),
+            self.remaining_selected_source_memory_bytes(policy)?,
+        ))
+    }
+
     pub(crate) fn remaining_selected_source_memory_bytes(
         &self,
         policy: &ResourcePolicy,

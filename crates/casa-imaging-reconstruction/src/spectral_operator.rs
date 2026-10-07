@@ -4,8 +4,10 @@
 
 mod initial_planes;
 pub(crate) mod normal_storage;
+mod pass_state;
 use initial_planes::InitialPlaneBatch;
 pub use initial_planes::InitialPlaneWork;
+pub use pass_state::{PassImages, PassNormalState};
 
 use std::{
     collections::BTreeMap,

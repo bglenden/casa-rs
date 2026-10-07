@@ -12,6 +12,7 @@ mod aw_cache;
 mod casa_product_sink;
 mod continuum_domains;
 mod continuum_request;
+mod imaging;
 mod major_cycle;
 mod prepared_aw_phase;
 mod streaming_cube;
@@ -181,7 +182,7 @@ pub struct NativeApplicationOutcome {
     /// Ordered warm-probe, optional cold-import, and consume receipts for AW preparation.
     pub aw_preparation_receipts: Vec<ExecutionReceipt>,
     /// Initial-major receipt (also the final scientific pass for dirty imaging).
-    pub initial_receipt: ExecutionReceipt,
+    pub initial_receipt: Option<ExecutionReceipt>,
     /// Mandatory post-minor final-major receipt for Högbom imaging.
     pub final_major_receipt: Option<ExecutionReceipt>,
     /// Ordered solve evidence captured before each affine major-cycle handoff.
@@ -382,6 +383,12 @@ where
     S: SerialProductPublicationSink + Send + 'static,
     S::Error: Send + Sync,
 {
+    if std::env::var_os("CASA_RS_IF2_OLD_ROUTE").is_none()
+        && !input.write_model_column
+        && !input.write_corrected_data
+    {
+        return run_pass_route(problem, input);
+    }
     if !input.write_model_column
         && !input.write_corrected_data
         && casa_imaging_runtime::CubePhase::supports(problem)?
@@ -390,6 +397,61 @@ where
     } else {
         run_native_phases::<SpectralCycleExecutor, S>(problem, input)
     }
+}
+
+fn run_pass_route<S>(
+    problem: &CompiledProblem,
+    input: NativeInput<S>,
+) -> Result<NativeApplicationOutcome, ApplicationError>
+where
+    S: SerialProductPublicationSink + Send + 'static,
+    S::Error: Send + Sync,
+{
+    let ApplicationNative {
+        runtime,
+        publication,
+        aw_preparation,
+    } = input.native?;
+    if aw_preparation.is_some() {
+        return Err(boxed("A-projection preparation has no pass route"));
+    }
+    publication.controls.validate_for_problem(problem)?;
+    let access = SelectedObservationSourceResources::finalize_access(
+        problem,
+        input.initial_access,
+        &runtime.authority,
+        &runtime.resource_policy,
+    )?;
+    let spill = runtime.gridded_normal_storage.clone();
+    let outcome = imaging::run(imaging::ImagingInputs {
+        problem,
+        access,
+        masks: input.masks,
+        image_response: input.minor_cycle_image_response,
+        authority: &runtime.authority,
+        policy: &runtime.resource_policy,
+        spill_directory: spill.directory(),
+    })?;
+    publish_products(
+        problem,
+        outcome.scientific,
+        outcome.masks,
+        runtime,
+        publication,
+        PriorPhaseOutcome {
+            aw_preparation_receipts: Vec::new(),
+            initial_receipt: None,
+            final_major_receipt: None,
+            minor_cycles: outcome.minor_cycles,
+            major_cycle_count: outcome.major_cycle_count,
+            total_minor_iterations: outcome.total_minor_iterations,
+            total_actual_minor_iterations: outcome.total_actual_minor_iterations,
+            visibility_products: None,
+            visibility_replay: None,
+            visibility_output_receipt: None,
+            workers: outcome.workers,
+        },
+    )
 }
 
 fn run_native_phases<P, S>(
@@ -818,7 +880,8 @@ where
         PriorPhaseOutcome {
             aw_preparation_receipts: prepared_aw
                 .map_or_else(Vec::new, |prepared| prepared.receipts),
-            initial_receipt,
+            workers: usize::try_from(initial_receipt.initial_execution_knobs().workers)?,
+            initial_receipt: Some(initial_receipt),
             final_major_receipt,
             minor_cycles,
             major_cycle_count,
@@ -877,7 +940,8 @@ fn visibility_write_selection(
 
 struct PriorPhaseOutcome {
     aw_preparation_receipts: Vec<ExecutionReceipt>,
-    initial_receipt: ExecutionReceipt,
+    workers: usize,
+    initial_receipt: Option<ExecutionReceipt>,
     final_major_receipt: Option<ExecutionReceipt>,
     minor_cycles: Vec<NativeMinorCycleOutcome>,
     major_cycle_count: usize,
@@ -1005,12 +1069,11 @@ where
 {
     let (planned_products, generation_demand) = {
         let requested_workers = match &runtime.resource_policy {
-            ResourcePolicy::Explicit(policy) => policy
-                .workers
-                .unwrap_or_else(|| prior.initial_receipt.initial_execution_knobs().workers),
-            _ => prior.initial_receipt.initial_execution_knobs().workers,
+            ResourcePolicy::Explicit(policy) => {
+                policy.workers.map_or(Ok(prior.workers), usize::try_from)?
+            }
+            _ => prior.workers,
         };
-        let requested_workers = usize::try_from(requested_workers)?;
         let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific)?;
         if let Some(masks) = reconstruction_masks.as_ref() {
             inputs = match masks {
@@ -1040,8 +1103,9 @@ where
                 .visibility_output_receipt
                 .clone()
                 .or_else(|| prior.final_major_receipt.clone())
-                .unwrap_or_else(|| prior.initial_receipt.clone())
-        });
+                .or_else(|| prior.initial_receipt.clone())
+        })
+        .flatten();
     let planning_registry =
         PlanningRegistry::new(runtime.registry, runtime.implementation.clone(), problem);
     let publication_plan = SerialProductPublicationPlan::new(

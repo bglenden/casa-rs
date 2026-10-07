@@ -52,6 +52,20 @@ pub enum PassError {
     /// The visibility source failed.
     #[error("visibility source: {0}")]
     Source(#[source] SourceError),
+    /// The model grids of a wave could not be prepared.
+    #[error("model preparation: {0}")]
+    Model(#[source] SourceError),
+    /// The consumer of a wave's images failed.
+    #[error("wave images: {0}")]
+    Images(#[source] SourceError),
+    /// Not even one plane of the pass fits the memory budget.
+    #[error("one plane needs {required} bytes but the pass may use {available}")]
+    Memory {
+        /// Bytes one plane needs.
+        required: u64,
+        /// Bytes the pass may use.
+        available: u64,
+    },
     /// The pass was cancelled at a block boundary.
     #[error("the pass was cancelled")]
     Cancelled,
