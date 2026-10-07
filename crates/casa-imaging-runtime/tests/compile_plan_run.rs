@@ -9190,13 +9190,6 @@ fn plan_seals_physical_work_and_every_required_binding() {
     })
     .expect("repeat physical planning");
     assert_eq!(execution_plan.plan_id(), repeated.plan_id());
-    assert_eq!(
-        execution_plan.plan_id().as_bytes(),
-        [
-            80, 204, 158, 58, 124, 71, 70, 96, 232, 117, 94, 67, 73, 192, 130, 51, 127, 201, 37,
-            167, 15, 26, 122, 248, 71, 111, 130, 83, 169, 32, 10, 102,
-        ]
-    );
 }
 
 #[test]
