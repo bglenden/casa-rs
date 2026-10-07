@@ -16,5 +16,6 @@ casa-imaging-model = { path = "../casa-imaging-model" }
 casa-numerics = { path = "../casa-numerics" }
 ndarray.workspace = true
 num-complex.workspace = true
+num-traits = "0.2"
 thiserror.workspace = true
 tracing.workspace = true
