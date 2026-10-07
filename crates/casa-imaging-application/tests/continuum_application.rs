@@ -797,6 +797,7 @@ fn t51_direct_taylor_aw_clean_executes_the_application_replay_path() {
 }
 
 #[test]
+#[ignore = "recompute route unreachable since 1dc92262ac (final major prefers a resident source); replaced by the IF-6 admission test, issue #655"]
 fn t51_fixed_memory_aw_clean_preserves_prepared_projection_during_recompute() {
     if !isolated_application_case(
         "t51_fixed_memory_aw_clean_preserves_prepared_projection_during_recompute",

@@ -3705,7 +3705,12 @@ fn execute_spectral_cycle_with_weighting_mode(
             ..ResourceOverride::default()
         })
     } else {
-        ResourcePolicy::Balanced
+        // This explicit ceiling admits exactly one frame of the two-channel replay window.
+        ResourcePolicy::Explicit(ResourceOverride {
+            memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 584_000)]),
+            workers: Some(2),
+            ..ResourceOverride::default()
+        })
     };
     let final_planned = SpectralCyclePlan::final_major(
         &problem,
@@ -3734,11 +3739,7 @@ fn execute_spectral_cycle_with_weighting_mode(
         &problem,
         PlanningBindings::new(
             registry(73),
-            if verify_low_memory_plan {
-                final_resource_policy.clone()
-            } else {
-                resource_policy.clone()
-            },
+            final_resource_policy.clone(),
             planning_profile(4),
         ),
         authority(),
@@ -4001,8 +4002,10 @@ fn execute_spectral_cycle_with_weighting_mode(
         .filter(|claim| claim.resource == LeaseResource::IoBuffer(IoBufferKind::SpillRead))
         .map(|claim| claim.amount)
         .collect::<Vec<_>>();
+    // Since cd1d4a4234 the sealed artifact carries one 40-byte record per frame;
+    // the former 40 + 2 * 40 term encoded the pre-fix over-reservation.
     assert!(
-        spill_read_claims.contains(&(2 * expected_batch * (40 + 2 * 40))),
+        spill_read_claims.contains(&(2 * expected_batch * (40 + 40))),
         "two source slots must cover every frame in the admitted batch: {spill_read_claims:?}"
     );
     assert!(
