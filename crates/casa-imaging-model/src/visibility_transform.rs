@@ -167,53 +167,6 @@ impl fmt::Debug for ContinuumTransformContractId {
     }
 }
 
-/// Stable identity of one transformed ordered selected-observation stream.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ContinuumTransformGenerationId([u8; 32]);
-
-impl ContinuumTransformGenerationId {
-    /// Construct an owner-minted generation from its canonical digest.
-    #[doc(hidden)]
-    #[must_use]
-    pub const fn from_owner_digest(digest: [u8; 32]) -> Self {
-        Self(digest)
-    }
-
-    /// Return the exact SHA-256 digest.
-    #[must_use]
-    pub const fn as_bytes(self) -> [u8; 32] {
-        self.0
-    }
-}
-
-impl fmt::Debug for ContinuumTransformGenerationId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for byte in self.0 {
-            write!(formatter, "{byte:02x}")?;
-        }
-        Ok(())
-    }
-}
-
-/// Stable generation of ordered fit roles, flags, and effective input weights.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ContinuumFitWeightGenerationId([u8; 32]);
-
-impl ContinuumFitWeightGenerationId {
-    /// Construct an owner-minted generation from its canonical digest.
-    #[doc(hidden)]
-    #[must_use]
-    pub const fn from_owner_digest(digest: [u8; 32]) -> Self {
-        Self(digest)
-    }
-
-    /// Return the exact SHA-256 digest.
-    #[must_use]
-    pub const fn as_bytes(self) -> [u8; 32] {
-        self.0
-    }
-}
-
 /// Canonical, backend-independent sequential continuum-transform contract.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SequentialContinuumTransform {

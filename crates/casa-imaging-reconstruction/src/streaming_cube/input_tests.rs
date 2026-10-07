@@ -5,7 +5,7 @@ use super::*;
 use crate::spectral_operator::accept_polarization_input;
 use crate::streaming_cube::input::{NativeBlock, NativeInput, NativeLayout};
 use casa_imaging_model::{CorrelationType, FiniteValuePolicy};
-use num_complex::Complex64;
+use num_complex::Complex32;
 use std::io;
 
 fn samples(rows: u64) -> Vec<WeightingSampleValue> {
@@ -117,18 +117,14 @@ fn preparation_carries_split_rows_and_correlations_without_extra_payload_buffers
             {
                 let sample = weighted.selected();
                 let expected = match sample.visibility {
-                    SelectedVisibilitySample::Float32(value) => {
-                        Complex64::new(f64::from(value), 0.0)
-                    }
-                    SelectedVisibilitySample::Complex32([re, im]) => {
-                        Complex64::new(f64::from(re), f64::from(im))
-                    }
+                    SelectedVisibilitySample::Float32(value) => Complex32::new(value, 0.0),
+                    SelectedVisibilitySample::Complex32([re, im]) => Complex32::new(re, im),
                 };
                 assert_eq!(block.values[index].re.to_bits(), expected.re.to_bits());
                 assert_eq!(block.values[index].im.to_bits(), expected.im.to_bits());
                 assert_eq!(
                     block.weights[index],
-                    weighted.source_imaging_weight.unwrap()
+                    weighted.source_imaging_weight.unwrap() as f32
                 );
                 assert_eq!(
                     block.flags[index],
@@ -172,7 +168,7 @@ fn preparation_preserves_finite_policy_and_nearest_weight_flag_distinction() {
     input
         .push(&samples, |block| {
             assert!(block.values[0].re.is_nan());
-            assert_eq!(block.values[0].im.to_bits(), (-0.0f64).to_bits());
+            assert_eq!(block.values[0].im.to_bits(), (-0.0f32).to_bits());
             assert!(block.flags[0] && block.flags[2] && block.flags[4]);
             assert!(!block.weight_flags[0] && !block.weight_flags[2]);
             assert!(block.weight_flags[4]);

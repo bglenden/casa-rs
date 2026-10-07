@@ -675,8 +675,7 @@ struct CasarsMacApp: App {
             "--per-channel-density",
             "--no-perchanweightdensity",
             "--write-pb",
-            "--pbcor",
-            "--no-preview-pngs"
+            "--pbcor"
         ]
         if let flag = incompatibleFlags.first(where: arguments.contains) {
             return "\(prototypeLaunchLabel) cannot be combined with \(flag)"
@@ -780,9 +779,6 @@ struct CasarsMacApp: App {
         if let channelCount = argumentValue(after: "--channel-count", in: arguments) {
             store.setGenericTaskValue(taskID: "imager", argumentID: "channel_count", value: channelCount)
         }
-        if let chanchunks = argumentValue(after: "--chanchunks", in: arguments) {
-            store.setGenericTaskValue(taskID: "imager", argumentID: "chanchunks", value: chanchunks)
-        }
         if let parallel = argumentBool(after: "--parallel", defaultIfPresent: true, in: arguments) {
             store.setGenericTaskToggle(taskID: "imager", argumentID: "parallel", value: parallel)
         } else if argumentBool(after: "--no-parallel", defaultIfPresent: false, in: arguments) != nil {
@@ -813,27 +809,6 @@ struct CasarsMacApp: App {
                 value: standardMFSAcceleration
             )
         }
-        if let standardMFSGridThreads = argumentValue(after: "--standard-mfs-grid-threads", in: arguments) {
-            store.setGenericTaskValue(
-                taskID: "imager",
-                argumentID: "standard_mfs_grid_threads",
-                value: standardMFSGridThreads
-            )
-        }
-        if let readAheadBlocks = argumentValue(after: "--imaging-read-ahead-blocks", in: arguments) {
-            store.setGenericTaskValue(
-                taskID: "imager",
-                argumentID: "imaging_read_ahead_blocks",
-                value: readAheadBlocks
-            )
-        }
-        if let fftBackend = argumentValue(after: "--imaging-fft-backend", in: arguments) {
-            store.setGenericTaskValue(
-                taskID: "imager",
-                argumentID: "imaging_fft_backend",
-                value: fftBackend
-            )
-        }
         if let interpolation = argumentValue(after: "--interpolation", in: arguments)
             ?? argumentValue(after: "--cube-interp", in: arguments) {
             store.setGenericTaskValue(taskID: "imager", argumentID: "interpolation", value: interpolation)
@@ -849,9 +824,6 @@ struct CasarsMacApp: App {
         }
         if let pbcor = argumentBool(after: "--pbcor", defaultIfPresent: true, in: arguments) {
             store.setGenericTaskToggle(taskID: "imager", argumentID: "pbcor", value: pbcor)
-        }
-        if arguments.contains("--no-preview-pngs") {
-            store.setGenericTaskToggle(taskID: "imager", argumentID: "write_preview_pngs", value: false)
         }
         for (argumentID, value) in argumentPairs(after: "--set-task-value", in: arguments) {
             if store.state.taskUISchemas["imager"]?.arguments.first(where: { $0.id == argumentID })?.parser.kind == "toggle" {

@@ -109,7 +109,7 @@ fn t42_real_ms_mtmfs_normal_matches_casa_oracle_inputs() -> Result<(), Box<dyn E
         SpectralOperatorPass::InitialMajor,
     )?;
     let mut owner =
-        prepare_spectral_operator(specification, workload)?.begin_streaming(&problem)?;
+        prepare_spectral_operator(specification, workload, 1)?.begin_streaming(&problem)?;
     owner.bind_major_cycle_model(preparation.final_model(), None)?;
 
     let mut basis_bits = vec![u32::MAX; 2 * SELECTED_ROWS * CHANNELS];
@@ -194,7 +194,7 @@ fn t42_real_ms_mtmfs_normal_matches_casa_oracle_inputs() -> Result<(), Box<dyn E
     {
         return Err("empty model emitted final visibilities".into());
     }
-    let complete_data = owner.complete(&summary, completion.generation_id(), None)?;
+    let complete_data = owner.complete(&summary)?;
     let joined = MajorCycleOwner::from_complete_data(
         {
             let storage =
@@ -653,7 +653,7 @@ fn specification_with_products(
         ObservationTransactionRequirements::new(casa_imaging_model::ModelColumnWrite::Disabled),
         NumericsContract::new(
             vec![NumericPrecision::F64],
-            ReductionPolicy::Compensated,
+            ReductionPolicy::UnorderedWithinBudget,
             FiniteValuePolicy::FlagInputRejectGenerated,
             NumericalStage::ALL
                 .into_iter()

@@ -20,7 +20,10 @@ mod tests;
 pub(crate) use access::{
     BoundObservationSamples, BoundObservationSource, validate_selected_coordinates,
 };
-pub use access::{BoundObservationSourceError, SelectedObservationBlock};
+pub use access::{
+    BoundObservationSourceError, SelectedObservationBlock, SelectedObservationBlockIdentity,
+    SelectedObservationNumericBlock, SelectedObservationNumericGeometry,
+};
 pub use bound_observation::{
     BoundSelectedObservation, BoundSelectedObservationError, DeferredSelectedObservationAccess,
     ObservationSourceBinding, SelectedObservationBlockConsumer, SelectedObservationBlockSource,

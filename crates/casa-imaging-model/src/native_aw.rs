@@ -136,19 +136,14 @@ pub struct EvlaAwCellRequest {
 }
 
 impl EvlaAwCellRequest {
-    /// Numerical residency ceiling for six Complex32 working planes and the
-    /// shared FFT implementation's conservative plan/scratch reservation.
+    /// Numerical residency ceiling for six Complex32 working planes, one
+    /// disposable FFTW planning plane and one opaque native-plan allowance.
     pub fn generation_workspace_bytes(&self) -> Result<usize, NativeAwRequestError> {
         self.validate()?;
-        let fft_axis_bound = 4 * usize::BITS as usize;
         self.size
             .checked_mul(self.size)
-            .and_then(|pixels| pixels.checked_mul(6))
-            .and_then(|planes| {
-                self.size
-                    .checked_mul(3 * fft_axis_bound + 1)
-                    .and_then(|fft| planes.checked_add(fft))
-            })
+            .and_then(|pixels| pixels.checked_mul(8))
+            .and_then(|values| values.checked_add(64))
             .and_then(|values| values.checked_mul(8))
             .ok_or(NativeAwRequestError::InvalidSampling)
     }

@@ -11,9 +11,7 @@ use crate::{
     ComponentDivergence, Encoder, FinalNormalState, MinorCycleError, MinorCycleEvidence,
     MinorCycleModelPlane, MinorCycleProgram, MinorCycleStopReason, ModelDelta, ModelGeneration,
     ModelLifecycle, ModelLifecycleError, ModelSupport, SpectralChannelValidity,
-    minor_cycle::{
-        run_image_domain_minor_cycle, run_joint_minor_cycle, run_minor_cycle, run_minor_cycle_plane,
-    },
+    minor_cycle::{run_image_domain_minor_cycle, run_minor_cycle, run_minor_cycle_plane},
 };
 
 const RECONSTRUCTION_CYCLE_EVIDENCE_DOMAIN: &[u8] = b"casa-rs-reconstruction-cycle-evidence";
@@ -421,7 +419,6 @@ impl ReconstructionCycle {
             if !matches!(
                 normal.catalog(),
                 crate::NormalStateCatalog::UnnormalizedTaylorBlockV1
-                    | crate::NormalStateCatalog::UnnormalizedJointBlockV1
             ) {
                 return Err(ReconstructionCycleError::UnsupportedCoupledPolicy);
             }
@@ -447,12 +444,7 @@ impl ReconstructionCycle {
                     },
                 });
             }
-            let program =
-                if normal.catalog() == crate::NormalStateCatalog::UnnormalizedTaylorBlockV1 {
-                    self.program.clone().with_global_convergence_check()
-                } else {
-                    self.program.clone()
-                };
+            let program = self.program.clone().with_global_convergence_check();
             let result = run_minor_cycle(lifecycle, base, normal, mask, program)?;
             let (delta, minor_cycle) = result.into_parts();
             let channels = vec![ChannelCycleEvidence {
@@ -480,7 +472,7 @@ impl ReconstructionCycle {
         }
         for ordinal in 0..work.plane_count() {
             let input = work.prepare_plane(ordinal)?;
-            let partial = work.execute_plane(&input)?;
+            let partial = work.execute_plane(&input, 1)?;
             work.commit_plane(partial)?;
         }
         work.finish()
@@ -523,47 +515,6 @@ impl ReconstructionCycle {
             plane_count,
             terms: Vec::new(),
             channels: Vec::with_capacity(plane_count),
-        })
-    }
-
-    /// Run one joint continuum-line solve with independently committed masks.
-    pub fn run_coupled(
-        &self,
-        lifecycle: &ModelLifecycle,
-        base: &ModelGeneration,
-        normal: &FinalNormalState,
-        masks: &crate::CoupledReconstructionMask,
-    ) -> Result<ReconstructionCycleResult, ReconstructionCycleError> {
-        if self.policy != ChannelCyclePolicy::Coupled
-            || normal.catalog() != crate::NormalStateCatalog::UnnormalizedJointBlockV1
-        {
-            return Err(ReconstructionCycleError::UnsupportedCoupledPolicy);
-        }
-        if normal
-            .channel_validity()
-            .iter()
-            .any(|validity| *validity != SpectralChannelValidity::Valid)
-        {
-            return Err(ReconstructionCycleError::InvalidJointSupport);
-        }
-        let result = run_joint_minor_cycle(lifecycle, base, normal, masks, self.program.clone())?;
-        let (delta, evidence) = result.into_parts();
-        let channels = vec![ChannelCycleEvidence {
-            output_channel: normal.slab().core_range().start,
-            polarization: 0,
-            validity: SpectralChannelValidity::Valid,
-            minor_cycle: Some(evidence),
-        }];
-        let evidence_id =
-            reconstruction_cycle_evidence_id(lifecycle, normal, self.policy, &channels);
-        Ok(ReconstructionCycleResult {
-            delta,
-            evidence: ReconstructionCycleEvidence {
-                evidence_id,
-                problem: lifecycle.problem(),
-                policy: self.policy,
-                channels: channels.into_boxed_slice(),
-            },
         })
     }
 }
@@ -635,9 +586,33 @@ pub struct ReconstructionPlaneWorkspace {
     planes: usize,
     worker_bytes: u64,
     retained_bytes: u64,
+    parallel_fft: bool,
 }
 
 impl ReconstructionPlaneWorkspace {
+    /// Persistent two-buffer bound for a single constant-basis Clark PSF.
+    /// Cubes and coupled families do not retain a plane-indexed cache.
+    #[doc(hidden)]
+    pub fn clark_reuse_bytes(problem: &casa_imaging_model::CompiledProblem) -> u64 {
+        use casa_imaging_model::{ReconstructionAlgorithm, ReconstructionBasis};
+        let target = problem.model_lifecycle().target();
+        if problem.geometry().domains().len() != 1
+            || target.polarizations() != 1
+            || !matches!(
+                problem.reconstruction().basis(),
+                ReconstructionBasis::Constant
+            )
+            || !matches!(
+                problem.reconstruction().algorithm(),
+                ReconstructionAlgorithm::Clark
+            )
+            || problem.reconstruction().controls().max_minor_iterations() == 0
+        {
+            return 0;
+        }
+        let shape = target.domains()[0].pixels();
+        crate::minor_cycle::ClarkRefreshWorkspace::maximum_bytes(shape)
+    }
     /// Derive the largest legal independent-plane work from compiled controls.
     /// Coupled, multi-domain, and dirty work have different execution shapes.
     pub fn for_problem(
@@ -716,6 +691,12 @@ impl ReconstructionPlaneWorkspace {
                 .saturating_add(normal_bytes)
                 .max(threshold_bytes),
             retained_bytes,
+            parallel_fft: cfg!(unix)
+                && planes == 1
+                && matches!(
+                    program.algorithm(),
+                    casa_imaging_model::ReconstructionAlgorithm::Clark
+                ),
         }
     }
 
@@ -723,6 +704,30 @@ impl ReconstructionPlaneWorkspace {
     #[must_use]
     pub const fn plane_count(self) -> usize {
         self.planes
+    }
+
+    /// A single Clark solve may spend its worker budget inside FFTW or a
+    /// disjoint-row direct convolution, never both concurrently.
+    /// Unix exposes the default pthread stack envelope needed for admission.
+    #[doc(hidden)]
+    pub const fn parallel_fft(self) -> bool {
+        self.parallel_fft
+    }
+
+    /// Transient heap and stack bytes for Clark's direct row workers.
+    /// FFTW's persistent native worker stacks remain a separate reservation.
+    #[doc(hidden)]
+    pub const fn parallel_convolution_overhead(self, workers: usize) -> (u64, u64) {
+        if !self.parallel_fft {
+            return (0, 0);
+        }
+        let spawned = workers.saturating_sub(1) as u64;
+        (
+            spawned.saturating_mul(size_of::<
+                std::thread::ScopedJoinHandle<'static, Result<(), MinorCycleError>>,
+            >() as u64),
+            spawned.saturating_mul(crate::minor_cycle::CLARK_ROW_STACK_BYTES as u64),
+        )
     }
 
     /// Heap envelope for each concurrently executing or pending plane partial.
@@ -760,7 +765,7 @@ impl<'a> ReconstructionPlaneWork<'a> {
     /// Envelope for these exact controls and the full pending cycle collection.
     #[must_use]
     pub fn workspace(&self) -> ReconstructionPlaneWorkspace {
-        ReconstructionPlaneWorkspace::new(
+        let mut workspace = ReconstructionPlaneWorkspace::new(
             self.binding.normal.shape(),
             self.binding.base.shape().polarizations(),
             self.plane_count,
@@ -771,7 +776,16 @@ impl<'a> ReconstructionPlaneWork<'a> {
                 .component_sequence_limit()
                 .unwrap_or(0),
             self.binding.lifecycle.contract().bounds().max_delta_terms(),
-        )
+        );
+        if self.binding.cycle.program.clark_reuse_bytes() != 0 {
+            let shape = self.binding.normal.shape();
+            let buffers = (shape[0] as u64)
+                .saturating_mul(2)
+                .saturating_mul((shape[1] as u64).saturating_add(1))
+                .saturating_mul(2 * size_of::<num_complex::Complex32>() as u64);
+            workspace.worker_bytes = workspace.worker_bytes.saturating_sub(buffers);
+        }
+        workspace
     }
     /// Number of canonical plane slots, including explicit blank/unmapped slots.
     #[must_use]
@@ -801,7 +815,7 @@ impl<'a> ReconstructionPlaneWork<'a> {
         let normal = self.binding.normal;
         let channel = normal.slab().core_range().start + ordinal % normal.channel_count();
         let plane = normal.read_plane(0, channel, ordinal / normal.channel_count())?;
-        let (peak, sidelobe) = plane_cycle_statistics(&plane)?;
+        let (peak, sidelobe) = plane_cycle_statistics(&plane, self.binding.mask)?;
         Ok(ReconstructionPlaneStatistics {
             binding: self.binding,
             ordinal,
@@ -847,13 +861,17 @@ impl<'a> ReconstructionPlaneWork<'a> {
         })
     }
 
-    /// Acquire bounded read-only fields and run the existing solver on this worker.
+    /// Acquire bounded fields and run the shared solver. `fft_threads` must fit
+    /// the caller's admitted CPU and native-stack budget; multi-plane solves use one.
     pub fn execute_plane(
         &self,
         input: &ReconstructionPlaneInput<'a>,
+        fft_threads: usize,
     ) -> Result<ReconstructionPlanePartial<'a>, ReconstructionCycleError> {
         if !self.binding.same_inputs(input.binding)
             || self.threshold_planes != self.threshold_plane_count()
+            || fft_threads == 0
+            || (fft_threads != 1 && !self.workspace().parallel_fft())
         {
             return Err(ReconstructionCycleError::InvalidPlaneCoverage);
         }
@@ -871,11 +889,15 @@ impl<'a> ReconstructionPlaneWork<'a> {
         let (delta, minor_cycle) = if validity == SpectralChannelValidity::Valid {
             let plane = normal.read_reconstruction_plane(0, channel, polarization)?;
             let model = base.read_window(0, channel..channel + 1)?;
-            let program = cycle
+            let mut program = cycle
                 .program
                 .clone()
+                .with_fft_threads(fft_threads)
                 .with_fixed_cycle_threshold(self.shared_cycle_threshold)
                 .on_model_plane(MinorCycleModelPlane::new(0, channel, polarization));
+            if self.plane_count == 1 {
+                program = program.with_global_convergence_check();
+            }
             let (delta, evidence) =
                 run_minor_cycle_plane(lifecycle, &model, plane, mask, program)?.into_parts();
             (delta, Some(evidence))
@@ -1074,7 +1096,11 @@ fn shared_cycle_threshold_from_statistics(
 
 fn plane_cycle_statistics(
     plane: &crate::FinalNormalPlaneReader<'_>,
+    mask: &crate::ReconstructionMask,
 ) -> Result<(f64, f64), MinorCycleError> {
+    if mask.shape() != plane.shape() {
+        return Err(MinorCycleError::ModelShapeMismatch);
+    }
     if plane.validity() != SpectralChannelValidity::Valid {
         return Ok((0.0, 0.0));
     }
@@ -1093,7 +1119,9 @@ fn plane_cycle_statistics(
     let peak = plane
         .read_residual()?
         .iter()
-        .map(|value| value.re.abs() / psf_peak)
+        .enumerate()
+        .filter(|(index, _)| mask.contains([index / plane.shape()[1], index % plane.shape()[1]]))
+        .map(|(_, value)| value.re.abs() / psf_peak)
         .fold(0.0_f64, f64::max);
     Ok((
         peak,
@@ -1134,12 +1162,9 @@ pub enum ReconstructionCycleError {
     /// A coordinator could not load the required authoritative Normal State.
     #[error(transparent)]
     NormalAccess(#[from] crate::SpectralOperatorError),
-    /// No jointly coupled channel solver is approved by T38.
-    #[error("coupled channel reconstruction requires an approved joint solver")]
+    /// The channel-cycle policy does not match the Normal State catalog.
+    #[error("channel-cycle policy does not match the normal-state catalog")]
     UnsupportedCoupledPolicy,
-    /// At least one declared anchor or line channel lacks positive weighted support.
-    #[error("joint reconstruction requires positive weighted support on every declared channel")]
-    InvalidJointSupport,
     /// The normal-state slab cannot expose all of its declared core planes.
     #[error("normal-state slab storage does not match its declared channel interval")]
     InvalidNormalStateSlab,

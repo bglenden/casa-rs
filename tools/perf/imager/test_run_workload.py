@@ -1420,7 +1420,7 @@ real 1.145408
         self.assertEqual("1", env["IMAGER_BENCH_WPROJPLANES"])
         self.assertEqual("1", env["IMAGER_BENCH_CASA_WPROJPLANES"])
         self.assertEqual("cpu", env["IMAGER_BENCH_STANDARD_MFS_ACCELERATION"])
-        self.assertEqual("rustfft", env["IMAGER_BENCH_IMAGING_FFT_BACKEND"])
+        self.assertNotIn("IMAGER_BENCH_IMAGING_FFT_BACKEND", env)
         self.assertEqual("auto", env["IMAGER_BENCH_IMAGING_FFT_PRECISION"])
         self.assertEqual("0", env["IMAGER_BENCH_PARALLEL"])
         self.assertEqual(2, plan["mode"]["facets"])
@@ -1880,7 +1880,6 @@ real 1.145408
                 "imaging_prepare_workers": 3,
                 "imaging_read_ahead_blocks": 2,
                 "imaging_fft_precision": "f32",
-                "imaging_fft_backend": "metal-mpsgraph",
                 "parallel": False,
                 "chanchunks": 4,
                 "standard_mfs_grid_threads": "1",
@@ -1904,11 +1903,10 @@ real 1.145408
         self.assertEqual("3", env["IMAGER_BENCH_IMAGING_PREPARE_WORKERS"])
         self.assertEqual("2", env["IMAGER_BENCH_IMAGING_READ_AHEAD_BLOCKS"])
         self.assertEqual("f32", env["IMAGER_BENCH_IMAGING_FFT_PRECISION"])
-        self.assertEqual("metal-mpsgraph", env["IMAGER_BENCH_IMAGING_FFT_BACKEND"])
+        self.assertNotIn("IMAGER_BENCH_IMAGING_FFT_BACKEND", env)
         self.assertEqual("0", env["IMAGER_BENCH_PARALLEL"])
         self.assertEqual("4", env["IMAGER_BENCH_CHANCHUNKS"])
         self.assertEqual("f32", plan["mode"]["imaging_fft_precision"])
-        self.assertEqual("metal-mpsgraph", plan["mode"]["imaging_fft_backend"])
         self.assertIs(False, plan["mode"]["parallel"])
         self.assertEqual(4, plan["mode"]["chanchunks"])
         self.assertEqual(2, plan["mode"]["imaging_read_ahead_blocks"])
@@ -1967,7 +1965,6 @@ real 1.145408
             [
                 "standard_mfs_acceleration=multi-cpu",
                 "imaging_fft_precision=f32",
-                "imaging_fft_backend=accelerate",
                 "deconvolver=clark",
                 "niter=1000",
                 "pbcor=true",
@@ -1991,10 +1988,6 @@ real 1.145408
         self.assertEqual("f32", plan["mode"]["imaging_fft_precision"])
         self.assertEqual(
             "f32", plan["command"]["env"]["IMAGER_BENCH_IMAGING_FFT_PRECISION"]
-        )
-        self.assertEqual("accelerate", plan["mode"]["imaging_fft_backend"])
-        self.assertEqual(
-            "accelerate", plan["command"]["env"]["IMAGER_BENCH_IMAGING_FFT_BACKEND"]
         )
         self.assertEqual("clark", plan["mode"]["deconvolver"])
         self.assertEqual(1000, plan["mode"]["niter"])

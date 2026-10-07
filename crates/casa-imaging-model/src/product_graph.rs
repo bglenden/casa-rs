@@ -65,19 +65,6 @@ pub enum ProductTerm {
     Single,
     /// One zero-based Taylor coefficient or convolution order.
     Taylor(usize),
-    /// One smooth continuum coefficient of a joint reconstruction.
-    Continuum(usize),
-    /// The channel-local line component evaluated on the output sampling.
-    Line,
-    /// The sum of continuum and line components on the output sampling.
-    Total,
-    /// One explicitly retained dense joint-normal block.
-    JointNormal {
-        /// Block row in composite coefficient order.
-        row: usize,
-        /// Block column in composite coefficient order.
-        column: usize,
-    },
 }
 
 /// Exact logical meaning of one product node.
@@ -95,10 +82,6 @@ pub enum ProductRole {
     SumWeights(ProductTerm),
     /// Reconstruction mask, distinct from output validity.
     CleanMask,
-    /// Joint continuum-component reconstruction mask.
-    ContinuumCleanMask,
-    /// Joint line-component reconstruction mask.
-    LineCleanMask,
     /// Imaging weight image or Taylor convolution term.
     Weight(ProductTerm),
     /// Primary-beam response.
@@ -126,10 +109,6 @@ pub enum ProductRole {
 pub enum ProductAxisKind {
     /// Full sky-image axes.
     SkyImage,
-    /// One direction/polarization image with a singleton coefficient axis.
-    CoefficientImage,
-    /// One unit-direction plane state with a singleton coefficient axis.
-    CoefficientPlaneState,
     /// Per-polarization/per-spectral-plane state with unit direction extents.
     PlaneState,
     /// Logical collection or metadata embedded in image products.
@@ -551,7 +530,7 @@ impl<'a> GraphBuilder<'a> {
                         domain,
                         ProductRole::Psf(term),
                         product_name("psf", term, false),
-                        axis_kind_for_term(term),
+                        ProductAxisKind::SkyImage,
                         ProductUnit::JyPerBeam,
                         Some(ProductNormalization::UnitResponse),
                         if is_zeroth(term) {
@@ -565,18 +544,17 @@ impl<'a> GraphBuilder<'a> {
                 }
             }
             ProductKind::Residual => {
-                let validity = self.normalized_image_validity();
-                for term in self.residual_terms() {
+                for term in self.image_terms() {
                     self.add_image(
                         domain_index,
                         domain,
                         ProductRole::Residual(term),
                         product_name("residual", term, false),
-                        axis_kind_for_term(term),
+                        ProductAxisKind::SkyImage,
                         ProductUnit::JyPerBeam,
                         Some(self.products.normalization()),
                         ProductBeamRule::Fitted,
-                        validity,
+                        ProductValidityRule::FinalNormalState,
                         [],
                     );
                 }
@@ -588,7 +566,7 @@ impl<'a> GraphBuilder<'a> {
                         domain,
                         ProductRole::Model(term),
                         product_name("model", term, false),
-                        axis_kind_for_term(term),
+                        ProductAxisKind::SkyImage,
                         ProductUnit::JyPerPixel,
                         None,
                         ProductBeamRule::None,
@@ -598,30 +576,21 @@ impl<'a> GraphBuilder<'a> {
                 }
             }
             ProductKind::RestoredImage => {
-                let validity = self.normalized_image_validity();
-                for term in self.restored_terms() {
-                    let residual = if matches!(
-                        self.reconstruction.basis(),
-                        ReconstructionBasis::JointContinuumLine { .. }
-                    ) {
-                        ProductTerm::Total
-                    } else {
-                        term
-                    };
+                for term in self.image_terms() {
                     let dependencies = self.required_nodes_for(
                         domain_index,
-                        [ProductRole::Residual(residual), ProductRole::Model(term)],
+                        [ProductRole::Residual(term), ProductRole::Model(term)],
                     );
                     self.add_image(
                         domain_index,
                         domain,
                         ProductRole::RestoredImage(term),
                         product_name("image", term, false),
-                        axis_kind_for_term(term),
+                        ProductAxisKind::SkyImage,
                         ProductUnit::JyPerBeam,
                         Some(self.products.normalization()),
                         ProductBeamRule::Restoring(self.products.restoring_beam()),
-                        validity,
+                        ProductValidityRule::FinalNormalState,
                         dependencies,
                     );
                 }
@@ -633,11 +602,7 @@ impl<'a> GraphBuilder<'a> {
                         domain,
                         ProductRole::SumWeights(term),
                         product_name("sumwt", term, false),
-                        if matches!(term, ProductTerm::JointNormal { .. }) {
-                            ProductAxisKind::CoefficientPlaneState
-                        } else {
-                            ProductAxisKind::PlaneState
-                        },
+                        ProductAxisKind::PlaneState,
                         ProductUnit::VisibilityWeight,
                         None,
                         ProductBeamRule::None,
@@ -647,31 +612,18 @@ impl<'a> GraphBuilder<'a> {
                 }
             }
             ProductKind::Mask => {
-                let roles = if matches!(
-                    self.reconstruction.basis(),
-                    ReconstructionBasis::JointContinuumLine { .. }
-                ) {
-                    vec![
-                        (ProductRole::ContinuumCleanMask, ".continuum.mask"),
-                        (ProductRole::LineCleanMask, ".line.mask"),
-                    ]
-                } else {
-                    vec![(ProductRole::CleanMask, ".mask")]
-                };
-                for (role, name) in roles {
-                    self.add_image(
-                        domain_index,
-                        domain,
-                        role,
-                        name.to_string(),
-                        ProductAxisKind::SkyImage,
-                        ProductUnit::Dimensionless,
-                        None,
-                        ProductBeamRule::None,
-                        ProductValidityRule::All,
-                        [],
-                    );
-                }
+                self.add_image(
+                    domain_index,
+                    domain,
+                    ProductRole::CleanMask,
+                    ".mask".to_string(),
+                    ProductAxisKind::SkyImage,
+                    ProductUnit::Dimensionless,
+                    None,
+                    ProductBeamRule::None,
+                    ProductValidityRule::All,
+                    [],
+                );
             }
             ProductKind::Weight => {
                 for term in self.convolution_terms() {
@@ -680,7 +632,7 @@ impl<'a> GraphBuilder<'a> {
                         domain,
                         ProductRole::Weight(term),
                         product_name("weight", term, false),
-                        axis_kind_for_term(term),
+                        ProductAxisKind::SkyImage,
                         ProductUnit::Dimensionless,
                         None,
                         ProductBeamRule::None,
@@ -702,7 +654,7 @@ impl<'a> GraphBuilder<'a> {
                         domain,
                         ProductRole::PrimaryBeam(term),
                         product_name("pb", term, false),
-                        axis_kind_for_term(term),
+                        ProductAxisKind::SkyImage,
                         ProductUnit::Dimensionless,
                         None,
                         ProductBeamRule::None,
@@ -887,15 +839,6 @@ impl<'a> GraphBuilder<'a> {
                     ProductBeamRule::Metadata(self.products.restoring_beam()),
                     dependencies,
                 );
-            }
-        }
-    }
-
-    fn normalized_image_validity(&self) -> ProductValidityRule {
-        match self.products.normalization() {
-            ProductNormalization::UnitResponse => ProductValidityRule::FinalNormalState,
-            ProductNormalization::FlatNoise | ProductNormalization::FlatSky => {
-                ProductValidityRule::PrimaryBeam(self.products.validity().primary_beam())
             }
         }
     }
@@ -1091,7 +1034,6 @@ impl<'a> GraphBuilder<'a> {
             ReconstructionBasis::Constant | ReconstructionBasis::ChannelLocal { .. } => {
                 ProductTerm::Single
             }
-            ReconstructionBasis::JointContinuumLine { .. } => ProductTerm::Total,
         }
     }
 
@@ -1109,37 +1051,9 @@ impl<'a> GraphBuilder<'a> {
             | ReconstructionBasis::TaylorViaChannelMajor { terms, .. } => {
                 (0..terms).map(ProductTerm::Taylor).collect()
             }
-            ReconstructionBasis::JointContinuumLine {
-                continuum_terms, ..
-            } => (0..continuum_terms)
-                .map(ProductTerm::Continuum)
-                .chain([ProductTerm::Line, ProductTerm::Total])
-                .collect(),
             ReconstructionBasis::Constant | ReconstructionBasis::ChannelLocal { .. } => {
                 vec![ProductTerm::Single]
             }
-        }
-    }
-
-    fn residual_terms(&self) -> Vec<ProductTerm> {
-        if matches!(
-            self.reconstruction.basis(),
-            ReconstructionBasis::JointContinuumLine { .. }
-        ) {
-            vec![ProductTerm::Total]
-        } else {
-            self.image_terms()
-        }
-    }
-
-    fn restored_terms(&self) -> Vec<ProductTerm> {
-        if matches!(
-            self.reconstruction.basis(),
-            ReconstructionBasis::JointContinuumLine { .. }
-        ) {
-            vec![ProductTerm::Line, ProductTerm::Total]
-        } else {
-            self.image_terms()
         }
     }
 
@@ -1149,17 +1063,6 @@ impl<'a> GraphBuilder<'a> {
             | ReconstructionBasis::TaylorViaChannelMajor { terms, .. } => {
                 (0..terms.saturating_mul(2).saturating_sub(1))
                     .map(ProductTerm::Taylor)
-                    .collect()
-            }
-            ReconstructionBasis::JointContinuumLine {
-                continuum_terms,
-                line_terms,
-            } => {
-                let terms = continuum_terms + line_terms;
-                (0..terms)
-                    .flat_map(|row| {
-                        (0..terms).map(move |column| ProductTerm::JointNormal { row, column })
-                    })
                     .collect()
             }
             ReconstructionBasis::Constant | ReconstructionBasis::ChannelLocal { .. } => {
@@ -1245,8 +1148,6 @@ fn encode_node(encoder: &mut CanonicalEncoder, node: &ProductNode) {
         ProductAxisKind::SkyImage => 0,
         ProductAxisKind::PlaneState => 1,
         ProductAxisKind::Metadata => 2,
-        ProductAxisKind::CoefficientImage => 3,
-        ProductAxisKind::CoefficientPlaneState => 4,
     });
     encoder.digest(node.axes.geometry_id.as_bytes());
     match &node.axes.domain {
@@ -1336,8 +1237,6 @@ fn encode_role(encoder: &mut CanonicalEncoder, role: ProductRole) {
         ProductRole::SpectralIndexError => encoder.u8(13),
         ProductRole::PbCorrectedSpectralIndex => encoder.u8(14),
         ProductRole::BeamMetadata => encoder.u8(15),
-        ProductRole::ContinuumCleanMask => encoder.u8(16),
-        ProductRole::LineCleanMask => encoder.u8(17),
     }
 }
 
@@ -1348,17 +1247,6 @@ fn encode_term_role(encoder: &mut CanonicalEncoder, tag: u8, term: ProductTerm) 
         ProductTerm::Taylor(term) => {
             encoder.u8(1);
             encoder.usize(term);
-        }
-        ProductTerm::Continuum(term) => {
-            encoder.u8(2);
-            encoder.usize(term);
-        }
-        ProductTerm::Line => encoder.u8(3),
-        ProductTerm::Total => encoder.u8(4),
-        ProductTerm::JointNormal { row, column } => {
-            encoder.u8(5);
-            encoder.usize(row);
-            encoder.usize(column);
         }
     }
 }
@@ -1455,14 +1343,13 @@ fn product_axes(
     kind: ProductAxisKind,
 ) -> ProductAxes {
     let direction_pixels = match kind {
-        ProductAxisKind::SkyImage | ProductAxisKind::CoefficientImage => domain.shape().pixels(),
-        ProductAxisKind::PlaneState | ProductAxisKind::CoefficientPlaneState => [1, 1],
+        ProductAxisKind::SkyImage => domain.shape().pixels(),
+        ProductAxisKind::PlaneState => [1, 1],
         ProductAxisKind::Metadata => [0, 0],
     };
     let polarization = reconstruction.polarization().coordinates();
     let spectral = match kind {
         ProductAxisKind::Metadata => 0,
-        ProductAxisKind::CoefficientImage | ProductAxisKind::CoefficientPlaneState => 1,
         ProductAxisKind::SkyImage | ProductAxisKind::PlaneState => match reconstruction.basis() {
             ReconstructionBasis::TaylorViaChannelMajor { .. } => 1,
             _ => geometry.spectral().output_channels(),
@@ -1496,41 +1383,11 @@ fn product_name(stem: &str, term: ProductTerm, pb_corrected: bool) -> String {
         (ProductTerm::Single, true) => format!(".{stem}.pbcor"),
         (ProductTerm::Taylor(term), false) => format!(".{stem}.tt{term}"),
         (ProductTerm::Taylor(term), true) => format!(".{stem}.tt{term}.pbcor"),
-        (ProductTerm::Continuum(term), false) => format!(".continuum.{stem}.ct{term}"),
-        (ProductTerm::Continuum(term), true) => format!(".continuum.{stem}.ct{term}.pbcor"),
-        (ProductTerm::Line, false) => format!(".line.{stem}"),
-        (ProductTerm::Line, true) => format!(".line.{stem}.pbcor"),
-        (ProductTerm::Total, false) => format!(".total.{stem}"),
-        (ProductTerm::Total, true) => format!(".total.{stem}.pbcor"),
-        (ProductTerm::JointNormal { row, column }, false) => {
-            format!(".{stem}.joint{row}_{column}")
-        }
-        (ProductTerm::JointNormal { row, column }, true) => {
-            format!(".{stem}.joint{row}_{column}.pbcor")
-        }
     }
 }
 
 fn is_zeroth(term: ProductTerm) -> bool {
-    matches!(
-        term,
-        ProductTerm::Single
-            | ProductTerm::Taylor(0)
-            | ProductTerm::Continuum(0)
-            | ProductTerm::Total
-            | ProductTerm::JointNormal { row: 0, column: 0 }
-    )
-}
-
-fn axis_kind_for_term(term: ProductTerm) -> ProductAxisKind {
-    match term {
-        ProductTerm::Continuum(_) | ProductTerm::JointNormal { .. } => {
-            ProductAxisKind::CoefficientImage
-        }
-        ProductTerm::Single | ProductTerm::Taylor(_) | ProductTerm::Line | ProductTerm::Total => {
-            ProductAxisKind::SkyImage
-        }
-    }
+    matches!(term, ProductTerm::Single | ProductTerm::Taylor(0))
 }
 
 fn canonical_ids<T: Ord>(values: impl IntoIterator<Item = T>) -> Box<[T]> {

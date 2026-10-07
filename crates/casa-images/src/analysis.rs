@@ -9,6 +9,7 @@ use casa_coordinates::{
     CoordinateSystem, CoordinateType, FitsHeader, FitsValue,
     fits::{from_fits_header, to_fits_header},
 };
+use casa_fft::Fft2;
 use casa_lattices::{LatticeStatistics, Statistic, StatsElement, TiledShape};
 use casa_provider_contracts::{
     NoAdditionalProviderSchemas, ProviderCliMachineActions, ProviderCliProjection,
@@ -25,7 +26,6 @@ use fitsio::{
 };
 use ndarray::{Array2, Axis, IxDyn, ShapeBuilder, Zip};
 use num_complex::Complex32;
-use rustfft::FftPlanner;
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 
@@ -3516,45 +3516,28 @@ fn unravel_index(mut value: usize, shape: &[usize]) -> Vec<usize> {
 
 fn centered_fft2(input: &Array2<Complex32>) -> Array2<Complex32> {
     let mut shifted = ifftshift2(input);
-    transform_axis(&mut shifted, Axis(0), false);
-    transform_axis(&mut shifted, Axis(1), false);
+    let mut fft = Fft2::<f32>::new([shifted.shape()[0], shifted.shape()[1]])
+        .expect("valid feather FFT shape");
+    fft.transform(
+        shifted.as_slice_mut().expect("contiguous feather plane"),
+        false,
+    )
+    .expect("valid feather FFT plan");
     fftshift2(&shifted)
 }
 
 fn centered_ifft2(input: &Array2<Complex32>) -> Array2<Complex32> {
     let mut shifted = ifftshift2(input);
-    transform_axis(&mut shifted, Axis(0), true);
-    transform_axis(&mut shifted, Axis(1), true);
+    let mut fft = Fft2::<f32>::new([shifted.shape()[0], shifted.shape()[1]])
+        .expect("valid feather FFT shape");
+    fft.transform(
+        shifted.as_slice_mut().expect("contiguous feather plane"),
+        true,
+    )
+    .expect("valid feather FFT plan");
     let scale = 1.0 / (input.shape()[0] * input.shape()[1]) as f32;
     shifted.mapv_inplace(|value| value * scale);
     fftshift2(&shifted)
-}
-
-fn transform_axis(data: &mut Array2<Complex32>, axis: Axis, inverse: bool) {
-    let len = data.len_of(axis);
-    let mut planner = FftPlanner::<f32>::new();
-    let fft = if inverse {
-        planner.plan_fft_inverse(len)
-    } else {
-        planner.plan_fft_forward(len)
-    };
-    if axis.index() == 0 {
-        for column_index in 0..data.shape()[1] {
-            let mut lane = data.column(column_index).to_vec();
-            fft.process(&mut lane);
-            for (row_index, value) in lane.into_iter().enumerate() {
-                data[(row_index, column_index)] = value;
-            }
-        }
-    } else {
-        for row_index in 0..data.shape()[0] {
-            let mut lane = data.row(row_index).to_vec();
-            fft.process(&mut lane);
-            for (column_index, value) in lane.into_iter().enumerate() {
-                data[(row_index, column_index)] = value;
-            }
-        }
-    }
 }
 
 fn fftshift2(input: &Array2<Complex32>) -> Array2<Complex32> {

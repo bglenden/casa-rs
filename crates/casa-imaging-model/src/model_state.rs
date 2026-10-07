@@ -19,7 +19,7 @@ const MODEL_SPACE_IDENTITY_VERSION: u32 = 1;
 const MODEL_SOURCE_SHAPE_IDENTITY_DOMAIN: &[u8] = b"casa-rs-model-source-shape";
 const MODEL_SOURCE_SHAPE_IDENTITY_VERSION: u32 = 1;
 const MODEL_LIFECYCLE_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-model-lifecycle-contract";
-const MODEL_LIFECYCLE_CONTRACT_IDENTITY_VERSION: u32 = 5;
+const MODEL_LIFECYCLE_CONTRACT_IDENTITY_VERSION: u32 = 6;
 const MODEL_REPROJECTION_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-model-reprojection-contract";
 const MODEL_REPROJECTION_CONTRACT_IDENTITY_VERSION: u32 = 1;
 const MODEL_REPROJECTED_SEED_IDENTITY_DOMAIN: &[u8] = b"casa-rs-model-reprojected-seed";
@@ -119,19 +119,50 @@ pub fn model_support_identity(support: impl IntoIterator<Item = ModelSupport>) -
 pub fn try_model_support_identity<E>(
     support: impl IntoIterator<Item = Result<ModelSupport, E>>,
 ) -> Result<LogicalIdentity, E> {
-    let mut encoder = CanonicalEncoder::new();
-    encoder.bytes(MODEL_SUPPORT_IDENTITY_DOMAIN);
-    encoder.u32(MODEL_SUPPORT_IDENTITY_VERSION);
-    let mut count = 0usize;
+    let mut inspection = ModelSourceSupportInspection::new();
     for value in support {
-        encoder.u8(match value? {
+        inspection.push(value?);
+    }
+    Ok(inspection.finish())
+}
+
+/// Incremental validity-mask inspection for an externally supplied aligned seed.
+/// Fold into ingestion; trusted in-process model transitions do not use this.
+#[doc(hidden)]
+pub struct ModelSourceSupportInspection {
+    encoder: CanonicalEncoder,
+    count: usize,
+}
+
+impl ModelSourceSupportInspection {
+    /// Begin inspecting one external mask.
+    pub fn new() -> Self {
+        let mut encoder = CanonicalEncoder::new();
+        encoder.bytes(MODEL_SUPPORT_IDENTITY_DOMAIN);
+        encoder.u32(MODEL_SUPPORT_IDENTITY_VERSION);
+        Self { encoder, count: 0 }
+    }
+
+    /// Record a mask value as its corresponding sample is ingested.
+    pub fn push(&mut self, value: ModelSupport) {
+        self.encoder.u8(match value {
             ModelSupport::Valid => 1,
             ModelSupport::Invalid => 0,
         });
-        count += 1;
+        self.count += 1;
     }
-    encoder.usize(count);
-    Ok(LogicalIdentity::from_sha256(encoder.finish()))
+
+    /// Complete the declared external-mask comparison.
+    pub fn finish(mut self) -> LogicalIdentity {
+        self.encoder.usize(self.count);
+        LogicalIdentity::from_sha256(self.encoder.finish())
+    }
+}
+
+impl Default for ModelSourceSupportInspection {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Explicit logical cardinality and numeric ceilings for one model lifecycle.
@@ -480,7 +511,7 @@ impl ModelSourceShape {
     }
 }
 
-/// Digest projection of one reconstruction-owned, target-ordered preparation.
+/// Source and geometry projection of one reconstruction-owned preparation.
 ///
 /// This projection is compiler and receipt data, not executable preparation
 /// authority. Only `casa-imaging-reconstruction` can bind it to the opaque
@@ -514,10 +545,6 @@ pub struct ModelReprojectedSeedProjection {
     source_shape: Box<ModelSourceShape>,
     preparation_contract: LogicalIdentity,
     reprojection: LogicalIdentity,
-    support: LogicalIdentity,
-    samples: LogicalIdentity,
-    stencil: LogicalIdentity,
-    proof: LogicalIdentity,
 }
 
 impl ModelReprojectedSeedProjection {
@@ -531,31 +558,15 @@ impl ModelReprojectedSeedProjection {
         source_shape: ModelSourceShape,
         preparation_contract: LogicalIdentity,
         reprojection: LogicalIdentity,
-        support: LogicalIdentity,
-        samples: LogicalIdentity,
-        stencil: LogicalIdentity,
-        proof: LogicalIdentity,
     ) -> Result<Self, ModelContractError> {
-        if !identities_are_set(&[
-            source,
-            preparation_contract,
-            reprojection,
-            support,
-            samples,
-            stencil,
-            proof,
-        ]) {
-            return Err(ModelContractError::InvalidReprojectedSeedProof);
+        if !identities_are_set(&[source, preparation_contract, reprojection]) {
+            return Err(ModelContractError::InvalidReprojectedSeedProjection);
         }
         Ok(Self {
             source,
             source_shape: Box::new(source_shape),
             preparation_contract,
             reprojection,
-            support,
-            samples,
-            stencil,
-            proof,
         })
     }
 
@@ -583,30 +594,6 @@ impl ModelReprojectedSeedProjection {
         self.reprojection
     }
 
-    /// Return the canonical target-support identity.
-    #[must_use]
-    pub const fn support(&self) -> LogicalIdentity {
-        self.support
-    }
-
-    /// Return the canonical target-ordered value-and-support identity.
-    #[must_use]
-    pub const fn samples(&self) -> LogicalIdentity {
-        self.samples
-    }
-
-    /// Return the canonical ordered interpolation-stencil identity.
-    #[must_use]
-    pub const fn stencil(&self) -> LogicalIdentity {
-        self.stencil
-    }
-
-    /// Return the complete preparation-proof identity.
-    #[must_use]
-    pub const fn proof(&self) -> LogicalIdentity {
-        self.proof
-    }
-
     fn validate(
         &self,
         target: &ModelSourceShape,
@@ -628,14 +615,10 @@ impl ModelReprojectedSeedProjection {
             target.identity(),
         );
         if self.source.as_bytes() == [0; 32]
-            || self.support.as_bytes() == [0; 32]
-            || self.samples.as_bytes() == [0; 32]
-            || self.stencil.as_bytes() == [0; 32]
-            || self.proof.as_bytes() == [0; 32]
             || self.source_shape.as_ref() == target
             || self.reprojection != expected_reprojection
         {
-            Err(ModelContractError::InvalidReprojectedSeedProof)
+            Err(ModelContractError::InvalidReprojectedSeedProjection)
         } else {
             Ok(())
         }
@@ -693,7 +676,7 @@ pub enum ModelInputCommitmentIdentity {
         /// Source validity-mask identity.
         support: LogicalIdentity,
     },
-    /// One opaque reconstruction-prepared reprojection proof.
+    /// Source and geometry of a reconstruction-owned reprojection.
     ReprojectedSeed {
         /// Immutable source artifact identity.
         source: LogicalIdentity,
@@ -703,14 +686,6 @@ pub enum ModelInputCommitmentIdentity {
         preparation_contract: LogicalIdentity,
         /// Canonical source-to-target mapping identity.
         reprojection: LogicalIdentity,
-        /// Projected target-support identity.
-        support: LogicalIdentity,
-        /// Canonical target-ordered projected sample identity.
-        samples: LogicalIdentity,
-        /// Canonical ordered interpolation-stencil identity.
-        stencil: LogicalIdentity,
-        /// Complete opaque preparation-proof identity.
-        proof: LogicalIdentity,
     },
     /// One exact previously minted generation.
     Generation(LogicalIdentity),
@@ -729,10 +704,6 @@ impl ModelInputCommitmentIdentity {
                 source_shape: commitment.source_shape().identity(),
                 preparation_contract: commitment.preparation_contract(),
                 reprojection: commitment.reprojection(),
-                support: commitment.support(),
-                samples: commitment.samples(),
-                stencil: commitment.stencil(),
-                proof: commitment.proof(),
             },
             ModelInputCommitment::Generation(generation) => Self::Generation(*generation),
         }
@@ -1152,9 +1123,9 @@ pub enum ModelContractError {
     /// A seed commitment used an all-zero evidence identity.
     #[error("model seed, support, and reprojection identities must be established")]
     UnidentifiedInputEvidence,
-    /// Reprojected input was not one canonical opaque preparation proof.
-    #[error("reprojected model input is not a canonical preparation proof")]
-    InvalidReprojectedSeedProof,
+    /// Source/geometry projection disagrees with the compiled target.
+    #[error("reprojected model source/geometry projection is inconsistent")]
+    InvalidReprojectedSeedProjection,
     /// A persisted lifecycle identity disagreed with its complete typed projection.
     #[error("model lifecycle identity differs from its canonical typed projection")]
     LifecycleContractMismatch,
@@ -1278,10 +1249,6 @@ fn input_identities_are_unset(input: &ModelInputCommitment) -> bool {
             commitment.source(),
             commitment.preparation_contract(),
             commitment.reprojection(),
-            commitment.support(),
-            commitment.samples(),
-            commitment.stencil(),
-            commitment.proof(),
         ]),
         ModelInputCommitment::Generation(identity) => !identities_are_set(&[*identity]),
     }
@@ -1419,7 +1386,7 @@ fn model_lifecycle_contract_id(
 ///
 /// Receipt validation supplies typed, digest-only projections. The model
 /// contract owner revalidates the complete lifecycle identity, the canonical
-/// empty-target preparation identity, and the opaque reprojected-input proof;
+/// empty-target preparation identity and source/geometry mapping;
 /// duplicate audit fields are never treated as authority.
 #[allow(clippy::too_many_arguments)]
 pub fn validate_model_lifecycle_contract_identity(
@@ -1484,20 +1451,12 @@ fn validate_input_commitment_identity(
             source_shape,
             preparation_contract,
             reprojection,
-            support,
-            samples,
-            stencil,
-            proof,
         } => {
             require_input_identities(&[
                 *source,
                 *source_shape,
                 *preparation_contract,
                 *reprojection,
-                *support,
-                *samples,
-                *stencil,
-                *proof,
             ])?;
             let expected_preparation = model_lifecycle_contract_identity(
                 numerics,
@@ -1517,7 +1476,7 @@ fn validate_input_commitment_identity(
             if *preparation_contract != expected_preparation
                 || *reprojection != expected_reprojection
             {
-                return Err(ModelContractError::InvalidReprojectedSeedProof);
+                return Err(ModelContractError::InvalidReprojectedSeedProjection);
             }
             Ok(())
         }
@@ -1580,20 +1539,12 @@ fn encode_input_commitment_identity(
             source_shape,
             preparation_contract,
             reprojection,
-            support,
-            samples,
-            stencil,
-            proof,
         } => {
             encoder.u8(2);
             encoder.identity(*source);
             encoder.identity(*source_shape);
             encoder.identity(*preparation_contract);
             encoder.identity(*reprojection);
-            encoder.identity(*support);
-            encoder.identity(*samples);
-            encoder.identity(*stencil);
-            encoder.identity(*proof);
         }
         ModelInputCommitmentIdentity::Generation(generation) => {
             encoder.u8(3);
@@ -1624,10 +1575,6 @@ const fn coefficient_count(basis: ReconstructionBasis) -> usize {
         ReconstructionBasis::Taylor { terms }
         | ReconstructionBasis::TaylorViaChannelMajor { terms, .. } => terms,
         ReconstructionBasis::ChannelLocal { channels } => channels,
-        ReconstructionBasis::JointContinuumLine {
-            continuum_terms,
-            line_terms,
-        } => continuum_terms.saturating_add(line_terms),
     }
 }
 

@@ -8,17 +8,19 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use casa_imaging_model::{CompiledProblem, ModelSample};
-use casa_imaging_reconstruction::{
-    ModelStoragePlan, SpectralOperatorSpecification,
-    runtime_adapter::{ChannelNormalStorageRequirement, NormalStorageFactory, NormalStoragePlan},
-};
-
 use crate::{
+    managed_cube_blocks::{CubeResidency, ManagedPlaneArray},
+    managed_model::ManagedModelFactory,
+    managed_normal::ManagedNormalFactory,
     paged_cube_state::{
         CubeArrayLayout, CubeBackingMetrics, PagedModelStorageFactory, PagedNormalStorageFactory,
     },
     *,
+};
+use casa_imaging_model::{CompiledProblem, ModelSample};
+use casa_imaging_reconstruction::{
+    ModelStorageFactory, ModelStoragePlan, SpectralOperatorSpecification,
+    runtime_adapter::{ChannelNormalStorageRequirement, NormalStorageFactory, NormalStoragePlan},
 };
 
 /// Reservations are attached at the scheduler's existing export boundaries.
@@ -33,16 +35,47 @@ struct CubeStateRetention {
 /// resident normals and remains conservative for paged file/storage resources.
 #[derive(Debug)]
 struct CubeBackingRetention {
-    heap: OnceLock<RetainedArtifactPermit>,
+    heap: OnceLock<std::sync::Mutex<RetainedArtifactPermit>>,
     _shared: Arc<CubeStateRetention>,
+}
+
+/// One retained lease and one physical cache across every cube major cycle.
+pub(crate) struct ManagedCubeRun {
+    pub(crate) residency: Arc<CubeResidency>,
+    retention: Arc<CubeBackingRetention>,
+}
+
+impl ManagedCubeRun {
+    /// Physical eviction must precede returning any part of the retained lease.
+    pub(crate) fn shrink_cache_to(&self, target: usize) -> io::Result<()> {
+        self.residency.shrink_to(target)?;
+        self.retention
+            .heap
+            .get()
+            .ok_or_else(|| io::Error::other("managed cache permit is not retained"))?
+            .lock()
+            .map_err(|_| io::Error::other("managed cache permit lock poisoned"))?
+            .narrow_memory_to(target as u64)
+            .map_err(io::Error::other)
+    }
+}
+
+impl std::fmt::Debug for ManagedCubeRun {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ManagedCubeRun")
+            .field("used_bytes", &self.residency.used_bytes())
+            .finish_non_exhaustive()
+    }
 }
 
 /// A candidate owns a model and separate epoch/invariant normal backings.
 /// Prior generations keep their own reservations while this generation is built.
 #[derive(Debug)]
 pub(crate) struct CubeStatePlan {
-    model: Arc<PagedModelStorageFactory>,
+    model: Arc<dyn ModelStorageFactory>,
     normal: Arc<dyn NormalStorageFactory>,
+    managed: Option<Arc<ManagedCubeRun>>,
+    managed_initial: bool,
     retention: Arc<CubeStateRetention>,
     metrics: Arc<CubeBackingMetrics>,
     model_window_samples: usize,
@@ -59,6 +92,262 @@ pub(crate) struct CubeStatePlan {
 }
 
 impl CubeStatePlan {
+    /// Admission floor and full-residency ceiling for two overlapping model
+    /// generations, one invariant PSF and two residual epochs. All owner,
+    /// registry, staging and active-operation terms use the same typed array
+    /// formulas as physical creation.
+    pub(crate) fn managed_cache_limits(
+        problem: &CompiledProblem,
+        storage: &ManagedSpillStorage,
+        workers: usize,
+    ) -> io::Result<(usize, usize)> {
+        let shape = problem.model_lifecycle().target();
+        let [domain] = shape.domains() else {
+            return Err(io::Error::other("managed cube requires one image domain"));
+        };
+        let [width, height] = domain.pixels();
+        let cells = width.checked_mul(height).ok_or_else(overflow)?;
+        if cells == 0 || workers == 0 || !shape.sample_count().is_multiple_of(cells) {
+            return Err(overflow());
+        }
+        let planes = shape.sample_count() / cells;
+        Self::managed_cache_limits_for_shape(storage.directory(), height, width, planes, workers)
+    }
+
+    fn managed_cache_limits_for_shape(
+        directory: &std::path::Path,
+        height: usize,
+        width: usize,
+        planes: usize,
+        workers: usize,
+    ) -> io::Result<(usize, usize)> {
+        let value = ManagedPlaneArray::<f32>::footprint(directory, height, width, planes)?;
+        let support = ManagedPlaneArray::<bool>::footprint(directory, height, width, planes)?;
+        let owner = add(
+            value.owner_bytes.checked_mul(5).ok_or_else(overflow)?,
+            support.owner_bytes.checked_mul(2).ok_or_else(overflow)?,
+        )?;
+        let registry = add(
+            value.registry_bytes.checked_mul(5).ok_or_else(overflow)?,
+            support.registry_bytes.checked_mul(2).ok_or_else(overflow)?,
+        )?;
+        let staging = add(
+            value.staging_bytes.checked_mul(5).ok_or_else(overflow)?,
+            support.staging_bytes.checked_mul(2).ok_or_else(overflow)?,
+        )?;
+        let worker_blocks = add(
+            value.block_bytes.checked_mul(3).ok_or_else(overflow)?,
+            support.block_bytes.checked_mul(2).ok_or_else(overflow)?,
+        )?;
+        let active = worker_blocks.checked_mul(workers).ok_or_else(overflow)?;
+        let fixed = CubeResidency::fixed_owner_bytes();
+        let operation =
+            CubeResidency::operation_overhead(workers.checked_mul(5).ok_or_else(overflow)?)?;
+        let normal_floor = [fixed, owner, registry, staging, active, operation]
+            .into_iter()
+            .try_fold(0usize, add)?;
+        let creation_overlap = add(
+            add(fixed, add(owner, registry)?)?,
+            add(staging, value.creation_bytes.max(support.creation_bytes))?,
+        )?;
+        let minimum = normal_floor.max(creation_overlap);
+        let payload = add(
+            value
+                .block_bytes
+                .checked_mul(5)
+                .and_then(|n| n.checked_mul(planes))
+                .ok_or_else(overflow)?,
+            support
+                .block_bytes
+                .checked_mul(2)
+                .and_then(|n| n.checked_mul(planes))
+                .ok_or_else(overflow)?,
+        )?;
+        let full = add(
+            add(add(fixed, owner)?, registry)?,
+            add(add(staging, payload)?, operation)?,
+        )?
+        .max(minimum);
+        Ok((minimum, full))
+    }
+
+    /// Bind channel-local Float owners to the one lease-backed run cache.
+    /// The first major reserves its storage and memory capacity; later majors
+    /// reuse that retained capacity while admitting only their own workspaces.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn managed_streaming_cube(
+        problem: &CompiledProblem,
+        storage: &ManagedSpillStorage,
+        window_channels: usize,
+        acquire: WorkNodeId,
+        terminal: WorkNodeId,
+        run: Option<Arc<ManagedCubeRun>>,
+        cache_bytes: usize,
+    ) -> io::Result<Self> {
+        let shape = problem.model_lifecycle().target();
+        let [domain] = shape.domains() else {
+            return Err(io::Error::other("managed cube requires one image domain"));
+        };
+        let [width, height] = domain.pixels();
+        let cells = width.checked_mul(height).ok_or_else(overflow)?;
+        let planes = shape.sample_count() / cells;
+        if cells == 0 || planes == 0 || cells.checked_mul(planes) != Some(shape.sample_count()) {
+            return Err(overflow());
+        }
+        let initial = run.is_none();
+        let retention = run.as_ref().map_or_else(
+            || Arc::new(CubeStateRetention::default()),
+            |run| run.retention._shared.clone(),
+        );
+        let run = match run {
+            Some(run) => run,
+            None => Arc::new(ManagedCubeRun {
+                residency: CubeResidency::new(cache_bytes)?,
+                retention: Arc::new(CubeBackingRetention {
+                    heap: OnceLock::new(),
+                    _shared: retention.clone(),
+                }),
+            }),
+        };
+        let permit_owner: Arc<dyn std::fmt::Debug + Send + Sync> = run.clone();
+        let model: Arc<dyn ModelStorageFactory> = Arc::new(ManagedModelFactory::new(
+            run.residency.clone(),
+            permit_owner.clone(),
+            storage.directory(),
+            [height, width],
+            planes,
+        )?);
+        let normal: Arc<dyn NormalStorageFactory> = Arc::new(ManagedNormalFactory::new(
+            run.residency.clone(),
+            permit_owner,
+            storage.directory(),
+            [height, width],
+        )?);
+        let storage_id = format!("cube-state-storage-{}", acquire.as_str());
+        let value_disk =
+            ManagedPlaneArray::<f32>::footprint(storage.directory(), height, width, planes)?
+                .storage_bytes;
+        let support_disk =
+            ManagedPlaneArray::<bool>::footprint(storage.directory(), height, width, planes)?
+                .storage_bytes;
+        let storage_bytes = if initial {
+            let model_pair = add(value_disk, support_disk)?;
+            as_u64(add(
+                model_pair.checked_mul(2).ok_or_else(overflow)?,
+                value_disk.checked_mul(3).ok_or_else(overflow)?,
+            )?)?
+        } else {
+            0
+        };
+        let file_handles = if initial { 7 } else { 0 };
+        let heap_id = format!("cube-state-retained-{}", acquire.as_str());
+        let heap_bytes = size_of::<Self>()
+            .checked_add(size_of::<ManagedModelFactory>())
+            .and_then(|n| n.checked_add(size_of::<ManagedNormalFactory>()))
+            .and_then(|n| n.checked_add(size_of::<ManagedCubeRun>()))
+            .and_then(|n| n.checked_add(size_of::<CubeStateRetention>()))
+            .and_then(|n| n.checked_add(size_of::<CubeBackingRetention>()))
+            .and_then(|n| n.checked_add(storage.directory().as_os_str().len() * 2))
+            .and_then(|n| n.checked_add(12 * size_of::<usize>()))
+            .ok_or_else(overflow)?;
+        let permit_bytes = if initial {
+            RetainedArtifactPermit::heap_bytes_for_resources(
+                &[
+                    LeaseResource::Storage {
+                        demand_id: storage_id.clone(),
+                        use_kind: StorageUseKind::Temporary,
+                    },
+                    LeaseResource::FileDescriptors,
+                ],
+                0,
+                "host-memory",
+                storage.resources().domain().as_str(),
+            )
+            .and_then(|n| {
+                RetainedArtifactPermit::heap_bytes_for_resources(
+                    &[LeaseResource::Memory {
+                        allocation_id: format!("cube-state-manager-{}", acquire.as_str()),
+                    }],
+                    1,
+                    "host-memory",
+                    storage.resources().domain().as_str(),
+                )
+                .and_then(|extra| n.checked_add(extra))
+            })
+            .ok_or_else(overflow)? as usize
+        } else {
+            0
+        };
+        let heap = allocation(
+            heap_id,
+            as_u64(add(heap_bytes, permit_bytes)?)?,
+            &acquire,
+            &terminal,
+            initial,
+        );
+        let backings = if initial {
+            vec![(
+                allocation(
+                    format!("cube-state-manager-{}", acquire.as_str()),
+                    as_u64(cache_bytes)?,
+                    &acquire,
+                    &terminal,
+                    true,
+                ),
+                run.retention.clone(),
+            )]
+            .into_boxed_slice()
+        } else {
+            Box::new([])
+        };
+        let plane_complex = cells
+            .checked_mul(size_of::<num_complex::Complex64>())
+            .ok_or_else(overflow)?;
+        let scratch_bytes = add(
+            plane_complex.checked_mul(2).ok_or_else(overflow)?,
+            cells
+                .checked_mul(size_of::<ModelSample>())
+                .ok_or_else(overflow)?,
+        )?;
+        let scratch = allocation(
+            format!("cube-state-access-{}", acquire.as_str()),
+            as_u64(scratch_bytes)?,
+            &acquire,
+            &terminal,
+            false,
+        );
+        let retained_bytes = if initial {
+            heap.bytes
+                .checked_add(as_u64(cache_bytes)?)
+                .ok_or_else(overflow)?
+        } else {
+            0
+        };
+        Ok(Self {
+            model,
+            normal,
+            managed: Some(run),
+            managed_initial: initial,
+            retention,
+            metrics: Arc::new(CubeBackingMetrics::default()),
+            model_window_samples: cells,
+            normal_window_channels: window_channels,
+            acquire,
+            terminal,
+            heap,
+            backings,
+            retained_bytes,
+            scratch,
+            storage_id,
+            storage_bytes,
+            file_handles,
+        })
+    }
+
+    pub(crate) fn managed_run(&self) -> Option<Arc<ManagedCubeRun>> {
+        self.managed.clone()
+    }
+
     pub(crate) fn new(
         problem: &CompiledProblem,
         storage: &ManagedSpillStorage,
@@ -78,38 +367,6 @@ impl CubeStatePlan {
             acquire,
             terminal,
             requirements,
-            false,
-        )
-    }
-
-    pub(crate) fn streaming_cube(
-        problem: &CompiledProblem,
-        storage: &ManagedSpillStorage,
-        window_channels: usize,
-        acquire: WorkNodeId,
-        terminal: WorkNodeId,
-        resident: bool,
-        residual_only: bool,
-    ) -> io::Result<Self> {
-        let specification =
-            SpectralOperatorSpecification::new(problem).map_err(io::Error::other)?;
-        let requirements = if residual_only {
-            ChannelNormalStorageRequirement::for_streaming_cube_refresh(
-                &specification,
-                window_channels,
-            )
-        } else {
-            ChannelNormalStorageRequirement::for_streaming_cube(&specification, window_channels)
-        }
-        .map_err(io::Error::other)?;
-        Self::with_normal(
-            problem,
-            storage,
-            window_channels,
-            acquire,
-            terminal,
-            requirements,
-            resident,
         )
     }
 
@@ -121,7 +378,6 @@ impl CubeStatePlan {
         acquire: WorkNodeId,
         terminal: WorkNodeId,
         requirements: Box<[ChannelNormalStorageRequirement]>,
-        resident: bool,
     ) -> io::Result<Self> {
         let shape = problem.model_lifecycle().target();
         let model_window_samples = shape.domains().iter().try_fold(0usize, |largest, domain| {
@@ -138,12 +394,25 @@ impl CubeStatePlan {
             _shared: retention.clone(),
         });
         let metrics = Arc::new(CubeBackingMetrics::default());
-        let model_layout = CubeArrayLayout::new(
-            shape.sample_count(),
-            model_window_samples,
-            model_window_samples,
-            1,
-        )
+        let model_layout = if let [domain] = shape.domains() {
+            let [width, height] = domain.pixels();
+            CubeArrayLayout::new_spatial(
+                shape.sample_count(),
+                height,
+                width
+                    .checked_mul(shape.polarizations())
+                    .ok_or_else(overflow)?,
+                model_window_samples,
+                1,
+            )
+        } else {
+            CubeArrayLayout::new(
+                shape.sample_count(),
+                model_window_samples,
+                model_window_samples,
+                1,
+            )
+        }
         .map_err(io::Error::other)?;
         let model = Arc::new(
             PagedModelStorageFactory::new(
@@ -158,9 +427,10 @@ impl CubeStatePlan {
         let layouts = requirements
             .iter()
             .map(|requirement| {
-                CubeArrayLayout::new(
+                CubeArrayLayout::new_spatial(
                     requirement.scalar_capacity(),
-                    requirement.complex_plane_scalars(),
+                    requirement.image_axes()[0],
+                    requirement.image_axes()[1],
                     requirement.maximum_window_scalars(),
                     1,
                 )
@@ -194,13 +464,9 @@ impl CubeStatePlan {
             )
             .ok_or_else(overflow)?;
         for ((_, layout), requirement) in layouts.iter().zip(&requirements) {
-            let ledger = if resident {
-                crate::streaming_cube::normal::ResidentNormalFactory::ledger(*requirement)?
-            } else {
-                layout
-                    .normal_ledger(storage.directory())
-                    .map_err(io::Error::other)?
-            };
+            let ledger = layout
+                .normal_ledger(storage.directory())
+                .map_err(io::Error::other)?;
             let normal_retention = Arc::new(CubeBackingRetention {
                 heap: OnceLock::new(),
                 _shared: retention.clone(),
@@ -237,24 +503,15 @@ impl CubeStatePlan {
                     .max(ledger.flush_scratch_bytes),
             );
         }
-        let (normal, normal_metadata): (Arc<dyn NormalStorageFactory>, usize) = if resident {
-            let factory = crate::streaming_cube::normal::ResidentNormalFactory::new(
-                requirements,
-                normal_retentions.into_boxed_slice(),
-                metrics.clone(),
-            );
-            let metadata = factory.metadata_bytes();
-            (Arc::new(factory), metadata)
-        } else {
-            let factory = PagedNormalStorageFactory::new(
-                storage.directory(),
-                layouts,
-                normal_retentions.into_boxed_slice(),
-                metrics.clone(),
-            );
-            let metadata = factory.owned_metadata_bytes().map_err(io::Error::other)?;
-            (Arc::new(factory), metadata)
-        };
+        let factory = PagedNormalStorageFactory::new(
+            storage.directory(),
+            layouts,
+            normal_retentions.into_boxed_slice(),
+            metrics.clone(),
+            false,
+        );
+        let normal_metadata = factory.owned_metadata_bytes().map_err(io::Error::other)?;
+        let normal: Arc<dyn NormalStorageFactory> = Arc::new(factory);
         retained_bytes = add(
             retained_bytes,
             model.owned_metadata_bytes().map_err(io::Error::other)?,
@@ -332,6 +589,8 @@ impl CubeStatePlan {
         Ok(Self {
             model,
             normal,
+            managed: None,
+            managed_initial: false,
             retention,
             metrics,
             model_window_samples,
@@ -357,6 +616,13 @@ impl CubeStatePlan {
         &self,
         context: WorkExecutionContext<'_>,
     ) -> io::Result<ModelStoragePlan> {
+        let retained_capacity = self.managed.is_some()
+            && !self.managed_initial
+            && self.retention.capacity.get().is_some()
+            && self
+                .managed
+                .as_ref()
+                .is_some_and(|run| run.retention.heap.get().is_some());
         if context.node().id != self.acquire
             || !context
                 .node()
@@ -370,16 +636,18 @@ impl CubeStatePlan {
                     .iter()
                     .any(|use_| use_.allocation == allocation.id)
             })
-            || !context.node().claims.iter().any(|claim| {
-                claim.resource == self.storage_resource()
-                    && claim.amount == self.storage_bytes
-                    && claim.lifetime == ClaimLifetime::Artifact
-            })
-            || !context.node().claims.iter().any(|claim| {
-                claim.resource == LeaseResource::FileDescriptors
-                    && claim.amount == self.file_handles
-                    && claim.lifetime == ClaimLifetime::Artifact
-            })
+            || !(retained_capacity
+                || context.node().claims.iter().any(|claim| {
+                    claim.resource == self.storage_resource()
+                        && claim.amount == self.storage_bytes
+                        && claim.lifetime == ClaimLifetime::Artifact
+                }))
+            || !(retained_capacity
+                || context.node().claims.iter().any(|claim| {
+                    claim.resource == LeaseResource::FileDescriptors
+                        && claim.amount == self.file_handles
+                        && claim.lifetime == ClaimLifetime::Artifact
+                }))
         {
             return Err(io::Error::other(
                 "cube storage lacks its plan-issued allocation and capacity claims",
@@ -401,6 +669,21 @@ impl CubeStatePlan {
 
     pub(crate) fn log_measurements(&self, node: &WorkNodeId) {
         if std::env::var_os("CASA_RS_TRACE_IMAGING_STAGE_TIMING").is_some() {
+            if let Some(run) = &self.managed {
+                let metrics = run.residency.metrics();
+                eprintln!(
+                    "imaging_cube_managed node={} used_bytes={} live_payload_bytes={} limit_bytes={} peak_used_bytes={} dirty_write_operations={} dirty_write_bytes={} reload_read_operations={} reload_read_bytes={}",
+                    node.as_str(),
+                    run.residency.used_bytes(),
+                    run.residency.live_payload_bytes(),
+                    run.residency.limit_bytes(),
+                    metrics.peak_used_bytes,
+                    metrics.dirty_write_operations,
+                    metrics.dirty_write_bytes,
+                    metrics.reload_read_operations,
+                    metrics.reload_read_bytes,
+                );
+            }
             eprintln!(
                 "imaging_cube_backing_measurements node={} planned_retained_bytes={} planned_access_scratch_bytes={} planned_storage_bytes={} planned_file_handles={} observed={:?}",
                 node.as_str(),
@@ -414,7 +697,8 @@ impl CubeStatePlan {
     }
 
     pub(crate) fn retains_at(&self, node: &WorkNodeId) -> bool {
-        node == &self.acquire || node == &self.terminal
+        (self.managed.is_none() || self.managed_initial)
+            && (node == &self.acquire || node == &self.terminal)
     }
 
     pub(crate) fn retain(
@@ -450,7 +734,7 @@ impl CubeStatePlan {
             for ((_, retention), permit) in self.backings.iter().zip(partitions) {
                 retention
                     .heap
-                    .set(permit)
+                    .set(std::sync::Mutex::new(permit))
                     .map_err(|_| io::Error::other("cube backing allocation was retained twice"))?;
             }
             Ok(())
@@ -560,7 +844,7 @@ impl CubeStatePlan {
                     lifetime,
                 });
             }
-            if node.id == self.acquire {
+            if node.id == self.acquire && self.storage_bytes != 0 {
                 node.claims.extend([
                     ResourceClaim {
                         resource: self.storage_resource(),
@@ -723,4 +1007,38 @@ fn add(left: usize, right: usize) -> io::Result<usize> {
 }
 fn as_u64(value: usize) -> io::Result<u64> {
     u64::try_from(value).map_err(|_| overflow())
+}
+
+#[cfg(test)]
+mod managed_cache_tests {
+    use super::*;
+
+    #[test]
+    fn full_cube_cache_ceiling_exceeds_active_four_worker_floor() {
+        let (minimum, full) = CubeStatePlan::managed_cache_limits_for_shape(
+            std::path::Path::new("cube"),
+            512,
+            512,
+            512,
+            4,
+        )
+        .unwrap();
+        eprintln!("review2_cache_formula minimum_bytes={minimum} full_bytes={full}");
+        assert!(minimum < full);
+        assert!(minimum < 16 << 30);
+    }
+
+    #[test]
+    fn large_spatial_working_plane_does_not_require_channel_count_payload_residency() {
+        let directory = std::path::Path::new("cube");
+        let (short_floor, short_full) =
+            CubeStatePlan::managed_cache_limits_for_shape(directory, 2048, 2048, 64, 4).unwrap();
+        let (long_floor, long_full) =
+            CubeStatePlan::managed_cache_limits_for_shape(directory, 2048, 2048, 2048, 4).unwrap();
+        let plane_bytes = 2048 * 2048 * size_of::<f32>();
+        assert!(short_floor >= 4 * plane_bytes);
+        assert!(long_floor < short_floor + 32 * plane_bytes);
+        assert!(long_full > short_full * 16);
+        assert!(long_floor < 16 << 30);
+    }
 }

@@ -31,8 +31,7 @@
     "threshold_jy": 0.0,
     "minor_cycle_length": 25,
     "parallel": false,
-    "standard_mfs_acceleration": "cpu",
-    "imaging_fft_backend": "rustfft"
+    "standard_mfs_acceleration": "cpu"
   },
   "run": {
     "repeats": 1,

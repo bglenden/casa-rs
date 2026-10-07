@@ -12,6 +12,7 @@ publish = false
 workspace = true
 
 [dependencies]
+tracing.workspace = true
 casa-coordinates = { path = "../casa-coordinates" }
 casa-images = { path = "../casa-images" }
 casa-imaging-model = { path = "../casa-imaging-model" }

@@ -158,13 +158,7 @@ fn product_from_imager(
     workspace: &Path,
 ) -> RunProductReference {
     let path = resolve_product_path(workspace, &artifact.path);
-    let preview_path = artifact
-        .preview_png_path
-        .as_deref()
-        .map(|path| resolve_product_path(workspace, path));
     let exists = artifact.exists && path.exists();
-    let preview_exists =
-        artifact.preview_png_exists && preview_path.as_ref().is_some_and(|path| path.exists());
     RunProductReference {
         id: format!("{}:{}", descriptor.id, artifact.kind),
         role: descriptor.role,
@@ -172,8 +166,8 @@ fn product_from_imager(
         label: artifact.label.clone(),
         path: path.clone(),
         exists,
-        preview_path,
-        preview_exists,
+        preview_path: None,
+        preview_exists: false,
         diagnostic: (!exists).then(|| {
             format!(
                 "imager declared product {} but an exact path check did not find it",
@@ -276,8 +270,6 @@ struct ImagerArtifactWire {
     label: String,
     path: String,
     exists: bool,
-    preview_png_path: Option<String>,
-    preview_png_exists: bool,
 }
 
 #[cfg(test)]
@@ -307,17 +299,13 @@ mod tests {
                     "kind": "image",
                     "label": "Image",
                     "path": "target.image",
-                    "exists": true,
-                    "preview_png_path": null,
-                    "preview_png_exists": false
+                    "exists": true
                 },
                 {
                     "kind": "model",
                     "label": "Model",
                     "path": "missing.model",
-                    "exists": true,
-                    "preview_png_path": null,
-                    "preview_png_exists": false
+                    "exists": true
                 }
             ]
         })

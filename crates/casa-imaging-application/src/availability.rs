@@ -4,9 +4,8 @@
 use std::{error::Error, fmt};
 
 use casa_imaging_model::{
-    CompiledProblem, ImageDomainRole, InstrumentModel, InstrumentResponse, ModelStateIdentity,
-    PhaseCentreLaw, PolarizationCoordinate, ProductKind, ReconstructionBasis, RequiredCapability,
-    UvwCoordinateLaw,
+    CompiledProblem, ImageDomainRole, InstrumentModel, InstrumentResponse, PolarizationCoordinate,
+    ProductKind, ReconstructionBasis, RequiredCapability, UvwCoordinateLaw,
 };
 
 /// A task-surface requirement not represented by [`CompiledProblem`].
@@ -42,68 +41,24 @@ pub enum TaskRequirement {
     FixedTileCpu,
     /// Metal gridding override.
     MetalGridder,
-    /// Metal row-run gridding override.
-    MetalRowRunGridder,
     /// Grouped Metal row-run gridding override.
     MetalRowRunGroupedGridder,
-    /// Automatic FFT selection.
-    FftAuto,
-    /// RustFFT override.
-    RustFft,
-    /// Accelerate FFT override.
-    Accelerate,
-    /// FFTW override.
-    Fftw,
-    /// Metal MPSGraph FFT override.
-    MetalMpsGraph,
     /// Non-Stokes-I or raw-correlation selection.
     PolarizationSelection,
     /// UV tapering.
     UvTaper,
-    /// Long-form minor-cycle summary.
-    FullSummary,
-    /// Cube channel chunking.
-    ChannelChunks,
     /// Per-channel weighting-density control.
     PerChannelWeightDensity,
     /// Explicit W-projection plane budget.
     WProjectionPlanes,
-    /// Explicit standard-MFS grid worker count.
-    GridThreads,
-    /// Explicit fixed-tile anchor.
-    TileAnchor,
-    /// Explicit residual backend override.
-    ResidualBackend,
-    /// Explicit initial-dirty backend override.
-    InitialDirtyBackend,
-    /// Metal minor-cycle chunk override.
-    MetalMinorCycleChunk,
-    /// Metal grouped-input cache override.
-    MetalGroupedInputCache,
     /// Explicit source-stream memory target.
     MemoryTarget,
-    /// Explicit non-default source-stream memory-pressure policy.
-    MemoryPressurePolicy,
-    /// Explicit source-stream prepare-buffer budget.
-    PrepareBuffer,
-    /// Explicit source row-block size.
-    RowBlockRows,
-    /// Explicit source preparation worker count.
-    PrepareWorkers,
-    /// Explicit source read-ahead count.
-    ReadAheadBlocks,
-    /// Explicit FFT precision.
-    FftPrecision,
-    /// Preview sidecar publication.
-    PreviewPng,
-    /// Unknown backend spelling.
-    UnknownBackend,
 }
 
 impl TaskRequirement {
     /// Complete stable task-only capability catalog for the current application
     /// contract.
-    pub const ALL: [Self; 43] = [
+    pub const ALL: [Self; 21] = [
         Self::SpectralCube,
         Self::SpectralCubedata,
         Self::SpectralCubeSource,
@@ -119,34 +74,12 @@ impl TaskRequirement {
         Self::ExecutionAuto,
         Self::FixedTileCpu,
         Self::MetalGridder,
-        Self::MetalRowRunGridder,
         Self::MetalRowRunGroupedGridder,
-        Self::FftAuto,
-        Self::RustFft,
-        Self::Accelerate,
-        Self::Fftw,
-        Self::MetalMpsGraph,
         Self::PolarizationSelection,
         Self::UvTaper,
-        Self::FullSummary,
-        Self::ChannelChunks,
         Self::PerChannelWeightDensity,
         Self::WProjectionPlanes,
-        Self::GridThreads,
-        Self::TileAnchor,
-        Self::ResidualBackend,
-        Self::InitialDirtyBackend,
-        Self::MetalMinorCycleChunk,
-        Self::MetalGroupedInputCache,
         Self::MemoryTarget,
-        Self::MemoryPressurePolicy,
-        Self::PrepareBuffer,
-        Self::RowBlockRows,
-        Self::PrepareWorkers,
-        Self::ReadAheadBlocks,
-        Self::FftPrecision,
-        Self::PreviewPng,
-        Self::UnknownBackend,
     ];
 
     /// Return the stable application-catalog identity.
@@ -168,34 +101,12 @@ impl TaskRequirement {
             Self::ExecutionAuto => "execution_auto",
             Self::FixedTileCpu => "fixed_tile_cpu",
             Self::MetalGridder => "metal_gridder",
-            Self::MetalRowRunGridder => "metal_row_run_gridder",
             Self::MetalRowRunGroupedGridder => "metal_row_run_grouped_gridder",
-            Self::FftAuto => "fft_auto",
-            Self::RustFft => "rust_fft",
-            Self::Accelerate => "accelerate_fft",
-            Self::Fftw => "fftw",
-            Self::MetalMpsGraph => "metal_mps_graph",
             Self::PolarizationSelection => "polarization_selection",
             Self::UvTaper => "uv_taper",
-            Self::FullSummary => "full_summary",
-            Self::ChannelChunks => "channel_chunks",
             Self::PerChannelWeightDensity => "per_channel_weight_density",
             Self::WProjectionPlanes => "w_projection_planes",
-            Self::GridThreads => "grid_threads",
-            Self::TileAnchor => "tile_anchor",
-            Self::ResidualBackend => "residual_backend",
-            Self::InitialDirtyBackend => "initial_dirty_backend",
-            Self::MetalMinorCycleChunk => "metal_minor_cycle_chunk",
-            Self::MetalGroupedInputCache => "metal_grouped_input_cache",
             Self::MemoryTarget => "memory_target",
-            Self::MemoryPressurePolicy => "memory_pressure_policy",
-            Self::PrepareBuffer => "prepare_buffer",
-            Self::RowBlockRows => "row_block_rows",
-            Self::PrepareWorkers => "prepare_workers",
-            Self::ReadAheadBlocks => "read_ahead_blocks",
-            Self::FftPrecision => "fft_precision",
-            Self::PreviewPng => "preview_png",
-            Self::UnknownBackend => "unknown_backend",
         }
     }
 }
@@ -207,22 +118,18 @@ pub enum UnsupportedRequirement {
     Capability(RequiredCapability),
     /// A task-only requirement has no installed implementation.
     Task(TaskRequirement),
-    /// The implementation requires exactly one observation source.
-    SingleObservationSource,
     /// Facet execution currently requires the constant spectral basis.
     ConstantBasisForFacets,
     /// Non-Stokes-I or multi-polarization execution requires an independent-plane basis.
     IndependentBasisForPolarizationSelection,
-    /// The implementation requires a fixed phase centre.
-    FixedPhaseCentre,
-    /// The implementation does not accept an initial model.
-    EmptyInitialModel,
-    /// The implementation does not write `MODEL_DATA`.
-    NoModelColumnWrite,
     /// The implementation requires a scalar measurement equation.
     ScalarInstrumentResponse,
     /// W projection is not installed for mosaic UVW geometry.
     WProjectionWithMosaic,
+    /// Metal cube initial wave cannot size coarse output channels; use the CPU
+    /// backend. Each output channel must span at most one selected native
+    /// channel spacing, which must be known before planning.
+    MetalCubeCoarseOutputChannels,
 }
 
 impl UnsupportedRequirement {
@@ -232,14 +139,11 @@ impl UnsupportedRequirement {
         match self {
             Self::Capability(_) => "capability",
             Self::Task(_) => "task",
-            Self::SingleObservationSource
-            | Self::ConstantBasisForFacets
+            Self::ConstantBasisForFacets
             | Self::IndependentBasisForPolarizationSelection
-            | Self::FixedPhaseCentre
-            | Self::EmptyInitialModel
-            | Self::NoModelColumnWrite
             | Self::ScalarInstrumentResponse
-            | Self::WProjectionWithMosaic => "constraint",
+            | Self::WProjectionWithMosaic
+            | Self::MetalCubeCoarseOutputChannels => "constraint",
         }
     }
 
@@ -251,16 +155,15 @@ impl UnsupportedRequirement {
                 format!("capability.{}", requirement.catalog_id())
             }
             Self::Task(requirement) => format!("task.{}", requirement.catalog_id()),
-            Self::SingleObservationSource => "constraint.single_observation_source".to_string(),
             Self::ConstantBasisForFacets => "constraint.constant_basis_for_facets".to_string(),
             Self::IndependentBasisForPolarizationSelection => {
                 "constraint.independent_basis_for_polarization_selection".to_string()
             }
-            Self::FixedPhaseCentre => "constraint.fixed_phase_centre".to_string(),
-            Self::EmptyInitialModel => "constraint.empty_initial_model".to_string(),
-            Self::NoModelColumnWrite => "constraint.no_model_column_write".to_string(),
             Self::ScalarInstrumentResponse => "constraint.scalar_instrument_response".to_string(),
             Self::WProjectionWithMosaic => "constraint.w_projection_with_mosaic".to_string(),
+            Self::MetalCubeCoarseOutputChannels => {
+                "constraint.metal_cube_coarse_output_channels".to_string()
+            }
         }
     }
 }
@@ -381,16 +284,35 @@ pub fn validate_installed_implementation(
         .map(UnsupportedRequirement::Capability)
         .collect::<Vec<_>>();
 
+    let mut coarse_metal_cube = false;
     unsupported.extend(
         task_requirements
             .into_iter()
-            .filter(|requirement| !supports_task(*requirement))
+            .filter(|requirement| {
+                if *requirement == TaskRequirement::MetalGridder {
+                    let cube = problem.geometry().spectral().output_channels() >= 2
+                        && casa_imaging_runtime::CubePhase::supports(problem).unwrap_or(false)
+                        && matches!(
+                            problem.reconstruction().basis(),
+                            ReconstructionBasis::ChannelLocal { .. }
+                        );
+                    let scalar = matches!(
+                        problem.reconstruction().basis(),
+                        ReconstructionBasis::Constant
+                    ) && casa_imaging_runtime::supports_metal_normal(problem);
+                    coarse_metal_cube = cube
+                        && metal_cube_output_to_native_width(problem)
+                            .is_none_or(|ratio| ratio > 1.0 + METAL_CUBE_WIDTH_TOLERANCE);
+                    return !supports_task(*requirement) || !(cube || scalar);
+                }
+                !supports_task(*requirement)
+            })
             .map(UnsupportedRequirement::Task),
     );
-
-    if problem.inputs().observation_snapshot().sources().len() != 1 {
-        unsupported.push(UnsupportedRequirement::SingleObservationSource);
+    if coarse_metal_cube {
+        unsupported.push(UnsupportedRequirement::MetalCubeCoarseOutputChannels);
     }
+
     debug_assert_eq!(
         problem.geometry().domains()[0].role(),
         &ImageDomainRole::Main
@@ -408,15 +330,6 @@ pub fn validate_installed_implementation(
         problem.reconstruction().polarization().coordinates(),
     ) {
         unsupported.push(UnsupportedRequirement::IndependentBasisForPolarizationSelection);
-    }
-    if matches!(
-        problem.geometry().centres().phase_tracking(),
-        PhaseCentreLaw::Observation
-    ) {
-        unsupported.push(UnsupportedRequirement::FixedPhaseCentre);
-    }
-    if !matches!(problem.inputs().model(), ModelStateIdentity::Empty) {
-        unsupported.push(UnsupportedRequirement::EmptyInitialModel);
     }
     let installed_response = instrument_response_is_installed(
         problem
@@ -451,6 +364,31 @@ pub fn validate_installed_implementation(
     } else {
         Err(ImplementationUnavailable { unsupported })
     }
+}
+
+/// Output/native width ratio still treated as one native channel per output,
+/// so equal widths survive per-row frequency-frame conversion.
+const METAL_CUBE_WIDTH_TOLERANCE: f64 = 1.0e-3;
+
+/// The Metal cube sizes its first initial wave before observing rows, for one
+/// CASA fine sample per output channel and row. Compare the output increment
+/// with the first selected native pair, which seeds that row-local CASA grid.
+fn metal_cube_output_to_native_width(problem: &CompiledProblem) -> Option<f64> {
+    let spectral = problem.geometry().spectral();
+    let output_hz = spectral.channel_centre_hz(1)? - spectral.channel_centre_hz(0)?;
+    let [source] = problem.selected_observation().read_set().sources() else {
+        return None;
+    };
+    let [spectral_window] = source.selection().spectral_windows() else {
+        return None;
+    };
+    let &[first, second, ..] = spectral_window.channel_indices() else {
+        return None;
+    };
+    let catalog = spectral_window.coordinate_catalog()?;
+    let native_hz = catalog.channel_frequency_hz(second as usize)?
+        - catalog.channel_frequency_hz(first as usize)?;
+    Some((output_hz / native_hz).abs())
 }
 
 fn instrument_response_is_installed(
@@ -489,13 +427,14 @@ fn coupled_basis_requires_independent_polarization(
 ) -> bool {
     matches!(
         basis,
-        ReconstructionBasis::Taylor { .. }
-            | ReconstructionBasis::TaylorViaChannelMajor { .. }
-            | ReconstructionBasis::JointContinuumLine { .. }
+        ReconstructionBasis::Taylor { .. } | ReconstructionBasis::TaylorViaChannelMajor { .. }
     ) && coordinates != [PolarizationCoordinate::StokesI]
 }
 
 const fn supports_task(requirement: TaskRequirement) -> bool {
+    if matches!(requirement, TaskRequirement::MetalGridder) {
+        return cfg!(all(target_os = "macos", not(coverage)));
+    }
     matches!(
         requirement,
         TaskRequirement::SpectralCube
@@ -513,8 +452,6 @@ const fn supports_task(requirement: TaskRequirement) -> bool {
             | TaskRequirement::PerChannelWeightDensity
             | TaskRequirement::SerialCpu
             | TaskRequirement::FixedTileCpu
-            | TaskRequirement::RustFft
-            | TaskRequirement::PreviewPng
     )
 }
 
@@ -594,13 +531,6 @@ mod tests {
     }
 
     #[test]
-    fn optional_joint_reconstruction_is_not_installed_at_the_application_boundary() {
-        assert!(!supports_capability(
-            RequiredCapability::JointContinuumLineReconstruction
-        ));
-    }
-
-    #[test]
     fn t41_primary_beam_response_is_installed_at_the_application_boundary() {
         assert!(supports_capability(RequiredCapability::PrimaryBeamResponse));
     }
@@ -634,12 +564,12 @@ mod tests {
     }
 
     #[test]
-    fn coupled_basis_polarization_constraint_covers_taylor_and_joint() {
+    fn coupled_basis_polarization_constraint_covers_taylor() {
         for basis in [
             ReconstructionBasis::Taylor { terms: 2 },
-            ReconstructionBasis::JointContinuumLine {
-                continuum_terms: 2,
-                line_terms: 1,
+            ReconstructionBasis::TaylorViaChannelMajor {
+                terms: 2,
+                channels: 4,
             },
         ] {
             assert!(!coupled_basis_requires_independent_polarization(
@@ -702,6 +632,23 @@ mod tests {
                 .and_then(ImagingCapabilityCatalogEntry::unsupported),
             Some(UnsupportedRequirement::Capability(mueller))
         );
+    }
+
+    #[test]
+    fn metal_catalog_matches_the_compiled_platform() {
+        let catalog = installed_imaging_capability_catalog();
+        let metal = catalog
+            .iter()
+            .find(|entry| {
+                entry.requirement()
+                    == ImagingCapabilityRequirement::Task(TaskRequirement::MetalGridder)
+            })
+            .unwrap();
+        assert_eq!(
+            metal.unsupported().is_none(),
+            cfg!(all(target_os = "macos", not(coverage)))
+        );
+        assert!(!supports_task(TaskRequirement::MetalRowRunGroupedGridder));
     }
 
     #[test]

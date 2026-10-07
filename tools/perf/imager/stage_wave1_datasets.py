@@ -487,12 +487,14 @@ def build_casars_simobserve_request(dataset: dict[str, Any]) -> dict[str, Any]:
             "integration_seconds": dataset["shape"]["integration_seconds"],
             "elevation_limit_rad": math.radians(DEFAULT_ELEVATION_LIMIT_DEG),
             "allow_below_elevation_limit": False,
-            "spectral_setup": {
-                "name": "wave1",
-                "start_frequency_hz": start_frequency_hz(dataset["instrument"]),
-                "channel_width_hz": channel_width_hz(dataset["instrument"]),
-                "channel_count": dataset["shape"]["channels"],
-            },
+            "spectral_windows": [
+                {
+                    "name": "wave1",
+                    "start_frequency_hz": start_frequency_hz(dataset["instrument"]),
+                    "channel_width_hz": channel_width_hz(dataset["instrument"]),
+                    "channel_count": dataset["shape"]["channels"],
+                }
+            ],
             "predict_model": True,
             "corruption": {
                 "seed": stable_seed(dataset["id"]),

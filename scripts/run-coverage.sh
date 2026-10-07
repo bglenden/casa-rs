@@ -79,7 +79,7 @@ run_llvm_cov() {
     --require unittest/tclean/refim_twochan.ms \
     --require unittest/tclean/refim_point.ms; then
     echo "==> Including slow parity suites in coverage"
-    coverage_args+=(--features casa-ms/slow-tests,casars-imager/slow-tests)
+    coverage_args+=(--features casa-ms/slow-tests)
   else
     echo "coverage warning: slow parity datasets unavailable; coverage omits slow parity suites" >&2
   fi

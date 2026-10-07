@@ -1,5 +1,10 @@
-This project is licensed under the GNU Lesser General Public License v3.0
-or later (LGPL-3.0-or-later).
+Independently authored casa-rs source is licensed under the GNU Lesser General
+Public License v3.0 or later (LGPL-3.0-or-later), except where a file states
+otherwise. Imaging applications and Python extensions linked with FFTW are
+distributed under the GNU General Public License v3.0 or later
+(GPL-3.0-or-later) as combined works. This does not change the license grant
+on the independently authored source.
 
 See COPYING.LESSER for the LGPL license text.
-See COPYING for the GPL license text (referenced by the LGPL).
+See COPYING for the GPL license text and THIRD_PARTY_NOTICES.md for the FFTW
+attribution and redistribution requirements.

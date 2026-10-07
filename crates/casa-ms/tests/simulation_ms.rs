@@ -3,15 +3,18 @@
 
 use casa_ms::columns::main_ids;
 use casa_ms::{
-    MeasurementSet, SyntheticAnalyticComponent, SyntheticAnalyticSpectrum, SyntheticAntenna,
-    SyntheticBandpassCorruption, SyntheticBandpassMode, SyntheticCorruptionConfig, SyntheticField,
-    SyntheticGainCorruption, SyntheticGainMode, SyntheticNoiseCorruption, SyntheticNoiseMode,
-    SyntheticObservationMode, SyntheticObservationRequest, SyntheticPointingCorruption,
-    SyntheticPolarizationBasis, SyntheticPolarizationLeakageCorruption,
-    SyntheticPolarizationLeakageMode, SyntheticPolarizationSetup, SyntheticSkyModel,
-    SyntheticSpectralSetup, generate_synthetic_observation_ms, tutorial_vla_a_antennas,
+    MeasurementSet, SubTable, SyntheticAnalyticComponent, SyntheticAnalyticSpectrum,
+    SyntheticAntenna, SyntheticBandpassCorruption, SyntheticBandpassMode,
+    SyntheticCorruptionConfig, SyntheticField, SyntheticGainCorruption, SyntheticGainMode,
+    SyntheticNoiseCorruption, SyntheticNoiseMode, SyntheticObservationMode,
+    SyntheticObservationRequest, SyntheticPointingCorruption, SyntheticPolarizationBasis,
+    SyntheticPolarizationLeakageCorruption, SyntheticPolarizationLeakageMode,
+    SyntheticPolarizationSetup, SyntheticSkyModel, SyntheticSpectralSetup,
+    generate_synthetic_observation_ms, tutorial_vla_a_antennas,
 };
+use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
 use casa_test_support::{discover_casa_python, tutorial_dataset_path};
+use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::position::MPosition;
 use casa_types::{ArrayValue, ScalarValue, Value};
 use std::process::Command;
@@ -36,12 +39,12 @@ fn request(root: &std::path::Path) -> SyntheticObservationRequest {
     request.start_time_mjd_seconds = 59_000.25 * 86_400.0;
     request.duration_seconds = 25.0;
     request.integration_seconds = 10.0;
-    request.spectral_setup = SyntheticSpectralSetup {
+    request.spectral_windows = vec![SyntheticSpectralSetup {
         name: "band1".to_string(),
         start_frequency_hz: 672.0e9,
         channel_width_hz: 2.0e6,
         channel_count: 4,
-    };
+    }];
     request
 }
 
@@ -66,6 +69,33 @@ fn generates_vla_ppdisk_synthetic_ms_skeleton() {
     assert_eq!(ms.antenna().unwrap().name(0).unwrap(), "VLA01");
     assert_eq!(ms.field().unwrap().name(0).unwrap(), "ppdisk");
     assert_eq!(ms.spectral_window().unwrap().num_chan(0).unwrap(), 4);
+    let spectral = ms.spectral_window().unwrap();
+    assert_eq!(
+        spectral.meas_freq_ref(0).unwrap(),
+        FrequencyRef::LSRK.casacore_code()
+    );
+    assert_eq!(
+        spectral.chan_freq(0).unwrap().to_vec(),
+        request.spectral_windows[0].channel_frequencies_hz()
+    );
+    for column in ["CHAN_FREQ", "REF_FREQUENCY"] {
+        let descriptor = TableMeasDesc::reconstruct(spectral.table(), column).unwrap();
+        let MeasRefDesc::VariableInt {
+            ref_column,
+            tab_ref_types,
+            tab_ref_codes,
+        } = descriptor.ref_desc()
+        else {
+            panic!("{column} must use the MS frequency reference column");
+        };
+        assert_eq!(ref_column, "MEAS_FREQ_REF");
+        let code = spectral.meas_freq_ref(0).unwrap();
+        let index = tab_ref_codes
+            .iter()
+            .position(|value| *value == code)
+            .unwrap();
+        assert_eq!(tab_ref_types[index], "LSRK");
+    }
     let observation = ms.observation().unwrap();
     let telescope = observation
         .table()
@@ -166,12 +196,12 @@ fn analytic_component_model_generates_predicted_ms_data() {
     request.start_time_mjd_seconds = 59_000.25 * 86_400.0;
     request.duration_seconds = 10.0;
     request.integration_seconds = 10.0;
-    request.spectral_setup = SyntheticSpectralSetup {
+    request.spectral_windows = vec![SyntheticSpectralSetup {
         name: "analytic-band".to_string(),
         start_frequency_hz: 44.0e9,
         channel_width_hz: 1.0e6,
         channel_count: 4,
-    };
+    }];
 
     let report = generate_synthetic_observation_ms(&request).unwrap();
 
@@ -251,12 +281,12 @@ fn total_power_mode_generates_autocorrelation_rows() {
     request.integration_seconds = 10.0;
     request.allow_below_elevation_limit = true;
     request.elevation_limit_rad = (-89.0_f64).to_radians();
-    request.spectral_setup = SyntheticSpectralSetup {
+    request.spectral_windows = vec![SyntheticSpectralSetup {
         name: "band3".to_string(),
         start_frequency_hz: 330.076e9,
         channel_width_hz: 50.0e6,
         channel_count: 1,
-    };
+    }];
 
     let report = generate_synthetic_observation_ms(&request).unwrap();
 
@@ -539,7 +569,7 @@ fn common_bandpass_and_leakage_corruptions_are_reported_and_change_data() {
     let temp = tempfile::tempdir().unwrap();
     let mut corrupted = request(&temp.path().join("corrupted"));
     std::fs::create_dir_all(temp.path().join("corrupted")).unwrap();
-    corrupted.spectral_setup.channel_count = 4;
+    corrupted.spectral_windows[0].channel_count = 4;
     corrupted.corruption = Some(SyntheticCorruptionConfig {
         seed: 99,
         noise: None,
@@ -565,7 +595,7 @@ fn common_bandpass_and_leakage_corruptions_are_reported_and_change_data() {
     let uncorrupted_root = temp.path().join("uncorrupted-common");
     std::fs::create_dir_all(&uncorrupted_root).unwrap();
     let mut uncorrupted = request(&uncorrupted_root);
-    uncorrupted.spectral_setup.channel_count = 4;
+    uncorrupted.spectral_windows[0].channel_count = 4;
     generate_synthetic_observation_ms(&uncorrupted).unwrap();
 
     let corrupted_data = first_row_data(&corrupted.output_ms);
@@ -667,12 +697,86 @@ fn invalid_antenna_configuration_fails_clearly() {
 fn unsupported_spectral_setup_fails_clearly() {
     let temp = tempfile::tempdir().unwrap();
     let mut request = request(temp.path());
-    request.spectral_setup.channel_count = 0;
+    request.spectral_windows[0].channel_count = 0;
 
     let error = generate_synthetic_observation_ms(&request)
         .unwrap_err()
         .to_string();
     assert!(error.contains("at least one channel"));
+}
+
+#[test]
+fn two_windows_with_mixed_channel_counts_write_one_data_description_each() {
+    assert_two_window_observation([4, 3]);
+}
+
+#[test]
+fn two_windows_with_equal_channel_counts_write_one_data_description_each() {
+    assert_two_window_observation([4, 4]);
+}
+
+fn assert_two_window_observation(channel_counts: [usize; 2]) {
+    let temp = tempfile::tempdir().unwrap();
+    let mut request = request(temp.path());
+    request.spectral_windows = vec![
+        SyntheticSpectralSetup {
+            name: "low".to_string(),
+            start_frequency_hz: 672.0e9,
+            channel_width_hz: 2.0e6,
+            channel_count: channel_counts[0],
+        },
+        SyntheticSpectralSetup {
+            name: "high".to_string(),
+            start_frequency_hz: 676.0e9,
+            channel_width_hz: -1.0e6,
+            channel_count: channel_counts[1],
+        },
+    ];
+
+    let report = generate_synthetic_observation_ms(&request).unwrap();
+    let rows_per_window = report.baseline_count * report.time_sample_count;
+    assert_eq!(report.main_row_count, 2 * rows_per_window);
+    assert_eq!(report.channel_count, channel_counts.iter().sum::<usize>());
+
+    let ms = MeasurementSet::open(&request.output_ms).unwrap();
+    assert!(ms.validate().unwrap().is_empty());
+    let data_description = ms.data_description().unwrap();
+    let spectral_window = ms.spectral_window().unwrap();
+    assert_eq!(data_description.row_count(), 2);
+    assert_eq!(spectral_window.row_count(), 2);
+    for (window, setup) in request.spectral_windows.iter().enumerate() {
+        assert_eq!(
+            data_description.spectral_window_id(window).unwrap(),
+            window as i32
+        );
+        assert_eq!(
+            spectral_window.num_chan(window).unwrap(),
+            setup.channel_count as i32
+        );
+        assert_eq!(
+            spectral_window.chan_freq(window).unwrap(),
+            setup.channel_frequencies_hz()
+        );
+    }
+
+    let mut rows_by_window = [0usize; 2];
+    for row in 0..ms.row_count() {
+        let window = main_ids::data_desc_id(ms.main_table()).get(row).unwrap() as usize;
+        rows_by_window[window] += 1;
+        match ms
+            .main_table()
+            .cell_accessor(row, "DATA")
+            .unwrap()
+            .value()
+            .unwrap()
+        {
+            Some(Value::Array(ArrayValue::Complex32(values))) => {
+                assert_eq!(values.shape(), &[2, channel_counts[window]], "row {row}");
+            }
+            other => panic!("expected Complex32 DATA array, got {other:?}"),
+        }
+    }
+    assert_eq!(rows_by_window, [rows_per_window; 2]);
 }
 
 #[test]
@@ -691,9 +795,9 @@ fn tutorial_ppdisk_fits_model_generates_predicted_visibilities_when_available() 
     );
     request.duration_seconds = 10.0;
     request.integration_seconds = 2.0;
-    request.spectral_setup.channel_count = 1;
-    request.spectral_setup.start_frequency_hz = 44.0e9;
-    request.spectral_setup.channel_width_hz = 128.0e6;
+    request.spectral_windows[0].channel_count = 1;
+    request.spectral_windows[0].start_frequency_hz = 44.0e9;
+    request.spectral_windows[0].channel_width_hz = 128.0e6;
 
     let report = generate_synthetic_observation_ms(&request).unwrap();
     assert_eq!(report.antenna_count, 27);
@@ -733,9 +837,17 @@ fn casa_can_open_generated_synthetic_ms_when_available() {
     let script = r#"
 import json
 import sys
-from casatools import table
+from casatools import table, ms
 
 path = sys.argv[1]
+tool = ms()
+tool.open(path, nomodify=True)
+try:
+    actual = list(tool.cvelfreqs(spwids=[0], fieldids=[0], mode="channel",
+                                nchan=4, start=0, width=1, outframe="LSRK"))
+finally:
+    tool.close()
+    tool.done()
 tb = table()
 tb.open(path)
 try:
@@ -746,6 +858,18 @@ try:
     }
 finally:
     tb.close()
+tb.open(path + "/SPECTRAL_WINDOW")
+try:
+    assert tb.getcell("MEAS_FREQ_REF", 0) == 1
+    expected = tb.getcell("CHAN_FREQ", 0).tolist()
+    for column in ("CHAN_FREQ", "REF_FREQUENCY"):
+        info = tb.getcolkeyword(column, "MEASINFO")
+        assert info["VarRefCol"] == "MEAS_FREQ_REF"
+        assert info["TabRefTypes"][1] == "LSRK"
+finally:
+    tb.close()
+assert actual == expected
+result["frequency_frame"] = "LSRK"
 print(json.dumps(result, sort_keys=True))
 "#;
     let output = Command::new(&casa.program)
@@ -764,6 +888,7 @@ print(json.dumps(result, sort_keys=True))
     assert!(stdout.contains(&format!("\"rows\": {}", report.main_row_count)));
     assert!(stdout.contains("\"nonzero\": "));
     assert!(!stdout.contains("\"nonzero\": 0"));
+    assert!(stdout.contains("\"frequency_frame\": \"LSRK\""));
 }
 
 fn write_test_fits_model(path: &std::path::Path, nx: usize, ny: usize) {

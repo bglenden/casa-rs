@@ -355,8 +355,8 @@ mod tests {
     fn imager_wide_field_controls_share_one_catalog_owned_surface() {
         let catalog = builtin_surface_catalog().unwrap();
         let surface = catalog.surface("imager").unwrap();
-        assert_eq!(surface.contract_version(), 16);
-        assert_eq!(surface.bindings().len(), 102);
+        assert_eq!(surface.contract_version(), 18);
+        assert_eq!(surface.bindings().len(), 91);
         for binding in surface.bindings() {
             let concept = catalog
                 .catalog
@@ -518,51 +518,18 @@ mod tests {
             "current imager profiles retain no migration reader"
         );
 
-        for name in [
-            "imaging_memory_target_mb",
-            "imaging_memory_pressure_policy",
-            "imaging_prepare_buffer_mb",
-            "imaging_row_block_rows",
-            "imaging_prepare_workers",
-            "standard_mfs_grid_threads",
-            "imaging_fft_precision",
-        ] {
-            let binding = surface
-                .bindings()
-                .iter()
-                .find(|binding| binding.name == name)
-                .unwrap_or_else(|| panic!("missing imager resource binding {name}"));
-            assert_eq!(
-                binding.projections.presentation.group, "Execution Resources",
-                "{name}"
-            );
-            assert!(binding.projections.presentation.advanced, "{name}");
-        }
         let memory_target = surface
             .bindings()
             .iter()
             .find(|binding| binding.name == "imaging_memory_target_mb")
             .expect("imaging memory target binding");
-        assert_eq!(memory_target.concept.semantic_revision, SemanticRevision(2));
         assert_eq!(
-            memory_target.required_when,
-            Predicate::Equals {
-                parameter: "imaging_memory_pressure_policy".to_string(),
-                value: ParameterValue::String("oversubscribe".to_string()),
-            }
+            memory_target.projections.presentation.group,
+            "Execution Resources"
         );
-        let memory_policy = surface
-            .bindings()
-            .iter()
-            .find(|binding| binding.name == "imaging_memory_pressure_policy")
-            .expect("imaging memory policy binding");
-        let memory_policy_note = memory_policy
-            .surface_note
-            .as_deref()
-            .expect("memory policy note");
-        assert!(memory_policy_note.contains("oversubscribe"));
-        assert!(!memory_policy_note.contains("stage-aware"));
-        assert!(!memory_policy_note.contains("hybrid"));
+        assert!(memory_target.projections.presentation.advanced);
+        assert_eq!(memory_target.concept.semantic_revision, SemanticRevision(2));
+        assert_eq!(memory_target.required_when, Predicate::Never);
     }
 
     #[test]

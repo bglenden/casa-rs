@@ -19,15 +19,15 @@ use casa_imaging_model::{
     ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
     RestFrequency, RestoringBeamPolicy, ScientificContract, SelectedColumns,
     SelectedImageDomainProjection, SelectedImageDomainProjections, SelectedMainRow,
-    SelectedObservationGenerationId, SelectedObservationInspectionError,
-    SelectedObservationPassError, SelectedObservationSample, SelectedPhaseCentreProjection,
-    SelectedPredictionTarget, SelectedRowSpectralGeometry, SelectedRows, SelectedSampleAddress,
-    SelectedSampleCoordinates, SelectedSampleMetadata, SelectedVisibilitySample, SkyDirection,
-    SourceGenerations, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
-    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection,
-    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, TimeScale, UvwCoordinateLaw,
-    VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract,
-    WeightingScheme, compile, compile_observation,
+    SelectedObservationInspectionError, SelectedObservationPassError, SelectedObservationSample,
+    SelectedPhaseCentreProjection, SelectedPredictionTarget, SelectedRowSpectralGeometry,
+    SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates, SelectedSampleMetadata,
+    SelectedVisibilitySample, SkyDirection, SourceGenerations, SpectralContract,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
+    SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
+    TaylorValidityPolicy, TimeScale, UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct,
+    WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme, compile,
+    compile_observation,
 };
 
 mod common;
@@ -185,8 +185,8 @@ fn selected_observation_inspection_rejects_any_departure_from_compiled_coverage(
         samples.chunks(2).flat_map(|block| block.iter().cloned()),
     )
     .expect("inspect the same logical stream through different borrowed chunks");
-    assert_eq!(contiguous.1, samples.len() as u64);
-    assert_eq!(contiguous.0, differently_chunked.0);
+    assert_eq!(contiguous, samples.len() as u64);
+    assert_eq!(contiguous, differently_chunked);
 
     let first_source = problem.selected_observation().read_set().sources()[0].measurement_set();
 
@@ -334,8 +334,8 @@ fn selected_observation_inspection_rejects_any_departure_from_compiled_coverage(
         Err(SelectedObservationInspectionError::VisibilityStorageMismatch { .. })
     ));
 
-    // Inspection is deterministic validation plus content identity only. It is
-    // not access evidence, attempt freshness, traversal completion, or weighting authority.
+    // Inspection validates stream shape and order; source access and lifecycle
+    // ownership are checked by the reader that supplies it.
 }
 
 #[test]
@@ -368,7 +368,7 @@ fn closed_inspection_pass_validates_before_exposing_a_sample() {
 fn inspect(
     problem: &casa_imaging_model::CompiledProblem,
     samples: impl IntoIterator<Item = SelectedObservationSample>,
-) -> Result<(SelectedObservationGenerationId, u64), SelectedObservationInspectionError> {
+) -> Result<u64, SelectedObservationInspectionError> {
     match problem.inspect_selected_observation(samples.into_iter().map(Ok::<_, Infallible>), |_| {
         Ok::<_, Infallible>(())
     }) {
@@ -454,7 +454,7 @@ fn sample(
         ),
         interval_seconds: 1.0,
         exposure_seconds: 0.8,
-        parallactic_angles_rad: [0.2, 0.25],
+        parallactic_angles_rad: Some([0.2, 0.25]),
         phase_direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
         delay_direction: SkyDirection::new(DirectionFrame::J2000, 1.000_5, -0.500_5),
         pointing_directions: casa_imaging_model::SelectedPointingDirections {

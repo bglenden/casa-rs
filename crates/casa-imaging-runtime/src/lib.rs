@@ -7,13 +7,21 @@ mod complete_data_operator;
 #[cfg(test)]
 mod complete_data_parallel_mfs_tests;
 mod continuum_transform;
-mod cost_model;
 mod cube_state_plan;
 mod execution;
 mod execution_bindings;
 mod major_cycle;
+#[allow(
+    dead_code,
+    reason = "review-1 foundation is connected to cube callers in milestone B"
+)]
+mod managed_cube_blocks;
+mod managed_model;
+mod managed_normal;
 #[allow(dead_code)]
 mod managed_spill;
+#[cfg(all(target_os = "macos", not(coverage)))]
+mod metal_cube;
 mod metal_runtime;
 mod observation_transaction;
 mod paged_cube_state;
@@ -22,6 +30,8 @@ pub mod product_publication;
 mod publication_layout;
 mod receipt;
 mod reconstruction_executor;
+#[doc(hidden)]
+pub use reconstruction_executor::ClarkWorkspaceReservation;
 mod resource_authority;
 mod serial_product_publication;
 mod spectral_cycle;
@@ -30,6 +40,12 @@ mod streaming_cube;
 /// Native streaming-cube phases composed by the imaging application.
 #[doc(hidden)]
 pub use streaming_cube::{CubePhase, NativeReplay};
+
+/// Whether the shared device normal operator supports this compiled MFS problem.
+#[doc(hidden)]
+pub fn supports_metal_normal(problem: &casa_imaging_model::CompiledProblem) -> bool {
+    casa_imaging_reconstruction::runtime_adapter::supports_device_normal(problem)
+}
 mod weighting;
 
 pub use execution_bindings::{
@@ -46,7 +62,6 @@ pub use execution_bindings::{
     WorkMeasurements, plan, run,
 };
 
-pub use casa_imaging_model::{ContinuumFitWeightGenerationId, ContinuumTransformGenerationId};
 pub use casa_imaging_reconstruction::{MajorCyclePreparation, SpectralPrimitiveCatalog};
 pub use complete_data_operator::{
     CompleteDataOperatorError, CompleteDataOperatorResult, CompleteDataPlanError,
@@ -56,10 +71,6 @@ pub use complete_data_operator::{
 pub use continuum_transform::{
     ContinuumTransformCompletion, ContinuumTransformError, ContinuumTransformRowPlan,
     ContinuumTransformStream, ContinuumTransformedSample, plan_continuum_transform_row,
-};
-pub use cost_model::{
-    PlannerCostModelProfileBootstrap, PlannerCostModelProfileRecord, ProfileEvidenceEntry,
-    ProfilePromotionError, ProfileReview, open_cost_model_profile, promote_cost_model_profile,
 };
 pub use execution::{
     AdaptationId, AdaptationTransition, AllocationAccess, AllocationDisposition, AllocationId,
@@ -79,7 +90,6 @@ pub use observation_transaction::{
     BoundObservationTransaction, ObservationTransactionPlanError,
     ObservationTransactionPublicationScope, ObservationTransactionWork,
 };
-pub use prepared_artifact::reload_probe;
 pub use prepared_artifact::{
     PreparedArtifact, PreparedArtifactBudget, PreparedArtifactCatalogEntryOutcome,
     PreparedArtifactCatalogPlanFragment, PreparedArtifactCatalogReuseOutcome,

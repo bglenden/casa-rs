@@ -611,7 +611,7 @@ fn run_phase(
     let current = RunBindings::new(
         problem.inputs().clone(),
         &runtime.resource_policy,
-        runtime.cost_model.profile_id(),
+        runtime.cost_model,
     );
     let attempt = aw_attempt(runtime.attempts[0], phase);
     let execution = run(
@@ -648,8 +648,6 @@ fn aw_attempt(base: ExecutionAttemptId, phase: u64) -> ExecutionAttemptId {
 
 #[cfg(test)]
 mod tests {
-    mod catalog_scale_probe;
-    mod cold_load_probe;
     mod native_generation;
 
     use std::{collections::BTreeSet, path::Path};
@@ -1025,7 +1023,7 @@ mod tests {
                 .expect("bind test spill"),
             confidence_parts_per_million: 900_000,
             resource_policy: ResourcePolicy::Exclusive,
-            cost_model: PlannerCostModelProfileId::from_sha256([2; 32]).bootstrap(),
+            cost_model: PlannerCostModelProfileId::from_sha256([2; 32]),
             authority,
             receipts: ExecutionReceiptStore::new(
                 root.join("receipts"),

@@ -259,7 +259,7 @@ fn problem_with_controls(
             ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
             NumericsContract::new(
                 vec![NumericPrecision::F64],
-                ReductionPolicy::Compensated,
+                ReductionPolicy::UnorderedWithinBudget,
                 FiniteValuePolicy::FlagInputRejectGenerated,
                 NumericalStage::ALL
                     .into_iter()
@@ -327,7 +327,7 @@ fn sample(
             time_centroid: Epoch::new(59_000.0 + physical_row as f64, TimeScale::Utc),
             interval_seconds: 1.0,
             exposure_seconds: 1.0,
-            parallactic_angles_rad: [0.0, 0.0],
+            parallactic_angles_rad: Some([0.0, 0.0]),
             phase_direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
             delay_direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
             pointing_directions: casa_imaging_model::SelectedPointingDirections {
@@ -460,7 +460,7 @@ fn run_operator(
         }
     }
 
-    let (selected_generation, selected_count) = problem
+    let selected_count = problem
         .inspect_selected_observation(samples.iter().cloned().map(Ok::<_, Infallible>), |_| {
             Ok::<_, Infallible>(())
         })
@@ -473,7 +473,8 @@ fn run_operator(
         SpectralOperatorPass::InitialMajor,
     )
     .expect("Taylor workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("prepare Taylor FFT");
+    let prepared =
+        prepare_spectral_operator(specification, workload, 1).expect("prepare Taylor FFT");
     let mut owner = prepared
         .begin(problem, &generation)
         .expect("begin Taylor complete-data owner");
@@ -491,7 +492,7 @@ fn run_operator(
         );
     }
     let result = owner
-        .complete(&summary, selected_generation, None)
+        .complete(&summary)
         .expect("complete Taylor normal state");
     (result, expected)
 }

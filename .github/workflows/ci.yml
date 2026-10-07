@@ -32,6 +32,9 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Install FFTW development libraries
+        run: sudo apt-get update && sudo apt-get install -y libfftw3-dev pkg-config
+
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
@@ -77,6 +80,9 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install FFTW development libraries
+        run: sudo apt-get update && sudo apt-get install -y libfftw3-dev pkg-config
+
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
@@ -100,6 +106,9 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install FFTW development libraries
+        run: sudo apt-get update && sudo apt-get install -y libfftw3-dev pkg-config
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
@@ -131,6 +140,9 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install FFTW development libraries
+        run: brew install fftw pkg-config
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2

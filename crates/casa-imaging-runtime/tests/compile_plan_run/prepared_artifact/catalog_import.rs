@@ -321,7 +321,7 @@ fn catalog_cold_import_cancellation_retains_only_the_durable_prefix_and_restarts
         let fixture = fixture(&problem, 3, None);
         let execution_plan = plan(
             &problem,
-            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
             |_, _| Ok::<_, ()>(fixture.physical.clone()),
         )
         .expect("plan");
@@ -401,7 +401,7 @@ fn catalog_cold_import_cancellation_retains_only_the_durable_prefix_and_restarts
             catalog_physical_work(&problem, &suite, &fixture.store, &fixture.descriptors);
         let warm_plan = plan(
             &problem,
-            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
             |_, _| Ok::<_, ()>(physical),
         )
         .expect("restart plan");
@@ -447,7 +447,7 @@ fn catalog_cold_import_failure_retains_prefix_and_current_io_without_later_claim
         let fixture = fixture(&problem, 3, Some(failed));
         let execution_plan = plan(
             &problem,
-            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
             |_, _| Ok::<_, ()>(fixture.physical),
         )
         .expect("plan");
@@ -556,7 +556,7 @@ fn catalog_cold_import_eviction_preserves_selected_members_on_failure_and_succes
             .expect("seed composition");
             let seed_plan = plan(
                 &problem,
-                PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+                PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
                 |_, _| Ok::<_, ()>(physical),
             )
             .expect("seed plan");
@@ -575,7 +575,7 @@ fn catalog_cold_import_eviction_preserves_selected_members_on_failure_and_succes
         assert_eq!(directory_entry_names(&objects).len(), 4);
         let execution_plan = plan(
             &problem,
-            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
             |_, _| Ok::<_, ()>(fixture.physical),
         )
         .expect("catalog plan");
@@ -637,7 +637,7 @@ fn catalog_cold_import_does_not_import_a_missing_plan_selected_warm_member() {
     let fixture = fixture_with_reuse(&problem, 3, None, &[0]);
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(fixture.physical),
     )
     .expect("mixed plan");
@@ -685,7 +685,7 @@ fn catalog_cold_import_rejects_an_oversized_receipt_before_dispatch() {
     .expect("receipt store");
     let execution_plan = plan_with_receipts(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         &receipts,
         |_, _| Ok::<_, ()>(fixture.physical),
     )
@@ -729,7 +729,7 @@ fn catalog_cold_import_receipt_failure_preserves_objects_without_claiming_comple
     }
     let execution_plan = plan_with_receipts(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         &receipts,
         |_, _| Ok::<_, ()>(fixture.physical),
     )
@@ -811,7 +811,7 @@ fn catalog_cold_import_receipt_failure_preserves_objects_without_claiming_comple
     let subsequent = self::fixture(&problem, 3, None);
     plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(subsequent.physical),
     )
     .expect("verified cleanup returns capacity even when receipt persistence failed");
@@ -823,7 +823,7 @@ fn catalog_cold_import_revalidates_source_inode_before_opening_any_importer() {
     let fixture = fixture(&problem, 3, None);
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(fixture.physical),
     )
     .expect("plan");
@@ -853,7 +853,7 @@ fn catalog_cold_import_does_not_repeat_the_eviction_inventory_for_budgeting() {
         let fixture = fixture(&problem, count, None);
         let execution_plan = plan(
             &problem,
-            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
             |_, _| Ok::<_, ()>(fixture.physical),
         )
         .expect("plan");

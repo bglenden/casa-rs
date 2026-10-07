@@ -22,10 +22,9 @@ use crate::{
     ClaimLifetime, DemandAlternatives, ExecutionAttemptId, ExecutionError, ExecutionKnobs,
     ExecutionOutcome, ExecutionReceiptBinding, FenceKind, IoBufferKind, LeaseResource,
     PhysicalSlotId, PublicationLayoutLedger, ReceiptError, ReceiptFailureKind, ReceiptStatus,
-    ResourceAuthority, ResourceError, ResourceOverride, ResourcePolicy, WorkDomain,
-    WorkImplementationId, WorkKind, WorkNodeId,
+    ResourceAuthority, ResourceError, ResourceOverride, ResourcePolicy, WorkImplementationId,
+    WorkKind, WorkNodeId,
     bounded_stream::BOUNDED_WORKER_STACK_BYTES,
-    cost_model::PlannerCostModelProfileRecord,
     execution::{
         ExecutionDag, ExecutionScheduler, PublicationReservation, SchedulerAction,
         SchedulerTerminal, WorkResult, io_buffer_kind_supports_work_kind, validate_topology,
@@ -86,16 +85,8 @@ digest_identity!(
 );
 digest_identity!(
     PlannerCostModelProfileId,
-    "Stable content identity of one reviewed planner cost-model profile."
+    "Deployment-selected planner cost-model profile identity bound into a plan."
 );
-
-impl PlannerCostModelProfileId {
-    /// Mark this deployment-selected identity as the initial planner baseline.
-    #[must_use]
-    pub const fn bootstrap(self) -> crate::PlannerCostModelProfileBootstrap {
-        crate::PlannerCostModelProfileBootstrap::new(self)
-    }
-}
 
 digest_identity!(
     PhysicalWorkId,
@@ -2243,10 +2234,6 @@ impl ResourcePolicyId {
     pub const fn as_bytes(self) -> [u8; 32] {
         self.0
     }
-
-    pub(crate) const fn from_sha256(digest: [u8; 32]) -> Self {
-        Self(digest)
-    }
 }
 
 impl fmt::Debug for ResourcePolicyId {
@@ -2298,26 +2285,23 @@ pub struct PlanningBindings {
     implementation_registry: ImplementationRegistryId,
     resource_policy: ResourcePolicy,
     resource_policy_id: ResourcePolicyId,
-    planner_cost_model_profile: PlannerCostModelProfileRecord,
+    planner_cost_model_profile: PlannerCostModelProfileId,
 }
 
 impl PlanningBindings {
-    /// Bind one registry snapshot, host-use policy, and reviewed cost model.
+    /// Bind one registry snapshot, host-use policy, and cost-model identity.
     #[must_use]
-    pub fn new<P>(
+    pub fn new(
         implementation_registry: ImplementationRegistryId,
         resource_policy: ResourcePolicy,
-        planner_cost_model_profile: P,
-    ) -> Self
-    where
-        P: Into<PlannerCostModelProfileRecord>,
-    {
+        planner_cost_model_profile: PlannerCostModelProfileId,
+    ) -> Self {
         let resource_policy_id = resource_policy_id(&resource_policy);
         Self {
             implementation_registry,
             resource_policy,
             resource_policy_id,
-            planner_cost_model_profile: planner_cost_model_profile.into(),
+            planner_cost_model_profile,
         }
     }
 
@@ -2339,16 +2323,10 @@ impl PlanningBindings {
         self.resource_policy_id
     }
 
-    /// Return the exact reviewed cost-model profile identity.
+    /// Return the exact cost-model profile identity.
     #[must_use]
     pub const fn planner_cost_model_profile_id(&self) -> PlannerCostModelProfileId {
-        self.planner_cost_model_profile.profile_id()
-    }
-
-    /// Return the reviewed or deployment-selected profile bound to planning.
-    #[must_use]
-    pub const fn planner_cost_model_profile(&self) -> &PlannerCostModelProfileRecord {
-        &self.planner_cost_model_profile
+        self.planner_cost_model_profile
     }
 }
 
@@ -2448,7 +2426,7 @@ impl ExecutionPlan {
         &self.resource_policy
     }
 
-    /// Return the exact reviewed cost-model profile identity.
+    /// Return the exact cost-model profile identity.
     #[must_use]
     pub const fn planner_cost_model_profile_id(&self) -> PlannerCostModelProfileId {
         self.planner_cost_model_profile
@@ -3288,7 +3266,29 @@ impl ObservationReadCompletionContext {
             owner_node: self.owner_node,
             settled_fences: self.settled_fences,
             lease_epoch: self.lease_epoch,
-            owner_completion,
+            owner_completion: SelectedObservationReadCompletion::Full(owner_completion),
+        })
+    }
+
+    /// Bind a freshly exhausted selected-channel window to this read attempt.
+    /// This remains distinct from an exhaustive selected-observation completion.
+    pub fn bind_window(
+        self,
+        owner_completion: casa_ms::SelectedObservationWindowCompletion,
+    ) -> Result<AttemptBoundObservationCompletion, ObservationCompletionBindingError> {
+        if owner_completion.problem_id() != self.problem_id
+            || owner_completion.observation_snapshot_id() != self.observation_snapshot_id
+            || owner_completion.observation_provenance_id() != self.observation_provenance_id
+            || owner_completion.commitment_id() != self.commitment_id
+        {
+            return Err(ObservationCompletionBindingError);
+        }
+        Ok(AttemptBoundObservationCompletion {
+            attempt_id: self.attempt_id,
+            owner_node: self.owner_node,
+            settled_fences: self.settled_fences,
+            lease_epoch: self.lease_epoch,
+            owner_completion: SelectedObservationReadCompletion::Window(owner_completion),
         })
     }
 }
@@ -3307,19 +3307,23 @@ impl fmt::Display for ObservationCompletionBindingError {
 
 impl Error for ObservationCompletionBindingError {}
 
-/// Affine selected-observation completion bound to one execution attempt and owning node.
+/// Affine selected-observation pass bound to one execution attempt and owning node.
 ///
-/// The contained value is casa-ms's opaque scientific completion. Keeping that
-/// concrete affine value inside this proof prevents the runtime from
-/// synthesizing science identity or treating physical I/O completion alone as
-/// selected-observation completion.
+/// The contained owner value remains either an exhaustive completion or a
+/// genuine bounded window. Physical I/O completion alone cannot become either.
 #[derive(Debug)]
 pub struct AttemptBoundObservationCompletion {
     attempt_id: ExecutionAttemptId,
     owner_node: WorkNodeId,
     settled_fences: BTreeSet<FenceKind>,
     lease_epoch: u64,
-    owner_completion: casa_ms::SelectedObservationCompletion,
+    owner_completion: SelectedObservationReadCompletion,
+}
+
+#[derive(Debug)]
+enum SelectedObservationReadCompletion {
+    Full(casa_ms::SelectedObservationCompletion),
+    Window(casa_ms::SelectedObservationWindowCompletion),
 }
 
 impl AttemptBoundObservationCompletion {
@@ -3347,10 +3351,22 @@ impl AttemptBoundObservationCompletion {
         self.lease_epoch
     }
 
-    /// Return the storage owner's opaque scientific completion.
+    /// Return the exhaustive storage-owner completion, if this was a full pass.
     #[must_use]
-    pub const fn owner_completion(&self) -> &casa_ms::SelectedObservationCompletion {
-        &self.owner_completion
+    pub const fn owner_completion(&self) -> Option<&casa_ms::SelectedObservationCompletion> {
+        match &self.owner_completion {
+            SelectedObservationReadCompletion::Full(owner) => Some(owner),
+            SelectedObservationReadCompletion::Window(_) => None,
+        }
+    }
+
+    /// Return samples actually delivered by this pass, not the frozen full-axis count.
+    #[must_use]
+    pub const fn delivered_sample_count(&self) -> u64 {
+        match &self.owner_completion {
+            SelectedObservationReadCompletion::Full(owner) => owner.sample_count(),
+            SelectedObservationReadCompletion::Window(owner) => owner.sample_count(),
+        }
     }
 }
 
@@ -4376,15 +4392,14 @@ where
                         if work.node().kind == WorkKind::Publication {
                             controller_stopped = true;
                         }
-                        let metal_submitted =
-                            if matches!(work.node().domain, WorkDomain::Metal { .. }) {
-                                context
-                                    .metal_execution()
-                                    .and_then(|execution| execution.submitted(&node_id))
-                                    .unwrap_or(false)
-                            } else {
-                                true
-                            };
+                        let metal_submitted = if work.node().metal_demand_id().is_some() {
+                            context
+                                .metal_execution()
+                                .and_then(|execution| execution.submitted(&node_id))
+                                .unwrap_or(false)
+                        } else {
+                            true
+                        };
                         let validation = if !metal_submitted {
                             Err(ExecutionEvidenceError::MetalRuntimeBypassed {
                                 node: node_id.clone(),

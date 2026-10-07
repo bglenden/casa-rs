@@ -38,6 +38,67 @@ use ndarray::ArrayD;
 const PRODUCT_SUFFIXES: [&str; 6] = [".psf", ".residual", ".model", ".image", ".sumwt", ".mask"];
 const DIRTY_PRODUCT_SUFFIXES: [&str; 5] = [".psf", ".residual", ".model", ".image", ".sumwt"];
 
+fn assert_real_agreement<T: Copy + Into<f64>>(expected: &[T], actual: &[T]) {
+    assert_eq!(expected.len(), actual.len());
+    let scale = expected
+        .iter()
+        .map(|&value| value.into().powi(2))
+        .sum::<f64>()
+        .sqrt();
+    let error = expected
+        .iter()
+        .zip(actual)
+        .map(|(&a, &b)| (a.into() - b.into()).powi(2))
+        .sum::<f64>()
+        .sqrt();
+    assert!(
+        error <= (1e-3 * scale).max(1e-12),
+        "error={error:e}, scale={scale:e}"
+    );
+}
+
+fn assert_complex_agreement(
+    expected: &[num_complex::Complex64],
+    actual: &[num_complex::Complex64],
+) {
+    assert_eq!(expected.len(), actual.len());
+    let scale = expected
+        .iter()
+        .map(|value| value.norm_sqr())
+        .sum::<f64>()
+        .sqrt();
+    let error = expected
+        .iter()
+        .zip(actual)
+        .map(|(a, b)| (*a - *b).norm_sqr())
+        .sum::<f64>()
+        .sqrt();
+    assert!(
+        error <= (1e-3 * scale).max(1e-12),
+        "error={error:e}, scale={scale:e}"
+    );
+}
+
+fn assert_model_agreement(
+    expected: &[casa_imaging_model::ModelSample],
+    actual: &[casa_imaging_model::ModelSample],
+) {
+    assert_eq!(expected.len(), actual.len());
+    for (expected, actual) in expected.iter().zip(actual) {
+        assert_eq!(expected.support(), actual.support());
+    }
+    assert_real_agreement(
+        &expected
+            .iter()
+            .map(|value| value.value().value())
+            .collect::<Vec<_>>(),
+        &actual
+            .iter()
+            .map(|value| value.value().value())
+            .collect::<Vec<_>>(),
+    );
+}
+
 fn fixture_model_samples(
     model: &casa_imaging_reconstruction::ModelGeneration,
 ) -> Vec<casa_imaging_model::ModelSample> {
@@ -89,6 +150,12 @@ mod t55_cube_pipeline;
 
 #[path = "continuum_application/t55_real_cube.rs"]
 mod t55_real_cube;
+
+#[path = "continuum_application/t55_c_array_turnaround.rs"]
+mod t55_c_array_turnaround;
+
+#[path = "continuum_application/t55_mfs_pilot.rs"]
+mod t55_mfs_pilot;
 
 #[test]
 fn unsupported_primary_beam_frequency_rejects_before_execution_receipts() {
@@ -149,6 +216,60 @@ fn image_pointing_center_preserves_casa_positive_pi_longitude() {
     );
 }
 
+#[test]
+fn image_observation_metadata_accepts_matching_labels_across_observations() {
+    let _execution_guard = EXECUTION_LOCK.lock().unwrap();
+    set_production_io_environment();
+    for (second_telescope, second_observer, accepted) in [
+        ("EVLA", "casa-rs-test", true),
+        ("VLA", "casa-rs-test", false),
+        ("EVLA", "another-observer", false),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let path = four_spw_vla_measurement_set(root.path());
+        let mut ms = MeasurementSet::open(&path).unwrap();
+        ms.subtable_mut(SubtableId::Observation)
+            .unwrap()
+            .add_row(required_row(
+                schema::observation::REQUIRED_COLUMNS,
+                &[
+                    ("TELESCOPE_NAME", string(second_telescope)),
+                    ("OBSERVER", string(second_observer)),
+                ],
+            ))
+            .unwrap();
+        // Selected DDID 0 rows include both observations, with distinct times.
+        for row in 12..ms.row_count() {
+            ms.main_table_mut()
+                .row_accessor_mut()
+                .set_cell(row, "OBSERVATION_ID", int(1))
+                .unwrap();
+        }
+        ms.save().unwrap();
+        drop(ms);
+        let prefix = root.path().join("joint-observation");
+        let result = execute_continuum(request(path, prefix.clone(), ContinuumAlgorithm::Dirty));
+        if accepted {
+            let result = result.unwrap_or_else(|error| panic!("joint observation: {error}"));
+            assert_dirty_products(&prefix, &result.product_names);
+            let image =
+                PagedImage::<f32>::open(root.path().join("joint-observation.image")).unwrap();
+            assert_eq!(image.coordinates().obs_info().telescope, "EVLA");
+            assert_eq!(image.coordinates().obs_info().observer, "casa-rs-test");
+        } else {
+            let error = result
+                .err()
+                .expect("conflicting image metadata must reject");
+            assert!(
+                error
+                    .to_string()
+                    .contains("consistent telescope and observer")
+            );
+            assert!(!root.path().join("joint-observation.image").exists());
+        }
+    }
+}
+
 fn assert_standard_products(image_name: &Path, product_names: &[String]) {
     assert_products(image_name, product_names, &PRODUCT_SUFFIXES);
 }
@@ -170,11 +291,35 @@ fn assert_products(image_name: &Path, product_names: &[String], suffixes: &[&str
             "missing CASA product directory {}",
             path.display()
         );
+        if matches!(*suffix, ".psf" | ".psf.tt0") {
+            assert_unit_psf_planes(&path);
+        }
+    }
+}
+
+fn assert_unit_psf_planes(path: &Path) {
+    let product = PagedImage::<f32>::open(path).expect("open principal PSF");
+    let shape = product.shape();
+    for channel in 0..shape[3] {
+        for polarization in 0..shape[2] {
+            let plane = product
+                .get_slice(&[0, 0, polarization, channel], &[shape[0], shape[1], 1, 1])
+                .expect("read PSF plane");
+            assert!(plane.iter().all(|value| value.is_finite()));
+            if plane.iter().any(|value| *value != 0.0) {
+                assert_eq!(
+                    plane.iter().copied().fold(f32::NEG_INFINITY, f32::max),
+                    1.0,
+                    "{} polarization {polarization} channel {channel}",
+                    path.display()
+                );
+            }
+        }
     }
 }
 
 fn product_plane(image_name: &Path, suffix: &str) -> ArrayD<f32> {
-    product_plane_with_size(image_name, suffix, 16)
+    product_plane_with_size(image_name, suffix, if suffix == ".sumwt" { 1 } else { 16 })
 }
 
 fn product_plane_with_size(image_name: &Path, suffix: &str, image_size: usize) -> ArrayD<f32> {
@@ -652,6 +797,7 @@ fn t51_direct_taylor_aw_clean_executes_the_application_replay_path() {
 }
 
 #[test]
+#[ignore = "recompute route unreachable since 1dc92262ac (final major prefers a resident source); replaced by the IF-6 admission test, issue #655"]
 fn t51_fixed_memory_aw_clean_preserves_prepared_projection_during_recompute() {
     if !isolated_application_case(
         "t51_fixed_memory_aw_clean_preserves_prepared_projection_during_recompute",
@@ -813,6 +959,7 @@ fn t51_zero_iteration_mtmfs_executes_dirty_taylor_basis_and_publishes_products()
     imaging.task_requirements = vec![TaskRequirement::AwProjection];
 
     let result = execute_continuum(imaging).expect("native zero-iteration MT-MFS execution");
+    assert_unit_psf_planes(&PathBuf::from(format!("{}.psf.tt0", image_name.display())));
     assert_eq!(result.minor_iterations, 0);
     assert_eq!(result.actual_minor_iterations, 0);
     assert!(result.minor_cycles.is_empty());
@@ -1680,50 +1827,6 @@ fn t31_application_canonicalizes_reversed_outliers_before_domain_indexed_derivat
 }
 
 #[test]
-fn optional_joint_application_route_fails_closed_before_execution() {
-    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
-    let root = tempfile::tempdir().expect("test root");
-    let measurement_set = joint_measurement_set(root.path());
-    let image_name = root.path().join("joint-continuum-line");
-    let mut imaging = request(
-        measurement_set,
-        image_name.clone(),
-        ContinuumAlgorithm::JointContinuumLine {
-            continuum_terms: 1,
-            continuum_anchor_channels: vec![0, 1],
-            line_channels: vec![2, 3],
-            maximum_condition_number: 1.0e12,
-            scales_px: vec![0.0],
-            small_scale_bias: 0.0,
-        },
-    );
-    imaging.spectral_window = Some("0:0~3".to_string());
-    imaging.channel_count = Some(4);
-    imaging.spectral_mode = SpectralImagingMode::JointContinuumLine;
-    imaging.beam_policy = ContinuumBeamPolicy::Common;
-    imaging.mask = ContinuumMask::Coupled {
-        continuum: Box::new(ContinuumMask::FullPlane),
-        line: Box::new(ContinuumMask::Boxes(vec![ContinuumMaskBox {
-            blc: [7, 7],
-            trc: [8, 8],
-        }])),
-    };
-
-    let error = match execute_continuum(imaging) {
-        Ok(_) => panic!("optional joint reconstruction reached production execution"),
-        Err(error) => error,
-    };
-    assert!(
-        error
-            .to_string()
-            .contains("JointContinuumLineReconstruction"),
-        "wrong fail-closed error: {error}"
-    );
-    assert!(!PathBuf::from(format!("{}.psf", image_name.display())).exists());
-}
-
-#[test]
 fn application_preserves_the_bounded_source_budget_across_multiple_rows() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();
@@ -1829,6 +1932,7 @@ fn mtmfs_via_cube_executes_one_bounded_sixteen_channel_axis_from_four_spectral_w
     };
 
     let result = execute_continuum(imaging).expect("bounded multi-SPW MVC execution");
+    assert_unit_psf_planes(&PathBuf::from(format!("{}.psf.tt0", image_name.display())));
     assert_eq!(
         result.product_names,
         [
@@ -1913,6 +2017,13 @@ fn cube_common_beam_products_preserve_blank_pixels_and_casa_metadata_without_pb(
         assert_eq!(product.shape(), &[16, 16, 1, 4]);
     }
     assert_eq!(psf.units(), "");
+    for channel in 0..4 {
+        let plane = psf.get_slice(&[0, 0, 0, channel], &[16, 16, 1, 1]).unwrap();
+        assert_eq!(
+            plane.iter().copied().fold(0.0_f32, f32::max),
+            if channel == 0 { 0.0 } else { 1.0 }
+        );
+    }
     assert_eq!(residual.units(), "");
     assert_eq!(restored.units(), "Jy/beam");
 
@@ -2129,6 +2240,129 @@ fn application_serial_cpu_requirement_caps_replay_to_one_worker() {
             .hard(),
         1
     );
+}
+
+#[test]
+fn uniform_multi_spw_mfs_clark_matches_serial_with_four_admitted_workers() {
+    let _execution_guard = EXECUTION_LOCK.lock().unwrap();
+    set_production_io_environment();
+    let root = tempfile::tempdir().unwrap();
+    let measurement_set = four_spw_vla_measurement_set(root.path());
+    for selection in ["0~3", "0:0,1:0~2,2:0~4,3:0~6"] {
+        assert_uniform_mfs_workers(measurement_set.clone(), root.path(), selection);
+    }
+}
+
+fn assert_uniform_mfs_workers(measurement_set: PathBuf, root: &Path, selection: &str) {
+    // Admission caps explicit worker overrides at the host thread count, so a
+    // team larger than this host is infeasible rather than a parity failure.
+    let host_threads = std::thread::available_parallelism().unwrap().get() as u64;
+    assert!(host_threads >= 4, "parity needs at least four host threads");
+    let mut prefixes = Vec::new();
+    for workers in [1, 4, 8]
+        .into_iter()
+        .filter(|&workers| workers <= host_threads)
+    {
+        let prefix = root.join(format!("uniform-mfs-{selection}-w{workers}"));
+        let mut imaging = request(
+            measurement_set.clone(),
+            prefix.clone(),
+            ContinuumAlgorithm::Clark,
+        );
+        imaging.image_size = 256;
+        imaging.cell_arcsec = 3.0;
+        imaging.data_description = None;
+        imaging.spectral_window = Some(selection.into());
+        imaging.channel_start = None;
+        imaging.channel_count = None;
+        imaging.weighting = ContinuumWeighting::Uniform;
+        imaging.gain = 0.1;
+        imaging.task_requirements = if workers == 1 {
+            vec![TaskRequirement::SerialCpu]
+        } else {
+            vec![]
+        };
+        imaging.resource_policy = casa_imaging_runtime::ResourcePolicy::Explicit(
+            casa_imaging_runtime::ResourceOverride {
+                workers: Some(workers),
+                memory_bytes: std::collections::BTreeMap::from([(
+                    casa_imaging_runtime::CapacityDomainId::new("host-memory"),
+                    2 << 30,
+                )]),
+                ..Default::default()
+            },
+        );
+        let result = execute_continuum(imaging).expect("uniform multi-SPW MFS Clark execution");
+        assert!(result.actual_minor_iterations > 0);
+        let initial_workers = result
+            .outcome
+            .output
+            .initial_receipt
+            .selected_alternative_projection()
+            .demand
+            .workers
+            .hard();
+        assert!((1..=workers).contains(&initial_workers));
+        if workers <= 4 {
+            assert_eq!(initial_workers, workers);
+        }
+        let final_receipt = result
+            .outcome
+            .output
+            .final_major_receipt
+            .as_ref()
+            .expect("CLEAN residual refresh");
+        let final_workers = final_receipt
+            .selected_alternative_projection()
+            .demand
+            .workers
+            .hard();
+        assert!((1..=workers).contains(&final_workers));
+        if workers <= 4 {
+            assert_eq!(final_workers, workers);
+        }
+        assert_standard_products(&prefix, &result.product_names);
+        prefixes.push(prefix);
+    }
+    assert!(
+        prefixes.len() >= 2,
+        "parity needs a serial and a parallel run"
+    );
+    for candidate in 1..prefixes.len() {
+        for suffix in PRODUCT_SUFFIXES {
+            let left = PagedImage::<f32>::open(PathBuf::from(format!(
+                "{}{suffix}",
+                prefixes[0].display()
+            )))
+            .unwrap();
+            let right = PagedImage::<f32>::open(PathBuf::from(format!(
+                "{}{suffix}",
+                prefixes[candidate].display()
+            )))
+            .unwrap();
+            assert_eq!(left.shape(), right.shape());
+            assert_eq!(left.units(), right.units());
+            assert_eq!(left.default_mask_name(), right.default_mask_name());
+            let left = left.get().unwrap();
+            let right = right.get().unwrap();
+            let mut square_error = 0.0_f64;
+            let mut square_signal = 0.0_f64;
+            for (&left, &right) in left.iter().zip(right.iter()) {
+                assert_eq!(left.is_finite(), right.is_finite(), "{suffix} validity");
+                if left.is_finite() {
+                    if suffix == ".mask" {
+                        assert_eq!(left, right);
+                    }
+                    square_error += f64::from(left - right).powi(2);
+                    square_signal += f64::from(left).powi(2);
+                }
+            }
+            assert!(
+                square_error.sqrt() <= 1e-6 * square_signal.sqrt().max(1e-12),
+                "{suffix} normalized difference"
+            );
+        }
+    }
 }
 
 #[test]

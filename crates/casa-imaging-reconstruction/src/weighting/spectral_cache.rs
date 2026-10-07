@@ -102,8 +102,7 @@ fn axis_channels(problem: &CompiledProblem) -> usize {
     match problem.reconstruction().basis() {
         ReconstructionBasis::Constant | ReconstructionBasis::Taylor { .. } => 0,
         ReconstructionBasis::TaylorViaChannelMajor { .. }
-        | ReconstructionBasis::ChannelLocal { .. }
-        | ReconstructionBasis::JointContinuumLine { .. } => {
+        | ReconstructionBasis::ChannelLocal { .. } => {
             problem.geometry().spectral().output_channels()
         }
     }

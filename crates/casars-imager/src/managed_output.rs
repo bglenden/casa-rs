@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Structured run report emitted for launcher-managed imaging runs.
 
-#[cfg(test)]
-use std::path::PathBuf;
-
 use serde::{Deserialize, Serialize};
 
 use crate::task_contract::{
@@ -63,8 +60,6 @@ pub struct ManagedImagingRequest {
     pub projection: String,
     /// Whether the run skipped CLEAN.
     pub dirty_only: bool,
-    /// Whether preview PNG sidecars were requested.
-    pub write_preview_pngs: bool,
     /// Whether the primary-beam product was requested.
     pub write_pb: bool,
     /// Whether per-channel density estimation was requested for cube weighting.
@@ -151,7 +146,6 @@ impl ManagedImagingOutput {
                 cell_arcsec: config.cell_arcsec,
                 projection: "SIN".to_string(),
                 dirty_only: config.dirty_only,
-                write_preview_pngs: config.write_preview_pngs,
                 write_pb: config.write_pb,
                 per_channel_weight_density: config.per_channel_weight_density,
                 nterms: config.nterms,
@@ -231,7 +225,6 @@ impl ManagedImagingOutput {
                 cell_arcsec: request.cell_arcsec,
                 projection: request.projection.as_cli_text().to_string(),
                 dirty_only: request.dirty_only,
-                write_preview_pngs: request.write_preview_pngs,
                 write_pb: request.write_pb,
                 per_channel_weight_density: managed_request_per_channel_weight_density(request),
                 nterms: request.nterms,
@@ -279,8 +272,8 @@ impl ManagedImagingOutput {
                     label: artifact.label.clone(),
                     path: artifact.path.clone(),
                     exists: artifact.exists,
-                    preview_png_path: artifact.preview_png_path.clone(),
-                    preview_png_exists: artifact.preview_png_exists,
+                    preview_png_path: None,
+                    preview_png_exists: false,
                 })
                 .collect(),
         }
@@ -346,37 +339,15 @@ fn imaging_artifacts(config: &CliConfig, products: &[String]) -> Vec<ManagedImag
             label: artifact.label,
             path: artifact.path,
             exists: artifact.exists,
-            preview_png_path: artifact.preview_png_path,
-            preview_png_exists: artifact.preview_png_exists,
+            preview_png_path: None,
+            preview_png_exists: false,
         })
         .collect()
 }
 
 #[cfg(test)]
-fn label_for_term(base: &str, term: usize) -> String {
-    format!("{base} TT{term}")
-}
-
-#[cfg(test)]
-fn artifact(
-    label: String,
-    kind: &str,
-    path: PathBuf,
-    preview: Option<PathBuf>,
-) -> ManagedImagingArtifact {
-    ManagedImagingArtifact {
-        kind: kind.to_string(),
-        label,
-        exists: path.exists(),
-        path: path.display().to_string(),
-        preview_png_exists: preview.as_ref().is_some_and(|path| path.exists()),
-        preview_png_path: preview.map(|path| path.display().to_string()),
-    }
-}
-
-#[cfg(test)]
 mod tests {
-    use super::{ManagedImagingOutput, artifact, imaging_artifacts, label_for_term};
+    use super::{ManagedImagingOutput, imaging_artifacts};
     use crate::task_contract::{
         ImagerArtifact, ImagerArtifactKind, ImagerAutoMultiThresholdConfig, ImagerCleanMaskMode,
         ImagerCleanStopReason, ImagerDeconvolver, ImagerHogbomIterationMode, ImagerPlaneSelection,
@@ -386,8 +357,8 @@ mod tests {
     use crate::{
         AutoMultiThresholdConfig, AwProjectControls, AwProjectNormalization, CleanMaskMode,
         CleanStopReason, CliConfig, CubeAxisConfig, Deconvolver, HogbomIterationMode,
-        ImagingFftBackendPolicy, ImagingFftPrecisionPolicy, RestoringBeamMode, RunSummary,
-        SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy, WTermMode, WeightingMode,
+        RestoringBeamMode, RunSummary, SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy,
+        WTermMode, WeightingMode,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -432,7 +403,6 @@ mod tests {
             small_scale_bias: 0.0,
             niter: 50,
             nmajor: None,
-            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -456,26 +426,10 @@ mod tests {
             aw_project: None,
             dirty_only: false,
             parallel: None,
-            chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
             standard_mfs_backend: None,
-            standard_mfs_grid_threads: None,
-            standard_mfs_tile_anchor: None,
-            standard_mfs_residual_backend: None,
-            standard_mfs_initial_dirty_backend: None,
-            standard_mfs_metal_minor_cycle_chunk: None,
-            standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
-            standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
-            imaging_memory_pressure_policy: Default::default(),
-            imaging_prepare_buffer_mb: None,
-            imaging_row_block_rows: None,
-            imaging_prepare_workers: None,
-            imaging_read_ahead_blocks: None,
-            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
-            imaging_fft_backend: ImagingFftBackendPolicy::Auto,
-            write_preview_pngs: true,
         }
     }
 
@@ -505,9 +459,7 @@ mod tests {
         let tempdir = tempdir().unwrap();
         let imagename = tempdir.path().join("managed-output");
         fs::write(imagename.with_extension("psf.tt0"), b"psf").unwrap();
-        fs::write(imagename.with_extension("psf.tt0.png"), b"png").unwrap();
         fs::write(imagename.with_extension("alpha"), b"alpha").unwrap();
-        fs::write(imagename.with_extension("alpha.png"), b"png").unwrap();
 
         let output =
             ManagedImagingOutput::from_run(&sample_cli_config(imagename), &sample_run_summary());
@@ -632,7 +584,6 @@ mod tests {
                 small_scale_bias: 0.3,
                 niter: 100,
                 nmajor: Some(4),
-                fullsummary: true,
                 gain: 0.2,
                 threshold_jy: 0.01,
                 nsigma: 5.0,
@@ -656,26 +607,10 @@ mod tests {
                 aw_project: None,
                 dirty_only: true,
                 parallel: None,
-                chanchunks: None,
                 standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
                 standard_mfs_backend: None,
-                standard_mfs_grid_threads: None,
-                standard_mfs_tile_anchor: None,
-                standard_mfs_residual_backend: None,
-                standard_mfs_initial_dirty_backend: None,
-                standard_mfs_metal_minor_cycle_chunk: None,
-                standard_mfs_metal_grouped_input_cache: None,
                 standard_mfs_memory_target_mb: None,
-                standard_mfs_prepare_buffer_mb: None,
                 imaging_memory_target_mb: None,
-                imaging_memory_pressure_policy: Default::default(),
-                imaging_prepare_buffer_mb: None,
-                imaging_row_block_rows: None,
-                imaging_prepare_workers: None,
-                imaging_read_ahead_blocks: None,
-                imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
-                imaging_fft_backend: ImagingFftBackendPolicy::Auto,
-                write_preview_pngs: false,
                 progress: None,
             },
             run: ImagerRunReport {
@@ -697,8 +632,6 @@ mod tests {
                 label: "Spectral Index".to_string(),
                 path: "/tmp/from-task.alpha".to_string(),
                 exists: true,
-                preview_png_path: Some("/tmp/from-task.alpha.png".to_string()),
-                preview_png_exists: false,
             }],
         };
 
@@ -714,7 +647,6 @@ mod tests {
         assert_eq!(output.request.output_channels, 1);
         assert_eq!(output.request.correlation.as_deref(), Some("XX"));
         assert!(output.request.dirty_only);
-        assert!(!output.request.write_preview_pngs);
         assert_eq!(output.request.projection, "SIN");
         assert_eq!(
             output.run.clean_stop_reason.as_deref(),
@@ -726,25 +658,18 @@ mod tests {
         assert_eq!(output.artifacts[0].kind, "alpha");
         assert_eq!(output.artifacts[0].label, "Spectral Index");
         assert!(output.artifacts[0].exists);
-        assert_eq!(
-            output.artifacts[0].preview_png_path.as_deref(),
-            Some("/tmp/from-task.alpha.png")
-        );
-        assert!(!output.artifacts[0].preview_png_exists);
     }
 
     #[test]
-    fn artifact_helpers_cover_standard_products_and_preview_flags() {
+    fn artifact_helpers_cover_standard_products() {
         let tempdir = tempdir().unwrap();
         let imagename = tempdir.path().join("standard-output");
         fs::write(imagename.with_extension("image"), b"image").unwrap();
-        fs::write(imagename.with_extension("image.png"), b"png").unwrap();
 
         let mut config = sample_cli_config(imagename.clone());
         config.deconvolver = Deconvolver::Clark;
         config.nterms = 1;
         config.spectral_mode = SpectralMode::Cube;
-        config.write_preview_pngs = true;
 
         let artifacts = imaging_artifacts(&config, &sample_run_summary().output_products);
         assert_eq!(artifacts.len(), 5);
@@ -757,29 +682,7 @@ mod tests {
         );
         assert_eq!(artifacts[3].label, "Restored Image");
         assert!(artifacts[3].exists);
-        assert_eq!(
-            artifacts[3].preview_png_path.as_deref(),
-            Some(
-                imagename
-                    .with_extension("image.png")
-                    .to_string_lossy()
-                    .as_ref()
-            )
-        );
-        assert!(artifacts[3].preview_png_exists);
         assert_eq!(artifacts[4].label, "Sum of Weights");
         assert!(!artifacts[4].exists);
-
-        let manual = artifact(
-            label_for_term("Residual", 2),
-            "residual",
-            imagename.with_extension("residual"),
-            None,
-        );
-        assert_eq!(manual.label, "Residual TT2");
-        assert_eq!(manual.kind, "residual");
-        assert!(!manual.exists);
-        assert_eq!(manual.preview_png_path, None);
-        assert!(!manual.preview_png_exists);
     }
 }

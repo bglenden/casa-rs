@@ -263,7 +263,7 @@ impl ClaimLifetime {
         Self::RetainedUntil(release)
     }
 
-    fn retains_fence(&self, kind: FenceKind) -> bool {
+    pub(crate) fn retains_fence(&self, kind: FenceKind) -> bool {
         matches!(self, Self::Fences(kinds) if kinds.contains(&kind))
             || matches!(self, Self::RetainedUntil(_))
     }
@@ -385,6 +385,17 @@ impl RetainedArtifactPermit {
         }
         permit.narrow_temporary_storage_to(amount)?;
         Ok(self)
+    }
+
+    /// Narrow the single retained cache permit after its owner has physically
+    /// reclaimed the returned portion. The export remains owned by this run.
+    pub(crate) fn narrow_memory_to(&mut self, amount: u64) -> Result<(), ResourceError> {
+        let [permit] = &mut *self.permits else {
+            return Err(ResourceError::Invalid(
+                "cache retention requires one memory permit".to_string(),
+            ));
+        };
+        permit.narrow_memory_to(amount)
     }
 
     /// Return whether this permit contains exactly one matching resource claim.
@@ -613,6 +624,28 @@ pub struct WorkNode {
     pub fences: BTreeSet<FenceKind>,
     /// Safe adaptation boundaries reached after this node and all its fences settle.
     pub quiescence_after: BTreeSet<QuiescencePoint>,
+}
+
+impl WorkNode {
+    /// Accelerator participation is declared by the node's lease claim, including
+    /// fused observation I/O. The primary domain still controls I/O admission.
+    pub(crate) fn metal_demand_id(&self) -> Option<&str> {
+        match &self.domain {
+            WorkDomain::Metal { demand_id } => Some(demand_id),
+            _ => self.claims.iter().find_map(|claim| match &claim.resource {
+                LeaseResource::Accelerator { demand_id } => Some(demand_id.as_str()),
+                _ => None,
+            }),
+        }
+    }
+
+    pub(crate) fn payload_lifetime(&self) -> ClaimLifetime {
+        if self.fences.is_empty() {
+            ClaimLifetime::Work
+        } else {
+            ClaimLifetime::Fences(self.fences.clone())
+        }
+    }
 }
 
 /// Execution-only controls that a pre-authorized transition may change.
@@ -1354,7 +1387,7 @@ impl<'plan> ExecutionScheduler<'plan> {
         let metal_execution = if dag
             .nodes()
             .values()
-            .any(|node| matches!(node.domain, WorkDomain::Metal { .. }))
+            .any(|node| node.metal_demand_id().is_some())
         {
             Some(Rc::new(
                 crate::metal_runtime::MetalExecutionState::bind(
@@ -2318,6 +2351,11 @@ impl<'plan> ExecutionScheduler<'plan> {
     }
 
     fn release_allocation(&mut self, allocation: &AllocationId) -> Result<(), ExecutionError> {
+        if let Some(metal) = &self.metal_execution {
+            metal
+                .release_allocation(allocation)
+                .map_err(|error| ExecutionError::invalid_state(error.to_string()))?;
+        }
         let active = self.active_allocations.remove(allocation).ok_or_else(|| {
             ExecutionError::invalid_state(format!(
                 "logical allocation {} is not active",
@@ -2726,7 +2764,7 @@ pub(crate) fn validate_topology(
         }
     }
     for node in dag.nodes.values() {
-        let WorkDomain::Metal { demand_id } = &node.domain else {
+        let Some(demand_id) = node.metal_demand_id() else {
             continue;
         };
         let demand = dag
@@ -2734,7 +2772,7 @@ pub(crate) fn validate_topology(
             .demand
             .accelerators
             .iter()
-            .find(|demand| &demand.demand_id == demand_id)
+            .find(|demand| demand.demand_id == demand_id)
             .ok_or_else(|| {
                 ExecutionError::invalid_plan(format!(
                     "Metal work node {} references undeclared accelerator demand {demand_id}",
@@ -2769,6 +2807,9 @@ pub(crate) fn validate_topology(
         for allocation_use in &node.allocations {
             let allocation = &dag.logical_allocations[&allocation_use.allocation];
             let slot = &dag.physical_slots[&allocation.physical_slot];
+            if slot.compatibility.storage_mode != StorageMode::MetalShared {
+                continue;
+            }
             if !slot.compatibility.views.contains(&accelerator.memory_view)
                 || !slot.compatibility.views.contains(&host_view.id)
                 || slot.compatibility.memory_domain != metal_view.domain
@@ -3401,7 +3442,7 @@ fn validate_nodes(
                 )));
             }
             if matches!(&node.domain, WorkDomain::Metal { .. } | WorkDomain::Io)
-                && allocation_use.lifetime != required_payload_lifetime(node)
+                && allocation_use.lifetime != node.payload_lifetime()
             {
                 return Err(ExecutionError::invalid_plan(format!(
                     "work node {} has an allocation use without its exact asynchronous lifetime",
@@ -3438,7 +3479,7 @@ fn validate_claims(node: &WorkNode) -> Result<(), ExecutionError> {
             )));
         }
         if claim_requires_domain_lifetime(node, &claim.resource)
-            && claim.lifetime != required_payload_lifetime(node)
+            && claim.lifetime != node.payload_lifetime()
             && !matches!(claim.lifetime, ClaimLifetime::RetainedUntil(_))
             && !matches!(claim.lifetime, ClaimLifetime::Artifact)
         {
@@ -3530,14 +3571,6 @@ fn validate_retained_claims(nodes: &BTreeMap<WorkNodeId, WorkNode>) -> Result<()
     Ok(())
 }
 
-fn required_payload_lifetime(node: &WorkNode) -> ClaimLifetime {
-    if node.fences.is_empty() {
-        ClaimLifetime::Work
-    } else {
-        ClaimLifetime::Fences(node.fences.clone())
-    }
-}
-
 fn claim_requires_domain_lifetime(node: &WorkNode, resource: &LeaseResource) -> bool {
     match &node.domain {
         WorkDomain::Metal { .. } | WorkDomain::Io => !matches!(
@@ -3562,7 +3595,46 @@ fn validate_lifetime(node: &WorkNode, lifetime: &ClaimLifetime) -> Result<(), Ex
 }
 
 fn validate_domain(node: &WorkNode) -> Result<(), ExecutionError> {
-    let expected_fences = match (&node.domain, node.kind) {
+    let metal = node.metal_demand_id();
+    let accelerator_claims = node
+        .claims
+        .iter()
+        .filter(|claim| matches!(claim.resource, LeaseResource::Accelerator { .. }))
+        .collect::<Vec<_>>();
+    let queue_claims = node
+        .claims
+        .iter()
+        .filter(|claim| {
+            matches!(
+                claim.resource,
+                LeaseResource::AcceleratorCommandQueue { .. }
+            )
+        })
+        .collect::<Vec<_>>();
+    if let Some(demand_id) = metal {
+        let supported = matches!(node.domain, WorkDomain::Metal { .. })
+            || (node.domain == WorkDomain::Io
+                && (node.kind.reads_observation() || node.kind == WorkKind::Spill));
+        if !supported
+            || demand_id.is_empty()
+            || accelerator_claims.len() != 1
+            || queue_claims.len() != 1
+            || !matches!(&accelerator_claims[0].resource,
+                LeaseResource::Accelerator { demand_id: id } if id == demand_id)
+            || !matches!(&queue_claims[0].resource,
+                LeaseResource::AcceleratorCommandQueue { demand_id: id } if id == demand_id)
+        {
+            return Err(ExecutionError::invalid_plan(format!(
+                "work node {} requires one matching accelerator and command-queue claim in Metal or streamed I/O work",
+                node.id.as_str()
+            )));
+        }
+    } else if !queue_claims.is_empty() {
+        return Err(ExecutionError::invalid_plan(
+            "command queue without accelerator participation",
+        ));
+    }
+    let mut expected_fences = match (&node.domain, node.kind) {
         (WorkDomain::Metal { .. }, _) => BTreeSet::from([FenceKind::Device]),
         (WorkDomain::Io, WorkKind::Writeback) => {
             BTreeSet::from([FenceKind::Io, FenceKind::Writeback])
@@ -3573,8 +3645,13 @@ fn validate_domain(node: &WorkNode) -> Result<(), ExecutionError> {
         (WorkDomain::Io, _) => BTreeSet::from([FenceKind::Io]),
         (WorkDomain::Cpu | WorkDomain::Control, _) => BTreeSet::new(),
     };
-    let synchronous_observation_read =
-        node.domain == WorkDomain::Io && node.kind.reads_observation() && node.fences.is_empty();
+    if metal.is_some() {
+        expected_fences.insert(FenceKind::Device);
+    }
+    let synchronous_observation_read = node.domain == WorkDomain::Io
+        && node.kind.reads_observation()
+        && metal.is_none()
+        && node.fences.is_empty();
     if node.fences != expected_fences && !synchronous_observation_read {
         return Err(ExecutionError::invalid_plan(format!(
             "work node {} must declare its exact asynchronous fence set {expected_fences:?}",
@@ -3685,6 +3762,7 @@ fn validate_kind(node: &WorkNode) -> Result<(), ExecutionError> {
             },
             "resident or persistent cache reservation",
         ),
+        WorkKind::FftPlanning if !node.allocations.is_empty() => Ok(()),
         WorkKind::FftPlanning => require_claim(
             node,
             |resource| {
@@ -3693,7 +3771,7 @@ fn validate_kind(node: &WorkNode) -> Result<(), ExecutionError> {
                     LeaseResource::RuntimeOverhead(RuntimeOverheadKind::FftWorkspace)
                 )
             },
-            "FFT workspace",
+            "FFT workspace or owned allocation",
         ),
         WorkKind::Jit => require_claim(
             node,
@@ -3780,7 +3858,7 @@ pub(crate) fn io_buffer_kind_supports_work_kind(
             work_kind == WorkKind::Preparation
         }
         crate::IoBufferKind::HostToDeviceTransfer | crate::IoBufferKind::DeviceToHostTransfer => {
-            work_kind == WorkKind::Transfer
+            work_kind == WorkKind::Transfer || work_kind.reads_observation()
         }
         crate::IoBufferKind::SpillRead => {
             matches!(work_kind, WorkKind::Spill | WorkKind::Prefetch)
@@ -4130,7 +4208,7 @@ fn validate_allocations(
         for allocation_use in &node.allocations {
             let allocation = &allocations[&allocation_use.allocation];
             match &node.domain {
-                WorkDomain::Cpu | WorkDomain::Io => {
+                WorkDomain::Cpu | WorkDomain::Io | WorkDomain::Metal { .. } => {
                     if !allocation
                         .compatibility
                         .views
@@ -4138,15 +4216,6 @@ fn validate_allocations(
                     {
                         return Err(ExecutionError::invalid_plan(format!(
                             "work node {} uses logical allocation {} without the selected host-memory view",
-                            node.id.as_str(),
-                            allocation.id.as_str()
-                        )));
-                    }
-                }
-                WorkDomain::Metal { .. } => {
-                    if allocation.compatibility.storage_mode != StorageMode::MetalShared {
-                        return Err(ExecutionError::invalid_plan(format!(
-                            "Metal work node {} uses non-shared logical allocation {}",
                             node.id.as_str(),
                             allocation.id.as_str()
                         )));

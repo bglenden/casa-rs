@@ -9,7 +9,6 @@ mod filesystem;
 mod native;
 mod planning;
 mod reader;
-pub mod reload_probe;
 mod transaction;
 
 use accounting::*;
@@ -1774,15 +1773,6 @@ pub trait PreparedArtifactImporter {
 /// store's configured streaming-buffer ceiling. Implementations may retain a
 /// bounded decoded cell, but receive no cache path or persistence authority.
 pub trait PreparedArtifactConsumer {
-    /// Select complete-load diagnostic timing. This changes no validation or
-    /// payload behavior and defaults to no clock reads in the chunk loop.
-    fn reload_cost_enabled(&self) -> bool {
-        false
-    }
-
-    /// Receive the same load's transaction timing after payload consumption.
-    fn observe_reload_cost(&mut self, _cost: &reload_probe::Cost) {}
-
     /// Consume one exact byte chunk from a named prepared segment.
     fn consume_segment(
         &mut self,

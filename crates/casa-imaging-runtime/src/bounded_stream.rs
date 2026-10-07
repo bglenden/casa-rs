@@ -339,6 +339,12 @@ impl BoundedExecution<'_> {
         self.0.is_some_and(|team| team.pool.is_some())
     }
 
+    pub(crate) fn worker_count(self) -> usize {
+        self.0
+            .and_then(|team| team.pool.as_ref())
+            .map_or(1, rayon::ThreadPool::current_num_threads)
+    }
+
     /// Join bounded borrowed jobs inside the already installed, admitted team.
     /// No job or borrowed source storage survives this call, including on error.
     pub(crate) fn for_each_mut<T: Send, E: Send>(
@@ -408,6 +414,27 @@ impl BoundedExecution<'_> {
             (science, compilation) => science.and(compilation),
         }
     }
+
+    /// Join two borrowed pipeline jobs, retaining both outcomes even on panic.
+    /// The caller propagates its typed error and records any sibling failure.
+    pub(crate) fn join_pipeline<A: Send, B: Send>(
+        self,
+        produce: impl FnOnce() -> A + Send,
+        consume: impl FnOnce() -> B + Send,
+    ) -> (std::thread::Result<A>, std::thread::Result<B>) {
+        let pool = self
+            .0
+            .and_then(|team| team.pool.as_ref())
+            .expect("parallel pipeline");
+        assert!(
+            pool.current_thread_index().is_some(),
+            "pipeline outside admitted team"
+        );
+        rayon::join(
+            || std::panic::catch_unwind(std::panic::AssertUnwindSafe(produce)),
+            || std::panic::catch_unwind(std::panic::AssertUnwindSafe(consume)),
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -475,7 +502,7 @@ pub(crate) struct BoundedStreamMeasurements {
     pub(crate) maximum_logical_units_per_block: usize,
     pub(crate) worker_threads_started: u64,
     #[cfg(test)]
-    external_pool_installs: u64,
+    pub(crate) external_pool_installs: u64,
     pub(crate) dispatch_waves: u64,
     pub(crate) planned_source_capacity_bytes: u64,
     pub(crate) maximum_partitions_per_block: usize,
@@ -2568,6 +2595,37 @@ mod tests {
                 assert_eq!(*calls.lock().unwrap(), ["science"]);
             });
         }
+    }
+
+    #[test]
+    fn bounded_pipeline_retains_both_failures_and_joins_panicked_jobs() {
+        let team = FixedWorkerTeam::new(2).unwrap();
+        let completed = AtomicUsize::new(0);
+        let (tx, rx) = mpsc::channel();
+        let (left, right) = team.install(|| {
+            let completed = &completed;
+            BoundedExecution(Some(&team)).join_pipeline(
+                move || {
+                    tx.send(()).unwrap();
+                    completed.fetch_add(1, Ordering::SeqCst);
+                    panic!("preparation failed");
+                },
+                move || {
+                    rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                    completed.fetch_add(1, Ordering::SeqCst);
+                    Err::<(), _>(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "consumer failed",
+                    ))
+                },
+            )
+        });
+        assert_eq!(completed.load(Ordering::SeqCst), 2);
+        assert!(left.is_err());
+        assert_eq!(
+            right.unwrap().unwrap_err().kind(),
+            std::io::ErrorKind::InvalidData
+        );
     }
 
     #[test]
@@ -5088,6 +5146,53 @@ mod tests {
         assert_eq!(output, [11, 24, 39, 44]);
         assert_eq!(workers.lock().unwrap().len(), 4);
         assert_eq!(team.shutdown(), 4);
+    }
+
+    #[test]
+    fn bounded_borrowed_jobs_bound_live_leaf_scopes_across_waves() {
+        struct LiveScope<'a>(&'a AtomicUsize);
+        impl Drop for LiveScope<'_> {
+            fn drop(&mut self) {
+                self.0.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+
+        for workers in [1, 3, 4] {
+            for fail in [false, true] {
+                let team = FixedWorkerTeam::new(workers).unwrap();
+                let barrier = Barrier::new(workers);
+                let live = AtomicUsize::new(0);
+                let peak = AtomicUsize::new(0);
+                let started = AtomicUsize::new(0);
+                let mut output = [0; 17];
+                let result = team.install(|| {
+                    BoundedExecution(Some(&team)).for_each_mut(&mut output, |index, value| {
+                        let count = live.fetch_add(1, Ordering::SeqCst) + 1;
+                        let _scope = LiveScope(&live);
+                        peak.fetch_max(count, Ordering::SeqCst);
+                        assert!(count <= workers);
+                        let ordinal = started.fetch_add(1, Ordering::SeqCst);
+                        if ordinal < workers {
+                            barrier.wait();
+                        }
+                        *value = index + 1;
+                        if fail && ordinal == 0 {
+                            Err("injected leaf error")
+                        } else {
+                            Ok(())
+                        }
+                    })
+                });
+                assert_eq!(result.is_err(), fail);
+                assert_eq!(live.load(Ordering::SeqCst), 0);
+                assert_eq!(peak.load(Ordering::SeqCst), workers);
+                if !fail {
+                    assert_eq!(started.load(Ordering::SeqCst), output.len());
+                    assert_eq!(output, std::array::from_fn(|index| index + 1));
+                }
+                team.shutdown();
+            }
+        }
     }
 
     #[test]

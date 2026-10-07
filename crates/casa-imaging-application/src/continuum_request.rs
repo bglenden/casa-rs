@@ -102,21 +102,6 @@ pub enum ContinuumAlgorithm {
         /// CASA small-scale preference in `[0, 1]`.
         small_scale_bias: f64,
     },
-    /// Reconstruct one smooth continuum basis and channel-local line basis jointly.
-    JointContinuumLine {
-        /// Number of smooth continuum coefficients.
-        continuum_terms: usize,
-        /// Channels where line coefficients are structurally absent.
-        continuum_anchor_channels: Vec<usize>,
-        /// Channels carrying one channel-local line coefficient each.
-        line_channels: Vec<usize>,
-        /// Maximum admitted active-block condition estimate.
-        maximum_condition_number: f64,
-        /// Canonical scale sizes in image pixels.
-        scales_px: Vec<f64>,
-        /// CASA small-scale preference in `[0, 1]`.
-        small_scale_bias: f64,
-    },
 }
 
 /// Native continuum visibility-weighting law.
@@ -144,13 +129,6 @@ pub enum ContinuumBeamPolicy {
 /// Reconstruction-mask policy evaluated at the initial major-cycle boundary.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ContinuumMask {
-    /// Independently commit continuum and line spatial support for a joint solve.
-    Coupled {
-        /// Continuum-component support.
-        continuum: Box<ContinuumMask>,
-        /// Line-component support.
-        line: Box<ContinuumMask>,
-    },
     /// Admit every valid model pixel.
     FullPlane,
     /// Admit the union of inclusive target-grid pixel boxes.
@@ -320,8 +298,6 @@ pub enum ContinuumStopReason {
 pub enum SpectralImagingMode {
     /// One constant-basis continuum plane over every selected source channel.
     Continuum,
-    /// Preserve one exact output channel for every selected source channel.
-    JointContinuumLine,
     /// One independently reconstructed model plane per output cube channel.
     Cube {
         /// CASA-compatible output-axis and interpolation controls.
@@ -600,58 +576,6 @@ fn prepare_spectral_axis(
                 sampling: SpectralSamplingLaw::IDENTITY,
                 basis: ReconstructionBasis::Constant,
                 output_channels: 1,
-                reference_frequency_hz,
-                increment_hz,
-            })
-        }
-        SpectralImagingMode::JointContinuumLine => {
-            let [window] = spectral_windows else {
-                return Err(boxed(
-                    "joint continuum-line imaging requires exactly one selected spectral window",
-                ));
-            };
-            let selected = selected_channels(request, window.spw_id, &window.frequencies_hz)?;
-            let frequencies = selected
-                .iter()
-                .map(|channel| window.frequencies_hz[*channel])
-                .collect::<Vec<_>>();
-            let reference_frequency_hz = frequencies[0];
-            let increment_hz = if frequencies.len() > 1 {
-                frequencies[1] - frequencies[0]
-            } else {
-                window.channel_widths_hz[selected[0]]
-            };
-            if !increment_hz.is_finite()
-                || increment_hz == 0.0
-                || frequencies.iter().enumerate().any(|(index, frequency)| {
-                    let expected = reference_frequency_hz + index as f64 * increment_hz;
-                    (*frequency - expected).abs() > expected.abs().max(1.0) * 1.0e-12
-                })
-            {
-                return Err(boxed(
-                    "joint continuum-line output requires a finite linear selected source axis",
-                ));
-            }
-            Ok(PreparedSpectralAxis {
-                selected_source_channels: BTreeMap::from([(window.spw_id, selected)]),
-                source_frame,
-                output_frequency_reference: source_frequency_reference,
-                output_frame: source_frame,
-                anchor: SpectralFrameAnchor::NotApplicable,
-                wcs: SpectralWcs::Linear {
-                    channels: frequencies.len(),
-                    reference_pixel: 0.0,
-                    reference_frequency_hz,
-                    increment_hz,
-                },
-                rest_frequency: RestFrequency::NotApplicable,
-                image_rest_frequency_hz: spectral_window_midpoint_hz(window),
-                doppler: DopplerConvention::NotApplicable,
-                sampling: SpectralSamplingLaw::IDENTITY,
-                basis: ReconstructionBasis::ChannelLocal {
-                    channels: frequencies.len(),
-                },
-                output_channels: frequencies.len(),
                 reference_frequency_hz,
                 increment_hz,
             })
@@ -1544,27 +1468,28 @@ fn prepare(
         increment_hz: prepared_spectral.increment_hz,
         rest_frequency_hz: prepared_spectral.image_rest_frequency_hz,
     };
-    let observation_id = if selected_observation_ids.len() == 1 {
-        usize::try_from(
-            *selected_observation_ids
-                .first()
-                .expect("one selected observation identifier"),
-        )
-        .map_err(|_| boxed("selected OBSERVATION_ID is negative"))?
-    } else {
-        return Err(boxed(format!(
-            "image observation metadata requires one selected OBSERVATION_ID; found {selected_observation_ids:?}"
-        )));
-    };
     let observation = ms.observation()?;
-    let (telescope_name, observer) = if observation_id < observation.row_count() {
-        (
-            observation.string(observation_id, "TELESCOPE_NAME")?,
-            observation.string(observation_id, "OBSERVER")?,
-        )
-    } else {
-        (String::new(), String::new())
-    };
+    let mut observation_labels = BTreeSet::new();
+    for id in &selected_observation_ids {
+        let id = usize::try_from(*id).map_err(|_| boxed("selected OBSERVATION_ID is negative"))?;
+        let labels = if id < observation.row_count() {
+            (
+                observation.string(id, "TELESCOPE_NAME")?,
+                observation.string(id, "OBSERVER")?,
+            )
+        } else {
+            (String::new(), String::new())
+        };
+        observation_labels.insert(labels);
+    }
+    if observation_labels.len() != 1 {
+        return Err(boxed(format!(
+            "image observation metadata requires consistent telescope and observer labels for selected OBSERVATION_IDs {selected_observation_ids:?}; found {observation_labels:?}"
+        )));
+    }
+    let (telescope_name, observer) = observation_labels
+        .pop_first()
+        .expect("one consistent selected observation label pair");
     // ObsInfo::toRecord uses MVDirection::get, preserving the signed atan2
     // endpoint rather than mapping an exactly positive pi to negative pi.
     let [pointing_x, pointing_y, _] = image_centre.cosines();
@@ -1758,11 +1683,6 @@ fn prepare(
     let digest = request_digest(&request, b"selection");
     let reconstruction_planes = match &request.algorithm {
         ContinuumAlgorithm::Mtmfs { terms, .. } => *terms,
-        ContinuumAlgorithm::JointContinuumLine {
-            continuum_terms,
-            line_channels,
-            ..
-        } => continuum_terms.saturating_add(line_channels.len()),
         _ => prepared_spectral.output_channels,
     };
     let model_samples = prepared_domains
@@ -2692,12 +2612,6 @@ const fn direction_ref(frame: DirectionFrame) -> DirectionRef {
     }
 }
 
-fn spectral_window_midpoint_hz(window: &SourceSpectralWindow) -> f64 {
-    let first = window.frequencies_hz[0];
-    let last = window.frequencies_hz[window.frequencies_hz.len() - 1];
-    first + (last - first) / 2.0
-}
-
 const fn stokes_type(coordinate: PolarizationCoordinate) -> StokesType {
     match coordinate {
         PolarizationCoordinate::StokesI => StokesType::I,
@@ -2865,12 +2779,6 @@ fn reconstruction_mask_plan(
     image_size: usize,
 ) -> Result<ReconstructionMaskPlan, crate::ApplicationError> {
     Ok(match mask {
-        ContinuumMask::Coupled { continuum, line } => ReconstructionMaskPlan::Coupled {
-            continuum: Box::new(reconstruction_mask_plan(
-                *continuum, coordinate, image_size,
-            )?),
-            line: Box::new(reconstruction_mask_plan(*line, coordinate, image_size)?),
-        },
         ContinuumMask::FullPlane => ReconstructionMaskPlan::FullPlane { coordinate },
         ContinuumMask::Boxes(boxes) => ReconstructionMaskPlan::Boxes {
             coordinate,
@@ -2989,17 +2897,6 @@ fn specification(
         (_, ContinuumAlgorithm::Mtmfs { terms, .. }) => {
             ReconstructionBasis::Taylor { terms: *terms }
         }
-        (
-            _,
-            ContinuumAlgorithm::JointContinuumLine {
-                continuum_terms,
-                line_channels,
-                ..
-            },
-        ) => ReconstructionBasis::JointContinuumLine {
-            continuum_terms: *continuum_terms,
-            line_terms: line_channels.len(),
-        },
         _ => spectral.basis,
     };
     // CASA disables cube density for MFS and MT-MFS-via-cube requests.
@@ -3025,7 +2922,7 @@ fn specification(
             density_scope,
         ),
     };
-    let mut reconstruction = ReconstructionContract::new(
+    let reconstruction = ReconstructionContract::new(
         basis,
         algorithm.clone(),
         if algorithm == ReconstructionAlgorithm::Dirty {
@@ -3046,21 +2943,6 @@ fn specification(
         },
         PolarizationContract::new(request.polarizations.clone()),
     );
-    if let ContinuumAlgorithm::JointContinuumLine {
-        continuum_anchor_channels,
-        line_channels,
-        maximum_condition_number,
-        ..
-    } = &request.algorithm
-    {
-        reconstruction = reconstruction.with_joint_continuum_line(
-            casa_imaging_model::JointContinuumLineContract::new(
-                continuum_anchor_channels.clone(),
-                line_channels.clone(),
-                *maximum_condition_number,
-            ),
-        );
-    }
     let measurement_equation = MeasurementEquationContract::new(
         if instrument_model.is_some() {
             InstrumentResponse::PrimaryBeam
@@ -3082,10 +2964,7 @@ fn specification(
         SpectralContract::new(
             spectral.sampling,
             match (&request.algorithm, request.beam_policy) {
-                (ContinuumAlgorithm::Mtmfs { .. }, _)
-                | (ContinuumAlgorithm::JointContinuumLine { .. }, _) => {
-                    SpectralCoupling::CommonRestoringBeam
-                }
+                (ContinuumAlgorithm::Mtmfs { .. }, _) => SpectralCoupling::CommonRestoringBeam,
                 (_, ContinuumBeamPolicy::PerPlane) => SpectralCoupling::Independent,
                 (_, ContinuumBeamPolicy::Common) => SpectralCoupling::CommonRestoringBeam,
             },
@@ -3107,7 +2986,6 @@ fn specification(
             requested_products(
                 &request.algorithm,
                 minor_cycle_requested,
-                request.normalization,
                 mosaic,
                 weight_image,
                 request.write_primary_beam,
@@ -3115,8 +2993,7 @@ fn specification(
             ),
             request.normalization,
             match (&request.algorithm, request.beam_policy) {
-                (ContinuumAlgorithm::Mtmfs { .. }, _)
-                | (ContinuumAlgorithm::JointContinuumLine { .. }, _) => RestoringBeamPolicy::Common,
+                (ContinuumAlgorithm::Mtmfs { .. }, _) => RestoringBeamPolicy::Common,
                 (_, ContinuumBeamPolicy::PerPlane) => RestoringBeamPolicy::PerPlane,
                 (_, ContinuumBeamPolicy::Common) => RestoringBeamPolicy::Common,
             },
@@ -3147,7 +3024,7 @@ fn specification(
         }),
         NumericsContract::new(
             vec![NumericPrecision::F64],
-            ReductionPolicy::Compensated,
+            ReductionPolicy::UnorderedWithinBudget,
             FiniteValuePolicy::FlagInputRejectGenerated,
             NumericalStage::ALL
                 .into_iter()
@@ -3160,7 +3037,6 @@ fn specification(
 fn requested_products(
     algorithm: &ContinuumAlgorithm,
     minor_cycle_requested: bool,
-    normalization: ProductNormalization,
     mosaic: bool,
     weight_image: bool,
     write_primary_beam: bool,
@@ -3186,10 +3062,6 @@ fn requested_products(
     }
     if weight_image {
         products.push(ProductKind::Weight);
-    }
-    // Mosaic and AW publish the sensitivity normalization through `.weight`.
-    if !matches!(normalization, ProductNormalization::UnitResponse) && !weight_image {
-        products.push(ProductKind::Sensitivity);
     }
     if write_primary_beam || pbcor {
         products.push(ProductKind::PrimaryBeam);
@@ -3220,14 +3092,6 @@ fn reconstruction_algorithm(algorithm: &ContinuumAlgorithm) -> ReconstructionAlg
             small_scale_bias,
             ..
         } => ReconstructionAlgorithm::Mtmfs {
-            scales_px: scales_px.clone(),
-            small_scale_bias: *small_scale_bias,
-        },
-        ContinuumAlgorithm::JointContinuumLine {
-            scales_px,
-            small_scale_bias,
-            ..
-        } => ReconstructionAlgorithm::JointContinuumLine {
             scales_px: scales_px.clone(),
             small_scale_bias: *small_scale_bias,
         },
@@ -3377,8 +3241,7 @@ fn runtime(
         gridded_normal_storage,
         confidence_parts_per_million: 900_000,
         resource_policy: request.resource_policy.clone(),
-        cost_model: PlannerCostModelProfileId::from_sha256(hash(b"spectral-cycle-cost-v1"))
-            .bootstrap(),
+        cost_model: PlannerCostModelProfileId::from_sha256(hash(b"spectral-cycle-cost-v1")),
         authority,
         receipts: ExecutionReceiptStore::new(receipts, ReceiptRetention::new(512, 256 << 20)?)?,
         build: BuildIdentity::from_sha256(hash(env!("CARGO_PKG_VERSION").as_bytes())),
@@ -3398,14 +3261,6 @@ fn planned_minor_cycle_bytes(
 ) -> u64 {
     let basis = match algorithm {
         ContinuumAlgorithm::Mtmfs { terms, .. } => ReconstructionBasis::Taylor { terms: *terms },
-        ContinuumAlgorithm::JointContinuumLine {
-            continuum_terms,
-            line_channels,
-            ..
-        } => ReconstructionBasis::JointContinuumLine {
-            continuum_terms: *continuum_terms,
-            line_terms: line_channels.len(),
-        },
         _ => ReconstructionBasis::Constant,
     };
     minor_cycle_workspace_bytes(
@@ -3551,8 +3406,7 @@ fn boxed(message: impl Into<String>) -> crate::ApplicationError {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(unix)]
-    mod source_bind_probe;
+    mod native_aw_preflight;
 
     use casa_coordinates::{CoordinateModel, CoordinateType, StokesType};
     use casa_imaging_model::{
@@ -3798,28 +3652,23 @@ mod tests {
 
     #[test]
     fn dirty_execution_does_not_request_a_clean_mask() {
-        let dirty = requested_products(
-            &ContinuumAlgorithm::Dirty,
-            false,
-            casa_imaging_model::ProductNormalization::UnitResponse,
-            false,
-            false,
-            true,
-            false,
-        );
+        let dirty =
+            requested_products(&ContinuumAlgorithm::Dirty, false, false, false, true, false);
         assert!(!dirty.contains(&casa_imaging_model::ProductKind::Mask));
         assert!(dirty.contains(&casa_imaging_model::ProductKind::PrimaryBeam));
 
-        let clean = requested_products(
-            &ContinuumAlgorithm::Hogbom,
-            true,
-            casa_imaging_model::ProductNormalization::UnitResponse,
-            false,
-            false,
-            true,
-            false,
-        );
+        let clean =
+            requested_products(&ContinuumAlgorithm::Hogbom, true, false, false, true, false);
         assert!(clean.contains(&casa_imaging_model::ProductKind::Mask));
+    }
+
+    #[test]
+    fn clark_requested_products_do_not_publish_internal_sensitivity() {
+        let products =
+            requested_products(&ContinuumAlgorithm::Clark, true, false, false, true, false);
+        assert!(products.contains(&casa_imaging_model::ProductKind::RestoredImage));
+        assert!(!products.contains(&casa_imaging_model::ProductKind::Sensitivity));
+        assert!(!products.contains(&casa_imaging_model::ProductKind::Weight));
     }
 
     #[test]
@@ -3831,7 +3680,6 @@ mod tests {
                 small_scale_bias: 0.0,
             },
             false,
-            casa_imaging_model::ProductNormalization::FlatNoise,
             false,
             true,
             true,
@@ -3867,7 +3715,6 @@ mod tests {
                 small_scale_bias: 0.0,
             },
             true,
-            casa_imaging_model::ProductNormalization::FlatNoise,
             true,
             true,
             true,

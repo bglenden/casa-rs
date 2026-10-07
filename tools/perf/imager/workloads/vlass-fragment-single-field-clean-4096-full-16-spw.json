@@ -76,7 +76,6 @@
     "imaging_prepare_workers": 1,
     "imaging_read_ahead_blocks": 1,
     "imaging_fft_precision": "f64",
-    "imaging_fft_backend": "fftw",
     "imaging_memory_target_mb": 16384,
     "cfcache": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache/6.7.5.18/single-field-4096-full-16-spw",
     "cf_resident_mb": 256

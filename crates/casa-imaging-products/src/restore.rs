@@ -6,9 +6,9 @@
 //! and the image cell scale share one unit system, so a multi-pixel beam
 //! stays a multi-pixel kernel at any cell size.
 
-use ndarray::{Array2, Axis};
+use casa_fft::Fft2;
+use ndarray::Array2;
 use num_complex::Complex64;
-use rustfft::FftPlanner;
 
 use casa_imaging_model::ProductNormalization;
 
@@ -18,6 +18,21 @@ use crate::error::ProductsError;
 pub use casa_imaging_reconstruction::MosaicSensitivity;
 
 const FWHM_TO_SIGMA: f64 = 1.0 / 2.354_820_045_030_949_3;
+
+/// Publication uses the principal PSF's measured peak, not its sum weight.
+/// Coupled Taylor terms must all use this same divisor.
+pub(crate) fn psf_peak(mut values: impl Iterator<Item = f32>) -> Result<f32, ProductsError> {
+    values.try_fold(0.0_f32, |peak, value| {
+        value
+            .is_finite()
+            .then_some(peak.max(value))
+            .ok_or(ProductsError::GeneratedNonfinite)
+    })
+}
+
+pub(crate) fn normalized_psf_value(value: f32, peak: f32) -> f32 {
+    if peak > 0.0 { value / peak } else { 0.0 }
+}
 
 /// Normalize one unnormalized plane to its compiled product normalization.
 ///
@@ -94,6 +109,8 @@ pub(crate) fn restore_model_plane(
     shape: [usize; 2],
     beam: &RestoringBeam,
     cell_size_rad: [f64; 2],
+    total_channels: usize,
+    fft_threads: usize,
 ) -> Vec<f32> {
     // FFT zero signs cannot affect addition except when the residual is -0.
     if model.iter().all(|value| *value == 0.0)
@@ -104,11 +121,26 @@ pub(crate) fn restore_model_plane(
         return residual;
     }
     let kernel = gaussian_beam_image(shape, beam, cell_size_rad);
-    let mut restored = fft_convolve(model, kernel.as_slice().expect("contiguous"), shape);
+    let mut restored = fft_convolve_with_plan(
+        model,
+        kernel.as_slice().expect("contiguous"),
+        shape,
+        restoration_fft(shape, total_channels, fft_threads),
+    );
     for (restored, residual) in restored.iter_mut().zip(residual) {
         *restored += residual;
     }
     restored
+}
+
+fn restoration_fft(shape: [usize; 2], total_channels: usize, threads: usize) -> Fft2<f64> {
+    let fft = Fft2::with_threads(shape, threads).expect("valid restoration FFT shape");
+    // One output channel cannot amortize measured planning across cube planes.
+    if total_channels == 1 {
+        fft.with_estimated_plan()
+    } else {
+        fft
+    }
 }
 
 /// Result of rescaling one normalized residual plane to a selected beam.
@@ -218,8 +250,21 @@ pub fn rescale_residual_to_beam(
 /// FFTs, matching the reconstruction owner's transform conventions.
 #[must_use]
 pub fn fft_convolve(plane: &[f32], kernel: &[f32], shape: [usize; 2]) -> Vec<f32> {
+    fft_convolve_with_plan(
+        plane,
+        kernel,
+        shape,
+        Fft2::new(shape).expect("valid restoration FFT shape"),
+    )
+}
+
+fn fft_convolve_with_plan(
+    plane: &[f32],
+    kernel: &[f32],
+    shape: [usize; 2],
+    mut fft: Fft2<f64>,
+) -> Vec<f32> {
     let cells = shape[0] * shape[1];
-    let mut planner = FftPlanner::<f64>::new();
     let mut signal = Array2::<Complex64>::from_shape_vec(
         (shape[0], shape[1]),
         plane
@@ -239,46 +284,22 @@ pub fn fft_convolve(plane: &[f32], kernel: &[f32], shape: [usize; 2]) -> Vec<f32
 
     for data in [&mut signal, &mut response] {
         shift_even(data);
-        for axis in 0..2 {
-            let plan = planner.plan_fft_forward(data.len_of(Axis(axis)));
-            let scratch_len = plan.get_inplace_scratch_len();
-            let length = data.len_of(Axis(axis));
-            let mut lane = vec![Complex64::default(); length];
-            let mut scratch = vec![Complex64::default(); scratch_len];
-            for mut view in data.lanes_mut(Axis(axis)) {
-                lane.iter_mut()
-                    .zip(view.iter())
-                    .for_each(|(target, source)| {
-                        *target = *source;
-                    });
-                plan.process_with_scratch(&mut lane, &mut scratch);
-                lane.iter()
-                    .zip(view.iter_mut())
-                    .for_each(|(source, target)| *target = *source);
-            }
-        }
+        fft.transform(
+            data.as_slice_mut().expect("contiguous restoration plane"),
+            false,
+        )
+        .expect("valid restoration FFT plan");
         shift_even(data);
     }
     for (signal, response) in signal.iter_mut().zip(response.iter()) {
         *signal *= *response;
     }
     shift_even(&mut signal);
-    for axis in 0..2 {
-        let plan = planner.plan_fft_inverse(signal.len_of(Axis(axis)));
-        let scratch_len = plan.get_inplace_scratch_len();
-        let length = signal.len_of(Axis(axis));
-        let mut lane = vec![Complex64::default(); length];
-        let mut scratch = vec![Complex64::default(); scratch_len];
-        for mut view in signal.lanes_mut(Axis(axis)) {
-            lane.iter_mut()
-                .zip(view.iter())
-                .for_each(|(target, source)| *target = *source);
-            plan.process_with_scratch(&mut lane, &mut scratch);
-            lane.iter()
-                .zip(view.iter_mut())
-                .for_each(|(source, target)| *target = *source);
-        }
-    }
+    fft.transform(
+        signal.as_slice_mut().expect("contiguous restoration plane"),
+        true,
+    )
+    .expect("valid restoration FFT plan");
     shift_even(&mut signal);
 
     let scale = 1.0 / cells as f64;
@@ -305,6 +326,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn restoration_planning_uses_total_channels_not_window_depth() {
+        let shape = [8, 16];
+        for total_channels in [1, 2, 32, 512, 2048] {
+            for threads in [1, 2, 4, 8] {
+                let actual = restoration_fft(shape, total_channels, threads);
+                let expected = Fft2::<f64>::with_threads(shape, threads).unwrap();
+                let expected = if total_channels == 1 {
+                    expected.with_estimated_plan()
+                } else {
+                    expected
+                };
+                assert_eq!(actual.shape(), shape);
+                assert_eq!(actual.threads(), threads);
+                assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+            }
+        }
+    }
+
+    #[test]
+    fn psf_normalization_is_exact_and_preserves_coupled_signed_terms() {
+        for amplitude in [f32::MIN_POSITIVE, 1.000_000_7, 12345.67] {
+            let principal = [-0.25 * amplitude, amplitude, 0.5 * amplitude];
+            let peak = psf_peak(principal.into_iter()).unwrap();
+            assert_eq!(peak, amplitude);
+            assert_eq!(
+                principal.map(|value| normalized_psf_value(value, peak)),
+                [-0.25, 1.0, 0.5]
+            );
+            let coupled = [-0.5 * amplitude, 0.25 * amplitude];
+            assert_eq!(
+                coupled.map(|value| normalized_psf_value(value, peak)),
+                [-0.5, 0.25]
+            );
+        }
+        let peak = psf_peak([0.0; 3].into_iter()).unwrap();
+        assert_eq!(normalized_psf_value(0.0, peak), 0.0);
+        for nonfinite in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert!(psf_peak([1.0, nonfinite].into_iter()).is_err());
+        }
+    }
+
+    #[test]
     fn model_restoration_matches_fft_for_empty_sparse_and_dense_planes() {
         let beam = RestoringBeam::new(4.0e-6, 3.0e-6, 0.2).unwrap();
         let shape = [8, 16];
@@ -324,17 +387,25 @@ mod tests {
                 for (value, residual) in expected.iter_mut().zip(&residual) {
                     *value += residual;
                 }
-                let actual = restore_model_plane(&model, residual, shape, &beam, [1.0e-6; 2]);
-                assert_eq!(
-                    actual
-                        .iter()
-                        .map(|value| value.to_bits())
-                        .collect::<Vec<_>>(),
-                    expected
-                        .iter()
-                        .map(|value| value.to_bits())
-                        .collect::<Vec<_>>()
-                );
+                for total_channels in [1, 512] {
+                    for threads in [1, 4] {
+                        let actual = restore_model_plane(
+                            &model,
+                            residual.clone(),
+                            shape,
+                            &beam,
+                            [1.0e-6; 2],
+                            total_channels,
+                            threads,
+                        );
+                        for (actual, expected) in actual.iter().zip(&expected) {
+                            assert!(
+                                (*actual - *expected).abs() <= 1.0e-6 * expected.abs().max(1.0),
+                                "restoration differs for {total_channels} channels: {actual} != {expected}"
+                            );
+                        }
+                    }
+                }
             }
         }
     }

@@ -340,6 +340,12 @@ pub struct ResourceTopology {
     pub queue_resources: Vec<QueueResource>,
     /// Logical CPU threads available to the process.
     pub logical_cpu_threads: u64,
+    /// Stack reservation of one native thread created with default
+    /// attributes, which is what FFTW's worker pool uses.
+    pub native_thread_stack_bytes: u64,
+    /// Virtual-memory page size, which rounds every page-cache window the
+    /// planner charges.
+    pub page_bytes: u64,
     /// Performance-oriented CPU cores available to the process.
     pub performance_cpu_cores: CpuClassCapacity,
     /// Process-wide resident-cache capacity.
@@ -775,6 +781,8 @@ impl HostInventory {
         let logical_cpu_threads = std::thread::available_parallelism()
             .map_err(|error| ResourceError::Detection(error.to_string()))?
             .get() as u64;
+        let native_thread_stack_bytes = detect_native_thread_stack_bytes()?;
+        let page_bytes = detect_page_bytes()?;
         let performance_cpu_cores = detect_performance_cpu_cores()
             .map(|cores| CpuClassCapacity::Known(cores.clamp(1, logical_cpu_threads)))
             .unwrap_or(CpuClassCapacity::Unknown);
@@ -840,6 +848,8 @@ impl HostInventory {
             rate_resources,
             queue_resources,
             logical_cpu_threads,
+            native_thread_stack_bytes,
+            page_bytes,
             performance_cpu_cores,
             cache_capacity_bytes: physical_memory_bytes,
             // Table and synchronization capacity has no portable detector.
@@ -2088,6 +2098,97 @@ impl ResourceAuthority {
         self.remaining_memory_bytes(policy, &base.demand.host_memory_view, reserved)
     }
 
+    /// Keep one host allocation charged between execution plans. Its owner
+    /// releases physical storage before dropping this ordinary RAII lease.
+    pub(crate) fn reserve_host_memory(
+        &self,
+        policy: ResourcePolicy,
+        allocation_id: &str,
+        bytes: u64,
+    ) -> Result<ResourceLease, ResourceError> {
+        self.reserve_host_residency(policy, allocation_id, bytes, false)
+    }
+
+    /// Optional immutable replay residency obeys both cache and host ceilings.
+    pub(crate) fn reserve_host_cache(
+        &self,
+        policy: ResourcePolicy,
+        allocation_id: &str,
+        bytes: u64,
+    ) -> Result<ResourceLease, ResourceError> {
+        self.reserve_host_residency(policy, allocation_id, bytes, true)
+    }
+
+    fn reserve_host_residency(
+        &self,
+        policy: ResourcePolicy,
+        allocation_id: &str,
+        bytes: u64,
+        cache: bool,
+    ) -> Result<ResourceLease, ResourceError> {
+        let host = self
+            .inner
+            .topology
+            .memory_views
+            .iter()
+            .find(|view| view.kind == MemoryViewKind::Host)
+            .ok_or_else(|| ResourceError::Invalid("host memory view is missing".into()))?;
+        self.acquire(
+            policy,
+            DemandAlternatives {
+                required_capabilities: BTreeSet::new(),
+                alternatives: vec![DemandAlternative {
+                    id: AlternativeId::new(allocation_id),
+                    capabilities: CapabilityPredicate::default(),
+                    demand: DemandEnvelope {
+                        host_memory_view: host.id.clone(),
+                        // CacheDemand includes its physical host bytes. Do not
+                        // also charge them through a MemoryDemand allocation.
+                        memory: if cache {
+                            vec![]
+                        } else {
+                            vec![MemoryDemand {
+                                allocation_id: allocation_id.into(),
+                                hard_bytes: bytes,
+                                preferred_bytes: bytes,
+                                views: vec![host.id.clone()],
+                            }]
+                        },
+                        workers: CountDemand::zero(),
+                        overhead: RuntimeOverheadDemand::zero(),
+                        storage: vec![],
+                        rates: vec![],
+                        caches: if cache {
+                            CacheDemand {
+                                hard_resident_bytes: bytes,
+                                preferred_resident_bytes: bytes,
+                            }
+                        } else {
+                            CacheDemand::zero()
+                        },
+                        locks: CountDemand::zero(),
+                        file_descriptors: CountDemand::zero(),
+                        queues: vec![],
+                        transfers: vec![],
+                        accelerators: vec![],
+                        io_buffers: IoBufferDemand::zero(),
+                    },
+                    headroom: ResourceHeadroom::default(),
+                    scaling: ScalingMetadata {
+                        minimum_workers: 0,
+                        maximum_workers: 0,
+                        maximum_batch_size: 1,
+                        maximum_tile_width: 1,
+                        maximum_tile_height: 1,
+                        maximum_slab_depth: 1,
+                        memory_bytes_per_worker: BTreeMap::new(),
+                    },
+                    quiescence_points: BTreeSet::from([QuiescencePoint::MajorCycle]),
+                }],
+            },
+        )
+    }
+
     /// Quote current host capacity for an unopened selected source, preserving
     /// policy reserves and active leases including their headroom. This is
     /// source-only feasibility: the complete plan's demand and additional
@@ -2947,6 +3048,35 @@ impl ResourcePermit {
             .amount
             .checked_sub(amount)
             .ok_or(ResourceError::Overflow("narrowed resource permit"))?;
+        release_permit(
+            &self.inner,
+            self.lease_id,
+            &self.resource,
+            &self.accounting_resource,
+            returned,
+            self.artifact_capacity.as_ref(),
+        )?;
+        self.amount = amount;
+        Ok(())
+    }
+
+    /// Return unused retained host-memory capacity after its physical owner
+    /// has first reclaimed all allocations above the new limit.
+    pub(crate) fn narrow_memory_to(&mut self, amount: u64) -> Result<(), ResourceError> {
+        if !matches!(self.resource, LeaseResource::Memory { .. }) {
+            return Err(ResourceError::Invalid(
+                "only memory permits may be narrowed here".to_string(),
+            ));
+        }
+        if amount == 0 || amount > self.amount {
+            return Err(ResourceError::Invalid(
+                "narrowed memory must retain a positive owned amount".to_string(),
+            ));
+        }
+        if amount == self.amount {
+            return Ok(());
+        }
+        let returned = self.amount - amount;
         release_permit(
             &self.inner,
             self.lease_id,
@@ -4534,6 +4664,55 @@ fn checked_sum(
 fn checked_add(left: u64, right: u64, category: &'static str) -> Result<u64, ResourceError> {
     left.checked_add(right)
         .ok_or(ResourceError::Overflow(category))
+}
+
+/// Query the stack size `pthread_create` gives a thread with default
+/// attributes, which native thread pools such as FFTW's rely on.
+#[cfg(unix)]
+fn detect_native_thread_stack_bytes() -> Result<u64, ResourceError> {
+    let os_error = |status: libc::c_int| {
+        ResourceError::Detection(std::io::Error::from_raw_os_error(status).to_string())
+    };
+    let mut attributes = std::mem::MaybeUninit::<libc::pthread_attr_t>::uninit();
+    let status = unsafe { libc::pthread_attr_init(attributes.as_mut_ptr()) };
+    if status != 0 {
+        return Err(os_error(status));
+    }
+    let mut attributes = unsafe { attributes.assume_init() };
+    let mut stack_bytes = 0;
+    let queried = unsafe { libc::pthread_attr_getstacksize(&attributes, &mut stack_bytes) };
+    let destroyed = unsafe { libc::pthread_attr_destroy(&mut attributes) };
+    if queried != 0 {
+        return Err(os_error(queried));
+    }
+    if destroyed != 0 {
+        return Err(os_error(destroyed));
+    }
+    Ok(stack_bytes as u64)
+}
+
+#[cfg(not(unix))]
+fn detect_native_thread_stack_bytes() -> Result<u64, ResourceError> {
+    Err(ResourceError::Detection(
+        "native thread stack size is unavailable".to_string(),
+    ))
+}
+
+/// Query the virtual-memory page size the kernel rounds mappings to.
+#[cfg(unix)]
+fn detect_page_bytes() -> Result<u64, ResourceError> {
+    let bytes = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    u64::try_from(bytes)
+        .ok()
+        .filter(|bytes| *bytes > 0)
+        .ok_or_else(|| ResourceError::Detection("page size is unavailable".to_string()))
+}
+
+#[cfg(not(unix))]
+fn detect_page_bytes() -> Result<u64, ResourceError> {
+    Err(ResourceError::Detection(
+        "page size is unavailable".to_string(),
+    ))
 }
 
 #[cfg(target_os = "linux")]

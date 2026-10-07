@@ -160,12 +160,14 @@ def build_request(paths: dict[str, pathlib.Path]) -> dict[str, Any]:
             "integration_seconds": INTEGRATION_SECONDS,
             "elevation_limit_rad": math.radians(20.0),
             "allow_below_elevation_limit": False,
-            "spectral_setup": {
-                "name": "lband-widefield",
-                "start_frequency_hz": START_FREQUENCY_HZ,
-                "channel_width_hz": CHANNEL_WIDTH_HZ,
-                "channel_count": CHANNEL_COUNT,
-            },
+            "spectral_windows": [
+                {
+                    "name": "lband-widefield",
+                    "start_frequency_hz": START_FREQUENCY_HZ,
+                    "channel_width_hz": CHANNEL_WIDTH_HZ,
+                    "channel_count": CHANNEL_COUNT,
+                }
+            ],
             "predict_model": True,
             "corruption": {
                 "seed": 281003,

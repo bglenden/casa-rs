@@ -61,14 +61,13 @@ use casa_imaging_runtime::{
     ExecutionReceipt, ExecutionReceiptStore, ExecutionStatus, FenceKind, FinalVisibilityReplay,
     FrozenWeightingReservation, ImplementationContractMetadata, ImplementationRegistry,
     ImplementationRegistryId, ManagedSpillStorage, ObservationReadCompletionContext,
-    PlannerCostModelProfileBootstrap, PlanningBindings, PreparedArtifactRegistration,
-    ResourceAuthority, RunBindings, RunController, RunDirective,
-    SelectedObservationSourceResources, SerialProductPublicationExecutor,
-    SerialProductPublicationPlan, SerialProductPublicationPolicy, SerialProductPublicationRegistry,
-    SerialProductPublicationSink, SpectralCycleExecutionPolicy, SpectralCycleExecutor,
-    SpectralCyclePassInput, SpectralCyclePlan, SpectralCyclePlanParts, SpectralCyclePlanningLimits,
-    SpectralCycleRegistry, StorageIoResourceBinding, WorkExecutionContext, WorkImplementation,
-    WorkImplementationId, WorkMeasurements, plan, run,
+    PlannerCostModelProfileId, PlanningBindings, PreparedArtifactRegistration, ResourceAuthority,
+    RunBindings, RunController, RunDirective, SelectedObservationSourceResources,
+    SerialProductPublicationExecutor, SerialProductPublicationPlan, SerialProductPublicationPolicy,
+    SerialProductPublicationRegistry, SerialProductPublicationSink, SpectralCycleExecutionPolicy,
+    SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan, SpectralCyclePlanParts,
+    SpectralCyclePlanningLimits, SpectralCycleRegistry, StorageIoResourceBinding,
+    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkMeasurements, plan, run,
 };
 use casa_ms::{
     ResolvedSelectedObservationAccess, SelectedObservationResolutionRequest,
@@ -102,7 +101,7 @@ pub struct ApplicationRuntime {
     /// Host-use policy bound at planning and execution.
     pub resource_policy: ResourcePolicy,
     /// Deployment-selected cost-model profile.
-    pub cost_model: PlannerCostModelProfileBootstrap,
+    pub cost_model: PlannerCostModelProfileId,
     /// Process resource authority used for admission and execution.
     pub authority: ResourceAuthority,
     /// Durable bounded receipt store shared by all phases.
@@ -256,14 +255,6 @@ pub struct NativeMinorCycleOutcome {
     pub mask_normal_state: Option<casa_imaging_reconstruction::FinalNormalStateCompletionId>,
     /// Auto-multithreshold diagnostics, when that mask mode generated support.
     pub auto_mask: Option<casa_imaging_reconstruction::AutoMultithreshEvidence>,
-    /// Exact line-component support for a joint solve.
-    pub line_mask_support: Option<Vec<bool>>,
-    /// Immutable line-mask generation for a joint solve.
-    pub line_mask_generation: Option<casa_imaging_reconstruction::ReconstructionMaskGenerationId>,
-    /// Current Normal State consumed to generate an automatic line mask.
-    pub line_mask_normal_state: Option<casa_imaging_reconstruction::FinalNormalStateCompletionId>,
-    /// Auto-multithreshold diagnostics for the line mask, when selected.
-    pub line_auto_mask: Option<casa_imaging_reconstruction::AutoMultithreshEvidence>,
 }
 
 /// Stable application spelling of the scientific minor-cycle terminal reason.
@@ -346,9 +337,18 @@ where
         request.model_lifecycle,
     );
     let problem = compile(imaging).map_err(ApplicationDispatchError::Compile)?;
+    let metal_cube = request
+        .task_requirements
+        .contains(&TaskRequirement::MetalGridder);
+    if metal_cube && (request.write_model_column || request.write_corrected_data) {
+        return Err(ApplicationDispatchError::Native(boxed(
+            "Metal cube does not implement visibility-column writes",
+        )));
+    }
     validate_installed_implementation(&problem, request.task_requirements)
         .map_err(ApplicationDispatchError::Unavailable)?;
     let input = NativeInput {
+        metal_cube,
         observation: request.observation,
         initial_access: access,
         write_model_column: request.write_model_column,
@@ -364,6 +364,7 @@ where
 }
 
 struct NativeInput<S> {
+    metal_cube: bool,
     observation: SelectedObservationResolutionRequest,
     initial_access: ResolvedSelectedObservationAccess,
     write_model_column: bool,
@@ -417,6 +418,12 @@ where
         .observation
         .with_content_budget(initial_access.source_binding().content_budget());
     let minor_cycle_requested = problem.reconstruction().controls().max_minor_iterations() > 0;
+    let clark_workspace = casa_imaging_runtime::ClarkWorkspaceReservation::acquire(
+        problem,
+        &runtime.authority,
+        runtime.resource_policy.clone(),
+    )?;
+    let clark_reuse_bytes = clark_workspace.as_ref().map_or(0, |owner| owner.bytes());
     let prepared_aw = aw_preparation
         .map(|deployment| prepared_aw_phase::prepare_aw_projection(problem, deployment, &runtime))
         .transpose()?;
@@ -431,15 +438,22 @@ where
     let initial_write = !minor_cycle_requested && visibility_write_requested;
     let planning_registry =
         PlanningRegistry::new(runtime.registry, runtime.implementation.clone(), problem);
-    let mut policy = execution_policy(&runtime, residency.clone(), initial_aw.as_ref());
+    let mut policy = execution_policy(&runtime, residency.clone(), initial_aw.as_ref())
+        .with_metal_cube(input.metal_cube);
     if initial_write {
         policy = policy
             .with_visibility_write(initial_access.selected_visibility_storage_plan(write_targets)?);
     }
     let minor = minor_cycle_requested
         .then(|| {
-            streaming_cube::minor_program(problem, input.minor_cycle_image_response, None)
-                .map(|program| (input.masks.clone(), program))
+            streaming_cube::minor_program(problem, input.minor_cycle_image_response, None).map(
+                |program| {
+                    (
+                        input.masks.clone(),
+                        program.with_clark_workspace_reuse(clark_reuse_bytes),
+                    )
+                },
+            )
         })
         .transpose()?;
     let (initial_plan, executor, initial_terminal_replay) = P::initial(
@@ -526,7 +540,6 @@ where
             let mut minor_outcomes = Vec::new();
             loop {
                 let applied_masks = minor.masks().clone();
-                let line_mask = applied_masks.coupled().map(|masks| masks.line());
                 let iterations_entering = total_iterations;
                 let actual_iterations_entering = total_actual_iterations;
                 total_iterations = total_iterations
@@ -559,11 +572,6 @@ where
                     mask_model_generation: minor.mask().model_generation(),
                     mask_normal_state: minor.mask().normal_state_completion(),
                     auto_mask: minor.auto_mask_evidence(),
-                    line_mask_support: line_mask.map(|mask| mask.support().to_vec()),
-                    line_mask_generation: line_mask.map(|mask| mask.generation_id()),
-                    line_mask_normal_state: line_mask
-                        .and_then(|mask| mask.normal_state_completion()),
-                    line_auto_mask: minor.line_auto_mask_evidence(),
                 };
                 eprintln!(
                     "imaging_minor_cycle_summary cycle={} associated_replay_ordinal={} controller_iterations_entering={} controller_iterations={} controller_iterations_total={} actual_iterations_entering={} actual_iterations={} actual_iterations_total={} initial_peak_flux={} final_peak_flux={} model_update_abs_flux={} global_threshold={} effective_threshold={} cycle_threshold={} stop_reason={:?} clark_refreshes={}",
@@ -602,23 +610,6 @@ where
                             })
                             .collect::<Vec<_>>(),
                     )?,
-                    ReconstructionMaskSet::Coupled(masks) => {
-                        ImageDomainReconstructionMaskPlans::new([mask_plans
-                            .primary()
-                            .next_coupled_cycle(
-                                masks,
-                                cycle,
-                                minor.evidence().cycle_threshold_is_global(),
-                                [
-                                    minor_outcome
-                                        .auto_mask
-                                        .is_some_and(|evidence| evidence.channel_stopped),
-                                    minor_outcome
-                                        .line_auto_mask
-                                        .is_some_and(|evidence| evidence.channel_stopped),
-                                ],
-                            )])?
-                    }
                     ReconstructionMaskSet::Shared(_) => {
                         return Err(boxed(
                             "native application received a non-domain reconstruction mask",
@@ -634,7 +625,8 @@ where
                     .as_ref()
                     .map(prepared_aw_phase::PreparedAwPhase::bind_plan)
                     .transpose()?;
-                let final_policy = execution_policy(&runtime, residency.clone(), final_aw.as_ref());
+                let final_policy = execution_policy(&runtime, residency.clone(), final_aw.as_ref())
+                    .with_metal_cube(input.metal_cube);
                 let ordinal =
                     u32::try_from(cycle).map_err(|_| boxed("major-cycle ordinal exceeds u32"))?;
                 let minor_program = continue_cleaning
@@ -648,7 +640,12 @@ where
                                     .saturating_sub(total_iterations),
                             ),
                         )
-                        .map(|program| (next_masks.clone(), program))
+                        .map(|program| {
+                            (
+                                next_masks.clone(),
+                                program.with_clark_workspace_reuse(clark_reuse_bytes),
+                            )
+                        })
                     })
                     .transpose()?;
                 let (final_plan, executor) = P::refresh(
@@ -663,6 +660,7 @@ where
                     ordinal,
                     replay,
                     final_aw,
+                    &input.observation,
                 )?;
                 let registry = SpectralCycleRegistry::new(
                     runtime.registry,
@@ -710,6 +708,7 @@ where
                     );
                 }
                 {
+                    let output_frozen_weighting = P::visibility_weighting(replay)?;
                     let resolved = resolve_selected_observation(input.observation.clone())?;
                     let (_, access) = resolved.into_parts();
                     let output_residency = access.certify_residency(problem)?;
@@ -765,7 +764,7 @@ where
                         output_complete,
                         access.into_deferred(),
                         completion,
-                        P::visibility_weighting(replay)?,
+                        output_frozen_weighting,
                     )
                     .with_final_visibility_sink(sink);
                     if let Some(binding) = output_aw {
@@ -957,7 +956,7 @@ where
     let current = RunBindings::new(
         problem.inputs().clone(),
         &runtime.resource_policy,
-        runtime.cost_model.profile_id(),
+        runtime.cost_model,
     );
     let mut controller = application_controller(runtime);
     run(
@@ -1016,9 +1015,6 @@ where
         if let Some(masks) = reconstruction_masks.as_ref() {
             inputs = match masks {
                 ReconstructionMaskSet::Shared(mask) => inputs.with_reconstruction_mask(mask)?,
-                ReconstructionMaskSet::Coupled(masks) => {
-                    inputs.with_coupled_reconstruction_masks(masks)?
-                }
                 ReconstructionMaskSet::Domains(masks) => {
                     inputs.with_domain_reconstruction_masks(masks)?
                 }
@@ -1059,6 +1055,7 @@ where
             runtime.storage_io.clone(),
             runtime.stage_nanos,
             runtime.confidence_parts_per_million,
+            runtime.authority.topology().native_thread_stack_bytes,
         ),
     )?;
     let (physical, publication, window) = publication_plan.into_parts();
@@ -1095,7 +1092,7 @@ where
     let current = RunBindings::new(
         problem.inputs().clone(),
         &runtime.resource_policy,
-        runtime.cost_model.profile_id(),
+        runtime.cost_model,
     );
     let mut controller = application_controller(&runtime);
     run(

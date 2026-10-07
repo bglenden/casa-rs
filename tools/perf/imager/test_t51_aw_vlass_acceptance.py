@@ -84,7 +84,6 @@ def workload() -> dict:
             "parallel": False,
             "standard_mfs_acceleration": "cpu",
             "imaging_fft_precision": "auto",
-            "imaging_fft_backend": "rustfft",
             "mosweight": False,
             "psfphasecenter": "",
             "vptable": "",
@@ -194,7 +193,6 @@ class T51AwVlassAcceptanceTests(unittest.TestCase):
             imaging = GATE.validate_manifest_contract(candidate)
             self.assertEqual("cpu", imaging["standard_mfs_acceleration"])
             self.assertEqual("auto", imaging["imaging_fft_precision"])
-            self.assertEqual("rustfft", imaging["imaging_fft_backend"])
             self.assertIs(imaging["parallel"], False)
             self.assertTrue(
                 all(name not in imaging for name in GATE.FORBIDDEN_RUNTIME_OVERRIDES)
@@ -478,7 +476,6 @@ class T51AwVlassAcceptanceTests(unittest.TestCase):
                 "IMAGER_BENCH_SAVEMODEL": "none",
                 "IMAGER_BENCH_STANDARD_MFS_ACCELERATION": "cpu",
                 "IMAGER_BENCH_IMAGING_FFT_PRECISION": "auto",
-                "IMAGER_BENCH_IMAGING_FFT_BACKEND": "rustfft",
                 "IMAGER_BENCH_PARALLEL": "0",
                 "IMAGER_BENCH_WTERM": "wproject",
                 "IMAGER_BENCH_WPROJPLANES": "32",

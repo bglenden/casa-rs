@@ -254,6 +254,51 @@ impl GriddedNormalCompilationPlan {
         Ok(compilation_dimensions(problem, &specification)?.3)
     }
 
+    /// Return the input-sized record capacity in the compiler's emission units.
+    ///
+    /// Scalar Stokes-I MFS combines all correlations of a row/channel into one
+    /// normal atom, with one shared prediction/accumulation record per chart.
+    /// Its capacity is therefore independent of the selected correlation count.
+    /// Other layouts retain the per-correlation capacity policy; exceeding that
+    /// finite capacity remains a typed compilation failure, not unbounded growth.
+    pub fn source_record_capacity(problem: &CompiledProblem) -> Result<u64, SpectralOperatorError> {
+        let specification = SpectralOperatorSpecification::new(problem)?;
+        let atom = compilation_dimensions(problem, &specification)?.3 as u64;
+        let combined = scalar_correlation_preaggregation(&specification);
+        problem
+            .inputs()
+            .observation_snapshot()
+            .sources()
+            .iter()
+            .try_fold(0_u64, |total, source| {
+                let selection = source.selection();
+                let channels = selection
+                    .spectral_windows()
+                    .iter()
+                    .map(|window| window.channel_indices().len())
+                    .max()
+                    .unwrap_or(0) as u64;
+                let correlations = if combined {
+                    1
+                } else {
+                    selection
+                        .correlations()
+                        .iter()
+                        .map(|selection| selection.products().len())
+                        .max()
+                        .unwrap_or(0) as u64
+                };
+                selection
+                    .rows()
+                    .selected_row_count()
+                    .checked_mul(channels)
+                    .and_then(|groups| groups.checked_mul(correlations))
+                    .and_then(|groups| groups.checked_mul(atom))
+                    .and_then(|records| total.checked_add(records))
+                    .ok_or(SpectralOperatorError::ResidencyOverflow)
+            })
+    }
+
     /// Return simultaneous compiler-owned heap and inline storage, excluding the writer.
     #[must_use]
     pub const fn workspace_bytes(self) -> usize {
@@ -364,7 +409,9 @@ fn compilation_dimensions(
         .checked_mul(specification.chart_count())
         .and_then(|terms| terms.checked_mul(specification.polarization_count()))
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    let atom = if specification.aw_projection().is_some() {
+    let atom = if scalar_correlation_preaggregation(specification)
+        || specification.aw_projection().is_some()
+    {
         specification.chart_count()
     } else if matches!(
         GriddedNormalRecordLayout::for_specification(specification),
@@ -393,6 +440,17 @@ fn compilation_dimensions(
     Ok((correlations, spectral, native, atom))
 }
 
+fn scalar_correlation_preaggregation(specification: &SpectralOperatorSpecification) -> bool {
+    specification.aw_projection().is_none()
+        && matches!(
+            GriddedNormalRecordLayout::for_specification(specification),
+            GriddedNormalRecordLayout::Scalar
+        )
+        && specification.polarization_coordinates()
+            == [casa_imaging_model::PolarizationCoordinate::StokesI]
+        && specification.slab().total_channels() == 1
+}
+
 /// A complete frame borrowed only for the duration of one synchronous sink call.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug)]
@@ -400,7 +458,6 @@ pub struct GriddedNormalOperatorFrame<'a> {
     sequence: u64,
     record_count: u64,
     encoded: &'a [u8],
-    payload_crc32c: u32,
 }
 
 impl<'a> GriddedNormalOperatorFrame<'a> {
@@ -418,11 +475,6 @@ impl<'a> GriddedNormalOperatorFrame<'a> {
     #[must_use]
     pub const fn encoded_bytes(self) -> &'a [u8] {
         self.encoded
-    }
-    /// Return the checksum of the borrowed encoding computed by the compiler.
-    #[must_use]
-    pub const fn payload_crc32c(self) -> u32 {
-        self.payload_crc32c
     }
 }
 
@@ -465,7 +517,6 @@ struct FrameLedger {
     record_count: u64,
     frame_bytes: u64,
     sink_time: Duration,
-    checksum_time: Duration,
     observe: bool,
 }
 
@@ -502,7 +553,6 @@ impl CompilationFrames {
                 record_count: 0,
                 frame_bytes: 0,
                 sink_time: Duration::ZERO,
-                checksum_time: Duration::ZERO,
                 observe,
             },
         })
@@ -547,8 +597,7 @@ impl CompilationFrames {
     }
 
     pub(super) fn timings(&self) -> (GriddedNormalOperatorStageTimings, Duration) {
-        let mut timings = self.encoder.timings();
-        timings.encoding_checksum += self.ledger.checksum_time;
+        let timings = self.encoder.timings();
         (timings, self.ledger.sink_time)
     }
 
@@ -583,23 +632,17 @@ impl FrameLedger {
             .checked_add(record_count)
             .ok_or(SpectralOperatorError::CoverageOverflow)?;
         let started = self.observe.then(Instant::now);
-        let payload_crc32c = crc32c::crc32c(encoded);
-        if let Some(started) = started {
-            self.checksum_time += started.elapsed();
-        }
-        let started = self.observe.then(Instant::now);
         sink(GriddedNormalOperatorFrame {
             sequence: self.descriptors.length as u64,
             record_count,
             encoded,
-            payload_crc32c,
         })?;
         if let Some(started) = started {
             self.sink_time += started.elapsed();
         }
         self.descriptors.storage[self.descriptors.length] = BlockDescriptor {
             record_count,
-            payload_crc32c,
+
             accumulation_output_planes,
         };
         self.descriptors.length += 1;
@@ -615,12 +658,11 @@ mod tests {
     use std::sync::OnceLock;
 
     fn problem() -> &'static CompiledProblem {
-        &fixture().0
+        fixture()
     }
 
-    fn fixture() -> &'static (CompiledProblem, SelectedObservationGenerationId) {
-        static FIXTURE: OnceLock<(CompiledProblem, SelectedObservationGenerationId)> =
-            OnceLock::new();
+    fn fixture() -> &'static CompiledProblem {
+        static FIXTURE: OnceLock<CompiledProblem> = OnceLock::new();
         FIXTURE.get_or_init(|| {
             let cells = 512 * 512;
             let (problem, lifecycle, model, normal) =
@@ -629,9 +671,8 @@ mod tests {
                     vec![Complex64::default(); 3 * cells].into_boxed_slice(),
                     None,
                 );
-            let generation = normal.selected_generation();
             drop((lifecycle, model, normal));
-            (problem, generation)
+            problem
         })
     }
 
@@ -880,9 +921,7 @@ mod tests {
             .finish_into_stream(problem(), &weighting_plan)
             .unwrap();
         let (_, _, replay) = stream.finish().unwrap();
-        let program = compiler
-            .complete(&replay, fixture().1, None)
-            .expect("seal empty program");
+        let program = compiler.complete(&replay).expect("seal empty program");
         assert_eq!(program.block_count(), 0);
         assert_eq!(program.block_accumulation_output_plane_range(0), None);
         assert_eq!(program.block_overlaps_output_planes(0, 0..1), None);
@@ -956,7 +995,7 @@ mod tests {
             .unwrap();
         let (_, _, replay) = stream.finish().unwrap();
         assert!(matches!(
-            compiler.complete(&replay, fixture().1, None),
+            compiler.complete(&replay),
             Err(SpectralOperatorError::GriddedCompilationPoisoned)
         ));
     }

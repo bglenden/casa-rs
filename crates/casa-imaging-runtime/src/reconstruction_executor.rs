@@ -18,45 +18,108 @@ use crate::{LeaseResource, RuntimeOverheadKind, WorkExecutionContext};
 
 pub(crate) const ALLOCATION: &str = "spectral-cycle-minor-cycle";
 
+/// Run-lifetime reservation for one immutable PSF's Clark refresh buffers.
+/// Retain this owner until all major cycles and their normal states are dropped.
+#[doc(hidden)]
+pub struct ClarkWorkspaceReservation {
+    _lease: crate::ResourceLease,
+    bytes: u64,
+}
+
+impl ClarkWorkspaceReservation {
+    /// Reserve only the single-plane constant-basis Clark case; other modes
+    /// continue to use their bounded per-solve workspace.
+    pub fn acquire(
+        problem: &casa_imaging_model::CompiledProblem,
+        authority: &crate::ResourceAuthority,
+        policy: crate::ResourcePolicy,
+    ) -> Result<Option<Self>, crate::ResourceError> {
+        let bytes = ReconstructionPlaneWorkspace::clark_reuse_bytes(problem);
+        if bytes == 0 {
+            return Ok(None);
+        }
+        let lease = authority.reserve_host_memory(policy, "cross-plan-clark-workspace", bytes)?;
+        Ok(Some(Self {
+            _lease: lease,
+            bytes,
+        }))
+    }
+
+    /// Resident ceiling priced before the first major plan is admitted.
+    pub const fn bytes(&self) -> u64 {
+        self.bytes
+    }
+}
+
 /// One owner-derived envelope, shared by admission and execution validation.
 pub(crate) struct PlaneExecutionPlan {
     kernel: BoundedKernelPlan,
     pub(crate) heap_bytes: u64,
+    /// Bounded outer plane and inner direct-convolution worker stacks; native FFT stacks are reserved as
+    /// process-lifetime external-library overhead by the cycle planner.
     pub(crate) stack_bytes: u64,
+    pub(crate) workers: usize,
+    fft_threads: usize,
+}
+
+/// FFTW's pthread pool can survive between phases, so its default stack bound
+/// is also reserved as process-lifetime external-library overhead by planning.
+/// `thread_stack_bytes` is the host's default native thread stack from
+/// `ResourceTopology::native_thread_stack_bytes`.
+pub(crate) fn native_fft_stack_bytes(threads: usize, thread_stack_bytes: u64) -> io::Result<u64> {
+    if threads <= 1 {
+        return Ok(0);
+    }
+    ((threads - 1) as u64)
+        .checked_mul(thread_stack_bytes)
+        .ok_or_else(|| io::Error::other("native FFT stack overflow"))
 }
 
 impl PlaneExecutionPlan {
     pub(crate) fn new(workspace: ReconstructionPlaneWorkspace, workers: usize) -> io::Result<Self> {
+        let fft_threads = if workspace.parallel_fft() { workers } else { 1 };
+        let plane_workers = workers.min(workspace.plane_count());
         let dynamic_bytes = workspace
             .worker_bytes()
-            .checked_mul(workers as u64)
+            .checked_mul(plane_workers as u64)
             .ok_or_else(|| io::Error::other("plane workspace overflow"))?;
         let partitions = workspace
             .plane_count()
             .checked_mul(if workspace.plane_count() == 1 { 1 } else { 2 })
             .ok_or_else(|| io::Error::other("plane partition count overflow"))?;
         let kernel = BoundedKernelPlan::new::<PlanePartition<'_>, PlanePartial<'_>>(
-            workers,
+            plane_workers,
             partitions,
             dynamic_bytes,
         )
         .map_err(|error| io::Error::other(format!("invalid plane kernel plan: {error:?}")))?;
-        let stack_bytes = if workers == 1 {
+        let plane_stack_bytes = if plane_workers == 1 {
             0
         } else {
-            (workers as u64)
+            (plane_workers as u64)
                 .checked_mul(BOUNDED_WORKER_STACK_BYTES as u64)
                 .ok_or_else(|| io::Error::other("plane worker stack overflow"))?
         };
+        let (convolution_heap_bytes, convolution_stack_bytes) =
+            workspace.parallel_convolution_overhead(fft_threads);
         let heap_bytes = kernel
             .capacity_bytes()
-            .checked_sub(stack_bytes)
+            .checked_sub(plane_stack_bytes)
             .and_then(|bytes| bytes.checked_add(workspace.retained_bytes()))
+            .and_then(|bytes| bytes.checked_add(convolution_heap_bytes))
             .ok_or_else(|| io::Error::other("plane collection workspace overflow"))?;
         Ok(Self {
             kernel,
             heap_bytes,
-            stack_bytes,
+            stack_bytes: plane_stack_bytes
+                .checked_add(convolution_stack_bytes)
+                .ok_or_else(|| io::Error::other("convolution worker stack overflow"))?,
+            workers: if workspace.parallel_fft() {
+                workers
+            } else {
+                plane_workers
+            },
+            fft_threads,
         })
     }
 }
@@ -100,6 +163,14 @@ pub(crate) fn execute(
             "plane solve exceeds its admitted memory capabilities",
         ));
     }
+    if std::env::var_os("CASA_RS_TRACE_IMAGING_STAGE_TIMING").is_some() {
+        eprintln!(
+            "imaging_minor_cycle_execution_budget admitted_workers={} plane_workers={} fft_threads={}",
+            workers,
+            workspace.plane_count().min(workers as usize),
+            plan.fft_threads
+        );
+    }
     match execute_bounded_resident(
         plan.kernel,
         pass,
@@ -107,6 +178,7 @@ pub(crate) fn execute(
         PlaneKernel {
             work,
             worker_bytes: workspace.worker_bytes(),
+            fft_threads: plan.fft_threads,
         },
     ) {
         Ok(outcome) => {
@@ -126,6 +198,7 @@ pub(crate) fn execute(
 struct PlaneKernel<'a> {
     work: ReconstructionPlaneWork<'a>,
     worker_bytes: u64,
+    fft_threads: usize,
 }
 
 enum PlanePartition<'a> {
@@ -190,7 +263,10 @@ impl<'a> PartitionedKernel<()> for PlaneKernel<'a> {
                 .work
                 .plane_statistics(*ordinal)
                 .map(PlanePartial::Statistics),
-            PlanePartition::Solve(input) => self.work.execute_plane(input).map(PlanePartial::Solve),
+            PlanePartition::Solve(input) => self
+                .work
+                .execute_plane(input, self.fft_threads)
+                .map(PlanePartial::Solve),
         }
     }
 
@@ -219,5 +295,190 @@ impl<'a> PartitionedKernel<()> for PlaneKernel<'a> {
         _execution: crate::bounded_stream::BoundedExecution<'_>,
     ) -> Result<Self::Completion, Self::Error> {
         self.work.finish()
+    }
+}
+
+#[cfg(test)]
+#[path = "../../casa-imaging-model/tests/common/mod.rs"]
+#[allow(dead_code, clippy::duplicate_mod)]
+mod model_fixture;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use casa_imaging_model::*;
+    use casa_imaging_reconstruction::runtime_adapter::ReconstructionPlaneWorkspace;
+
+    use super::model_fixture;
+    use crate::complete_data_parallel_mfs_tests::geometry_with_facets;
+
+    #[test]
+    fn persistent_clark_bound_is_one_constant_plane_not_a_cube_cache() {
+        let clark = compiled_problem(1, ReconstructionAlgorithm::Clark);
+        assert!(ReconstructionPlaneWorkspace::clark_reuse_bytes(&clark) > 0);
+        for problem in [
+            compiled_problem(1, ReconstructionAlgorithm::Hogbom),
+            compiled_problem(8, ReconstructionAlgorithm::Clark),
+        ] {
+            assert_eq!(ReconstructionPlaneWorkspace::clark_reuse_bytes(&problem), 0);
+        }
+    }
+
+    fn compiled_problem(channels: usize, algorithm: ReconstructionAlgorithm) -> CompiledProblem {
+        let geometry =
+            geometry_with_facets(FacetLayout::Single).with_spectral(SpectralCoordinateSpec::new(
+                FrequencyFrame::Topocentric,
+                FrequencyFrame::Topocentric,
+                SpectralFrameAnchor::NotApplicable,
+                SpectralWcs::Linear {
+                    channels,
+                    reference_pixel: 0.0,
+                    reference_frequency_hz: 1.4e9,
+                    increment_hz: 1.0e6,
+                },
+                RestFrequency::NotApplicable,
+                DopplerConvention::NotApplicable,
+            ));
+        let validity = ProductValidityPolicies::new(
+            PrimaryBeamValidityPolicy::new(
+                0.2,
+                ProductSupportComparison::StrictlyGreater,
+                ProductBlankingPolicy::Zero,
+            )
+            .unwrap(),
+            TaylorValidityPolicy::new(
+                TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
+                0.1,
+                ProductSupportComparison::StrictlyGreater,
+                ProductBlankingPolicy::Zero,
+            )
+            .unwrap(),
+        );
+        let basis = if channels == 1 {
+            ReconstructionBasis::Constant
+        } else {
+            ReconstructionBasis::ChannelLocal { channels }
+        };
+        let specification = ProblemSpecification::new(
+            ScientificContract::new(
+                SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
+                MeasurementEquationContract::new(
+                    InstrumentResponse::Scalar,
+                    DeclaredInnerProducts::new(
+                        ModelInnerProduct::HermitianEuclidean,
+                        VisibilityInnerProduct::HermitianEuclidean,
+                    ),
+                ),
+            ),
+            ReconstructionContract::new(
+                basis,
+                algorithm,
+                ReconstructionControls::new(8, 0.1, 0.0),
+                PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+            ),
+            WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+            ProductRequirements::new(
+                vec![ProductKind::Psf],
+                ProductNormalization::UnitResponse,
+                RestoringBeamPolicy::None,
+                validity,
+            ),
+            ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
+            NumericsContract::new(
+                vec![NumericPrecision::F64],
+                ReductionPolicy::UnorderedWithinBudget,
+                FiniteValuePolicy::FlagInputRejectGenerated,
+                NumericalStage::ALL
+                    .into_iter()
+                    .map(|stage| (stage, StageErrorBudget::new(1.0e-7, 1.0e-3)))
+                    .collect(),
+            ),
+        );
+        compile(ImagingRequest::new(
+            specification,
+            geometry,
+            model_fixture::problem_inputs(1, Vec::new(), ModelStateIdentity::Empty),
+            ModelLifecycleRequirements::new(
+                ModelBounds::new(
+                    10_000_000, 10_000_000, 10_000_000, 10_000_000, 1.0e30, 1.0e30,
+                )
+                .unwrap(),
+                NumericPrecision::F64,
+                ModelInputCommitment::Empty,
+            ),
+        ))
+        .unwrap()
+    }
+
+    fn plane_workspace(
+        channels: usize,
+        algorithm: ReconstructionAlgorithm,
+    ) -> ReconstructionPlaneWorkspace {
+        ReconstructionPlaneWorkspace::for_problem(&compiled_problem(channels, algorithm))
+            .unwrap()
+            .expect("independent reconstruction planes")
+    }
+
+    const THREAD_STACK_BYTES: u64 = 8 << 20;
+
+    #[test]
+    fn one_plane_clark_separates_persistent_fft_stacks_from_outer_worker_stack_claim() {
+        let workspace = plane_workspace(1, ReconstructionAlgorithm::Clark);
+        let serial = PlaneExecutionPlan::new(workspace, 1).unwrap();
+
+        for workers in [1, 4, 8] {
+            let plan = PlaneExecutionPlan::new(workspace, workers).unwrap();
+            let expected_native_stack = (workers as u64 - 1) * THREAD_STACK_BYTES;
+
+            assert_eq!(plan.workers, workers);
+            assert_eq!(plan.fft_threads, workers);
+            let (row_heap, row_stacks) = workspace.parallel_convolution_overhead(workers);
+            assert_eq!(row_stacks, (workers as u64 - 1) * 128 * 1024);
+            assert_eq!(
+                row_heap,
+                (workers as u64 - 1)
+                    * std::mem::size_of::<
+                        std::thread::ScopedJoinHandle<
+                            'static,
+                            Result<(), casa_imaging_reconstruction::MinorCycleError>,
+                        >,
+                    >() as u64
+            );
+            assert_eq!(plan.heap_bytes, serial.heap_bytes + row_heap);
+            assert_eq!(
+                native_fft_stack_bytes(workers, THREAD_STACK_BYTES).unwrap(),
+                expected_native_stack
+            );
+            // The cycle alternative reserves these native stacks under
+            // ExternalLibrary. Do not duplicate them in this node's ThreadStack
+            // claim, which covers outer plane workers and transient row workers.
+            assert_eq!(plan.stack_bytes, row_stacks);
+        }
+    }
+
+    #[test]
+    fn multi_plane_clark_keeps_native_ffts_single_threaded_under_outer_parallelism() {
+        let workspace = plane_workspace(4, ReconstructionAlgorithm::Clark);
+        let plan = PlaneExecutionPlan::new(workspace, 8).unwrap();
+
+        assert_eq!(plan.workers, 4);
+        assert_eq!(plan.fft_threads, 1);
+        assert_eq!(
+            native_fft_stack_bytes(plan.fft_threads, THREAD_STACK_BYTES).unwrap(),
+            0
+        );
+        assert_eq!(plan.stack_bytes, 4 * BOUNDED_WORKER_STACK_BYTES as u64,);
+    }
+
+    #[test]
+    fn one_plane_hogbom_does_not_claim_admitted_workers_for_native_fft() {
+        let workspace = plane_workspace(1, ReconstructionAlgorithm::Hogbom);
+        let serial = PlaneExecutionPlan::new(workspace, 1).unwrap();
+        let plan = PlaneExecutionPlan::new(workspace, 4).unwrap();
+
+        assert_eq!(plan.workers, 1);
+        assert_eq!(plan.fft_threads, 1);
+        assert_eq!(plan.heap_bytes, serial.heap_bytes);
+        assert_eq!(plan.stack_bytes, 0);
     }
 }

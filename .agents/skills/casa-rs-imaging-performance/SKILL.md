@@ -15,6 +15,13 @@ decoding, hashing, and I/O. Count work per sample, block, cell, and major cycle;
 distinguish one-time preparation from costs paid repeatedly. Check compiler
 settings and the actual library/backend before assuming an algorithm is slow.
 
+For native-library timing comparisons, preserve the parent's build environment
+and check the candidate's actual linker inputs before running. In particular,
+FFTW's version alone does not identify its precision/SIMD build: record the
+resolved static-library paths (Cargo build-script output) and relevant SIMD
+capability. An omitted `PKG_CONFIG_PATH` can silently select a different FFTW.
+Do not attribute such a mismatched comparison to imaging source changes.
+
 Distinguish block I/O, block scheduling, and block numerical kernels. Large reads
 or worker batches can still call an expensive object/adapter chain for every
 sample. Follow into that chain: look for metadata reconstruction, allocations,
@@ -119,6 +126,12 @@ model hashes or verification-only lifecycle scans. Routine operational progress
 must not serialize or hash full receipts/plans, or scan historical receipt
 stores; current admission is authoritative. Exceptions need a concrete failure
 model and demonstrated benefit.
+
+ADR-0015 extends ownership-only association to trusted within-run input,
+weighting/replay, sparse model updates and reprojection. Do not content-hash
+scientific arrays or private same-run spill bytes for bookkeeping or improbable
+corruption insurance. Retain structural/source/lifecycle and I/O checks;
+independently justified external-input checksums and opt-in diagnostics differ.
 
 Use the smallest existing check that exercises the change, then the applicable
 issue-named acceptance. Reuse unaffected green evidence; do not mechanically

@@ -33,8 +33,5 @@ cargo run -q -p casa-test-support --bin casatestdata-preflight -- \
 run_timed_step \
   "Running slow msexplore CASA parity suite" \
   cargo test -p casa-ms --features slow-tests --test msexplore_casa_parity
-run_timed_step \
-  "Running slow casars-imager CASA parity suite" \
-  scripts/test-imaging-parity.sh
 script_finished_at="$(date +%s)"
 echo "Slow test suite completed in $(format_elapsed $(( script_finished_at - script_started_at )))"

@@ -15,9 +15,8 @@ use casa_imaging_application::{
 
 use super::{
     AwProjectNormalization, CleanMaskMode, CleanStopReason, CliConfig, CubeAxisValue, Deconvolver,
-    ImagingFftBackendPolicy, ImagingFftPrecisionPolicy, ImagingMemoryPressurePolicy,
     RestoringBeamMode, RunSummary, SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy,
-    WTermMode, WeightingMode,
+    StandardMfsBackend, WTermMode, WeightingMode,
 };
 
 fn hex(bytes: [u8; 32]) -> String {
@@ -40,10 +39,6 @@ pub(super) fn execute(config: &CliConfig) -> Result<RunSummary, String> {
         crate::task_contract::ImagerVisibilityProductDiagnostic {
             problem_id: hex(completion.problem_id().as_bytes()),
             final_model_generation: hex(completion.final_model().as_bytes()),
-            selected_generation: hex(completion.selected_generation().as_bytes()),
-            weighting_generation: hex(completion.weighting_generation().as_bytes()),
-            model_product: hex(completion.model_product().as_bytes()),
-            residual_product: hex(completion.residual_product().as_bytes()),
             sample_count: completion.sample_count(),
         }
     });
@@ -357,24 +352,13 @@ fn backend_requirements(config: &CliConfig) -> Vec<TaskRequirement> {
             requirements.push(TaskRequirement::MetalRowRunGroupedGridder);
         }
     }
-    if let Some(backend) = config.standard_mfs_backend.as_deref() {
+    if let Some(backend) = config.standard_mfs_backend {
         requirements.push(match backend {
-            "cpu" | "serial" | "serial-cpu" => TaskRequirement::SerialCpu,
-            "fixed-tile" | "fixed-tile-cpu" => TaskRequirement::FixedTileCpu,
-            "metal" | "metal-gridder" => TaskRequirement::MetalGridder,
-            "metal-row-run" | "metal-row-run-gridder" => TaskRequirement::MetalRowRunGridder,
-            "metal-row-run-grouped" | "metal-row-run-grouped-gridder" => {
-                TaskRequirement::MetalRowRunGroupedGridder
-            }
-            _ => TaskRequirement::UnknownBackend,
+            StandardMfsBackend::SerialCpu => TaskRequirement::SerialCpu,
+            StandardMfsBackend::FixedTileCpu => TaskRequirement::FixedTileCpu,
+            StandardMfsBackend::Metal => TaskRequirement::MetalGridder,
+            StandardMfsBackend::MetalRowRunGrouped => TaskRequirement::MetalRowRunGroupedGridder,
         });
-    }
-    match config.imaging_fft_backend {
-        ImagingFftBackendPolicy::RustFft => {}
-        ImagingFftBackendPolicy::Auto => requirements.push(TaskRequirement::FftAuto),
-        ImagingFftBackendPolicy::Accelerate => requirements.push(TaskRequirement::Accelerate),
-        ImagingFftBackendPolicy::MetalMpsGraph => requirements.push(TaskRequirement::MetalMpsGraph),
-        ImagingFftBackendPolicy::Fftw => requirements.push(TaskRequirement::Fftw),
     }
     requirements
 }
@@ -394,8 +378,6 @@ fn unsupported_native_controls(config: &CliConfig) -> Vec<TaskRequirement> {
         TaskRequirement::PolarizationSelection,
     );
     require(config.uv_taper.is_some(), TaskRequirement::UvTaper);
-    require(config.fullsummary, TaskRequirement::FullSummary);
-    require(config.chanchunks.is_some(), TaskRequirement::ChannelChunks);
     require(
         config.per_channel_weight_density,
         TaskRequirement::PerChannelWeightDensity,
@@ -405,59 +387,9 @@ fn unsupported_native_controls(config: &CliConfig) -> Vec<TaskRequirement> {
         TaskRequirement::WProjectionPlanes,
     );
     require(
-        config.standard_mfs_grid_threads.is_some(),
-        TaskRequirement::GridThreads,
-    );
-    require(
-        config.standard_mfs_tile_anchor.is_some(),
-        TaskRequirement::TileAnchor,
-    );
-    require(
-        config.standard_mfs_residual_backend.is_some(),
-        TaskRequirement::ResidualBackend,
-    );
-    require(
-        config.standard_mfs_initial_dirty_backend.is_some(),
-        TaskRequirement::InitialDirtyBackend,
-    );
-    require(
-        config.standard_mfs_metal_minor_cycle_chunk.is_some(),
-        TaskRequirement::MetalMinorCycleChunk,
-    );
-    require(
-        config.standard_mfs_metal_grouped_input_cache.is_some(),
-        TaskRequirement::MetalGroupedInputCache,
-    );
-    require(
         config.standard_mfs_memory_target_mb.is_some() || config.imaging_memory_target_mb.is_some(),
         TaskRequirement::MemoryTarget,
     );
-    require(
-        config.imaging_memory_pressure_policy != ImagingMemoryPressurePolicy::Auto,
-        TaskRequirement::MemoryPressurePolicy,
-    );
-    require(
-        config.standard_mfs_prepare_buffer_mb.is_some()
-            || config.imaging_prepare_buffer_mb.is_some(),
-        TaskRequirement::PrepareBuffer,
-    );
-    require(
-        config.imaging_row_block_rows.is_some(),
-        TaskRequirement::RowBlockRows,
-    );
-    require(
-        config.imaging_prepare_workers.is_some(),
-        TaskRequirement::PrepareWorkers,
-    );
-    require(
-        config.imaging_read_ahead_blocks.is_some(),
-        TaskRequirement::ReadAheadBlocks,
-    );
-    require(
-        config.imaging_fft_precision != ImagingFftPrecisionPolicy::Auto,
-        TaskRequirement::FftPrecision,
-    );
-    require(config.write_preview_pngs, TaskRequirement::PreviewPng);
     requirements
 }
 
@@ -471,9 +403,9 @@ mod tests {
     };
 
     use super::{
-        CliConfig, HogbomIterationAccounting, ImagingFftPrecisionPolicy,
-        StandardMfsAccelerationPolicy, TaskRequirement, WeightingMode, application_request,
-        backend_requirements, task_requirements, unsupported_native_controls,
+        CliConfig, HogbomIterationAccounting, StandardMfsAccelerationPolicy, StandardMfsBackend,
+        TaskRequirement, WeightingMode, application_request, backend_requirements,
+        task_requirements, unsupported_native_controls,
     };
 
     fn config(extra: &[&str]) -> CliConfig {
@@ -494,13 +426,8 @@ mod tests {
     #[test]
     fn automatic_backend_choices_remain_explicit_task_requirements() {
         assert_eq!(
-            backend_requirements(&config(&[
-                "--standard-mfs-acceleration",
-                "auto",
-                "--imaging-fft-backend",
-                "auto",
-            ])),
-            vec![TaskRequirement::ExecutionAuto, TaskRequirement::FftAuto,]
+            backend_requirements(&config(&["--standard-mfs-acceleration", "auto",])),
+            vec![TaskRequirement::ExecutionAuto]
         );
     }
 
@@ -690,9 +617,6 @@ mod tests {
             "--dirty-only",
             "--standard-mfs-acceleration",
             "cpu",
-            "--imaging-fft-backend",
-            "rustfft",
-            "--no-preview-pngs",
             "--gridder",
             "standard",
             "--deconvolver",
@@ -706,7 +630,7 @@ mod tests {
             "--no-parallel",
         ]));
 
-        assert!(!requirements.contains(&TaskRequirement::UnknownBackend));
+        assert_eq!(requirements, vec![TaskRequirement::SerialCpu]);
     }
 
     #[test]
@@ -737,18 +661,9 @@ mod tests {
             "1",
             "--standard-mfs-acceleration",
             "cpu",
-            "--imaging-fft-backend",
-            "rustfft",
-            "--imaging-fft-precision",
-            "auto",
             "--no-parallel",
-            "--no-preview-pngs",
         ]);
 
-        assert_eq!(
-            config.imaging_fft_precision,
-            ImagingFftPrecisionPolicy::Auto
-        );
         assert_eq!(config.weighting, WeightingMode::Natural);
         let requirements = task_requirements(&config);
         assert_eq!(requirements, vec![TaskRequirement::SerialCpu]);
@@ -773,7 +688,7 @@ mod tests {
             "--nmajor",
             "3",
         ]));
-        assert!(!requirements.contains(&TaskRequirement::UnknownBackend));
+        assert_eq!(requirements, vec![TaskRequirement::SerialCpu]);
     }
 
     #[test]
@@ -851,6 +766,53 @@ mod tests {
             request.hogbom_iteration_accounting,
             HogbomIterationAccounting::Strict
         );
+    }
+
+    #[test]
+    fn explicit_backend_spellings_map_to_typed_task_requirements() {
+        for (spelling, backend, requirement) in [
+            (
+                "serial-cpu",
+                StandardMfsBackend::SerialCpu,
+                TaskRequirement::SerialCpu,
+            ),
+            (
+                "fixed-tile",
+                StandardMfsBackend::FixedTileCpu,
+                TaskRequirement::FixedTileCpu,
+            ),
+            (
+                "metal",
+                StandardMfsBackend::Metal,
+                TaskRequirement::MetalGridder,
+            ),
+            (
+                "metal-row-run-grouped",
+                StandardMfsBackend::MetalRowRunGrouped,
+                TaskRequirement::MetalRowRunGroupedGridder,
+            ),
+        ] {
+            let config = config(&["--standard-mfs-backend", spelling]);
+            assert_eq!(config.standard_mfs_backend, Some(backend));
+            assert!(backend_requirements(&config).contains(&requirement));
+        }
+        for unsupported in ["metal-row-run", "gpu"] {
+            assert!(
+                CliConfig::parse(
+                    [
+                        "--ms",
+                        "fixture.ms",
+                        "--imagename",
+                        "image",
+                        "--standard-mfs-backend",
+                        unsupported,
+                    ]
+                    .into_iter()
+                    .map(OsString::from),
+                )
+                .is_err()
+            );
+        }
     }
 
     #[test]

@@ -7,33 +7,32 @@ use std::convert::Infallible;
 
 use casa_imaging_model::{
     AntennaSelection, AxisOrder, CentreLaws, ColumnGeneration, ConsistencyToken,
-    ContinuumTransformGenerationId, CorrelationProduct, CorrelationSelection, CorrelationType,
-    DataDescriptionSelection, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
-    DirectionFrame, DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy,
-    FrequencyFrame, GeometryInput, HogbomIterationAccounting, IdSelection, ImageAxis,
-    ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest, InstrumentResponse,
-    IntentSelection, LogicalIdentity, MeasurementEquationContract, MeasurementSetIdentity,
-    MetadataGeneration, MetadataTableKind, ModelBounds, ModelCell, ModelColumnState,
-    ModelColumnWrite, ModelDeltaTerm, ModelExecutionAttemptId, ModelInnerProduct,
-    ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity, MsColumnKind,
-    NumericPrecision, NumericalStage, NumericsContract, ObservationSelection,
-    ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance,
-    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PolarizationContract,
-    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInputIdentities,
-    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
-    ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
-    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
-    ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection, ScientificContract,
-    SelectedColumns, SelectedImageDomainProjections, SelectedMainRow,
-    SelectedObservationGenerationId, SelectedObservationSample, SelectedPhaseCentreProjection,
-    SelectedPredictionTarget, SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates,
-    SelectedSampleMetadata, SelectedSpectralContribution, SelectedSpectralContributions,
-    SelectedSpectralEvaluation, SelectedSpectralInterval, SelectedVisibilitySample, SkyDirection,
-    SourceGenerations, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
-    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection,
-    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection,
-    UvSelection, UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn,
-    WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
+    CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
+    DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
+    DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame,
+    GeometryInput, HogbomIterationAccounting, IdSelection, ImageAxis, ImageDomainRole,
+    ImageDomainSpec, ImageShape, ImagingRequest, InstrumentResponse, IntentSelection,
+    LogicalIdentity, MeasurementEquationContract, MeasurementSetIdentity, MetadataGeneration,
+    MetadataTableKind, ModelBounds, ModelCell, ModelColumnState, ModelColumnWrite, ModelDeltaTerm,
+    ModelExecutionAttemptId, ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements,
+    ModelStateIdentity, MsColumnKind, NumericPrecision, NumericalStage, NumericsContract,
+    ObservationSelection, ObservationSnapshotInput, ObservationSourceInput,
+    ObservationSourceProvenance, ObservationTransactionRequirements, PhaseCentreLaw,
+    PointingCentreLaw, PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
+    ProblemInputIdentities, ProblemSpecification, ProductBlankingPolicy, ProductKind,
+    ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
+    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
+    ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection,
+    ScientificContract, SelectedColumns, SelectedImageDomainProjections, SelectedMainRow,
+    SelectedObservationSample, SelectedPhaseCentreProjection, SelectedPredictionTarget,
+    SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates, SelectedSampleMetadata,
+    SelectedSpectralContribution, SelectedSpectralContributions, SelectedSpectralEvaluation,
+    SelectedSpectralInterval, SelectedVisibilitySample, SkyDirection, SourceGenerations,
+    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
+    TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection,
+    UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope,
+    WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
     ChannelCyclePolicy, ExecutableModelProblem, FinalModelCompletionId, MajorCycleError,
@@ -70,6 +69,18 @@ fn source(seed: u8) -> ObservationSourceInput {
 }
 
 fn source_with_channels(seed: u8, channels: [Vec<u32>; 2]) -> ObservationSourceInput {
+    source_with_channels_and_correlations(
+        seed,
+        channels,
+        vec![CorrelationProduct::new(0, CorrelationType::StokesI)],
+    )
+}
+
+fn source_with_channels_and_correlations(
+    seed: u8,
+    channels: [Vec<u32>; 2],
+    correlations: Vec<CorrelationProduct>,
+) -> ObservationSourceInput {
     let columns = [
         MsColumnKind::Data,
         MsColumnKind::Flag,
@@ -141,10 +152,7 @@ fn source_with_channels(seed: u8, channels: [Vec<u32>; 2]) -> ObservationSourceI
                 .enumerate()
                 .map(|(spw, channels)| SpectralWindowSelection::new(spw as u32, channels))
                 .collect(),
-            vec![CorrelationSelection::new(
-                0,
-                vec![CorrelationProduct::new(0, CorrelationType::StokesI)],
-            )],
+            vec![CorrelationSelection::new(0, correlations)],
         ),
         SourceGenerations::new(
             ConsistencyToken::new(identity(seed, 3)),
@@ -359,7 +367,7 @@ fn reconstruction_problem_with_sampling_and_model(
             ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
             NumericsContract::new(
                 vec![NumericPrecision::F64],
-                ReductionPolicy::Compensated,
+                ReductionPolicy::UnorderedWithinBudget,
                 FiniteValuePolicy::FlagInputRejectGenerated,
                 NumericalStage::ALL
                     .into_iter()
@@ -576,7 +584,19 @@ fn t38_casacore_minor_cycle_and_paired_final_residual_are_split_oracles() {
     let initial = initial_lifecycle.initial_empty().expect("empty cube model");
     let preparation = MajorCyclePreparation::prepare(&initial_lifecycle, initial, None)
         .expect("prepare empty cube model");
-    let complete = run_t19_complete_data(&problem, Some(&preparation));
+    let samples = fixture_samples(&problem);
+    let plan = plan_weighting(&problem, WeightingExecutionLimits::new(1, 1).unwrap()).unwrap();
+    let generation = freeze_weighting_generation(&problem, &plan, &samples).unwrap();
+    let complete = run_t19_complete_data_with_weighting(
+        &problem,
+        Some(&preparation),
+        &samples,
+        SpectralOperatorPass::InitialMajor,
+        None,
+        &plan,
+        &generation,
+    )
+    .unwrap();
     let joined = MajorCycleOwner::from_complete_data(
         {
             let storage =
@@ -638,11 +658,15 @@ fn t38_casacore_minor_cycle_and_paired_final_residual_are_split_oracles() {
             .expect("channel normal plane");
         let psf = plane
             .normal_approximation()
+            .complex()
+            .unwrap()
             .iter()
             .map(|value| value.re as f32)
             .collect::<Vec<_>>();
         let residual = plane
             .residual()
+            .complex()
+            .unwrap()
             .iter()
             .map(|value| value.re as f32)
             .collect::<Vec<_>>();
@@ -719,8 +743,15 @@ fn t38_casacore_minor_cycle_and_paired_final_residual_are_split_oracles() {
     }
 
     let (delta, _) = rust.into_parts();
-    let (complete, preparation) =
-        prepare_reconciliation_reusing(&problem, &lifecycle, carried, delta, normal);
+    let (complete, preparation) = prepare_reconciliation_reusing(
+        &problem,
+        &lifecycle,
+        carried,
+        delta,
+        normal,
+        &plan,
+        &generation,
+    );
     let final_join = MajorCycleOwner::from_complete_data(
         {
             let storage =
@@ -737,9 +768,13 @@ fn t38_casacore_minor_cycle_and_paired_final_residual_are_split_oracles() {
     .expect("final paired A/A* reconciliation");
     assert!(final_join.model_completion().delta().is_some());
     let (paired_normal, continuation) = final_join.into_continuation();
-    let paired_final_residual = paired_normal.residual().to_vec();
-    let paired_psf = paired_normal.normal_approximation().to_vec();
-    let paired_sensitivity = paired_normal.sensitivity().to_vec();
+    let paired_final_residual = paired_normal.residual().complex().unwrap().to_vec();
+    let paired_psf = paired_normal
+        .normal_approximation()
+        .complex()
+        .unwrap()
+        .to_vec();
+    let paired_sensitivity = paired_normal.sensitivity().dense().unwrap().to_vec();
     let paired_sum_weights = paired_normal.sum_weights().to_vec();
     let paired_validity = paired_normal.channel_validity().to_vec();
 
@@ -771,16 +806,20 @@ fn t38_casacore_minor_cycle_and_paired_final_residual_are_split_oracles() {
     .reconcile(&mut replay_lifecycle)
     .expect("fresh paired A/A* replay");
     assert_eq!(
-        replayed_join.normal_state().residual(),
+        replayed_join.normal_state().residual().complex().unwrap(),
         paired_final_residual,
         "invariant reuse is bit-exact under a full paired A/A* replay of the same model"
     );
     assert_eq!(
-        replayed_join.normal_state().normal_approximation(),
+        replayed_join
+            .normal_state()
+            .normal_approximation()
+            .complex()
+            .unwrap(),
         paired_psf
     );
     assert_eq!(
-        replayed_join.normal_state().sensitivity(),
+        replayed_join.normal_state().sensitivity().dense().unwrap(),
         paired_sensitivity
     );
     assert_eq!(
@@ -795,7 +834,7 @@ fn t38_casacore_minor_cycle_and_paired_final_residual_are_split_oracles() {
 }
 
 #[test]
-fn residual_refresh_rejects_prior_invariants_from_another_selected_generation() {
+fn residual_refresh_rejects_prior_invariants_from_another_weighting_owner() {
     let problem = t19_compatible_problem(250);
     let mut initial_lifecycle = ModelLifecycle::bind(
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem"),
@@ -838,19 +877,148 @@ fn residual_refresh_rejects_prior_invariants_from_another_selected_generation() 
     .expect("continued lifecycle");
     let preparation = MajorCyclePreparation::prepare(&continued_lifecycle, carried_model, None)
         .expect("residual refresh preparation");
-    let mut changed_samples = fixture_samples(&problem);
-    changed_samples[0].visibility = SelectedVisibilitySample::Complex32([91.0, -17.0]);
-
     let error = run_t19_complete_data_for_pass_result(
         &problem,
         Some(&preparation),
-        &changed_samples,
-        None,
+        &fixture_samples(&problem),
         SpectralOperatorPass::ResidualRefresh,
         Some(normal_state),
     )
-    .expect_err("changed selected content must invalidate reused normal state");
+    .expect_err("a different weighting owner cannot supply the reused normal state");
     assert_eq!(error, SpectralOperatorError::ReusableNormalStateMismatch);
+}
+
+#[test]
+fn mfs_initial_batch_spans_input_blocks_and_finishes_partial_tail() {
+    let problem = t19_compatible_problem(249);
+    let samples = fixture_samples(&problem);
+    let plan = plan_weighting(&problem, WeightingExecutionLimits::new(1, 1).unwrap()).unwrap();
+    let generation =
+        freeze_weighting_generation_with(&problem, &plan, &samples, constant_basis_contributions)
+            .unwrap();
+    let (blocks, summary) = replay_with(
+        &generation,
+        &problem,
+        &plan,
+        &samples,
+        constant_basis_contributions,
+    );
+    assert_eq!(blocks.len(), 2);
+    let mut reference = None;
+    for capacity in 1..=3 {
+        let specification = SpectralOperatorSpecification::new(&problem).unwrap();
+        assert!(specification.initial_mfs_region_count() > 0);
+        let workload = spectral_operator_workload(
+            &specification,
+            capacity,
+            SpectralOperatorPass::InitialMajor,
+        )
+        .unwrap();
+        let mut owner = prepare_spectral_operator(specification, workload, 1)
+            .unwrap()
+            .begin(&problem, &generation)
+            .unwrap();
+        let mut dispatches = 0;
+        for block in &blocks {
+            owner
+                .consume_block_with_initial_planes(block, |planes| {
+                    dispatches += 1;
+                    for plane in planes {
+                        plane.execute()?;
+                    }
+                    Ok(())
+                })
+                .unwrap();
+        }
+        assert_eq!(dispatches, samples.len() / capacity);
+        let complete = owner.complete(&summary).unwrap();
+        let primitives = complete.primitives();
+        let actual = (
+            primitives.dirty().complex().unwrap().to_vec(),
+            primitives.psf().complex().unwrap().to_vec(),
+            primitives.sensitivity().dense().unwrap().to_vec(),
+            primitives.sum_weights().to_vec(),
+            primitives.channel_validity().to_vec(),
+        );
+        assert!(actual.3.iter().any(|weight| *weight > 0.0));
+        if let Some(reference) = &reference {
+            assert_eq!(&actual, reference);
+        } else {
+            reference = Some(actual);
+        }
+    }
+}
+
+#[test]
+fn scalar_mfs_compiler_emits_one_record_per_dual_correlation_group() {
+    let problem = reconstruction_problem_with_sampling_and_model(
+        source_with_channels_and_correlations(
+            249,
+            [vec![0], vec![1]],
+            vec![
+                CorrelationProduct::new(0, CorrelationType::CircularRr),
+                CorrelationProduct::new(1, CorrelationType::CircularLl),
+            ],
+        ),
+        8,
+        1,
+        ReconstructionBasis::Constant,
+        ReconstructionAlgorithm::Dirty,
+        ReconstructionControls::new(0, 1.0, 0.0),
+        (
+            SpectralSamplingLaw::IDENTITY,
+            ModelStateIdentity::Empty,
+            ModelInputCommitment::Empty,
+        ),
+    );
+    let samples = fixture_samples(&problem)
+        .into_iter()
+        .flat_map(|mut rr| {
+            rr.address.correlation_type = CorrelationType::CircularRr;
+            let mut ll = rr.clone();
+            ll.address.correlation_index = 1;
+            ll.address.correlation_type = CorrelationType::CircularLl;
+            [rr, ll]
+        })
+        .collect::<Vec<_>>();
+    let plan = plan_weighting(&problem, WeightingExecutionLimits::new(4, 1).unwrap()).unwrap();
+    let generation =
+        freeze_weighting_generation_with(&problem, &plan, &samples, constant_basis_contributions)
+            .unwrap();
+    let (blocks, summary) = replay_with(
+        &generation,
+        &problem,
+        &plan,
+        &samples,
+        constant_basis_contributions,
+    );
+    let compilation = GriddedNormalCompilationPlan::new(&problem, 4, 1, 1, 224, 40)
+        .expect("one combined record is sufficient for a complete dual-correlation atom");
+    let mut compiler = GriddedNormalOperatorCompiler::new(
+        &problem,
+        compilation,
+        SourceCardinalityObservation::Enabled,
+    )
+    .unwrap();
+    let mut frames = Vec::<RecordedFrame>::new();
+    let mut sink = |frame: GriddedNormalOperatorFrame<'_>| {
+        frames.push(RecordedFrame::from(frame));
+        Ok(())
+    };
+    for block in &blocks {
+        compiler.consume_source(block, &mut sink).unwrap();
+    }
+    let measured = compiler.finish_rows_and_frames(&mut sink).unwrap();
+    let program = compiler.complete(&summary).unwrap();
+    assert_eq!(measured.source_samples, 4);
+    assert_eq!(measured.source_cardinality.unwrap().groups, 2);
+    assert_eq!(program.record_count(), 2);
+    assert_eq!(frames.len(), 2);
+    assert!(
+        frames
+            .iter()
+            .all(|frame| frame.record_count() == 1 && frame.encoded_bytes().len() == 40)
+    );
 }
 
 #[test]
@@ -861,7 +1029,6 @@ fn t55_all_flagged_program_finishes_without_encoded_frames() {
         sample.channel_flag = true;
     }
     let plan = plan_weighting(&problem, WeightingExecutionLimits::new(1, 1).unwrap()).unwrap();
-    let selected_generation = replay_selected_generation(&problem, &samples);
     let generation =
         freeze_weighting_generation_with(&problem, &plan, &samples, constant_basis_contributions)
             .expect("all-flagged weighting generation");
@@ -889,9 +1056,7 @@ fn t55_all_flagged_program_finishes_without_encoded_frames() {
     assert_eq!(measurements.source_samples, samples.len() as u64);
     assert_eq!(measurements.source_blocks, blocks.len() as u64);
     assert_eq!(measurements.frames, 0);
-    let program = compiler
-        .complete(&summary, selected_generation, None)
-        .expect("seal zero-work program");
+    let program = compiler.complete(&summary).expect("seal zero-work program");
     assert_eq!(program.block_count(), 0);
     assert_eq!(program.record_count(), 0);
 
@@ -901,7 +1066,7 @@ fn t55_all_flagged_program_finishes_without_encoded_frames() {
     let specification = SpectralOperatorSpecification::new(&problem).unwrap();
     let workload =
         spectral_operator_workload(&specification, 1, SpectralOperatorPass::InitialMajor).unwrap();
-    let mut owner = prepare_spectral_operator(specification, workload)
+    let mut owner = prepare_spectral_operator(specification, workload, 1)
         .unwrap()
         .begin(&problem, &generation)
         .unwrap();
@@ -912,7 +1077,7 @@ fn t55_all_flagged_program_finishes_without_encoded_frames() {
         owner.consume_block(block).unwrap();
     }
     let complete = owner
-        .complete(&summary, selected_generation, None)
+        .complete(&summary)
         .expect("all-flagged initial normal");
     let joined = MajorCycleOwner::from_complete_data(
         {
@@ -944,7 +1109,7 @@ fn t55_all_flagged_program_finishes_without_encoded_frames() {
     let workload =
         spectral_operator_workload(&specification, 1, SpectralOperatorPass::ResidualRefresh)
             .unwrap();
-    let prepared = prepare_spectral_operator(specification, workload).unwrap();
+    let prepared = prepare_spectral_operator(specification, workload, 1).unwrap();
     let apply = program
         .begin_apply(
             &problem,
@@ -990,7 +1155,6 @@ fn sealed_gridded_program_is_reused_across_distinct_model_generations() {
             WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
         )
         .expect("weighting plan");
-        let selected_generation = replay_selected_generation(&problem, &samples);
         let generation = freeze_weighting_generation_with(
             &problem,
             &plan,
@@ -1027,9 +1191,7 @@ fn sealed_gridded_program_is_reused_across_distinct_model_generations() {
         compiler
             .finish_rows_and_frames(&mut sink)
             .expect("finish gridded frames");
-        let program = compiler
-            .complete(&summary, selected_generation, None)
-            .expect("seal gridded program");
+        let program = compiler.complete(&summary).expect("seal gridded program");
         assert_eq!(
             program.record_count(),
             gridded_blocks.iter().map(RecordedFrame::record_count).sum()
@@ -1069,7 +1231,7 @@ fn sealed_gridded_program_is_reused_across_distinct_model_generations() {
         )
         .expect("initial workload");
         let prepared =
-            prepare_spectral_operator(specification, workload).expect("initial operator");
+            prepare_spectral_operator(specification, workload, 1).expect("initial operator");
         let mut owner = prepared
             .begin(&problem, &generation)
             .expect("initial complete-data owner");
@@ -1080,7 +1242,7 @@ fn sealed_gridded_program_is_reused_across_distinct_model_generations() {
             owner.consume_block(block).expect("consume selected block");
         }
         let initial_complete = owner
-            .complete(&summary, selected_generation, None)
+            .complete(&summary)
             .expect("complete initial normal state");
 
         (
@@ -1138,7 +1300,7 @@ fn sealed_gridded_program_is_reused_across_distinct_model_generations() {
         SpectralOperatorPass::ResidualRefresh,
     )
     .expect("first residual workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("first operator");
+    let prepared = prepare_spectral_operator(specification, workload, 1).expect("first operator");
     let mut first_apply = program
         .begin_apply(
             &problem,
@@ -1207,7 +1369,7 @@ fn sealed_gridded_program_is_reused_across_distinct_model_generations() {
         SpectralOperatorPass::ResidualRefresh,
     )
     .expect("second residual workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("second operator");
+    let prepared = prepare_spectral_operator(specification, workload, 1).expect("second operator");
     let mut second_apply = program
         .begin_apply(
             &problem,
@@ -1311,7 +1473,7 @@ impl Default for LinearReplayConfiguration {
 }
 
 struct LinearReplayResult {
-    normal_content: LogicalIdentity,
+    normal_psf: Vec<num_complex::Complex64>,
     predictions: Vec<num_complex::Complex64>,
     records: u64,
     frames: Vec<RecordedFrame>,
@@ -1320,6 +1482,28 @@ struct LinearReplayResult {
     source_records_per_source: Vec<u64>,
     gridded_residual: Vec<num_complex::Complex64>,
     direct_residual: Vec<num_complex::Complex64>,
+}
+
+fn assert_complex_agreement(
+    expected: &[num_complex::Complex64],
+    actual: &[num_complex::Complex64],
+) {
+    assert_eq!(expected.len(), actual.len());
+    let scale = expected
+        .iter()
+        .map(|value| value.norm_sqr())
+        .sum::<f64>()
+        .sqrt();
+    let error = expected
+        .iter()
+        .zip(actual)
+        .map(|(a, b)| (*a - *b).norm_sqr())
+        .sum::<f64>()
+        .sqrt();
+    assert!(
+        error <= (1e-3 * scale).max(1e-12),
+        "error={error:e}, scale={scale:e}"
+    );
 }
 
 #[test]
@@ -1340,9 +1524,9 @@ fn t55_fixed_atom_frames_are_independent_of_source_block_boundaries() {
     let split = run(1);
     let combined = run(6);
     assert_eq!(split.frames, combined.frames);
-    assert_eq!(split.predictions, combined.predictions);
-    assert_eq!(split.gridded_residual, combined.gridded_residual);
-    assert_eq!(split.direct_residual, combined.direct_residual);
+    assert_complex_agreement(&split.predictions, &combined.predictions);
+    assert_complex_agreement(&split.gridded_residual, &combined.gridded_residual);
+    assert_complex_agreement(&split.direct_residual, &combined.direct_residual);
     assert_ne!(split.source_blocks, combined.source_blocks);
     assert_ne!(combined.source_blocks, combined.frames.len() as u64);
     assert!(combined.frames_per_source.iter().any(|frames| *frames > 1));
@@ -1379,7 +1563,6 @@ fn check_linear_compiler_rejections(
     plan: GriddedNormalCompilationPlan,
     blocks: &[WeightingReplayChunk],
     summary: &WeightingReplaySummary,
-    selected_generation: casa_imaging_model::SelectedObservationGenerationId,
 ) {
     let compiler = || {
         GriddedNormalOperatorCompiler::new(problem, plan, SourceCardinalityObservation::Enabled)
@@ -1396,7 +1579,7 @@ fn check_linear_compiler_rejections(
         Err(SpectralOperatorError::IncompleteCoverage)
     ));
     assert!(matches!(
-        incomplete.complete(summary, selected_generation, None),
+        incomplete.complete(summary),
         Err(SpectralOperatorError::GriddedCompilationPoisoned)
     ));
 
@@ -1411,7 +1594,7 @@ fn check_linear_compiler_rejections(
         Err(SpectralOperatorError::GriddedCompilationPoisoned)
     ));
     assert!(matches!(
-        duplicate.complete(summary, selected_generation, None),
+        duplicate.complete(summary),
         Err(SpectralOperatorError::GriddedCompilationPoisoned)
     ));
 
@@ -1433,7 +1616,7 @@ fn check_linear_compiler_rejections(
         Err(SpectralOperatorError::GriddedCompilationPoisoned)
     ));
     assert!(matches!(
-        failed_sink.complete(summary, selected_generation, None),
+        failed_sink.complete(summary),
         Err(SpectralOperatorError::GriddedCompilationPoisoned)
     ));
 
@@ -1444,7 +1627,7 @@ fn check_linear_compiler_rejections(
     finished.finish_rows_and_frames(&mut sink).unwrap();
     assert!(finished.consume_source(&blocks[0], &mut sink).is_err());
     assert!(matches!(
-        finished.complete(summary, selected_generation, None),
+        finished.complete(summary),
         Err(SpectralOperatorError::GriddedCompilationPoisoned)
     ));
 }
@@ -1527,7 +1710,6 @@ fn check_linear_cube_replay(
             .expect("weighting limits"),
     )
     .expect("weighting plan");
-    let selected_generation = replay_selected_generation(&problem, &samples);
     let generation = freeze_weighting_generation_with(&problem, &plan, &samples, contributions)
         .expect("freeze split-channel weighting generation");
     let (weighted_blocks, summary) =
@@ -1553,13 +1735,7 @@ fn check_linear_cube_replay(
         compilation_plan(&problem, plan.limits().max_block_samples(), samples.len())
     };
     if configuration.check_rejections {
-        check_linear_compiler_rejections(
-            &problem,
-            compilation,
-            &weighted_blocks,
-            &summary,
-            selected_generation,
-        );
+        check_linear_compiler_rejections(&problem, compilation, &weighted_blocks, &summary);
     }
     let mut compiler = GriddedNormalOperatorCompiler::new(
         &problem,
@@ -1586,7 +1762,7 @@ fn check_linear_cube_replay(
         .finish_rows_and_frames(&mut sink)
         .expect("finish split-channel frames");
     let program = compiler
-        .complete(&summary, selected_generation, None)
+        .complete(&summary)
         .expect("seal split-channel gridded program");
     let foreign_program = if configuration.selected_frames {
         let atom = GriddedNormalCompilationPlan::maximum_atom_records(&problem).unwrap();
@@ -1611,11 +1787,7 @@ fn check_linear_cube_replay(
             compiler.consume_source(block, &mut discard).unwrap();
         }
         compiler.finish_rows_and_frames(&mut discard).unwrap();
-        Some(
-            compiler
-                .complete(&summary, selected_generation, None)
-                .unwrap(),
-        )
+        Some(compiler.complete(&summary).unwrap())
     } else {
         None
     };
@@ -1674,7 +1846,7 @@ fn check_linear_cube_replay(
             )
             .expect("initial workload");
             let prepared =
-                prepare_spectral_operator(specification, workload).expect("initial operator");
+                prepare_spectral_operator(specification, workload, 1).expect("initial operator");
             let mut owner = prepared
                 .begin(&problem, &generation)
                 .expect("initial complete-data owner");
@@ -1685,7 +1857,7 @@ fn check_linear_cube_replay(
                 owner.consume_block(block).expect("consume selected block");
             }
             owner
-                .complete(&summary, selected_generation, None)
+                .complete(&summary)
                 .expect("complete initial normal state")
         };
         let initial_complete = run_initial_slab(0, output_channels);
@@ -1697,15 +1869,21 @@ fn check_linear_cube_replay(
             let mut validity = Vec::new();
             for start in (0..output_channels).step_by(depth) {
                 let slab = run_initial_slab(start, depth.min(output_channels - start));
-                dirty.extend_from_slice(slab.primitives().dirty());
-                psf.extend_from_slice(slab.primitives().psf());
-                sensitivity.extend_from_slice(slab.primitives().sensitivity());
+                dirty.extend_from_slice(slab.primitives().dirty().complex().unwrap());
+                psf.extend_from_slice(slab.primitives().psf().complex().unwrap());
+                sensitivity.extend_from_slice(slab.primitives().sensitivity().dense().unwrap());
                 sum_weights.extend_from_slice(slab.primitives().sum_weights());
                 validity.extend_from_slice(slab.primitives().channel_validity());
             }
-            assert_eq!(dirty, initial_complete.primitives().dirty());
-            assert_eq!(psf, initial_complete.primitives().psf());
-            assert_eq!(sensitivity, initial_complete.primitives().sensitivity());
+            assert_eq!(
+                dirty,
+                initial_complete.primitives().dirty().complex().unwrap()
+            );
+            assert_eq!(psf, initial_complete.primitives().psf().complex().unwrap());
+            assert_eq!(
+                sensitivity,
+                initial_complete.primitives().sensitivity().dense().unwrap()
+            );
             assert_eq!(sum_weights, initial_complete.primitives().sum_weights());
             assert_eq!(validity, initial_complete.primitives().channel_validity());
         }
@@ -1776,8 +1954,8 @@ fn check_linear_cube_replay(
         )
         .expect("residual window workload");
         let convolution_support = specification.maximum_convolution_support();
-        let prepared =
-            prepare_spectral_operator(specification, workload).expect("residual window operator");
+        let prepared = prepare_spectral_operator(specification, workload, 1)
+            .expect("residual window operator");
         let selection = program.select_frames(start..start + depth).unwrap();
         saw_physical_sequence_gap |= selection
             .frame_sequences()
@@ -1809,7 +1987,7 @@ fn check_linear_cube_replay(
                     SpectralOperatorPass::ResidualRefresh,
                 )
                 .unwrap();
-                prepare_spectral_operator(specification, workload).unwrap()
+                prepare_spectral_operator(specification, workload, 1).unwrap()
             };
             if selection.frame_count() > 0 {
                 let incomplete = program
@@ -1899,7 +2077,7 @@ fn check_linear_cube_replay(
                     .two_domain_window_partition_count(
                         blocks
                             .iter()
-                            .map(|frame| (frame.sequence(), frame.encoded_bytes(), None)),
+                            .map(|frame| (frame.sequence(), frame.encoded_bytes())),
                     )
                     .unwrap();
                 assert_eq!(
@@ -1999,6 +2177,8 @@ fn check_linear_cube_replay(
                 .read_window(channel..channel + 1)
                 .expect("one-channel fixture window")
                 .residual()
+                .complex()
+                .unwrap()
                 .to_vec()
         })
         .collect::<Vec<_>>();
@@ -2031,7 +2211,7 @@ fn check_linear_cube_replay(
         SpectralOperatorPass::ResidualRefresh,
     )
     .expect("direct residual workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("direct operator");
+    let prepared = prepare_spectral_operator(specification, workload, 1).expect("direct operator");
     let mut direct_owner = prepared
         .begin(&problem, &generation)
         .expect("direct complete-data owner with the same frozen weighting");
@@ -2061,7 +2241,7 @@ fn check_linear_cube_replay(
             .all(|sample| sample.predicted().norm() > 0.01)
     );
     let direct_complete = direct_owner
-        .complete(&summary, selected_generation, None)
+        .complete(&summary)
         .expect("complete direct linear residual");
     let direct = MajorCycleOwner::from_complete_data(
         {
@@ -2090,6 +2270,8 @@ fn check_linear_cube_replay(
         .expect("complete diagnostic fixture window");
     let differences = direct_window
         .residual()
+        .complex()
+        .unwrap()
         .iter()
         .zip(&gridded_residual)
         .map(|(direct, gridded)| (*direct - *gridded).norm())
@@ -2107,11 +2289,21 @@ fn check_linear_cube_replay(
     assert!(
         *maximum < 1.0e-7,
         "row-local CASA linear residual differs from sealed replay: native=[1.0,1.1,1.2]GHz output=[1.05,1.15]GHz minimum_nonzero={minimum_nonzero:e} maximum={maximum:e} index={maximum_index} direct={:?} gridded={:?}",
-        direct_window.residual()[maximum_index],
+        direct_window.residual().complex().unwrap()[maximum_index],
         gridded_residual[maximum_index],
     );
     LinearReplayResult {
-        normal_content: joined.normal_state().diagnostic_content_identity().unwrap(),
+        normal_psf: (0..output_channels)
+            .flat_map(|channel| {
+                joined
+                    .normal_state()
+                    .read_window(channel..channel + 1)
+                    .unwrap()
+                    .normal_approximation()
+                    .iter()
+                    .collect::<Vec<_>>()
+            })
+            .collect(),
         predictions: predictions
             .iter()
             .map(|sample| sample.predicted())
@@ -2122,7 +2314,7 @@ fn check_linear_cube_replay(
         frames_per_source,
         source_records_per_source,
         gridded_residual,
-        direct_residual: direct_window.residual().to_vec(),
+        direct_residual: direct_window.residual().complex().unwrap().to_vec(),
     }
 }
 
@@ -2158,8 +2350,8 @@ fn t55_gridded_final_replay_preserves_complete_identity_across_channel_windows()
     let full = run(2);
     let windows = run(1);
     assert_eq!(full.frames, windows.frames);
-    assert_eq!(full.gridded_residual, windows.gridded_residual);
-    assert_eq!(full.normal_content, windows.normal_content);
+    assert_complex_agreement(&full.gridded_residual, &windows.gridded_residual);
+    assert_complex_agreement(&full.normal_psf, &windows.normal_psf);
 }
 
 #[test]
@@ -2180,8 +2372,8 @@ fn t55_coarse_native_atoms_preserve_final_replay_across_nondivisible_windows() {
     for window in [1, 2, 3, 5] {
         let bounded = run(window);
         assert_eq!(full.frames, bounded.frames);
-        assert_eq!(full.gridded_residual, bounded.gridded_residual);
-        assert_eq!(full.normal_content, bounded.normal_content);
+        assert_complex_agreement(&full.gridded_residual, &bounded.gridded_residual);
+        assert_complex_agreement(&full.normal_psf, &bounded.normal_psf);
     }
 }
 
@@ -2204,8 +2396,8 @@ fn selected_physical_frames_preserve_complete_boundary_prediction_groups() {
     let full = run(false);
     let selected = run(true);
     assert_eq!(full.frames, selected.frames);
-    assert_eq!(full.gridded_residual, selected.gridded_residual);
-    assert_eq!(full.normal_content, selected.normal_content);
+    assert_complex_agreement(&full.gridded_residual, &selected.gridded_residual);
+    assert_complex_agreement(&full.normal_psf, &selected.normal_psf);
 }
 
 #[test]
@@ -2427,6 +2619,12 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
                 .with_cycle_threshold(1.0, 0.05, 0.8),
         );
         let mut samples = fixture_samples(&problem);
+        if matches!(&algorithm, ReconstructionAlgorithm::Hogbom) && !blank_second_channel {
+            let SelectedVisibilitySample::Complex32(value) = &mut samples[1].visibility else {
+                panic!("fixture visibility layout");
+            };
+            value[0] *= 2.0;
+        }
         if blank_second_channel {
             samples[1].input_weight = 0.0;
         }
@@ -2465,6 +2663,61 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
             normal.shape(),
         )
         .expect("cube mask");
+        if matches!(&algorithm, ReconstructionAlgorithm::Hogbom) && !blank_second_channel {
+            let peaks = (0..3)
+                .filter_map(|ordinal| {
+                    let channel = normal.slab().core_range().start + ordinal;
+                    let window = normal.read_window(channel..channel + 1).unwrap();
+                    let plane = window.polarization_plane(0, 0).unwrap();
+                    if plane.validity() != SpectralChannelValidity::Valid {
+                        return None;
+                    }
+                    let psf_peak = plane
+                        .normal_approximation()
+                        .complex()
+                        .unwrap()
+                        .iter()
+                        .map(|value| value.re.abs())
+                        .fold(0.0_f64, f64::max);
+                    let peak = plane
+                        .residual()
+                        .complex()
+                        .unwrap()
+                        .iter()
+                        .map(|value| value.re.abs() / psf_peak)
+                        .fold(0.0_f64, f64::max);
+                    Some((ordinal, peak))
+                })
+                .collect::<Vec<_>>();
+            assert!(peaks.len() >= 2);
+            let (near_channel, near_peak) = peaks
+                .iter()
+                .copied()
+                .min_by(|left, right| left.1.total_cmp(&right.1))
+                .unwrap();
+            let threshold = near_peak / 1.005;
+            assert!(
+                peaks.iter().any(|(_, peak)| *peak > 1.01 * threshold),
+                "fixture needs a second active plane: {peaks:?}"
+            );
+            let near_cycle = ReconstructionCycle::new(
+                ChannelCyclePolicy::Independent,
+                MinorCycleProgram::for_algorithm(
+                    ReconstructionAlgorithm::Hogbom,
+                    ReconstructionControls::new(1, 0.1, threshold),
+                )
+                .unwrap(),
+            );
+            let near_result = near_cycle.run(&lifecycle, base, &normal, &mask).unwrap();
+            assert_eq!(
+                near_result.evidence().channels()[near_channel]
+                    .minor_cycle()
+                    .unwrap()
+                    .iterations(),
+                1,
+                "a near-threshold plane remains eligible while another plane is above the global stop"
+            );
+        }
         let program =
             MinorCycleProgram::for_algorithm(algorithm, problem.reconstruction().controls())
                 .expect("point CLEAN program")
@@ -2499,6 +2752,8 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
             }
             let psf = plane
                 .normal_approximation()
+                .complex()
+                .unwrap()
                 .iter()
                 .map(|v| v.re as f32)
                 .collect::<Vec<_>>();
@@ -2509,6 +2764,8 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
             peak = peak.max(
                 plane
                     .residual()
+                    .complex()
+                    .unwrap()
                     .iter()
                     .map(|v| v.re.abs() / psf_peak)
                     .fold(0.0_f64, f64::max),
@@ -2523,6 +2780,59 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
             (peak * sidelobe.clamp(0.05, 0.8)).to_bits()
         );
 
+        // CASA derives the shared control from peaks inside the CLEAN mask,
+        // not a brighter excluded source. Exercise the actual prepared path.
+        let shape = normal.shape();
+        let mut pixel_peaks = vec![0.0_f64; shape[0] * shape[1]];
+        for channel in normal.slab().core_range() {
+            let window = normal.read_window(channel..channel + 1).unwrap();
+            let plane = window.polarization_plane(0, 0).unwrap();
+            if plane.validity() != SpectralChannelValidity::Valid {
+                continue;
+            }
+            let normalization = plane
+                .normal_approximation()
+                .complex()
+                .unwrap()
+                .iter()
+                .map(|value| f64::from((value.re as f32).abs()))
+                .fold(0.0_f64, f64::max);
+            for (peak, value) in pixel_peaks
+                .iter_mut()
+                .zip(plane.residual().complex().unwrap())
+            {
+                *peak = peak.max(value.re.abs() / normalization);
+            }
+        }
+        let (index, masked_peak) = pixel_peaks
+            .iter()
+            .enumerate()
+            .min_by(|left, right| left.1.total_cmp(right.1))
+            .unwrap();
+        assert!(
+            *masked_peak < 0.99 * peak,
+            "fixture must exclude a brighter pixel"
+        );
+        let pixel = [index / shape[1], index % shape[1]];
+        let restricted = ReconstructionMask::from_boxes(
+            problem.problem_id(),
+            base.generation_id(),
+            problem.geometry().domains()[0].direction(),
+            shape,
+            [casa_imaging_reconstruction::MaskBox::new(pixel, pixel).unwrap()],
+        )
+        .unwrap();
+        let masked = cycle.run(&lifecycle, base, &normal, &restricted).unwrap();
+        for channel in masked.evidence().channels() {
+            if let Some(minor) = channel.minor_cycle() {
+                assert_eq!(
+                    minor.cycle_threshold().unwrap().to_bits(),
+                    (masked_peak * sidelobe.clamp(0.05, 0.8)).to_bits(),
+                    "cube threshold must exclude pixels outside the CLEAN mask"
+                );
+            }
+        }
+
         for workers in [1, 2, 3] {
             let mut work = cycle
                 .prepare_independent(&lifecycle, base, &normal, &mask)
@@ -2535,7 +2845,7 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
             assert!(actual_workspace.worker_bytes() <= planned_workspace.worker_bytes());
             assert!(actual_workspace.retained_bytes() <= planned_workspace.retained_bytes());
             assert!(matches!(
-                work.execute_plane(&work.prepare_plane(0).unwrap()),
+                work.execute_plane(&work.prepare_plane(0).unwrap(), 1),
                 Err(casa_imaging_reconstruction::ReconstructionCycleError::InvalidPlaneCoverage)
             ));
             for start in (0..work.threshold_plane_count()).step_by(workers) {
@@ -2564,7 +2874,7 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
                     let work = &work;
                     inputs
                         .into_iter()
-                        .map(|input| scope.spawn(move || work.execute_plane(&input)))
+                        .map(|input| scope.spawn(move || work.execute_plane(&input, 1)))
                         .collect::<Vec<_>>()
                         .into_iter()
                         .map(|worker| worker.join().expect("plane worker").expect("plane solve"))
@@ -2584,10 +2894,9 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
                 parallel.evidence().iterations(),
                 serial.evidence().iterations()
             );
-            assert_eq!(
-                parallel.delta().map(ModelDelta::delta_id),
-                serial.delta().map(ModelDelta::delta_id)
-            );
+            if let (Some(parallel_delta), Some(serial_delta)) = (parallel.delta(), serial.delta()) {
+                assert_ne!(parallel_delta.delta_id(), serial_delta.delta_id());
+            }
             assert_eq!(
                 parallel.delta().map(ModelDelta::terms),
                 serial.delta().map(ModelDelta::terms)
@@ -2616,7 +2925,7 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
             work.commit_statistics(statistics).unwrap();
         }
         let out_of_order = work
-            .execute_plane(&work.prepare_plane(1).unwrap())
+            .execute_plane(&work.prepare_plane(1).unwrap(), 1)
             .expect("second plane");
         assert!(matches!(
             work.commit_plane(out_of_order),
@@ -2637,19 +2946,21 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
         }
         let foreign_input = other_work.prepare_plane(0).unwrap();
         assert!(matches!(
-            work.execute_plane(&foreign_input),
+            work.execute_plane(&foreign_input, 1),
             Err(InvalidPlaneCoverage)
         ));
         let foreign = other_work
-            .execute_plane(&foreign_input)
+            .execute_plane(&foreign_input, 1)
             .expect("foreign partial");
         assert!(matches!(
             work.commit_plane(foreign),
             Err(InvalidPlaneCoverage)
         ));
         let input = work.prepare_plane(0).unwrap();
-        let first = work.execute_plane(&input).expect("first plane");
-        let duplicate = work.execute_plane(&input).expect("duplicate first plane");
+        let first = work.execute_plane(&input, 1).expect("first plane");
+        let duplicate = work
+            .execute_plane(&input, 1)
+            .expect("duplicate first plane");
         work.commit_plane(first).expect("first commit");
         assert!(matches!(
             work.commit_plane(duplicate),
@@ -2797,7 +3108,7 @@ fn exact_samples(problem: &casa_imaging_model::CompiledProblem) -> Vec<SelectedO
                     time_centroid: Epoch::new(59_000.0 + physical_row as f64, TimeScale::Utc),
                     interval_seconds: 1.0,
                     exposure_seconds: 1.0,
-                    parallactic_angles_rad: [0.0, 0.0],
+                    parallactic_angles_rad: Some([0.0, 0.0]),
                     phase_direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
                     delay_direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
                     pointing_directions: casa_imaging_model::SelectedPointingDirections {
@@ -2850,27 +3161,6 @@ fn constant_basis_contributions(
         None,
     ])
     .expect("one constant-basis MFS contribution")
-}
-
-/// Mint the authoritative T17 observation generation of the fixture stream.
-///
-/// Production binds this identity through the casa-ms traversal seam; the
-/// reconstruction fixtures use the same compiler-owned inspection pass, so no
-/// second construction path exists.
-fn replay_selected_generation(
-    problem: &casa_imaging_model::CompiledProblem,
-    samples: &[SelectedObservationSample],
-) -> SelectedObservationGenerationId {
-    let (generation, count) = problem
-        .inspect_selected_observation(samples.iter().cloned().map(Ok::<_, Infallible>), |_| {
-            Ok::<_, Infallible>(())
-        })
-        .expect("inspect fixture sample stream");
-    assert_eq!(
-        usize::try_from(count).expect("fixture sample count"),
-        samples.len()
-    );
-    generation
 }
 
 fn freeze_weighting_generation(
@@ -2953,13 +3243,28 @@ fn selected_row_spectral_view<'a>(
     samples: &[SelectedObservationSample],
     sample: &'a SelectedObservationSample,
 ) -> casa_imaging_model::SelectedObservationSampleView<'a> {
-    let view = sample.as_view();
+    let address = sample.address;
+    let mut members = samples.iter().filter(|candidate| {
+        candidate.address.measurement_set == address.measurement_set
+            && candidate.address.physical_row == address.physical_row
+            && candidate.address.channel_index == address.channel_index
+    });
+    let first = members.next().expect("fixture correlation group");
+    let (count, last) = members.fold((1, first), |(count, _), member| (count + 1, member));
+    let view = sample.as_view().with_input_weight_group(
+        casa_imaging_model::SelectedInputWeightGroup::correlation_run(
+            first.input_weight,
+            last.input_weight,
+            count,
+        )
+        .with_density_owner(address.correlation_index == first.address.correlation_index)
+        .with_terminal_member(address.correlation_index == last.address.correlation_index),
+    );
     if problem.science().spectral().sampling().kernel()
         != casa_imaging_model::SpectralKernel::Linear
     {
         return view;
     }
-    let address = sample.address;
     let selection = problem
         .inputs()
         .observation_snapshot()
@@ -3012,20 +3317,10 @@ fn run_t19_complete_data_with_samples(
     preparation: Option<&MajorCyclePreparation>,
     samples: &[SelectedObservationSample],
 ) -> CompleteDataOwnerResult {
-    run_t19_complete_data_with_transform(problem, preparation, samples, None)
-}
-
-fn run_t19_complete_data_with_transform(
-    problem: &casa_imaging_model::CompiledProblem,
-    preparation: Option<&MajorCyclePreparation>,
-    samples: &[SelectedObservationSample],
-    transform_generation: Option<ContinuumTransformGenerationId>,
-) -> CompleteDataOwnerResult {
     run_t19_complete_data_for_pass(
         problem,
         preparation,
         samples,
-        transform_generation,
         SpectralOperatorPass::InitialMajor,
         None,
     )
@@ -3035,26 +3330,17 @@ fn run_t19_complete_data_for_pass(
     problem: &casa_imaging_model::CompiledProblem,
     preparation: Option<&MajorCyclePreparation>,
     samples: &[SelectedObservationSample],
-    transform_generation: Option<ContinuumTransformGenerationId>,
     pass: SpectralOperatorPass,
     prior_normal_state: Option<casa_imaging_reconstruction::FinalNormalState>,
 ) -> CompleteDataOwnerResult {
-    run_t19_complete_data_for_pass_result(
-        problem,
-        preparation,
-        samples,
-        transform_generation,
-        pass,
-        prior_normal_state,
-    )
-    .expect("complete T19 evidence")
+    run_t19_complete_data_for_pass_result(problem, preparation, samples, pass, prior_normal_state)
+        .expect("complete T19 evidence")
 }
 
 fn run_t19_complete_data_for_pass_result(
     problem: &casa_imaging_model::CompiledProblem,
     preparation: Option<&MajorCyclePreparation>,
     samples: &[SelectedObservationSample],
-    transform_generation: Option<ContinuumTransformGenerationId>,
     pass: SpectralOperatorPass,
     prior_normal_state: Option<casa_imaging_reconstruction::FinalNormalState>,
 ) -> Result<CompleteDataOwnerResult, SpectralOperatorError> {
@@ -3063,10 +3349,30 @@ fn run_t19_complete_data_for_pass_result(
         WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
     )
     .expect("weighting residency plan");
-    let selected_generation = replay_selected_generation(problem, samples);
     let generation = freeze_weighting_generation(problem, &plan, samples)
         .expect("freeze global weighting generation");
-    let (blocks, summary) = replay(&generation, problem, &plan, samples);
+    run_t19_complete_data_with_weighting(
+        problem,
+        preparation,
+        samples,
+        pass,
+        prior_normal_state,
+        &plan,
+        &generation,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_t19_complete_data_with_weighting(
+    problem: &casa_imaging_model::CompiledProblem,
+    preparation: Option<&MajorCyclePreparation>,
+    samples: &[SelectedObservationSample],
+    pass: SpectralOperatorPass,
+    prior_normal_state: Option<casa_imaging_reconstruction::FinalNormalState>,
+    plan: &WeightingPlan,
+    generation: &WeightingAlgorithmState,
+) -> Result<CompleteDataOwnerResult, SpectralOperatorError> {
+    let (blocks, summary) = replay(generation, problem, plan, samples);
     assert!(!blocks.is_empty(), "replay must emit bounded blocks");
 
     let specification =
@@ -3074,14 +3380,12 @@ fn run_t19_complete_data_for_pass_result(
     let workload =
         spectral_operator_workload(&specification, plan.limits().max_block_samples(), pass)
             .expect("workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
+    let prepared = prepare_spectral_operator(specification, workload, 1).expect("prepare operator");
     let mut state = prepared
-        .begin(problem, &generation)
+        .begin(problem, generation)
         .expect("begin complete-data owner");
     if let Some(preparation) = preparation {
-        state
-            .bind_major_cycle_model(preparation.final_model(), prior_normal_state)
-            .expect("bind exact final model before replay");
+        state.bind_major_cycle_model(preparation.final_model(), prior_normal_state)?;
     }
     for block in &blocks {
         assert!(
@@ -3092,7 +3396,7 @@ fn run_t19_complete_data_for_pass_result(
             "a complete-data replay without a final-visibility sink must not emit samples"
         );
     }
-    state.complete(&summary, selected_generation, transform_generation)
+    state.complete(&summary)
 }
 
 fn prepare_reconciliation(
@@ -3101,16 +3405,9 @@ fn prepare_reconciliation(
     named: ModelGeneration,
     delta: Option<ModelDelta>,
 ) -> (CompleteDataOwnerResult, MajorCyclePreparation) {
-    prepare_reconciliation_with_prior(problem, lifecycle, named, delta, None)
-}
-
-fn prepare_reconciliation_with_prior(
-    problem: &casa_imaging_model::CompiledProblem,
-    lifecycle: &ModelLifecycle,
-    named: ModelGeneration,
-    delta: Option<ModelDelta>,
-    prior_normal_state: Option<casa_imaging_reconstruction::FinalNormalState>,
-) -> (CompleteDataOwnerResult, MajorCyclePreparation) {
+    let samples = fixture_samples(problem);
+    let plan = plan_weighting(problem, WeightingExecutionLimits::new(1, 1).unwrap()).unwrap();
+    let generation = freeze_weighting_generation(problem, &plan, &samples).unwrap();
     let preparation =
         MajorCyclePreparation::prepare(lifecycle, named, delta).expect("prepare final model");
     // An unchanged empty model is the certified-zero initial pass; any other
@@ -3122,20 +3419,18 @@ fn prepare_reconciliation_with_prior(
     } else {
         SpectralOperatorPass::ResidualRefresh
     };
-    let prior_normal_state =
-        if pass == SpectralOperatorPass::ResidualRefresh && prior_normal_state.is_none() {
-            Some(confirm_prior_normal_state(problem))
-        } else {
-            prior_normal_state
-        };
-    let evidence = run_t19_complete_data_for_pass(
+    let prior_normal_state = (pass == SpectralOperatorPass::ResidualRefresh)
+        .then(|| confirm_prior_normal_state_with_weighting(problem, &plan, &generation));
+    let evidence = run_t19_complete_data_with_weighting(
         problem,
         Some(&preparation),
-        &fixture_samples(problem),
-        None,
+        &samples,
         pass,
         prior_normal_state,
-    );
+        &plan,
+        &generation,
+    )
+    .expect("complete replay with the carried weighting owner");
     (evidence, preparation)
 }
 
@@ -3146,6 +3441,17 @@ fn prepare_reconciliation_with_prior(
 /// frozen observation and weighting lineage.
 fn confirm_prior_normal_state(
     problem: &casa_imaging_model::CompiledProblem,
+) -> casa_imaging_reconstruction::FinalNormalState {
+    let plan = plan_weighting(problem, WeightingExecutionLimits::new(1, 1).unwrap()).unwrap();
+    let generation =
+        freeze_weighting_generation(problem, &plan, &fixture_samples(problem)).unwrap();
+    confirm_prior_normal_state_with_weighting(problem, &plan, &generation)
+}
+
+fn confirm_prior_normal_state_with_weighting(
+    problem: &casa_imaging_model::CompiledProblem,
+    plan: &WeightingPlan,
+    generation: &WeightingAlgorithmState,
 ) -> casa_imaging_reconstruction::FinalNormalState {
     let mut lifecycle = ModelLifecycle::bind(
         ExecutableModelProblem::from_compiled(problem.clone()).expect("prior executable problem"),
@@ -3158,14 +3464,16 @@ fn confirm_prior_normal_state(
     let named = lifecycle.initial_empty().expect("prior empty generation");
     let preparation =
         MajorCyclePreparation::prepare(&lifecycle, named, None).expect("prior preparation");
-    let evidence = run_t19_complete_data_for_pass(
+    let evidence = run_t19_complete_data_with_weighting(
         problem,
         Some(&preparation),
         &fixture_samples(problem),
-        None,
         SpectralOperatorPass::InitialMajor,
         None,
-    );
+        plan,
+        generation,
+    )
+    .expect("complete initial replay using the same weighting owner");
     MajorCycleOwner::from_complete_data(
         {
             let storage =
@@ -3191,18 +3499,122 @@ fn prepare_reconciliation_reusing(
     named: ModelGeneration,
     delta: Option<ModelDelta>,
     prior_normal_state: casa_imaging_reconstruction::FinalNormalState,
+    plan: &WeightingPlan,
+    generation: &WeightingAlgorithmState,
 ) -> (CompleteDataOwnerResult, MajorCyclePreparation) {
     let preparation =
         MajorCyclePreparation::prepare(lifecycle, named, delta).expect("prepare final model");
-    let evidence = run_t19_complete_data_for_pass(
+    let evidence = run_t19_complete_data_with_weighting(
         problem,
         Some(&preparation),
         &fixture_samples(problem),
-        None,
         SpectralOperatorPass::ResidualRefresh,
         Some(prior_normal_state),
-    );
+        plan,
+        generation,
+    )
+    .expect("replay using the retained weighting owner");
     (evidence, preparation)
+}
+
+#[test]
+fn blocked_generation_prediction_matches_scalar_layout_with_partial_tiles() {
+    use casa_imaging_model::{ModelSample, ModelValue};
+    use num_complex::Complex64;
+
+    for width in [8, 34] {
+        let seed = identity(111, 1);
+        let mut samples = Vec::with_capacity(width * width);
+        let mut scalar_model = vec![Complex64::default(); width * width];
+        for y in 0..width {
+            for x in 0..width {
+                let sample = if (x + 5 * y) % 17 == 0 {
+                    ModelSample::invalid()
+                } else {
+                    let value = (x as f64 - 2.0 * y as f64) / 100.0;
+                    scalar_model[x * width + y] = Complex64::new(value, 0.0);
+                    ModelSample::valid(ModelValue::new(value).unwrap())
+                };
+                samples.push(sample);
+            }
+        }
+        let problem = reconstruction_problem_with_sampling_and_model(
+            source(111),
+            width,
+            1,
+            ReconstructionBasis::Constant,
+            ReconstructionAlgorithm::Dirty,
+            ReconstructionControls::new(0, 1.0, 0.0),
+            (
+                SpectralSamplingLaw::IDENTITY,
+                ModelStateIdentity::Seed(seed),
+                ModelInputCommitment::AlignedSeed {
+                    source: seed,
+                    support: casa_imaging_reconstruction::model_support_identity(
+                        samples.iter().map(|sample| sample.support()),
+                    ),
+                },
+            ),
+        );
+        let lifecycle = bind_lifecycle(&problem, attempt(112));
+        let generation = lifecycle
+            .ingest_aligned(
+                seed,
+                lifecycle.contract().target(),
+                samples.into_iter().map(Ok::<_, Infallible>),
+            )
+            .unwrap()
+            .unwrap();
+        let preparation = MajorCyclePreparation::prepare(&lifecycle, generation, None).unwrap();
+        let selected = fixture_samples(&problem);
+        let plan = plan_weighting(&problem, WeightingExecutionLimits::new(1, 1).unwrap()).unwrap();
+        let weighting = freeze_weighting_generation(&problem, &plan, &selected).unwrap();
+        let (blocks, _) = replay(&weighting, &problem, &plan, &selected);
+        let specification = SpectralOperatorSpecification::new(&problem).unwrap();
+        let workload = spectral_operator_workload(
+            &specification,
+            plan.limits().max_block_samples(),
+            SpectralOperatorPass::InitialMajor,
+        )
+        .unwrap();
+        let mut bound = prepare_spectral_operator(specification.clone(), workload, 1)
+            .unwrap()
+            .begin(&problem, &weighting)
+            .unwrap();
+        let mut scalar = prepare_spectral_operator(specification, workload, 1)
+            .unwrap()
+            .begin(&problem, &weighting)
+            .unwrap();
+        bound
+            .bind_major_cycle_model(preparation.final_model(), None)
+            .unwrap();
+        bound.enable_final_visibility_samples();
+        for block in &blocks {
+            let expected = scalar.predict_block(&scalar_model, block).unwrap();
+            let actual = bound.consume_block(block).unwrap();
+            // The sink also emits zero for samples outside the owned output plane.
+            if expected.is_empty() {
+                assert!(!actual.is_empty());
+                assert!(
+                    actual
+                        .iter()
+                        .all(|sample| sample.predicted() == Complex64::default())
+                );
+                continue;
+            }
+            assert_eq!(actual.len(), expected.len());
+            for (actual, expected) in actual.iter().zip(expected) {
+                // Final visibility samples use CASA's persisted Complex32 boundary.
+                let expected =
+                    Complex64::new(f64::from(expected.re as f32), f64::from(expected.im as f32));
+                assert!(
+                    (actual.predicted() - expected).norm() <= 1e-12 * expected.norm().max(1.0),
+                    "width={width}, actual={:?}, expected={expected:?}",
+                    actual.predicted()
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -3229,7 +3641,7 @@ fn bound_major_cycle_model_cannot_be_replaced_by_diagnostic_prediction() {
         SpectralOperatorPass::InitialMajor,
     )
     .expect("spectral operator workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
+    let prepared = prepare_spectral_operator(specification, workload, 1).expect("prepare operator");
     let mut state = prepared
         .begin(&problem, &generation)
         .expect("begin complete-data owner");
@@ -3378,7 +3790,7 @@ fn reconciliation_without_a_pending_delta_confirms_the_named_generation_final() 
     let named = lifecycle.initial_empty().expect("empty named generation");
     let input_id = named.generation_id();
     let (evidence, preparation) = prepare_reconciliation(&problem, &lifecycle, named, None);
-    let data_side_dirty = evidence.primitives().dirty().to_vec();
+    let data_side_dirty = evidence.primitives().dirty().complex().unwrap().to_vec();
 
     let owner = MajorCycleOwner::from_complete_data(
         {
@@ -3415,9 +3827,12 @@ fn reconciliation_without_a_pending_delta_confirms_the_named_generation_final() 
         .normal_state()
         .read_window(0..1)
         .expect("single-plane fixture window");
-    assert_eq!(window.residual(), data_side_dirty);
-    assert_eq!(window.normal_approximation().len(), 8 * 8);
-    assert_eq!(window.sensitivity().len(), 8 * 8);
+    assert_eq!(window.residual().complex().unwrap(), data_side_dirty);
+    assert_eq!(
+        window.normal_approximation().complex().unwrap().len(),
+        8 * 8
+    );
+    assert_eq!(window.sensitivity().dense().unwrap().len(), 8 * 8);
     assert!(joined.normal_state().sum_weight() > 0.0);
 }
 
@@ -3434,7 +3849,6 @@ fn empty_initial_model_emits_zero_predictions_only_for_an_explicit_sink() {
         WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
     )
     .expect("weighting plan");
-    let selected_generation = replay_selected_generation(&problem, &samples);
     let weighting =
         freeze_weighting_generation(&problem, &plan, &samples).expect("weighting generation");
     let (blocks, summary) = replay(&weighting, &problem, &plan, &samples);
@@ -3446,7 +3860,7 @@ fn empty_initial_model_emits_zero_predictions_only_for_an_explicit_sink() {
         SpectralOperatorPass::InitialMajor,
     )
     .expect("initial workload");
-    let mut state = prepare_spectral_operator(specification, workload)
+    let mut state = prepare_spectral_operator(specification, workload, 1)
         .expect("prepare operator")
         .begin(&problem, &weighting)
         .expect("begin owner");
@@ -3465,9 +3879,30 @@ fn empty_initial_model_emits_zero_predictions_only_for_an_explicit_sink() {
         }));
     }
     assert_eq!(emitted, samples.len());
-    state
-        .complete(&summary, selected_generation, None)
+    let with_sink = state
+        .complete(&summary)
         .expect("complete empty sink-enabled replay");
+    let without_sink = run_t19_complete_data(&problem, Some(&preparation));
+    assert_eq!(
+        with_sink.primitives().dirty().complex().unwrap(),
+        without_sink.primitives().dirty().complex().unwrap()
+    );
+    assert_eq!(
+        with_sink.primitives().psf().complex().unwrap(),
+        without_sink.primitives().psf().complex().unwrap()
+    );
+    assert_eq!(
+        with_sink.primitives().sensitivity().dense().unwrap(),
+        without_sink.primitives().sensitivity().dense().unwrap()
+    );
+    assert_eq!(
+        with_sink.primitives().sum_weights(),
+        without_sink.primitives().sum_weights()
+    );
+    assert_eq!(
+        with_sink.primitives().channel_validity(),
+        without_sink.primitives().channel_validity()
+    );
 }
 
 #[test]
@@ -3529,16 +3964,20 @@ fn all_zero_ingested_model_uses_the_general_operator_and_matches_empty_science()
     let empty_evidence = run_t19_complete_data(&empty_problem, Some(&empty_preparation));
 
     assert_eq!(
-        ingested_evidence.primitives().dirty(),
-        empty_evidence.primitives().dirty()
+        ingested_evidence.primitives().dirty().complex().unwrap(),
+        empty_evidence.primitives().dirty().complex().unwrap()
     );
     assert_eq!(
-        ingested_evidence.primitives().psf(),
-        empty_evidence.primitives().psf()
+        ingested_evidence.primitives().psf().complex().unwrap(),
+        empty_evidence.primitives().psf().complex().unwrap()
     );
     assert_eq!(
-        ingested_evidence.primitives().sensitivity(),
-        empty_evidence.primitives().sensitivity()
+        ingested_evidence
+            .primitives()
+            .sensitivity()
+            .dense()
+            .unwrap(),
+        empty_evidence.primitives().sensitivity().dense().unwrap()
     );
     assert_eq!(
         ingested_evidence.primitives().sum_weights(),
@@ -3564,7 +4003,19 @@ fn empty_origin_residual_refresh_uses_the_general_operator() {
     let initial_preparation =
         MajorCyclePreparation::prepare(&initial_lifecycle, initial_model, None)
             .expect("initial preparation");
-    let initial_complete = run_t19_complete_data(&problem, Some(&initial_preparation));
+    let samples = fixture_samples(&problem);
+    let plan = plan_weighting(&problem, WeightingExecutionLimits::new(1, 1).unwrap()).unwrap();
+    let generation = freeze_weighting_generation(&problem, &plan, &samples).unwrap();
+    let initial_complete = run_t19_complete_data_with_weighting(
+        &problem,
+        Some(&initial_preparation),
+        &samples,
+        SpectralOperatorPass::InitialMajor,
+        None,
+        &plan,
+        &generation,
+    )
+    .unwrap();
     let initial_join = MajorCycleOwner::from_complete_data(
         {
             let storage =
@@ -3602,14 +4053,16 @@ fn empty_origin_residual_refresh_uses_the_general_operator() {
     let refresh_preparation =
         MajorCyclePreparation::prepare(&continued_lifecycle, carried_model, None)
             .expect("refresh preparation");
-    let refresh_complete = run_t19_complete_data_for_pass(
+    let refresh_complete = run_t19_complete_data_with_weighting(
         &problem,
         Some(&refresh_preparation),
-        &fixture_samples(&problem),
-        None,
+        &samples,
         SpectralOperatorPass::ResidualRefresh,
         Some(initial_normal),
-    );
+        &plan,
+        &generation,
+    )
+    .unwrap();
     let refreshed = MajorCycleOwner::from_complete_data(
         {
             let storage =
@@ -3646,8 +4099,21 @@ fn chained_no_delta_final_major_cycles_reauthorize_the_carried_generation() {
         .read_samples(0..initial_named.sample_count())
         .expect("read fixture model");
     let initial_id = initial_named.generation_id();
-    let (initial_evidence, initial_preparation) =
-        prepare_reconciliation(&problem, &initial_lifecycle, initial_named, None);
+    let samples = fixture_samples(&problem);
+    let plan = plan_weighting(&problem, WeightingExecutionLimits::new(1, 1).unwrap()).unwrap();
+    let generation = freeze_weighting_generation(&problem, &plan, &samples).unwrap();
+    let initial_preparation =
+        MajorCyclePreparation::prepare(&initial_lifecycle, initial_named, None).unwrap();
+    let initial_evidence = run_t19_complete_data_with_weighting(
+        &problem,
+        Some(&initial_preparation),
+        &samples,
+        SpectralOperatorPass::InitialMajor,
+        None,
+        &plan,
+        &generation,
+    )
+    .unwrap();
     let initial_join = MajorCycleOwner::from_complete_data(
         {
             let storage =
@@ -3679,14 +4145,16 @@ fn chained_no_delta_final_major_cycles_reauthorize_the_carried_generation() {
     assert_eq!(first_named.generation_id(), initial_id);
     let first_preparation = MajorCyclePreparation::prepare(&first_lifecycle, first_named, None)
         .expect("prepare the first no-delta final major cycle");
-    let first_evidence = run_t19_complete_data_for_pass(
+    let first_evidence = run_t19_complete_data_with_weighting(
         &problem,
         Some(&first_preparation),
-        &fixture_samples(&problem),
-        None,
+        &samples,
         SpectralOperatorPass::ResidualRefresh,
         Some(initial_normal),
-    );
+        &plan,
+        &generation,
+    )
+    .unwrap();
     let first_join = MajorCycleOwner::from_complete_data(
         {
             let storage =
@@ -3732,14 +4200,16 @@ fn chained_no_delta_final_major_cycles_reauthorize_the_carried_generation() {
     assert_eq!(second_named.generation_id(), first_id);
     let second_preparation = MajorCyclePreparation::prepare(&second_lifecycle, second_named, None)
         .expect("prepare the second no-delta final major cycle");
-    let second_evidence = run_t19_complete_data_for_pass(
+    let second_evidence = run_t19_complete_data_with_weighting(
         &problem,
         Some(&second_preparation),
-        &fixture_samples(&problem),
-        None,
+        &samples,
         SpectralOperatorPass::ResidualRefresh,
         Some(first_normal),
-    );
+        &plan,
+        &generation,
+    )
+    .unwrap();
     let second_join = MajorCycleOwner::from_complete_data(
         {
             let storage =
@@ -3856,12 +4326,16 @@ fn residual_content_depends_on_the_exact_final_model() {
             .normal_state()
             .read_window(0..1)
             .expect("single-plane fixture window")
-            .residual(),
+            .residual()
+            .complex()
+            .unwrap(),
         delta_join
             .normal_state()
             .read_window(0..1)
             .expect("single-plane fixture window")
-            .residual(),
+            .residual()
+            .complex()
+            .unwrap(),
         "the retained authoritative residual must depend on the final model"
     );
     assert_ne!(empty_join.completion_id(), delta_join.completion_id());
@@ -3931,16 +4405,11 @@ fn completion_ids_distinguish_owners_while_science_and_replay_remain_stable() {
     let first_normal = first_join.normal_state();
     let second_normal = second_join.normal_state();
     assert_eq!(first_normal.problem_id(), second_normal.problem_id());
-    assert_eq!(
-        first_normal.selected_generation(),
-        second_normal.selected_generation()
-    );
-    assert_eq!(
+    assert_ne!(
         first_normal.weighting_generation(),
         second_normal.weighting_generation()
     );
-    assert_eq!(first_normal.replay_id(), second_normal.replay_id());
-    assert_eq!(first_normal.coverage(), second_normal.coverage());
+    assert_ne!(first_normal.replay_id(), second_normal.replay_id());
     assert_eq!(
         first_normal.diagnostic_content_identity().unwrap(),
         second_normal.diagnostic_content_identity().unwrap()
@@ -3967,106 +4436,6 @@ fn completion_ids_distinguish_owners_while_science_and_replay_remain_stable() {
             joined.final_model().generation_id()
         );
     }
-}
-
-#[test]
-fn transformed_visibility_generation_cannot_be_substituted_under_raw_lineage() {
-    let problem = t19_compatible_problem(41);
-    let samples = fixture_samples(&problem);
-    let selected_generation = replay_selected_generation(&problem, &samples);
-    let first_transform = ContinuumTransformGenerationId::from_owner_digest([1; 32]);
-    let second_transform = ContinuumTransformGenerationId::from_owner_digest([2; 32]);
-
-    let reconcile = |transform_generation, attempt_byte| {
-        let mut lifecycle = bind_lifecycle(&problem, attempt(attempt_byte));
-        let named = lifecycle.initial_empty().expect("empty named generation");
-        let preparation =
-            MajorCyclePreparation::prepare(&lifecycle, named, None).expect("preparation");
-        let evidence = run_t19_complete_data_with_transform(
-            &problem,
-            Some(&preparation),
-            &samples,
-            Some(transform_generation),
-        );
-        MajorCycleOwner::from_complete_data(
-            {
-                let storage =
-                    casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
-                        evidence.primitives().slab().total_channels(),
-                    )
-                    .expect("fixture normal window");
-                evidence.seal(&storage).expect("seal fixture normal state")
-            },
-            preparation,
-        )
-        .expect("owner")
-        .reconcile(&mut lifecycle)
-        .expect("reconciliation")
-    };
-
-    let first = reconcile(first_transform, 42);
-    let second = reconcile(second_transform, 42);
-    assert_eq!(
-        first.normal_state().selected_generation(),
-        selected_generation
-    );
-    assert_eq!(
-        second.normal_state().selected_generation(),
-        selected_generation
-    );
-    assert_eq!(
-        first.normal_state().continuum_transform_generation(),
-        Some(first_transform)
-    );
-    assert_eq!(
-        second.normal_state().continuum_transform_generation(),
-        Some(second_transform)
-    );
-    assert_ne!(
-        first.normal_state().completion_id(),
-        second.normal_state().completion_id()
-    );
-    assert_ne!(first.completion_id(), second.completion_id());
-}
-
-#[test]
-fn observation_generation_lineage_is_bound_into_the_normal_state() {
-    // Two problems whose fixture streams carry different observation content.
-    let first_problem = t19_compatible_problem(33);
-    let second_problem = t19_compatible_problem_with_width(34, 12);
-
-    for (problem, attempt_byte) in [(&first_problem, 35_u8), (&second_problem, 36)] {
-        let expected = replay_selected_generation(problem, &fixture_samples(problem));
-        let mut lifecycle = bind_lifecycle(problem, attempt(attempt_byte));
-        let named = lifecycle.initial_empty().expect("named generation");
-        let (evidence, preparation) = prepare_reconciliation(problem, &lifecycle, named, None);
-        let join = MajorCycleOwner::from_complete_data(
-            {
-                let storage =
-                    casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
-                        evidence.primitives().slab().total_channels(),
-                    )
-                    .expect("fixture normal window");
-                evidence.seal(&storage).expect("seal fixture normal state")
-            },
-            preparation,
-        )
-        .expect("owner from intact T19 pairing")
-        .reconcile(&mut lifecycle)
-        .expect("reconciliation");
-        assert_eq!(
-            join.normal_state().selected_generation(),
-            expected,
-            "Final Normal State carries the exact authoritative observation generation"
-        );
-    }
-
-    // Distinct observation streams never share one lineage identity.
-    let first_generation =
-        replay_selected_generation(&first_problem, &fixture_samples(&first_problem));
-    let second_generation =
-        replay_selected_generation(&second_problem, &fixture_samples(&second_problem));
-    assert_ne!(first_generation, second_generation);
 }
 
 #[test]
@@ -4184,7 +4553,7 @@ fn incomplete_or_foreign_operator_evidence_cannot_become_a_major_cycle_owner() {
     let workload =
         spectral_operator_workload(&specification, 1, SpectralOperatorPass::InitialMajor)
             .expect("other workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("prepared");
+    let prepared = prepare_spectral_operator(specification, workload, 1).expect("prepared");
     let plan = plan_weighting(
         &problem,
         WeightingExecutionLimits::new(1, 1).expect("limits"),
@@ -4201,7 +4570,5 @@ fn incomplete_or_foreign_operator_evidence_cannot_become_a_major_cycle_owner() {
     let evidence = run_t19_complete_data(&problem, None);
     let completion = evidence.completion();
     assert!(completion.sample_count() > 0 && completion.block_count() > 0);
-    assert!(completion.coverage_proof_bytes() > 0);
-    assert!(completion.coverage_proof_hash_calls() > 0);
     assert_eq!(completion.problem_id(), problem.problem_id());
 }

@@ -47,6 +47,13 @@ const STREAMING_TILED_READ_AHEAD_BYTES: usize = 16 * 1024 * 1024;
 const STREAMED_TILED_TRACE_ENV: &str = "CASA_RS_STREAMED_TILED_TRACE";
 const TYPED_2D_READ_PROFILE_ENV: &str = "CASA_RS_TYPED_2D_READ_PROFILE";
 
+#[cfg(test)]
+thread_local! {
+    static STREAMED_READ_COUNTS: std::cell::Cell<(usize, usize)> = const {
+        std::cell::Cell::new((0, 0))
+    };
+}
+
 #[derive(Clone, Debug, Default)]
 struct CountingWriteStats {
     write_calls: usize,
@@ -3504,6 +3511,7 @@ fn load_tiled_column_rows_shape_variant_2d_channel_range_typed(
         corr_count,
         channel_start,
         channel_count,
+        row_major: false,
     };
 
     match dt {
@@ -3522,6 +3530,7 @@ fn load_tiled_column_rows_shape_variant_2d_channel_range_typed(
                 corr_count,
                 channel_start,
                 channel_count,
+                false,
                 &mut session,
                 &mut values,
                 |bytes, _big_endian| bytes[0] != 0,
@@ -3665,9 +3674,18 @@ fn fill_tiled_column_rows_shape_variant_2d_channel_range_typed(
         corr_count,
         channel_start,
         channel_count,
+        row_major: matches!(
+            &destination,
+            SelectedArray2DCellsMut::RowChannelBool(_)
+                | SelectedArray2DCellsMut::RowChannelFloat32(_)
+                | SelectedArray2DCellsMut::RowChannelComplex32(_)
+        ),
     };
     match (dt, destination) {
-        (CasacoreDataType::TpBool, SelectedArray2DCellsMut::Bool(values)) => {
+        (
+            CasacoreDataType::TpBool,
+            SelectedArray2DCellsMut::Bool(values) | SelectedArray2DCellsMut::RowChannelBool(values),
+        ) => {
             values.resize(sample_count, false);
             fill_typed_selected_2d_rows(
                 table_path,
@@ -3682,12 +3700,17 @@ fn fill_tiled_column_rows_shape_variant_2d_channel_range_typed(
                 corr_count,
                 channel_start,
                 channel_count,
+                fill_plan.row_major,
                 &mut session,
                 values,
                 |bytes, _| bytes[0] != 0,
             )?;
         }
-        (CasacoreDataType::TpFloat, SelectedArray2DCellsMut::Float32(values)) => {
+        (
+            CasacoreDataType::TpFloat,
+            SelectedArray2DCellsMut::Float32(values)
+            | SelectedArray2DCellsMut::RowChannelFloat32(values),
+        ) => {
             values.resize(sample_count, 0.0);
             fill_typed_selected_2d_rows_by_copy(fill_plan, &mut session, values)?;
         }
@@ -3695,7 +3718,11 @@ fn fill_tiled_column_rows_shape_variant_2d_channel_range_typed(
             values.resize(sample_count, 0.0);
             fill_typed_selected_2d_rows_by_copy(fill_plan, &mut session, values)?;
         }
-        (CasacoreDataType::TpComplex, SelectedArray2DCellsMut::Complex32(values)) => {
+        (
+            CasacoreDataType::TpComplex,
+            SelectedArray2DCellsMut::Complex32(values)
+            | SelectedArray2DCellsMut::RowChannelComplex32(values),
+        ) => {
             values.resize(sample_count, Complex32::new(0.0, 0.0));
             fill_typed_selected_2d_rows_by_copy(fill_plan, &mut session, values)?;
         }
@@ -3739,6 +3766,7 @@ struct TypedSelected2DFillPlan<'a> {
     corr_count: usize,
     channel_start: usize,
     channel_count: usize,
+    row_major: bool,
 }
 
 fn typed_2d_cube_shape(
@@ -3796,6 +3824,7 @@ fn fill_typed_selected_2d_rows<T: Copy>(
     corr_count: usize,
     channel_start: usize,
     channel_count: usize,
+    row_major: bool,
     session: &mut TileReadSession,
     values: &mut [T],
     decode: fn(&[u8], bool) -> T,
@@ -3873,6 +3902,7 @@ fn fill_typed_selected_2d_rows<T: Copy>(
                         col_offsets[target_col_idx],
                         dt,
                         tile_index,
+                        last_channel_tile - channel_tile + 1,
                         session,
                         &mut streamed_tile,
                     )?;
@@ -3910,11 +3940,12 @@ fn fill_typed_selected_2d_rows<T: Copy>(
                         let dst_channel = channel - channel_start;
                         for corr in 0..corr_count {
                             let src_elem = corr + src_channel * shape.tile_corr_count;
-                            let dst_elem = dst_channel
-                                .saturating_mul(row_count)
-                                .saturating_mul(corr_count)
-                                .saturating_add(selected.out_idx.saturating_mul(corr_count))
-                                .saturating_add(corr);
+                            let dst_elem = if row_major {
+                                selected.out_idx * channel_count + dst_channel
+                            } else {
+                                dst_channel * row_count + selected.out_idx
+                            } * corr_count
+                                + corr;
                             let src_byte = src_elem * elem_size;
                             values[dst_elem] = decode(
                                 &tile_row[src_byte..src_byte + elem_size],
@@ -4028,6 +4059,7 @@ fn fill_typed_selected_2d_rows_by_copy<T: TilePixel>(
                         col_offsets[plan.target_col_idx],
                         plan.dt,
                         tile_index,
+                        last_channel_tile - channel_tile + 1,
                         session,
                         &mut streamed_tile,
                     )?;
@@ -4060,17 +4092,32 @@ fn fill_typed_selected_2d_rows_by_copy<T: TilePixel>(
                     let src_start = row_in_tile * row_tile_nelem * plan.elem_size;
                     let src_end = src_start + row_tile_nelem * plan.elem_size;
                     let tile_row = &tile[src_start..src_end];
+                    if plan.row_major && shape.tile_corr_count == plan.corr_count {
+                        let source_channel = overlap_start - tile_channel_start;
+                        let destination_channel = overlap_start - plan.channel_start;
+                        let copy_bytes =
+                            (overlap_end - overlap_start) * plan.corr_count * plan.elem_size;
+                        let src_byte = source_channel * plan.corr_count * plan.elem_size;
+                        let dst_byte = (selected.out_idx * plan.channel_count
+                            + destination_channel)
+                            * plan.corr_count
+                            * plan.elem_size;
+                        values_bytes[dst_byte..dst_byte + copy_bytes]
+                            .copy_from_slice(&tile_row[src_byte..src_byte + copy_bytes]);
+                        continue;
+                    }
                     for channel in overlap_start..overlap_end {
                         let src_channel = channel - tile_channel_start;
                         let dst_channel = channel - plan.channel_start;
                         let src_byte = src_channel
                             .saturating_mul(shape.tile_corr_count)
                             .saturating_mul(plan.elem_size);
-                        let dst_byte = dst_channel
-                            .saturating_mul(plan.row_count)
-                            .saturating_mul(plan.corr_count)
-                            .saturating_add(selected.out_idx.saturating_mul(plan.corr_count))
-                            .saturating_mul(plan.elem_size);
+                        let dst_sample = if plan.row_major {
+                            selected.out_idx * plan.channel_count + dst_channel
+                        } else {
+                            dst_channel * plan.row_count + selected.out_idx
+                        };
+                        let dst_byte = dst_sample * plan.corr_count * plan.elem_size;
                         let copy_bytes = plan.corr_count.saturating_mul(plan.elem_size);
                         values_bytes[dst_byte..dst_byte + copy_bytes]
                             .copy_from_slice(&tile_row[src_byte..src_byte + copy_bytes]);
@@ -9351,6 +9398,7 @@ impl TileReadSession {
         file_pos: u64,
         dst: &mut [u8],
         file_tile_bytes: usize,
+        useful_read_ahead_bytes: usize,
         dt: CasacoreDataType,
         tile_nelem: usize,
         needs_swap: bool,
@@ -9367,7 +9415,11 @@ impl TileReadSession {
             if session_file.file_position != file_pos {
                 session_file.file.seek(SeekFrom::Start(file_pos))?;
             }
-            let read_ahead_bytes = STREAMING_TILED_READ_AHEAD_BYTES.max(file_tile_bytes);
+            // Prefetch only the contiguous selected tile run. The next row
+            // tile may start at a different channel or may not be selected.
+            let read_ahead_bytes = STREAMING_TILED_READ_AHEAD_BYTES
+                .min(useful_read_ahead_bytes)
+                .max(file_tile_bytes);
             session_file.read_ahead.resize(read_ahead_bytes, 0);
             let mut bytes_read = 0usize;
             while bytes_read < read_ahead_bytes {
@@ -9377,6 +9429,11 @@ impl TileReadSession {
                 if read == 0 {
                     break;
                 }
+                #[cfg(test)]
+                STREAMED_READ_COUNTS.with(|counts| {
+                    let (calls, bytes) = counts.get();
+                    counts.set((calls + 1, bytes + read));
+                });
                 bytes_read += read;
             }
             session_file.read_ahead.truncate(bytes_read);
@@ -9439,12 +9496,18 @@ fn load_streamed_column_tile(
     col_offset_in_tile: usize,
     dt: CasacoreDataType,
     tile_index: usize,
+    contiguous_tiles: usize,
     session: &mut TileReadSession,
     tile: &mut Vec<u8>,
 ) -> Result<(), StorageError> {
     let tile_nelem: usize = cube.tile_shape.iter().product();
     let tile_bytes = tile_nelem * tile_element_size(dt);
     let file_tile_bytes = tile_storage_bytes(dt, tile_nelem);
+    let useful_read_ahead_bytes = contiguous_tiles
+        .checked_sub(1)
+        .and_then(|remaining| remaining.checked_mul(bucket_size))
+        .and_then(|bytes| bytes.checked_add(file_tile_bytes))
+        .ok_or_else(|| StorageError::FormatMismatch("selected tile run size overflow".into()))?;
     let swap_size = match dt {
         CasacoreDataType::TpComplex => 4,
         CasacoreDataType::TpDComplex => 8,
@@ -9461,6 +9524,7 @@ fn load_streamed_column_tile(
         file_pos,
         tile,
         file_tile_bytes,
+        useful_read_ahead_bytes,
         dt,
         tile_nelem,
         needs_swap,
@@ -10728,6 +10792,13 @@ impl TiledFileIO {
 
     /// Flushes all dirty tiles to disk and clears the cache.
     pub fn flush(&mut self) -> Result<(), StorageError> {
+        self.flush_with_flat_file(|path| OpenOptions::new().write(true).open(path))
+    }
+
+    fn flush_with_flat_file(
+        &mut self,
+        open: impl FnOnce(&Path) -> std::io::Result<File>,
+    ) -> Result<(), StorageError> {
         match &mut self.cache {
             TileCache::Flat(flat) => {
                 if !flat.allocated {
@@ -10736,9 +10807,7 @@ impl TiledFileIO {
                 self.stats.flat_flush_calls = self.stats.flat_flush_calls.saturating_add(1);
                 let has_dirty = flat.dirty.iter().any(|&d| d);
                 if has_dirty {
-                    let mut f = std::io::BufWriter::new(
-                        OpenOptions::new().write(true).open(&self.tsm_path)?,
-                    );
+                    let mut f = std::io::BufWriter::new(open(&self.tsm_path)?);
 
                     if self.file_tile_bytes != self.tile_bytes || self.needs_swap {
                         let tile_bytes = self.tile_bytes;
@@ -10797,6 +10866,7 @@ impl TiledFileIO {
                             }
                         }
                     }
+                    f.flush()?;
                 }
                 flat.data.clear();
                 flat.data.shrink_to_fit();
@@ -11570,10 +11640,42 @@ impl TiledFileIO {
         start: &[usize],
         shape: &[usize],
     ) -> Result<ArrayD<T>, StorageError> {
+        let nelem = shape
+            .iter()
+            .try_fold(1usize, |n, &dim| n.checked_mul(dim))
+            .ok_or_else(|| StorageError::FormatMismatch("slice size overflow".into()))?;
+        let mut result = vec![T::default(); nelem];
+        self.get_slice_into(start, shape, &mut result)?;
+        ArrayD::from_shape_vec(IxDyn(shape).f(), result)
+            .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))
+    }
+
+    /// Read a rectangular slice into caller-owned Fortran-order storage.
+    /// The only tile-sized staging belongs to this storage handle's cache.
+    pub fn get_slice_into<T: TilePixel>(
+        &mut self,
+        start: &[usize],
+        shape: &[usize],
+        result: &mut [T],
+    ) -> Result<(), StorageError> {
         let ndim = self.cube_shape.len();
         assert!(ndim <= MAX_NDIM, "ndim exceeds MAX_NDIM");
-        let nelem: usize = shape.iter().product();
-        let mut result = vec![T::default(); nelem];
+        if start.len() != ndim
+            || shape.len() != ndim
+            || shape.contains(&0)
+            || start
+                .iter()
+                .zip(shape)
+                .zip(&self.cube_shape)
+                .any(|((&offset, &len), &extent)| {
+                    offset.checked_add(len).is_none_or(|end| end > extent)
+                })
+            || shape.iter().try_fold(1usize, |n, &dim| n.checked_mul(dim)) != Some(result.len())
+        {
+            return Err(StorageError::FormatMismatch(
+                "invalid tiled slice bounds or destination".into(),
+            ));
+        }
         let result_strides = fortran_order_strides(shape);
 
         let inner_axis = {
@@ -11699,8 +11801,7 @@ impl TiledFileIO {
             }
         }
 
-        ArrayD::from_shape_vec(IxDyn(shape).f(), result)
-            .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))
+        Ok(())
     }
 
     /// Reads the full cube as a Fortran-order `ArrayD<T>`.
@@ -12401,6 +12502,16 @@ impl TiledArrayStorage {
     ) -> Result<ArrayD<T>, StorageError> {
         self.ensure_pixel_type::<T>()?;
         self.inner.get_slice(start, shape)
+    }
+
+    pub fn get_slice_into<T: TilePixel>(
+        &mut self,
+        start: &[usize],
+        shape: &[usize],
+        destination: &mut [T],
+    ) -> Result<(), StorageError> {
+        self.ensure_pixel_type::<T>()?;
+        self.inner.get_slice_into(start, shape, destination)
     }
 
     pub fn get_all<T: TilePixel>(&mut self) -> Result<ArrayD<T>, StorageError> {
@@ -13386,6 +13497,170 @@ mod tests {
     }
 
     #[test]
+    fn streamed_selected_channels_bound_physical_read_ahead() {
+        let _guard = shared_table_cache_test_guard();
+        reset_table_cache_budget_for_tests();
+        set_table_cache_budget_bytes(1024 * 1024);
+
+        for endian in [
+            crate::EndianFormat::BigEndian,
+            crate::EndianFormat::LittleEndian,
+        ] {
+            for primitive in [
+                PrimitiveType::Complex32,
+                PrimitiveType::Float32,
+                PrimitiveType::Bool,
+            ] {
+                let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+                    "DATA",
+                    primitive,
+                    vec![2, 12],
+                )])
+                .unwrap();
+                let mut table = Table::with_schema(schema);
+                for row in 0..56 {
+                    let values = (0..12).flat_map(|channel| {
+                        (0..2).map(move |corr| row * 100 + channel * 10 + corr)
+                    });
+                    let array = match primitive {
+                        PrimitiveType::Complex32 => ArrayValue::Complex32(
+                            ArrayD::from_shape_vec(
+                                ndarray::IxDyn(&[2, 12]).f(),
+                                values
+                                    .map(|value| Complex32::new(value as f32, -(value as f32)))
+                                    .collect(),
+                            )
+                            .unwrap(),
+                        ),
+                        PrimitiveType::Float32 => ArrayValue::Float32(
+                            ArrayD::from_shape_vec(
+                                ndarray::IxDyn(&[2, 12]).f(),
+                                values.map(|value| value as f32).collect(),
+                            )
+                            .unwrap(),
+                        ),
+                        PrimitiveType::Bool => ArrayValue::Bool(
+                            ArrayD::from_shape_vec(
+                                ndarray::IxDyn(&[2, 12]).f(),
+                                values.map(|value| value % 3 == 0).collect(),
+                            )
+                            .unwrap(),
+                        ),
+                        _ => unreachable!(),
+                    };
+                    table
+                        .add_row(RecordValue::new(vec![RecordField::new(
+                            "DATA",
+                            Value::Array(array),
+                        )]))
+                        .unwrap();
+                }
+                let dir = tempdir().unwrap();
+                let root = dir.path().join("selected_read_ahead.table");
+                std::fs::create_dir_all(&root).unwrap();
+                table
+                    .save(
+                        TableOptions::new(&root)
+                            .with_data_manager(DataManagerKind::TiledShapeStMan)
+                            .with_tile_shape(vec![2, 2, 2])
+                            .with_endian_format(endian),
+                    )
+                    .unwrap();
+                let reopened = Table::open(TableOptions::new(&root)).unwrap();
+                // Fourteen nonadjacent row tiles force the production streaming
+                // path. Duplicate and reversed rows must not duplicate reads.
+                let mut rows: Vec<_> = (0..56).step_by(4).rev().collect();
+                rows.push(0);
+                for (start, count, row_major) in [
+                    (2, 2, false),
+                    (1, 2, false),
+                    (11, 1, false),
+                    (0, 12, false),
+                    (2, 2, true),
+                    (1, 2, true),
+                    (11, 1, true),
+                    (0, 12, true),
+                ] {
+                    let mut data = Vec::new();
+                    let mut floats = Vec::new();
+                    let mut flags = Vec::new();
+                    let destination = match (primitive, row_major) {
+                        (PrimitiveType::Complex32, false) => {
+                            SelectedArray2DCellsMut::Complex32(&mut data)
+                        }
+                        (PrimitiveType::Complex32, true) => {
+                            SelectedArray2DCellsMut::RowChannelComplex32(&mut data)
+                        }
+                        (PrimitiveType::Float32, false) => {
+                            SelectedArray2DCellsMut::Float32(&mut floats)
+                        }
+                        (PrimitiveType::Float32, true) => {
+                            SelectedArray2DCellsMut::RowChannelFloat32(&mut floats)
+                        }
+                        (PrimitiveType::Bool, false) => SelectedArray2DCellsMut::Bool(&mut flags),
+                        (PrimitiveType::Bool, true) => {
+                            SelectedArray2DCellsMut::RowChannelBool(&mut flags)
+                        }
+                        _ => unreachable!(),
+                    };
+                    STREAMED_READ_COUNTS.with(|counts| counts.set((0, 0)));
+                    reopened
+                        .fill_array_cells_2d_channel_range_typed_uncached(
+                            "DATA",
+                            &rows,
+                            start,
+                            count,
+                            destination,
+                        )
+                        .unwrap()
+                        .expect("defined cells");
+                    let (calls, bytes) = STREAMED_READ_COUNTS.with(|counts| counts.get());
+                    let channel_tiles = (start + count - 1) / 2 - start / 2 + 1;
+                    let tile_bytes = match primitive {
+                        PrimitiveType::Bool => 1,
+                        PrimitiveType::Float32 => 32,
+                        PrimitiveType::Complex32 => 64,
+                        _ => unreachable!(),
+                    };
+                    assert_eq!(
+                        bytes,
+                        14 * channel_tiles * tile_bytes,
+                        "read only selected tile runs: {primitive:?} {endian:?} {start} {count}"
+                    );
+                    assert_eq!(calls, 14, "read each selected run as a block");
+                    for channel in start..start + count {
+                        for (index, row) in rows.iter().enumerate() {
+                            for corr in 0..2 {
+                                let value = row * 100 + channel * 10 + corr;
+                                let output = if row_major {
+                                    (index * count + channel - start) * 2 + corr
+                                } else {
+                                    ((channel - start) * rows.len() + index) * 2 + corr
+                                };
+                                match primitive {
+                                    PrimitiveType::Complex32 => assert_eq!(
+                                        data[output],
+                                        Complex32::new(value as f32, -(value as f32))
+                                    ),
+                                    PrimitiveType::Float32 => {
+                                        assert_eq!(floats[output], value as f32)
+                                    }
+                                    PrimitiveType::Bool => {
+                                        assert_eq!(flags[output], value % 3 == 0)
+                                    }
+                                    _ => unreachable!(),
+                                }
+                            }
+                        }
+                    }
+                }
+                assert_eq!(shared_tile_cache_entry_count_for_table(&root), 0);
+            }
+        }
+        reset_table_cache_budget_for_tests();
+    }
+
+    #[test]
     fn large_typed_channel_range_uses_streaming_read_ahead() {
         let _guard = shared_table_cache_test_guard();
         reset_table_cache_budget_for_tests();
@@ -13659,6 +13934,47 @@ mod tests {
         let all = io.get_all::<bool>().unwrap();
         let expected: Vec<bool> = first_tile.into_iter().chain(second_tile).collect();
         assert_eq!(all.iter().copied().collect::<Vec<_>>(), expected);
+    }
+
+    #[test]
+    fn flat_flush_returns_final_buffered_write_failure_and_retains_dirty_data() {
+        let dir = tempdir().unwrap();
+        let mut storage = TiledArrayStorage::create_planned_table(
+            &dir.path().join("failed_flush"),
+            &TiledArrayStorageLayout::new(
+                &[2, 2, 1],
+                &[2, 2, 1],
+                PrimitiveType::Float32,
+                cfg!(target_endian = "big"),
+                0,
+                "values",
+                16,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let values = [1.0_f32, 2.0, 3.0, 4.0];
+        storage
+            .put_slice_fortran(&values, &[0, 0, 0], &[2, 2, 1])
+            .unwrap();
+        // Seek succeeds on a read-only descriptor. The 16-byte write fits in
+        // BufWriter and only fails when its final buffered bytes are flushed.
+        assert!(
+            storage
+                .inner
+                .flush_with_flat_file(|path| File::open(path))
+                .is_err()
+        );
+        let TileCache::Flat(cache) = &storage.inner.cache else {
+            panic!("expected flat cache")
+        };
+        assert!(cache.allocated && cache.dirty.iter().any(|dirty| *dirty));
+        storage.flush().unwrap();
+        let mut actual = [0.0; 4];
+        storage
+            .get_slice_into(&[0, 0, 0], &[2, 2, 1], &mut actual)
+            .unwrap();
+        assert_eq!(actual, values);
     }
 
     #[test]

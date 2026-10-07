@@ -1,6 +1,7 @@
 target/
 target-clippy/
 dist/
+.native/
 site/
 .DS_Store
 .obsidian/
@@ -12,7 +13,7 @@ TempLattice*/
 IMAGING_WEIGHT_*/
 __pycache__/
 *.py[cod]
-autoresearch-results/
+autoresearch-results
 **/node_modules/
 .codex/
 .codex-run-worktrees/
@@ -20,3 +21,7 @@ autoresearch-results/
 # developer launches casars from a crate directory.
 **/.casa-rs/parameters/
 docs/generated/cargo-metadata.json
+
+# Claude Code session state
+.claude/worktrees/
+.claude/settings.local.json

@@ -16,6 +16,7 @@ members = [
     "crates/casa-aipsio",
     "crates/casa-logging",
     "crates/casa-numerics",
+    "crates/casa-fft",
     "crates/casa-calibration",
     "crates/casa-measures-tools",
     "crates/casa-tables",
@@ -23,10 +24,13 @@ members = [
     "crates/casa-coordinates",
     "crates/casa-images",
     "crates/casa-imaging-model",
+    "crates/casa-imaging-operator",
+    "crates/casa-imaging-deconvolution",
     "crates/casa-imaging-reconstruction",
     "crates/casa-imaging-products",
     "crates/casa-imaging-application",
     "crates/casa-imaging-runtime",
+    "crates/casa-imaging-metal",
     "crates/casa-simulation-synthesis",
     "crates/casa-measures-data",
     "crates/casa-test-support",
@@ -46,8 +50,8 @@ repository = "https://github.com/bglenden/casa-rs"
 nalgebra = "0.33"
 ndarray = "0.17"
 num-complex = "0.4"
+pkg-config = "0.3"
 ratatui-graphics = { path = "crates/ratatui-graphics", default-features = false, features = ["panel", "plotters", "kitty"] }
-rustfft = "6.4"
 sha2 = { version = "0.10", features = ["asm"] }
 smallvec = "1.15"
 sofars = "0.6"
@@ -77,13 +81,36 @@ opt-level = 2
 opt-level = 2
 [profile.test.package.casa-test-support]
 opt-level = 2
+
+# Imaging end-to-end tests (T1 tier) must finish within about ten minutes on
+# realistic sample counts; debug assertions stay on, optimisation is release-like.
+[profile.test.package.casa-imaging-model]
+opt-level = 3
+[profile.test.package.casa-imaging-operator]
+opt-level = 3
+[profile.test.package.casa-imaging-deconvolution]
+opt-level = 3
+[profile.test.package.casa-imaging-reconstruction]
+opt-level = 3
+[profile.test.package.casa-imaging-products]
+opt-level = 3
+[profile.test.package.casa-imaging-runtime]
+opt-level = 3
+[profile.test.package.casa-imaging-metal]
+opt-level = 3
+[profile.test.package.casa-imaging-application]
+opt-level = 3
+[profile.test.package.casars-imager]
+opt-level = 3
+[profile.test.package.casa-fft]
+opt-level = 3
+[profile.test.package.casa-numerics]
+opt-level = 3
 [profile.test.package.ndarray]
 opt-level = 2
 [profile.test.package.nalgebra]
 opt-level = 2
 [profile.test.package.num-complex]
-opt-level = 2
-[profile.test.package.rustfft]
 opt-level = 2
 
 [workspace.lints.rust]

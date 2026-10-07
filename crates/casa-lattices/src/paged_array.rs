@@ -730,6 +730,60 @@ impl<T: LatticeElement> PagedArray<T> {
     }
 }
 
+impl<T: LatticeElement + TilePixel> PagedArray<T> {
+    /// Transfer a unit-stride window into caller-owned Fortran-order storage.
+    /// This deliberately requires the tiled persistent representation: it never
+    /// materializes the complete array as a fallback.
+    pub fn read_slice_into(
+        &self,
+        start: &[usize],
+        shape: &[usize],
+        destination: &mut [T],
+    ) -> Result<(), LatticeError> {
+        self.auto_reopen_tiled_io()?;
+        let mut storage = self.tiled_io.borrow_mut();
+        storage
+            .as_mut()
+            .ok_or_else(|| LatticeError::Table("typed tiled storage is unavailable".into()))?
+            .get_slice_into(start, shape, destination)
+            .map_err(tiled_io_err)
+    }
+
+    /// Write a Fortran-order window from a borrowed slice without an ndarray
+    /// conversion or a second window-sized allocation.
+    pub fn write_slice_from(
+        &mut self,
+        start: &[usize],
+        shape: &[usize],
+        values: &[T],
+    ) -> Result<(), LatticeError> {
+        if start.len() != self.shape.len()
+            || shape.len() != self.shape.len()
+            || shape.contains(&0)
+            || start
+                .iter()
+                .zip(shape)
+                .zip(&self.shape)
+                .any(|((&offset, &len), &extent)| {
+                    offset.checked_add(len).is_none_or(|end| end > extent)
+                })
+            || shape.iter().try_fold(1usize, |n, &dim| n.checked_mul(dim)) != Some(values.len())
+        {
+            return Err(LatticeError::ShapeMismatch {
+                expected: self.shape.clone(),
+                got: shape.to_vec(),
+            });
+        }
+        self.auto_reopen()?;
+        self.tiled_io
+            .get_mut()
+            .as_mut()
+            .ok_or_else(|| LatticeError::Table("typed tiled storage is unavailable".into()))?
+            .put_slice_fortran(values, start, shape)
+            .map_err(tiled_io_err)
+    }
+}
+
 impl<T: LatticeElement> Lattice<T> for PagedArray<T> {
     fn shape(&self) -> &[usize] {
         &self.shape
@@ -1322,6 +1376,47 @@ mod tests {
         assert_eq!(array.maximum_cache_size_pixels(), pixels);
         assert_eq!(array.get_at(&[7, 7]).unwrap(), 2.0);
         assert!(PagedArray::<f32>::open_with_cache(&path, 0).is_err());
+    }
+
+    #[test]
+    fn borrowed_typed_windows_round_trip_without_result_array() {
+        fn exercise<T: LatticeElement + TilePixel + PartialEq + std::fmt::Debug>(values: Vec<T>) {
+            let directory = tempfile::tempdir().unwrap();
+            let shape = TiledShape::with_tile_shape(vec![2, 3, 2], vec![2, 3, 1]).unwrap();
+            let cache = 6 * std::mem::size_of::<T>();
+            let mut array =
+                PagedArray::<T>::create_with_cache(shape, directory.path().join("array"), cache)
+                    .unwrap();
+            array
+                .write_slice_from(&[0, 0, 0], &[2, 3, 2], &values)
+                .unwrap();
+            array.flush().unwrap();
+            array.temp_close().unwrap();
+            let mut actual = vec![T::default(); values.len()];
+            array
+                .read_slice_into(&[0, 0, 0], &[2, 3, 2], &mut actual)
+                .unwrap();
+            assert_eq!(actual, values);
+            assert!(
+                array
+                    .read_slice_into(&[0, 0, 1], &[2, 3, 2], &mut actual)
+                    .is_err()
+            );
+            assert!(
+                array
+                    .read_slice_into(&[0, 0, 0], &[2, 3, 2], &mut actual[..11])
+                    .is_err()
+            );
+        }
+
+        exercise::<f32>((0..12).map(|n| n as f32 + 0.25).collect());
+        exercise::<f64>((0..12).map(|n| n as f64 + 0.125).collect());
+        exercise::<Complex32>(
+            (0..12)
+                .map(|n| Complex32::new(n as f32, -(n as f32)))
+                .collect(),
+        );
+        exercise::<bool>((0..12).map(|n| n % 3 == 0).collect());
     }
 
     #[test]

@@ -24,16 +24,15 @@ use serde::{Deserialize, Serialize};
 use crate::{
     AutoMultiThresholdConfig, AwProjectControls, AwProjectNormalization, CleanMaskMode,
     CleanStopReason, CliConfig, Deconvolver, GaussianUvTaper, HogbomIterationMode,
-    ImagerAwCfSource, ImagingFftBackendPolicy, ImagingFftPrecisionPolicy,
-    ImagingMemoryPressurePolicy, RestoringBeamMode, RunSummary, SaveModelMode, SpectralMode,
-    StandardMfsAccelerationPolicy, UvTaperSize, WTermMode, WeightingMode,
+    ImagerAwCfSource, RestoringBeamMode, RunSummary, SaveModelMode, SpectralMode,
+    StandardMfsAccelerationPolicy, StandardMfsBackend, UvTaperSize, WTermMode, WeightingMode,
     apply_parallel_runtime_control, run_from_request, validate_parallel_acceleration,
 };
 
 /// Stable protocol name advertised by `casars-imager --protocol-info`.
 pub const IMAGER_TASK_PROTOCOL_NAME: &str = "casa_imager_task";
 /// Stable protocol version advertised by `casars-imager --protocol-info`.
-pub const IMAGER_TASK_PROTOCOL_VERSION: u32 = 8;
+pub const IMAGER_TASK_PROTOCOL_VERSION: u32 = 10;
 /// Version of the newline-delimited imager progress-event payload.
 pub const IMAGER_PROGRESS_EVENT_SCHEMA_VERSION: u32 = 1;
 /// Version of the authoritative observability snapshot embedded in progress events.
@@ -252,7 +251,6 @@ const IMAGER_PROJECTED_PARAMETERS: &[&str] = &[
     "channel_count",
     "stokes",
     "specmode",
-    "chanchunks",
     "start",
     "width",
     "outframe",
@@ -265,7 +263,6 @@ const IMAGER_PROJECTED_PARAMETERS: &[&str] = &[
     "niter",
     "threshold",
     "nmajor",
-    "fullsummary",
     "gain",
     "nsigma",
     "psfcutoff",
@@ -292,7 +289,6 @@ const IMAGER_PROJECTED_PARAMETERS: &[&str] = &[
     "wprojplanes",
     "usepointing",
     "uvtaper",
-    "write_preview_pngs",
     "write_pb",
     "pbcor",
     "pblimit",
@@ -300,8 +296,6 @@ const IMAGER_PROJECTED_PARAMETERS: &[&str] = &[
     "gridder",
     "standard_mfs_acceleration",
     "parallel",
-    "imaging_read_ahead_blocks",
-    "imaging_fft_backend",
     "uvrange",
     "intent",
     "cfcache",
@@ -327,12 +321,6 @@ const IMAGER_PROJECTED_PARAMETERS: &[&str] = &[
     "mosweight",
     "normtype",
     "imaging_memory_target_mb",
-    "imaging_memory_pressure_policy",
-    "imaging_prepare_buffer_mb",
-    "imaging_row_block_rows",
-    "imaging_prepare_workers",
-    "imaging_fft_precision",
-    "standard_mfs_grid_threads",
     "projection",
     "fitspw",
     "fitorder",
@@ -2214,9 +2202,6 @@ pub struct ImagerRunTaskRequest {
     /// CASA-style major-cycle limit. `None` corresponds to CASA `nmajor=-1`.
     #[serde(default)]
     pub nmajor: Option<usize>,
-    /// Include long-form CASA-compatible `summaryminor` fields.
-    #[serde(default)]
-    pub fullsummary: bool,
     /// Minor-cycle loop gain.
     #[serde(default = "default_gain")]
     pub gain: f32,
@@ -2294,66 +2279,18 @@ pub struct ImagerRunTaskRequest {
     /// comparisons.
     #[serde(default)]
     pub parallel: Option<bool>,
-    /// Optional CASA-like top-level spectral channel chunk count request.
-    #[serde(default)]
-    pub chanchunks: Option<usize>,
     /// Runtime acceleration policy for single-plane standard-family imaging.
     #[serde(default)]
     pub standard_mfs_acceleration: StandardMfsAccelerationPolicy,
     /// Optional explicit standard-MFS backend override.
     #[serde(default)]
-    pub standard_mfs_backend: Option<String>,
-    /// Optional explicit standard-MFS grid worker count override.
-    #[serde(default)]
-    pub standard_mfs_grid_threads: Option<String>,
-    /// Optional explicit standard-MFS fixed-tile anchor override.
-    #[serde(default)]
-    pub standard_mfs_tile_anchor: Option<String>,
-    /// Optional explicit standard-MFS residual-refresh backend override.
-    #[serde(default)]
-    pub standard_mfs_residual_backend: Option<String>,
-    /// Optional explicit standard-MFS initial dirty/PSF backend override.
-    #[serde(default)]
-    pub standard_mfs_initial_dirty_backend: Option<String>,
-    /// Optional standard-MFS Metal minor-cycle command-buffer component chunk.
-    #[serde(default)]
-    pub standard_mfs_metal_minor_cycle_chunk: Option<String>,
-    /// Optional explicit Metal grouped input cache override.
-    #[serde(default)]
-    pub standard_mfs_metal_grouped_input_cache: Option<bool>,
+    pub standard_mfs_backend: Option<StandardMfsBackend>,
     /// Optional standard-MFS planner memory target in MiB.
     #[serde(default)]
     pub standard_mfs_memory_target_mb: Option<usize>,
-    /// Optional standard-MFS prepare-buffer budget in MiB.
-    #[serde(default)]
-    pub standard_mfs_prepare_buffer_mb: Option<usize>,
     /// Optional shared imaging source-stream memory target in MiB.
     #[serde(default)]
     pub imaging_memory_target_mb: Option<usize>,
-    /// Shared imaging memory-pressure policy.
-    #[serde(default)]
-    pub imaging_memory_pressure_policy: ImagingMemoryPressurePolicy,
-    /// Optional shared imaging source-stream prepare-buffer budget in MiB.
-    #[serde(default)]
-    pub imaging_prepare_buffer_mb: Option<usize>,
-    /// Optional shared imaging source-stream row-block override.
-    #[serde(default)]
-    pub imaging_row_block_rows: Option<usize>,
-    /// Optional shared imaging source-stream prepare worker count.
-    #[serde(default)]
-    pub imaging_prepare_workers: Option<usize>,
-    /// Optional shared imaging source-stream read-ahead live block count.
-    #[serde(default)]
-    pub imaging_read_ahead_blocks: Option<usize>,
-    /// Imaging-wide FFT precision policy for dirty/residual product transforms.
-    #[serde(default)]
-    pub imaging_fft_precision: ImagingFftPrecisionPolicy,
-    /// Imaging-wide FFT backend policy for dirty/residual product transforms.
-    #[serde(default)]
-    pub imaging_fft_backend: ImagingFftBackendPolicy,
-    /// Write PNG preview sidecars for the CASA image products.
-    #[serde(default = "default_write_preview_pngs")]
-    pub write_preview_pngs: bool,
     /// Optional low-rate running progress telemetry settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub progress: Option<ImagerProgressOptions>,
@@ -2422,7 +2359,6 @@ impl ImagerRunTaskRequest {
             small_scale_bias: config.small_scale_bias,
             niter: config.niter,
             nmajor: config.nmajor,
-            fullsummary: config.fullsummary,
             gain: config.gain,
             threshold_jy: config.threshold_jy,
             nsigma: config.nsigma,
@@ -2446,28 +2382,10 @@ impl ImagerRunTaskRequest {
             aw_project: config.aw_project.as_ref().map(Into::into),
             dirty_only: config.dirty_only,
             parallel: config.parallel,
-            chanchunks: config.chanchunks,
             standard_mfs_acceleration: config.standard_mfs_acceleration,
-            standard_mfs_backend: config.standard_mfs_backend.clone(),
-            standard_mfs_grid_threads: config.standard_mfs_grid_threads.clone(),
-            standard_mfs_tile_anchor: config.standard_mfs_tile_anchor.clone(),
-            standard_mfs_residual_backend: config.standard_mfs_residual_backend.clone(),
-            standard_mfs_initial_dirty_backend: config.standard_mfs_initial_dirty_backend.clone(),
-            standard_mfs_metal_minor_cycle_chunk: config
-                .standard_mfs_metal_minor_cycle_chunk
-                .clone(),
-            standard_mfs_metal_grouped_input_cache: config.standard_mfs_metal_grouped_input_cache,
+            standard_mfs_backend: config.standard_mfs_backend,
             standard_mfs_memory_target_mb: config.standard_mfs_memory_target_mb,
-            standard_mfs_prepare_buffer_mb: config.standard_mfs_prepare_buffer_mb,
             imaging_memory_target_mb: config.imaging_memory_target_mb,
-            imaging_memory_pressure_policy: config.imaging_memory_pressure_policy,
-            imaging_prepare_buffer_mb: config.imaging_prepare_buffer_mb,
-            imaging_row_block_rows: config.imaging_row_block_rows,
-            imaging_prepare_workers: config.imaging_prepare_workers,
-            imaging_read_ahead_blocks: config.imaging_read_ahead_blocks,
-            imaging_fft_precision: config.imaging_fft_precision,
-            imaging_fft_backend: config.imaging_fft_backend,
-            write_preview_pngs: config.write_preview_pngs,
             progress: None,
         }
     }
@@ -2502,31 +2420,12 @@ impl ImagerRunTaskRequest {
         if self.nterms == 0 {
             return Err("nterms must be at least 1".to_string());
         }
-        if self.chanchunks == Some(0) {
-            return Err("chanchunks must be positive".to_string());
-        }
-        if self.chanchunks.is_some() && spectral_mode == SpectralMode::Mfs {
-            return Err("chanchunks applies only to cube and cubedata imaging".to_string());
-        }
         validate_parallel_acceleration(self.parallel, self.standard_mfs_acceleration)?;
         if self.imaging_memory_target_mb == Some(0) {
             return Err("imaging_memory_target_mb must be positive".to_string());
         }
         if self.standard_mfs_memory_target_mb == Some(0) {
             return Err("standard_mfs_memory_target_mb must be positive".to_string());
-        }
-        if self.imaging_memory_pressure_policy == ImagingMemoryPressurePolicy::Oversubscribe
-            && self.imaging_memory_target_mb.is_none()
-            && self.standard_mfs_memory_target_mb.is_none()
-        {
-            return Err(
-                "imaging_memory_pressure_policy='oversubscribe' requires an explicit \
-                 imaging_memory_target_mb (or the compatibility standard_mfs_memory_target_mb)"
-                    .to_string(),
-            );
-        }
-        if self.imaging_read_ahead_blocks == Some(0) {
-            return Err("imaging_read_ahead_blocks must be positive".to_string());
         }
         if self.start_model.is_some() {
             if spectral_mode != SpectralMode::Mfs {
@@ -2547,9 +2446,6 @@ impl ImagerRunTaskRequest {
                     "invalid multiscale scale {scale}; expected finite value >= 0"
                 ));
             }
-        }
-        if let Some(value) = self.standard_mfs_metal_minor_cycle_chunk.as_deref() {
-            validate_metal_minor_cycle_chunk(value)?;
         }
         if self.use_mask == ImagerCleanMaskMode::AutoMultithresh {
             for (name, value) in [
@@ -2619,7 +2515,6 @@ impl ImagerRunTaskRequest {
             small_scale_bias: self.small_scale_bias,
             niter: self.niter,
             nmajor: self.nmajor,
-            fullsummary: self.fullsummary,
             gain: self.gain,
             threshold_jy: self.threshold_jy,
             nsigma: self.nsigma,
@@ -2643,26 +2538,10 @@ impl ImagerRunTaskRequest {
             aw_project,
             dirty_only: self.dirty_only,
             parallel: self.parallel,
-            chanchunks: self.chanchunks,
             standard_mfs_acceleration: self.standard_mfs_acceleration,
-            standard_mfs_backend: self.standard_mfs_backend.clone(),
-            standard_mfs_grid_threads: self.standard_mfs_grid_threads.clone(),
-            standard_mfs_tile_anchor: self.standard_mfs_tile_anchor.clone(),
-            standard_mfs_residual_backend: self.standard_mfs_residual_backend.clone(),
-            standard_mfs_initial_dirty_backend: self.standard_mfs_initial_dirty_backend.clone(),
-            standard_mfs_metal_minor_cycle_chunk: self.standard_mfs_metal_minor_cycle_chunk.clone(),
-            standard_mfs_metal_grouped_input_cache: self.standard_mfs_metal_grouped_input_cache,
+            standard_mfs_backend: self.standard_mfs_backend,
             standard_mfs_memory_target_mb: self.standard_mfs_memory_target_mb,
-            standard_mfs_prepare_buffer_mb: self.standard_mfs_prepare_buffer_mb,
             imaging_memory_target_mb: self.imaging_memory_target_mb,
-            imaging_memory_pressure_policy: self.imaging_memory_pressure_policy,
-            imaging_prepare_buffer_mb: self.imaging_prepare_buffer_mb,
-            imaging_row_block_rows: self.imaging_row_block_rows,
-            imaging_prepare_workers: self.imaging_prepare_workers,
-            imaging_read_ahead_blocks: self.imaging_read_ahead_blocks,
-            imaging_fft_precision: self.imaging_fft_precision,
-            imaging_fft_backend: self.imaging_fft_backend,
-            write_preview_pngs: self.write_preview_pngs,
         };
         apply_parallel_runtime_control(self.parallel, &mut config)?;
         Ok(config)
@@ -2699,31 +2578,6 @@ impl ImagerProjection {
             Self::Sin => "SIN",
         }
     }
-}
-
-fn validate_metal_minor_cycle_chunk(value: &str) -> Result<(), String> {
-    let value = value.trim();
-    if value.eq_ignore_ascii_case("auto")
-        || value.eq_ignore_ascii_case("full")
-        || parse_metal_minor_cycle_auto_target_ms(value).is_some()
-    {
-        return Ok(());
-    }
-    match value.parse::<usize>() {
-        Ok(parsed) if parsed > 0 => Ok(()),
-        _ => Err(format!(
-            "invalid standard_mfs_metal_minor_cycle_chunk {value:?}; expected auto, auto:<positive-ms>, full, or a positive integer"
-        )),
-    }
-}
-
-fn parse_metal_minor_cycle_auto_target_ms(value: &str) -> Option<f64> {
-    let lowercase = value.trim().to_ascii_lowercase();
-    let target_ms = lowercase.strip_prefix("auto:")?.parse::<f64>().ok()?;
-    target_ms
-        .is_finite()
-        .then_some(target_ms)
-        .filter(|value| *value > 0.0)
 }
 
 /// Stable stop reasons for CLEAN controller completion.
@@ -2950,21 +2804,13 @@ pub struct ImagerRunReport {
     pub elapsed_ns: u64,
 }
 
-/// Machine-readable projection of the final visibility-product authority.
+/// Final visibility stream's run association and completed sample count.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ImagerVisibilityProductDiagnostic {
     /// Compiled imaging-problem identity.
     pub problem_id: String,
     /// Exact final model generation used for prediction.
     pub final_model_generation: String,
-    /// Exact selected-observation generation traversed by the final replay.
-    pub selected_generation: String,
-    /// Exact weighting generation paired with the final replay.
-    pub weighting_generation: String,
-    /// Content identity of the model-visibility stream.
-    pub model_product: String,
-    /// Content identity of the observed-minus-model visibility stream.
-    pub residual_product: String,
     /// Number of canonically selected visibility samples.
     pub sample_count: u64,
 }
@@ -3029,10 +2875,6 @@ pub struct ImagerArtifact {
     pub path: String,
     /// Whether that product exists after the run.
     pub exists: bool,
-    /// Optional preview sidecar path.
-    pub preview_png_path: Option<String>,
-    /// Whether the preview sidecar exists after the run.
-    pub preview_png_exists: bool,
 }
 
 /// Canonical imager task result for one end-to-end run.
@@ -3147,10 +2989,6 @@ fn default_max_psf_fraction() -> f32 {
     0.8
 }
 
-fn default_write_preview_pngs() -> bool {
-    false
-}
-
 fn default_progress_max_uv_points() -> usize {
     64
 }
@@ -3176,19 +3014,12 @@ fn casa_stop_code(reason: Option<CleanStopReason>) -> i32 {
     }
 }
 
-fn artifact(
-    kind: ImagerArtifactKind,
-    label: String,
-    path: PathBuf,
-    preview: Option<PathBuf>,
-) -> ImagerArtifact {
+fn artifact(kind: ImagerArtifactKind, label: String, path: PathBuf) -> ImagerArtifact {
     ImagerArtifact {
         kind,
         label,
         exists: path.exists(),
         path: path.display().to_string(),
-        preview_png_path: preview.as_ref().map(|path| path.display().to_string()),
-        preview_png_exists: preview.as_ref().is_some_and(|path| path.exists()),
     }
 }
 
@@ -3206,15 +3037,10 @@ pub(crate) fn build_artifacts_for_products(
     output_products
         .iter()
         .map(|suffix| {
-            let kind = artifact_kind_for_product_suffix(suffix);
-            let path = PathBuf::from(format!("{base}{suffix}"));
-            let preview = product_preview_requested(request, suffix)
-                .then(|| PathBuf::from(format!("{base}{suffix}.png")));
             artifact(
-                kind,
+                artifact_kind_for_product_suffix(suffix),
                 artifact_label_for_product_suffix(suffix),
-                path,
-                preview,
+                PathBuf::from(format!("{base}{suffix}")),
             )
         })
         .collect()
@@ -3272,29 +3098,6 @@ fn artifact_label_for_product_suffix(suffix: &str) -> String {
         .map_or_else(|| base.to_string(), |term| format!("{base} tt{term}"))
 }
 
-fn product_preview_requested(request: &ImagerRunTaskRequest, suffix: &str) -> bool {
-    if !request.write_preview_pngs {
-        return false;
-    }
-    if request.spectral_mode == ImagerSpectralMode::Mfs
-        && request.deconvolver == ImagerDeconvolver::Mtmfs
-        && request.nterms > 1
-    {
-        suffix == ".alpha" || suffix.ends_with(".tt0")
-    } else {
-        matches!(
-            artifact_kind_for_product_suffix(suffix),
-            ImagerArtifactKind::Psf
-                | ImagerArtifactKind::Residual
-                | ImagerArtifactKind::Model
-                | ImagerArtifactKind::Image
-                | ImagerArtifactKind::Mask
-                | ImagerArtifactKind::PrimaryBeam
-                | ImagerArtifactKind::ImagePbcor
-        )
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{ImagerObservedMemoryConfidence, ImagerObservedMemoryKind};
@@ -3324,7 +3127,6 @@ mod tests {
     };
     use crate::{
         AwProjectNormalization, CleanStopReason, CliConfig, Deconvolver, GaussianUvTaper,
-        ImagingFftBackendPolicy, ImagingFftPrecisionPolicy, ImagingMemoryPressurePolicy,
         RestoringBeamMode, SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy, UvTaperSize,
         WTermMode, WeightingMode,
     };
@@ -3498,14 +3300,7 @@ mod tests {
             OsString::from("wproject"),
             OsString::from("--wprojplanes"),
             OsString::from("8"),
-            OsString::from("--imaging-fft-precision"),
-            OsString::from("f32"),
-            OsString::from("--imaging-fft-backend"),
-            OsString::from("metal-mpsgraph"),
-            OsString::from("--imaging-memory-pressure-policy"),
-            OsString::from("aggressive"),
             OsString::from("--dirty-only"),
-            OsString::from("--no-preview-pngs"),
         ])
         .unwrap();
 
@@ -3545,20 +3340,7 @@ mod tests {
         assert!(restored.force_standard_gridder);
         assert_eq!(restored.w_term_mode, WTermMode::WProject);
         assert_eq!(restored.w_project_planes, Some(8));
-        assert_eq!(
-            restored.imaging_fft_precision,
-            ImagingFftPrecisionPolicy::F32
-        );
-        assert_eq!(
-            restored.imaging_fft_backend,
-            ImagingFftBackendPolicy::MetalMpsGraph
-        );
-        assert_eq!(
-            restored.imaging_memory_pressure_policy,
-            ImagingMemoryPressurePolicy::Aggressive
-        );
         assert!(restored.dirty_only);
-        assert!(!restored.write_preview_pngs);
     }
 
     #[test]
@@ -3646,7 +3428,7 @@ mod tests {
     }
 
     #[test]
-    fn run_request_validates_memory_policy_combinations() {
+    fn run_request_validates_memory_targets() {
         let config = CliConfig::parse([
             OsString::from("--ms"),
             OsString::from("demo.ms"),
@@ -3675,23 +3457,9 @@ mod tests {
         );
 
         let mut request = base.clone();
-        request.imaging_memory_pressure_policy = ImagingMemoryPressurePolicy::Oversubscribe;
-        assert!(
-            request
-                .to_cli_config()
-                .unwrap_err()
-                .contains("requires an explicit imaging_memory_target_mb")
-        );
-
         request.imaging_memory_target_mb = Some(1024);
-        let restored = request
-            .to_cli_config()
-            .expect("bounded oversubscribe request");
+        let restored = request.to_cli_config().expect("bounded memory target");
         assert_eq!(restored.imaging_memory_target_mb, Some(1024));
-        assert_eq!(
-            restored.imaging_memory_pressure_policy,
-            ImagingMemoryPressurePolicy::Oversubscribe
-        );
     }
 
     #[test]
@@ -3834,7 +3602,6 @@ mod tests {
             small_scale_bias: 0.0,
             niter: 0,
             nmajor: None,
-            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -3858,26 +3625,10 @@ mod tests {
             aw_project: None,
             dirty_only: false,
             parallel: None,
-            chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Cpu,
             standard_mfs_backend: None,
-            standard_mfs_grid_threads: None,
-            standard_mfs_tile_anchor: None,
-            standard_mfs_residual_backend: None,
-            standard_mfs_initial_dirty_backend: None,
-            standard_mfs_metal_minor_cycle_chunk: None,
-            standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
-            standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
-            imaging_memory_pressure_policy: Default::default(),
-            imaging_prepare_buffer_mb: None,
-            imaging_row_block_rows: None,
-            imaging_prepare_workers: None,
-            imaging_read_ahead_blocks: None,
-            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
-            imaging_fft_backend: ImagingFftBackendPolicy::RustFft,
-            write_preview_pngs: false,
             progress: None,
         };
         let config = request.to_cli_config().unwrap();
@@ -3949,7 +3700,6 @@ mod tests {
             small_scale_bias: 0.0,
             niter: 0,
             nmajor: None,
-            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -3973,26 +3723,10 @@ mod tests {
             aw_project: None,
             dirty_only: false,
             parallel: None,
-            chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
             standard_mfs_backend: None,
-            standard_mfs_grid_threads: None,
-            standard_mfs_tile_anchor: None,
-            standard_mfs_residual_backend: None,
-            standard_mfs_initial_dirty_backend: None,
-            standard_mfs_metal_minor_cycle_chunk: None,
-            standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
-            standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
-            imaging_memory_pressure_policy: Default::default(),
-            imaging_prepare_buffer_mb: None,
-            imaging_row_block_rows: None,
-            imaging_prepare_workers: None,
-            imaging_read_ahead_blocks: None,
-            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
-            imaging_fft_backend: ImagingFftBackendPolicy::Auto,
-            write_preview_pngs: true,
             progress: None,
         };
         let config = request.to_cli_config().unwrap();
@@ -4224,7 +3958,6 @@ mod tests {
             small_scale_bias: 0.0,
             niter: 0,
             nmajor: None,
-            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -4248,35 +3981,12 @@ mod tests {
             aw_project: None,
             dirty_only: false,
             parallel: None,
-            chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
             standard_mfs_backend: None,
-            standard_mfs_grid_threads: None,
-            standard_mfs_tile_anchor: None,
-            standard_mfs_residual_backend: None,
-            standard_mfs_initial_dirty_backend: None,
-            standard_mfs_metal_minor_cycle_chunk: None,
-            standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
-            standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
-            imaging_memory_pressure_policy: Default::default(),
-            imaging_prepare_buffer_mb: None,
-            imaging_row_block_rows: None,
-            imaging_prepare_workers: None,
-            imaging_read_ahead_blocks: None,
-            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
-            imaging_fft_backend: ImagingFftBackendPolicy::Auto,
-            write_preview_pngs: true,
             progress: None,
         };
-
-        assert!(
-            base.clone()
-                .to_cli_config()
-                .expect("base request converts")
-                .write_preview_pngs
-        );
 
         assert!(base.clone().to_cli_config().is_ok());
         assert!(
@@ -4353,7 +4063,6 @@ mod tests {
         let image_name = temp.path().join("artifact/demo");
         fs::create_dir_all(image_name.parent().unwrap()).expect("artifact parent");
         fs::write(image_name.with_extension("psf"), b"psf").expect("write psf");
-        fs::write(image_name.with_extension("psf.png"), b"png").expect("write psf png");
         let standard = ImagerRunTaskRequest {
             measurement_set: PathBuf::from("demo.ms"),
             image_name: image_name.clone(),
@@ -4391,7 +4100,6 @@ mod tests {
             small_scale_bias: 0.0,
             niter: 1,
             nmajor: None,
-            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -4415,26 +4123,10 @@ mod tests {
             aw_project: None,
             dirty_only: false,
             parallel: None,
-            chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
             standard_mfs_backend: None,
-            standard_mfs_grid_threads: None,
-            standard_mfs_tile_anchor: None,
-            standard_mfs_residual_backend: None,
-            standard_mfs_initial_dirty_backend: None,
-            standard_mfs_metal_minor_cycle_chunk: None,
-            standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
-            standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
-            imaging_memory_pressure_policy: Default::default(),
-            imaging_prepare_buffer_mb: None,
-            imaging_row_block_rows: None,
-            imaging_prepare_workers: None,
-            imaging_read_ahead_blocks: None,
-            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
-            imaging_fft_backend: ImagingFftBackendPolicy::Auto,
-            write_preview_pngs: true,
             progress: None,
         };
         let standard_config = standard.to_cli_config().unwrap();
@@ -4457,7 +4149,6 @@ mod tests {
             .find(|artifact| artifact.kind == ImagerArtifactKind::Psf)
             .unwrap();
         assert!(standard_psf.exists);
-        assert!(standard_psf.preview_png_exists);
         assert!(
             standard_artifacts
                 .iter()
@@ -4500,8 +4191,7 @@ mod tests {
               "robust": 0.5
             },
             "niter": 0,
-            "dirty_only": true,
-            "write_preview_pngs": true
+            "dirty_only": true
           }
         }"#;
         let request: ImagerTaskRequest =
@@ -4521,7 +4211,6 @@ mod tests {
         assert_eq!(request.weighting, ImagerWeighting::Briggs { robust: 0.5 });
         assert_eq!(request.niter, 0);
         assert!(request.dirty_only);
-        assert!(request.write_preview_pngs);
 
         let config = request.to_cli_config().expect("restore CLI config");
         assert_eq!(config.field_ids, Some(vec![0]));
@@ -4971,7 +4660,6 @@ mod tests {
             small_scale_bias: 0.0,
             niter: 0,
             nmajor: None,
-            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -4995,26 +4683,10 @@ mod tests {
             aw_project: None,
             dirty_only: false,
             parallel: None,
-            chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
             standard_mfs_backend: None,
-            standard_mfs_grid_threads: None,
-            standard_mfs_tile_anchor: None,
-            standard_mfs_residual_backend: None,
-            standard_mfs_initial_dirty_backend: None,
-            standard_mfs_metal_minor_cycle_chunk: None,
-            standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
-            standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
-            imaging_memory_pressure_policy: Default::default(),
-            imaging_prepare_buffer_mb: None,
-            imaging_row_block_rows: None,
-            imaging_prepare_workers: None,
-            imaging_read_ahead_blocks: None,
-            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
-            imaging_fft_backend: ImagingFftBackendPolicy::Auto,
-            write_preview_pngs: true,
             progress: None,
         };
 

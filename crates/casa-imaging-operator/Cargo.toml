@@ -1,0 +1,20 @@
+[package]
+name = "casa-imaging-operator"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Measurement operator: placement records, convolution functions, gridding backends and weighting"
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-fft = { path = "../casa-fft" }
+casa-imaging-model = { path = "../casa-imaging-model" }
+casa-numerics = { path = "../casa-numerics" }
+ndarray.workspace = true
+num-complex.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

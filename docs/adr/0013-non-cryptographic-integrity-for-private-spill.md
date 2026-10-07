@@ -1,10 +1,10 @@
 # ADR-0013: Non-cryptographic integrity for private run-scoped spill artifacts
 
-Status: accepted
+Status: superseded
 Date: 2026-09-10
-Truth class: normative
+Truth class: historical, non-normative
 Supersedes:
-Superseded by:
+Superseded by: ADR-0015, explicit owner direction 2026-10-03
 
 ## Context
 

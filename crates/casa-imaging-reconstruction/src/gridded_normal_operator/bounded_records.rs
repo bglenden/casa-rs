@@ -429,7 +429,7 @@ impl BoundedRecordEncoder {
         sink: &mut impl FnMut(&[u8], u64, [u32; 2]) -> Result<(), SpectralOperatorError>,
     ) -> Result<(), SpectralOperatorError> {
         let started = self.observe_timings.then(Instant::now);
-        let encoding_before = self.timings.encoding_checksum;
+        let encoding_before = self.timings.encoding;
         let sink_before = if self.observe_timings {
             self.sink_duration()
         } else {
@@ -439,7 +439,7 @@ impl BoundedRecordEncoder {
         if let Some(started) = started {
             self.timings.grouping_reduction += started
                 .elapsed()
-                .saturating_sub(self.timings.encoding_checksum - encoding_before)
+                .saturating_sub(self.timings.encoding - encoding_before)
                 .saturating_sub(self.sink_duration() - sink_before);
         }
         result
@@ -520,7 +520,7 @@ impl BoundedRecordEncoder {
                         }
                     }
                     if let Some(started) = started {
-                        self.timings.encoding_checksum += started.elapsed();
+                        self.timings.encoding += started.elapsed();
                     }
                     self.reduced_groups = self
                         .reduced_groups
@@ -581,7 +581,7 @@ impl BoundedRecordEncoder {
                         *bytes = canonical_zero_bits(*sum).to_le_bytes();
                     }
                     if let Some(started) = started {
-                        self.timings.encoding_checksum += started.elapsed();
+                        self.timings.encoding += started.elapsed();
                     }
                     self.reduced_groups = self
                         .reduced_groups
@@ -634,7 +634,7 @@ fn encode_record(
         }
         validate_numeric_record(forward_real, forward_imaginary, imaging_weight)?;
         let key = output_channel
-            | (u64::from(record.chart_ordinal) << TAP_KEY_BITS)
+            | (u64::from(record.chart_ordinal) << super::CHANNEL_KEY_BITS)
             | (u64::from(aw.mueller_element) << AW_MUELLER_SHIFT)
             | if group_end { AW_GROUP_END_BIT } else { 0 };
         for (bytes, value) in encoded.as_chunks_mut::<8>().0.iter_mut().zip([
@@ -662,7 +662,7 @@ fn encode_record(
             | (output_channel << TAP_KEY_BITS)
             | ((record.role as u64) << RECORD_ROLE_SHIFT)
             | if group_end { GROUP_END_BIT } else { 0 };
-        let route = u64::from(record.chart_ordinal) | ((record.taps >> 24) << 24);
+        let route = u64::from(record.chart_ordinal) | (record.taps & !TAP_KEY_MASK);
         for (bytes, value) in encoded.as_chunks_mut::<8>().0.iter_mut().zip([
             key,
             route,
@@ -697,7 +697,7 @@ fn validate_numeric_record(
 mod tests {
     use super::super::{
         AwRecordCoordinates, GriddedNormalOperatorBlockMeasurements, ReducedRecordGroup,
-        encode_and_checksum_mode, encode_taylor_and_checksum, group_and_reduce_taylor,
+        encode_records_mode, encode_taylor_records, group_and_reduce_taylor,
     };
     use super::*;
 
@@ -715,14 +715,63 @@ mod tests {
     }
 
     fn oracle(groups: Vec<ReducedRecordGroup>, aw: bool) -> Vec<u8> {
-        encode_and_checksum_mode(
+        encode_records_mode(
             groups,
             aw,
             &mut GriddedNormalOperatorBlockMeasurements::default(),
         )
         .expect("reference codec")
-        .0
         .into_vec()
+    }
+
+    #[test]
+    fn large_grid_coordinates_do_not_overlap_channels_routes_or_roles() {
+        use super::super::{SampleTaps, TapSpan, decode_record_for_shape, encode_taps};
+        let taps = SampleTaps {
+            x: TapSpan {
+                start: 4993,
+                weight_index: (1 << 24) - 1,
+            },
+            y: TapSpan {
+                start: 4992,
+                weight_index: 255,
+            },
+        };
+        for role in [
+            RecordRole::Both,
+            RecordRole::Prediction,
+            RecordRole::Accumulation,
+        ] {
+            let record = ReducedRecordKey {
+                chart_ordinal: 0x00ab_cdef,
+                output_channel: 0x00fe_dcba,
+                role,
+                ..record(encode_taps(taps).unwrap())
+            };
+            let mut encoded = [0; 40];
+            encode_record(&record, 1.0, true, false, &mut encoded).unwrap();
+            assert_eq!(
+                encoded.as_slice(),
+                oracle(
+                    vec![ReducedRecordGroup {
+                        records: vec![record],
+                        multiplicity: 1.0
+                    }],
+                    false
+                )
+            );
+            let decoded = decode_record_for_shape(&encoded, [5000, 5000], 1 << 24).unwrap();
+            assert_eq!(decoded.taps, taps);
+            assert_eq!(decoded.chart_ordinal, record.chart_ordinal as usize);
+            assert_eq!(decoded.output_channel, record.output_channel as usize);
+            assert_eq!(decoded.role, role);
+            assert!(decoded.group_end);
+            encoded[11] = 1;
+            assert_eq!(
+                decode_record_for_shape(&encoded, [5000, 5000], 1 << 24),
+                Err(SpectralOperatorError::InvalidGriddedRecord)
+            );
+        }
     }
 
     #[test]
@@ -1154,9 +1203,8 @@ mod tests {
                     group_and_reduce_taylor::<false>(chunk.to_vec(), plan, &mut measurements)
                         .expect("reference Taylor reduction");
                 expected.extend_from_slice(
-                    &encode_taylor_and_checksum(reduced, plan, &mut measurements)
-                        .expect("reference Taylor encoding")
-                        .0,
+                    &encode_taylor_records(reduced, plan, &mut measurements)
+                        .expect("reference Taylor encoding"),
                 );
             }
             assert_eq!(actual, expected);
@@ -1268,10 +1316,7 @@ mod tests {
         let elapsed = started.elapsed();
         let timings = encoder.timings();
         assert!(encoder.sink_duration() >= Duration::from_millis(6));
-        assert!(
-            timings.grouping_reduction + timings.encoding_checksum + encoder.sink_duration()
-                <= elapsed
-        );
+        assert!(timings.grouping_reduction + timings.encoding + encoder.sink_duration() <= elapsed);
         assert_eq!(timings.record_key_construction, Duration::ZERO);
         assert_eq!(timings.completion, Duration::ZERO);
     }

@@ -66,20 +66,25 @@ pub struct SerialProductPublicationPolicy {
     storage_io: StorageIoResourceBinding,
     stage_nanos: u64,
     confidence_parts_per_million: u32,
+    native_thread_stack_bytes: u64,
 }
 impl SerialProductPublicationPolicy {
-    /// Bind the implementation, output storage, and prediction inputs.
+    /// Bind the implementation, output storage, prediction inputs, and the
+    /// host's default native thread stack
+    /// (`ResourceTopology::native_thread_stack_bytes`).
     pub fn new(
         implementation: WorkImplementationId,
         storage_io: StorageIoResourceBinding,
         stage_nanos: u64,
         confidence_parts_per_million: u32,
+        native_thread_stack_bytes: u64,
     ) -> Self {
         Self {
             implementation,
             storage_io,
             stage_nanos,
             confidence_parts_per_million,
+            native_thread_stack_bytes,
         }
     }
 }
@@ -370,7 +375,13 @@ fn build_physical<R: ImplementationRegistry>(
                 memory("product-publication-commit", 1),
             ],
             workers: CountDemand::new(workers, workers),
-            overhead: RuntimeOverheadDemand::zero(),
+            overhead: RuntimeOverheadDemand {
+                external_library_bytes: publication_fft_stack_bytes(
+                    workers as usize,
+                    policy.native_thread_stack_bytes,
+                )?,
+                ..RuntimeOverheadDemand::zero()
+            },
             storage: vec![StorageDemand {
                 demand_id: storage_demand,
                 domain: policy.storage_io.domain().clone(),
@@ -563,6 +574,37 @@ fn layout_id(artifact: ArtifactIdentity) -> PhysicalLayoutId {
     PhysicalLayoutId::from_sha256(hash.finalize().into())
 }
 
+fn publication_fft_stack_bytes(
+    workers: usize,
+    thread_stack_bytes: u64,
+) -> Result<u64, SerialProductPublicationPlanError> {
+    // Single- and double-precision FFTW pools can both survive imaging into
+    // publication. Bound both by the admitted CPU budget, not by window lanes.
+    crate::reconstruction_executor::native_fft_stack_bytes(workers, thread_stack_bytes)
+        .map_err(SerialProductPublicationPlanError::NativeFftStacks)?
+        .checked_mul(2)
+        .ok_or(SerialProductPublicationPlanError::Overflow)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn publication_charges_persistent_native_pools_without_replica_images() {
+        const THREAD_STACK_BYTES: u64 = 8 << 20;
+        for workers in [1, 2, 4, 8, 16] {
+            let expected = 2 * crate::reconstruction_executor::native_fft_stack_bytes(
+                workers,
+                THREAD_STACK_BYTES,
+            )
+            .unwrap();
+            assert_eq!(
+                super::publication_fft_stack_bytes(workers, THREAD_STACK_BYTES).unwrap(),
+                expected
+            );
+        }
+    }
+}
+
 /// Planning failure for direct product publication.
 #[derive(Debug)]
 pub enum SerialProductPublicationPlanError {
@@ -576,6 +618,8 @@ pub enum SerialProductPublicationPlanError {
     Physical(PhysicalWorkBindingError),
     /// Invalid output layout.
     Layout(PublicationLayoutError),
+    /// The platform's native FFTW worker-stack bound could not be queried.
+    NativeFftStacks(std::io::Error),
 }
 impl fmt::Display for SerialProductPublicationPlanError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -727,9 +771,6 @@ impl<S: SerialProductPublicationSink> WorkImplementation for SerialProductPublic
                     ReconstructionMaskSet::Shared(mask) => inputs.with_reconstruction_mask(mask),
                     ReconstructionMaskSet::Domains(masks) => {
                         inputs.with_domain_reconstruction_masks(masks)
-                    }
-                    ReconstructionMaskSet::Coupled(masks) => {
-                        inputs.with_coupled_reconstruction_masks(masks)
                     }
                 }
                 .map_err(SerialProductPublicationExecutionError::Products)?;

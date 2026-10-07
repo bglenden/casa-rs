@@ -6,23 +6,15 @@
 //! simulator: standard-MFS model prediction and the cached Airy voltage
 //! pattern. MeasurementSet persistence remains in `casa-ms`.
 
-use std::collections::HashMap;
-use std::sync::{Arc, LazyLock, Mutex};
-
+use casa_fft::Fft2;
 use casa_numerics::AnnularApertureVoltageTable;
-use ndarray::{Array2, Axis};
+use ndarray::Array2;
 use num_complex::Complex32;
-use rustfft::{Fft, FftPlanner};
 use thiserror::Error;
 
 const GRIDDER_SUPPORT: usize = 3;
 const GRIDDER_TAP_COUNT: usize = GRIDDER_SUPPORT * 2 + 1;
 const GRIDDER_PRODUCT_TAP_COUNT: usize = GRIDDER_TAP_COUNT * GRIDDER_TAP_COUNT;
-
-type FftKey = (usize, bool);
-type FftPlan = Arc<dyn Fft<f32>>;
-static FFT_CACHE: LazyLock<Mutex<HashMap<FftKey, FftPlan>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Failure to construct a simulation synthesis operator.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -358,62 +350,16 @@ impl StandardGridder {
 
 fn centered_fft2(input: &Array2<Complex32>) -> Array2<Complex32> {
     let mut transformed = shift2(input, true);
-    transform_axis(&mut transformed, Axis(0));
-    transform_axis(&mut transformed, Axis(1));
+    let mut fft = Fft2::<f32>::new([transformed.shape()[0], transformed.shape()[1]])
+        .expect("valid synthesis FFT shape");
+    fft.transform(
+        transformed
+            .as_slice_mut()
+            .expect("contiguous synthesis plane"),
+        false,
+    )
+    .expect("valid synthesis FFT plan");
     shift2(&transformed, false)
-}
-
-fn transform_axis(data: &mut Array2<Complex32>, axis: Axis) {
-    if axis.index() == 0 {
-        transform_rows(data);
-    } else {
-        transform_columns(data);
-    }
-}
-
-fn fft(len: usize) -> FftPlan {
-    let mut cache = FFT_CACHE.lock().expect("FFT cache lock poisoned");
-    if let Some(fft) = cache.get(&(len, false)) {
-        return Arc::clone(fft);
-    }
-    let fft = FftPlanner::<f32>::new().plan_fft_forward(len);
-    cache.insert((len, false), Arc::clone(&fft));
-    fft
-}
-
-fn transform_rows(data: &mut Array2<Complex32>) {
-    let fft = fft(data.shape()[1]);
-    let mut scratch = vec![Complex32::default(); fft.get_inplace_scratch_len()];
-    for mut row in data.rows_mut() {
-        if let Some(row) = row.as_slice_mut() {
-            fft.process_with_scratch(row, &mut scratch);
-        } else {
-            let mut lane = row.to_vec();
-            fft.process_with_scratch(&mut lane, &mut scratch);
-            for (column_index, value) in lane.into_iter().enumerate() {
-                row[column_index] = value;
-            }
-        }
-    }
-}
-
-fn transform_columns(data: &mut Array2<Complex32>) {
-    let [row_count, column_count]: [usize; 2] = data
-        .shape()
-        .try_into()
-        .expect("2-D FFT input should have exactly two axes");
-    let fft = fft(row_count);
-    let mut lane = vec![Complex32::default(); row_count];
-    let mut scratch = vec![Complex32::default(); fft.get_inplace_scratch_len()];
-    for column_index in 0..column_count {
-        for row_index in 0..row_count {
-            lane[row_index] = data[(row_index, column_index)];
-        }
-        fft.process_with_scratch(&mut lane, &mut scratch);
-        for row_index in 0..row_count {
-            data[(row_index, column_index)] = lane[row_index];
-        }
-    }
 }
 
 fn shift2(input: &Array2<Complex32>, inverse: bool) -> Array2<Complex32> {

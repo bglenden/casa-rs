@@ -4,7 +4,7 @@ Status: accepted
 Date: 2026-08-18
 Truth class: normative
 Supersedes:
-Superseded by:
+Superseded by: 0016 (the Migration section and the attestation wording only)
 
 ## Context
 

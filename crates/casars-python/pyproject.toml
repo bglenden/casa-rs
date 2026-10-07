@@ -8,12 +8,12 @@ description = "Python bindings for casa-rs"
 requires-python = ">=3.10"
 dynamic = ["version"]
 readme = "README.md"
-license = { text = "LGPL-3.0-or-later" }
+license = { file = "../../COPYING" }
 keywords = ["astronomy", "radio-astronomy", "casacore", "casa", "numpy"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
-  "License :: OSI Approved :: GNU Lesser General Public License v3 or later (LGPLv3+)",
+  "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.10",
@@ -49,6 +49,11 @@ test = [
 python-source = "python"
 module-name = "casars._core"
 features = ["extension-module"]
+include = [
+  { path = "LICENSE", format = "wheel" },
+  { path = "COPYING.LESSER", format = "wheel" },
+  { path = "THIRD_PARTY_NOTICES.md", format = "wheel" },
+]
 
 [tool.pytest.ini_options]
 testpaths = ["python/tests"]

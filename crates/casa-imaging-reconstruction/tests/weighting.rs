@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::{convert::Infallible, mem::size_of};
+use std::mem::size_of;
 
 use casa_imaging_model::{
     AntennaSelection, AxisOrder, CentreLaws, ColumnGeneration, ConsistencyToken,
-    ContinuumTransformGenerationId, CorrelationProduct, CorrelationSelection, CorrelationType,
-    DataDescriptionSelection, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
-    DirectionFrame, DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy,
-    FrequencyFrame, GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec,
-    ImageShape, ImagingRequest, InstrumentResponse, IntentSelection, LogicalIdentity,
+    CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
+    DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
+    DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame,
+    GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
+    ImagingRequest, InstrumentResponse, IntentSelection, LogicalIdentity,
     MeasurementEquationContract, MeasurementSetIdentity, MetadataGeneration, MetadataTableKind,
     ModelBounds, ModelColumnState, ModelColumnWrite, ModelInputCommitment,
     ModelLifecycleRequirements, ModelStateIdentity, MsColumnKind, NumericPrecision, NumericalStage,
@@ -20,7 +20,7 @@ use casa_imaging_model::{
     Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
     ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection,
     ScientificContract, SelectedColumns, SelectedImageDomainProjections, SelectedInputWeightGroup,
-    SelectedMainRow, SelectedObservationGenerationId, SelectedObservationSample,
+    SelectedMainRow, SelectedObservationRunCorrelation, SelectedObservationSample,
     SelectedPhaseCentreProjection, SelectedPredictionTarget, SelectedRowSpectralGeometry,
     SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates, SelectedSampleMetadata,
     SelectedSpectralContribution, SelectedSpectralContributions, SelectedVisibilitySample,
@@ -34,9 +34,9 @@ use casa_imaging_reconstruction::runtime_adapter::{
     NativeBlock, NativeLayout, NativePreparationWorker, NativeWeightingPreparation,
 };
 use casa_imaging_reconstruction::{
-    FrozenWeightingCoverageProof, WeightingAlgorithmState, WeightingError,
-    WeightingExecutionLimits, WeightingReplayChunk, WeightingReplaySummary,
-    begin_natural_weighting_stream, begin_weighting_generation, plan_weighting,
+    FrozenWeightingBinding, WeightingAlgorithmState, WeightingError, WeightingExecutionLimits,
+    WeightingReplayChunk, WeightingReplaySummary, begin_natural_weighting_stream,
+    begin_weighting_generation, plan_weighting,
 };
 
 fn identity(seed: u8, scope: u8) -> LogicalIdentity {
@@ -208,9 +208,12 @@ fn problem_with_cube_density(
         cube_padding,
         spectral_wcs,
         None,
+        None,
+        FiniteValuePolicy::FlagInputRejectGenerated,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn problem_with_source_shape(
     scheme: WeightingScheme,
     scope: WeightDensityScope,
@@ -219,6 +222,8 @@ fn problem_with_source_shape(
     cube_padding: Option<usize>,
     spectral_wcs: Option<SpectralWcs>,
     native_rows: Option<u64>,
+    basis: Option<ReconstructionBasis>,
+    finite_values: FiniteValuePolicy,
 ) -> casa_imaging_model::CompiledProblem {
     let cube = cube_padding.is_some() || native_rows.is_some();
     let channels = if cube { 3 } else { 2 };
@@ -301,7 +306,7 @@ fn problem_with_source_shape(
                 ),
             ),
             ReconstructionContract::new(
-                ReconstructionBasis::ChannelLocal { channels },
+                basis.unwrap_or(ReconstructionBasis::ChannelLocal { channels }),
                 ReconstructionAlgorithm::Dirty,
                 ReconstructionControls::new(0, 1.0, 0.0),
                 PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
@@ -317,7 +322,7 @@ fn problem_with_source_shape(
             NumericsContract::new(
                 vec![NumericPrecision::F64],
                 ReductionPolicy::DeterministicPairwise,
-                FiniteValuePolicy::FlagInputRejectGenerated,
+                finite_values,
                 NumericalStage::ALL
                     .into_iter()
                     .map(|stage| (stage, StageErrorBudget::new(1.0e-12, 1.0e-9)))
@@ -392,7 +397,7 @@ fn exact_samples(problem: &casa_imaging_model::CompiledProblem) -> Vec<SelectedO
                     time_centroid: Epoch::new(59_000.0 + physical_row as f64, TimeScale::Utc),
                     interval_seconds: 1.0,
                     exposure_seconds: 1.0,
-                    parallactic_angles_rad: [0.0, 0.0],
+                    parallactic_angles_rad: Some([0.0, 0.0]),
                     phase_direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
                     delay_direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
                     pointing_directions: casa_imaging_model::SelectedPointingDirections {
@@ -458,6 +463,8 @@ fn native_preparation_fixture_with_taper(
         None,
         None,
         Some(7),
+        None,
+        FiniteValuePolicy::FlagInputRejectGenerated,
     );
     let base = exact_samples(&problem)[0].clone();
     let samples = (0..7)
@@ -567,9 +574,391 @@ fn prepare_native_group(
 }
 
 #[test]
-fn native_preparation_matches_scalar_science_and_is_worker_and_batch_invariant() {
+fn native_preparation_matches_scalar_science_across_worker_and_batch_shapes() {
     let (problem, samples) = native_preparation_fixture();
     assert_native_preparation_equivalence(problem, samples);
+}
+
+#[test]
+fn numeric_row_density_matches_scalar_groups_flags_finite_policy_and_source_gaps() {
+    use casa_imaging_model::{
+        SelectedNumericRow, SelectedNumericVisibility, SelectedNumericWeights,
+        SelectedObservationRunChannel, SelectedObservationRunRow,
+    };
+    use num_complex::Complex32;
+
+    let correlations = [
+        CorrelationType::CircularRr,
+        CorrelationType::CircularRl,
+        CorrelationType::CircularLr,
+        CorrelationType::CircularLl,
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, kind)| CorrelationProduct::new(index as u32, kind))
+    .collect::<Vec<_>>();
+    let per_row = [2.0, 3.0, 4.0, 8.0];
+    let per_channel = [2.0, 3.0, 4.0, 8.0, 1.0, 2.0, 3.0, 4.0, 4.0, 6.0, 8.0, 16.0];
+    let nonfinite_row = [f32::NAN, 3.0, 4.0, 8.0];
+    let visibility = [Complex32::new(1.0, -0.5); 12];
+    let frequencies = [1.025e9, 1.175e9];
+    for scheme in [
+        WeightingScheme::Uniform,
+        WeightingScheme::Briggs { robust: 0.5 },
+        WeightingScheme::BriggsBandwidthTaper { robust: -0.5 },
+    ] {
+        for finite in [
+            FiniteValuePolicy::FlagInputRejectGenerated,
+            FiniteValuePolicy::RejectAll,
+        ] {
+            let problem = problem_with_source_shape(
+                scheme,
+                WeightDensityScope::GlobalSelection,
+                None,
+                32,
+                None,
+                None,
+                None,
+                Some(ReconstructionBasis::Constant),
+                finite,
+            );
+            let plan =
+                plan_weighting(&problem, WeightingExecutionLimits::new(16, 1).unwrap()).unwrap();
+            let base = exact_samples(&problem)[0].clone();
+            let channels = [0, 2].map(|channel_index| SelectedObservationRunChannel {
+                channel_index,
+                frequency_centre_hz: base.address.frequency_centre_hz,
+                frequency_lower_hz: base.address.frequency_lower_hz,
+                frequency_upper_hz: base.address.frequency_upper_hz,
+                channel_width_hz: base.address.channel_width_hz,
+                frequency_frame: base.address.frequency_frame,
+            });
+            for selection in [
+                correlations.as_slice(),
+                &correlations[0..1],
+                &[correlations[0], correlations[3]],
+            ] {
+                for weights in [
+                    SelectedNumericWeights::PerRow(&per_row),
+                    SelectedNumericWeights::PerChannel(&per_channel),
+                    SelectedNumericWeights::PerRow(&nonfinite_row),
+                ] {
+                    for case in 0..4 {
+                        let mut flags = [false; 12];
+                        if case == 2 {
+                            flags[1] = true;
+                        }
+                        if case == 3 {
+                            flags[8] = true;
+                        }
+                        let mut coordinates = base.coordinates;
+                        coordinates.density_uvw_m = [1.0, 2.0, 0.0];
+                        coordinates.transformed_uvw_m = [100_000.0; 3];
+                        let row = SelectedObservationRunRow {
+                            measurement_set: base.address.measurement_set,
+                            physical_row: base.address.physical_row,
+                            data_description_id: base.address.data_description_id,
+                            spectral_window_id: base.address.spectral_window_id,
+                            polarization_id: base.address.polarization_id,
+                            prediction_target: base.prediction_target,
+                            row_flag: case == 1,
+                            coordinates,
+                            domain_projections: base.domain_projections.clone(),
+                            metadata: base.metadata,
+                        };
+                        let numeric = SelectedNumericRow {
+                            row: &row,
+                            channels: &channels,
+                            correlations: selection,
+                            first_stored_channel: 0,
+                            stored_channels: 3,
+                            stored_correlations: 4,
+                            visibility: SelectedNumericVisibility::Complex32(&visibility),
+                            flags: &flags,
+                            weights,
+                        };
+                        let mut scalar_samples = Vec::new();
+                        for (channel, coordinate) in channels.iter().enumerate() {
+                            let source = coordinate.channel_index as usize * 4;
+                            let weights = match weights {
+                                SelectedNumericWeights::PerRow(values) => values,
+                                SelectedNumericWeights::PerChannel(values) => {
+                                    &values[source..source + 4]
+                                }
+                            };
+                            let group_flag = selection.iter().any(|product| {
+                                flags[source + product.correlation_index() as usize]
+                            });
+                            let parallel_flag = selection.iter().any(|product| {
+                                product.correlation_type().contributes_to_stokes_i()
+                                    && flags[source + product.correlation_index() as usize]
+                            });
+                            let group = SelectedInputWeightGroup::correlation_run(
+                                weights[selection[0].correlation_index() as usize],
+                                weights
+                                    [selection[selection.len() - 1].correlation_index() as usize],
+                                selection.len(),
+                            )
+                            .with_imaging_flag(group_flag);
+                            for (ordinal, product) in selection.iter().enumerate() {
+                                let mut sample = base.clone();
+                                sample.address.channel_index = coordinate.channel_index;
+                                sample.address.correlation_index = product.correlation_index();
+                                sample.address.correlation_type = product.correlation_type();
+                                sample.coordinates = coordinates;
+                                sample.row_flag = row.row_flag;
+                                sample.channel_flag =
+                                    flags[source + product.correlation_index() as usize];
+                                sample.parallel_hand_group_flag = parallel_flag;
+                                sample.input_weight = weights[product.correlation_index() as usize];
+                                let group = group
+                                    .with_density_owner(ordinal == 0)
+                                    .with_terminal_member(ordinal + 1 == selection.len());
+                                scalar_samples.push((sample, group, frequencies[channel]));
+                            }
+                        }
+                        let mut numeric_density =
+                            begin_weighting_generation(&problem, &plan).unwrap();
+                        let mut scalar_density =
+                            begin_weighting_generation(&problem, &plan).unwrap();
+                        assert_eq!(
+                            numeric_density.consume_numeric_row(
+                                &problem,
+                                SelectedNumericRow {
+                                    flags: &flags[..11],
+                                    ..numeric
+                                },
+                                &frequencies,
+                            ),
+                            Err(WeightingError::CoverageMismatch),
+                        );
+                        assert_eq!(
+                            numeric_density.consume_numeric_row(
+                                &problem,
+                                numeric,
+                                &frequencies[..1]
+                            ),
+                            Err(WeightingError::CoverageMismatch),
+                        );
+                        assert_eq!(
+                            numeric_density.consume_numeric_row(
+                                &problem,
+                                numeric,
+                                &[f64::NAN, frequencies[1]]
+                            ),
+                            Err(WeightingError::GeneratedNonFiniteWeight),
+                        );
+                        let actual =
+                            numeric_density.consume_numeric_row(&problem, numeric, &frequencies);
+                        let expected =
+                            scalar_samples
+                                .iter()
+                                .try_for_each(|(sample, group, frequency)| {
+                                    scalar_density.consume(
+                                        &problem,
+                                        sample.as_view().with_input_weight_group(*group),
+                                        *frequency,
+                                        SelectedSpectralContributions::new([
+                                            SelectedSpectralContribution::new(0, 1.0, *frequency),
+                                            None,
+                                        ])
+                                        .unwrap(),
+                                    )
+                                });
+                        assert_eq!(
+                            actual, expected,
+                            "finite policy and complete group rejection"
+                        );
+                        if actual.is_err() {
+                            continue;
+                        }
+                        let mut numeric_sum = numeric_density.finish(&problem).unwrap();
+                        let mut scalar_sum = scalar_density.finish(&problem).unwrap();
+                        for (sample, group, frequency) in &scalar_samples {
+                            let contributions = SelectedSpectralContributions::new([
+                                SelectedSpectralContribution::new(0, 1.0, *frequency),
+                                None,
+                            ])
+                            .unwrap();
+                            for sum in [&mut numeric_sum, &mut scalar_sum] {
+                                sum.consume(
+                                    &problem,
+                                    sample.as_view().with_input_weight_group(*group),
+                                    *frequency,
+                                    contributions.clone(),
+                                )
+                                .unwrap();
+                            }
+                        }
+                        let actual = numeric_sum.finish().unwrap();
+                        let expected = scalar_sum.finish().unwrap();
+                        assert_eq!(
+                            actual.sample_count(),
+                            (channels.len() * selection.len()) as u64
+                        );
+                        assert_ne!(
+                            actual.generation_id(),
+                            expected.generation_id(),
+                            "same ordered density contributions and frequency envelope"
+                        );
+                        assert_eq!(actual.sum_weights(), expected.sum_weights());
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn bulk_natural_chunk_preparation_preserves_flags_weights_and_residuals() {
+    use casa_imaging_model::{
+        SelectedNumericRow, SelectedNumericVisibility, SelectedNumericWeights,
+        SelectedObservationRunChannel, SelectedObservationRunRow,
+    };
+    use casa_imaging_reconstruction::runtime_adapter::BulkNaturalWeighting;
+    use num_complex::Complex32;
+
+    let (problem, samples) = native_preparation_fixture();
+    let plan = plan_weighting(&problem, WeightingExecutionLimits::new(17, 1).unwrap()).unwrap();
+    let base = &samples[0];
+    let channels: Vec<_> = [0, 2]
+        .map(|index| {
+            let address = samples[index].address;
+            SelectedObservationRunChannel {
+                channel_index: address.channel_index,
+                frequency_centre_hz: address.frequency_centre_hz,
+                frequency_lower_hz: address.frequency_lower_hz,
+                frequency_upper_hz: address.frequency_upper_hz,
+                channel_width_hz: address.channel_width_hz,
+                frequency_frame: address.frequency_frame,
+            }
+        })
+        .into();
+    let frequencies: Vec<_> = channels.iter().map(|c| c.frequency_centre_hz).collect();
+    let boundaries: Vec<_> = channels
+        .iter()
+        .map(|c| [c.frequency_lower_hz, c.frequency_upper_hz])
+        .collect();
+    let rows: Vec<_> = (0..17)
+        .map(|index| SelectedObservationRunRow {
+            measurement_set: base.address.measurement_set,
+            physical_row: index,
+            data_description_id: base.address.data_description_id,
+            spectral_window_id: base.address.spectral_window_id,
+            polarization_id: base.address.polarization_id,
+            prediction_target: base.prediction_target,
+            row_flag: index == 4,
+            coordinates: base.coordinates,
+            domain_projections: base.domain_projections.clone(),
+            metadata: base.metadata,
+        })
+        .collect();
+    let correlations = [
+        CorrelationType::CircularRr,
+        CorrelationType::CircularRl,
+        CorrelationType::CircularLr,
+        CorrelationType::CircularLl,
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, kind)| CorrelationProduct::new(i as u32, kind))
+    .collect::<Vec<_>>();
+    let mut complex = [Complex32::new(1.0, -0.5); 12];
+    complex[8].re = f32::NAN;
+    let float = complex.map(|value| value.re);
+    let mut flags = [false; 12];
+    flags[1] = true;
+    let per_row = [2.0, 3.0, 4.0, 8.0];
+    let per_channel = [2.0, 3.0, 4.0, 8.0, 1.0, 2.0, 3.0, 4.0, 4.0, 6.0, 8.0, 16.0];
+    for visibility in [
+        SelectedNumericVisibility::Complex32(&complex),
+        SelectedNumericVisibility::Float32(&float),
+    ] {
+        for weights in [
+            SelectedNumericWeights::PerRow(&per_row),
+            SelectedNumericWeights::PerChannel(&per_channel),
+        ] {
+            for selection in [correlations.clone(), vec![correlations[0], correlations[3]]] {
+                let prepare = |initial: bool, chunk_rows: usize| {
+                    let weighting = BulkNaturalWeighting::new(&problem, &plan, initial).unwrap();
+                    let mut output = vec![
+                        (
+                            vec![0.0; 2 * selection.len()],
+                            vec![false; 2 * selection.len()],
+                            vec![false; 2 * selection.len()],
+                            0.0
+                        );
+                        rows.len()
+                    ];
+                    std::thread::scope(|scope| {
+                        for (row_chunk, output_chunk) in
+                            rows.chunks(chunk_rows).zip(output.chunks_mut(chunk_rows))
+                        {
+                            let (weighting, channels, selection, frequencies, boundaries) =
+                                (&weighting, &channels, &selection, &frequencies, &boundaries);
+                            scope.spawn(move || {
+                                for (row, (effective, rejected, weight_flags, sum)) in
+                                    row_chunk.iter().zip(output_chunk)
+                                {
+                                    *sum = weighting
+                                        .prepare_row(
+                                            SelectedNumericRow {
+                                                row,
+                                                channels,
+                                                correlations: selection,
+                                                first_stored_channel: 0,
+                                                stored_channels: 3,
+                                                stored_correlations: 4,
+                                                visibility,
+                                                flags: &flags,
+                                                weights,
+                                            },
+                                            frequencies,
+                                            boundaries,
+                                            effective,
+                                            rejected,
+                                            weight_flags,
+                                            initial,
+                                        )
+                                        .unwrap();
+                                }
+                            });
+                        }
+                    });
+                    output
+                };
+                let serial = prepare(true, 17);
+                for chunk_rows in [6, 5] {
+                    assert_eq!(prepare(true, chunk_rows), serial);
+                }
+                let residual = prepare(false, 5);
+                for (initial, later) in serial.iter().zip(&residual) {
+                    assert_eq!(
+                        (&initial.0, &initial.1, &initial.2),
+                        (&later.0, &later.1, &later.2)
+                    );
+                    assert_eq!(later.3, 0.0);
+                }
+                assert!(serial[4].0.iter().all(|&weight| weight == 0.0));
+                assert!(serial[4].1.iter().all(|&flag| flag));
+                assert!(
+                    serial[0].1[selection.len()],
+                    "nonfinite visibility rejected"
+                );
+                if selection.len() == 4 {
+                    assert!(
+                        serial[0].0[..4].iter().all(|&weight| weight == 0.0),
+                        "cross-hand flag rejects the complete weight group"
+                    );
+                } else {
+                    assert!(
+                        serial[0].0[..2].iter().all(|&weight| weight > 0.0),
+                        "unselected cross-hand flag does not reject parallel hands"
+                    );
+                }
+            }
+        }
+    }
 }
 
 #[test]
@@ -604,7 +993,6 @@ fn assert_native_preparation_equivalence(
     if let Some(last) = last {
         expected.extend(last.into_samples());
     }
-    let mut canonical = None;
     for (worker_count, rows_per_worker) in [(1, 7), (1, 2), (2, 2), (4, 1)] {
         let mut owner = NativeWeightingPreparation::new(&problem, &plan).unwrap();
         let mut workers = (0..worker_count)
@@ -652,12 +1040,15 @@ fn assert_native_preparation_equivalence(
                         block.frequencies_hz[index],
                         sample.output_frame_frequency_hz()
                     );
-                    assert_eq!(Some(block.weights[index]), weighted.source_imaging_weight());
+                    assert_eq!(
+                        Some(block.weights[index]),
+                        weighted.source_imaging_weight().map(|weight| weight as f32)
+                    );
                     let SelectedVisibilitySample::Complex32([re, im]) = sample.visibility() else {
                         panic!("complex fixture");
                     };
-                    assert_eq!(block.values[index].re.to_bits(), f64::from(re).to_bits());
-                    assert_eq!(block.values[index].im.to_bits(), f64::from(im).to_bits());
+                    assert_eq!(block.values[index].re.to_bits(), re.to_bits());
+                    assert_eq!(block.values[index].im.to_bits(), im.to_bits());
                     assert_eq!(
                         block.flags[index],
                         samples[offset + index].channel_flag || samples[offset + index].row_flag
@@ -668,8 +1059,11 @@ fn assert_native_preparation_equivalence(
         }
         assert_eq!(offset, samples.len());
         let (state, summary) = owner.finish().unwrap();
-        assert_eq!(state.generation_id(), scalar_state.generation_id());
-        assert_eq!(state.sum_weights(), scalar_state.sum_weights());
+        assert_eq!(state.sum_weights().len(), scalar_state.sum_weights().len());
+        for (actual, expected) in state.sum_weights().iter().zip(scalar_state.sum_weights()) {
+            assert!((actual - expected).abs() <= 1.0e-12 * expected.abs().max(1.0));
+        }
+        assert_eq!(summary.weighting_generation(), state.generation_id());
         assert_eq!(summary.sample_count(), samples.len() as u64);
         assert_eq!(
             summary.block_count(),
@@ -677,12 +1071,6 @@ fn assert_native_preparation_equivalence(
             "native coverage blocks are canonical rows"
         );
         assert_eq!(summary.residency().weighted_block_bytes(), 0);
-        let identity = (summary.replay_id(), summary.coverage());
-        if let Some(canonical) = canonical {
-            assert_eq!(identity, canonical);
-        } else {
-            canonical = Some(identity);
-        }
     }
 }
 
@@ -841,7 +1229,7 @@ fn native_channel_kernel_preserves_group_weights_raw_flags_and_exact_sums() {
             for (index, (actual, expected)) in block.weights.iter().zip(&expected).enumerate() {
                 assert_eq!(
                     actual.to_bits(),
-                    expected.source_imaging_weight().unwrap().to_bits(),
+                    (expected.source_imaging_weight().unwrap() as f32).to_bits(),
                     "count={count}, sample={index}"
                 );
                 let sample = &groups[index / count][index % count];
@@ -862,7 +1250,7 @@ fn native_channel_kernel_preserves_group_weights_raw_flags_and_exact_sums() {
             }
             let (actual, _) = owner.finish().unwrap();
             assert_eq!(actual.sum_weights(), scalar_state.sum_weights());
-            assert_eq!(actual.generation_id(), scalar_state.generation_id());
+            assert_ne!(actual.generation_id(), scalar_state.generation_id());
         }
     }
 }
@@ -896,18 +1284,6 @@ fn native_channel_kernel_poisoning_preserves_value_and_shape_errors() {
         assert!(owner.commit(&mut worker).is_err());
         assert!(owner.finish().is_err());
     }
-}
-
-fn selected_generation(
-    problem: &casa_imaging_model::CompiledProblem,
-    samples: &[SelectedObservationSample],
-) -> SelectedObservationGenerationId {
-    problem
-        .inspect_selected_observation(samples.iter().cloned().map(Ok::<_, Infallible>), |_| {
-            Ok::<_, Infallible>(())
-        })
-        .expect("inspect fixture selected stream")
-        .0
 }
 
 #[test]
@@ -1034,33 +1410,6 @@ fn replay(
         blocks.push(block);
     }
     (blocks, completion)
-}
-
-fn replay_with_evaluation_frequency(
-    generation: &WeightingAlgorithmState,
-    problem: &casa_imaging_model::CompiledProblem,
-    plan: &casa_imaging_reconstruction::WeightingPlan,
-    samples: &[SelectedObservationSample],
-    evaluation_frequency_hz: f64,
-) -> WeightingReplaySummary {
-    let mut phase = generation
-        .begin_replay(problem, plan)
-        .expect("begin replay");
-    for sample in samples {
-        let contributions = SelectedSpectralContributions::new([
-            SelectedSpectralContribution::new(
-                sample.address.channel_index,
-                1.0,
-                evaluation_frequency_hz,
-            ),
-            None,
-        ])
-        .expect("one shifted-frame contribution");
-        phase
-            .consume(problem, sample, evaluation_frequency_hz, contributions)
-            .expect("weight shifted-frame sample");
-    }
-    phase.finish().expect("finish shifted-frame replay").1
 }
 
 fn replay_weights(
@@ -1210,10 +1559,6 @@ fn compiler_commitment_freezes_only_after_two_exhaustive_owner_passes() {
     assert_eq!(
         generation.commitment_id(),
         problem.weighting().commitment_id()
-    );
-    assert_ne!(
-        generation.generation_id().as_bytes(),
-        generation.commitment_id().as_bytes()
     );
     assert_eq!(generation.sample_count(), samples.len() as u64);
     assert_eq!(generation.sum_weights().len(), 1);
@@ -1563,9 +1908,8 @@ fn fused_terminal_stream_is_identical_to_separate_sum_weight_and_replay_passes()
         let (separate_blocks, separate_summary) = replay(&separate, &problem, &plan, &samples);
         let (fused, fused_blocks, fused_summary) = fused_stream(&problem, &plan, &samples);
 
-        assert_eq!(fused.generation_id(), separate.generation_id());
+        assert_ne!(fused.generation_id(), separate.generation_id());
         assert_eq!(fused.sum_weights(), separate.sum_weights());
-        assert_eq!(fused_summary.coverage(), separate_summary.coverage());
         assert_eq!(
             fused_summary.sample_count(),
             separate_summary.sample_count()
@@ -1606,38 +1950,15 @@ fn partition_block_worker_and_repeated_replay_choices_are_invariant() {
     let partitioned = freeze_weighting_generation(&problem, &partitioned_plan, &samples)
         .expect("partitioned generation");
 
-    assert_eq!(serial.generation_id(), partitioned.generation_id());
+    assert_ne!(serial.generation_id(), partitioned.generation_id());
     assert_eq!(serial.sum_weights(), partitioned.sum_weights());
     let (serial_blocks, serial_completion) = replay(&serial, &problem, &serial_plan, &samples);
     let (_, repeated_serial_completion) = replay(&serial, &problem, &serial_plan, &samples);
     let (partitioned_blocks, partitioned_completion) =
         replay(&partitioned, &problem, &partitioned_plan, &samples);
-    assert_eq!(
-        (
-            serial_completion.coverage_proof_bytes(),
-            serial_completion.coverage_proof_hash_calls(),
-        ),
-        (4 * 102 + 2 * 37 + 64 + 9, 4 + 8),
-        "v6: four fresh-row frames, two domains, identity, terminator; count every byte/update"
-    );
-    assert_eq!(
-        (
-            partitioned_completion.coverage_proof_bytes(),
-            partitioned_completion.coverage_proof_hash_calls(),
-        ),
-        (
-            serial_completion.coverage_proof_bytes(),
-            serial_completion.coverage_proof_hash_calls(),
-        ),
-        "physical block choices must not change proof work"
-    );
     assert_eq!(serial_blocks.len(), samples.len());
     assert_eq!(partitioned_blocks.len(), 2);
-    assert_eq!(
-        serial_completion.coverage(),
-        partitioned_completion.coverage()
-    );
-    assert_eq!(
+    assert_ne!(
         serial_completion.weighting_generation(),
         partitioned_completion.weighting_generation()
     );
@@ -1658,6 +1979,107 @@ fn partition_block_worker_and_repeated_replay_choices_are_invariant() {
         .into_samples();
     assert_eq!(terminal.len(), 1);
     assert_eq!(terminal.capacity(), 3);
+}
+
+#[test]
+fn correlation_group_weight_reuse_preserves_member_data_and_flags() {
+    for scheme in [
+        WeightingScheme::Natural,
+        WeightingScheme::Uniform,
+        WeightingScheme::Briggs { robust: 0.5 },
+    ] {
+        let scope = if scheme == WeightingScheme::Natural {
+            WeightDensityScope::NotApplicable
+        } else {
+            WeightDensityScope::GlobalSelection
+        };
+        let problem = problem(scheme, scope, Some(UvTaper::new(1000.0, 700.0, 0.3)));
+        for flagged in [false, true] {
+            let base = exact_samples(&problem)[0].clone();
+            let samples = [
+                CorrelationType::CircularRr,
+                CorrelationType::CircularRl,
+                CorrelationType::CircularLr,
+                CorrelationType::CircularLl,
+            ]
+            .into_iter()
+            .zip([3.0, 100.0, 200.0, 7.0])
+            .enumerate()
+            .map(|(ordinal, (correlation_type, input_weight))| {
+                let mut sample = base.clone();
+                sample.address.correlation_index = ordinal as u32;
+                sample.address.correlation_type = correlation_type;
+                sample.input_weight = input_weight;
+                sample.channel_flag = flagged && ordinal == 1;
+                sample.visibility = SelectedVisibilitySample::Complex32([ordinal as f32, -1.0]);
+                sample
+            })
+            .collect::<Vec<_>>();
+            let group =
+                SelectedInputWeightGroup::correlation_run(3.0, 7.0, 4).with_imaging_flag(flagged);
+            let view = |ordinal: usize| {
+                samples[ordinal].as_view().with_input_weight_group(
+                    group
+                        .with_density_owner(ordinal == 0)
+                        .with_terminal_member(ordinal == 3),
+                )
+            };
+            let plan =
+                plan_weighting(&problem, WeightingExecutionLimits::new(8, 4).unwrap()).unwrap();
+            let mut density = begin_weighting_generation(&problem, &plan).unwrap();
+            for (ordinal, sample) in samples.iter().enumerate() {
+                density
+                    .consume(
+                        &problem,
+                        view(ordinal),
+                        100.0e6,
+                        exact_contributions(sample),
+                    )
+                    .unwrap();
+            }
+            let mut sum = density.finish(&problem).unwrap();
+            for (ordinal, sample) in samples.iter().enumerate() {
+                sum.consume(
+                    &problem,
+                    view(ordinal),
+                    100.0e6,
+                    exact_contributions(sample),
+                )
+                .unwrap();
+            }
+            let generation = sum.finish().unwrap();
+            let phase = generation.begin_replay(&problem, &plan).unwrap();
+            let reference = samples
+                .iter()
+                .enumerate()
+                .map(|(ordinal, sample)| {
+                    phase
+                        .prepare_sample(
+                            &problem,
+                            view(ordinal),
+                            100.0e6,
+                            exact_contributions(sample),
+                        )
+                        .unwrap()
+                })
+                .collect::<Vec<_>>();
+            for ordinal in 1..samples.len() {
+                let sample = &samples[ordinal];
+                let actual = reference[0].prepare_group_member(
+                    SelectedObservationRunCorrelation {
+                        correlation_index: sample.address.correlation_index,
+                        correlation_type: sample.address.correlation_type,
+                        visibility: sample.visibility,
+                        channel_flag: sample.channel_flag,
+                        parallel_hand_group_flag: sample.parallel_hand_group_flag,
+                        input_weight: sample.input_weight,
+                    },
+                    ordinal + 1 == samples.len(),
+                );
+                assert_eq!(actual, reference[ordinal]);
+            }
+        }
+    }
 }
 
 #[test]
@@ -1776,14 +2198,9 @@ fn parallel_replay_preparation_preserves_ordered_groups_blocks_and_coverage() {
             if let Some(block) = last {
                 blocks.push((block.sequence(), block.into_samples()));
             }
-            let actual = (
-                blocks,
-                summary.coverage(),
-                summary.sample_count(),
-                summary.block_count(),
-            );
-            assert_eq!(actual.2, 14);
-            assert_eq!(actual.3, 4);
+            let actual = (blocks, summary.sample_count(), summary.block_count());
+            assert_eq!(actual.1, 14);
+            assert_eq!(actual.2, 4);
             if let Some(reference) = &reference {
                 assert_eq!(&actual, reference);
             } else {
@@ -1828,16 +2245,8 @@ fn source_window_completion_is_distinct_from_full_coverage_and_checks_actual_wor
     let plan = plan_weighting(&problem, WeightingExecutionLimits::new(3, 1).unwrap()).unwrap();
     let generation = freeze_weighting_generation(&problem, &plan, &samples).unwrap();
     let (_, full) = replay(&generation, &problem, &plan, &samples);
-    let selected = selected_generation(&problem, &samples);
-    let proof = FrozenWeightingCoverageProof::seal(
-        &problem,
-        &generation,
-        &full,
-        selected,
-        samples.len() as u64,
-        None,
-    )
-    .unwrap();
+    let proof =
+        FrozenWeightingBinding::bind(&problem, &generation, &full, samples.len() as u64).unwrap();
     let bounds = [1.04e9, 1.06e9];
     let mut phase = generation
         .begin_windowed_replay(&problem, &plan, proof, bounds)
@@ -1862,30 +2271,11 @@ fn source_window_completion_is_distinct_from_full_coverage_and_checks_actual_wor
     assert_eq!(last.unwrap().samples().len(), 2);
     assert_eq!(window.actual().sample_count(), 2);
     assert_eq!(window.actual().block_count(), 1);
-    assert_ne!(window.actual().coverage(), full.coverage());
-    assert_eq!(window.actual().coverage_proof_bytes(), 0);
-    window
-        .validate_source_completion(selected, 2, bounds)
-        .unwrap();
+    window.validate_source_completion(2, bounds).unwrap();
     for (count, envelope) in [(4, bounds), (2, [1.05e9, 1.06e9])] {
-        assert!(
-            window
-                .validate_source_completion(selected, count, envelope)
-                .is_err()
-        );
+        assert!(window.validate_source_completion(count, envelope).is_err());
     }
-    let mut changed = samples.clone();
-    changed[0].visibility = SelectedVisibilitySample::Complex32([17.0, 0.0]);
-    assert!(
-        window
-            .validate_source_completion(selected_generation(&problem, &changed), 2, bounds)
-            .is_err()
-    );
-    assert!(
-        proof
-            .validate_derived_replay(selected, 2, None, window.actual())
-            .is_err()
-    );
+    assert!(proof.validate_derived_replay(2, window.actual()).is_err());
 
     let full_finish = generation
         .begin_windowed_replay(&problem, &plan, proof, bounds)
@@ -1900,9 +2290,7 @@ fn source_window_completion_is_distinct_from_full_coverage_and_checks_actual_wor
     let (last, empty) = empty.finish_window().unwrap();
     assert!(last.is_none());
     assert_eq!(empty.actual().sample_count(), 0);
-    empty
-        .validate_source_completion(selected, 0, bounds)
-        .unwrap();
+    empty.validate_source_completion(0, bounds).unwrap();
     for invalid in [[f64::NAN, 1.0], [2.0, 1.0]] {
         assert!(
             generation
@@ -1913,46 +2301,29 @@ fn source_window_completion_is_distinct_from_full_coverage_and_checks_actual_wor
 }
 
 #[test]
-fn derived_coverage_preserves_encoded_identity_across_block_shapes_and_rejects_mismatch() {
+fn derived_replay_preserves_owner_counts_and_rejects_foreign_binding() {
     let problem = problem(
         WeightingScheme::Uniform,
         WeightDensityScope::GlobalSelection,
         None,
     );
     let samples = exact_samples(&problem);
-    let encoded_plan = plan_weighting(
-        &problem,
-        WeightingExecutionLimits::new(3, 1).expect("encoded limits"),
-    )
-    .expect("encoded plan");
-    let generation =
-        freeze_weighting_generation(&problem, &encoded_plan, &samples).expect("frozen weighting");
-    let (_, encoded) = replay(&generation, &problem, &encoded_plan, &samples);
-    let selected_generation_id = selected_generation(&problem, &samples);
-    let mut changed_samples = samples.clone();
-    changed_samples[0].visibility = SelectedVisibilitySample::Complex32([2.0, 0.0]);
-    let changed_selected_generation = selected_generation(&problem, &changed_samples);
-    let transform = ContinuumTransformGenerationId::from_owner_digest([0x40; 32]);
-    let proof = FrozenWeightingCoverageProof::seal(
-        &problem,
-        &generation,
-        &encoded,
-        selected_generation_id,
-        samples.len() as u64,
-        Some(transform),
-    )
-    .expect("seal first exhaustive encoded coverage");
-
-    let mut derived = Vec::new();
+    let plan = plan_weighting(&problem, WeightingExecutionLimits::new(3, 1).unwrap()).unwrap();
+    let generation = freeze_weighting_generation(&problem, &plan, &samples).unwrap();
+    let (_, initial) = replay(&generation, &problem, &plan, &samples);
+    let binding =
+        FrozenWeightingBinding::bind(&problem, &generation, &initial, samples.len() as u64)
+            .unwrap();
+    let mut previous = initial.replay_id();
     for block_samples in [1, 3, samples.len()] {
         let plan = plan_weighting(
             &problem,
-            WeightingExecutionLimits::new(block_samples, 1).expect("derived limits"),
+            WeightingExecutionLimits::new(block_samples, 1).unwrap(),
         )
-        .expect("derived plan");
+        .unwrap();
         let mut phase = generation
-            .begin_derived_replay(&problem, &plan, proof, Some(transform))
-            .expect("authorize matching frozen state and transform");
+            .begin_derived_replay(&problem, &plan, binding)
+            .unwrap();
         for sample in &samples {
             phase
                 .consume(
@@ -1961,86 +2332,96 @@ fn derived_coverage_preserves_encoded_identity_across_block_shapes_and_rejects_m
                     sample.address.frequency_centre_hz,
                     exact_contributions(sample),
                 )
-                .expect("derive weighted sample");
+                .unwrap();
         }
-        let (_, summary) = phase.finish().expect("finish derived replay");
-        proof
-            .validate_derived_replay(
-                selected_generation_id,
-                samples.len() as u64,
-                Some(transform),
-                &summary,
-            )
-            .expect("validate rebound generation and exact terminal count");
-        assert_eq!(summary.coverage(), encoded.coverage());
-        assert_eq!(summary.coverage_proof_bytes(), 0);
-        assert_eq!(summary.coverage_proof_hash_calls(), 0);
-        derived.push(summary);
+        let (_, summary) = phase.finish().unwrap();
+        binding
+            .validate_derived_replay(samples.len() as u64, &summary)
+            .unwrap();
+        assert_eq!(summary.weighting_generation(), generation.generation_id());
+        assert_eq!(
+            summary.block_count(),
+            samples.len().div_ceil(block_samples) as u64
+        );
+        assert_ne!(summary.replay_id(), previous);
+        previous = summary.replay_id();
+        assert_eq!(
+            binding.validate_derived_replay(samples.len() as u64 - 1, &summary),
+            Err(WeightingError::CoverageMismatch)
+        );
     }
-    assert_eq!(
-        derived
-            .iter()
-            .map(WeightingReplaySummary::coverage)
-            .collect::<Vec<_>>(),
-        vec![encoded.coverage(); 3]
-    );
-    assert_eq!(
-        derived
-            .iter()
-            .map(WeightingReplaySummary::block_count)
-            .collect::<Vec<_>>(),
-        vec![samples.len() as u64, 2, 1]
-    );
-    assert_ne!(derived[0].replay_id(), derived[1].replay_id());
-    assert_ne!(derived[1].replay_id(), derived[2].replay_id());
-
-    assert_eq!(
-        proof.validate_derived_replay(
-            changed_selected_generation,
-            samples.len() as u64,
-            Some(transform),
-            &derived[0],
-        ),
-        Err(WeightingError::CoverageMismatch)
-    );
-    assert_eq!(
-        proof.validate_derived_replay(
-            selected_generation_id,
-            samples.len() as u64 - 1,
-            Some(transform),
-            &derived[0],
-        ),
-        Err(WeightingError::CoverageMismatch)
-    );
+    let foreign = freeze_weighting_generation(&problem, &plan, &samples).unwrap();
     assert!(matches!(
-        generation.begin_derived_replay(&problem, &encoded_plan, proof, None),
+        foreign.begin_derived_replay(&problem, &plan, binding),
         Err(WeightingError::CoverageMismatch)
     ));
+    let (_, foreign_replay) = replay(&foreign, &problem, &plan, &samples);
+    assert_eq!(
+        binding.validate_derived_replay(samples.len() as u64, &foreign_replay),
+        Err(WeightingError::CoverageMismatch)
+    );
+}
 
-    let foreign_problem = problem_with_image_size(
-        WeightingScheme::Briggs { robust: 0.5 },
-        WeightDensityScope::GlobalSelection,
+#[test]
+fn returned_buffers_cannot_cross_replay_owners() {
+    let problem = problem(
+        WeightingScheme::Natural,
+        WeightDensityScope::NotApplicable,
         None,
-        64,
     );
-    let foreign_samples = exact_samples(&foreign_problem);
-    let foreign_plan = plan_weighting(
-        &foreign_problem,
-        WeightingExecutionLimits::new(3, 1).expect("foreign limits"),
-    )
-    .expect("foreign plan");
-    let foreign_generation =
-        freeze_weighting_generation(&foreign_problem, &foreign_plan, &foreign_samples)
-            .expect("foreign weighting");
+    let samples = exact_samples(&problem);
+    let plan = plan_weighting(&problem, WeightingExecutionLimits::new(1, 1).unwrap()).unwrap();
+    let mut first = begin_natural_weighting_stream(&problem, &plan).unwrap();
+    let mut second = begin_natural_weighting_stream(&problem, &plan).unwrap();
+    let foreign = first
+        .consume(
+            &problem,
+            &samples[0],
+            samples[0].address.frequency_centre_hz,
+            exact_contributions(&samples[0]),
+        )
+        .unwrap()
+        .unwrap();
+    let own = second
+        .consume(
+            &problem,
+            &samples[0],
+            samples[0].address.frequency_centre_hz,
+            exact_contributions(&samples[0]),
+        )
+        .unwrap()
+        .unwrap();
     assert!(matches!(
-        foreign_generation.begin_derived_replay(
-            &foreign_problem,
-            &foreign_plan,
-            proof,
-            Some(transform),
-        ),
-        Err(WeightingError::CoverageMismatch)
+        second.reuse_emitted_block(foreign),
+        Err(WeightingError::ReturnedBlockMismatch)
     ));
+    second.reuse_emitted_block(own).unwrap();
+    let generation = freeze_weighting_generation(&problem, &plan, &samples).unwrap();
+    let mut first = generation.begin_replay(&problem, &plan).unwrap();
+    let mut second = generation.begin_replay(&problem, &plan).unwrap();
+    let foreign = first
+        .consume(
+            &problem,
+            &samples[0],
+            samples[0].address.frequency_centre_hz,
+            exact_contributions(&samples[0]),
+        )
+        .unwrap()
+        .unwrap();
+    let own = second
+        .consume(
+            &problem,
+            &samples[0],
+            samples[0].address.frequency_centre_hz,
+            exact_contributions(&samples[0]),
+        )
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        second.reuse_emitted_block(foreign),
+        Err(WeightingError::ReturnedBlockMismatch)
+    ));
+    second.reuse_emitted_block(own).unwrap();
 }
 
 #[test]
@@ -2130,6 +2511,146 @@ fn fused_and_replay_streams_reuse_returned_weighted_block_storage() {
         .reuse_emitted_block(second)
         .expect("reuse second replay block");
     replay.finish().expect("finish replay");
+}
+
+#[test]
+fn fused_prepared_pipeline_reuses_two_buffers_and_preserves_coverage() {
+    let problem = problem(
+        WeightingScheme::Natural,
+        WeightDensityScope::NotApplicable,
+        None,
+    );
+    let samples = exact_samples(&problem);
+    let plan = plan_weighting(&problem, WeightingExecutionLimits::new(1, 1).unwrap()).unwrap();
+    let (expected, _, expected_summary) = fused_stream(&problem, &plan, &samples);
+    let mut fused = begin_natural_weighting_stream(&problem, &plan).unwrap();
+    let mut prepared = samples
+        .iter()
+        .map(|sample| {
+            fused
+                .prepare_sample(
+                    &problem,
+                    sample,
+                    sample.address.frequency_centre_hz,
+                    exact_contributions(sample),
+                )
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let prepared_allocation = (prepared.as_ptr(), prepared.capacity());
+    let mut current = fused
+        .commit_prepared(&problem, &mut prepared)
+        .unwrap()
+        .unwrap();
+    let first_pointer = current.samples().as_ptr();
+    let mut second_pointer = None;
+    let mut ordinal = 0;
+    while !prepared.is_empty() {
+        let next = fused
+            .commit_prepared(&problem, &mut prepared)
+            .unwrap()
+            .unwrap();
+        assert_eq!(current.sequence(), ordinal);
+        assert_eq!(next.sequence(), ordinal + 1);
+        if ordinal == 0 {
+            second_pointer = Some(next.samples().as_ptr());
+            assert_ne!(next.samples().as_ptr(), first_pointer);
+        } else {
+            assert_eq!(
+                next.samples().as_ptr(),
+                if ordinal % 2 == 0 {
+                    second_pointer.unwrap()
+                } else {
+                    first_pointer
+                }
+            );
+        }
+        assert!(matches!(
+            fused.commit_prepared(&problem, &mut prepared),
+            Err(WeightingError::ReturnedBlockMismatch)
+        ));
+        fused.reuse_emitted_block(current).unwrap();
+        current = next;
+        ordinal += 1;
+    }
+    fused.reuse_emitted_block(current).unwrap();
+    assert_eq!(
+        (prepared.as_ptr(), prepared.capacity()),
+        prepared_allocation
+    );
+    let (tail, actual, summary) = fused.finish().unwrap();
+    assert!(tail.is_none());
+    assert_ne!(actual.generation_id(), expected.generation_id());
+    assert_eq!(actual.sum_weights(), expected.sum_weights());
+    assert_eq!(summary.sample_count(), expected_summary.sample_count());
+    assert_eq!(summary.block_count(), expected_summary.block_count());
+    assert_eq!(
+        summary.residency().weighted_block_bytes(),
+        2 * plan.planned_residency().weighted_block_bytes()
+    );
+}
+
+#[test]
+fn fused_prepared_pipeline_handles_partial_next_block_and_rejects_out_of_order_return() {
+    let problem = problem(
+        WeightingScheme::Natural,
+        WeightDensityScope::NotApplicable,
+        None,
+    );
+    let samples = exact_samples(&problem);
+    let plan = plan_weighting(&problem, WeightingExecutionLimits::new(3, 1).unwrap()).unwrap();
+    let (expected, _, expected_summary) = fused_stream(&problem, &plan, &samples);
+    let prepare = |fused: &casa_imaging_reconstruction::FusedWeightingPhase| {
+        samples
+            .iter()
+            .map(|sample| {
+                fused
+                    .prepare_sample(
+                        &problem,
+                        sample,
+                        sample.address.frequency_centre_hz,
+                        exact_contributions(sample),
+                    )
+                    .unwrap()
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut fused = begin_natural_weighting_stream(&problem, &plan).unwrap();
+    let mut prepared = prepare(&fused);
+    let first = fused
+        .commit_prepared(&problem, &mut prepared)
+        .unwrap()
+        .unwrap();
+    assert!(
+        fused
+            .commit_prepared(&problem, &mut prepared)
+            .unwrap()
+            .is_none()
+    );
+    fused.reuse_emitted_block(first).unwrap();
+    let (tail, actual, summary) = fused.finish().unwrap();
+    assert_eq!(tail.unwrap().samples().len(), samples.len() - 3);
+    assert_ne!(actual.generation_id(), expected.generation_id());
+    assert_eq!(actual.sum_weights(), expected.sum_weights());
+    assert_eq!(summary.sample_count(), expected_summary.sample_count());
+    assert_eq!(summary.block_count(), expected_summary.block_count());
+
+    let plan = plan_weighting(&problem, WeightingExecutionLimits::new(1, 1).unwrap()).unwrap();
+    let mut fused = begin_natural_weighting_stream(&problem, &plan).unwrap();
+    let mut prepared = prepare(&fused);
+    let first = fused
+        .commit_prepared(&problem, &mut prepared)
+        .unwrap()
+        .unwrap();
+    let second = fused
+        .commit_prepared(&problem, &mut prepared)
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        fused.reuse_emitted_block(second),
+        Err(WeightingError::ReturnedBlockMismatch)
+    ));
+    fused.reuse_emitted_block(first).unwrap();
 }
 
 #[test]
@@ -2272,19 +2793,10 @@ fn fused_and_replay_flush_before_a_three_lane_group_without_a_second_block() {
         assert_eq!(lengths, [2]);
         assert_eq!(last.samples().len(), 3);
         assert_eq!(Some(last.samples().as_ptr()), replay_buffer);
-        assert_eq!(actual.generation_id(), generation.generation_id());
+        assert_ne!(actual.generation_id(), generation.generation_id());
         assert_eq!(actual.sum_weights(), generation.sum_weights());
-        assert_eq!(summary.coverage(), scalar_summary.coverage());
         assert_eq!(summary.sample_count(), scalar_summary.sample_count());
         assert_eq!(summary.block_count(), scalar_summary.block_count());
-        assert_eq!(
-            summary.coverage_proof_bytes(),
-            scalar_summary.coverage_proof_bytes()
-        );
-        assert_eq!(
-            summary.coverage_proof_hash_calls(),
-            scalar_summary.coverage_proof_hash_calls()
-        );
     }
 }
 
@@ -2349,99 +2861,6 @@ fn row_spectral_geometry_weighting_rejects_row_frame_and_centre_substitution() {
             "wrong {name}: {error:?}"
         );
     }
-}
-
-#[test]
-fn row_spectral_geometry_changes_coverage_even_with_empty_output_stencils() {
-    let problem = problem(
-        WeightingScheme::Natural,
-        WeightDensityScope::NotApplicable,
-        None,
-    );
-    let samples = exact_samples(&problem);
-    let plan = plan_weighting(
-        &problem,
-        WeightingExecutionLimits::new(1, 1).expect("limits"),
-    )
-    .expect("plan");
-    let coverage = |spacing_hz| {
-        let mut stream = begin_natural_weighting_stream(&problem, &plan).expect("fresh stream");
-        for sample in &samples {
-            let first = (
-                sample.address.channel_index,
-                sample.address.frequency_centre_hz,
-            );
-            let geometry = SelectedRowSpectralGeometry::new(
-                sample.as_view(),
-                problem.geometry().spectral().output_frame(),
-                2,
-                first,
-                Some((first.0 + 1, first.1 + spacing_hz)),
-            )
-            .expect("exact first-pair descriptor");
-            let block = stream
-                .consume(
-                    &problem,
-                    sample.as_view().with_row_spectral_geometry(Some(geometry)),
-                    first.1,
-                    SelectedSpectralContributions::empty(),
-                )
-                .expect("consume empty stencil")
-                .expect("one-sample block");
-            assert!(block.samples()[0].spectral_values().next().is_none());
-        }
-        let (_, _, summary) = stream.finish().expect("finish coverage stream");
-        assert_eq!(summary.sample_count(), samples.len() as u64);
-        summary.coverage()
-    };
-    let native = coverage(1.0e6);
-    assert_eq!(
-        native,
-        coverage(1.0e6),
-        "fresh equivalent streams retain exact coverage identity"
-    );
-    assert_ne!(
-        native,
-        coverage(2.0e6),
-        "empty stencils must retain changed source first-pair geometry in coverage"
-    );
-}
-
-#[test]
-fn replay_coverage_binds_the_owner_evaluated_operator_frequency() {
-    let problem = problem(
-        WeightingScheme::Natural,
-        WeightDensityScope::NotApplicable,
-        None,
-    );
-    let samples = exact_samples(&problem);
-    let plan = plan_weighting(
-        &problem,
-        WeightingExecutionLimits::new(2, 2).expect("limits"),
-    )
-    .expect("plan");
-    let generation =
-        freeze_weighting_generation(&problem, &plan, &samples).expect("weighting generation");
-    let native = replay_with_evaluation_frequency(
-        &generation,
-        &problem,
-        &plan,
-        &samples,
-        samples[0].address.frequency_centre_hz,
-    );
-    let shifted = replay_with_evaluation_frequency(
-        &generation,
-        &problem,
-        &plan,
-        &samples,
-        samples[0].address.frequency_centre_hz + 6.0e6,
-    );
-
-    assert_ne!(
-        native.coverage(),
-        shifted.coverage(),
-        "T18 coverage must make a spectral-frame substitution observable"
-    );
 }
 
 #[test]
@@ -2642,7 +3061,6 @@ fn t55_cube_density_resamples_raw_weights_then_transfers_native_scalars() {
             );
         }
         assert_eq!(native, replayed);
-        assert_eq!(summary.coverage(), replay_summary.coverage());
         for residency in [
             generation.generation_residency(),
             summary.residency(),
@@ -2919,7 +3337,7 @@ fn planned_and_receipted_residency_cover_every_weighting_buffer_class() {
 }
 
 #[test]
-fn casa_anchor_grid_plans_one_shared_bounded_exact_accumulator() {
+fn casa_anchor_grid_plans_one_transferred_density_buffer_and_scalar_sums() {
     let image_size = 1_024;
     let problem = problem_with_image_size(
         WeightingScheme::Briggs { robust: 0.5 },
@@ -2939,25 +3357,23 @@ fn casa_anchor_grid_plans_one_shared_bounded_exact_accumulator() {
     .expect("partitioned anchor plan");
     let planned = plan.planned_residency();
     let density_cells = image_size * image_size;
-    let exact_f32_state_bytes = density_cells * 6 * size_of::<u64>() + 3 * size_of::<usize>();
-
     assert_eq!(
-        planned.shared_density_accumulator_bytes(),
-        exact_f32_state_bytes,
-        "worker count must not multiply the shared exact density grid"
+        planned.density_grid_bytes(),
+        density_cells * size_of::<f64>(),
+        "one f64 buffer is retained through density generation and freezing"
     );
     assert_eq!(
-        partitioned
-            .planned_residency()
-            .shared_density_accumulator_bytes(),
-        exact_f32_state_bytes,
-        "density partitions must use the same shared exact grid"
+        partitioned.planned_residency().density_grid_bytes(),
+        planned.density_grid_bytes(),
+        "density partitions must use the same shared density buffer"
     );
     assert_eq!(
-        planned.sum_weight_accumulator_bytes(),
-        2_047 * 64,
-        "one output plane needs one bounded exact-f64 sum-weight accumulator"
+        planned.sum_weight_bytes(),
+        size_of::<f64>(),
+        "one output plane retains one transferred f64 sum"
     );
+    assert_eq!(planned.shared_density_accumulator_bytes(), 0);
+    assert_eq!(planned.sum_weight_accumulator_bytes(), 0);
 }
 
 #[test]

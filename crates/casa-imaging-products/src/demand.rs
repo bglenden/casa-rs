@@ -10,7 +10,6 @@ use casa_imaging_model::{
 };
 use casa_imaging_reconstruction::NormalStateCatalog;
 use num_complex::Complex64;
-use rustfft::FftPlanner;
 
 use crate::{
     ContinuumProductInputs, PlannedContinuumGeneration, ProductStoragePlan, ProductsError,
@@ -111,10 +110,6 @@ impl PlannedContinuumGeneration {
             || inputs.normal_state_completion() != self.normal_state_completion()
             || inputs.final_model().generation_id() != self.final_model_generation()
             || inputs.reconstruction_mask_generation() != self.reconstruction_mask_generation()
-            || inputs
-                .coupled_reconstruction_masks()
-                .map(|masks| masks.line().generation_id())
-                != self.line_reconstruction_mask_generation()
         {
             return Err(ProductsError::SourceLineageMismatch);
         }
@@ -163,24 +158,33 @@ impl PlannedContinuumGeneration {
             0
         };
         let workers = match inputs.normal_state().catalog() {
-            NormalStateCatalog::UnnormalizedTaylorBlockV1
-            | NormalStateCatalog::UnnormalizedJointBlockV1 => 1,
+            NormalStateCatalog::UnnormalizedTaylorBlockV1 => 1,
+            _ if cfg!(unix)
+                && maximum_windows == 1
+                && self.members().iter().any(|member| {
+                    matches!(
+                        member.role(),
+                        ProductRole::RestoredImage(_) | ProductRole::PbCorrectedImage(_)
+                    )
+                }) =>
+            {
+                storage_plan.maximum_workers()
+            }
             _ => storage_plan
                 .maximum_workers()
                 .min(maximum_windows.max(beam_jobs)),
         };
         let storage_plan = ProductStoragePlan::new(storage_plan.maximum_channels(), workers)?;
+        let window_workers = workers.min(maximum_windows);
 
         let mut algorithm_scratch_bytes = match inputs.normal_state().catalog() {
             NormalStateCatalog::UnnormalizedTaylorBlockV1 => taylor_scratch_bytes(inputs)?,
-            NormalStateCatalog::UnnormalizedJointBlockV1 => generic_scratch_bytes(self, inputs)?,
             NormalStateCatalog::UnnormalizedPlaneV1
             | NormalStateCatalog::UnnormalizedChannelSlabV1 => generic_scratch_bytes(self, inputs)?,
         };
         if matches!(
             inputs.normal_state().catalog(),
             NormalStateCatalog::UnnormalizedTaylorBlockV1
-                | NormalStateCatalog::UnnormalizedJointBlockV1
         ) {
             algorithm_scratch_bytes = checked_add(
                 algorithm_scratch_bytes,
@@ -203,26 +207,26 @@ impl PlannedContinuumGeneration {
         )?;
         // Each lane can retain a completed window while another lane still owns
         // its plane workspace. Beam fitting joins before these windows begin.
-        algorithm_scratch_bytes = algorithm_scratch_bytes.checked_mul(workers as u64).ok_or(
-            ProductsError::ResourceDemandOverflow("parallel product windows"),
-        )?;
+        algorithm_scratch_bytes = algorithm_scratch_bytes
+            .checked_mul(window_workers as u64)
+            .ok_or(ProductsError::ResourceDemandOverflow(
+                "parallel product windows",
+            ))?;
         if !matches!(
             inputs.normal_state().catalog(),
             NormalStateCatalog::UnnormalizedTaylorBlockV1
-                | NormalStateCatalog::UnnormalizedJointBlockV1
         ) {
             algorithm_scratch_bytes = checked_add(
                 algorithm_scratch_bytes,
-                bytes_for::<Option<crate::ProductWindow>>(workers, "product window slots")?,
+                bytes_for::<Option<crate::ProductWindow>>(window_workers, "product window slots")?,
                 "parallel product slots",
             )?;
         }
         let (retained_metadata_bytes, member_beam_bytes, beam_scratch_bytes) =
-            self.metadata_demand(inputs, workers)?;
+            self.metadata_demand(inputs, workers.min(beam_jobs))?;
         let transient_bytes = if matches!(
             inputs.normal_state().catalog(),
             NormalStateCatalog::UnnormalizedTaylorBlockV1
-                | NormalStateCatalog::UnnormalizedJointBlockV1
         ) {
             checked_add(
                 algorithm_scratch_bytes,
@@ -274,7 +278,6 @@ impl PlannedContinuumGeneration {
         } else {
             match state.catalog() {
                 NormalStateCatalog::UnnormalizedTaylorBlockV1 => 1,
-                NormalStateCatalog::UnnormalizedJointBlockV1 => state.channel_count(),
                 _ => domains
                     .checked_mul(state.channel_count())
                     .and_then(|count| count.checked_mul(state.polarization_count()))
@@ -423,7 +426,6 @@ fn generic_scratch_bytes(
             casa_imaging_reconstruction::normal_state_window_residency_bytes(
                 shape,
                 inputs.normal_state().polarization_count(),
-                inputs.normal_state().channel_count(),
                 1,
             )?,
             "generic normal-state input window",
@@ -434,7 +436,7 @@ fn generic_scratch_bytes(
         scratch = scratch.max(checked_mul(plane, 2, "generic converted plane pair")?);
         if requires_restoration {
             // Restoration retains its restored result and normalized residual while
-            // a Gaussian kernel and one exact rustfft convolution workspace live.
+            // a Gaussian kernel and one FFTW convolution workspace live.
             scratch = scratch.max(checked_add(
                 checked_mul(plane, 3, "generic restoration planes")?,
                 fft_convolution_workspace_bytes(shape)?,
@@ -551,23 +553,15 @@ fn fft_convolution_workspace_bytes(shape: [usize; 2]) -> Result<u64, ProductsErr
         "FFT complex planes",
     )?;
     let output = bytes_for::<f32>(cells, "FFT output plane")?;
-    let mut planner = FftPlanner::<f64>::new();
-    let mut lane_values = 0usize;
-    for length in shape {
-        for plan in [
-            planner.plan_fft_forward(length),
-            planner.plan_fft_inverse(length),
-        ] {
-            lane_values = lane_values.max(
-                length
-                    .checked_add(plan.get_inplace_scratch_len())
-                    .ok_or(ProductsError::ResourceDemandOverflow("FFT lane scratch"))?,
-            );
-        }
-    }
+    let planning = cells
+        .checked_add(64)
+        .and_then(|values| values.checked_mul(size_of::<Complex64>()))
+        .and_then(|bytes| bytes.checked_add(cells.checked_mul(size_of::<usize>())?))
+        .ok_or(ProductsError::ResourceDemandOverflow("FFTW planning"))?;
     checked_add(
         checked_add(complex_planes, output, "FFT planes and output")?,
-        bytes_for::<Complex64>(lane_values, "FFT lane and scratch")?,
+        u64::try_from(planning)
+            .map_err(|_| ProductsError::ResourceDemandOverflow("FFTW planning"))?,
         "FFT convolution workspace",
     )
 }

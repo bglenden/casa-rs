@@ -1,10 +1,10 @@
 # ADR-0010: Unified imaging resource authority
 
-Status: accepted
+Status: superseded
 Date: 2026-08-18
 Truth class: normative
 Supersedes:
-Superseded by:
+Superseded by: 0016
 
 ## Context
 

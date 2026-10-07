@@ -73,8 +73,15 @@ and depends inward on the model plus reconstruction's opaque executable-problem
 brand. That reconstruction edge is limited to admitting owner-prepared model
 inputs at the execution and receipt boundary; runtime does not own or invoke
 reprojection algorithms. Its Metal module binds only plan-selected physical
-facts under a one-shot scheduler-issued lease authority, allocates each unified
-physical slot once, and owns command queues, device fences, cancellation drain,
+facts under a scheduler-issued lease authority, materializes only admitted live
+GPU-visible slots, and retires them at the allocation ledger's release events.
+An observation or managed-replay I/O node may explicitly claim accelerator participation while
+retaining I/O-depth admission and both I/O/device terminal fences; CPU-only
+buffers do not become Metal allocations. Bounded command batches reuse residency
+within the stage without completing either terminal fence. Pending commands own
+their device dependencies; batch-scoped autorelease pools release framework
+temporaries without relying on a Cocoa event loop on Rust worker threads.
+The runtime owns command queues, device fences, cancellation drain,
 and canonical work measurements; implementation registries retain kernel and
 Numerics Contract ownership, and unavailable Metal work fails typed without CPU
 substitution. Runtime also
@@ -147,6 +154,13 @@ scientific sealing transfers the existing permit; there is no release/reacquire
 gap or second lease. Runtime-owned shared backing couples the compiled program,
 temporary artifact, and retention capability to every reader and operator.
 The final owning alias releases the exact retained metadata and storage.
+When the complete next phase leaves room, immutable replay frames also retain
+one optional run-scoped host-cache lease, charged exactly once against both
+host-memory and cache ceilings. CPU and Metal use fresh batch cursors over the
+same frame storage; changing batch size does not copy or reload payloads. The
+last view retains the memory charge. At a quiescent major boundary, a phase that
+cannot fit may evict this optional cache before planning bounded disk replay;
+channel-selected replay does not require full-artifact residency.
 Compiler transient and later minor-cycle heaps may reuse one max-sized host
 workspace only across ordered, disjoint lifetimes; exported allocations never
 reuse a physical slot. Private receipt schema 23 records each allocation's
@@ -156,9 +170,8 @@ release or export disposition. CASA-interoperable formats are unchanged.
 MeasurementSet observation authority, reconstruction, products, and physical
 execution. It compiles the logical request, checks it against the implementation
 installed in the build, and either invokes that implementation or returns a
-typed unavailable result before planning. The repository migration matrix is
-planning and acceptance evidence only and is never compiled or interpreted at
-runtime. A selected production failure is terminal; there is no alternate
+typed unavailable result before planning. A selected production failure is
+terminal; there is no alternate
 implementation, retry path, or stage-level delegation. `casars-imager` is a
 thin frontend projection over this interface:
 it owns parsing, unit and representation conversion, canonical request
@@ -251,8 +264,9 @@ Additional constraints:
   inspect hosts or devices, select imaging implementations, allocate work
   buffers, or define scientific products. Native model code depends on no
   MeasurementSet, backend, device, cache, or allocation API. The machine-
-  readable dependency policy and migration matrix under
-  `resources/imaging-architecture/` are enforced by `just arch-check`.
+  readable dependency policy under `resources/imaging-architecture/` is
+  enforced by `scripts/check-imaging-dependencies.py` in `just arch-check`
+  (ADR-0016).
 
 The native interface has one `ImagingRequest` contract (version 3) and exactly
 one `compile` / `plan` / `run` sequence. `compile` validates and canonicalizes
@@ -439,8 +453,8 @@ reservations. The provisional selection lease is released before `plan` seals
 that one candidate and its transaction declaration to the exact compiled
 problem and
 geometry, the complete Observation Snapshot, Numerics Contract,
-implementation-registry snapshot, Resource Policy, and reviewed planner
-cost-model profile. The plan owns the complete immutable physical work DAG:
+implementation-registry snapshot, Resource Policy, and planner cost-model
+profile identity. The plan owns the complete immutable physical work DAG:
 explicit nodes and dependencies, per-node implementation identities, resource
 claims, logical allocation lifetimes, compatible reusable physical slots,
 asynchronous fences, quiescence points, and pre-authorized adaptations. `run`
@@ -468,10 +482,10 @@ Typed I/O-buffer ceilings bound concurrent logical activity while MemoryDemand
 and plan-owned physical slots are the sole physical-byte charge, allowing
 compatible buffers from disjoint processing segments to reuse storage.
 Execution receipts retain the plan and outcome evidence defined by the runtime
-receipt schema; they do not embed the repository migration-matrix schema,
-contract revision, migration disposition, or row ledger. Installed-
-implementation availability is an application-owned pre-plan result, so a
-typed-unavailable request invokes no runtime and creates no execution receipt.
+receipt schema until ticket IF-6 replaces them with the run summary of
+ADR-0016. Installed-implementation availability is an application-owned
+pre-plan result, so a typed-unavailable request invokes no runtime and creates
+no execution receipt.
 Stores opened on the same canonical receipt root share one process-wide mutation lock and
 must agree on one registered retention policy, so pruning and persistence
 enforce one aggregate retention ceiling.
@@ -703,14 +717,11 @@ budget or admission authority.
 The app uses one shared bounded producer/consumer primitive for source
 read-ahead across standard and mosaic MFS replay, standard MT-MFS, standard
 and mosaic cube slabs, cubedata preparation, and trace preparation.
-`imaging_read_ahead_blocks` is a maximum live row-block count, not a queue-depth
-request. The default is two: one producer-owned block and one consumer-owned
-block. An explicit larger cap is admitted only within the assigned CPU and
-memory slice. Queue capacity is `max_live_row_blocks - 2`, so the default
-two-block case uses a rendezvous channel and cannot retain a third queued block.
-A value of one runs synchronously. Full-slab spectral routes remain single-block
-by default and accept explicit read-ahead only when the planner does not lose
-plane residency or row locality. Consumer failure
+The read-ahead bound is a maximum live row-block count, not a queue depth. The
+default is two: one producer-owned block and one consumer-owned block. Queue
+capacity is `max_live_row_blocks - 2`, so the default two-block case uses a
+rendezvous channel and cannot retain a third queued block. A value of one runs
+synchronously. Full-slab spectral routes remain single-block. Consumer failure
 sets a shared cancellation token, drops the rendezvous receiver to wake a
 blocked producer, and prevents another bounded source read after the current
 in-flight read; the original consumer error remains the returned context.
@@ -732,37 +743,44 @@ remain independent of mosaic projection coordinates. Start-model, outlier,
 multi-MS, and higher-term combinations outside those admitted slices still
 reject during planning.
 
-Imager task protocol v3 carries the local execution controls (`parallel`,
-`chanchunks`, shared source memory/row-block/worker/read-ahead settings, and
-dirty-product FFT precision/backend policy). Diagnostic progress events expose
+Imager task protocol v10 carries the local execution controls (`parallel` and
+the shared imaging memory target). Diagnostic progress events expose
 planned and measured memory, source bytes and read bandwidth, read/prepare
 overlap, producer/consumer blocking, live-block high water, worker/queue state,
 stage timings, and backend selection or fallback reasons. The task protocol is
-v3, the newline-delimited progress event schema is v1, and the embedded
+v10, the newline-delimited progress event schema is v1, and the embedded
 observability snapshot schema is v2. `parallel=false` selects the serial CPU
-comparison surface, including one live source block and RustFFT product
+comparison surface, including one live source block and FFTW product
 transforms.
 
-`chanchunks` supplies a minimum spectral-slab residency shape, not an exact
-worker cap or a switch for shared-source concurrency. For every cube plan, the
-runtime derives active-plane and worker concurrency from plane/channel geometry,
-hardware capacity, the exact source-cache size, the per-plane working set, and
-the run-level memory target. If all planes fit, it uses the ordinary one-slab
-route. Any selected multi-slab shape is eligible for bounded shared-source reuse
-when the same formula proves the source cache and concurrent plane state
-resident; neither dataset identity nor a particular `chanchunks` value selects
-that route. Dirty cubes may therefore execute as multiple bounded slabs. Cube
-CLEAN is the deliberate exception: synchronized minor/major-cycle control must
-retain every nonblank plane state together, so planning admits it only when one
-planner-charged shape holds all output planes. A requested CLEAN that would
-require multiple slabs fails during planning instead of accumulating uncharged
-plane state across slabs.
+For every cube plan, the runtime derives active-plane and worker concurrency
+from plane/channel geometry, hardware capacity, the exact source-cache size, the
+per-plane working set, and the run-level memory target. If all planes fit, it
+uses the ordinary one-slab route. Any selected multi-slab shape is eligible for
+bounded shared-source reuse when the same formula proves the source cache and
+concurrent plane state resident; dataset identity does not select that route.
+Dirty cubes may therefore execute as multiple bounded slabs. Bulk cube CLEAN
+also processes memory-admitted channel-band waves rather than requiring every
+plane resident together. The shared reader feeds each wave;
+after initial spectral discovery, source reads are restricted to the wave's
+required native channel window, including interpolation support. Model and
+normal-state buffers use the shared residency and paged-storage machinery
+between phases and waves. Admission charges retained band state plus at most
+the worker-count concurrent transition buffers, alongside the bounded input and
+retained-state reservations. The existing CLEAN controller remains authoritative
+across major cycles; a wave that cannot fit even one output band fails instead
+of exceeding its budget.
 
-Metal gridding and Metal MPSGraph FFT are not installed at the application
-boundary. Their task controls remain part of the transported surface until the
-later backend tickets transfer them, but requests for those implementations
-fail availability validation. Runtime Metal resource and receipt types define a
-future execution contract; they do not constitute a production imaging route.
+Explicit Metal spatial execution is installed for supported standard channel-local
+cubes and single-chart Stokes-I, constant-basis MFS residual refresh. Both use the
+same admitted device/queue/residency/fence runtime and seven-tap spatial primitives.
+MFS keeps model and normal grids resident across bounded replay batches, using
+two reusable staging slots and a single final normal-grid import. Model FFTs,
+normalization, CLEAN and publication remain authoritative shared machinery;
+initial MFS imaging remains CPU work. Unsupported device geometry fails rather
+than falling back. All production FFTs use FFTW; there is no application-level
+FFT backend selector or fallback. Performance evidence for capped CLEAN is not
+full scientific acceptance.
 
 W-projection is installed as an explicit paired measurement transform. The
 model binds the selected projected-|W| envelope and optional plane count;
@@ -822,7 +840,7 @@ backend selection available.
 ## Approved dependency classes
 
 - N-dimensional arrays and numeric containers: `ndarray`
-- FFT and spectral transforms: `rustfft`
+- FFT and spectral transforms: direct, in-place FFTW 3 through `casa-fft`
 - error types: `thiserror`
 - terminal rendering and TUI support: `ratatui`, `ratatui-graphics`, `plotters`
 - Adding a second library in the same category requires review.
@@ -837,13 +855,19 @@ backend selection available.
 ## Known current gaps / debt
 
 - `just` provides a stable command vocabulary, but some contributors may still use the underlying `cargo` and `scripts/*` commands directly until it is installed locally.
-- Imaging capabilities whose authoritative tickets have not landed are
-  `TemporarilyUnavailable`; `casa-imaging-application` returns typed installed-
-  implementation unavailability before planning, and production never enters a
-  displaced implementation. `just arch-check` validates the repository
-  migration ledger and rejects runtime migration-matrix interpretation; it also
-  rejects unclassified workspace packages, non-exact native dependency sets,
-  forbidden Rust/Swift source imports, and unapproved dependency exceptions.
+- Imaging capabilities that are not installed return typed unavailability from
+  `casa-imaging-application` before planning; production never enters a
+  displaced implementation. `scripts/check-imaging-dependencies.py` (in `just
+  arch-check`) rejects crate edges outside the ADR-0016 layering, non-exact
+  native dependency sets, device APIs outside `casa-imaging-metal`, and
+  environment reads, `eprintln!` and content hashing in imaging crates. Its
+  grandfathered-file lists only shrink as tickets IF-1 to IF-9 delete the
+  listed files.
+- The imaging foundation refactor (#648, ADR-0016) is in progress. Until IF-2
+  lands, the four CPU gridding drivers, the replay cache and the receipt
+  runtime described above remain the production path; the plan in
+  `docs/imaging-architecture/imaging-foundation-plan-20261007.md` is the
+  target.
 
 ## ADR index
 
@@ -858,7 +882,10 @@ backend selection available.
 | 0007 | Scientific notebooks and assistant boundary | accepted |
 | 0008 | Casacore storage and bounded MeasurementSet writes | accepted |
 | 0009 | Mathematical imaging architecture | accepted |
-| 0010 | Unified imaging resource authority | accepted |
+| 0010 | Unified imaging resource authority | superseded |
 | 0011 | Distinct sequential and joint continuum-line reconstruction | accepted |
 | 0012 | Current-only sparse profile contracts | accepted |
 | 0013 | Non-cryptographic integrity for private run-scoped spill artifacts | accepted |
+| 0014 | Trusted product generation without content attestation | accepted |
+| 0015 | Run-local imaging ownership without content attestation | accepted |
+| 0016 | Imaging foundation | accepted |

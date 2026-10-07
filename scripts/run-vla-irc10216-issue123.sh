@@ -385,7 +385,6 @@ rust_tclean_cmd=(
   --datacolumn DATA \
   --fitspw "0:0~7;44~51" \
   --fitorder 0 \
-  --no-preview-pngs \
   --dirty-only \
   --managed-output true
 )

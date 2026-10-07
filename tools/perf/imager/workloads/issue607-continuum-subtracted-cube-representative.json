@@ -26,7 +26,6 @@
     "parallel": false,
     "standard_mfs_acceleration": "cpu",
     "imaging_fft_precision": "auto",
-    "imaging_fft_backend": "rustfft",
     "deconvolver": "hogbom",
     "niter": 0,
     "minor_cycle_length": 1,

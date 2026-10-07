@@ -20,10 +20,9 @@ use casa_imaging_model::{
     WeightingContract, WeightingScheme, compile,
 };
 use casa_imaging_reconstruction::{
-    ExecutableModelProblem, FinalModelCompletionId, ModelDeltaId, ModelGenerationId,
-    ModelGenerationOrigin, ModelLifecycle, ModelLifecycleError, ModelReprojectionError,
-    ModelReprojectionId, ModelSourceReader, PreparedReprojectedSeed, model_support_identity,
-    prepare_reprojected_seed,
+    ExecutableModelProblem, FinalModelCompletionId, ModelGenerationId, ModelGenerationOrigin,
+    ModelLifecycle, ModelLifecycleError, ModelReprojectionError, ModelReprojectionId,
+    ModelSourceReader, PreparedReprojectedSeed, model_support_identity, prepare_reprojected_seed,
 };
 
 #[path = "../../casa-imaging-model/tests/common/mod.rs"]
@@ -287,7 +286,7 @@ fn problem_with_contract(
         ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
         NumericsContract::new(
             vec![precision],
-            ReductionPolicy::Compensated,
+            ReductionPolicy::UnorderedWithinBudget,
             FiniteValuePolicy::FlagInputRejectGenerated,
             NumericalStage::ALL
                 .into_iter()
@@ -556,12 +555,14 @@ fn t55_model_windows_preserve_values_and_support_with_owner_scoped_identities() 
 struct ModelIoCounts {
     reads: std::sync::atomic::AtomicUsize,
     fail_reads: std::sync::atomic::AtomicBool,
+    creations: std::sync::atomic::AtomicUsize,
+    updated: std::sync::atomic::AtomicUsize,
 }
 
 #[derive(Debug)]
 struct CountedModelStorage {
     counts: std::sync::Arc<ModelIoCounts>,
-    samples: Vec<ModelSample>,
+    samples: std::sync::RwLock<Box<[ModelSample]>>,
 }
 
 #[derive(Debug)]
@@ -572,16 +573,19 @@ impl casa_imaging_reconstruction::ModelStorageFactory for CountedModelFactory {
         &self,
         count: usize,
     ) -> Result<Box<dyn casa_imaging_reconstruction::ModelSampleStorage>, ModelLifecycleError> {
+        self.0
+            .creations
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(Box::new(CountedModelStorage {
             counts: self.0.clone(),
-            samples: vec![ModelSample::invalid(); count],
+            samples: std::sync::RwLock::new(vec![ModelSample::invalid(); count].into()),
         }))
     }
 }
 
 impl casa_imaging_reconstruction::ModelSampleStorage for CountedModelStorage {
     fn sample_count(&self) -> usize {
-        self.samples.len()
+        self.samples.read().unwrap().len()
     }
 
     fn read(
@@ -594,14 +598,89 @@ impl casa_imaging_reconstruction::ModelSampleStorage for CountedModelStorage {
         if self.counts.fail_reads.load(Relaxed) {
             return Err(ModelLifecycleError::Storage("injected read failure".into()));
         }
-        destination.copy_from_slice(&self.samples[start..start + destination.len()]);
+        destination
+            .copy_from_slice(&self.samples.read().unwrap()[start..start + destination.len()]);
         Ok(())
     }
 
     fn write(&mut self, start: usize, samples: &[ModelSample]) -> Result<(), ModelLifecycleError> {
-        self.samples[start..start + samples.len()].copy_from_slice(samples);
+        self.samples.get_mut().unwrap()[start..start + samples.len()].copy_from_slice(samples);
         Ok(())
     }
+
+    fn apply_updates(
+        &self,
+        updates: &[casa_imaging_reconstruction::ModelSampleUpdate],
+        precision: NumericPrecision,
+        bound: f64,
+    ) -> Result<f64, ModelLifecycleError> {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.counts.reads.fetch_add(updates.len(), Relaxed);
+        if self.counts.fail_reads.load(Relaxed) {
+            return Err(ModelLifecycleError::Storage("injected read failure".into()));
+        }
+        self.counts.updated.fetch_add(updates.len(), Relaxed);
+        casa_imaging_reconstruction::ModelSampleStorage::apply_updates(
+            &self.samples,
+            updates,
+            precision,
+            bound,
+        )
+    }
+}
+
+#[test]
+fn sparse_delta_reuses_owned_storage_and_does_not_touch_unchanged_windows() {
+    use std::sync::{Arc, atomic::Ordering::Relaxed};
+    let compiled = problem(
+        1,
+        8,
+        ModelStateIdentity::Empty,
+        empty_requirements(NumericPrecision::F32),
+        NumericPrecision::F32,
+    );
+    let counts = Arc::new(ModelIoCounts::default());
+    let mut owner = ModelLifecycle::bind(
+        ExecutableModelProblem::from_compiled(compiled).unwrap(),
+        attempt(90),
+        1,
+        casa_imaging_reconstruction::ModelStoragePlan::new(
+            Arc::new(CountedModelFactory(counts.clone())),
+            2,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let base = owner.initial_empty().unwrap();
+    let delta = owner
+        .compile_delta(&base, [ModelDeltaTerm::new(cell(3), value(2.0))])
+        .unwrap();
+    counts.reads.store(0, Relaxed);
+    let prepared = owner.prepare_final_model(base, Some(delta)).unwrap();
+    assert_eq!(
+        counts.creations.load(Relaxed),
+        1,
+        "no replacement cube allocation"
+    );
+    assert_eq!(
+        counts.reads.load(Relaxed),
+        0,
+        "preparation must not scan the cube"
+    );
+    assert_eq!(
+        counts.updated.load(Relaxed),
+        0,
+        "worker applies its own updates"
+    );
+    prepared.generation().read_samples(0..2).unwrap();
+    assert_eq!(counts.updated.load(Relaxed), 0, "unaffected plane/window");
+    let samples = prepared.generation().read_samples(2..4).unwrap();
+    assert_eq!(samples[1].value().value(), 2.0);
+    assert_eq!(counts.updated.load(Relaxed), 1, "only the changed cell");
+    let reads = counts.reads.load(Relaxed);
+    owner.commit_final_model(prepared).unwrap();
+    assert_eq!(counts.reads.load(Relaxed), reads, "no completion reread");
+    assert_eq!(counts.creations.load(Relaxed), 1);
 }
 
 #[test]
@@ -685,7 +764,6 @@ fn generations_are_distinct_and_finalization_is_affine() {
     let base = owner.initial_empty().expect("empty generation");
     let replay_base = owner.initial_empty().expect("second pre-final base");
     assert_eq!(ModelGenerationId::SCHEMA_VERSION, 4);
-    assert_eq!(ModelDeltaId::SCHEMA_VERSION, 2);
     assert_eq!(ModelReprojectionId::SCHEMA_VERSION, 3);
     assert_eq!(FinalModelCompletionId::SCHEMA_VERSION, 2);
     assert_ne!(base.generation_id(), replay_base.generation_id());
@@ -755,6 +833,12 @@ fn named_resume_preserves_new_scientific_value_bounds() {
             .compile_delta(&base, [ModelDeltaTerm::new(cell(0), value(1.0))])
             .unwrap();
         let generation = owner.apply_delta(base, delta).unwrap();
+        generation.read_samples(0..1).unwrap();
+        assert_eq!(
+            counts.updated.load(Relaxed),
+            1,
+            "complete the pending scientific update"
+        );
         let id = generation.generation_id();
         let tighter = problem(
             1,
@@ -950,6 +1034,63 @@ fn aligned_ingest_preserves_support_and_rejects_wrong_evidence() {
 }
 
 #[test]
+fn aligned_ingest_checks_external_support_without_reading_back_owned_storage() {
+    use std::sync::{Arc, atomic::Ordering::Relaxed};
+    let seed = identity(73);
+    let samples = [ModelSample::valid(value(2.0)), ModelSample::invalid()];
+    let support = model_support_identity(samples.iter().map(|sample| sample.support()));
+    let compiled = problem(
+        1,
+        2,
+        ModelStateIdentity::Seed(seed),
+        ModelLifecycleRequirements::new(
+            bounds(),
+            NumericPrecision::F64,
+            ModelInputCommitment::AlignedSeed {
+                source: seed,
+                support,
+            },
+        ),
+        NumericPrecision::F64,
+    );
+    let counts = Arc::new(ModelIoCounts::default());
+    let owner = ModelLifecycle::bind(
+        ExecutableModelProblem::from_compiled(compiled).unwrap(),
+        attempt(126),
+        1,
+        casa_imaging_reconstruction::ModelStoragePlan::new(
+            Arc::new(CountedModelFactory(counts.clone())),
+            1,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    counts.fail_reads.store(true, Relaxed);
+    let generation = owner
+        .ingest_aligned(
+            seed,
+            owner.contract().target(),
+            samples.into_iter().map(Ok::<_, ()>),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        counts.reads.load(Relaxed),
+        0,
+        "external support is checked during ingestion, not by rereading storage"
+    );
+    counts.fail_reads.store(false, Relaxed);
+    assert_eq!(
+        generation.read_samples(0..1).unwrap().as_ref(),
+        &samples[..1]
+    );
+    assert_eq!(
+        generation.read_samples(1..2).unwrap().as_ref(),
+        &samples[1..]
+    );
+}
+
+#[test]
 fn aligned_ingest_preserves_a_terminal_source_error() {
     let seed = identity(72);
     let samples = [ModelSample::valid(value(2.0)), ModelSample::invalid()];
@@ -981,7 +1122,7 @@ fn aligned_ingest_preserves_a_terminal_source_error() {
 }
 
 #[test]
-fn reprojection_is_owner_derived_streamed_support_aware_and_golden_pinned() {
+fn reprojection_is_owner_derived_streamed_and_support_aware() {
     let source_problem = problem(
         3,
         2,
@@ -1008,12 +1149,12 @@ fn reprojection_is_owner_derived_streamed_support_aware_and_golden_pinned() {
     assert_eq!(reader.reads, 2, "only the current derived stencil is read");
     let mapping_id = prepared.reprojection_id();
     assert_eq!(
-        mapping_id.to_string(),
-        "f66aa154ce471ea96ac70b7cf7cd6f2986da71e85c31eae7e50db10979ff4c4a"
-    );
-    assert_eq!(
-        prepared.support_identity(),
-        model_support_identity([ModelSupport::Valid, ModelSupport::Invalid])
+        mapping_id.identity(),
+        casa_imaging_model::model_reprojected_seed_mapping_identity(
+            LogicalIdentity::from_sha256(target_shell.model_lifecycle().contract_id().as_bytes()),
+            source_shape.identity(),
+            target_shell.model_lifecycle().target().identity(),
+        )
     );
     let compiled = problem_with_geometry(
         4,
@@ -1098,7 +1239,7 @@ fn reprojection_is_owner_derived_streamed_support_aware_and_golden_pinned() {
 }
 
 #[test]
-fn reprojected_seed_proof_binds_projected_values_and_stencils() {
+fn reprojected_seed_preserves_projected_values_and_geometry() {
     let source_problem = problem(
         3,
         2,
@@ -1135,16 +1276,42 @@ fn reprojected_seed_proof_binds_projected_values_and_stencils() {
     let value_changed = prepare_seed(seed, &source_shape, &target, &changed_values);
     let stencil_changed = prepare_seed(seed, &source_shape, &other_stencil, &values);
 
-    assert_ne!(
-        original.proof_identity(),
-        value_changed.proof_identity(),
-        "equal support with different projected values must not share a proof",
+    let project = |prepared: PreparedReprojectedSeed, geometry| {
+        let compiled = problem_with_geometry(
+            4,
+            geometry,
+            ModelStateIdentity::Seed(seed),
+            prepared.lifecycle_requirements(),
+            NumericPrecision::F64,
+        );
+        let executable = prepared.bind_compiled_problem(compiled).unwrap();
+        let mut owner = ModelLifecycle::bind(
+            executable,
+            attempt(93),
+            1,
+            casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX).unwrap(),
+        )
+        .unwrap();
+        let generation = owner.initial_reprojected().unwrap();
+        generation
+            .read_samples(0..generation.sample_count())
+            .unwrap()
+            .to_vec()
+    };
+    let original = project(original, geometry_with_reference_pixel(2, [-0.75, 0.0]));
+    let changed = project(
+        value_changed,
+        geometry_with_reference_pixel(2, [-0.75, 0.0]),
     );
-    assert_ne!(
-        original.proof_identity(),
-        stencil_changed.proof_identity(),
-        "different ordered interpolation stencils must not share a proof",
+    let shifted = project(
+        stencil_changed,
+        geometry_with_reference_pixel(2, [-0.25, 0.0]),
     );
+    assert_eq!(original[0].value().value(), 5.0);
+    assert_eq!(changed[0].value().value(), 5.25);
+    assert_eq!(shifted[0].value().value(), 3.0);
+    assert_eq!(original[1].support(), ModelSupport::Invalid);
+    assert_eq!(changed[1].support(), ModelSupport::Invalid);
 }
 
 #[test]
@@ -1341,7 +1508,7 @@ fn reprojected_seed_rejects_a_different_product_contract() {
 }
 
 #[test]
-fn reprojected_compile_and_ingest_reject_foreign_owner_evidence() {
+fn reprojected_ingest_carries_owned_support_and_rejects_foreign_source() {
     let source_problem = problem(
         3,
         2,
@@ -1372,10 +1539,21 @@ fn reprojected_compile_and_ingest_reject_foreign_owner_evidence() {
         prepare_seed(seed, &source_shape, &target_shell, &invalid_source).lifecycle_requirements(),
         NumericPrecision::F64,
     );
-    assert!(matches!(
-        expected.bind_compiled_problem(support_claim),
-        Err(ModelLifecycleError::SupportIdentityMismatch)
-    ));
+    let executable = expected
+        .bind_compiled_problem(support_claim)
+        .expect("the compact contract does not attest prepared support contents");
+    let mut owner = ModelLifecycle::bind(
+        executable,
+        attempt(93),
+        1,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX).unwrap(),
+    )
+    .unwrap();
+    let generation = owner.initial_reprojected().unwrap();
+    assert_eq!(
+        generation.read_samples(0..1).unwrap()[0].support(),
+        ModelSupport::Valid
+    );
 
     assert!(matches!(
         problem_with_contract(
@@ -1412,14 +1590,22 @@ fn reprojected_compile_and_ingest_reject_foreign_owner_evidence() {
         invalid_prepared.reprojection_id(),
         prepare_seed(seed, &source_shape, &target_shell, &source).reprojection_id()
     );
-    assert_ne!(
-        invalid_prepared.support_identity(),
-        prepare_seed(seed, &source_shape, &target_shell, &source).support_identity()
+    let executable = invalid_prepared.bind_compiled_problem(correct).unwrap();
+    let mut owner = ModelLifecycle::bind(
+        executable,
+        attempt(94),
+        1,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX).unwrap(),
+    )
+    .unwrap();
+    let generation = owner.initial_reprojected().unwrap();
+    assert_eq!(
+        generation
+            .read_samples(0..generation.sample_count())
+            .unwrap()[0]
+            .support(),
+        ModelSupport::Invalid
     );
-    assert!(matches!(
-        invalid_prepared.bind_compiled_problem(correct),
-        Err(ModelLifecycleError::SupportIdentityMismatch)
-    ));
 }
 
 #[test]

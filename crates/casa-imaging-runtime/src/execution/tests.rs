@@ -35,11 +35,10 @@ use crate::{
     ImplementationContractCatalog, ImplementationContractMetadata, ImplementationRegistryId,
     IoBufferDemand, IoBufferKind, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand,
     MemoryView, MemoryViewKind, ObservationTransactionWork, PhysicalWorkBinding,
-    PlannerCostModelProfileId, PlannerCostModelProfileRecord, PlanningBindings, QueueDemand,
-    QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId,
-    RateUnit, ResourceAuthority, ResourceHeadroom, ResourcePolicy, ResourceTopology,
-    RuntimeOverheadDemand, ScalingMetadata, StorageDemand, StorageDomain, StorageDomainId,
-    plan as authority_plan,
+    PlannerCostModelProfileId, PlanningBindings, QueueDemand, QueueResource, QueueResourceId,
+    QuiescencePoint, RateDemand, RateResource, RateResourceId, RateUnit, ResourceAuthority,
+    ResourceHeadroom, ResourcePolicy, ResourceTopology, RuntimeOverheadDemand, ScalingMetadata,
+    StorageDemand, StorageDomain, StorageDomainId, plan as authority_plan,
 };
 
 fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
@@ -343,6 +342,8 @@ fn cpu_authority_with_workers(workers: u64) -> ResourceAuthority {
             rate_resources: Vec::new(),
             queue_resources: Vec::new(),
             logical_cpu_threads: workers,
+            native_thread_stack_bytes: 512 << 10,
+            page_bytes: 16 << 10,
             performance_cpu_cores: CpuClassCapacity::Known(workers),
             cache_capacity_bytes: 1_024,
             lock_capacity: 8,
@@ -409,6 +410,8 @@ fn unified_authority() -> ResourceAuthority {
                 QueueResource::new(io_queue.clone(), 1),
             ],
             logical_cpu_threads: 2,
+            native_thread_stack_bytes: 512 << 10,
+            page_bytes: 16 << 10,
             performance_cpu_cores: CpuClassCapacity::Known(2),
             cache_capacity_bytes: 1_024,
             lock_capacity: 8,
@@ -480,6 +483,8 @@ pub(super) fn io_authority_with_workers_and_memory(
                 QueueResource::new(transaction_queue.clone(), 1),
             ],
             logical_cpu_threads: workers,
+            native_thread_stack_bytes: 512 << 10,
+            page_bytes: 16 << 10,
             performance_cpu_cores: CpuClassCapacity::Known(workers),
             cache_capacity_bytes: memory_bytes,
             lock_capacity: 8,
@@ -524,7 +529,7 @@ fn bound_plan_with_authority(
         PlanningBindings::new(
             ImplementationRegistryId::from_sha256([7; 32]),
             ResourcePolicy::Exclusive,
-            PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
+            PlannerCostModelProfileId::from_sha256([8; 32]),
         ),
         authority,
         &registry,
@@ -1305,7 +1310,7 @@ fn malformed_store_owned_rejection_is_rejected_without_partial_receipt_mutation(
         PlanningBindings::new(
             ImplementationRegistryId::from_sha256([7; 32]),
             ResourcePolicy::Exclusive,
-            PlannerCostModelProfileRecord::initial(cost_model),
+            cost_model,
         ),
         &receipts,
         |_, _| Ok::<_, std::convert::Infallible>(physical),
@@ -1672,7 +1677,7 @@ fn execution_plan_owns_the_bound_physical_work_dag() {
     let bindings = PlanningBindings::new(
         ImplementationRegistryId::from_sha256([7; 32]),
         ResourcePolicy::Exclusive,
-        PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
+        PlannerCostModelProfileId::from_sha256([8; 32]),
     );
 
     let physical = physical_work_binding(dag);
@@ -1699,7 +1704,7 @@ fn execution_plan_owns_the_resource_policy_selected_during_planning() {
         PlanningBindings::new(
             ImplementationRegistryId::from_sha256([7; 32]),
             ResourcePolicy::Balanced,
-            PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
+            PlannerCostModelProfileId::from_sha256([8; 32]),
         ),
         |_, _| Ok::<_, std::convert::Infallible>(physical_work_binding(dag)),
     )
@@ -1798,7 +1803,7 @@ fn planning_seals_the_first_resource_authority_feasible_candidate() {
         PlanningBindings::new(
             ImplementationRegistryId::from_sha256([7; 32]),
             ResourcePolicy::Exclusive,
-            PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
+            PlannerCostModelProfileId::from_sha256([8; 32]),
         ),
         &io_authority(),
         &registry,
@@ -1857,7 +1862,7 @@ fn planning_selects_the_largest_feasible_exact_worker_variant() {
         PlanningBindings::new(
             ImplementationRegistryId::from_sha256([7; 32]),
             ResourcePolicy::Exclusive,
-            PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
+            PlannerCostModelProfileId::from_sha256([8; 32]),
         ),
         &io_authority_with_workers_and_memory(3, 64 << 20),
         &registry,
@@ -1905,7 +1910,7 @@ fn planning_fails_before_sealing_when_no_candidate_is_feasible() {
         PlanningBindings::new(
             ImplementationRegistryId::from_sha256([7; 32]),
             ResourcePolicy::Exclusive,
-            PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
+            PlannerCostModelProfileId::from_sha256([8; 32]),
         ),
         &cpu_authority(),
         &registry,
@@ -2016,7 +2021,7 @@ fn historical_failures_do_not_override_current_resource_admission() {
         PlanningBindings::new(
             ImplementationRegistryId::from_sha256([7; 32]),
             ResourcePolicy::Exclusive,
-            PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
+            PlannerCostModelProfileId::from_sha256([8; 32]),
         )
     };
     authority_plan(
@@ -2115,7 +2120,7 @@ fn planning_resolves_each_distinct_implementation_once() {
         PlanningBindings::new(
             registry.inner.id,
             ResourcePolicy::Exclusive,
-            PlannerCostModelProfileRecord::initial(PlannerCostModelProfileId::from_sha256([8; 32])),
+            PlannerCostModelProfileId::from_sha256([8; 32]),
         ),
         &io_authority(),
         &registry,
@@ -2173,6 +2178,8 @@ fn scheduler_rejects_discrete_metal_memory_instead_of_inventing_a_mac_model() {
             rate_resources: Vec::new(),
             queue_resources: vec![QueueResource::new(command_queue.clone(), 1)],
             logical_cpu_threads: 2,
+            native_thread_stack_bytes: 512 << 10,
+            page_bytes: 16 << 10,
             performance_cpu_cores: CpuClassCapacity::Known(2),
             cache_capacity_bytes: 1_024,
             lock_capacity: 8,
@@ -2229,6 +2236,7 @@ fn scheduler_rejects_discrete_metal_memory_instead_of_inventing_a_mac_model() {
     }];
     specification.resource_alternative.demand.overhead = RuntimeOverheadDemand {
         driver_bytes: 1,
+        jit_bytes: 1,
         command_buffer_bytes: 1,
         ..RuntimeOverheadDemand::zero()
     };
@@ -2517,6 +2525,7 @@ fn unified_physical_slot_reuse_waits_for_every_declared_fence() {
     }];
     specification.resource_alternative.demand.overhead = RuntimeOverheadDemand {
         driver_bytes: 1,
+        jit_bytes: 1,
         command_buffer_bytes: 1,
         ..RuntimeOverheadDemand::zero()
     };
@@ -2960,11 +2969,11 @@ fn every_io_buffer_kind_has_exact_supported_and_unsupported_work_semantics() {
         ),
         (
             crate::IoBufferKind::HostToDeviceTransfer,
-            &[WorkKind::Transfer][..],
+            &[WorkKind::Transfer, WorkKind::ObservationRead][..],
         ),
         (
             crate::IoBufferKind::DeviceToHostTransfer,
-            &[WorkKind::Transfer][..],
+            &[WorkKind::Transfer, WorkKind::ObservationRead][..],
         ),
         (
             crate::IoBufferKind::SpillRead,

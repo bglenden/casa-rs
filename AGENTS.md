@@ -1,7 +1,7 @@
 # Agent Operating Contract
 
 Truth class: normative
-Last reality check: 2026-10-06
+Last reality check: 2026-10-07
 Verification: just docs-check
 
 casa-rs is a native Rust implementation of casacore/CASA libraries and
@@ -45,8 +45,9 @@ When sources disagree: code/tests/CI > ADRs > ARCHITECTURE/TESTING > issues.
   releases; `just --list` shows everything else.
 - Swift tests: `cargo build -p casars-frontend-services --lib`, then
   `swift test --package-path apps/casars-mac`.
-- Editing a file pinned in `resources/imaging-architecture/migration-matrix.json`
-  requires `python3 scripts/refresh-baseline-digests.py` in the same change.
+- `scripts/check-imaging-dependencies.py` (in `just arch-check`) enforces the
+  imaging crate layering and source rules of ADR-0016; its grandfathered-file
+  lists only shrink.
 
 ## Engineering Rules
 
@@ -129,10 +130,16 @@ The internal disk is small. Do not fill it.
 - Done means the relevant gates are green, the evidence is recorded on the
   issue or PR, and the docs match reality.
 
-## Programme #486 (Imaging Architecture)
+## Imaging Foundation (#648, tickets IF-0 to IF-11)
 
-Until T68 closes #486, its tickets follow the closure policy in
-`docs/imaging-architecture/lessons-and-next-tranche.md`: issue-named focused
-gates plus one independent contract review, and green gates with no blocker
-authorize merge and closure. In-scope non-persistent Rust API changes are
-pre-approved; persisted formats, cleanup, and release still need approval.
+The owner-approved plan
+`docs/imaging-architecture/imaging-foundation-plan-20261007.md` and ADR-0016
+are the work contract. Each ticket body carries outcome, deletion rows and
+acceptance tests; plan section 10 is the review checklist; section 9.3 defines
+the review gates R1–R4. Gates per ticket are its T0/T1/T1.5 tests, clippy
+`-D warnings` on touched crates, the dependency checker and `just quick`;
+`just verify` runs once at IF-11. The Rust API changes, deletions and
+dependency-direction changes written in the plan are pre-approved; persisted
+CASA-interoperable formats, cleanup and release still need approval. Record
+disagreements between plan and code under `## Deviations` on the ticket as
+they occur. Programme #486 and its rules are retired.

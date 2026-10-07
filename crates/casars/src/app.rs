@@ -16542,7 +16542,7 @@ fn build_workflow_sections(app_id: &str, fields: &[FormField]) -> Vec<FormSectio
             "intent",
             "stokes",
         ];
-        let product_ids = ["imagename", "write_preview_pngs"];
+        let product_ids = ["imagename"];
         let stage_ids = [
             "specmode",
             "start",
@@ -20067,8 +20067,6 @@ mod tests {
                 other => panic!("unexpected execution-resources item: {other:?}"),
             })
             .collect::<Vec<_>>();
-        assert!(ids.contains(&"imaging_memory_target_mb"));
-        assert!(ids.contains(&"imaging_memory_pressure_policy"));
-        assert!(ids.contains(&"imaging_fft_precision"));
+        assert_eq!(ids, ["imaging_memory_target_mb"]);
     }
 }

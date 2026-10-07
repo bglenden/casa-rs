@@ -8,6 +8,327 @@ use casa_imaging_model::{
 };
 use ndarray::{Array2, s};
 
+/// CPU spatial double that also records each dispatch's per-batch tap counts.
+struct Backend {
+    convolution: StandardConvolution,
+    grids: [Array3<Complex32>; 4],
+    dispatches: Vec<Vec<usize>>,
+}
+
+impl CubeSpatialBackend for Backend {
+    fn initialize(
+        &mut self,
+        shape: [usize; 2],
+        weights: &[[f32; 7]],
+        fields: [usize; 4],
+        model: &[Complex32],
+    ) -> Result<(), SpectralOperatorError> {
+        assert_eq!(weights, self.convolution.float_weights());
+        self.grids = fields.map(|planes| Array3::zeros((planes, shape[0], shape[1])));
+        self.grids[3].as_slice_mut().unwrap().copy_from_slice(model);
+        Ok(())
+    }
+    fn degrid(
+        &mut self,
+        batches: &mut [SpatialPredictionBatch],
+    ) -> Result<(), SpectralOperatorError> {
+        self.dispatches
+            .push(batches.iter().map(|b| b.taps.len()).collect());
+        for batch in batches {
+            for (tap, value) in batch.taps.iter().zip(&mut batch.values) {
+                *value = self
+                    .convolution
+                    .degrid_float(&self.grids[3].index_axis(Axis(0), batch.plane), unpack(tap));
+            }
+        }
+        Ok(())
+    }
+    fn grid(&mut self, batches: &[SpatialGridBatch]) -> Result<(), SpectralOperatorError> {
+        self.dispatches
+            .push(batches.iter().map(|b| b.taps.len()).collect());
+        for batch in batches {
+            let index = match batch.field {
+                SpatialField::Dirty => 0,
+                SpatialField::Residual => 1,
+                SpatialField::Psf => 2,
+                SpatialField::Model => 3,
+            };
+            for tap in &batch.taps {
+                self.convolution.grid_float(
+                    &mut self.grids[index].index_axis_mut(Axis(0), batch.plane),
+                    unpack(tap),
+                    Complex32::new(tap.value[0], tap.value[1]),
+                );
+            }
+        }
+        Ok(())
+    }
+    fn download(
+        &mut self,
+        _: SpatialField,
+        _: usize,
+        _: &mut [Complex32],
+    ) -> Result<(), SpectralOperatorError> {
+        unreachable!()
+    }
+}
+
+fn unpack(tap: &SpatialTap) -> crate::spectral_operator::SampleTaps {
+    use crate::spectral_operator::{SampleTaps, TapSpan};
+    SampleTaps {
+        x: TapSpan {
+            start: tap.x as usize,
+            weight_index: tap.x_weights as usize,
+        },
+        y: TapSpan {
+            start: tap.y as usize,
+            weight_index: tap.y_weights as usize,
+        },
+    }
+}
+
+#[test]
+fn batched_spatial_preparation_matches_cpu_for_flags_phase_and_nonzero_model() {
+    let output = [1e9, 1.002e9, 1.004e9, 1.006e9];
+    let mut block = NativeBlock::new(4, 12, 2).unwrap();
+    let mut layout = None;
+    for (r, shift) in [-0.6e6, -0.6e6, 0.1e6, 0.6e6].into_iter().enumerate() {
+        let input = Input::new(
+            (0..12)
+                .map(|ch| 0.996e9 + shift + ch as f64 * 1e6)
+                .collect(),
+        );
+        let row = input.row(0..12);
+        layout.get_or_insert_with(|| {
+            NativeLayout::new(
+                row.address,
+                input.channels.clone(),
+                smallvec::smallvec![
+                    (0, CorrelationType::CircularRr),
+                    (1, CorrelationType::CircularLl)
+                ],
+            )
+            .unwrap()
+        });
+        block.metadata[r] = super::super::input::RowMetadata {
+            physical_row: r as u64,
+            uvw_m: row.uvw_m,
+            phase_shift_m: row.phase_shift_m,
+            original_pair_hz: row.original_pair_hz,
+        };
+        block.frequencies_hz[r * 12..(r + 1) * 12].copy_from_slice(row.frequencies_hz);
+        block.values[r * 24..(r + 1) * 24].copy_from_slice(row.values);
+        block.weights[r * 24..(r + 1) * 24].copy_from_slice(row.weights);
+        block.flags[r * 24..(r + 1) * 24].copy_from_slice(row.flags);
+        block.weight_flags[r * 24..(r + 1) * 24].copy_from_slice(row.weight_flags);
+    }
+    let layout = layout.unwrap();
+    let raw = model();
+    let polarization = polarization();
+    for phase in [BandPhase::InitialZero, BandPhase::Full, BandPhase::Residual] {
+        let make = || {
+            let mut w = BandWorkspace::new(
+                geometry(),
+                0..4,
+                (0..4).collect(),
+                PreparedFft::new([10, 10], 7690, 1).unwrap(),
+                phase,
+                None,
+            );
+            if phase != BandPhase::InitialZero {
+                w.prepare_model(raw.view()).unwrap();
+            }
+            w
+        };
+        let mut cpu = make();
+        let mut candidate = make();
+        let mut backend = Backend {
+            convolution: StandardConvolution::new(&geometry()),
+            grids: std::array::from_fn(|_| Array3::zeros((0, 10, 10))),
+            dispatches: Vec::new(),
+        };
+        backend
+            .initialize(
+                [10, 10],
+                &candidate.convolution.float_weights(),
+                [
+                    candidate.dirty.len_of(Axis(0)),
+                    candidate.residual.len_of(Axis(0)),
+                    candidate.psf.len_of(Axis(0)),
+                    candidate.forward.len_of(Axis(0)),
+                ],
+                candidate.forward.as_slice().unwrap(),
+            )
+            .unwrap();
+        // Repeated refills accumulate into the same resident grids.
+        for _ in 0..2 {
+            cpu.consume_block(
+                block.view().unwrap(),
+                &layout,
+                0..12,
+                0..12,
+                &output,
+                &polarization,
+            )
+            .unwrap();
+            candidate
+                .consume_spatial(
+                    block.view().unwrap(),
+                    &layout,
+                    0..12,
+                    &output,
+                    &polarization,
+                    &mut backend,
+                )
+                .unwrap();
+        }
+        assert_close(backend.grids[0].iter().copied(), cpu.dirty.iter().copied());
+        assert_close(
+            backend.grids[1].iter().copied(),
+            cpu.residual.iter().copied(),
+        );
+        assert_close(backend.grids[2].iter().copied(), cpu.psf.iter().copied());
+        assert_eq!(candidate.mapped, cpu.mapped);
+        assert_eq!(candidate.sum_weight, cpu.sum_weight);
+    }
+}
+
+#[test]
+fn spatial_memory_includes_initialization_for_empty_source() {
+    let plan = BandPlan {
+        geometry: geometry(),
+        core: 0..4,
+        total_channels: 4,
+        fine_per_output: 1,
+        single_channel: None,
+        phase: BandPhase::InitialZero,
+        support: BandSupport {
+            native: 0..0,
+            model: Vec::new(),
+        },
+    };
+    assert!(plan.spatial_host_bytes(0).unwrap() >= BandPlan::spatial_weight_bytes());
+    assert_eq!(plan.spatial_request_capacity(0).unwrap(), 0);
+}
+
+#[test]
+fn spatial_request_capacity_counts_fine_samples_of_coarse_output_planes() {
+    // 1 MHz native channels under 2 MHz outputs: two CASA fine samples per
+    // row and coarse plane, all bracketed by the unflagged in-grid native row.
+    let output = [1e9, 1.002e9, 1.004e9, 1.006e9];
+    let mut input = Input::new((0..12).map(|ch| 0.996e9 + ch as f64 * 1e6).collect());
+    input.weights.fill(1.0);
+    input.flags.fill(false);
+    input.weight_flags.fill(false);
+    let row = input.row(0..12);
+    let layout = NativeLayout::new(
+        row.address,
+        input.channels.clone(),
+        smallvec::smallvec![
+            (0, CorrelationType::CircularRr),
+            (1, CorrelationType::CircularLl),
+        ],
+    )
+    .unwrap();
+    let rows = 3;
+    let mut block = NativeBlock::new(rows, 12, 2).unwrap();
+    for r in 0..rows {
+        block.metadata[r] = super::super::input::RowMetadata {
+            physical_row: r as u64,
+            uvw_m: row.uvw_m,
+            phase_shift_m: row.phase_shift_m,
+            original_pair_hz: row.original_pair_hz,
+        };
+        block.frequencies_hz[r * 12..(r + 1) * 12].copy_from_slice(row.frequencies_hz);
+        block.values[r * 24..(r + 1) * 24].copy_from_slice(row.values);
+        block.weights[r * 24..(r + 1) * 24].copy_from_slice(row.weights);
+        block.flags[r * 24..(r + 1) * 24].copy_from_slice(row.flags);
+        block.weight_flags[r * 24..(r + 1) * 24].copy_from_slice(row.weight_flags);
+    }
+    let raw = model();
+    let polarization = polarization();
+    for (phase, fields) in [
+        (BandPhase::InitialZero, 2),
+        (BandPhase::Full, 3),
+        (BandPhase::Residual, 1),
+    ] {
+        let mut plan = BandPlan {
+            geometry: geometry(),
+            core: 0..4,
+            total_channels: 4,
+            fine_per_output: 1,
+            single_channel: None,
+            phase,
+            support: BandSupport {
+                native: 0..0,
+                model: Vec::new(),
+            },
+        };
+        BandPlan::observe_all(std::slice::from_mut(&mut plan), &block, &output).unwrap();
+        assert_eq!(plan.fine_per_output, 2);
+        assert_eq!(plan.support.model, [0, 1, 2, 3]);
+        let capacity = plan.spatial_request_capacity(rows).unwrap();
+        // Host preparation retains at least every packed request it can emit.
+        let many = 1 << 12;
+        assert!(
+            plan.spatial_host_bytes(many).unwrap()
+                >= plan.spatial_request_capacity(many).unwrap() * size_of::<SpatialTap>()
+        );
+        let mut workspace = BandWorkspace::new(
+            geometry(),
+            plan.core(),
+            plan.support.model.clone(),
+            PreparedFft::new([10, 10], 7690, 1).unwrap(),
+            phase,
+            None,
+        );
+        if phase != BandPhase::InitialZero {
+            workspace.prepare_model(raw.view()).unwrap();
+        }
+        let mut backend = Backend {
+            convolution: StandardConvolution::new(&geometry()),
+            grids: std::array::from_fn(|_| Array3::zeros((0, 10, 10))),
+            dispatches: Vec::new(),
+        };
+        backend
+            .initialize(
+                [10, 10],
+                &workspace.convolution.float_weights(),
+                [
+                    workspace.dirty.len_of(Axis(0)),
+                    workspace.residual.len_of(Axis(0)),
+                    workspace.psf.len_of(Axis(0)),
+                    workspace.forward.len_of(Axis(0)),
+                ],
+                workspace.forward.as_slice().unwrap(),
+            )
+            .unwrap();
+        workspace
+            .consume_spatial(
+                block.view().unwrap(),
+                &layout,
+                plan.native_range(),
+                &output,
+                &polarization,
+                &mut backend,
+            )
+            .unwrap();
+        let grid = backend.dispatches.last().unwrap();
+        assert_eq!(grid.len(), fields * 4);
+        assert!(
+            grid.iter().all(|&taps| taps == rows * 2),
+            "{phase:?}: {grid:?}"
+        );
+        for dispatch in &backend.dispatches {
+            assert!(dispatch.iter().sum::<usize>() <= capacity);
+        }
+        if phase != BandPhase::Residual {
+            // Contributions, not native predictions, bound these phases.
+            assert_eq!(grid.iter().sum::<usize>(), capacity);
+        }
+    }
+}
+
 fn geometry() -> SpectralOperatorGeometry {
     SpectralOperatorGeometry {
         image_shape: [8, 8],
@@ -49,8 +370,8 @@ fn polarization() -> PolarizationOperator {
 struct Input {
     frequencies: Vec<f64>,
     channels: Vec<u32>,
-    values: Array2<Complex64>,
-    weights: Array2<f64>,
+    values: Array2<Complex32>,
+    weights: Array2<f32>,
     flags: Array2<bool>,
     weight_flags: Array2<bool>,
 }
@@ -62,13 +383,13 @@ impl Input {
             frequencies,
             channels: (0..count as u32).map(|channel| channel * 2).collect(),
             values: Array2::from_shape_fn((count, 2), |(ch, corr)| {
-                Complex64::new(0.25 + ch as f64 * 0.12, -0.8 + corr as f64 * 0.2)
+                Complex32::new(0.25 + ch as f32 * 0.12, -0.8 + corr as f32 * 0.2)
             }),
             weights: Array2::from_shape_fn((count, 2), |(ch, corr)| {
                 if ch == 2 {
                     0.0
                 } else {
-                    0.3 + ch as f64 * 0.17 + corr as f64 * 0.11
+                    0.3 + ch as f32 * 0.17 + corr as f32 * 0.11
                 }
             }),
             flags: Array2::from_shape_fn((count, 2), |(ch, corr)| ch == 3 && corr == 1),
@@ -78,6 +399,7 @@ impl Input {
 
     fn row(&self, native: Range<usize>) -> VisibilityRow<'_> {
         let frequency = self.frequencies[0];
+        let samples = native.start * 2..native.end * 2;
         VisibilityRow {
             address: SelectedSampleAddress {
                 measurement_set: MeasurementSetIdentity::new(LogicalIdentity::from_sha256([1; 32])),
@@ -99,10 +421,11 @@ impl Input {
             original_pair_hz: [self.frequencies[0], self.frequencies[1]],
             channels: &self.channels[native.clone()],
             frequencies_hz: &self.frequencies[native.clone()],
-            values: self.values.slice(s![native.clone(), ..]),
-            weights: self.weights.slice(s![native.clone(), ..]),
-            flags: self.flags.slice(s![native.clone(), ..]),
-            weight_flags: self.weight_flags.slice(s![native, ..]),
+            correlations: 2,
+            values: &self.values.as_slice().unwrap()[samples.clone()],
+            weights: &self.weights.as_slice().unwrap()[samples.clone()],
+            flags: &self.flags.as_slice().unwrap()[samples.clone()],
+            weight_flags: &self.weight_flags.as_slice().unwrap()[samples],
         }
     }
 }
@@ -116,8 +439,9 @@ fn workspace(
         geometry(),
         core,
         model_channels,
-        PreparedFft::new([10, 10], 7690).unwrap(),
+        PreparedFft::new([10, 10], 7690, 1).unwrap(),
         BandPhase::Full,
+        None,
     );
     band.prepare_model(model.view()).unwrap();
     band
@@ -126,28 +450,148 @@ fn workspace(
 fn full_band(input: &Input, output: &[f64], model: &Array3<Complex64>) -> BandWorkspace {
     let mut band = workspace(0..4, (0..4).collect(), model);
     let polarization = polarization();
-    let mut row = band
-        .begin_row(input.row(0..input.channels.len()), output, &polarization)
-        .unwrap();
+    let input_row = input.row(0..input.channels.len());
+    let mut row = band.begin_row(&input_row, output, &polarization).unwrap();
     row.push(0..input.channels.len()).unwrap();
     row.finish().unwrap();
     band
 }
 
-fn assert_bits(
-    actual: impl IntoIterator<Item = Complex64>,
-    expected: impl IntoIterator<Item = Complex64>,
+fn assert_close<T: Copy + Into<f64>>(
+    actual: impl IntoIterator<Item = num_complex::Complex<T>>,
+    expected: impl IntoIterator<Item = num_complex::Complex<T>>,
 ) {
-    let bits = |values: Vec<Complex64>| {
-        values
-            .into_iter()
-            .map(|value| [value.re.to_bits(), value.im.to_bits()])
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(
-        bits(actual.into_iter().collect()),
-        bits(expected.into_iter().collect())
-    );
+    let actual = actual.into_iter().collect::<Vec<_>>();
+    let expected = expected.into_iter().collect::<Vec<_>>();
+    assert_eq!(actual.len(), expected.len());
+    for (actual, expected) in actual.into_iter().zip(expected) {
+        let difference =
+            (actual.re.into() - expected.re.into()).hypot(actual.im.into() - expected.im.into());
+        let scale = expected.re.into().hypot(expected.im.into()).max(1.0);
+        assert!(
+            difference <= 2e-6 * scale,
+            "difference={difference}, scale={scale}"
+        );
+    }
+}
+
+#[test]
+fn single_output_uses_native_frequencies_and_ignores_neighbour_flags() {
+    use super::super::input::RowMetadata;
+    for increment in [2e6, -2e6, 8e6] {
+        let single = CasaSingleChannel {
+            centre_hz: 1e9,
+            increment_hz: increment,
+        };
+        assert!(single.contains(1e9 - increment * 0.5));
+        assert!(!single.contains(1e9 + increment * 0.5));
+        for centre in [0.998e9, 1e9, 1.002e9] {
+            let single = CasaSingleChannel {
+                centre_hz: centre,
+                ..single
+            };
+            let mut input = Input::new(vec![0.998e9, 1e9, 1.002e9]);
+            input.weights.fill(1.0);
+            for ch in 0..3 {
+                input
+                    .flags
+                    .row_mut(ch)
+                    .fill(!single.contains(input.frequencies[ch]));
+            }
+            let expected_range = single.native_window(&input.frequencies);
+            let mut block = NativeBlock::new(1, 3, 2).unwrap();
+            block.frequencies_hz.copy_from_slice(&input.frequencies);
+            block.metadata[0] = RowMetadata {
+                original_pair_hz: [0.998e9, 1e9],
+                ..RowMetadata::default()
+            };
+            let mut plan = BandPlan {
+                geometry: geometry(),
+                core: 0..1,
+                total_channels: 1,
+                fine_per_output: 1,
+                single_channel: Some(single),
+                phase: BandPhase::Full,
+                support: BandSupport {
+                    native: 0..0,
+                    model: vec![],
+                },
+            };
+            assert_eq!(
+                BandPlan::observe_all(std::slice::from_mut(&mut plan), &block, &[centre]).unwrap(),
+                0
+            );
+            assert_eq!(plan.support.native, expected_range);
+            assert_eq!(plan.support.model, [0]);
+            let model = model().slice(s![0..1, .., ..]).to_owned();
+            let make = || {
+                let mut band = BandWorkspace::new(
+                    geometry(),
+                    0..1,
+                    vec![0],
+                    PreparedFft::new([10, 10], 7690, 1).unwrap(),
+                    BandPhase::Full,
+                    Some(single),
+                );
+                band.prepare_model(model.view()).unwrap();
+                band
+            };
+            let mut actual = make();
+            let mut expected = make();
+            let polarization = polarization();
+            actual
+                .consume_single_row(input.row(0..3), single, &[centre], &polarization)
+                .unwrap();
+            let row = input.row(0..3);
+            for channel in expected_range {
+                let frequency = input.frequencies[channel];
+                let taps = expected
+                    .convolution
+                    .taps([
+                        row.uvw_m[0] * frequency / SPEED_OF_LIGHT_M_PER_S,
+                        row.uvw_m[1] * frequency / SPEED_OF_LIGHT_M_PER_S,
+                    ])
+                    .unwrap();
+                let predicted = expected
+                    .convolution
+                    .degrid_float(&expected.forward.index_axis(Axis(0), 0), taps);
+                let predicted = widen(predicted) * phase(row.phase_shift_m, frequency).conj();
+                let observed =
+                    (widen(input.values[(channel, 0)]) + widen(input.values[(channel, 1)])) / 2.0;
+                expected
+                    .grid_sample(0, frequency, &row, observed, predicted, 2.0)
+                    .unwrap();
+            }
+            for (actual, expected) in actual
+                .dirty
+                .iter()
+                .chain(actual.residual.iter())
+                .chain(actual.psf.iter())
+                .zip(
+                    expected
+                        .dirty
+                        .iter()
+                        .chain(expected.residual.iter())
+                        .chain(expected.psf.iter()),
+                )
+            {
+                assert!((*actual - *expected).norm() <= 1e-14 * expected.norm().max(1.0));
+            }
+            assert!((actual.sum_weight[0] - expected.sum_weight[0]).abs() < 1e-14);
+            assert!(actual.residual.iter().any(|value| value.norm() != 0.0));
+            // The retained native window can contain just one contributing channel.
+            let mut selected = make();
+            selected
+                .consume_single_row(
+                    row.window(plan.support.native).unwrap(),
+                    single,
+                    &[centre],
+                    &polarization,
+                )
+                .unwrap();
+            assert_eq!(selected.residual, actual.residual);
+        }
+    }
 }
 
 #[test]
@@ -187,6 +631,8 @@ fn preparation_support_matches_row_reference_with_one_pair_sweep_for_all_bands()
                             geometry: geometry(),
                             core: start..start + depth,
                             total_channels: 4,
+                            fine_per_output: 1,
+                            single_channel: None,
                             phase: BandPhase::Full,
                             support: BandSupport {
                                 native: 0..0,
@@ -251,6 +697,8 @@ fn preparation_reuses_only_identical_spectral_rows_without_losing_support() {
             geometry: geometry(),
             core: channel..channel + 1,
             total_channels: 4,
+            fine_per_output: 1,
+            single_channel: None,
             phase: BandPhase::Full,
             support: BandSupport {
                 native: 0..0,
@@ -295,7 +743,7 @@ fn exact_zero_model_planes_skip_forward_work_without_losing_halo_terms() {
     // Exercise the zero-valued degrid terms that the sparse path skips.
     unskipped.forward_nonzero.fill(true);
     for &frequency in &input.frequencies {
-        assert_bits(
+        assert_close(
             band.predict_native(&row, frequency, &output, &polarization)
                 .unwrap(),
             unskipped
@@ -307,7 +755,7 @@ fn exact_zero_model_planes_skip_forward_work_without_losing_halo_terms() {
         let predicted = band
             .predict_native(&row, frequency, &output, &polarization)
             .unwrap();
-        assert_bits(
+        assert_close(
             halo.predict_native(&row, frequency, &output, &polarization)
                 .unwrap(),
             predicted.iter().copied(),
@@ -327,7 +775,7 @@ fn exact_zero_model_planes_skip_forward_work_without_losing_halo_terms() {
     assert!(
         band.forward
             .iter()
-            .all(|value| *value == Complex64::default())
+            .all(|value| *value == Complex32::default())
     );
     assert!(
         band.prepare_plane(1, |x, y| if (x, y) == (3, 4) {
@@ -391,21 +839,19 @@ fn nonzero_native_prediction_and_band_grids_are_partition_and_chunk_invariant() 
                             let expected = reference
                                 .predict_native(&input_row, frequency, &output, &polarization)
                                 .unwrap();
-                            assert_bits(predicted, expected);
+                            assert_close(predicted, expected);
                         }
-                        let mut row = band
-                            .begin_row(input.row(support.native), &output, &polarization)
-                            .unwrap();
+                        let mut row = band.begin_row(&input_row, &output, &polarization).unwrap();
                         // End a chunk inside the row, then resume the exact cursor.
                         row.push(0..1).unwrap();
                         row.push(1..count).unwrap();
                         row.finish().unwrap();
                         for (local, global) in core.enumerate() {
-                            assert_bits(
+                            assert_close(
                                 band.dirty.index_axis(Axis(0), local).iter().copied(),
                                 reference.dirty.index_axis(Axis(0), global).iter().copied(),
                             );
-                            assert_bits(
+                            assert_close(
                                 band.residual.index_axis(Axis(0), local).iter().copied(),
                                 reference
                                     .residual
@@ -413,7 +859,7 @@ fn nonzero_native_prediction_and_band_grids_are_partition_and_chunk_invariant() 
                                     .iter()
                                     .copied(),
                             );
-                            assert_bits(
+                            assert_close(
                                 band.psf.index_axis(Axis(0), local).iter().copied(),
                                 reference.psf.index_axis(Axis(0), global).iter().copied(),
                             );
@@ -449,9 +895,8 @@ fn closure_includes_neighbors_and_excludes_unrelated_model_planes() {
     let polarization = polarization();
     let evaluate = |model: &Array3<Complex64>, channels: Vec<usize>| {
         let mut band = workspace(1..2, channels, model);
-        let mut row = band
-            .begin_row(input.row(support.native.clone()), &output, &polarization)
-            .unwrap();
+        let input_row = input.row(support.native.clone());
+        let mut row = band.begin_row(&input_row, &output, &polarization)?;
         row.push(0..support.native.len())?;
         row.finish()?;
         Ok::<_, SpectralOperatorError>(band.residual)
@@ -463,7 +908,7 @@ fn closure_includes_neighbors_and_excludes_unrelated_model_planes() {
     changed
         .index_axis_mut(Axis(0), 3)
         .fill(Complex64::new(1000.0, -300.0));
-    assert_bits(
+    assert_close(
         evaluate(&changed, support.model.clone()).unwrap(),
         expected.iter().copied(),
     );
@@ -489,13 +934,22 @@ fn compact_views_are_zero_copy_and_reject_bad_shape_or_partial_rows() {
     );
     row.validate(2).unwrap();
     assert!(row.validate(1).is_err());
+    for field in 0..4 {
+        let mut malformed = input.row(1..3);
+        match field {
+            0 => malformed.values = &malformed.values[..3],
+            1 => malformed.weights = &malformed.weights[..3],
+            2 => malformed.flags = &malformed.flags[..3],
+            _ => malformed.weight_flags = &malformed.weight_flags[..3],
+        }
+        assert!(malformed.validate(2).is_err());
+    }
     let mut band = workspace(0..4, vec![0, 1, 2, 3], &model());
     let allocation = band.forward.as_ptr();
     band.prepare_model(model().view()).unwrap();
     assert_eq!(band.forward.as_ptr(), allocation);
-    let mut row = band
-        .begin_row(input.row(0..4), &output, &polarization)
-        .unwrap();
+    let input_row = input.row(0..4);
+    let mut row = band.begin_row(&input_row, &output, &polarization).unwrap();
     row.push(0..2).unwrap();
     assert!(row.push(3..4).is_err());
     assert!(matches!(
@@ -503,14 +957,14 @@ fn compact_views_are_zero_copy_and_reject_bad_shape_or_partial_rows() {
         Err(SpectralOperatorError::IncompleteCoverage)
     ));
     assert!(matches!(
-        band.begin_row(input.row(0..4), &output, &polarization)
+        band.begin_row(&input_row, &output, &polarization)
             .unwrap()
             .finish(),
         Err(SpectralOperatorError::IncompleteCoverage)
     ));
     let (mut first, mut second) = band.dirty.view_mut().split_at(Axis(0), 2);
-    first.fill(Complex64::new(1.0, 0.0));
-    second.fill(Complex64::new(2.0, 0.0));
+    first.fill(Complex32::new(1.0, 0.0));
+    second.fill(Complex32::new(2.0, 0.0));
     assert!(
         band.dirty
             .slice(s![0..2, .., ..])
@@ -523,6 +977,59 @@ fn compact_views_are_zero_copy_and_reject_bad_shape_or_partial_rows() {
             .iter()
             .all(|v| v.re == 2.0)
     );
+}
+
+#[test]
+fn flat_row_windows_borrow_all_payloads_at_each_correlation_width() {
+    let input = Input::new(vec![1e9, 1.001e9, 1.002e9, 1.003e9]);
+    for correlations in 1..=4 {
+        let layout = NativeLayout::new(
+            input.row(0..4).address,
+            input.channels.clone(),
+            (0..correlations)
+                .map(|index| (index as u32, CorrelationType::CircularRr))
+                .collect(),
+        )
+        .unwrap();
+        let mut block = NativeBlock::new(2, 4, correlations).unwrap();
+        for (index, value) in block.values.iter_mut().enumerate() {
+            *value = Complex32::new(index as f32, -(index as f32));
+        }
+        let row = block.row(&layout, 1, 0..4).unwrap().window(1..4).unwrap();
+        let nested = row.window(1..2).unwrap();
+        nested.validate(correlations).unwrap();
+        let start = 6 * correlations;
+        assert_eq!(nested.values, &block.values[start..start + correlations]);
+        assert_eq!(nested.values.as_ptr(), block.values[start..].as_ptr());
+        assert_eq!(nested.weights.as_ptr(), block.weights[start..].as_ptr());
+        assert_eq!(nested.flags.as_ptr(), block.flags[start..].as_ptr());
+        assert_eq!(
+            nested.weight_flags.as_ptr(),
+            block.weight_flags[start..].as_ptr()
+        );
+        assert_eq!(nested.channels, &layout.channels[2..3]);
+        let view = block.view().unwrap();
+        let rows = view.rows(&layout, 0..4, 1..4).unwrap();
+        let mut direct = rows.row(1);
+        direct.restrict(1..2).unwrap();
+        direct.validate(correlations).unwrap();
+        assert_eq!(direct.address, nested.address);
+        assert_eq!(direct.values.as_ptr(), nested.values.as_ptr());
+        assert_eq!(direct.weights.as_ptr(), nested.weights.as_ptr());
+        assert_eq!(direct.flags.as_ptr(), nested.flags.as_ptr());
+        assert_eq!(direct.weight_flags.as_ptr(), nested.weight_flags.as_ptr());
+        assert_eq!(
+            direct.frequencies_hz.as_ptr(),
+            nested.frequencies_hz.as_ptr()
+        );
+        assert_eq!(direct.channels, nested.channels);
+        assert!(view.rows(&layout, 0..3, 0..3).is_err());
+        assert!(view.rows(&layout, 1..5, 0..4).is_err());
+        assert!(view.rows(&layout, 0..4, 0..0).is_err());
+        assert!(view.rows(&layout, 0..4, 1..5).is_err());
+        assert!(direct.restrict(0..2).is_err());
+        assert!(block.row(&layout, 2, 0..4).is_err());
+    }
 }
 
 #[test]
@@ -586,12 +1093,43 @@ fn stored_native_buffer_is_borrowed_directly_by_the_band_kernel() {
     assert_eq!(row.values.as_ptr(), block.values.as_ptr());
     assert_eq!(row.weights.as_ptr(), block.weights.as_ptr());
     assert_eq!(row.frequencies_hz.as_ptr(), block.frequencies_hz.as_ptr());
+    let borrowed = NativeBlockView::new(
+        &block.metadata,
+        &block.frequencies_hz,
+        input.values.as_slice().unwrap(),
+        &block.weights,
+        &block.flags,
+        &block.weight_flags,
+        6,
+        2,
+    )
+    .unwrap();
+    let source_row = borrowed.row(&layout, 0, 0..6).unwrap();
+    assert_eq!(source_row.values.as_ptr(), input.values.as_ptr());
+    assert!(
+        NativeBlockView::new(
+            &block.metadata,
+            &block.frequencies_hz,
+            input.values.as_slice().unwrap(),
+            &block.weights[..block.weights.len() - 1],
+            &block.flags,
+            &block.weight_flags,
+            6,
+            2,
+        )
+        .is_err()
+    );
     let model = model();
     let mut expected = workspace(0..4, (0..4).collect(), &model);
     let mut actual = workspace(0..4, (0..4).collect(), &model);
+    let mut source_borrowed = workspace(0..4, (0..4).collect(), &model);
     let polarization = polarization();
-    for (workspace, row) in [(&mut expected, original), (&mut actual, row)] {
-        let mut accumulator = workspace.begin_row(row, &output, &polarization).unwrap();
+    for (workspace, row) in [
+        (&mut expected, original),
+        (&mut actual, row),
+        (&mut source_borrowed, source_row),
+    ] {
+        let mut accumulator = workspace.begin_row(&row, &output, &polarization).unwrap();
         accumulator.push(0..6).unwrap();
         accumulator.finish().unwrap();
     }
@@ -600,6 +1138,9 @@ fn stored_native_buffer_is_borrowed_directly_by_the_band_kernel() {
     assert_eq!(actual.psf, expected.psf);
     assert_eq!(actual.sum_weight, expected.sum_weight);
     assert_eq!(actual.mapped, expected.mapped);
+    assert_eq!(source_borrowed.dirty, expected.dirty);
+    assert_eq!(source_borrowed.residual, expected.residual);
+    assert_eq!(source_borrowed.psf, expected.psf);
     assert!(block.row(&layout, 1, 0..6).is_err());
     assert!(block.row(&layout, 0, 1..6).is_err());
 }
@@ -616,13 +1157,13 @@ struct ModelReads {
 
 #[derive(Debug)]
 struct ObservedModelStorage {
-    samples: Box<[casa_imaging_model::ModelSample]>,
+    samples: std::sync::RwLock<Box<[casa_imaging_model::ModelSample]>>,
     reads: std::sync::Arc<ModelReads>,
 }
 
 impl crate::ModelSampleStorage for ObservedModelStorage {
     fn sample_count(&self) -> usize {
-        self.samples.len()
+        self.samples.read().unwrap().len()
     }
     fn read(
         &self,
@@ -639,7 +1180,8 @@ impl crate::ModelSampleStorage for ObservedModelStorage {
                 "injected model read failure".into(),
             ));
         }
-        destination.copy_from_slice(&self.samples[start..start + destination.len()]);
+        destination
+            .copy_from_slice(&self.samples.read().unwrap()[start..start + destination.len()]);
         Ok(())
     }
     fn write(
@@ -647,8 +1189,17 @@ impl crate::ModelSampleStorage for ObservedModelStorage {
         start: usize,
         samples: &[casa_imaging_model::ModelSample],
     ) -> Result<(), crate::ModelLifecycleError> {
-        self.samples[start..start + samples.len()].copy_from_slice(samples);
+        self.samples.get_mut().unwrap()[start..start + samples.len()].copy_from_slice(samples);
         Ok(())
+    }
+
+    fn apply_updates(
+        &self,
+        updates: &[crate::ModelSampleUpdate],
+        precision: casa_imaging_model::NumericPrecision,
+        bound: f64,
+    ) -> Result<f64, crate::ModelLifecycleError> {
+        crate::ModelSampleStorage::apply_updates(&self.samples, updates, precision, bound)
     }
 }
 
@@ -658,7 +1209,9 @@ impl crate::ModelStorageFactory for std::sync::Arc<ModelReads> {
         count: usize,
     ) -> Result<Box<dyn crate::ModelSampleStorage>, crate::ModelLifecycleError> {
         Ok(Box::new(ObservedModelStorage {
-            samples: vec![casa_imaging_model::ModelSample::invalid(); count].into(),
+            samples: std::sync::RwLock::new(
+                vec![casa_imaging_model::ModelSample::invalid(); count].into(),
+            ),
             reads: self.clone(),
         }))
     }
@@ -718,6 +1271,173 @@ fn real_model(channel: usize, x: usize, y: usize) -> casa_imaging_model::ModelSa
 }
 
 #[test]
+fn spatial_tap_preserves_checked_integer_projection_and_overflow_errors() {
+    use crate::spectral_operator::{SampleTaps, TapSpan};
+    let taps = SampleTaps {
+        x: TapSpan {
+            start: 7,
+            weight_index: 11,
+        },
+        y: TapSpan {
+            start: 13,
+            weight_index: 17,
+        },
+    };
+    let value = Complex32::new(0.25, -0.5);
+    let actual = SpatialTap::new(taps, value).unwrap();
+    assert_eq!(
+        [actual.x, actual.y, actual.x_weights, actual.y_weights],
+        [7, 13, 11, 17]
+    );
+    assert_eq!(actual.value, [value.re, value.im]);
+    let maximum = SampleTaps {
+        x: TapSpan {
+            start: u32::MAX as usize,
+            weight_index: u32::MAX as usize,
+        },
+        y: TapSpan {
+            start: u32::MAX as usize,
+            weight_index: u32::MAX as usize,
+        },
+    };
+    assert!(SpatialTap::new(maximum, value).is_ok());
+    #[cfg(target_pointer_width = "64")]
+    for field in 0..4 {
+        let mut invalid = taps;
+        let index = match field {
+            0 => &mut invalid.x.start,
+            1 => &mut invalid.y.start,
+            2 => &mut invalid.x.weight_index,
+            _ => &mut invalid.y.weight_index,
+        };
+        *index = u32::MAX as usize + 1;
+        assert!(matches!(
+            SpatialTap::new(invalid, value),
+            Err(SpectralOperatorError::ResidencyOverflow)
+        ));
+    }
+}
+
+#[test]
+fn connected_residual_reuses_coarse_predictions_with_bounded_refill_storage() {
+    let (model, _) = generation(64, real_model);
+    let output = [1e9, 1.002e9, 1.004e9, 1.006e9];
+    let input = Input::new((0..12).map(|ch| 0.996e9 + ch as f64 * 1e6).collect());
+    let row = input.row(0..12);
+    let layout = NativeLayout::new(
+        row.address,
+        input.channels.clone(),
+        smallvec::smallvec![
+            (0, CorrelationType::CircularRr),
+            (1, CorrelationType::CircularLl),
+        ],
+    )
+    .unwrap();
+    let metadata = [super::super::input::RowMetadata {
+        physical_row: 0,
+        uvw_m: row.uvw_m,
+        phase_shift_m: row.phase_shift_m,
+        original_pair_hz: row.original_pair_hz,
+    }];
+    let block = NativeBlockView::new(
+        &metadata,
+        row.frequencies_hz,
+        row.values,
+        row.weights,
+        row.flags,
+        row.weight_flags,
+        12,
+        2,
+    )
+    .unwrap();
+    let bands: Vec<_> = (0..4)
+        .map(|ch| BandPlan {
+            geometry: geometry(),
+            core: ch..ch + 1,
+            total_channels: 4,
+            fine_per_output: 2,
+            single_channel: None,
+            phase: BandPhase::Residual,
+            support: BandSupport {
+                native: 0..12,
+                model: (0..4).collect(),
+            },
+        })
+        .collect();
+    let wave = BandPlan::residual_wave(&bands).unwrap();
+    assert_eq!(wave.support.model, [0, 1, 2, 3]);
+    let capacity = wave.residual_capacities(1).unwrap();
+    let job = wave.prepare(&model, None).unwrap();
+    use bytemuck::Zeroable;
+    let mut predictions = vec![ResidualPrediction::zeroed(); capacity[0] + 1];
+    let mut native = vec![NativePrediction::zeroed(); capacity[1] + 1];
+    let mut samples = vec![ResidualSample::zeroed(); capacity[2] + 1];
+    predictions[capacity[0]].padding = 0xdead;
+    native[capacity[1]].indices = [0xdead; 2];
+    samples[capacity[2]].plane = 0xdead;
+    let pointers = (predictions.as_ptr(), native.as_ptr(), samples.as_ptr());
+    for _ in 0..2 {
+        let mut refill = ResidualRefill {
+            predictions: &mut predictions[..capacity[0]],
+            native: &mut native[..capacity[1]],
+            samples: &mut samples[..capacity[2]],
+            counts: [usize::MAX; 3],
+            requested_predictions: u64::MAX,
+        };
+        job.prepare_residual_refill(block, &layout, 0..12, &output, &mut refill)
+            .unwrap();
+        assert!(refill.requested_predictions > refill.counts[0] as u64);
+        let planes: std::collections::BTreeSet<_> = refill.predictions[..refill.counts[0]]
+            .iter()
+            .map(|v| v.plane)
+            .collect();
+        assert_eq!(
+            planes.len(),
+            refill.counts[0],
+            "one gather per row/coarse plane"
+        );
+        assert!(refill.counts[2] <= capacity[2]);
+        for sample in &refill.samples[..refill.counts[2]] {
+            assert!((sample.left as usize) < refill.counts[1]);
+            assert!((sample.right as usize) < refill.counts[1]);
+            assert!((sample.nearest_flags & ((1 << 30) - 1)) < refill.counts[1] as u32);
+        }
+        assert_eq!(
+            pointers,
+            (
+                refill.predictions.as_ptr(),
+                refill.native.as_ptr(),
+                refill.samples.as_ptr()
+            )
+        );
+    }
+    assert_eq!(predictions[capacity[0]].padding, 0xdead);
+    assert_eq!(native[capacity[1]].indices, [0xdead; 2]);
+    assert_eq!(samples[capacity[2]].plane, 0xdead);
+    for field in 0..3 {
+        let mut bounded = capacity;
+        bounded[field] = 0;
+        let mut undersized = ResidualRefill {
+            predictions: &mut predictions[..bounded[0]],
+            native: &mut native[..bounded[1]],
+            samples: &mut samples[..bounded[2]],
+            counts: [0; 3],
+            requested_predictions: 0,
+        };
+        assert!(matches!(
+            job.prepare_residual_refill(block, &layout, 0..12, &output, &mut undersized),
+            Err(SpectralOperatorError::ResidencyOverflow)
+        ));
+    }
+    let mut mismatch = bands.clone();
+    mismatch[1].geometry.increment_rad[0] *= 2.0;
+    assert!(matches!(
+        BandPlan::residual_wave(&mismatch),
+        Err(SpectralOperatorError::ProblemMismatch)
+    ));
+}
+
+#[test]
 fn band_memory_accounts_for_actual_phase_buffers_and_completed_ownership() {
     use std::mem::size_of;
     let (empty, _) = generation_with_origin(
@@ -731,6 +1451,8 @@ fn band_memory_accounts_for_actual_phase_buffers_and_completed_ownership() {
                 geometry: geometry(),
                 core: 0..depth,
                 total_channels: 4,
+                fine_per_output: 1,
+                single_channel: None,
                 phase,
                 support: BandSupport {
                     native: 0..6,
@@ -738,6 +1460,12 @@ fn band_memory_accounts_for_actual_phase_buffers_and_completed_ownership() {
                 },
             };
             let memory = plan.memory().unwrap();
+            assert_eq!(
+                memory.resident_bytes() + memory.transition_bytes(),
+                memory.peak_bytes()
+            );
+            assert!(memory.resident_bytes() >= memory.accumulation_bytes);
+            assert!(memory.resident_bytes() >= memory.retained_bytes);
             let generation = if phase == BandPhase::InitialZero {
                 &empty
             } else {
@@ -746,25 +1474,17 @@ fn band_memory_accounts_for_actual_phase_buffers_and_completed_ownership() {
             let job = plan.clone().prepare(generation, None).unwrap();
             assert_eq!(job.native_range, plan.native_range());
             let w = &job.workspace;
-            let grids = [
-                &w.forward,
-                &w.dirty,
-                &w.dirty_error,
-                &w.residual,
-                &w.residual_error,
-                &w.psf,
-                &w.psf_error,
-            ];
+            let grids = [&w.forward, &w.dirty, &w.residual, &w.psf];
             let payload = grids
                 .iter()
-                .map(|grid| grid.len() * size_of::<Complex64>())
+                .map(|grid| grid.len() * size_of::<Complex32>())
                 .sum::<usize>()
-                + (w.sum_weight.capacity() + w.sum_weight_error.capacity()) * size_of::<f64>()
+                + w.sum_weight.capacity() * size_of::<f64>()
                 + w.mapped.capacity() * size_of::<u64>()
                 + w.model_channels.capacity() * size_of::<usize>()
                 + w.forward_nonzero.capacity();
             let fft = fft_resident_complex_values_for_shape(geometry().grid_shape).unwrap()
-                * size_of::<Complex64>();
+                * size_of::<Complex32>();
             let convolution = StandardConvolution::dynamic_bytes(geometry().grid_shape).unwrap();
             assert_eq!(
                 memory.accumulation_bytes,
@@ -777,12 +1497,12 @@ fn band_memory_accounts_for_actual_phase_buffers_and_completed_ownership() {
             assert_eq!(
                 memory.retained_bytes,
                 normal.cube_owned_bytes(true).unwrap() - size_of::<SpectralOperatorPrimitives>()
-                    + size_of::<(BandResult, PreparedFft)>()
+                    + size_of::<(BandResult, PreparedFft<f32>)>()
                     + fft
             );
             let refresh = plan.residual_refresh();
             let memory = refresh.memory().unwrap();
-            let residual_image = depth * 64 * size_of::<Complex64>();
+            let residual_image = depth * 64 * size_of::<f32>();
             assert!(
                 memory.preparation_bytes
                     >= memory.accumulation_bytes
@@ -796,13 +1516,30 @@ fn band_memory_accounts_for_actual_phase_buffers_and_completed_ownership() {
             let BandResult::Residual(updated) = updated else {
                 panic!("residual-only result required")
             };
+            assert_eq!(updated.values.len() * size_of::<f32>(), residual_image);
+            let residual_grid = depth
+                * geometry().grid_shape[0]
+                * geometry().grid_shape[1]
+                * size_of::<Complex32>();
+            let completion_with_grid = size_of::<BandPlan>()
+                + size_of::<EpochBand<'_>>()
+                + fft
+                + convolution
+                + residual_grid
+                + residual_image;
+            let completion_with_result = residual_image
+                + size_of::<(BandResult, PreparedFft<f32>)>()
+                + fft
+                + size_of::<BandPlan>()
+                + size_of::<EpochBand<'_>>();
             assert_eq!(
-                updated.values.len() * size_of::<Complex64>(),
-                residual_image
+                memory.completion_bytes,
+                completion_with_grid.max(completion_with_result),
+                "residual completion must exclude prediction/support owners"
             );
             assert_eq!(
                 memory.retained_bytes,
-                residual_image + size_of::<(BandResult, PreparedFft)>() + fft
+                residual_image + size_of::<(BandResult, PreparedFft<f32>)>() + fft
             );
         }
     }
@@ -814,6 +1551,8 @@ fn band_memory_scales_from_shapes_and_rejects_overflow_without_allocating() {
         geometry: geometry(),
         core: 0..1,
         total_channels: 16_384,
+        fine_per_output: 1,
+        single_channel: None,
         phase: BandPhase::InitialZero,
         support: BandSupport {
             native: 0..0,
@@ -834,7 +1573,7 @@ fn band_memory_scales_from_shapes_and_rejects_overflow_without_allocating() {
             assert!(memory.peak_bytes() > previous);
             assert!(
                 memory.accumulation_bytes
-                    >= 4 * depth * grid * grid * std::mem::size_of::<Complex64>()
+                    >= 2 * depth * grid * grid * std::mem::size_of::<Complex32>()
             );
             previous = memory.peak_bytes();
         }
@@ -878,11 +1617,12 @@ fn model_epoch_reads_only_support_planes_with_correct_axes_and_invalid_support()
         geometry(),
         1..2,
         vec![0, 2],
-        PreparedFft::new([10, 10], 7690).unwrap(),
+        PreparedFft::new([10, 10], 7690, 1).unwrap(),
         BandPhase::Full,
+        None,
     );
     let job = EpochBand::prepare(owned, &model, 0..8).unwrap();
-    assert_bits(
+    assert_close(
         job.workspace.forward.iter().copied(),
         expected.forward.iter().copied(),
     );
@@ -904,20 +1644,20 @@ fn model_epoch_reads_only_support_planes_with_correct_axes_and_invalid_support()
         geometry(),
         1..2,
         support.model.clone(),
-        PreparedFft::new([10, 10], 7690).unwrap(),
+        PreparedFft::new([10, 10], 7690, 1).unwrap(),
         BandPhase::Full,
+        None,
     );
     let mut job = EpochBand::prepare(prepared, &model, support.native.clone()).unwrap();
     let mut expected = workspace(1..2, support.model, &raw);
     let polarization = polarization();
     for band in [&mut job.workspace, &mut expected] {
-        let mut row = band
-            .begin_row(input.row(support.native.clone()), &output, &polarization)
-            .unwrap();
+        let input_row = input.row(support.native.clone());
+        let mut row = band.begin_row(&input_row, &output, &polarization).unwrap();
         row.push(0..support.native.len()).unwrap();
         row.finish().unwrap();
     }
-    assert_bits(
+    assert_close(
         job.workspace.residual.iter().copied(),
         expected.residual.iter().copied(),
     );
@@ -932,8 +1672,9 @@ fn delayed_band_cannot_complete_into_another_model_epoch_and_model_io_errors_pro
             geometry(),
             0..1,
             vec![0],
-            PreparedFft::new([10, 10], 7690).unwrap(),
+            PreparedFft::new([10, 10], 7690, 1).unwrap(),
             BandPhase::Full,
+            None,
         )
     };
     let job = EpochBand::prepare(new(), &model, 0..8).unwrap();
@@ -986,14 +1727,17 @@ fn completed_epoch_images_preserve_partitioned_fields_and_model_binding() {
             geometry: geometry(),
             core,
             total_channels: 4,
+            fine_per_output: 1,
+            single_channel: None,
             phase: BandPhase::Full,
             support,
         };
         let mut job = plan.prepare(&model, None).unwrap();
         let count = job.native_range.len();
+        let input_row = input.row(job.native_range.clone());
         let mut row = job
             .workspace
-            .begin_row(input.row(job.native_range.clone()), &output, &polarization)
+            .begin_row(&input_row, &output, &polarization)
             .unwrap();
         if partitioned {
             for channel in 0..count {
@@ -1010,21 +1754,49 @@ fn completed_epoch_images_preserve_partitioned_fields_and_model_binding() {
         result
     };
     let expected = complete(0..4, false);
-    assert!(expected.dirty().iter().any(|value| value.norm() > 0.0));
+    assert!(
+        expected
+            .cube_real
+            .as_ref()
+            .unwrap()
+            .dirty
+            .iter()
+            .any(|value| *value != 0.0)
+    );
     for depth in [1, 2] {
         for start in (0..4).step_by(depth) {
             let core = start..start + depth;
             let pixels = start * 64..(start + depth) * 64;
             let actual = complete(core.clone(), true);
-            assert_bits(
-                actual.dirty().iter().copied(),
-                expected.dirty()[pixels.clone()].iter().copied(),
+            let actual_real = actual.cube_real.as_ref().unwrap();
+            let expected_real = expected.cube_real.as_ref().unwrap();
+            assert_close(
+                actual_real
+                    .dirty
+                    .iter()
+                    .map(|&value| Complex64::new(f64::from(value), 0.0)),
+                expected_real.dirty[pixels.clone()]
+                    .iter()
+                    .map(|&value| Complex64::new(f64::from(value), 0.0)),
             );
-            assert_bits(
-                actual.psf().iter().copied(),
-                expected.psf()[pixels.clone()].iter().copied(),
+            assert_close(
+                actual_real
+                    .psf
+                    .iter()
+                    .map(|&value| Complex64::new(f64::from(value), 0.0)),
+                expected_real.psf[pixels.clone()]
+                    .iter()
+                    .map(|&value| Complex64::new(f64::from(value), 0.0)),
             );
-            assert_eq!(actual.sensitivity(), &expected.sensitivity()[pixels]);
+            assert_eq!(
+                actual.sensitivity().iter().collect::<Vec<_>>(),
+                expected
+                    .sensitivity()
+                    .iter()
+                    .skip(pixels.start)
+                    .take(pixels.len())
+                    .collect::<Vec<_>>()
+            );
             assert_eq!(actual.sum_weights(), &expected.sum_weights()[core.clone()]);
             assert_eq!(
                 actual.published_sum_weights(),
@@ -1046,9 +1818,9 @@ fn completed_epoch_images_preserve_partitioned_fields_and_model_binding() {
 #[test]
 fn channel_completion_moves_buffers_and_keeps_blank_unmapped_and_shape_checks() {
     let model = crate::ModelGenerationId(LogicalIdentity::from_sha256([37; 32]));
-    let dirty = vec![Complex64::new(2.0, 0.0); 3];
-    let residual = vec![Complex64::new(1.0, 0.0); 3];
-    let psf = vec![Complex64::new(3.0, 0.0); 3];
+    let dirty = vec![2.0; 3];
+    let residual = vec![1.0; 3];
+    let psf = vec![3.0; 3];
     let residual_pointer = residual.as_ptr();
     let psf_pointer = psf.as_ptr();
     let images = BandImages {
@@ -1062,8 +1834,14 @@ fn channel_completion_moves_buffers_and_keeps_blank_unmapped_and_shape_checks() 
         mapped: vec![2, 1, 0],
     };
     let completed = SpectralOperatorPrimitives::from_cube_band(images, 4, model).unwrap();
-    assert_eq!(completed.dirty().as_ptr(), residual_pointer);
-    assert_eq!(completed.psf().as_ptr(), psf_pointer);
+    assert_eq!(
+        completed.cube_real.as_ref().unwrap().dirty.as_ptr(),
+        residual_pointer
+    );
+    assert_eq!(
+        completed.cube_real.as_ref().unwrap().psf.as_ptr(),
+        psf_pointer
+    );
     assert_eq!(
         completed.channel_validity(),
         [
@@ -1100,8 +1878,9 @@ fn empty_initial_and_residual_refresh_omit_dead_grids_and_do_not_load_prior_arra
             geometry(),
             0..4,
             (0..4).collect(),
-            PreparedFft::new([10, 10], 7690).unwrap(),
+            PreparedFft::new([10, 10], 7690, 1).unwrap(),
             phase,
+            None,
         )
     };
     assert!(matches!(
@@ -1109,9 +1888,10 @@ fn empty_initial_and_residual_refresh_omit_dead_grids_and_do_not_load_prior_arra
         Err(SpectralOperatorError::ReusableNormalStateMismatch)
     ));
     let consume = |job: &mut EpochBand<'_>| {
+        let input_row = input.row(0..8);
         let mut row = job
             .workspace
-            .begin_row(input.row(0..8), &output, &polarization)
+            .begin_row(&input_row, &output, &polarization)
             .unwrap();
         row.push(0..8).unwrap();
         row.finish().unwrap();
@@ -1123,7 +1903,6 @@ fn empty_initial_and_residual_refresh_omit_dead_grids_and_do_not_load_prior_arra
     );
     assert!(initial.workspace.forward.is_empty());
     assert!(initial.workspace.residual.is_empty());
-    assert!(initial.workspace.residual_error.is_empty());
     consume(&mut initial);
     let (initial, _) = initial.complete(&empty).unwrap();
     let BandResult::Initial(initial) = initial else {
@@ -1142,9 +1921,7 @@ fn empty_initial_and_residual_refresh_omit_dead_grids_and_do_not_load_prior_arra
     let original_identity = initial.normal_state_content_identity();
     let mut refresh = EpochBand::prepare(new(BandPhase::Residual), &model, 0..8).unwrap();
     assert!(refresh.workspace.dirty.is_empty());
-    assert!(refresh.workspace.dirty_error.is_empty());
     assert!(refresh.workspace.psf.is_empty());
-    assert!(refresh.workspace.psf_error.is_empty());
     assert!(refresh.workspace.sum_weight.is_empty());
     assert!(refresh.workspace.mapped.is_empty());
     consume(&mut refresh);
@@ -1158,7 +1935,9 @@ fn empty_initial_and_residual_refresh_omit_dead_grids_and_do_not_load_prior_arra
     let BandResult::Initial(expected) = expected else {
         panic!("initial normal required")
     };
-    assert_eq!(actual.values.as_ref(), expected.dirty());
+    for (&actual, expected) in actual.values.iter().zip(expected.dirty()) {
+        assert!((f64::from(actual) - expected.re).abs() < 1e-6);
+    }
     assert_eq!(actual.model, model.generation_id());
     assert_eq!(
         initial.normal_state_content_identity(),
@@ -1168,10 +1947,123 @@ fn empty_initial_and_residual_refresh_omit_dead_grids_and_do_not_load_prior_arra
 }
 
 #[test]
+fn interpolation_reuse_depends_only_on_admitted_window_and_original_pair() {
+    use super::super::input::RowMetadata;
+    let output = [1e9, 1.002e9, 1.004e9, 1.006e9];
+    let polarization = polarization();
+    let raw = model();
+    for descending in [false, true] {
+        let mut frequencies: Vec<_> = (0..12).map(|ch| 0.996e9 + ch as f64 * 1e6).collect();
+        if descending {
+            frequencies.reverse();
+        }
+        let input = Input::new(frequencies.clone());
+        let layout = NativeLayout::new(
+            input.row(0..12).address,
+            input.channels.clone(),
+            smallvec::smallvec![
+                (0, CorrelationType::CircularRr),
+                (1, CorrelationType::CircularLl)
+            ],
+        )
+        .unwrap();
+        for selected in [0..12, 2..10] {
+            let mut block = NativeBlock::new(8, selected.len(), 2).unwrap();
+            let mut row_hz = frequencies.clone();
+            let mut pair = [frequencies[0], frequencies[1]];
+            for row in 0..8 {
+                match row {
+                    1 => row_hz[2] += 0.05e6, // Outside the band's window, inside both source windows.
+                    2 => row_hz[9] += 0.1e6,
+                    3 => row_hz[4] += 0.1e6, // Admitted halo, even if this row narrows its support.
+                    5 => row_hz[6] += 0.2e6,
+                    6 => pair[1] += 0.1e6,
+                    _ => {}
+                }
+                block.metadata[row] = RowMetadata {
+                    physical_row: row as u64,
+                    uvw_m: [7.0 + row as f64, -3.0, 0.0],
+                    phase_shift_m: 0.017,
+                    original_pair_hz: pair,
+                };
+                let cells = row * selected.len()..(row + 1) * selected.len();
+                let samples = cells.start * 2..cells.end * 2;
+                let source = selected.start * 2..selected.end * 2;
+                block.frequencies_hz[cells].copy_from_slice(&row_hz[selected.clone()]);
+                block.values[samples.clone()]
+                    .copy_from_slice(&input.values.as_slice().unwrap()[source.clone()]);
+                block.weights[samples.clone()]
+                    .copy_from_slice(&input.weights.as_slice().unwrap()[source.clone()]);
+                block.flags[samples.clone()]
+                    .copy_from_slice(&input.flags.as_slice().unwrap()[source.clone()]);
+                block.weight_flags[samples]
+                    .copy_from_slice(&input.weight_flags.as_slice().unwrap()[source]);
+            }
+            for phase in [BandPhase::InitialZero, BandPhase::Full, BandPhase::Residual] {
+                let make_band = || {
+                    let mut band = BandWorkspace::new(
+                        geometry(),
+                        1..2,
+                        (0..4).collect(),
+                        PreparedFft::new([10, 10], 7690, 1).unwrap(),
+                        phase,
+                        None,
+                    );
+                    if phase != BandPhase::InitialZero {
+                        band.prepare_model(raw.view()).unwrap();
+                    }
+                    band
+                };
+                let mut actual = make_band();
+                actual
+                    .consume_block(
+                        block.view().unwrap(),
+                        &layout,
+                        selected.clone(),
+                        4..9,
+                        &output,
+                        &polarization,
+                    )
+                    .unwrap();
+                assert_eq!(
+                    actual.stencil_builds, 4,
+                    "outside-window changes must not rebuild"
+                );
+                let mut expected = make_band();
+                for row in 0..8 {
+                    let row = block
+                        .row(&layout, row, selected.clone())
+                        .unwrap()
+                        .window(4 - selected.start..9 - selected.start)
+                        .unwrap();
+                    let native = BandSupport::native_window(
+                        &output,
+                        1..2,
+                        row.frequencies_hz,
+                        row.original_pair_hz,
+                    )
+                    .unwrap();
+                    let channels = native.len();
+                    let row = row.window(native).unwrap();
+                    let mut accumulator = expected.begin_row(&row, &output, &polarization).unwrap();
+                    accumulator.push(0..channels).unwrap();
+                    accumulator.finish().unwrap();
+                }
+                assert_eq!(actual.dirty, expected.dirty);
+                assert_eq!(actual.residual, expected.residual);
+                assert_eq!(actual.psf, expected.psf);
+                assert_eq!(actual.sum_weight, expected.sum_weight);
+                assert_eq!(actual.mapped, expected.mapped);
+            }
+        }
+    }
+}
+
+#[test]
 fn shared_wide_window_narrows_row_dependent_support_without_copies() {
     use super::super::input::RowMetadata;
     let output = [1e9, 1.002e9, 1.004e9, 1.006e9];
-    let inputs: Vec<_> = [-0.6e6, 0.1e6, 0.6e6]
+    let inputs: Vec<_> = [-0.6e6, -0.6e6, 0.1e6, 0.6e6, 0.6e6]
         .into_iter()
         .map(|shift| {
             Input::new(
@@ -1190,7 +2082,7 @@ fn shared_wide_window_narrows_row_dependent_support_without_copies() {
         ],
     )
     .unwrap();
-    let mut block = NativeBlock::new(3, 12, 2).unwrap();
+    let mut block = NativeBlock::new(inputs.len(), 12, 2).unwrap();
     for (r, input) in inputs.iter().enumerate() {
         let row = input.row(0..12);
         block.metadata[r] = RowMetadata {
@@ -1214,9 +2106,20 @@ fn shared_wide_window_narrows_row_dependent_support_without_copies() {
         block.frequencies_hz[15..].as_ptr()
     );
     assert_eq!(narrow.original_pair_hz, block.metadata[1].original_pair_hz);
-    assert!(block.row(&layout, 0, 0..12).unwrap().window(0..1).is_err());
+    assert!(block.row(&layout, 0, 0..12).unwrap().window(0..0).is_err());
     let polarization = polarization();
     let raw = model();
+    let mut linear = workspace(0..4, (0..4).collect(), &raw);
+    assert!(
+        linear
+            .begin_row(
+                &block.row(&layout, 0, 0..12).unwrap().window(0..1).unwrap(),
+                &output,
+                &polarization
+            )
+            .is_err(),
+        "multi-plane interpolation still requires a native pair"
+    );
     for depth in [1, 2, 4] {
         for start in (0..4).step_by(depth) {
             let core = start..start + depth;
@@ -1238,7 +2141,7 @@ fn shared_wide_window_narrows_row_dependent_support_without_copies() {
             let mut actual = workspace(core.clone(), support.model.clone(), &raw);
             actual
                 .consume_block(
-                    &block,
+                    block.view().unwrap(),
                     &layout,
                     0..12,
                     support.native.clone(),
@@ -1258,8 +2161,9 @@ fn shared_wide_window_narrows_row_dependent_support_without_copies() {
                 .native;
                 assert!(native.start >= support.native.start && native.end <= support.native.end);
                 let count = native.len();
+                let input_row = input.row(native);
                 let mut row = expected
-                    .begin_row(input.row(native), &output, &polarization)
+                    .begin_row(&input_row, &output, &polarization)
                     .unwrap();
                 row.push(0..count).unwrap();
                 row.finish().unwrap();

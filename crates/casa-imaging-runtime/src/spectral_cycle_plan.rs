@@ -56,6 +56,37 @@ fn bounded_worker_stack_bytes(workers: u64) -> Result<u64, SpectralCyclePlanErro
         .ok_or(SpectralCyclePlanError::Overflow)
 }
 
+fn native_fft_pool_stack_bytes(
+    problem: &CompiledProblem,
+    policy: &SpectralCycleExecutionPolicy,
+) -> Result<u64, SpectralCyclePlanError> {
+    let clark_pool = ReconstructionPlaneWorkspace::for_problem(problem)
+        .map_err(SpectralCyclePlanError::Minor)?
+        .is_some_and(ReconstructionPlaneWorkspace::parallel_fft);
+    let spectral_pool = cfg!(unix)
+        && SpectralOperatorSpecification::new(problem)
+            .map_err(CompleteDataPlanError::from)?
+            .supports_bulk_mfs();
+    let pools = u64::from(clark_pool) + u64::from(spectral_pool);
+    if pools == 0 {
+        return Ok(0);
+    }
+    let workers = policy
+        .authority
+        .planning_worker_capacity(&policy.resource_policy)?;
+    // FFTW single- and double-precision workers have separate persistent pools.
+    crate::reconstruction_executor::native_fft_stack_bytes(
+        usize::try_from(workers).map_err(|_| SpectralCyclePlanError::Overflow)?,
+        policy.authority.topology().native_thread_stack_bytes,
+    )
+    .map_err(SpectralCyclePlanError::MinorWorkspace)
+    .and_then(|bytes| {
+        bytes
+            .checked_mul(pools)
+            .ok_or(SpectralCyclePlanError::Overflow)
+    })
+}
+
 /// Explicit non-scientific limits for one spectral cycle physical plan.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SpectralCyclePlanningLimits {
@@ -94,9 +125,19 @@ pub struct SpectralCycleExecutionPolicy {
     gridded_normal_storage: Option<ManagedSpillStorage>,
     pub(crate) aw_projection: Option<PreparedAwProjection>,
     pub(crate) aw_reader: Option<PreparedArtifactReaderPlan>,
+    pub(crate) metal_cube: bool,
 }
 
 impl SpectralCycleExecutionPolicy {
+    /// Require admitted native Metal spatial operators: cube initial/residual
+    /// imaging and scalar MFS residual refresh. Other phases remain their shared
+    /// CPU implementations. Unavailable devices or unsupported geometry fail
+    /// without backend substitution.
+    #[must_use]
+    pub fn with_metal_cube(mut self, enabled: bool) -> Self {
+        self.metal_cube = enabled;
+        self
+    }
     /// Construct explicit execution limits bound to runtime-owned resource planning.
     #[must_use]
     pub fn new(
@@ -120,6 +161,7 @@ impl SpectralCycleExecutionPolicy {
             gridded_normal_storage: None,
             aw_projection: None,
             aw_reader: None,
+            metal_cube: false,
         }
     }
 
@@ -200,6 +242,7 @@ pub struct SpectralCyclePlan {
     weighting: WeightingPlan,
     pass: SpectralPassIdentity,
     gridded_normal: Option<PlannedGriddedNormalBinding>,
+    replay_residency: Option<(ResourceAuthority, ResourcePolicy)>,
 }
 
 /// One complete plan-issued capability for gridded-normal compilation or replay.
@@ -476,6 +519,7 @@ impl SpectralCyclePlan {
             weighting,
             pass,
             gridded_normal: None,
+            replay_residency: None,
         })
     }
 
@@ -486,7 +530,7 @@ impl SpectralCyclePlan {
         pass: SpectralPassIdentity,
         include_minor: bool,
         phase_input: Option<&FinalMajorPhaseInput>,
-        gridded_replay: Option<crate::FrozenGriddedNormalReplay>,
+        mut gridded_replay: Option<crate::FrozenGriddedNormalReplay>,
     ) -> Result<Self, SpectralCyclePlanError> {
         validate_aw_projection_binding(problem, &policy)?;
         let weighting = plan_weighting(problem, policy.weighting_limits)?;
@@ -555,7 +599,13 @@ impl SpectralCyclePlan {
                 if strategy == GriddedNormalStrategy::CreateManagedSpill
                     && policy.visibility_write.is_none() =>
             {
-                if supports_replay_preparation(problem, &policy) {
+                let regions =
+                    casa_imaging_reconstruction::SpectralOperatorSpecification::new(problem)
+                        .map_err(CompleteDataPlanError::from)?
+                        .initial_mfs_region_count();
+                if regions > 0 {
+                    regions as u64 + 1
+                } else if supports_replay_preparation(problem, &policy) {
                     problem.geometry().spectral().output_channels() as u64
                 } else {
                     2
@@ -677,6 +727,30 @@ impl SpectralCyclePlan {
                                         },
                                     );
                                 }
+                                let bounded = compose_major_physical_mode(
+                                    problem,
+                                    registry,
+                                    &policy,
+                                    &weighting,
+                                    phase,
+                                    PhysicalComposition {
+                                        workers,
+                                        window: Some(window),
+                                        retention: RetentionMode::Bounded,
+                                    },
+                                )?;
+                                let resident_bytes =
+                                    replay.descriptor().retained_source_capacity_bytes()?;
+                                let can_reside = candidate_memory_fits(&bounded, &policy)?
+                                    && policy.authority.remaining_planning_memory_bytes(
+                                        &policy.resource_policy,
+                                        bounded.physical.execution_dag().resource_alternative(),
+                                    )? >= resident_bytes;
+                                if replay.has_resident_source() || can_reside {
+                                    // The immutable payload has its own cross-plan
+                                    // lease; do not allocate/load a second DAG cache.
+                                    return Ok(bounded);
+                                }
                                 let retained = compose_major_physical_mode(
                                     problem,
                                     registry,
@@ -700,18 +774,6 @@ impl SpectralCyclePlan {
                                 // fit the explicit ceiling, the direct replay
                                 // route streams the same artifact from disk
                                 // through window-sized buffers.
-                                let bounded = compose_major_physical_mode(
-                                    problem,
-                                    registry,
-                                    &policy,
-                                    &weighting,
-                                    phase,
-                                    PhysicalComposition {
-                                        workers,
-                                        window: Some(window),
-                                        retention: RetentionMode::Bounded,
-                                    },
-                                )?;
                                 if candidate_memory_fits(&bounded, &policy)? {
                                     if imaging_plan_diagnostics_enabled() {
                                         eprintln!(
@@ -754,6 +816,34 @@ impl SpectralCyclePlan {
                         },
                     )?,
                 };
+                if policy.metal_cube && pass.phase() == SpectralPassPhase::FinalMajor {
+                    let replay = gridded_replay
+                        .as_ref()
+                        .ok_or(SpectralCyclePlanError::InvalidGriddedNormalReplay)?;
+                    let window = candidate
+                        .window
+                        .as_ref()
+                        .ok_or(SpectralCyclePlanError::InvalidGriddedNormalReplay)?;
+                    let binding = replay
+                        .metal_plan(window, candidate.complete_data.replay_node())
+                        .map_err(SpectralCyclePlanError::CubeStorage)?;
+                    let reconcile = candidate
+                        .physical
+                        .observation_transaction()
+                        .post_replay_reconciliation()
+                        .ok_or(SpectralCyclePlanError::Overflow)?
+                        .clone();
+                    candidate.physical = crate::streaming_cube::metal_plan::compose(
+                        candidate.physical,
+                        &policy.authority,
+                        candidate.complete_data.replay_node(),
+                        &reconcile,
+                        &binding.allocation,
+                        binding.bytes as u64,
+                    )
+                    .map_err(SpectralCyclePlanError::CubeStorage)?;
+                    candidate.complete_data.metal_normal = Some(binding);
+                }
                 if !bounded_channels || depth == 1 || fits(&candidate)? {
                     if strategy == GriddedNormalStrategy::CreateManagedSpill
                         && bounded_channels
@@ -814,6 +904,35 @@ impl SpectralCyclePlan {
                 }
             }
         }
+        // At this quiescent boundary no source view is live. If the next complete
+        // phase cannot fit, release optional payload residency before replanning.
+        if gridded_replay
+            .as_ref()
+            .is_some_and(|replay| replay.has_resident_source())
+            && !candidates
+                .iter()
+                .map(fits)
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .any(|fits| fits)
+        {
+            gridded_replay
+                .as_mut()
+                .expect("resident replay exists")
+                .evict_resident_source();
+            return Self::build(
+                problem,
+                registry,
+                policy,
+                pass,
+                include_minor,
+                phase_input,
+                gridded_replay,
+            );
+        }
+        let replay_residency = gridded_replay
+            .as_ref()
+            .map(|_| (policy.authority.clone(), policy.resource_policy.clone()));
         let gridded_normal = match (strategy, gridded_normal_storage, gridded_replay) {
             (GriddedNormalStrategy::ReuseManagedSpill, Some(storage), Some(replay)) => {
                 Some(PlannedGriddedNormalBinding::replay(replay, storage)?)
@@ -837,6 +956,7 @@ impl SpectralCyclePlan {
             weighting,
             pass,
             gridded_normal,
+            replay_residency,
         })
     }
 
@@ -886,6 +1006,22 @@ impl SpectralCyclePlan {
             else {
                 return Err(SpectralCyclePlanError::InvalidGriddedNormalReplay);
             };
+            if window.has_selected_windows() {
+                replay.evict_resident_source();
+            } else if !candidate
+                .physical
+                .execution_dag()
+                .nodes()
+                .contains_key(&retained_route_node(self.pass))
+                && let Some((authority, policy)) = &self.replay_residency
+            {
+                replay.reserve_resident_source(
+                    authority,
+                    policy,
+                    candidate.physical.execution_dag().resource_alternative(),
+                    candidate.complete_data.metal_normal.as_ref(),
+                )?;
+            }
             replay.bind_window_plan(window)?;
         }
         Ok(SpectralCyclePlanParts {
@@ -1095,7 +1231,10 @@ fn compose_major_physical_mode<R: ImplementationRegistry>(
             if strategy == GriddedNormalStrategy::CreateManagedSpill
                 && policy.visibility_write.is_none() =>
         {
-            if supports_replay_preparation(problem, policy) {
+            let regions = casa_imaging_reconstruction::SpectralOperatorSpecification::new(problem)
+                .map_err(CompleteDataPlanError::from)?
+                .initial_mfs_region_count();
+            if regions > 0 || supports_replay_preparation(problem, policy) {
                 workers
             } else {
                 workers.min(2)
@@ -1111,7 +1250,6 @@ fn compose_major_physical_mode<R: ImplementationRegistry>(
                 base_physical(problem, registry, policy, pass, phase_input)?;
             let preparation = if strategy == GriddedNormalStrategy::CreateManagedSpill
                 && supports_replay_preparation(problem, policy)
-                && replay_workers > 1
             {
                 Some(
                     crate::weighting::ReplayPreparationPlan::new(
@@ -1119,6 +1257,7 @@ fn compose_major_physical_mode<R: ImplementationRegistry>(
                         weighting,
                         usize::try_from(replay_workers)
                             .map_err(|_| SpectralCyclePlanError::Overflow)?,
+                        &source_resources,
                     )
                     .map_err(|_| SpectralCyclePlanError::Overflow)?,
                 )
@@ -1147,7 +1286,9 @@ fn compose_major_physical_mode<R: ImplementationRegistry>(
                     .transpose()
                     .map_err(|_| SpectralCyclePlanError::Overflow)?,
             )
-            .with_replay_preparation(preparation);
+            .with_replay_preparation(preparation)
+            .with_numeric_density(problem)
+            .map_err(|_| SpectralCyclePlanError::Overflow)?;
             let replay = fragment.streaming_node().clone();
             let mut physical = fragment.compose(&base)?;
             if strategy == GriddedNormalStrategy::CreateManagedSpill {
@@ -2106,7 +2247,10 @@ pub(crate) fn base_physical<R: ImplementationRegistry>(
                 },
             ],
             workers: CountDemand::new(1, 1),
-            overhead: RuntimeOverheadDemand::zero(),
+            overhead: RuntimeOverheadDemand {
+                external_library_bytes: native_fft_pool_stack_bytes(problem, policy)?,
+                ..RuntimeOverheadDemand::zero()
+            },
             storage: vec![StorageDemand {
                 demand_id: output_storage_id,
                 domain: policy.storage_io.domain().clone(),
@@ -2239,7 +2383,7 @@ struct GriddedReplayPlanning<'a> {
 }
 
 fn base_gridded_physical<R: ImplementationRegistry>(
-    _problem: &CompiledProblem,
+    problem: &CompiledProblem,
     registry: &R,
     policy: &SpectralCycleExecutionPolicy,
     pass: SpectralPassIdentity,
@@ -2402,6 +2546,7 @@ fn base_gridded_physical<R: ImplementationRegistry>(
             workers: CountDemand::new(maximum_workers, maximum_workers),
             overhead: RuntimeOverheadDemand {
                 thread_stack_bytes: worker_stack_bytes,
+                external_library_bytes: native_fft_pool_stack_bytes(problem, policy)?,
                 ..RuntimeOverheadDemand::zero()
             },
             storage: vec![StorageDemand {
@@ -2625,10 +2770,15 @@ fn supports_replay_preparation(
     problem: &CompiledProblem,
     policy: &SpectralCycleExecutionPolicy,
 ) -> bool {
-    matches!(
+    (matches!(
         problem.reconstruction().basis(),
         casa_imaging_model::ReconstructionBasis::ChannelLocal { .. }
     ) && problem.weighting().scheme() == casa_imaging_model::WeightingScheme::Natural
+        || matches!(
+            problem.reconstruction().basis(),
+            casa_imaging_model::ReconstructionBasis::Constant
+        ) && problem.weighting().density_scope()
+            == casa_imaging_model::WeightDensityScope::GlobalSelection)
         && matches!(
             problem.model_lifecycle().input(),
             casa_imaging_model::ModelInputCommitment::Empty
@@ -3006,9 +3156,12 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
         .serialization_bytes
         .checked_add(serialization_bytes)
         .ok_or(SpectralCyclePlanError::Overflow)?;
-    let page_cache_bytes =
-        crate::managed_spill::page_cache_window_bytes(bytes_per_slot, source_slots)
-            .map_err(|_| SpectralCyclePlanError::Overflow)?;
+    let page_cache_bytes = crate::managed_spill::page_cache_window_bytes(
+        bytes_per_slot,
+        source_slots,
+        policy.authority.topology().page_bytes,
+    )
+    .map_err(|_| SpectralCyclePlanError::Overflow)?;
     let page_cache_headroom = alternative
         .headroom
         .memory_bytes
@@ -3506,14 +3659,13 @@ impl MinorCycleResources {
                 stack_bytes: 0,
             });
         };
-        let workers = workers.min(workspace.plane_count() as u64);
         let plan = crate::reconstruction_executor::PlaneExecutionPlan::new(
             workspace,
             usize::try_from(workers).map_err(|_| SpectralCyclePlanError::Overflow)?,
         )
         .map_err(SpectralCyclePlanError::MinorWorkspace)?;
         Ok(Self {
-            workers,
+            workers: plan.workers as u64,
             heap_bytes: plan.heap_bytes,
             stack_bytes: plan.stack_bytes,
         })

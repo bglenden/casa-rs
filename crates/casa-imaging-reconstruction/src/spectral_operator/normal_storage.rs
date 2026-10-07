@@ -38,9 +38,9 @@ fn scalar_complex(values: Cow<'_, [f64]>) -> Result<Cow<'_, [Complex64]>, Spectr
 /// Physical scalar-array capability used only by the Normal State owner.
 ///
 /// Complex values are stored as consecutive real/imaginary f64 values. Access
-/// must preserve every bit and must not enlarge an admitted cache. The owner
-/// writes every logical value before sealing a generation; storage handles
-/// must not permit mutation through aliases retained outside this capability.
+/// must not enlarge an admitted cache. The owner writes every logical value
+/// before transferring the generation; storage handles must not permit
+/// mutation through aliases retained outside this capability.
 #[doc(hidden)]
 pub trait NormalArrayStorage: fmt::Debug + Send + Sync {
     /// Logical scalar capacity, excluding physical tile padding.
@@ -60,8 +60,51 @@ pub trait NormalArrayStorage: fmt::Debug + Send + Sync {
     /// Owned windows used as complex pairs must also have an even capacity so
     /// their allocation can transfer without repacking; invalid layouts fail.
     fn read(&self, start: usize, len: usize) -> Result<Cow<'_, [f64]>, SpectralOperatorError>;
+    /// Read one image-plane complex window directly into the consuming shape.
+    /// Compact real backings can widen here without a second scalar buffer.
+    fn read_complex(
+        &self,
+        start: usize,
+        values: usize,
+    ) -> Result<Cow<'_, [Complex64]>, SpectralOperatorError> {
+        scalar_complex(self.read(start, values * 2)?)
+    }
+    /// Borrow or load a real Float image directly when the backing stores one.
+    /// Other normal families keep their existing complex access path.
+    fn read_real(
+        &self,
+        _start: usize,
+        _values: usize,
+    ) -> Result<Option<Cow<'_, [f32]>>, SpectralOperatorError> {
+        Ok(None)
+    }
     /// Replace a bounded scalar window without resizing the array.
     fn write(&mut self, start: usize, values: &[f64]) -> Result<(), SpectralOperatorError>;
+    /// Write a real Float image window at complex-scalar offsets. Other normal
+    /// implementations may widen through their scalar interface; the managed
+    /// cube backing writes Float planes directly.
+    fn write_real(&mut self, start: usize, values: &[f32]) -> Result<(), SpectralOperatorError> {
+        if !start.is_multiple_of(2) {
+            return Err(SpectralOperatorError::InvalidSlab);
+        }
+        let mut widened = [0.0_f64; 512];
+        for (chunk_index, chunk) in values.chunks(256).enumerate() {
+            let offset = chunk_index
+                .checked_mul(widened.len())
+                .and_then(|offset| start.checked_add(offset))
+                .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+            for (pair, &value) in widened.as_chunks_mut::<2>().0.iter_mut().zip(chunk) {
+                pair[0] = f64::from(value);
+            }
+            self.write(offset, &widened[..chunk.len() * 2])?;
+        }
+        Ok(())
+    }
+
+    /// Release a superseded epoch after its replacement is complete.
+    fn retire(self: Box<Self>) -> Result<(), SpectralOperatorError> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -148,12 +191,11 @@ mod tests {
                 },
                 basis: SpectralBasisPlan::ChannelLocal,
                 polarizations: POLARIZATIONS,
-                joint_line_term_by_channel: vec![None; CHANNELS].into(),
                 dirty: complex(0.25),
+                cube_real: None,
                 invariant_dirty: Some(complex(0.5)),
-                common_residual: None,
-                invariant_common_dirty: None,
                 psf: complex(-0.125),
+                clark_workspace: std::sync::Mutex::new(None),
                 sensitivity: values.clone().map(|i| i as f64 * 0.25).collect(),
                 primary_beam_weighted_sum: None,
                 sum_weights: planes.clone().map(|i| (i + 1) as f64).collect(),
@@ -161,7 +203,6 @@ mod tests {
                     .clone()
                     .map(|i| (i + 1) as f64 + if published_differ { 0.5 } else { 0.0 })
                     .collect(),
-                channel_sum_weights: Box::new([]),
                 validity: planes
                     .map(|i| match i % 3 {
                         0 => SpectralChannelValidity::Valid,
@@ -181,6 +222,7 @@ mod tests {
     struct ObservedFactory {
         maximum_access: Arc<AtomicUsize>,
         allowed: usize,
+        scalar_sensitivity: bool,
     }
 
     #[derive(Debug)]
@@ -191,6 +233,10 @@ mod tests {
     }
 
     impl NormalStorageFactory for ObservedFactory {
+        fn scalar_sensitivity(&self) -> bool {
+            self.scalar_sensitivity
+        }
+
         fn create(
             &self,
             _domain: usize,
@@ -332,11 +378,17 @@ mod tests {
 
             let full = primitives.read_window(3..4).unwrap();
             let expected = full.get(1).unwrap().primitives();
-            assert_eq!(psf.as_ref(), &expected.psf()[CELLS..2 * CELLS]);
-            assert_eq!(residual.as_ref(), &expected.dirty()[CELLS..2 * CELLS]);
+            assert_eq!(
+                psf.as_ref(),
+                &expected.psf().complex().unwrap()[CELLS..2 * CELLS]
+            );
+            assert_eq!(
+                residual.as_ref(),
+                &expected.dirty().complex().unwrap()[CELLS..2 * CELLS]
+            );
             assert_eq!(
                 sensitivity.as_ref(),
-                &expected.sensitivity()[CELLS..2 * CELLS]
+                &expected.sensitivity().dense().unwrap()[CELLS..2 * CELLS]
             );
         }
     }
@@ -382,7 +434,6 @@ mod tests {
                     input.primitives.basis = SpectralBasisPlan::Polynomial(
                         super::super::BlockNormalPlan::constant(1.0e9).unwrap(),
                     );
-                    input.primitives.joint_line_term_by_channel = vec![None].into();
                     if ordinal == 1 {
                         input.domain_role = ImageDomainRole::Outlier("constant".into());
                         input.primitives.shape = [2, 3];
@@ -417,11 +468,17 @@ mod tests {
             assert!(matches!(sensitivity, Cow::Borrowed(_)));
             assert!(std::ptr::eq(
                 residual.as_ptr(),
-                expected.dirty()[CELLS..].as_ptr()
+                expected.dirty().complex().unwrap()[CELLS..].as_ptr()
             ));
-            assert_eq!(residual.as_ref(), &expected.dirty()[CELLS..]);
-            assert_eq!(psf.as_ref(), &expected.psf()[CELLS..]);
-            assert_eq!(sensitivity.as_ref(), &expected.sensitivity()[CELLS..]);
+            assert_eq!(
+                residual.as_ref(),
+                &expected.dirty().complex().unwrap()[CELLS..]
+            );
+            assert_eq!(psf.as_ref(), &expected.psf().complex().unwrap()[CELLS..]);
+            assert_eq!(
+                sensitivity.as_ref(),
+                &expected.sensitivity().dense().unwrap()[CELLS..]
+            );
             assert_eq!(
                 residual[0].re,
                 CELLS as f64 + if promoted { 0.75 } else { 0.25 }
@@ -586,7 +643,7 @@ mod tests {
             let next_model = ModelGenerationId(LogicalIdentity::from_sha256([epoch; 32]));
             let mut next = old.refresh(next_model, &plan).unwrap();
             let values: Box<[_]> = (0..CHANNELS * POLARIZATIONS * CELLS)
-                .map(|index| Complex64::new(index as f64 + f64::from(epoch), -0.0))
+                .map(|index| index as f32 + f32::from(epoch))
                 .collect();
             next.append_residual(&crate::streaming_cube::band::CubeResidual {
                 shape: [3, 2],
@@ -613,14 +670,54 @@ mod tests {
             );
             assert_eq!(p.validity, expected.primitives().validity);
             for (actual, expected) in p.dirty.iter().zip(values.iter()) {
-                assert_eq!(actual.re.to_bits(), expected.re.to_bits());
-                assert_eq!(actual.im.to_bits(), expected.im.to_bits());
+                assert_eq!(actual.re, f64::from(*expected));
+                assert_eq!(actual.im, 0.0);
             }
             accesses.store(0, Ordering::Relaxed);
             old = next;
         }
         drop(old);
         assert!(invariants.upgrade().is_none());
+    }
+
+    #[test]
+    fn owned_residual_wave_writes_in_admitted_windows_without_partition_copies() {
+        let old_plan = NormalStoragePlan::resident(CHANNELS).unwrap();
+        let old = StoredChannelNormalDomain::begin(streaming_domain(), &old_plan).unwrap();
+        let maximum_access = Arc::new(AtomicUsize::new(0));
+        let allowed = 2 * CELLS * POLARIZATIONS;
+        let plan = NormalStoragePlan::new(
+            Arc::new(ObservedFactory {
+                maximum_access: maximum_access.clone(),
+                allowed,
+                scalar_sensitivity: false,
+            }),
+            1,
+        )
+        .unwrap();
+        let mut next = old.refresh(model(), &plan).unwrap();
+        let values: Box<[_]> = (0..CHANNELS * POLARIZATIONS * CELLS)
+            .map(|n| n as f32 + 0.5)
+            .collect();
+        next.append_residual(&crate::streaming_cube::band::CubeResidual {
+            shape: [3, 2],
+            core: 0..CHANNELS,
+            total_channels: CHANNELS,
+            model: model(),
+            values: values.clone(),
+        })
+        .unwrap();
+        assert!(next.is_complete());
+        assert!(maximum_access.load(Ordering::Relaxed) <= allowed);
+        for channel in 0..CHANNELS {
+            let window = next.read_window(channel..channel + 1).unwrap();
+            for (actual, &expected) in window.primitives().dirty.iter().zip(
+                &values[channel * POLARIZATIONS * CELLS..(channel + 1) * POLARIZATIONS * CELLS],
+            ) {
+                assert_eq!(actual.re, f64::from(expected));
+                assert_eq!(actual.im, 0.0);
+            }
+        }
     }
 
     #[test]
@@ -649,7 +746,7 @@ mod tests {
             core: 1..CHANNELS,
             total_channels: CHANNELS,
             model: model(),
-            values: vec![Complex64::new(3.0, -0.0); (CHANNELS - 1) * POLARIZATIONS * CELLS].into(),
+            values: vec![3.0; (CHANNELS - 1) * POLARIZATIONS * CELLS].into(),
         };
         assert_eq!(
             next.append_residual(&residual),
@@ -660,7 +757,7 @@ mod tests {
         assert!(!next.is_complete());
         next.storage = Box::new(WriteFailure);
         residual.core = CHANNELS - 1..CHANNELS;
-        residual.values = vec![Complex64::new(3.0, -0.0); POLARIZATIONS * CELLS].into();
+        residual.values = vec![3.0; POLARIZATIONS * CELLS].into();
         assert!(matches!(
             next.append_residual(&residual),
             Err(SpectralOperatorError::NormalStorage(_))
@@ -684,6 +781,7 @@ mod tests {
                     Arc::new(ObservedFactory {
                         maximum_access: maximum_access.clone(),
                         allowed,
+                        scalar_sensitivity: false,
                     }),
                     width,
                 )
@@ -740,11 +838,52 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn natural_cube_scalar_sensitivity_reconstructs_each_plane_without_a_dense_backing() {
+        let scalar_domain = |range: Range<usize>| {
+            let mut domain = domain(range, false);
+            domain.primitives.sensitivity = domain
+                .primitives
+                .sum_weights
+                .iter()
+                .flat_map(|&weight| std::iter::repeat_n(weight, CELLS))
+                .collect();
+            domain
+        };
+        let expected = scalar_domain(0..CHANNELS)
+            .primitives
+            .normal_state_content_identity();
+        let plan = NormalStoragePlan::new(
+            Arc::new(ObservedFactory {
+                maximum_access: Arc::new(AtomicUsize::new(0)),
+                allowed: 2 * CELLS * POLARIZATIONS,
+                scalar_sensitivity: true,
+            }),
+            1,
+        )
+        .unwrap();
+        let mut stored = StoredChannelNormalDomain::begin(scalar_domain(0..1), &plan).unwrap();
+        assert!(stored.fields.scalar_sensitivity);
+        assert!(stored.fields.sensitivity.is_empty());
+        for channel in 1..CHANNELS {
+            stored.append(scalar_domain(channel..channel + 1)).unwrap();
+        }
+        assert_eq!(stored.content_identity().unwrap(), expected);
+        let state = NormalStatePrimitives::ChannelLocal(vec![stored].into());
+        let reader = state.read_plane(0, 3, 1).unwrap();
+        assert_eq!(reader.read_sensitivity().unwrap().as_ref(), &[8.0; CELLS]);
+    }
 }
 
 /// Runtime allocation capability for an exact logical Normal State array.
 #[doc(hidden)]
 pub trait NormalStorageFactory: fmt::Debug + Send + Sync {
+    /// The natural-weight cube's sensitivity is one scalar per channel; no
+    /// image-sized backing is needed for that repeated value.
+    fn scalar_sensitivity(&self) -> bool {
+        false
+    }
     /// Allocate storage whose complete logical contents will be owner-written.
     /// Slots are `2 * domain` for epoch arrays and `2 * domain + 1` for invariants.
     fn create(
@@ -762,6 +901,7 @@ pub struct ChannelNormalStorageRequirement {
     allocation_ordinal: usize,
     scalar_capacity: usize,
     complex_plane_scalars: usize,
+    image_axes: [usize; 2],
     maximum_window_scalars: usize,
     retained_metadata_bytes: usize,
 }
@@ -774,36 +914,12 @@ impl ChannelNormalStorageRequirement {
         specification: &SpectralOperatorSpecification,
         window_channels: usize,
     ) -> Result<Box<[Self]>, SpectralOperatorError> {
-        Self::for_fields(specification, window_channels, true, true, false)
-    }
-
-    /// Native initial-empty imaging followed by residual refresh retains only
-    /// the promoted residual, PSF and sensitivity. This bound is specific to
-    /// that chain; nonempty full-normal construction uses `for_specification`.
-    /// The storage factory rejects allocations exceeding the projected capacity.
-    #[doc(hidden)]
-    pub fn for_streaming_cube(
-        specification: &SpectralOperatorSpecification,
-        window_channels: usize,
-    ) -> Result<Box<[Self]>, SpectralOperatorError> {
-        Self::for_fields(specification, window_channels, false, false, false)
-    }
-
-    /// Allocate only the new complex residual; imported invariants retain their
-    /// original physical owner and resource permit.
-    pub fn for_streaming_cube_refresh(
-        specification: &SpectralOperatorSpecification,
-        window_channels: usize,
-    ) -> Result<Box<[Self]>, SpectralOperatorError> {
-        Self::for_fields(specification, window_channels, false, false, true)
+        Self::for_fields(specification, window_channels)
     }
 
     fn for_fields(
         specification: &SpectralOperatorSpecification,
         window_channels: usize,
-        invariant: bool,
-        residual: bool,
-        residual_only: bool,
     ) -> Result<Box<[Self]>, SpectralOperatorError> {
         let channels = specification.slab.total_channels();
         if specification.basis != SpectralBasisPlan::ChannelLocal
@@ -827,7 +943,7 @@ impl ChannelNormalStorageRequirement {
                 let values = plane_values
                     .checked_mul(channels)
                     .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-                let fields = ChannelNormalFields::new(values, invariant, residual)?;
+                let fields = ChannelNormalFields::new(values, true, true, false)?;
                 let metadata_values = channels
                     .checked_mul(polarizations)
                     .ok_or(SpectralOperatorError::ResidencyOverflow)?;
@@ -844,22 +960,28 @@ impl ChannelNormalStorageRequirement {
                     allocation_ordinal: ordinal * 2,
                     scalar_capacity: fields.epoch_scalars,
                     complex_plane_scalars,
+                    image_axes: [
+                        domain.image_shape()[1],
+                        domain.image_shape()[0]
+                            .checked_mul(polarizations)
+                            .and_then(|n| n.checked_mul(2))
+                            .ok_or(SpectralOperatorError::ResidencyOverflow)?,
+                    ],
                     maximum_window_scalars: complex_plane_scalars
                         .checked_mul(window_channels)
                         .ok_or(SpectralOperatorError::ResidencyOverflow)?,
                     retained_metadata_bytes,
                 };
-                let mut allocations = vec![epoch];
-                if !residual_only {
-                    allocations.push(Self {
+                Ok(vec![
+                    epoch,
+                    Self {
                         allocation_ordinal: ordinal * 2 + 1,
                         scalar_capacity: fields.scalars - fields.epoch_scalars,
                         retained_metadata_bytes: size_of::<Box<dyn NormalArrayStorage>>()
                             + 2 * size_of::<usize>(),
                         ..epoch
-                    });
-                }
-                Ok(allocations)
+                    },
+                ])
             })
             .collect::<Result<Vec<_>, SpectralOperatorError>>()
             .map(|domains| domains.into_iter().flatten().collect())
@@ -881,6 +1003,12 @@ impl ChannelNormalStorageRequirement {
     #[must_use]
     pub const fn complex_plane_scalars(self) -> usize {
         self.complex_plane_scalars
+    }
+
+    /// Storage axes for native y-contiguous complex scalar planes.
+    #[must_use]
+    pub const fn image_axes(self) -> [usize; 2] {
+        self.image_axes
     }
 
     /// Largest single read/write request issued to the physical capability.
@@ -1013,14 +1141,20 @@ pub(crate) struct NormalDomainMetadata<'a> {
     pub(crate) coefficient_terms: usize,
     pub(crate) normal_moments: usize,
     pub(crate) reference_frequency_hz: Option<f64>,
-    pub(crate) joint_continuum_terms: Option<usize>,
     pub(crate) sum_weights: &'a [f64],
     pub(crate) published_sum_weights: &'a [f64],
-    pub(crate) channel_sum_weights: &'a [f64],
     pub(crate) validity: &'a [SpectralChannelValidity],
 }
 
 impl NormalStatePrimitives {
+    pub(crate) fn retire_obsolete(self) -> Result<(), SpectralOperatorError> {
+        if let Self::ChannelLocal(domains) = self {
+            for domain in domains {
+                domain.storage.retire()?;
+            }
+        }
+        Ok(())
+    }
     pub(crate) fn retained_resident_bytes(&self) -> Result<u64, SpectralOperatorError> {
         match self {
             Self::ChannelLocal(domains) => domains.iter().try_fold(0u64, |bytes, domain| {
@@ -1123,10 +1257,8 @@ impl NormalStatePrimitives {
                     coefficient_terms: d.total_channels,
                     normal_moments: d.total_channels,
                     reference_frequency_hz: None,
-                    joint_continuum_terms: None,
                     sum_weights: &d.sum_weights,
                     published_sum_weights: &d.published_sum_weights,
-                    channel_sum_weights: &[],
                     validity: &d.validity,
                 }
             }
@@ -1140,10 +1272,8 @@ impl NormalStatePrimitives {
                     coefficient_terms: p.coefficient_term_count(),
                     normal_moments: p.normal_moment_count(),
                     reference_frequency_hz: p.reference_frequency_hz(),
-                    joint_continuum_terms: p.joint_continuum_term_count(),
                     sum_weights: p.sum_weights(),
                     published_sum_weights: p.published_sum_weights(),
-                    channel_sum_weights: p.channel_sum_weights(),
                     validity: p.channel_validity(),
                 }
             }
@@ -1387,13 +1517,19 @@ struct ChannelNormalFields {
     invariant_dirty: Option<Range<usize>>,
     psf: Range<usize>,
     sensitivity: Range<usize>,
+    scalar_sensitivity: bool,
     major_cycle_residual: Option<Range<usize>>,
     scalars: usize,
     epoch_scalars: usize,
 }
 
 impl ChannelNormalFields {
-    fn new(values: usize, invariant: bool, residual: bool) -> Result<Self, SpectralOperatorError> {
+    fn new(
+        values: usize,
+        invariant: bool,
+        residual: bool,
+        scalar_sensitivity: bool,
+    ) -> Result<Self, SpectralOperatorError> {
         let complex = values
             .checked_mul(2)
             .ok_or(SpectralOperatorError::ResidencyOverflow)?;
@@ -1410,12 +1546,13 @@ impl ChannelNormalFields {
         let epoch_scalars = major_cycle_residual.as_ref().unwrap_or(&dirty).end;
         let invariant_dirty = invariant.then(|| field(complex)).transpose()?;
         let psf = field(complex)?;
-        let sensitivity = field(values)?;
+        let sensitivity = field(if scalar_sensitivity { 0 } else { values })?;
         Ok(Self {
             dirty,
             invariant_dirty,
             psf,
             sensitivity,
+            scalar_sensitivity,
             major_cycle_residual,
             scalars: end,
             epoch_scalars,
@@ -1447,7 +1584,7 @@ pub(crate) struct StoredChannelNormalDomain {
 ///
 /// Each field read loads only that field and polarization. The reader borrows
 /// the global completion owner and retains no image payload or cache.
-/// Multi-term Taylor and joint families use their existing complete-family readers.
+/// Multi-term Taylor families use their existing complete-family readers.
 #[derive(Debug)]
 pub struct FinalNormalPlaneReader<'a> {
     backing: NormalPlaneBacking<'a>,
@@ -1511,8 +1648,22 @@ impl<'a> FinalNormalPlaneReader<'a> {
         match self.backing {
             NormalPlaneBacking::Stored(d) => d.read_complex(&d.fields.dirty, offset, self.cells),
             NormalPlaneBacking::Resident(d) => {
-                Ok(Cow::Borrowed(&d.dirty()[offset..offset + self.cells]))
+                let values = d
+                    .dirty()
+                    .complex()
+                    .ok_or(SpectralOperatorError::ProblemMismatch)?;
+                Ok(Cow::Borrowed(&values[offset..offset + self.cells]))
             }
+        }
+    }
+
+    pub(crate) fn read_residual_real(
+        &self,
+    ) -> Result<Option<Cow<'a, [f32]>>, SpectralOperatorError> {
+        let offset = self.plane * self.cells;
+        match self.backing {
+            NormalPlaneBacking::Stored(d) => d.read_real(&d.fields.dirty, offset, self.cells),
+            NormalPlaneBacking::Resident(_) => Ok(None),
         }
     }
 
@@ -1522,8 +1673,20 @@ impl<'a> FinalNormalPlaneReader<'a> {
         match self.backing {
             NormalPlaneBacking::Stored(d) => d.read_complex(&d.fields.psf, offset, self.cells),
             NormalPlaneBacking::Resident(d) => {
-                Ok(Cow::Borrowed(&d.psf()[offset..offset + self.cells]))
+                let values = d
+                    .psf()
+                    .complex()
+                    .ok_or(SpectralOperatorError::ProblemMismatch)?;
+                Ok(Cow::Borrowed(&values[offset..offset + self.cells]))
             }
+        }
+    }
+
+    pub(crate) fn read_psf_real(&self) -> Result<Option<Cow<'a, [f32]>>, SpectralOperatorError> {
+        let offset = self.plane * self.cells;
+        match self.backing {
+            NormalPlaneBacking::Stored(d) => d.read_real(&d.fields.psf, offset, self.cells),
+            NormalPlaneBacking::Resident(_) => Ok(None),
         }
     }
 
@@ -1532,11 +1695,19 @@ impl<'a> FinalNormalPlaneReader<'a> {
         let offset = self.plane * self.cells;
         match self.backing {
             NormalPlaneBacking::Stored(d) => {
-                let start = d.fields.sensitivity.start + offset;
-                d.read_scalars(start..start + self.cells)
+                if d.fields.scalar_sensitivity {
+                    Ok(Cow::Owned(vec![d.sum_weights[self.plane]; self.cells]))
+                } else {
+                    let start = d.fields.sensitivity.start + offset;
+                    d.read_scalars(start..start + self.cells)
+                }
             }
             NormalPlaneBacking::Resident(d) => {
-                Ok(Cow::Borrowed(&d.sensitivity()[offset..offset + self.cells]))
+                let values = d
+                    .sensitivity()
+                    .dense()
+                    .ok_or(SpectralOperatorError::ProblemMismatch)?;
+                Ok(Cow::Borrowed(&values[offset..offset + self.cells]))
             }
         }
     }
@@ -1595,7 +1766,7 @@ impl StoredChannelNormalDomain {
         {
             return Err(SpectralOperatorError::IncompleteCoverage);
         }
-        if range.len() > self.window_channels {
+        if self.window_channels == 0 {
             return Err(SpectralOperatorError::NormalStorage(
                 "normal-state write exceeds the admitted channel window".into(),
             ));
@@ -1608,11 +1779,17 @@ impl StoredChannelNormalDomain {
         {
             return Err(SpectralOperatorError::ProblemMismatch);
         }
-        let scalars = complex_scalars(&residual.values)?;
-        self.storage.write(
-            range.start * self.polarizations * checked_cells(self.shape)? * 2,
-            scalars,
-        )?;
+        let plane_values = self.polarizations * checked_cells(self.shape)?;
+        for (index, values) in residual
+            .values
+            .chunks(self.window_channels * plane_values)
+            .enumerate()
+        {
+            self.storage.write_real(
+                (range.start * plane_values + index * self.window_channels * plane_values) * 2,
+                values,
+            )?;
+        }
         self.next_channel = range.end;
         Ok(())
     }
@@ -1656,8 +1833,12 @@ impl StoredChannelNormalDomain {
             .ok_or(SpectralOperatorError::ResidencyOverflow)?;
         let fields = ChannelNormalFields::new(
             values,
-            p.invariant_dirty.is_some(),
+            p.invariant_dirty.is_some()
+                || p.cube_real
+                    .as_ref()
+                    .is_some_and(|real| real.invariant_dirty.is_some()),
             p.major_cycle_residual.is_some(),
+            plan.factory.scalar_sensitivity(),
         )?;
         let storage = plan
             .factory
@@ -1699,6 +1880,7 @@ impl StoredChannelNormalDomain {
         domain: SpectralDomainPrimitives,
     ) -> Result<(), SpectralOperatorError> {
         let p = domain.primitives();
+        let compact = p.cube_real.as_ref();
         let range = p.slab.core_range();
         if range.start != self.next_channel || range.end > self.total_channels {
             return Err(SpectralOperatorError::IncompleteCoverage);
@@ -1716,14 +1898,11 @@ impl StoredChannelNormalDomain {
             || p.basis != SpectralBasisPlan::ChannelLocal
             || p.residual_model != self.residual_model
             || p.major_cycle_residual_promoted != self.major_cycle_residual_promoted
-            || p.invariant_dirty.is_some() != self.fields.invariant_dirty.is_some()
+            || (p.invariant_dirty.is_some()
+                || compact.is_some_and(|real| real.invariant_dirty.is_some()))
+                != self.fields.invariant_dirty.is_some()
             || p.major_cycle_residual.is_some() != self.fields.major_cycle_residual.is_some()
-            || p.common_residual.is_some()
-            || p.invariant_common_dirty.is_some()
             || p.primary_beam_weighted_sum.is_some()
-            || !p.channel_sum_weights.is_empty()
-            || p.joint_line_term_by_channel.len() != self.total_channels
-            || p.joint_line_term_by_channel.iter().any(Option::is_some)
         {
             return Err(SpectralOperatorError::ProblemMismatch);
         }
@@ -1731,11 +1910,22 @@ impl StoredChannelNormalDomain {
         let plane_offset = range.start * self.polarizations;
         let planes = range.len() * self.polarizations;
         let values = planes * cells;
-        if p.dirty.len() != values
-            || p.psf.len() != values
-            || p.sensitivity.len() != values
+        if compact.map_or_else(
+            || p.dirty.len() != values || p.psf.len() != values,
+            |real| {
+                !p.dirty.is_empty()
+                    || !p.psf.is_empty()
+                    || real.dirty.len() != values
+                    || real.psf.len() != values
+            },
+        ) || (!self.fields.scalar_sensitivity
+            && compact.is_none()
+            && p.sensitivity.len() != values)
             || p.invariant_dirty
                 .as_ref()
+                .is_some_and(|v| v.len() != values)
+            || compact
+                .and_then(|real| real.invariant_dirty.as_ref())
                 .is_some_and(|v| v.len() != values)
             || p.major_cycle_residual
                 .as_ref()
@@ -1747,6 +1937,23 @@ impl StoredChannelNormalDomain {
             return Err(SpectralOperatorError::ProblemMismatch);
         }
         let offset = plane_offset * cells;
+        if let Some(real) = compact {
+            self.storage
+                .write_real(self.fields.dirty.start + 2 * offset, &real.dirty)?;
+            if let (Some(field), Some(source)) =
+                (&self.fields.invariant_dirty, &real.invariant_dirty)
+            {
+                Arc::get_mut(&mut self.invariants)
+                    .ok_or(SpectralOperatorError::IncompleteCoverage)?
+                    .write_real(field.start - self.fields.epoch_scalars + 2 * offset, source)?;
+            }
+            Arc::get_mut(&mut self.invariants)
+                .ok_or(SpectralOperatorError::IncompleteCoverage)?
+                .write_real(
+                    self.fields.psf.start - self.fields.epoch_scalars + 2 * offset,
+                    &real.psf,
+                )?;
+        }
         for (field, source) in [
             (Some(&self.fields.dirty), Some(p.dirty.as_ref())),
             (
@@ -1759,7 +1966,9 @@ impl StoredChannelNormalDomain {
                 p.major_cycle_residual.as_deref(),
             ),
         ] {
-            if let (Some(field), Some(source)) = (field, source) {
+            if let (Some(field), Some(source)) = (field, source)
+                && !source.is_empty()
+            {
                 let scalars = complex_scalars(source)?;
                 let start = field.start + 2 * offset;
                 if field.start >= self.fields.epoch_scalars {
@@ -1771,12 +1980,25 @@ impl StoredChannelNormalDomain {
                 }
             }
         }
-        Arc::get_mut(&mut self.invariants)
-            .ok_or(SpectralOperatorError::IncompleteCoverage)?
-            .write(
-                self.fields.sensitivity.start - self.fields.epoch_scalars + offset,
-                &p.sensitivity,
-            )?;
+        if !self.fields.scalar_sensitivity {
+            let invariant = Arc::get_mut(&mut self.invariants)
+                .ok_or(SpectralOperatorError::IncompleteCoverage)?;
+            let start = self.fields.sensitivity.start - self.fields.epoch_scalars + offset;
+            if compact.is_some() {
+                let mut window = [0.0; 512];
+                for (plane, &weight) in p.sum_weights.iter().enumerate() {
+                    window.fill(weight);
+                    for chunk in (0..cells).step_by(window.len()) {
+                        invariant.write(
+                            start + plane * cells + chunk,
+                            &window[..window.len().min(cells - chunk)],
+                        )?;
+                    }
+                }
+            } else {
+                invariant.write(start, &p.sensitivity)?;
+            }
+        }
         self.sum_weights[plane_offset..plane_offset + planes].copy_from_slice(&p.sum_weights);
         self.published_sum_weights[plane_offset..plane_offset + planes]
             .copy_from_slice(&p.published_sum_weights);
@@ -1832,8 +2054,39 @@ impl StoredChannelNormalDomain {
         values: usize,
     ) -> Result<Cow<'_, [Complex64]>, SpectralOperatorError> {
         let start = field.start + offset * 2;
-        let scalars = self.read_scalars(start..start + values * 2)?;
-        scalar_complex(scalars)
+        let result = if start >= self.fields.epoch_scalars {
+            self.invariants
+                .read_complex(start - self.fields.epoch_scalars, values)
+        } else {
+            self.storage.read_complex(start, values)
+        }?;
+        if result.len() != values {
+            return Err(SpectralOperatorError::NormalStorage(
+                "normal backing returned an incorrect complex window length".into(),
+            ));
+        }
+        Ok(result)
+    }
+
+    fn read_real(
+        &self,
+        field: &Range<usize>,
+        offset: usize,
+        values: usize,
+    ) -> Result<Option<Cow<'_, [f32]>>, SpectralOperatorError> {
+        let start = field.start + 2 * offset;
+        let result = if field.start >= self.fields.epoch_scalars {
+            self.invariants
+                .read_real(start - self.fields.epoch_scalars, values)
+        } else {
+            self.storage.read_real(start, values)
+        }?;
+        if result.as_ref().is_some_and(|window| window.len() != values) {
+            return Err(SpectralOperatorError::NormalStorage(
+                "normal backing returned an incorrect real window length".into(),
+            ));
+        }
+        Ok(result)
     }
 
     pub(crate) fn read_window(
@@ -1860,6 +2113,7 @@ impl StoredChannelNormalDomain {
             self.role.clone(),
             SpectralOperatorPrimitives {
                 shape: self.shape,
+                clark_workspace: std::sync::Mutex::new(None),
                 slab: SpectralSlabPlan {
                     total_channels: self.total_channels,
                     core_start: range.start,
@@ -1869,11 +2123,11 @@ impl StoredChannelNormalDomain {
                 },
                 basis: SpectralBasisPlan::ChannelLocal,
                 polarizations: self.polarizations,
-                joint_line_term_by_channel: vec![None; self.total_channels].into_boxed_slice(),
                 dirty: self
                     .read_complex(&self.fields.dirty, offset, values)?
                     .into_owned()
                     .into_boxed_slice(),
+                cube_real: None,
                 invariant_dirty: self
                     .fields
                     .invariant_dirty
@@ -1883,23 +2137,26 @@ impl StoredChannelNormalDomain {
                             .map(|v| v.into_owned().into_boxed_slice())
                     })
                     .transpose()?,
-                common_residual: None,
-                invariant_common_dirty: None,
                 psf: self
                     .read_complex(&self.fields.psf, offset, values)?
                     .into_owned()
                     .into_boxed_slice(),
-                sensitivity: self
-                    .read_scalars(
+                sensitivity: if self.fields.scalar_sensitivity {
+                    self.sum_weights[plane_range.clone()]
+                        .iter()
+                        .flat_map(|&weight| std::iter::repeat_n(weight, cells))
+                        .collect()
+                } else {
+                    self.read_scalars(
                         self.fields.sensitivity.start + offset
                             ..self.fields.sensitivity.start + offset + values,
                     )?
                     .into_owned()
-                    .into_boxed_slice(),
+                    .into_boxed_slice()
+                },
                 primary_beam_weighted_sum: None,
                 sum_weights: self.sum_weights[plane_range.clone()].into(),
                 published_sum_weights: self.published_sum_weights[plane_range.clone()].into(),
-                channel_sum_weights: Box::new([]),
                 validity: self.validity[plane_range].into(),
                 major_cycle_residual: self
                     .fields
@@ -1936,28 +2193,34 @@ impl StoredChannelNormalDomain {
             .checked_mul(self.polarizations)
             .and_then(|n| n.checked_mul(self.window_channels.min(self.total_channels)))
             .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-        for (field, complex) in [
-            (&self.fields.dirty, true),
-            (&self.fields.psf, true),
-            (&self.fields.sensitivity, false),
-        ] {
-            let width = if complex {
-                window_values
-                    .checked_mul(2)
-                    .ok_or(SpectralOperatorError::ResidencyOverflow)?
-            } else {
-                window_values
-            };
+        for field in [&self.fields.dirty, &self.fields.psf] {
+            let width = window_values
+                .checked_mul(2)
+                .ok_or(SpectralOperatorError::ResidencyOverflow)?;
             for start in (field.start..field.end).step_by(width) {
                 for &value in self
                     .read_scalars(start..start.saturating_add(width).min(field.end))?
                     .iter()
                 {
-                    encoder.u64(if complex {
-                        value.to_bits()
-                    } else {
-                        canonical_f64_bits(value)
-                    });
+                    encoder.u64(value.to_bits());
+                }
+            }
+        }
+        if self.fields.scalar_sensitivity {
+            let cells = checked_cells(self.shape)?;
+            for &weight in &self.sum_weights {
+                for _ in 0..cells {
+                    encoder.u64(canonical_f64_bits(weight));
+                }
+            }
+        } else {
+            let field = &self.fields.sensitivity;
+            for start in (field.start..field.end).step_by(window_values) {
+                for &value in self
+                    .read_scalars(start..start.saturating_add(window_values).min(field.end))?
+                    .iter()
+                {
+                    encoder.u64(canonical_f64_bits(value));
                 }
             }
         }

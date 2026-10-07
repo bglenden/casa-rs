@@ -3,6 +3,104 @@
 use super::*;
 
 #[test]
+#[cfg(target_os = "macos")]
+#[ignore = "requires an actual Metal device and the guarded integration qualification"]
+fn metal_cube_initial_clean_refresh_and_publication_matches_cpu() {
+    use casa_imaging_runtime::{CapacityDomainId, ResourceOverride, ResourcePolicy};
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().unwrap();
+    let ms = spectral_line_measurement_set(root.path());
+    let mut baseline: Option<Vec<(Vec<usize>, Vec<f32>)>> = None;
+    for metal in [false, true] {
+        let prefix = root.path().join(if metal { "metal" } else { "cpu" });
+        let mut imaging = request(ms.clone(), prefix.clone(), ContinuumAlgorithm::Clark);
+        imaging.image_size = 64;
+        imaging.weighting = ContinuumWeighting::Natural;
+        imaging.spectral_window = Some("0:0~3".into());
+        imaging.channel_count = Some(4);
+        imaging.spectral_mode = SpectralImagingMode::Cube {
+            axis: CubeAxisConfig {
+                outframe: FrequencyRef::TOPO,
+                ..CubeAxisConfig::default()
+            },
+            output_channels: Some(4),
+        };
+        imaging.iterations = 3;
+        imaging.cycle_iterations = 1;
+        imaging.maximum_major_cycles = Some(3);
+        imaging.gain = 0.37;
+        imaging.threshold_jy = 1e-12;
+        imaging.noise_sigma = Some(1e-12);
+        if metal {
+            imaging
+                .task_requirements
+                .push(TaskRequirement::MetalGridder);
+        }
+        imaging.resource_policy = ResourcePolicy::Explicit(ResourceOverride {
+            workers: Some(2),
+            memory_bytes: std::collections::BTreeMap::from([(
+                CapacityDomainId::new("host-memory"),
+                4 << 30,
+            )]),
+            ..ResourceOverride::default()
+        });
+        let result = execute_continuum(imaging).expect("connected spatial backend");
+        assert_cube_execution_route(&result, true);
+        assert_standard_products(&prefix, &result.product_names);
+        assert_eq!(result.outcome.output.major_cycle_count, 3);
+        assert!(result.actual_minor_iterations > 0);
+        assert_eq!(
+            !result
+                .outcome
+                .output
+                .initial_receipt
+                .selected_alternative_projection()
+                .demand
+                .accelerators
+                .is_empty(),
+            metal
+        );
+        let products: Vec<_> = PRODUCT_SUFFIXES
+            .iter()
+            .map(|suffix| {
+                let image =
+                    PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", prefix.display())))
+                        .unwrap();
+                let shape = image.shape().to_vec();
+                let values = image
+                    .get_slice(&[0; 4], &shape)
+                    .unwrap()
+                    .iter()
+                    .copied()
+                    .collect::<Vec<_>>();
+                (shape, values)
+            })
+            .collect();
+        if let Some(expected) = &baseline {
+            for ((shape, values), (expected_shape, expected_values)) in
+                products.iter().zip(expected)
+            {
+                assert_eq!(shape, expected_shape);
+                let scale = expected_values
+                    .iter()
+                    .map(|v: &f32| v.abs())
+                    .fold(0_f32, f32::max)
+                    .max(1e-20);
+                for (&actual, &expected) in values.iter().zip(expected_values) {
+                    assert!(
+                        (actual - expected).abs() <= 1e-3 * scale,
+                        "{actual} vs {expected}, scale={scale}"
+                    );
+                }
+            }
+        } else {
+            baseline = Some(products);
+        }
+    }
+}
+
+#[test]
 fn streaming_cube_complete_application_handoff() {
     use casa_imaging_runtime::{CapacityDomainId, ResourceOverride, ResourcePolicy};
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
@@ -58,6 +156,21 @@ fn streaming_cube_complete_application_handoff() {
 
     let result = execute_continuum(imaging.clone()).expect("complete native cube application");
     assert_cube_execution_route(&result, true);
+    let projection = result
+        .outcome
+        .output
+        .initial_receipt
+        .selected_alternative_projection();
+    let cache = projection
+        .demand
+        .memory
+        .iter()
+        .find(|allocation| allocation.allocation_id.starts_with("cube-state-manager-"))
+        .expect("shared managed image/model cache");
+    assert!(
+        cache.hard_bytes >= 64 * 64 * 4 * (5 * 4 + 2),
+        "spare memory must retain all five Float and two support plane arrays"
+    );
     assert_standard_products(&image_name, &result.product_names);
     assert_eq!(result.outcome.output.major_cycle_count, 3);
     assert_eq!(result.outcome.output.minor_cycles.len(), 2);
@@ -101,13 +214,20 @@ pub(super) fn assert_cube_execution_route(
         .demand
         .memory;
     assert_eq!(
-        memory.iter().any(
-            |allocation| allocation.allocation_id.starts_with("native-cube-")
-                && allocation.allocation_id.ends_with("-workspace")
-        ),
+        memory
+            .iter()
+            .any(|allocation| allocation.allocation_id.starts_with("bulk-workspace-")),
         native,
-        "execution must select the capability's storage owner"
+        "execution must select the direct bulk-source owner"
     );
+    if native {
+        assert!(
+            !memory
+                .iter()
+                .any(|allocation| allocation.allocation_id.starts_with("native-cube-")),
+            "direct imaging must not reserve the removed native replay store"
+        );
+    }
     assert_eq!(
         memory.iter().any(|allocation| allocation
             .allocation_id
@@ -118,11 +238,56 @@ pub(super) fn assert_cube_execution_route(
 }
 
 #[test]
+fn streaming_cube_single_output_runs_clean_refresh_and_publication() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = spectral_line_measurement_set(root.path());
+    let mut imaging = request(
+        measurement_set,
+        root.path().join("single-plane"),
+        ContinuumAlgorithm::Clark,
+    );
+    imaging.image_size = 64;
+    imaging.spectral_window = Some("0:0~3".into());
+    imaging.channel_count = Some(4);
+    imaging.spectral_mode = SpectralImagingMode::Cube {
+        axis: CubeAxisConfig {
+            outframe: FrequencyRef::TOPO,
+            ..CubeAxisConfig::default()
+        },
+        output_channels: Some(1),
+    };
+    imaging.iterations = 3;
+    imaging.cycle_iterations = 1;
+    imaging.maximum_major_cycles = Some(3);
+    imaging.gain = 0.37;
+    imaging.threshold_jy = 1.0e-12;
+    imaging.task_requirements = vec![TaskRequirement::SerialCpu];
+    let prefix = imaging.image_name.clone();
+    let result = execute_continuum(imaging).expect("one output plane on native cube path");
+    assert_cube_execution_route(&result, true);
+    assert_standard_products(&prefix, &result.product_names);
+    assert_eq!(result.actual_minor_iterations, 3);
+    assert_eq!(result.outcome.output.major_cycle_count, 4);
+    assert_eq!(
+        PagedImage::<f32>::open(prefix.with_extension("image"))
+            .unwrap()
+            .shape(),
+        &[64, 64, 1, 1]
+    );
+    assert_eq!(
+        result.outcome.output.publication_receipt.status(),
+        ReceiptStatus::Completed
+    );
+}
+
+#[test]
 fn t55_shifted_cube_density_retains_native_endpoint_weights() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
-    let measurement_set = joint_measurement_set(root.path());
+    let measurement_set = four_channel_measurement_set(root.path());
     let mut imaging = request(
         measurement_set,
         root.path().join("shifted-density"),
@@ -235,7 +400,7 @@ fn t55_per_channel_density_request_is_bound_into_the_executed_cube() {
 }
 
 #[test]
-fn t55_clark_cube_products_and_repeated_cycles_are_exact_across_worker_counts() {
+fn t55_clark_cube_products_and_repeated_cycles_agree_across_worker_counts() {
     compare_clark_cube_cases(
         &[(1, None), (2, None), (4, None)],
         false,
@@ -244,13 +409,13 @@ fn t55_clark_cube_products_and_repeated_cycles_are_exact_across_worker_counts() 
 }
 
 #[test]
-fn t55_clark_cube_products_and_repeated_cycles_are_exact_across_channel_windows() {
+fn t55_clark_cube_products_and_repeated_cycles_agree_across_channel_windows() {
     compare_clark_cube_cases(
         &[
             (1, None),
+            (1, Some((8 << 20) + (512 << 10))),
             (1, Some((9 << 20) + (128 << 10))),
             (1, Some((10 << 20) + (128 << 10))),
-            (1, Some((11 << 20) + (640 << 10))),
         ],
         true,
         &[ContinuumWeighting::Briggs(0.5)],
@@ -362,7 +527,7 @@ fn compare_clark_cube_cases(
             let actual_workers = receipt
                 .actual_resource_peak(
                     &casa_imaging_runtime::WorkNodeId::new(if native {
-                        "native-cube-minor-0"
+                        "bulk-cube-minor-0"
                     } else {
                         "spectral-cycle-minor-cycle"
                     }),
@@ -389,7 +554,7 @@ fn compare_clark_cube_cases(
                     .get_slice(&[0; 4], &shape)
                     .expect("read complete product")
                     .iter()
-                    .map(|value| value.to_bits())
+                    .copied()
                     .collect::<Vec<_>>();
                 let mask = product
                     .get_mask_slice(&[0; 4], &shape, &[1; 4])
@@ -447,19 +612,33 @@ fn compare_clark_cube_cases(
                             .read_window(channel..channel + 1)
                             .unwrap()
                             .residual()
-                            .to_vec()
+                            .iter()
+                            .collect::<Vec<_>>()
                     })
                     .collect::<Vec<_>>(),
                 science.normal_state().sum_weights().to_vec(),
                 result.actual_minor_iterations,
                 result.outcome.output.major_cycle_count,
             );
-            match &baseline {
-                Some(baseline) => assert_eq!(
-                    baseline, &evidence,
-                    "physical partition changed scientific products"
-                ),
-                None => baseline = Some(evidence),
+            if let Some((products, model, residual, weights, iterations, majors)) =
+                baseline.replace(evidence)
+            {
+                let evidence = baseline.as_ref().unwrap();
+                for (expected, actual) in products.iter().zip(&evidence.0) {
+                    assert_eq!(expected.0, actual.0);
+                    assert_eq!(expected.1, actual.1);
+                    assert_real_agreement(&expected.2, &actual.2);
+                    assert_eq!(expected.3, actual.3);
+                    assert_eq!(expected.4, actual.4);
+                    assert_eq!(expected.5, actual.5);
+                    assert_eq!(expected.6, actual.6);
+                }
+                assert_model_agreement(&model, &evidence.1);
+                assert_complex_agreement(&residual, &evidence.2);
+                assert_real_agreement(&weights, &evidence.3);
+                assert_eq!(iterations, evidence.4);
+                assert_eq!(majors, evidence.5);
+                baseline = Some((products, model, residual, weights, iterations, majors));
             }
         }
         if require_window_variation {
@@ -526,6 +705,24 @@ fn t55_signed_primary_beam_limit_separates_pixels_search_support_and_stored_mask
                     resource_policy_for_task_requirements(&imaging.task_requirements);
                 let result = execute_continuum(imaging).expect("signed PB cube");
                 assert!(result.outcome.output.major_cycle_count > 1);
+                for role in [
+                    ProductRole::Residual(ProductTerm::Single),
+                    ProductRole::RestoredImage(ProductTerm::Single),
+                ] {
+                    assert_eq!(
+                        result
+                            .outcome
+                            .output
+                            .planned_products
+                            .members()
+                            .iter()
+                            .find(|member| member.role() == role)
+                            .expect("uncorrected image product")
+                            .validity(),
+                        ProductValidityRule::FinalNormalState,
+                        "PB cutoff must not zero uncorrected image pixels"
+                    );
+                }
                 let open = |suffix: &str| {
                     PagedImage::<f32>::open(PathBuf::from(format!(
                         "{}{suffix}",

@@ -36,8 +36,7 @@
     "write_pb": true,
     "pbcor": true,
     "standard_mfs_acceleration": "auto",
-    "imaging_fft_precision": "f32",
-    "imaging_fft_backend": "metal-mpsgraph"
+    "imaging_fft_precision": "f32"
   },
   "run": {
     "repeats": 3,

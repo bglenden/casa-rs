@@ -247,7 +247,7 @@ fn tui_typed_session_matches_shared_imager_cross_surface_profile() {
     let preflight = app
         .execution_stdin_for_test()
         .expect_err("unconsumed source-stream controls must surface owner diagnostics first");
-    assert!(preflight.contains("task/task.grid_threads"), "{preflight}");
+    assert!(preflight.contains("task/task.memory_target"), "{preflight}");
 
     for name in ["vis", "imagename", "imsize", "cell", "niter"] {
         assert_eq!(
@@ -9417,17 +9417,24 @@ fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
     start_run_with_default_imager_launcher(&mut app);
     assert!(app.wait_for_idle_for_test(Duration::from_secs(120)));
     let stderr = app.stderr_for_test();
+    let diagnostic_prefixes = [
+        "planning_memory ",
+        "imaging_operator_residency_summary ",
+        "imaging_operator_memory_demand ",
+        "imaging_operator_fixed_demand ",
+        "imaging_spectral_window_selection ",
+        "imaging_spectral_fft_budget ",
+        "imaging_bounded_stream_progress ",
+        "imaging_source_read_ahead_summary ",
+        "imaging_science_stage_timing ",
+        "imaging_product_pixels ",
+    ];
     assert!(
         stderr.trim().is_empty()
-            || stderr
-                .lines()
-                .all(|line| line.starts_with("standard_mfs_runtime_plan ")
-                    || line.starts_with("standard_mfs_planning_resources ")
-                    || line.starts_with("single_plane_execution_plan ")
-                    || line.starts_with("standard_one_channel_cube_acceleration ")
-                    || line.starts_with("imaging_source_read_ahead_summary ")
-                    || line.starts_with("image_product_write ")
-                    || (line.contains("WARN casars_imager") && line.ends_with("imager warning"))),
+            || stderr.lines().all(|line| diagnostic_prefixes
+                .iter()
+                .any(|prefix| line.starts_with(prefix))
+                || (line.contains("WARN casars_imager") && line.ends_with("imager warning"))),
         "status={} stderr={}",
         app.status_line_for_test(),
         stderr

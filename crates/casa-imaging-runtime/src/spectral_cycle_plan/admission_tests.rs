@@ -144,12 +144,27 @@ fn accepted_delta_residency_preserves_both_live_copies_and_logical_limit() {
     let samples = problem.model_lifecycle().target().sample_count();
     let limit = samples.min(problem.model_lifecycle().bounds().max_delta_terms());
     let model_bytes = samples * std::mem::size_of::<ModelSample>();
+    let pending = |terms| {
+        casa_imaging_reconstruction::ModelStoragePlan::pending_update_bytes(
+            terms,
+            samples,
+            problem
+                .model_lifecycle()
+                .target()
+                .domains()
+                .iter()
+                .map(|domain| domain.pixels().into_iter().product())
+                .min()
+                .unwrap(),
+        )
+        .unwrap()
+    };
     for terms in [0, 1, 9, limit] {
         let planned = fragment(terms).unwrap();
         assert_eq!(planned.pending_delta_terms(), Some(terms));
         assert_eq!(
             planned.residency().major_cycle_model_bytes(),
-            model_bytes + 2 * terms * std::mem::size_of::<ModelDeltaTerm>()
+            model_bytes + 2 * terms * std::mem::size_of::<ModelDeltaTerm>() + pending(terms)
         );
     }
     assert!(matches!(
@@ -168,7 +183,7 @@ fn accepted_delta_residency_preserves_both_live_copies_and_logical_limit() {
     assert_eq!(unbound.pending_delta_terms(), None);
     assert_eq!(
         unbound.residency().major_cycle_model_bytes(),
-        model_bytes + 2 * limit * std::mem::size_of::<ModelDeltaTerm>()
+        model_bytes + 2 * limit * std::mem::size_of::<ModelDeltaTerm>() + pending(limit)
     );
 }
 
@@ -239,6 +254,84 @@ fn inventory(root: &std::path::Path, memory: u64) -> HostInventory {
     inventory.topology.cache_capacity_bytes = 8 << 30;
     inventory.pressure.cache_available_bytes = 8 << 30;
     inventory
+}
+
+#[test]
+fn scalar_mfs_spill_admission_counts_correlation_groups() {
+    let inputs = model_fixture::problem_inputs(1, Vec::new(), ModelStateIdentity::Empty);
+    let snapshot = inputs.observation_snapshot();
+    let source = &snapshot.sources()[0];
+    let rows = 3_u64;
+    let channels = 512_u32;
+    for correlations in [
+        vec![CorrelationType::StokesI],
+        vec![CorrelationType::CircularRr, CorrelationType::CircularLl],
+        vec![
+            CorrelationType::CircularRr,
+            CorrelationType::CircularRl,
+            CorrelationType::CircularLr,
+            CorrelationType::CircularLl,
+        ],
+    ] {
+        let selection = ObservationSelection::new(
+            SelectedRows::from_ordered_main_rows(
+                rows,
+                (0..rows as usize).map(|row| SelectedMainRow::new(row as u64, 0)),
+            )
+            .unwrap(),
+            source.selection().rows_filter().clone(),
+            vec![DataDescriptionSelection::new(0, 0, 0)],
+            vec![SpectralWindowSelection::new(0, (0..channels).collect())],
+            vec![CorrelationSelection::new(
+                0,
+                correlations
+                    .iter()
+                    .enumerate()
+                    .map(|(index, kind)| CorrelationProduct::new(index as u32, *kind))
+                    .collect(),
+            )],
+        );
+        let observation = compile_observation(ObservationSnapshotInput::new(
+            vec![ObservationSourceInput::new(
+                source.identity(),
+                source.provenance().clone(),
+                selection,
+                source.generations().clone(),
+            )],
+            Vec::new(),
+            ModelStateIdentity::Empty,
+        ))
+        .unwrap();
+        let problem = compile(ImagingRequest::new(
+            problem_specification(WeightingContract::new(
+                WeightingScheme::Uniform,
+                WeightDensityScope::GlobalSelection,
+            )),
+            geometry_with_facets(FacetLayout::Single),
+            ProblemInputIdentities::new(observation),
+            lifecycle(),
+        ))
+        .unwrap();
+        let admission =
+            crate::complete_data_operator::project_gridded_normal_compilation(&problem, 8192)
+                .unwrap();
+        let payload = rows * u64::from(channels) * 40;
+        let expected = crate::managed_spill::ManagedSpillBudget::for_bounded_stream(
+            payload,
+            payload as usize,
+            1,
+        )
+        .unwrap();
+        assert_eq!(
+            admission.spill.maximum_artifact_bytes(),
+            expected.maximum_artifact_bytes(),
+            "scalar MFS emits one combined normal record per row/channel, not per correlation or separate prediction/accumulation"
+        );
+        assert_eq!(
+            admission.spill.maximum_frame_payload_bytes(),
+            payload as usize
+        );
+    }
 }
 
 #[test]
@@ -427,6 +520,12 @@ fn t51_full_aw_residual_phase_adapts_complete_allocations_and_rejects_below_floo
             .residency()
             .major_cycle_model_bytes(),
         model_samples * (size_of::<ModelSample>() + 2 * size_of::<ModelDeltaTerm>())
+            + casa_imaging_reconstruction::ModelStoragePlan::pending_update_bytes(
+                model_samples,
+                model_samples,
+                4096 * 4096,
+            )
+            .unwrap()
     );
     let receipts = ExecutionReceiptStore::new(
         root.path().join("receipts"),
@@ -436,7 +535,7 @@ fn t51_full_aw_residual_phase_adapts_complete_allocations_and_rejects_below_floo
     let planning = PlanningBindings::new(
         registry.registry_id(),
         ResourcePolicy::Exclusive,
-        PlannerCostModelProfileBootstrap::new(PlannerCostModelProfileId::from_sha256([51; 32])),
+        PlannerCostModelProfileId::from_sha256([51; 32]),
     );
     crate::plan(
         &problem,

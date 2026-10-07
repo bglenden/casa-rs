@@ -25,7 +25,6 @@
     "perchanweightdensity": true,
     "deconvolver": "hogbom",
     "standard_mfs_acceleration": "cpu",
-    "imaging_fft_backend": "rustfft",
     "nterms": 1,
     "niter": 0,
     "minor_cycle_length": 2,

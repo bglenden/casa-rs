@@ -94,9 +94,9 @@ pub struct SimobserveRunTaskRequest {
     /// Permit continuous tracks that include samples below the elevation limit.
     #[serde(default)]
     pub allow_below_elevation_limit: bool,
-    /// Spectral-window setup. Defaults to the VLA ppdisk tutorial frequency.
+    /// Spectral windows. Empty selects the VLA ppdisk tutorial window.
     #[serde(default)]
-    pub spectral_setup: Option<SyntheticSpectralSetup>,
+    pub spectral_windows: Vec<SyntheticSpectralSetup>,
     /// Optional polarization/correlation setup.
     #[serde(default)]
     pub polarization_setup: Option<SyntheticPolarizationSetup>,
@@ -174,8 +174,8 @@ impl SimobserveRunTaskRequest {
             )
             .unwrap_or(request.phase_center_rad);
         }
-        if let Some(spectral_setup) = &self.spectral_setup {
-            request.spectral_setup = spectral_setup.clone();
+        if !self.spectral_windows.is_empty() {
+            request.spectral_windows = self.spectral_windows.clone();
         }
         if let Some(polarization_setup) = &self.polarization_setup {
             request.polarization_setup = polarization_setup.clone();
@@ -446,7 +446,7 @@ impl SimobserveFamilyTaskRequest {
             integration_seconds: Some(integration_seconds),
             elevation_limit_rad: Some((-89.0_f64).to_radians()),
             allow_below_elevation_limit: true,
-            spectral_setup: Some(spectral_setup),
+            spectral_windows: vec![spectral_setup],
             polarization_setup: Some(polarization_setup),
             predict_model: true,
             corruption: None,
@@ -1806,12 +1806,12 @@ fn request_from_cli_args(args: &[std::ffi::OsString]) -> Result<SimobserveRunTas
         integration_seconds,
         elevation_limit_rad,
         allow_below_elevation_limit: has_flag(args, "--allow-below-elevation-limit"),
-        spectral_setup: Some(SyntheticSpectralSetup {
+        spectral_windows: vec![SyntheticSpectralSetup {
             name: "band1".to_string(),
             start_frequency_hz,
             channel_width_hz,
             channel_count,
-        }),
+        }],
         polarization_setup: Some(polarization_setup),
         predict_model: !has_flag(args, "--no-predict-model"),
         corruption,

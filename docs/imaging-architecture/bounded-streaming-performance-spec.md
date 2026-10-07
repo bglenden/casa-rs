@@ -1,4 +1,12 @@
 # Bounded streaming imaging performance specification
+## Owner supersession, 2026-10-03
+
+ADR-0015 supersedes all content-generation/coverage proofs and private same-run
+spill checksum requirements in this record. Retain live owner/source state,
+shape/order/window/count and I/O checks. Historical proof encodings, checksum
+timings and implementation descriptions below are non-normative; do not restore
+them. Scientific acceptance, bounded streaming and CASA formats are unchanged.
+
 
 Truth class: approved implementation handoff
 Date: 2026-08-27
@@ -977,7 +985,9 @@ that serial gate. Because each is a single pair, label the performance result
 provisional; do not claim repeatability or a statistical speedup distribution.
 The executable full-data gate is
 `tools/perf/imager/workloads/wave3-standard-mfs-single-term-heavy-wave2-serial.json`;
-it pins `parallel = false`, CPU standard-MFS execution, and the RustFFT backend.
+it historically pinned `parallel = false`, CPU standard-MFS execution, and
+RustFFT. The old FFT pin is superseded by the FFTW-only implementation; its
+timing record remains historical, not a fresh FFTW performance measurement.
 
 The measured plan-owned structural production run at `b2bc3f7cd` completed that exact workload in
 486.349417 seconds, 40.802298 seconds or 7.74 percent faster than the prior

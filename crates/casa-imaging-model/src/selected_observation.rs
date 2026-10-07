@@ -17,7 +17,6 @@ use crate::{
         SelectedRowSequenceError, SpectralWindowSelection, VisibilityColumn, WeightColumn,
     },
     selected_observation_sample::{
-        SelectedObservationGenerationEncoder, SelectedObservationGenerationId,
         SelectedObservationRunChannel, SelectedObservationRunCorrelation,
         SelectedObservationRunRow, SelectedObservationSample, SelectedObservationSampleView,
         SelectedPredictionTarget, SelectedVisibilitySample,
@@ -140,12 +139,8 @@ impl SelectedObservationCommitment {
         &self.read_set
     }
 
-    /// Return a conservative bound for the validation and digest state live
-    /// during one canonical traversal.
-    ///
-    /// This includes the fixed SHA/coverage state and the active row's
-    /// broadcast-weight vector. It is independent of selected MAIN row and
-    /// DATA_DESCRIPTION cardinality.
+    /// Bound the validator and active row's broadcast-weight vector.
+    /// This is independent of selected row and channel cardinality.
     #[must_use]
     pub fn inspection_scratch_bytes(&self) -> Option<usize> {
         let maximum_correlations = self
@@ -245,7 +240,7 @@ pub(crate) fn inspect_selected_observation<E>(
     write_set: &ObservationWriteSet,
     samples: impl IntoIterator<Item = Result<SelectedObservationSample, E>>,
     mut consume: impl FnMut(SelectedObservationSample) -> Result<(), E>,
-) -> Result<(SelectedObservationGenerationId, u64), SelectedObservationPassError<E>> {
+) -> Result<u64, SelectedObservationPassError<E>> {
     let mut inspection = SelectedObservationInspection::new(commitment, write_set);
     for sample in samples {
         let sample = sample.map_err(SelectedObservationPassError::External)?;
@@ -286,7 +281,7 @@ impl<E: std::error::Error + 'static> std::error::Error for SelectedObservationPa
     }
 }
 
-/// Incremental validator and content-identity encoder for one canonical
+/// Incremental shape, ordering and coverage validator for one canonical
 /// selected-observation pass.
 ///
 /// This state supports bounded block transports without materializing the
@@ -296,7 +291,7 @@ pub struct SelectedObservationInspection<'a> {
     write_set: &'a ObservationWriteSet,
     source_index: usize,
     source: SourceInspection<'a>,
-    generation: SelectedObservationGenerationEncoder,
+    sample_count: u64,
 }
 
 impl<'a> SelectedObservationInspection<'a> {
@@ -313,7 +308,7 @@ impl<'a> SelectedObservationInspection<'a> {
                 &expected_sources[0],
                 prediction_target(write_set, expected_sources[0].measurement_set()),
             ),
-            generation: SelectedObservationGenerationEncoder::new(),
+            sample_count: 0,
         }
     }
 
@@ -333,7 +328,10 @@ impl<'a> SelectedObservationInspection<'a> {
         let address = sample.address();
         self.advance_to_source(address.measurement_set, address.physical_row)?;
         self.source.push(sample)?;
-        self.generation.push_view(sample);
+        self.sample_count = self
+            .sample_count
+            .checked_add(1)
+            .expect("sample count overflow");
         Ok(())
     }
 
@@ -346,20 +344,77 @@ impl<'a> SelectedObservationInspection<'a> {
     ) -> Result<(), SelectedObservationInspectionError> {
         self.advance_to_source(row.measurement_set, row.physical_row)?;
         self.source.push_run(row, channel, correlations)?;
-        self.generation.push_run(row, channel, correlations);
+        self.sample_count = self
+            .sample_count
+            .checked_add(correlations.len() as u64)
+            .expect("sample count overflow");
         Ok(())
     }
 
-    /// Return bytes handed to the selected-generation identity hasher so far.
-    #[must_use]
-    pub const fn generation_proof_bytes(&self) -> u64 {
-        self.generation.proof_bytes()
-    }
-
-    /// Return selected-generation identity hasher update calls so far.
-    #[must_use]
-    pub const fn generation_proof_hash_calls(&self) -> u64 {
-        self.generation.proof_hash_calls()
+    /// Inspect a whole numeric row without constructing scalar sample/run
+    /// members. Exact selected axes and broadcast layout are checked once.
+    pub fn push_numeric_row(
+        &mut self,
+        numeric: crate::SelectedNumericRow<'_>,
+    ) -> Result<(), SelectedObservationInspectionError> {
+        let row = InspectionRow::from_run(numeric.row);
+        self.advance_to_source(row.measurement_set, row.physical_row)?;
+        self.source
+            .validate_prediction_target(row, numeric.row.prediction_target)?;
+        self.source.begin_row(row)?;
+        let inspection = self.source.row.as_mut().expect("row just opened");
+        inspection.validate_row(row)?;
+        if !numeric.has_exact_shape()
+            || inspection.next_ordinal != 0
+            || !numeric
+                .channels
+                .iter()
+                .map(|channel| channel.channel_index)
+                .eq(inspection.spectral_window.channel_indices().iter().copied())
+            || numeric.correlations != inspection.correlation.products()
+            || !matches!(
+                (inspection.weight_column, numeric.weights),
+                (
+                    WeightColumn::Weight,
+                    crate::SelectedNumericWeights::PerRow(_)
+                ) | (
+                    WeightColumn::WeightSpectrum,
+                    crate::SelectedNumericWeights::PerChannel(_)
+                )
+            )
+        {
+            return Err(SelectedObservationInspectionError::UnexpectedSample {
+                measurement_set: row.measurement_set,
+                physical_row: row.physical_row,
+            });
+        }
+        let visibility_matches = matches!(
+            (
+                self.source.expected.selected_columns().visibility(),
+                numeric.visibility
+            ),
+            (
+                VisibilityColumn::FloatData,
+                crate::SelectedNumericVisibility::Float32(_)
+            ) | (
+                VisibilityColumn::Data | VisibilityColumn::CorrectedData,
+                crate::SelectedNumericVisibility::Complex32(_)
+            )
+        );
+        if !visibility_matches {
+            return Err(
+                SelectedObservationInspectionError::VisibilityStorageMismatch {
+                    measurement_set: row.measurement_set,
+                    physical_row: row.physical_row,
+                },
+            );
+        }
+        inspection.next_ordinal = numeric.channels.len() * numeric.correlations.len();
+        self.sample_count = self
+            .sample_count
+            .checked_add(inspection.next_ordinal as u64)
+            .expect("sample count overflow");
+        Ok(())
     }
 
     fn advance_to_source(
@@ -400,10 +455,8 @@ impl<'a> SelectedObservationInspection<'a> {
         Ok(())
     }
 
-    /// Finish exhaustive coverage validation and return content identity and count.
-    pub fn finish(
-        self,
-    ) -> Result<(SelectedObservationGenerationId, u64), SelectedObservationInspectionError> {
+    /// Finish exhaustive coverage validation and return the consumed sample count.
+    pub fn finish(self) -> Result<u64, SelectedObservationInspectionError> {
         self.source.finish()?;
         for expected in &self.expected_sources[self.source_index + 1..] {
             SourceInspection::new(
@@ -412,7 +465,7 @@ impl<'a> SelectedObservationInspection<'a> {
             )
             .finish()?;
         }
-        Ok(self.generation.finish())
+        Ok(self.sample_count)
     }
 }
 

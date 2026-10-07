@@ -64,7 +64,7 @@ final class CasarsMacUITests: XCTestCase {
             "-ApplePersistenceIgnoreState", "YES",
             "--open-imager-ms", measurementSet.path,
             "--imagename", "products/t64-readiness",
-            "--set-task-toggle", "fullsummary", "true",
+            "--set-task-value", "imaging_memory_target_mb", "4096",
         ]
         launchTestApplication()
         app.activate()
@@ -77,8 +77,8 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(try textValue(try require("task.imagerReadiness.capability")).contains("Unsupported request"))
         XCTAssertTrue(try textValue(try require("task.imagerReadiness.plan")).contains("Pending launch"))
         XCTAssertTrue(try textValue(try require("task.imagerReadiness.cache")).contains("none"))
-        XCTAssertTrue(try textValue(try require("task.imagerReadiness.provider")).contains("casa_imager_task v8"))
-        XCTAssertTrue(try require("task.imagerReadiness.unsupported.task.full_summary").exists)
+        XCTAssertTrue(try textValue(try require("task.imagerReadiness.provider")).contains("casa_imager_task v10"))
+        XCTAssertTrue(try require("task.imagerReadiness.unsupported.task.memory_target").exists)
         XCTAssertFalse(try require("task.run").isEnabled)
     }
 
@@ -2325,7 +2325,7 @@ final class CasarsMacUITests: XCTestCase {
         format = 1
         surface = "imager"
         kind = "task"
-        contract = 16
+        contract = 18
 
         [parameters]
         vis = "data/science.bin"

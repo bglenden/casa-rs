@@ -192,8 +192,7 @@ PY
       --phasecenter-field 5 \
       --niter 0 \
       --threshold-jy 0 \
-      --datacolumn DATA \
-      --no-preview-pngs
+      --datacolumn DATA
     record_timing rust_dirty_seconds "$rust_dirty_start"
 
     clear_products "$rust_dir/twhya_base_params"
@@ -226,8 +225,7 @@ PY
       --minbeamfrac 0.3 \
       --negativethreshold 15.0 \
       --no-fastnoise \
-      --datacolumn DATA \
-      --no-preview-pngs
+      --datacolumn DATA
     record_timing rust_auto_seconds "$rust_auto_start"
   fi
 fi

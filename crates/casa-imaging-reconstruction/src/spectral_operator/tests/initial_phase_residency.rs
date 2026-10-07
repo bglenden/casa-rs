@@ -22,6 +22,42 @@ fn fixture() -> (
     (problem, model, normal)
 }
 
+#[test]
+fn ordinary_mfs_estimates_fft_plans_without_changing_cube_policy() {
+    let (problem, _, _) = fixture();
+    let mut specification = SpectralOperatorSpecification::new(&problem).unwrap();
+    specification.basis = SpectralBasisPlan::Polynomial(BlockNormalPlan::constant(1e9).unwrap());
+    assert_ne!(specification.initial_mfs_region_count(), 0);
+    for pass in [
+        SpectralOperatorPass::InitialMajor,
+        SpectralOperatorPass::ResidualRefresh,
+    ] {
+        let workload = spectral_operator_workload(&specification, 3, pass).unwrap();
+        for threads in [1, 4, 8] {
+            let prepared =
+                prepare_spectral_operator(specification.clone(), workload, threads).unwrap();
+            assert!(
+                prepared
+                    .ffts
+                    .iter()
+                    .all(|fft| fft.estimated && fft.threads == threads)
+            );
+        }
+    }
+    specification.basis = SpectralBasisPlan::ChannelLocal;
+    assert_eq!(specification.initial_mfs_region_count(), 0);
+    let workload =
+        spectral_operator_workload(&specification, 3, SpectralOperatorPass::InitialMajor).unwrap();
+    assert!(prepare_spectral_operator(specification.clone(), workload, 4).is_err());
+    let prepared = prepare_spectral_operator(specification, workload, 1).unwrap();
+    assert!(
+        prepared
+            .ffts
+            .iter()
+            .all(|fft| !fft.estimated && fft.threads == 1)
+    );
+}
+
 // The owner unit fixture varies private chart geometry independently of the
 // compiler fixture. Runtime integration separately covers compiled AW inputs.
 fn aw_specification(
@@ -66,8 +102,8 @@ fn t51_initial_phase_residency_is_geometry_derived_and_fail_closed() {
     let workload =
         spectral_operator_workload(&specification, 3, SpectralOperatorPass::InitialMajor).unwrap();
     let phases = workload.initial_phase_residency().unwrap();
-    assert_eq!(phases.accumulation_bytes(), 4_294_967_296);
-    assert_eq!(phases.completion_bytes(), 7_381_975_089);
+    assert_eq!(phases.accumulation_bytes(), 2_147_483_648);
+    assert_eq!(phases.completion_bytes(), 5_234_491_441);
     assert_eq!(phases.retained_bytes(), 2_281_701_425);
 
     let small = aw_specification(&problem, [8, 6]);
@@ -78,10 +114,10 @@ fn t51_initial_phase_residency_is_geometry_derived_and_fail_closed() {
     let complex = 8 * 6 * size_of::<Complex64>();
     let real = 8 * 6 * size_of::<f64>();
     let metadata = 6 * size_of::<f64>() + size_of::<SpectralChannelValidity>();
-    assert_eq!(projected.accumulation_bytes(), 16 * complex);
+    assert_eq!(projected.accumulation_bytes(), 8 * complex);
     assert_eq!(
         projected.completion_bytes(),
-        26 * complex + 3 * real + metadata
+        18 * complex + 3 * real + metadata
     );
     assert_eq!(
         projected.retained_bytes(),
@@ -113,12 +149,6 @@ fn t51_initial_phase_residency_is_geometry_derived_and_fail_closed() {
     exclusions.push(excluded);
     let mut excluded = small.clone();
     excluded.basis = SpectralBasisPlan::ChannelLocal;
-    exclusions.push(excluded);
-    let mut excluded = small.clone();
-    excluded.basis = SpectralBasisPlan::Joint {
-        continuum: BlockNormalPlan::taylor(1.0e9, 2).unwrap(),
-        line_terms: 1,
-    };
     exclusions.push(excluded);
     let mut excluded = small.clone();
     excluded.charts = vec![small.charts[0].clone(); 2].into_boxed_slice();
@@ -201,6 +231,7 @@ fn t51_initial_phase_residency_bounds_actual_formation_and_identity_transfer() {
         PreparedFft::new(
             workload.grid_shape(),
             workload.fft_resident_complex_values(),
+            1,
         )
         .unwrap(),
         3,
@@ -209,11 +240,8 @@ fn t51_initial_phase_residency_bounds_actual_formation_and_identity_transfer() {
     .unwrap();
     let grid_values: usize = [
         &source.dirty_grids,
-        &source.dirty_compensations,
         &source.psf_grids,
-        &source.psf_compensations,
         &source.aw_sensitivity_grids,
-        &source.aw_sensitivity_compensations,
     ]
     .into_iter()
     .flat_map(|grids| grids.iter().flatten())
@@ -223,10 +251,7 @@ fn t51_initial_phase_residency_bounds_actual_formation_and_identity_transfer() {
         grid_values * size_of::<Complex64>(),
         phases.accumulation_bytes()
     );
-    assert!(source.residual_grids.is_none() && source.residual_compensations.is_none());
-    assert!(
-        source.common_residual_grids.is_none() && source.common_residual_compensations.is_none()
-    );
+    assert!(source.residual_grids.is_none());
     assert!(source.primary_beam.is_none() && source.mosaic_normal.is_none());
     assert!(provider_lifetime.upgrade().is_some());
     let mut received_local = false;
@@ -239,7 +264,6 @@ fn t51_initial_phase_residency_bounds_actual_formation_and_identity_transfer() {
             // The chart owner releases its grids before transferring the primitives.
             assert!(provider_lifetime.upgrade().is_none());
             received_local = true;
-            assert!(local.common_residual.is_none() && local.invariant_common_dirty.is_none());
             assert!(
                 local.primary_beam_weighted_sum.is_none() && local.major_cycle_residual.is_none()
             );
@@ -287,7 +311,7 @@ fn t51_initial_phase_residency_rejects_prior_before_retaining_owner_state() {
     let specification = SpectralOperatorSpecification::new(&problem).unwrap();
     let workload =
         spectral_operator_workload(&specification, 3, SpectralOperatorPass::InitialMajor).unwrap();
-    let mut owner = prepare_spectral_operator(specification, workload)
+    let mut owner = prepare_spectral_operator(specification, workload, 1)
         .unwrap()
         .begin_streaming(&problem)
         .unwrap();
@@ -312,8 +336,7 @@ fn t51_initial_phase_residency_rejects_prior_before_retaining_owner_state() {
             .iter()
             .all(|operator| operator.primary_beam_replay.is_none()
                 && operator.reused_normal_state.is_none()
-                && operator.residual_grids.is_none()
-                && operator.residual_compensations.is_none())
+                && operator.residual_grids.is_none())
     );
     owner.bind_major_cycle_model(&model, None).unwrap();
 }

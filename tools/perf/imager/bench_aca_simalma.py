@@ -1280,7 +1280,6 @@ def run_native_imager_product(
         "--write-pb",
         "--pblimit",
         "0.2",
-        "--no-preview-pngs",
     ]
     if spec.get("phasecenter"):
         command.extend(["--phasecenter", spec["phasecenter"]])

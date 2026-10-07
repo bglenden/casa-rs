@@ -24,13 +24,13 @@ use casa_imaging_runtime::{
     FrozenWeightingReservation, HostInventory, ImplementationContractMetadata,
     ImplementationRegistry, ImplementationRegistryId, ManagedSpillStorage, MemoryCapacityDomain,
     MemoryCapacityKind, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
-    PlannerCostModelProfileBootstrap, PlannerCostModelProfileId, PlanningBindings, QueueResource,
-    QueueResourceId, RateResource, RateResourceId, RateUnit, ReceiptRetention, ResourceAuthority,
-    ResourceOverride, ResourcePolicy, ResourceTopology, RunBindings, RunToCompletion,
-    SpectralCycleExecutionPolicy, SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan,
-    SpectralCyclePlanParts, SpectralCyclePlanningLimits, SpectralCycleRegistry, StorageDomain,
-    StorageDomainId, StorageIoResourceBinding, WorkExecutionContext, WorkImplementation,
-    WorkImplementationId, WorkMeasurements, plan as runtime_plan, run as runtime_run,
+    PlannerCostModelProfileId, PlanningBindings, QueueResource, QueueResourceId, RateResource,
+    RateResourceId, RateUnit, ReceiptRetention, ResourceAuthority, ResourceOverride,
+    ResourcePolicy, ResourceTopology, RunBindings, RunToCompletion, SpectralCycleExecutionPolicy,
+    SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan, SpectralCyclePlanParts,
+    SpectralCyclePlanningLimits, SpectralCycleRegistry, StorageDomain, StorageDomainId,
+    StorageIoResourceBinding, WorkExecutionContext, WorkImplementation, WorkImplementationId,
+    WorkMeasurements, plan as runtime_plan, run as runtime_run,
 };
 use serde_json::json;
 
@@ -220,11 +220,7 @@ fn execute_four_cycle_clean(t44_products: bool) -> Result<CleanRun, Box<dyn Erro
     )?;
     let plan = runtime_plan(
         &problem,
-        PlanningBindings::new(
-            registry_id(),
-            resource_policy.clone(),
-            PlannerCostModelProfileBootstrap::new(cost_model_id()),
-        ),
+        PlanningBindings::new(registry_id(), resource_policy.clone(), cost_model_id()),
         authority,
         &planning_registry,
         &receipts,
@@ -530,12 +526,6 @@ fn product_role_name(role: ProductRole) -> String {
     let term = |prefix: &str, term: ProductTerm| match term {
         ProductTerm::Single => prefix.to_string(),
         ProductTerm::Taylor(term) => format!("{prefix}.tt{term}"),
-        ProductTerm::Continuum(term) => format!("{prefix}.continuum{term}"),
-        ProductTerm::Line => format!("{prefix}.line"),
-        ProductTerm::Total => format!("{prefix}.total"),
-        ProductTerm::JointNormal { row, column } => {
-            format!("{prefix}.normal{row}_{column}")
-        }
     };
     match role {
         ProductRole::Psf(value) => term("psf", value),
@@ -544,8 +534,6 @@ fn product_role_name(role: ProductRole) -> String {
         ProductRole::RestoredImage(value) => term("restored_image", value),
         ProductRole::SumWeights(value) => term("sum_weights", value),
         ProductRole::CleanMask => "clean_mask".to_string(),
-        ProductRole::ContinuumCleanMask => "continuum_clean_mask".to_string(),
-        ProductRole::LineCleanMask => "line_clean_mask".to_string(),
         ProductRole::Weight(value) => term("weight", value),
         ProductRole::PrimaryBeam(value) => term("primary_beam", value),
         ProductRole::PrimaryBeamSpectralIndex => "primary_beam_spectral_index".to_string(),
@@ -645,11 +633,7 @@ fn execute_continuing_cycle(
     )?;
     let plan = runtime_plan(
         problem,
-        PlanningBindings::new(
-            registry_id(),
-            resource_policy.clone(),
-            PlannerCostModelProfileBootstrap::new(cost_model_id()),
-        ),
+        PlanningBindings::new(registry_id(), resource_policy.clone(), cost_model_id()),
         authority,
         planning_registry,
         receipts,
@@ -727,11 +711,7 @@ fn execute_terminal_major(
     )?;
     let plan = runtime_plan(
         problem,
-        PlanningBindings::new(
-            registry_id(),
-            resource_policy.clone(),
-            PlannerCostModelProfileBootstrap::new(cost_model_id()),
-        ),
+        PlanningBindings::new(registry_id(), resource_policy.clone(), cost_model_id()),
         authority,
         planning_registry,
         receipts,
@@ -863,6 +843,8 @@ fn runtime_inventory(artifact_root: &std::path::Path, source_root: PathBuf) -> H
                 QueueResource::new(transaction_queue.clone(), 4),
             ],
             logical_cpu_threads: 1,
+            native_thread_stack_bytes: 512 << 10,
+            page_bytes: 16 << 10,
             performance_cpu_cores: CpuClassCapacity::Known(1),
             cache_capacity_bytes: 64 << 20,
             lock_capacity: 8,

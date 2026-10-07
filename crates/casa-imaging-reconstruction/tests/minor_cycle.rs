@@ -3,7 +3,7 @@
 //! T21 bounded Högbom Minor Cycles over authoritative Normal State views,
 //! driven entirely through the reconstruction owner seams.
 
-use std::{collections::BTreeMap, convert::Infallible};
+use std::collections::BTreeMap;
 
 use casa_imaging_model::{
     AntennaSelection, AxisOrder, CentreLaws, ColumnGeneration, ConsistencyToken,
@@ -24,15 +24,14 @@ use casa_imaging_model::{
     Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
     ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection,
     ScientificContract, SelectedColumns, SelectedImageDomainProjections, SelectedMainRow,
-    SelectedObservationGenerationId, SelectedObservationSample, SelectedPhaseCentreProjection,
-    SelectedPredictionTarget, SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates,
-    SelectedSampleMetadata, SelectedSpectralContribution, SelectedSpectralContributions,
-    SelectedVisibilitySample, SkyDirection, SourceGenerations, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
-    SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
-    TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection, UvwCoordinateLaw,
-    VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract,
-    WeightingScheme, compile, compile_observation,
+    SelectedObservationSample, SelectedPhaseCentreProjection, SelectedPredictionTarget,
+    SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates, SelectedSampleMetadata,
+    SelectedSpectralContribution, SelectedSpectralContributions, SelectedVisibilitySample,
+    SkyDirection, SourceGenerations, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
+    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection,
+    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection,
+    UvSelection, UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn,
+    WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
     AutoMultithreshControls, ExecutableModelProblem, FinalModelCompletion, FinalNormalState,
@@ -316,7 +315,7 @@ fn compile_problem(
             ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
             NumericsContract::new(
                 vec![NumericPrecision::F64],
-                ReductionPolicy::Compensated,
+                ReductionPolicy::UnorderedWithinBudget,
                 FiniteValuePolicy::FlagInputRejectGenerated,
                 NumericalStage::ALL
                     .into_iter()
@@ -392,7 +391,7 @@ fn fixture_samples_scaled(
                     time_centroid: Epoch::new(59_000.0 + physical_row as f64, TimeScale::Utc),
                     interval_seconds: 1.0,
                     exposure_seconds: 1.0,
-                    parallactic_angles_rad: [0.0, 0.0],
+                    parallactic_angles_rad: Some([0.0, 0.0]),
                     phase_direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
                     delay_direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
                     pointing_directions: casa_imaging_model::SelectedPointingDirections {
@@ -504,10 +503,19 @@ fn run_t19_complete_data(
         WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
     )
     .expect("weighting residency plan");
-    let selected_generation = replay_selected_generation(problem, samples);
     let generation = freeze_weighting_generation(problem, &plan, samples)
         .expect("freeze global weighting generation");
-    let (blocks, summary) = replay(&generation, problem, &plan, samples);
+    run_t19_complete_data_with_weighting(problem, preparation, samples, &plan, &generation)
+}
+
+fn run_t19_complete_data_with_weighting(
+    problem: &casa_imaging_model::CompiledProblem,
+    preparation: Option<&MajorCyclePreparation>,
+    samples: &[SelectedObservationSample],
+    plan: &WeightingPlan,
+    generation: &WeightingAlgorithmState,
+) -> CompleteDataOwnerResult {
+    let (blocks, summary) = replay(generation, problem, plan, samples);
     assert!(!blocks.is_empty(), "replay must emit bounded blocks");
 
     // A non-empty final model over an empty-model contract is a residual
@@ -529,12 +537,13 @@ fn run_t19_complete_data(
     let workload =
         spectral_operator_workload(&specification, plan.limits().max_block_samples(), pass)
             .expect("workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
+    let prepared = prepare_spectral_operator(specification, workload, 1).expect("prepare operator");
     let mut state = prepared
-        .begin(problem, &generation)
+        .begin(problem, generation)
         .expect("begin complete-data owner");
     if let Some(preparation) = preparation {
-        let prior = residual_refresh.then(|| confirm_prior_normal_state(problem, samples));
+        let prior = residual_refresh
+            .then(|| confirm_prior_normal_state(problem, samples, plan, generation));
         state
             .bind_major_cycle_model(preparation.final_model(), prior)
             .expect("bind exact final model before replay");
@@ -542,9 +551,7 @@ fn run_t19_complete_data(
     for block in &blocks {
         state.consume_block(block).expect("consume weighted block");
     }
-    state
-        .complete(&summary, selected_generation, None)
-        .expect("complete T19 evidence")
+    state.complete(&summary).expect("complete T19 evidence")
 }
 
 /// Mint the empty-model prior normal state used by delta refreshes.
@@ -555,6 +562,8 @@ fn run_t19_complete_data(
 fn confirm_prior_normal_state(
     problem: &casa_imaging_model::CompiledProblem,
     samples: &[SelectedObservationSample],
+    plan: &WeightingPlan,
+    generation: &WeightingAlgorithmState,
 ) -> casa_imaging_reconstruction::FinalNormalState {
     let mut lifecycle = ModelLifecycle::bind(
         ExecutableModelProblem::from_compiled(problem.clone()).expect("prior executable problem"),
@@ -567,7 +576,13 @@ fn confirm_prior_normal_state(
     let named = lifecycle.initial_empty().expect("prior empty generation");
     let preparation =
         MajorCyclePreparation::prepare(&lifecycle, named, None).expect("prior preparation");
-    let evidence = run_t19_complete_data(problem, Some(&preparation), samples);
+    let evidence = run_t19_complete_data_with_weighting(
+        problem,
+        Some(&preparation),
+        samples,
+        plan,
+        generation,
+    );
     MajorCycleOwner::from_complete_data(
         {
             let storage =
@@ -584,23 +599,6 @@ fn confirm_prior_normal_state(
     .expect("prior reconciliation")
     .into_continuation()
     .0
-}
-
-/// Mint the authoritative T17 observation generation of the fixture stream.
-fn replay_selected_generation(
-    problem: &casa_imaging_model::CompiledProblem,
-    samples: &[SelectedObservationSample],
-) -> SelectedObservationGenerationId {
-    let (generation, count) = problem
-        .inspect_selected_observation(samples.iter().cloned().map(Ok::<_, Infallible>), |_| {
-            Ok::<_, Infallible>(())
-        })
-        .expect("inspect fixture sample stream");
-    assert_eq!(
-        usize::try_from(count).expect("fixture sample count"),
-        samples.len()
-    );
-    generation
 }
 
 fn bind_lifecycle(
@@ -811,7 +809,9 @@ fn first_confirm_round_scaled(
             .normal_state()
             .read_window(0..1)
             .expect("single-plane fixture window")
-            .residual(),
+            .residual()
+            .complex()
+            .unwrap(),
     );
     let (normal_state, model_completion, final_model) = joined.into_parts();
     // The completed lifecycle cannot reopen or finalize its model again.
@@ -931,6 +931,8 @@ fn minor_cycle_delta_composes_with_the_next_major_cycle_reconciliation() {
         .read_window(0..1)
         .expect("single-plane fixture window")
         .residual()
+        .complex()
+        .unwrap()
         .to_vec();
     let model_before = round
         .final_model
@@ -980,7 +982,9 @@ fn minor_cycle_delta_composes_with_the_next_major_cycle_reconciliation() {
             .normal_state
             .read_window(0..1)
             .expect("single-plane fixture window")
-            .residual(),
+            .residual()
+            .complex()
+            .unwrap(),
         residual_before
     );
     let model_after = round
@@ -1038,17 +1042,20 @@ fn minor_cycle_delta_composes_with_the_next_major_cycle_reconciliation() {
         .expect("single-plane fixture window");
     let psf_peak = window
         .normal_approximation()
+        .complex()
+        .unwrap()
         .iter()
         .map(|value| value.re.abs())
         .fold(0.0_f64, f64::max);
-    let residual_peak_pixel = maximal_pixel(window.residual());
+    let residual_peak_pixel = maximal_pixel(window.residual().complex().unwrap());
     assert_eq!(
         recorded[0].cell().pixel(),
         residual_peak_pixel,
         "the first component sits on the residual peak inside the window"
     );
-    let expected_first_flux =
-        controls().gain() * window.residual()[plane_index(residual_peak_pixel)].re / psf_peak;
+    let expected_first_flux = controls().gain()
+        * window.residual().complex().unwrap()[plane_index(residual_peak_pixel)].re
+        / psf_peak;
     assert!((recorded[0].flux() - expected_first_flux).abs() <= 1.0e-12);
     assert!(
         (evidence.total_flux() - recorded.iter().map(|c| c.flux().abs()).sum::<f64>()).abs()
@@ -1103,7 +1110,9 @@ fn minor_cycle_delta_composes_with_the_next_major_cycle_reconciliation() {
             .normal_state()
             .read_window(0..1)
             .expect("single-plane fixture window")
-            .residual(),
+            .residual()
+            .complex()
+            .unwrap(),
     );
     assert!(
         peak2 < round.residual_peak,
@@ -1235,12 +1244,13 @@ fn threshold_stop_converges_without_a_delta_or_a_reconciliation_request() {
         .expect("valid controls")
         .record_component_sequence(8)
         .expect("recording limit");
+    let mask = box_mask(&round.normal_state, &round.final_model, [2, 2], [5, 5]);
 
     let outcome = hogbom_minor_cycle(
         &lifecycle,
         &round.final_model,
         &round.normal_state,
-        &box_mask(&round.normal_state, &round.final_model, [2, 2], [5, 5]),
+        &mask,
         converging_controls.clone(),
     )
     .expect("bounded Högbom solve");
@@ -1254,20 +1264,20 @@ fn threshold_stop_converges_without_a_delta_or_a_reconciliation_request() {
     assert!(outcome.delta().is_none());
     assert!(evidence.recorded_component_sequence().is_none());
 
-    // Identical solves mint identical stable evidence identities.
+    // Reusing the same input owners gives the same solve evidence.
     let other_lifecycle = bind_lifecycle(&continuation, 48, 9);
     let repeat = hogbom_minor_cycle(
         &other_lifecycle,
         &round.final_model,
         &round.normal_state,
-        &box_mask(&round.normal_state, &round.final_model, [2, 2], [5, 5]),
+        &mask,
         converging_controls,
     )
     .expect("repeat solve");
     assert_eq!(
         repeat.evidence().evidence_id(),
         evidence.evidence_id(),
-        "evidence identities hash stable authorities, not process-local seals"
+        "the repeated solve uses the same mask owner"
     );
     assert!(repeat.evidence().first_divergence(evidence).is_none());
 }
@@ -1387,7 +1397,9 @@ fn returned_deltas_never_exceed_the_accepted_view_envelope() {
             .normal_state
             .read_window(0..1)
             .expect("single-plane fixture window")
-            .residual(),
+            .residual()
+            .complex()
+            .unwrap(),
     ) * 0.75;
     let bounded = HogbomControls::new_bounded(0.5, 0.0, 64, envelope)
         .expect("valid controls")
@@ -1448,10 +1460,12 @@ fn threshold_boundary_follows_the_casa_hogbom_convention() {
         .expect("single-plane fixture window");
     let psf_peak = window
         .normal_approximation()
+        .complex()
+        .unwrap()
         .iter()
         .map(|value| value.re.abs())
         .fold(0.0_f64, f64::max);
-    let strength = residual_peak(window.residual()) / psf_peak;
+    let strength = residual_peak(window.residual().complex().unwrap()) / psf_peak;
 
     let solve = |threshold: f64| {
         hogbom_minor_cycle(
@@ -1528,10 +1542,12 @@ fn clark_uses_a_derived_bounded_patch_and_stops_at_or_below_threshold() {
         .expect("single-plane fixture window");
     let psf_peak = window
         .normal_approximation()
+        .complex()
+        .unwrap()
         .iter()
         .map(|value| value.re.abs())
         .fold(0.0_f64, f64::max);
-    let strength = residual_peak(window.residual()) / psf_peak;
+    let strength = residual_peak(window.residual().complex().unwrap()) / psf_peak;
     for threshold in [strength, strength * 2.0] {
         let program = casa_imaging_reconstruction::MinorCycleProgram::for_algorithm(
             ReconstructionAlgorithm::Clark,

@@ -15,9 +15,11 @@ The suite bundle contains:
   - bin/* entries selected by the provider application catalog include_in_suite=true
   - wheels/*.whl
   - bundle-manifest.json
+  - LICENSE, COPYING, COPYING.LESSER, THIRD_PARTY_NOTICES.md
 
 The binaries bundle contains:
   - bin/* entries selected by the provider application catalog include_in_suite=true
+  - LICENSE, COPYING, COPYING.LESSER, THIRD_PARTY_NOTICES.md
 EOF
 }
 
@@ -109,6 +111,10 @@ for binary in "${binaries[@]}"; do
   cp "$bin_dir/$binary" "$binaries_dir/bin/"
 done
 cp "${wheels[@]}" "$suite_dir/wheels/"
+for notice in LICENSE COPYING COPYING.LESSER THIRD_PARTY_NOTICES.md; do
+  cp "$repo_root/$notice" "$suite_dir/$notice"
+  cp "$repo_root/$notice" "$binaries_dir/$notice"
+done
 
 manifest_path="$suite_dir/bundle-manifest.json"
 wheel_json="$(

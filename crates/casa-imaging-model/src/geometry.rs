@@ -1940,15 +1940,6 @@ pub(crate) fn frequency_frame_tag(frame: FrequencyFrame) -> u8 {
     }
 }
 
-pub(crate) const fn time_scale_tag(scale: TimeScale) -> u8 {
-    match scale {
-        TimeScale::Utc => 0,
-        TimeScale::Tai => 1,
-        TimeScale::Tt => 2,
-        TimeScale::Tdb => 3,
-    }
-}
-
 fn canonical_longitude(longitude: f64) -> f64 {
     canonical_zero(longitude.rem_euclid(TAU))
 }

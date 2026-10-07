@@ -38,17 +38,16 @@ pub use storage::{
     ProductWriter,
 };
 pub use visibility::{
-    ModelVisibilityProductId, ResidualVisibilityProductId, VisibilityProductAuthority,
-    VisibilityProductCompletion, VisibilityProductError,
+    VisibilityProductCompletion, VisibilityProductError, VisibilityProductProgress,
 };
 
 #[cfg(test)]
 mod tests {
     #[test]
     fn algorithm_catalog_version_is_pinned() {
-        // v9 separated cube pixels and CASA publication masks; bump this pin
+        // v10 publishes unit-peak PSFs and uses CASA's EVLA coefficient ties; bump this pin
         // only together with a reviewed product-algorithm identity change.
-        assert_eq!(super::CONTINUUM_ALGORITHM_CATALOG_VERSION, 9);
+        assert_eq!(super::CONTINUUM_ALGORITHM_CATALOG_VERSION, 10);
         assert_eq!(super::DEFAULT_PSF_CUTOFF, 0.35);
     }
 }

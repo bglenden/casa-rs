@@ -27,7 +27,6 @@ class SpectralBenchmarkCliTests(unittest.TestCase):
                     "IMAGER_BENCH_CUBE_START": "0",
                     "IMAGER_BENCH_CUBE_WIDTH": "1",
                     "IMAGER_BENCH_STANDARD_MFS_ACCELERATION": "cpu",
-                    "IMAGER_BENCH_IMAGING_FFT_BACKEND": "rustfft",
                 })
                 result = subprocess.run(
                     [str(REPO / "scripts/bench-imager-vs-casa.sh"),

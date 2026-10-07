@@ -72,18 +72,17 @@ use casa_imaging_runtime::{
     MemoryDemand, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
     ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
     PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
-    PlannerCostModelProfileBootstrap, PlannerCostModelProfileId, PlanningBindings,
-    PredictionConfidence, PredictionUncertainty, PreparedArtifactBudget,
-    PreparedArtifactCatalogPlanFragment, PreparedArtifactDescriptor, PreparedArtifactError,
-    PreparedArtifactLoadSource, PreparedArtifactOperation, PreparedArtifactOrder,
-    PreparedArtifactPlanFragment, PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision,
-    PreparedArtifactRegistration, PreparedArtifactRejection, PreparedArtifactReuseOutcome,
-    PreparedArtifactSegmentDescriptor, PreparedArtifactSourceSegment, PreparedArtifactStore,
-    PreparedArtifactUvAffine, ProductPublicationPlan, ProductionStorageProfile,
-    PublicationLayoutLedger, PublicationMappedStaging, PublicationParticipant,
-    PublicationPhysicalLayout, PublicationResourceBounds, PublicationStaging, QueueDemand,
-    QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId,
-    RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus,
+    PlannerCostModelProfileId, PlanningBindings, PredictionConfidence, PredictionUncertainty,
+    PreparedArtifactBudget, PreparedArtifactCatalogPlanFragment, PreparedArtifactDescriptor,
+    PreparedArtifactError, PreparedArtifactLoadSource, PreparedArtifactOperation,
+    PreparedArtifactOrder, PreparedArtifactPlanFragment, PreparedArtifactPlaneDescriptor,
+    PreparedArtifactPrecision, PreparedArtifactRegistration, PreparedArtifactRejection,
+    PreparedArtifactReuseOutcome, PreparedArtifactSegmentDescriptor, PreparedArtifactSourceSegment,
+    PreparedArtifactStore, PreparedArtifactUvAffine, ProductPublicationPlan,
+    ProductionStorageProfile, PublicationLayoutLedger, PublicationMappedStaging,
+    PublicationParticipant, PublicationPhysicalLayout, PublicationResourceBounds,
+    PublicationStaging, QueueDemand, QueueResource, QueueResourceId, QuiescencePoint, RateDemand,
+    RateResource, RateResourceId, RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus,
     ReconstructionCyclePhaseCompletion, RedactedPath, ResourceAuthority, ResourceClaim,
     ResourceError, ResourceHeadroom, ResourceMeasurement, ResourceOverride, ResourcePolicy,
     ResourceTopology, RunBindings, RunController, RunDirective, RunError, RunToCompletion,
@@ -150,13 +149,8 @@ fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
     )
 }
 
-fn planning_profile(byte: u8) -> PlannerCostModelProfileBootstrap {
-    PlannerCostModelProfileBootstrap::new(cost_model(byte))
-}
-
 mod common;
 
-mod cost_model_profile;
 mod imaging_plan_selection;
 #[path = "compile_plan_run/publication_lifecycle.rs"]
 mod publication_lifecycle;
@@ -169,7 +163,7 @@ use common::{
     problem_inputs_with_source_count,
 };
 
-const SELECTED_CONTENT_BYTES: usize = 160 * 1024;
+const SELECTED_CONTENT_BYTES: usize = 192 * 1024;
 static T607_CHANNEL_SLAB_EXECUTION_LOCK: Mutex<()> = Mutex::new(());
 
 const fn selected_content_budget() -> SelectedObservationContentBudget {
@@ -961,12 +955,20 @@ fn spectral_request_with_inputs_and_shape(
         shape,
         [-1.0e-6, 1.0e-6],
     );
-    let spectral = geometry.spectral().clone().with_wcs(SpectralWcs::Linear {
-        channels,
-        reference_pixel: 0.0,
-        reference_frequency_hz,
-        increment_hz: 128.0e6,
-    });
+    // SyntheticSpectralSetup records fixed LSRK channels, not TOPO tuning.
+    let spectral = SpectralCoordinateSpec::new(
+        FrequencyFrame::Lsrk,
+        FrequencyFrame::Lsrk,
+        SpectralFrameAnchor::NotApplicable,
+        SpectralWcs::Linear {
+            channels,
+            reference_pixel: 0.0,
+            reference_frequency_hz,
+            increment_hz: 128.0e6,
+        },
+        RestFrequency::NotApplicable,
+        DopplerConvention::NotApplicable,
+    );
     let geometry = geometry.with_spectral(spectral);
     let mut specification = ProblemSpecification::new(
         ScientificContract::new(
@@ -999,7 +1001,7 @@ fn spectral_request_with_inputs_and_shape(
         ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
         NumericsContract::new(
             vec![NumericPrecision::F64],
-            ReductionPolicy::Compensated,
+            ReductionPolicy::UnorderedWithinBudget,
             FiniteValuePolicy::FlagInputRejectGenerated,
             NumericalStage::ALL
                 .into_iter()
@@ -1182,7 +1184,7 @@ fn standard_problem_specification(
 ) -> ProblemSpecification {
     let numerics = NumericsContract::new(
         vec![NumericPrecision::F64],
-        ReductionPolicy::Compensated,
+        ReductionPolicy::UnorderedWithinBudget,
         FiniteValuePolicy::FlagInputRejectGenerated,
         NumericalStage::ALL
             .into_iter()
@@ -1227,7 +1229,7 @@ fn hogbom_problem_specification(
 ) -> ProblemSpecification {
     let numerics = NumericsContract::new(
         vec![NumericPrecision::F64],
-        ReductionPolicy::Compensated,
+        ReductionPolicy::UnorderedWithinBudget,
         FiniteValuePolicy::FlagInputRejectGenerated,
         NumericalStage::ALL
             .into_iter()
@@ -1266,7 +1268,7 @@ fn hogbom_problem_specification(
 fn mtmfs_problem_specification(small_scale_bias: f64) -> ProblemSpecification {
     let numerics = NumericsContract::new(
         vec![NumericPrecision::F64],
-        ReductionPolicy::Compensated,
+        ReductionPolicy::UnorderedWithinBudget,
         FiniteValuePolicy::FlagInputRejectGenerated,
         NumericalStage::ALL
             .into_iter()
@@ -1459,7 +1461,6 @@ type DeliveredObservationCompletions = Arc<Mutex<Vec<(WorkNodeId, WorkNodeId)>>>
 enum MajorCycleMode {
     #[default]
     Confirm,
-    ApplyDelta,
     /// Execute the reconciliation at a different post-replay node than the
     /// plan-authoritative final-reconciliation node.
     NodeSubstitution,
@@ -1885,19 +1886,6 @@ impl RecordingExecutor {
                 )
                 .map_err(io::Error::other)?
             }
-            MajorCycleMode::ApplyDelta => {
-                let delta = lifecycle
-                    .compile_delta(
-                        &named,
-                        [ModelDeltaTerm::new(
-                            ModelCell::new(0, 0, 0, [1, 0]),
-                            ModelValue::new(2.0).map_err(io::Error::other)?,
-                        )],
-                    )
-                    .map_err(io::Error::other)?;
-                MajorCyclePreparation::prepare(&lifecycle, named, Some(delta))
-                    .map_err(io::Error::other)?
-            }
             _ => {
                 MajorCyclePreparation::prepare(&lifecycle, named, None).map_err(io::Error::other)?
             }
@@ -1932,8 +1920,7 @@ impl RecordingExecutor {
             .ok_or_else(|| io::Error::other("reconciliation ran without model lifecycle"))?;
         match state.reconcile(context, &mut lifecycle) {
             Ok(result) => {
-                // The Final Normal State must carry the exact authoritative
-                // T17 observation generation behind the settled replay.
+                // Reconciliation retains the exact live weighting owner behind the replay.
                 if let Some(replay) = self
                     .weighting_state
                     .lock()
@@ -1941,9 +1928,9 @@ impl RecordingExecutor {
                     .replay_completion()
                 {
                     assert_eq!(
-                        result.completion().normal_state().selected_generation(),
-                        replay.selected_generation(),
-                        "normal state must bind the replay's observation generation"
+                        result.completion().normal_state().weighting_generation(),
+                        replay.weighting_generation(),
+                        "normal state must bind the replay's weighting owner"
                     );
                 }
                 *self
@@ -2039,7 +2026,7 @@ impl WorkImplementation for RecordingExecutor {
         if let Some(complete) = &self.complete_data_plan
             && context.node().id == *complete.preparation_node()
         {
-            let prepared = complete.prepare(context).map_err(io::Error::other)?;
+            let prepared = complete.prepare(context, 1).map_err(io::Error::other)?;
             *self
                 .complete_data_prepared
                 .lock()
@@ -2237,9 +2224,8 @@ impl WorkImplementation for RecordingExecutor {
                 if predecessor.attempt_id() != completion.attempt_id()
                     || predecessor.owner_node() != completion.owner_node()
                     || predecessor.lease_epoch() != completion.lease_epoch()
-                    || predecessor.owner_completion().generation_id()
-                        != completion.selected_generation()
-                    || predecessor.owner_completion().sample_count() != completion.sample_count()
+                    || predecessor.delivered_sample_count()
+                        != completion.delivered_source_sample_count()
                 {
                     return Err(io::Error::other(
                         "reconciliation received mismatched weighting replay evidence",
@@ -2515,11 +2501,11 @@ fn production_weighting_fragment_owns_generation_replay_and_release_lifetimes() 
     );
     assert_eq!(
         dag.logical_allocations().len() - base.execution_dag().logical_allocations().len(),
-        5
+        3
     );
     assert_eq!(
         dag.physical_slots().len() - base.execution_dag().physical_slots().len(),
-        5
+        3
     );
     let cache = dag
         .logical_allocations()
@@ -2889,7 +2875,7 @@ fn managed_spill_requires_artifact_capacity_inside_the_selected_policy_reserve()
     .expect("feasible receipt store");
     let execution_plan = runtime_plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         &feasible_authority,
         &implementation_registry,
         &feasible_receipts,
@@ -2928,7 +2914,7 @@ fn managed_spill_requires_artifact_capacity_inside_the_selected_policy_reserve()
     .expect("insufficient receipt store");
     let result = runtime_plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         &insufficient_authority,
         &implementation_registry,
         &insufficient_receipts,
@@ -3245,7 +3231,7 @@ fn failed_density_generation_receipt_uses_current_partial_stream_measurements() 
     )
     .expect("two-source density fixture");
     let residency = selected_content_residency_with(&problem, |_| {
-        SelectedObservationContentBudget::new(160 * 1024, 1, 4)
+        SelectedObservationContentBudget::new(SELECTED_CONTENT_BYTES, 1, 4)
     });
     let planning_registry = ContractOnlyRegistry::new(
         registry(74),
@@ -3279,7 +3265,7 @@ fn failed_density_generation_receipt_uses_current_partial_stream_measurements() 
     let resource_policy = ResourcePolicy::Exclusive;
     let execution_plan = runtime_plan(
         &problem,
-        PlanningBindings::new(registry(74), resource_policy.clone(), planning_profile(4)),
+        PlanningBindings::new(registry(74), resource_policy.clone(), cost_model(4)),
         authority(),
         &planning_registry,
         &receipts,
@@ -3360,91 +3346,6 @@ fn failed_density_generation_receipt_uses_current_partial_stream_measurements() 
     );
 }
 
-fn assert_t59_low_memory_production_routes(physical: &PhysicalWorkBinding) {
-    let dag = physical.execution_dag();
-    let transition = dag
-        .adaptations()
-        .values()
-        .next()
-        .expect("explicit final-major memory ceiling seals one low-memory route");
-    assert_eq!(dag.adaptations().len(), 1);
-    assert_eq!(transition.from, *dag.initial_knobs());
-    assert_eq!(transition.from.batch_size, 2);
-    assert_eq!(transition.to.batch_size, 1);
-    assert!(transition.to.recomputation);
-    assert!(!transition.to.spill);
-    assert!(transition.to.prefetch);
-    assert_eq!(transition.activate_nodes.len(), 2);
-    assert_eq!(transition.deactivate_nodes.len(), 1);
-
-    let activated_kinds = transition
-        .activate_nodes
-        .iter()
-        .map(|node| dag.nodes()[node].kind)
-        .collect::<BTreeSet<_>>();
-    assert_eq!(
-        activated_kinds,
-        BTreeSet::from([WorkKind::Preparation, WorkKind::Prefetch])
-    );
-    let retained = transition
-        .deactivate_nodes
-        .iter()
-        .next()
-        .expect("retained route");
-    let retained_node = &dag.nodes()[retained];
-    assert_eq!(retained_node.kind, WorkKind::Cache);
-    assert!(
-        retained_node
-            .claims
-            .iter()
-            .any(|claim| { claim.resource == LeaseResource::ResidentCache && claim.amount > 0 })
-    );
-    assert!(retained_node.claims.iter().any(|claim| {
-        claim.resource == LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead) && claim.amount > 0
-    }));
-
-    let prefetch = transition
-        .activate_nodes
-        .iter()
-        .find(|node| dag.nodes()[*node].kind == WorkKind::Prefetch)
-        .expect("managed replay prefetch route");
-    assert!(dag.nodes()[prefetch].claims.iter().any(|claim| {
-        claim.resource == LeaseResource::IoBuffer(IoBufferKind::SpillRead) && claim.amount > 0
-    }));
-    let route_join = dag
-        .nodes()
-        .values()
-        .find(|node| {
-            node.kind == WorkKind::Synchronization
-                && node
-                    .dependencies
-                    .contains(&WorkDependency::Fence(FenceId::new(
-                        retained.clone(),
-                        FenceKind::Io,
-                    )))
-                && node
-                    .dependencies
-                    .contains(&WorkDependency::Fence(FenceId::new(
-                        prefetch.clone(),
-                        FenceKind::Io,
-                    )))
-        })
-        .expect("mutually exclusive routes rejoin before replay");
-    let replay = dag
-        .nodes()
-        .values()
-        .find(|node| {
-            node.kind == WorkKind::Spill
-                && node
-                    .dependencies
-                    .contains(&WorkDependency::Work(route_join.id.clone()))
-        })
-        .expect("fixed replay consumes the selected route");
-    assert!(physical.artifacts().iter().any(|artifact| {
-        artifact.node() == &replay.id && artifact.role() == ArtifactRole::Input
-    }));
-}
-
 fn execute_spectral_cycle_with_weighting(weighting: WeightingContract, abort_after_initial: bool) {
     execute_spectral_cycle_with_weighting_mode(weighting, abort_after_initial, false, false);
 }
@@ -3453,9 +3354,9 @@ fn execute_spectral_cycle_with_weighting_mode(
     weighting: WeightingContract,
     abort_after_initial: bool,
     verify_low_memory_plan: bool,
-    apply_low_memory_route: bool,
-) {
-    // The deterministic 1 MiB authority is shared by the whole integration
+    disable_resident_cache: bool,
+) -> Option<MajorCycleCompletion> {
+    // The deterministic 2 MiB authority is shared by the whole integration
     // binary; serialize with every other plan/run so an unrelated concurrent
     // reservation cannot make this exact plane envelope infeasible.
     let _guard = run_lock()
@@ -3468,8 +3369,8 @@ fn execute_spectral_cycle_with_weighting_mode(
         ImageShape::new(image_edge, image_edge),
         [-1.0e-6, 1.0e-6],
     );
-    // Fit the whole cube inside the fixed 1 MiB test authority so this fixture
-    // exercises retained-to-recompute adaptation, not static spectral windows.
+    // Fit the whole cube inside the fixed authority to compare admitted
+    // residency with bounded disk replay, not static spectral windows.
     let low_memory_channels = 4;
     if verify_low_memory_plan {
         let spectral = geometry.spectral().clone().with_wcs(SpectralWcs::Linear {
@@ -3497,11 +3398,15 @@ fn execute_spectral_cycle_with_weighting_mode(
             model_lifecycle(ModelStateIdentity::Empty),
         )
     } else {
-        request_with_geometry_references_and_weighting(
-            1,
+        ImagingRequest::new(
+            standard_problem_specification(
+                weighting,
+                vec![ProductKind::Psf],
+                ModelColumnWrite::Disabled,
+            ),
             geometry.clone(),
-            default_references(),
-            weighting,
+            problem_inputs_with_channels(1, default_references(), ModelStateIdentity::Empty, 2),
+            model_lifecycle(ModelStateIdentity::Empty),
         )
     };
     let fixture_problem = compile(fixture_request).expect("fixture continuum compilation");
@@ -3518,7 +3423,7 @@ fn execute_spectral_cycle_with_weighting_mode(
         WeightColumn::Weight,
         Vec::new(),
         ModelStateIdentity::Empty,
-        SelectedObservationContentBudget::new(160 * 1024, 1, 4),
+        SelectedObservationContentBudget::new(SELECTED_CONTENT_BYTES, 1, 4),
         casa_test_support::deterministic_measures_provider_for_identity([90; 32]),
     );
     let (snapshot_input, initial_access) = resolve_selected_observation(resolution.clone())
@@ -3579,8 +3484,7 @@ fn execute_spectral_cycle_with_weighting_mode(
         .with_gridded_normal_storage(gridded_storage.clone()),
     )
     .expect("production initial plan");
-    // The exact 8x8 density scratch and selected-owner minimum fit the fixture's
-    // physical 1 MiB capacity but intentionally exceed Balanced's 75% ceiling.
+    // Reserve the frozen weighting separately from the admitted serial phase.
     let resource_policy = ResourcePolicy::Exclusive;
     let frozen_reservation = FrozenWeightingReservation::acquire(
         authority(),
@@ -3597,7 +3501,7 @@ fn execute_spectral_cycle_with_weighting_mode(
     .expect("receipt store");
     let execution_plan = runtime_plan(
         &problem,
-        PlanningBindings::new(registry(73), resource_policy.clone(), planning_profile(4)),
+        PlanningBindings::new(registry(73), resource_policy.clone(), cost_model(4)),
         authority(),
         &planning_registry,
         &receipts,
@@ -3730,7 +3634,7 @@ fn execute_spectral_cycle_with_weighting_mode(
                 .is_none(),
             "an aborted executor cannot yield retained spill authority"
         );
-        return;
+        return None;
     }
     let minor = runtime_registry
         .implementation()
@@ -3749,7 +3653,7 @@ fn execute_spectral_cycle_with_weighting_mode(
     let source_delta = final_input.source_delta();
     let accepted_update = final_input.identity();
     let minor_evidence_id = final_input.evidence().reconstruction_cycle().evidence_id();
-    let selected_generation = final_input.evidence().normal_state().selected_generation();
+    let weighting_generation = final_input.evidence().normal_state().weighting_generation();
     let replay_descriptor = gridded_replay.descriptor();
     let initial_spill_node = execution_plan
         .execution_dag()
@@ -3774,7 +3678,7 @@ fn execute_spectral_cycle_with_weighting_mode(
             )
         })
         .expect("initial gridded spill storage claim");
-    assert_eq!(receipt.schema_version(), 24);
+    assert_eq!(receipt.schema_version(), 25);
     assert_eq!(initial_storage_claim.lifetime, ClaimLifetime::Artifact);
     assert_eq!(
         receipt.actual_resource_peak(
@@ -3791,10 +3695,16 @@ fn execute_spectral_cycle_with_weighting_mode(
         ResourcePolicy::Explicit(ResourceOverride {
             memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 1 << 20)]),
             workers: Some(1),
+            cache_bytes: disable_resident_cache.then_some(0),
             ..ResourceOverride::default()
         })
     } else {
-        ResourcePolicy::Balanced
+        // This explicit ceiling admits exactly one frame of the two-channel replay window.
+        ResourcePolicy::Explicit(ResourceOverride {
+            memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 584_000)]),
+            workers: Some(2),
+            ..ResourceOverride::default()
+        })
     };
     let final_planned = SpectralCyclePlan::final_major(
         &problem,
@@ -3821,15 +3731,7 @@ fn execute_spectral_cycle_with_weighting_mode(
     .expect("production final-major plan");
     let final_plan = runtime_plan(
         &problem,
-        PlanningBindings::new(
-            registry(73),
-            if verify_low_memory_plan {
-                final_resource_policy.clone()
-            } else {
-                resource_policy.clone()
-            },
-            planning_profile(4),
-        ),
+        PlanningBindings::new(registry(73), final_resource_policy.clone(), cost_model(4)),
         authority(),
         &planning_registry,
         &receipts,
@@ -3849,39 +3751,38 @@ fn execute_spectral_cycle_with_weighting_mode(
     let model_samples = problem.model_lifecycle().target().sample_count();
     let planned_model_bytes = final_complete.residency().major_cycle_model_bytes();
     let maximum_accepted_terms = 2 * problem.model_lifecycle().target().coefficients();
+    let window_samples = problem
+        .model_lifecycle()
+        .target()
+        .domains()
+        .iter()
+        .map(|domain| domain.pixels().into_iter().product())
+        .min()
+        .unwrap();
+    let pending_update_bytes = |terms| {
+        casa_imaging_reconstruction::ModelStoragePlan::pending_update_bytes(
+            terms,
+            model_samples,
+            window_samples,
+        )
+        .unwrap()
+    };
     assert!(
         final_complete.residency().major_cycle_model_bytes()
             <= model_samples * std::mem::size_of::<casa_imaging_model::ModelSample>()
                 + 2 * maximum_accepted_terms
-                    * std::mem::size_of::<casa_imaging_model::ModelDeltaTerm>(),
+                    * std::mem::size_of::<casa_imaging_model::ModelDeltaTerm>()
+                + pending_update_bytes(maximum_accepted_terms),
         "final-major admission must bind the accepted sparse update, not the logical whole-model delta ceiling"
     );
     if verify_low_memory_plan {
-        assert_t59_low_memory_production_routes(&final_physical);
         let dag = final_physical.execution_dag();
-        let transition = dag
-            .adaptations()
-            .values()
-            .next()
-            .expect("low-memory transition");
-        let retained_node = transition
-            .deactivate_nodes
-            .iter()
-            .next()
-            .expect("retained route")
-            .clone();
-        let recompute_node = transition
-            .activate_nodes
-            .iter()
-            .find(|node| dag.nodes()[*node].kind == WorkKind::Preparation)
-            .expect("recompute route")
-            .clone();
-        let prefetch_node = transition
-            .activate_nodes
-            .iter()
-            .find(|node| dag.nodes()[*node].kind == WorkKind::Prefetch)
-            .expect("prefetch route")
-            .clone();
+        assert!(dag.adaptations().is_empty());
+        assert!(
+            dag.nodes()
+                .values()
+                .all(|node| node.kind != WorkKind::Cache)
+        );
         let replay_node = dag
             .nodes()
             .values()
@@ -3890,151 +3791,65 @@ fn execute_spectral_cycle_with_weighting_mode(
                     && node.claims.iter().any(|claim| {
                         claim.resource == LeaseResource::IoBuffer(IoBufferKind::SpillRead)
                     })
-                    && !transition.activate_nodes.contains(&node.id)
             })
-            .expect("fixed final-major replay node")
+            .unwrap()
             .id
             .clone();
-        let cache_claim = dag.nodes()[&retained_node]
-            .claims
-            .iter()
-            .find(|claim| claim.resource == LeaseResource::ResidentCache)
-            .expect("retained route cache claim")
-            .clone();
-        let final_executor = SpectralCycleExecutor::new_gridded(
+        assert_eq!(dag.initial_knobs().batch_size, 2);
+        assert!(dag.nodes()[&replay_node].claims.iter().any(|claim| {
+            claim.resource == LeaseResource::IoBuffer(IoBufferKind::SpillRead)
+                && claim.amount == 480
+        }));
+        let executor = SpectralCycleExecutor::new_gridded(
             implementation(73),
             problem.clone(),
             final_weighting,
             final_pass,
             final_complete,
-            ExecutableModelProblem::from_compiled(problem.clone()).expect("final executable model"),
+            ExecutableModelProblem::from_compiled(problem.clone()).unwrap(),
             SpectralCyclePassInput::FinalMajor(final_input),
-            planned_gridded_normal.expect("final plan binds retained gridded replay"),
+            planned_gridded_normal.unwrap(),
         )
-        .expect("final executor accepts its planned replay")
+        .unwrap()
         .with_frozen_weighting(frozen_weighting);
-        let final_registry =
-            SpectralCycleRegistry::new(registry(73), implementation(73), &problem, final_executor);
-        let final_current = RunBindings::new(
+        let registry =
+            SpectralCycleRegistry::new(registry(73), implementation(73), &problem, executor);
+        let current = RunBindings::new(
             problem.inputs().clone(),
             &final_resource_policy,
             cost_model(4),
         );
-        let final_attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([75; 32]);
-        let mut controller = SelectSpectralLowMemoryRoute {
-            select: apply_low_memory_route,
-            applied: false,
-        };
+        let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([75; 32]);
         runtime_run(
             &executable,
             &final_plan,
-            &final_current,
-            &final_registry,
+            &current,
+            &registry,
             authority(),
-            &mut controller,
+            &mut RunToCompletion,
             receipts.bind(execution_provenance(
-                final_attempt,
+                attempt,
                 BuildIdentity::from_sha256([76; 32]),
             )),
         )
-        .expect("selected final-major route executes");
-        let final_receipt = receipts.open(final_attempt).expect("final route receipt");
-        let gridded_artifact = final_plan
-            .artifacts()
-            .iter()
-            .find(|artifact| {
-                artifact.node() == &replay_node && artifact.role() == ArtifactRole::Input
-            })
-            .expect("canonical replay owns the gridded input artifact");
-        let adaptation = final_receipt
-            .adaptation_projection(&AdaptationId::new("spectral-low-memory-1"))
-            .expect("receipt projects low-memory transition");
-        assert_eq!(adaptation.was_applied(), apply_low_memory_route);
-        assert_eq!(controller.applied, apply_low_memory_route);
+        .expect("bounded replay under the explicit memory/cache ceilings");
+        let receipt = receipts.open(attempt).unwrap();
         assert_eq!(
-            final_receipt.node_status(&replay_node),
+            receipt.node_status(&replay_node),
             Some(ReceiptStatus::Completed)
         );
+        assert_eq!(receipt.stage_actual_batch(&replay_node), Some((2, 2)));
+        let (bytes, operations) = receipt
+            .stage_actual_io(&replay_node, IoBufferKind::SpillRead)
+            .unwrap();
+        assert_eq!(bytes, replay_descriptor.bytes());
+        assert!(operations > 0);
         assert_eq!(
-            final_receipt.stage_actual_batch(&replay_node),
-            Some(if apply_low_memory_route {
-                (1, 1)
-            } else {
-                (2, 2)
-            }),
-            "canonical replay receipts the exact selected and consumed batch"
+            receipt.observation_transaction_publication_scope(),
+            casa_imaging_runtime::ObservationTransactionPublicationScope::ReconstructionOnly
         );
-        assert_eq!(final_receipt.stage_actual_batch(&retained_node), None);
-        assert_eq!(final_receipt.stage_actual_batch(&recompute_node), None);
-        assert_eq!(final_receipt.stage_actual_batch(&prefetch_node), None);
-        if apply_low_memory_route {
-            assert_eq!(
-                final_receipt.node_status(&retained_node),
-                Some(ReceiptStatus::NotStarted)
-            );
-            assert_eq!(
-                final_receipt.node_status(&recompute_node),
-                Some(ReceiptStatus::Completed)
-            );
-            assert_eq!(
-                final_receipt.node_status(&prefetch_node),
-                Some(ReceiptStatus::Completed)
-            );
-            assert!(
-                final_receipt
-                    .stage_actual_elapsed_nanos(&recompute_node)
-                    .is_some()
-            );
-            let (prefetched_bytes, prefetch_operations) = final_receipt
-                .stage_actual_io(&prefetch_node, IoBufferKind::SpillRead)
-                .expect("prefetch route reports its first-window spill read");
-            assert!(prefetched_bytes > 0 && prefetch_operations > 0);
-            let (bytes, operations) = final_receipt
-                .stage_actual_io(&replay_node, IoBufferKind::SpillRead)
-                .expect("managed route replay reports actual spill reads");
-            assert!(bytes > 0 && operations > 0);
-            assert_eq!(
-                final_receipt.artifact_disposition(gridded_artifact.identity()),
-                Some(ArtifactDisposition::Loaded)
-            );
-            assert_eq!(
-                final_receipt.stage_actual_io(&retained_node, IoBufferKind::SourceReadAhead),
-                None
-            );
-        } else {
-            assert_eq!(
-                final_receipt.node_status(&retained_node),
-                Some(ReceiptStatus::Completed)
-            );
-            assert_eq!(
-                final_receipt.node_status(&recompute_node),
-                Some(ReceiptStatus::NotStarted)
-            );
-            assert_eq!(
-                final_receipt.node_status(&prefetch_node),
-                Some(ReceiptStatus::NotStarted)
-            );
-            assert_eq!(
-                final_receipt.artifact_disposition(gridded_artifact.identity()),
-                Some(ArtifactDisposition::Reused)
-            );
-            assert_eq!(
-                final_receipt.stage_actual_io(&replay_node, IoBufferKind::SpillRead),
-                Some((0, 0))
-            );
-            let (cache_read_bytes, cache_read_operations) = final_receipt
-                .stage_actual_io(&retained_node, IoBufferKind::SourceReadAhead)
-                .expect("retained route reports the cache load I/O");
-            assert!(cache_read_bytes > 0 && cache_read_operations > 0);
-            let actual = final_receipt
-                .actual_resource_peak(&retained_node, &cache_claim.resource, &cache_claim.lifetime)
-                .expect("retained route reports actual residency");
-            assert!(actual > 0 && actual <= cache_claim.amount);
-        }
-        let receipt_path = receipts
-            .root_path()
-            .join(format!("{final_attempt}.receipt.json"));
-        let original = fs::read_to_string(&receipt_path).expect("serialized final-major receipt");
+        let receipt_path = receipts.root_path().join(format!("{attempt}.receipt.json"));
+        let original = fs::read_to_string(&receipt_path).unwrap();
         fs::write(
             &receipt_path,
             with_batch_receipt_tamper(
@@ -4043,10 +3858,8 @@ fn execute_spectral_cycle_with_weighting_mode(
                 BatchReceiptTamper::ValidPeakZero,
             ),
         )
-        .expect("rewrite checksum-valid receipt with valid batch evidence");
-        receipts
-            .open(final_attempt)
-            .expect("order-preserving batch rewrite passes envelope validation");
+        .unwrap();
+        receipts.open(attempt).unwrap();
         for tamper in [
             BatchReceiptTamper::Remove,
             BatchReceiptTamper::MismatchMaximum,
@@ -4055,16 +3868,38 @@ fn execute_spectral_cycle_with_weighting_mode(
                 &receipt_path,
                 with_batch_receipt_tamper(&original, replay_node.as_str(), tamper),
             )
-            .expect("rewrite checksum-valid batch-tampered receipt");
-            assert!(
-                matches!(
-                    receipts.open(final_attempt),
-                    Err(casa_imaging_runtime::ReceiptError::IntegrityMismatch)
-                ),
-                "{tamper:?} must fail terminal batch receipt validation"
-            );
+            .unwrap();
+            assert!(matches!(
+                receipts.open(attempt),
+                Err(casa_imaging_runtime::ReceiptError::IntegrityMismatch)
+            ));
         }
-        return;
+        fs::write(&receipt_path, &original).unwrap();
+        receipts.open(attempt).unwrap();
+        let completion = registry
+            .implementation()
+            .take_completion()
+            .unwrap()
+            .into_completion();
+        assert_eq!(
+            completion.normal_state().weighting_generation(),
+            weighting_generation
+        );
+        assert_eq!(
+            completion.normal_state().final_model_generation(),
+            completion.model_completion().generation()
+        );
+        registry
+            .implementation()
+            .abort_node_io(&replay_node)
+            .unwrap();
+        assert!(
+            registry
+                .implementation()
+                .take_gridded_normal_replay()
+                .is_none()
+        );
+        return Some(completion);
     }
     let initial_nodes = execution_plan
         .execution_dag()
@@ -4138,14 +3973,18 @@ fn execute_spectral_cycle_with_weighting_mode(
             .all(|node| node.kind != WorkKind::Prefetch),
         "managed restore is not T59 prefetch scheduling"
     );
-    assert_eq!(final_physical.execution_dag().initial_knobs().batch_size, 1);
+    let expected_batch = 1;
+    assert_eq!(
+        final_physical.execution_dag().initial_knobs().batch_size,
+        expected_batch
+    );
     assert_eq!(
         final_physical
             .execution_dag()
             .resource_alternative()
             .scaling
             .maximum_batch_size,
-        1
+        expected_batch
     );
     let spill_read_claims = replay_nodes[0]
         .claims
@@ -4153,9 +3992,11 @@ fn execute_spectral_cycle_with_weighting_mode(
         .filter(|claim| claim.resource == LeaseResource::IoBuffer(IoBufferKind::SpillRead))
         .map(|claim| claim.amount)
         .collect::<Vec<_>>();
+    // Since cd1d4a4234 the sealed artifact carries one 40-byte record per frame;
+    // the former 40 + 2 * 40 term encoded the pre-fix over-reservation.
     assert!(
-        spill_read_claims.contains(&(2 * 112)),
-        "two 112-byte gridded-normal records were {spill_read_claims:?}"
+        spill_read_claims.contains(&(2 * expected_batch * (40 + 40))),
+        "two source slots must cover every frame in the admitted batch: {spill_read_claims:?}"
     );
     assert!(
         replay_nodes[0]
@@ -4258,9 +4099,13 @@ fn execute_spectral_cycle_with_weighting_mode(
                 .starts_with("spectral-operator-gridded-route-gridded-residual-refresh-")
         })
         .expect("gridded replay route allocation");
-    // The single selected sample now contributes one compressed
-    // gridded-normal record; Stokes-I data no longer zeroes it out.
-    let expected_route_bytes = gridded_normal_route_capacity_bytes(1, 1, 1).unwrap();
+    // Each selected channel contributes one compressed scalar-normal record.
+    let expected_route_bytes = gridded_normal_route_capacity_bytes(
+        final_complete.gridded_replay_record_bound().unwrap(),
+        expected_batch as usize,
+        1,
+    )
+    .unwrap();
     assert_eq!(route.bytes, expected_route_bytes);
     assert_eq!(
         route.compatibility.layout,
@@ -4352,10 +4197,15 @@ fn execute_spectral_cycle_with_weighting_mode(
             && artifact.node() == &replay_node_id
     }));
     let final_attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([75; 32]);
+    let final_current = RunBindings::new(
+        problem.inputs().clone(),
+        &final_resource_policy,
+        cost_model(4),
+    );
     runtime_run(
         &executable,
         &final_plan,
-        &current,
+        &final_current,
         &final_registry,
         authority(),
         &mut RunToCompletion,
@@ -4366,6 +4216,11 @@ fn execute_spectral_cycle_with_weighting_mode(
     )
     .expect("final ordinary run");
     let final_receipt = receipts.open(final_attempt).expect("final receipt");
+    assert_eq!(
+        final_receipt.stage_actual_batch(&replay_node_id),
+        Some((expected_batch, expected_batch)),
+        "resident and disk cursors execute the same exact bounded batch"
+    );
     assert_eq!(
         final_receipt.observation_transaction_publication_scope(),
         casa_imaging_runtime::ObservationTransactionPublicationScope::ReconstructionOnly
@@ -4382,17 +4237,22 @@ fn execute_spectral_cycle_with_weighting_mode(
         .take_completion()
         .expect("final-major completion")
         .into_completion();
+    let accepted_delta_bytes = final_receipt
+        .artifact_actual_bytes(accepted_update)
+        .unwrap();
+    let delta_term_bytes = std::mem::size_of::<ModelDeltaTerm>() as u64;
+    assert_eq!(accepted_delta_bytes % delta_term_bytes, 0);
+    let accepted_delta_terms = (accepted_delta_bytes / delta_term_bytes) as usize;
     assert_eq!(
         planned_model_bytes as u64,
         (model_samples * std::mem::size_of::<casa_imaging_model::ModelSample>()) as u64
-            + 2 * final_receipt
-                .artifact_actual_bytes(accepted_update)
-                .unwrap(),
-        "the plan reserves the model and both exact pending-update copies"
+            + 2 * accepted_delta_bytes
+            + pending_update_bytes(accepted_delta_terms) as u64,
+        "the plan reserves the model, both exact delta copies and queued sparse updates"
     );
     assert_eq!(
-        final_completion.normal_state().selected_generation(),
-        selected_generation
+        final_completion.normal_state().weighting_generation(),
+        weighting_generation
     );
     assert_eq!(
         final_completion.normal_state().input_model_generation(),
@@ -4418,6 +4278,7 @@ fn execute_spectral_cycle_with_weighting_mode(
             .is_none(),
         "an aborted executor cannot yield retained spill authority"
     );
+    Some(final_completion)
 }
 
 fn execute_initial_reconstruction_cycle(
@@ -4528,11 +4389,7 @@ fn execute_planned_initial_reconstruction_cycle(
     .expect("receipt store");
     let execution_plan = runtime_plan(
         problem,
-        PlanningBindings::new(
-            registry(byte),
-            resource_policy.clone(),
-            planning_profile(byte),
-        ),
+        PlanningBindings::new(registry(byte), resource_policy.clone(), cost_model(byte)),
         authority,
         &planning_registry,
         &receipts,
@@ -4564,7 +4421,10 @@ fn execute_planned_initial_reconstruction_cycle(
                 .as_str()
                 .starts_with("initial-replay-preparation-")
         });
-        assert_eq!(preparation.is_some(), expected_workers > 1);
+        assert!(
+            preparation.is_some(),
+            "the selected mode owns replay preparation even at W1"
+        );
         if let Some(preparation) = preparation {
             assert!(
                 dag.nodes()[&preparation.lifetime.acquire_at]
@@ -4697,6 +4557,10 @@ fn execute_dirty_channel_local_slabs(
         implementation_metadata(problem),
         [implementation(byte)],
     );
+    let resource_policy = ResourcePolicy::Explicit(ResourceOverride {
+        memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 600_000)]),
+        ..ResourceOverride::default()
+    });
     let planned = SpectralCyclePlan::dirty(
         problem,
         &planning_registry,
@@ -4707,7 +4571,7 @@ fn execute_dirty_channel_local_slabs(
             serial_storage_io(),
             SpectralCyclePlanningLimits::new(1_000, 1, 900_000),
             authority().clone(),
-            ResourcePolicy::Balanced,
+            resource_policy.clone(),
         )
         .with_gridded_normal_storage(artifact_storage()),
     )
@@ -4720,11 +4584,7 @@ fn execute_dirty_channel_local_slabs(
     .expect("receipt store");
     let execution_plan = runtime_plan(
         problem,
-        PlanningBindings::new(
-            registry(byte),
-            ResourcePolicy::Balanced,
-            planning_profile(byte),
-        ),
+        PlanningBindings::new(registry(byte), resource_policy.clone(), cost_model(byte)),
         authority(),
         &planning_registry,
         &receipts,
@@ -4756,11 +4616,7 @@ fn execute_dirty_channel_local_slabs(
     );
     let runtime_registry =
         SpectralCycleRegistry::new(registry(byte), implementation(byte), problem, executor);
-    let current = RunBindings::new(
-        problem.inputs().clone(),
-        &ResourcePolicy::Balanced,
-        cost_model(byte),
-    );
+    let current = RunBindings::new(problem.inputs().clone(), &resource_policy, cost_model(byte));
     let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([byte; 32]);
     runtime_run(
         &ExecutableModelProblem::from_compiled(problem.clone()).expect("executable"),
@@ -4972,7 +4828,7 @@ fn t55_small_cube_admits_owner_workspace_with_one_worker() {
     // budget, then admit the same fully charged minimum candidate within 1 MiB.
     let rejected = runtime_plan(
         &problem,
-        PlanningBindings::new(registry(78), undersized_policy, planning_profile(78)),
+        PlanningBindings::new(registry(78), undersized_policy, cost_model(78)),
         authority(),
         &planning_registry,
         &receipts,
@@ -4989,7 +4845,7 @@ fn t55_small_cube_admits_owner_workspace_with_one_worker() {
     ));
     let selected = runtime_plan(
         &problem,
-        PlanningBindings::new(registry(78), admission_policy, planning_profile(78)),
+        PlanningBindings::new(registry(78), admission_policy, cost_model(78)),
         authority(),
         &planning_registry,
         &receipts,
@@ -5140,6 +4996,74 @@ fn t55_initial_consumer_pair_is_terminal_only_and_separately_accounted() {
                 allocation.compatibility.layout.as_str() == "initial-consumer-team"
             })
             .collect::<Vec<_>>();
+        if problem.weighting().scheme() == WeightingScheme::Uniform {
+            assert!(
+                teams.is_empty(),
+                "bulk preparation replaces separate terminal staging"
+            );
+            let is_preparation = |allocation: &&LogicalAllocation| {
+                allocation
+                    .id
+                    .as_str()
+                    .starts_with("initial-replay-preparation-")
+            };
+            let parallel = dag
+                .logical_allocations()
+                .values()
+                .filter(is_preparation)
+                .collect::<Vec<_>>();
+            let serial = serial_dag
+                .logical_allocations()
+                .values()
+                .filter(is_preparation)
+                .collect::<Vec<_>>();
+            assert_eq!(parallel.len(), 1);
+            assert_eq!(serial.len(), 1);
+            let allocation = parallel[0];
+            assert!(allocation.bytes > serial[0].bytes);
+            assert_eq!(
+                dag.physical_slots()[&allocation.physical_slot].capacity_bytes,
+                allocation.bytes
+            );
+            let demand = dag
+                .resource_alternative()
+                .demand
+                .memory
+                .iter()
+                .find(|demand| demand.allocation_id == allocation.id.as_str())
+                .unwrap();
+            assert_eq!(demand.hard_bytes, allocation.bytes);
+            assert_eq!(demand.preferred_bytes, allocation.bytes);
+            let owner = &dag.nodes()[&allocation.lifetime.acquire_at];
+            assert!(
+                owner
+                    .allocations
+                    .iter()
+                    .any(|usage| usage.allocation == allocation.id
+                        && usage.lifetime == ClaimLifetime::through_fence(FenceKind::Io))
+            );
+            assert!(
+                owner
+                    .claims
+                    .iter()
+                    .any(|claim| claim.resource == LeaseResource::Workers
+                        && claim.amount == 2
+                        && claim.lifetime == ClaimLifetime::Work)
+            );
+            let stacks = owner
+                .claims
+                .iter()
+                .filter(|claim| {
+                    claim.resource
+                        == LeaseResource::RuntimeOverhead(
+                            casa_imaging_runtime::RuntimeOverheadKind::ThreadStack,
+                        )
+                })
+                .map(|claim| claim.amount)
+                .sum::<u64>();
+            assert_eq!(stacks, 2 * 2 * 1024 * 1024);
+            continue;
+        }
         assert_eq!(teams.len(), 1);
         let team = teams[0];
         let terminal = &team.lifetime.acquire_at;
@@ -5194,7 +5118,32 @@ fn t55_initial_consumer_pair_is_terminal_only_and_separately_accounted() {
         }));
         for (id, node) in dag.nodes() {
             if id != terminal && id.as_str() != "spectral-cycle-minor-cycle" {
-                assert_eq!(node.claims, serial_dag.nodes()[id].claims);
+                let owns_preparation = node.allocations.iter().any(|usage| {
+                    usage
+                        .allocation
+                        .as_str()
+                        .starts_with("initial-replay-preparation-")
+                        || usage.allocation.as_str().starts_with("density-")
+                });
+                if owns_preparation || id.as_str().starts_with("weighting-generation-") {
+                    assert!(node.claims.iter().any(|claim| {
+                        claim.resource == LeaseResource::Workers
+                            && claim.amount == 2
+                            && claim.lifetime == ClaimLifetime::Work
+                    }));
+                } else {
+                    let expected = &serial_dag.nodes()[id].claims;
+                    assert_eq!(node.claims.len(), expected.len(), "node {id:?}");
+                    for (actual, serial) in node.claims.iter().zip(expected) {
+                        if actual.resource == LeaseResource::Workers {
+                            assert_eq!(actual.resource, serial.resource);
+                            assert_eq!(actual.lifetime, serial.lifetime);
+                            assert!((1..=2).contains(&actual.amount), "node {id:?}");
+                        } else {
+                            assert_eq!(actual, serial, "node {id:?}");
+                        }
+                    }
+                }
             }
         }
         assert_eq!(
@@ -5365,7 +5314,7 @@ fn t55_exact_plane_candidates_resize_workspace_and_admit_the_serial_memory_floor
     .unwrap();
     let selected = runtime_plan(
         &problem,
-        PlanningBindings::new(registry(78), constrained, planning_profile(78)),
+        PlanningBindings::new(registry(78), constrained, cost_model(78)),
         &authority,
         &planning_registry,
         &receipts,
@@ -5413,23 +5362,6 @@ fn t55_channel_replay_preparation_has_its_own_bounded_workspace_and_worker_claim
                     .starts_with("initial-replay-preparation-")
             })
             .collect::<Vec<_>>();
-        if workers == 1 {
-            assert!(
-                preparation.is_empty(),
-                "serial needs no parallel staging workspace"
-            );
-            assert!(
-                dag.nodes()
-                    .values()
-                    .all(|node| node.claims.iter().all(|claim| {
-                        claim.resource
-                            != LeaseResource::RuntimeOverhead(
-                                casa_imaging_runtime::RuntimeOverheadKind::ThreadStack,
-                            )
-                    }))
-            );
-            continue;
-        }
         assert_eq!(preparation.len(), 1);
         let allocation = preparation[0];
         assert_eq!(
@@ -5636,7 +5568,7 @@ fn t55_initial_clean_executes_parallel_preparation_across_bounded_slabs() {
                     );
                 }
             }
-            if workers == 1 || model_value.is_some() {
+            if model_value.is_some() {
                 assert_eq!(result.parallel_preparation_samples, 0);
             } else {
                 let full_replay_samples = normal.sample_count() * result.slab_count;
@@ -5704,11 +5636,6 @@ fn t55_initial_clean_executes_parallel_preparation_across_bounded_slabs() {
                 normal.block_count(),
                 normal
                     .sum_weights()
-                    .iter()
-                    .map(|value| value.to_bits())
-                    .collect::<Vec<_>>(),
-                normal
-                    .channel_sum_weights()
                     .iter()
                     .map(|value| value.to_bits())
                     .collect::<Vec<_>>(),
@@ -5851,7 +5778,10 @@ fn t607_clean_cycle_admits_bounded_channel_slabs_and_rejects_below_minimum() {
     let planned = SpectralCyclePlan::initial(
         &problem,
         &planning_registry,
-        make_policy(ResourcePolicy::Exclusive),
+        make_policy(ResourcePolicy::Explicit(ResourceOverride {
+            memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 800_000)]),
+            ..ResourceOverride::default()
+        })),
     )
     .expect("admit a resource-bounded channel-local CLEAN candidate");
     let directory = tempfile::tempdir().expect("admission receipts");
@@ -5864,8 +5794,11 @@ fn t607_clean_cycle_admits_bounded_channel_slabs_and_rejects_below_minimum() {
         &problem,
         PlanningBindings::new(
             registry(80),
-            ResourcePolicy::Exclusive,
-            planning_profile(80),
+            ResourcePolicy::Explicit(ResourceOverride {
+                memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 800_000)]),
+                ..ResourceOverride::default()
+            }),
+            cost_model(80),
         ),
         authority(),
         &planning_registry,
@@ -6021,7 +5954,7 @@ fn t607_clean_cycle_admits_bounded_channel_slabs_and_rejects_below_minimum() {
     });
     let result = runtime_plan(
         &problem,
-        PlanningBindings::new(registry(80), rejection_policy, planning_profile(80)),
+        PlanningBindings::new(registry(80), rejection_policy, cost_model(80)),
         authority(),
         &planning_registry,
         &receipts,
@@ -8278,30 +8211,6 @@ impl RunController for SelectStreamedRoute {
 }
 
 #[derive(Default)]
-struct SelectSpectralLowMemoryRoute {
-    select: bool,
-    applied: bool,
-}
-
-impl RunController for SelectSpectralLowMemoryRoute {
-    fn directive(&mut self, status: &ExecutionStatus) -> RunDirective {
-        let adaptation = AdaptationId::new("spectral-low-memory-1");
-        if self.select
-            && !self.applied
-            && status
-                .eligible_adaptations()
-                .iter()
-                .any(|transition| transition.id == adaptation)
-        {
-            self.applied = true;
-            RunDirective::Adapt(adaptation)
-        } else {
-            RunDirective::Continue
-        }
-    }
-}
-
-#[derive(Default)]
 struct CancelAfterLaunch {
     polls: usize,
 }
@@ -8422,7 +8331,7 @@ fn runtime_inventory(available_locks: u64) -> HostInventory {
             memory_domains: vec![MemoryCapacityDomain {
                 id: domain.clone(),
                 kind: MemoryCapacityKind::Host,
-                capacity_bytes: 1_048_576,
+                capacity_bytes: 2 * 1_048_576,
             }],
             memory_views: vec![MemoryView {
                 id: view,
@@ -8461,13 +8370,15 @@ fn runtime_inventory(available_locks: u64) -> HostInventory {
                 QueueResource::new(transaction_queue.clone(), 4),
             ],
             logical_cpu_threads: 4,
+            native_thread_stack_bytes: 512 << 10,
+            page_bytes: 16 << 10,
             performance_cpu_cores: CpuClassCapacity::Known(4),
             cache_capacity_bytes: 1_048_576,
             lock_capacity: 4,
             file_descriptor_capacity: 32,
         },
         pressure: ExternalPressure {
-            memory_available_bytes: BTreeMap::from([(domain, 1_048_576)]),
+            memory_available_bytes: BTreeMap::from([(domain, 2 * 1_048_576)]),
             available_cpu_threads: 4,
             storage_available_bytes: BTreeMap::from([
                 (storage, 1_048_576),
@@ -8957,7 +8868,7 @@ fn run_rejects_artifact_dispositions_that_contradict_plan_semantics() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(evidenced_physical_work(6)),
     )
     .expect("physical planning");
@@ -9004,7 +8915,7 @@ fn run_can_invoke_only_the_implementation_identity_sealed_by_plan() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -9055,7 +8966,7 @@ fn initial_consistency_check_receives_the_exact_observation_transaction() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -9090,7 +9001,7 @@ fn generic_io_cannot_receive_observation_sources() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -9121,7 +9032,7 @@ fn run_rejects_a_registry_that_cannot_resolve_the_bound_implementation() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -9152,7 +9063,7 @@ fn run_rejects_a_different_implementation_returned_under_the_bound_key() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -9202,8 +9113,7 @@ fn plan_seals_physical_work_and_every_required_binding() {
     ))
     .expect("logical compilation");
     let expected_problem_id = problem.problem_id();
-    let bindings =
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4));
+    let bindings = PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4));
     let receipts = ExecutionReceiptStore::new(
         "/tmp/casa-rs-imaging-plan-id-regression",
         ReceiptRetention::new(4, 1_048_576).expect("plan-id retention"),
@@ -9282,13 +9192,6 @@ fn plan_seals_physical_work_and_every_required_binding() {
     })
     .expect("repeat physical planning");
     assert_eq!(execution_plan.plan_id(), repeated.plan_id());
-    assert_eq!(
-        execution_plan.plan_id().as_bytes(),
-        [
-            224, 139, 174, 185, 255, 62, 180, 253, 69, 140, 215, 23, 240, 117, 8, 62, 0, 193, 140,
-            149, 89, 99, 182, 207, 248, 88, 164, 79, 54, 12, 37, 148,
-        ]
-    );
 }
 
 #[test]
@@ -9356,14 +9259,14 @@ fn receipt_store_location_does_not_change_the_logical_plan_identity() {
         .expect("second receipt store");
     let first = plan_with_receipts(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         &first_receipts,
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("first physical planning");
     let second = plan_with_receipts(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         &second_receipts,
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
@@ -9383,7 +9286,7 @@ fn transaction_seal_rejects_omitted_product_graph_publication_member() {
     .expect("two-product logical compilation");
     plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |problem, _| Ok::<_, io::Error>(physical_work_for_problem(problem, 6)),
     )
     .expect("canonical complete two-product transaction seal");
@@ -9433,8 +9336,7 @@ fn transaction_seal_rejects_matching_ordinals_from_a_foreign_product_graph() {
 #[test]
 fn mapped_publication_staging_binds_its_producer_release_allocation_and_plan_identity() {
     let problem = compile(request(1)).expect("logical compilation");
-    let bindings =
-        || PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4));
+    let bindings = || PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4));
     let valid = mapped_publication_candidate(
         WorkNodeId::new("1-prepare-mapping"),
         WorkDependency::Work(WorkNodeId::new("2-release-mapping")),
@@ -9509,7 +9411,7 @@ fn transaction_seal_blocks_unbound_transaction_work() {
     .expect("physically valid but transaction-unbound candidate");
     let result = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, io::Error>(unbound),
     );
 
@@ -9524,7 +9426,7 @@ fn run_rejects_changed_registry_policy_and_cost_model_bindings() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -9566,8 +9468,7 @@ fn run_rejects_changed_registry_policy_and_cost_model_bindings() {
 #[test]
 fn run_rejects_every_stale_problem_input_before_calling_the_executor() {
     let problem = compile(request(1)).expect("logical compilation");
-    let bindings =
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4));
+    let bindings = PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4));
     let execution_plan = plan(&problem, bindings.clone(), |_, _| {
         Ok::<_, ()>(physical_work(6))
     })
@@ -9651,8 +9552,7 @@ fn run_rejects_every_stale_problem_input_before_calling_the_executor() {
 #[test]
 fn run_executes_one_exactly_bound_plan_without_routing_or_replanning() {
     let problem = compile(request(1)).expect("logical compilation");
-    let bindings =
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4));
+    let bindings = PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4));
     let execution_plan = plan(&problem, bindings.clone(), |_, _| {
         Ok::<_, ()>(physical_work(6))
     })
@@ -9689,7 +9589,7 @@ fn run_preserves_the_selected_executors_error_chain() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -9714,7 +9614,7 @@ fn rejected_post_launch_adaptation_drains_fences_before_returning() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -9757,7 +9657,7 @@ fn run_applies_an_eligible_transition_to_later_scheduled_work() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(adaptive_physical_work(6)),
     )
     .expect("adaptive physical planning");
@@ -9801,7 +9701,7 @@ fn run_cancellation_at_the_pre_read_cut_releases_authority_capacity() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -9889,7 +9789,7 @@ fn cancellation_cannot_report_cancelled_after_atomic_publication_is_irrevocable(
         let problem = compile(request(1)).expect("logical compilation");
         let execution_plan = plan(
             &problem,
-            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
             |_, _| Ok::<_, ()>(physical_work(6)),
         )
         .expect("physical planning");
@@ -9951,7 +9851,7 @@ fn controller_cannot_adapt_after_atomic_publication_is_irrevocable() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -10001,7 +9901,7 @@ fn publication_visibility_is_final_after_fence_and_scheduler_settlement() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -10048,7 +9948,7 @@ fn publication_does_not_lock_receipt_store_and_active_attempt_remains_exclusive(
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -10186,7 +10086,7 @@ fn earlier_acquired_publication_buffer_is_held_through_publish_and_then_released
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work_with_early_publication_buffer(6)),
     )
     .expect("earlier-acquired publication buffer is valid physical work");
@@ -10233,7 +10133,7 @@ fn observation_completion_is_attempt_node_and_fence_bound_after_successful_settl
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -10282,7 +10182,7 @@ fn settled_observation_completion_is_delivered_only_to_explicit_predecessor_cons
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -10332,7 +10232,7 @@ fn synchronous_observation_completion_is_exactly_once_attempt_node_and_lease_bou
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work_with_synchronous_observation_read(6)),
     )
     .expect("synchronous ObservationRead is valid physical work");
@@ -10412,7 +10312,7 @@ fn actual_bound_observation_traversals_drive_both_weighting_generation_passes() 
         .expect("production weighting physical work");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical),
     )
     .expect("production weighting execution plan");
@@ -10510,7 +10410,7 @@ fn failed_weighting_release_quarantines_the_actual_selected_observation_owner() 
         .expect("production weighting physical work");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical),
     )
     .expect("production weighting execution plan");
@@ -10623,7 +10523,7 @@ fn failed_weighting_lifecycle_cuts_run_the_scheduler_owned_release() {
             .expect("production weighting physical work");
         let execution_plan = plan(
             &problem,
-            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
             |_, _| Ok::<_, ()>(physical),
         )
         .expect("production weighting execution plan");
@@ -10737,7 +10637,7 @@ fn weighting_replay_rejects_a_fresh_binding_with_identical_selected_content() {
         .expect("production weighting physical work");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical),
     )
     .expect("production weighting execution plan");
@@ -10803,7 +10703,7 @@ fn weighting_generation_rejects_missing_direct_predecessor_before_state_exists()
         .expect("production weighting physical work");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical),
     )
     .expect("production weighting execution plan");
@@ -10868,7 +10768,7 @@ fn weighting_replay_rejects_mismatched_block_allocation_before_samples_emit() {
         .expect("production weighting physical work");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical),
     )
     .expect("production weighting execution plan");
@@ -10943,7 +10843,7 @@ fn assert_source_residency_mismatch_fails_before_traversal(
         .expect("planned source residency composes");
     let execution_plan = plan(
         problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical),
     )
     .expect("plan with mismatched runtime owner");
@@ -11073,12 +10973,12 @@ fn multi_source_weighting_receipts_certified_aggregate_residency_through_release
     assert_eq!(
         physical.execution_dag().logical_allocations().len()
             - base.execution_dag().logical_allocations().len(),
-        5,
+        3,
         "the existing selected-source allocation is reused"
     );
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical),
     )
     .expect("plan owner-certified multi-source weighting");
@@ -11337,7 +11237,7 @@ fn t47_runtime_residency_projects_all_bounded_mosaic_state() {
         ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
         NumericsContract::new(
             vec![NumericPrecision::F64],
-            ReductionPolicy::Compensated,
+            ReductionPolicy::UnorderedWithinBudget,
             FiniteValuePolicy::FlagInputRejectGenerated,
             NumericalStage::ALL
                 .into_iter()
@@ -11405,6 +11305,23 @@ fn t51_initial_empty_model_residency_excludes_unallocated_pending_delta() {
         .max_delta_terms()
         .min(model_samples)
         * size_of::<ModelDeltaTerm>();
+    let pending_update_bytes = casa_imaging_reconstruction::ModelStoragePlan::pending_update_bytes(
+        problem
+            .model_lifecycle()
+            .bounds()
+            .max_delta_terms()
+            .min(model_samples),
+        model_samples,
+        problem
+            .model_lifecycle()
+            .target()
+            .domains()
+            .iter()
+            .map(|domain| domain.pixels().into_iter().product())
+            .min()
+            .unwrap(),
+    )
+    .unwrap();
     assert!(delta_bytes > 0);
     assert_eq!(
         fragment(SpectralOperatorPass::InitialMajor)
@@ -11416,8 +11333,8 @@ fn t51_initial_empty_model_residency_excludes_unallocated_pending_delta() {
         fragment(SpectralOperatorPass::ResidualRefresh)
             .residency()
             .major_cycle_model_bytes(),
-        dense_bytes + 2 * delta_bytes,
-        "a refresh reserves the pending delta's terms and their compensated pair",
+        dense_bytes + 2 * delta_bytes + pending_update_bytes,
+        "a refresh reserves both delta owners and the queued sparse writes",
     );
 }
 
@@ -11527,7 +11444,7 @@ fn t41_production_plan_schedules_planner_bounded_mvc_slabs_for_realistic_image_s
         PlanningBindings::new(
             registry.registry_id(),
             ResourcePolicy::Exclusive,
-            planning_profile(4),
+            cost_model(4),
         ),
         &mvc_authority,
         &registry,
@@ -11553,11 +11470,23 @@ fn t41_production_plan_schedules_planner_bounded_mvc_slabs_for_realistic_image_s
 }
 
 #[test]
-fn t59_explicit_memory_policy_seals_low_memory_production_adaptation() {
+fn t59_explicit_memory_policy_bounds_resident_and_streamed_replay() {
     let weighting =
         WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable);
-    execute_spectral_cycle_with_weighting_mode(weighting, false, true, true);
-    execute_spectral_cycle_with_weighting_mode(weighting, false, true, false);
+    let resident =
+        execute_spectral_cycle_with_weighting_mode(weighting, false, true, false).unwrap();
+    let streamed =
+        execute_spectral_cycle_with_weighting_mode(weighting, false, true, true).unwrap();
+    let resident = resident.normal_state().read_window(0..4).unwrap();
+    let streamed = streamed.normal_state().read_window(0..4).unwrap();
+    assert_eq!(
+        resident.residual().iter().collect::<Vec<_>>(),
+        streamed.residual().iter().collect::<Vec<_>>()
+    );
+    assert_eq!(
+        resident.normal_approximation().iter().collect::<Vec<_>>(),
+        streamed.normal_approximation().iter().collect::<Vec<_>>()
+    );
 }
 
 #[test]
@@ -11584,7 +11513,10 @@ fn t607_production_plan_bounds_channel_local_cube_with_ordered_slabs() {
             serial_storage_io(),
             SpectralCyclePlanningLimits::new(1_000, 1, 900_000),
             authority().clone(),
-            ResourcePolicy::Balanced,
+            ResourcePolicy::Explicit(ResourceOverride {
+                memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 800_000)]),
+                ..ResourceOverride::default()
+            }),
         )
         .with_gridded_normal_storage(artifact_storage()),
     )
@@ -11752,7 +11684,7 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
     .collect::<BTreeMap<_, _>>();
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical),
     )
     .expect("plan with production weighting lifecycle");
@@ -11796,9 +11728,9 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
     let receipt = receipts
         .open(provenance.attempt_id())
         .expect("weighting execution receipt");
-    assert_eq!(weighting_allocations.len(), 11);
+    assert_eq!(weighting_allocations.len(), 9);
     assert!(weighting_allocations.is_subset(&receipt.allocation_generation_identities()));
-    assert_eq!(weighting_slots.len(), 11);
+    assert_eq!(weighting_slots.len(), 9);
     assert!(weighting_slots.is_subset(&receipt.physical_slot_identities()));
     for (node, uses) in expected_uses {
         assert_eq!(receipt.allocation_uses(&node), Some(uses));
@@ -11993,7 +11925,7 @@ fn completion_from_a_different_compiled_observation_cannot_unlock_dependents() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work_with_synchronous_observation_read(6)),
     )
     .expect("synchronous ObservationRead is valid physical work");
@@ -12039,7 +11971,7 @@ fn failed_synchronous_observation_completion_prevents_dependent_work() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work_with_synchronous_observation_read(6)),
     )
     .expect("synchronous ObservationRead is valid physical work");
@@ -12095,7 +12027,7 @@ fn failed_observation_fence_cannot_mint_attempt_bound_completion() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -12172,7 +12104,7 @@ fn transaction_failures_leave_the_old_generation_visible() {
         let problem = compile(request(1)).expect("logical compilation");
         let execution_plan = plan(
             &problem,
-            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
             |_, _| Ok::<_, ()>(physical_work(6)),
         )
         .expect("physical planning");
@@ -12228,7 +12160,7 @@ fn transaction_failures_leave_the_old_generation_visible() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -12309,7 +12241,7 @@ fn transaction_failures_leave_the_old_generation_visible() {
     );
     let replay = runtime_plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         authority(),
         &replay_registry,
         &admission_receipts,
@@ -12341,7 +12273,7 @@ fn release_failures_drain_independent_fences_and_quarantine_only_failed_slots() 
     for fail_at_fence in [false, true] {
         let execution_plan = plan(
             &problem,
-            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
             |_, _| Ok::<_, ()>(release_failure_physical_work(6, 8, fail_at_fence)),
         )
         .expect("external-release failure planning");
@@ -12409,7 +12341,7 @@ fn release_failures_drain_independent_fences_and_quarantine_only_failed_slots() 
 
         let readmission_plan = plan(
             &problem,
-            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
             |_, _| Ok::<_, ()>(physical_work(6)),
         )
         .expect("post-quarantine planning");
@@ -12434,7 +12366,7 @@ fn run_persists_a_reopenable_receipt_with_exact_identities_and_every_plan_node()
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -12466,7 +12398,7 @@ fn run_persists_a_reopenable_receipt_with_exact_identities_and_every_plan_node()
         .expect("reopen durable receipt");
 
     assert_eq!(outcome, ExecutionOutcome::Succeeded);
-    assert_eq!(receipt.schema_version(), 24);
+    assert_eq!(receipt.schema_version(), 25);
     assert_eq!(receipt.status(), ReceiptStatus::Completed);
     assert_eq!(receipt.plan_identity(), execution_plan.plan_id().as_bytes());
     assert_eq!(receipt.problem_identity(), problem.problem_id().as_bytes());
@@ -12520,7 +12452,7 @@ fn receipt_rejects_checksum_valid_typed_projection_and_audit_forgery() {
     .expect("two-product logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |problem, _| Ok::<_, ()>(reconstruction_physical_work_for_problem(problem, 6)),
     )
     .expect("physical planning");
@@ -12708,7 +12640,7 @@ fn effective_problem_projection_carries_mtmfs_scales_and_bias() {
     let unbiased_projection = CompiledProblemEvidence::project(&unbiased);
     let biased_projection = CompiledProblemEvidence::project(&biased);
 
-    assert_eq!(unbiased_projection.schema_version(), 11);
+    assert_eq!(unbiased_projection.schema_version(), 12);
     assert_eq!(
         unbiased_projection.field("reconstruction.algorithm.kind"),
         Some("mtmfs")
@@ -12762,7 +12694,7 @@ fn t41_receipt_projection_records_the_exact_primary_beam_instrument_model() {
         ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
         NumericsContract::new(
             vec![NumericPrecision::F64],
-            ReductionPolicy::Compensated,
+            ReductionPolicy::UnorderedWithinBudget,
             FiniteValuePolicy::FlagInputRejectGenerated,
             NumericalStage::ALL
                 .into_iter()
@@ -12802,7 +12734,7 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
     .expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |problem, _| Ok::<_, ()>(physical_work_for_problem(problem, 6)),
     )
     .expect("physical planning");
@@ -12863,7 +12795,7 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
         .expect("antenna generation")
         .to_string();
 
-    assert_eq!(projected.schema_version(), 11);
+    assert_eq!(projected.schema_version(), 12);
     assert_eq!(projected, &CompiledProblemEvidence::project(&problem));
     assert_eq!(
         reopened.model_lifecycle_identity(),
@@ -12993,7 +12925,10 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
         projected.field("products.normalization_boundary.operations.1.kind"),
         Some("convert_units")
     );
-    assert_eq!(projected.field("numerics.reduction"), Some("compensated"));
+    assert_eq!(
+        projected.field("numerics.reduction"),
+        Some("unordered_within_budget")
+    );
     assert_eq!(
         projected.field("geometry.domains.0.direction.projection"),
         Some("sin")
@@ -13039,7 +12974,7 @@ fn receipt_reopens_the_complete_selected_plan_projection() {
     });
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), policy.clone(), planning_profile(4)),
+        PlanningBindings::new(registry(3), policy.clone(), cost_model(4)),
         |_, _| Ok::<_, ()>(auditable_physical_work(&problem, 6)),
     )
     .expect("auditable physical planning");
@@ -13162,7 +13097,7 @@ fn receipt_records_only_the_atomically_selected_conditional_route() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(conditional_adaptive_physical_work(6)),
     )
     .expect("conditional adaptive physical planning");
@@ -13291,7 +13226,7 @@ fn receipt_compares_plan_predictions_with_actual_stage_resource_and_fence_use() 
     let read = WorkNodeId::new("read");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -13368,7 +13303,7 @@ fn receipt_compares_planned_and_actual_io_artifacts_and_never_persists_paths() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(evidenced_physical_work(6)),
     )
     .expect("physical planning");
@@ -13519,7 +13454,7 @@ fn failed_publication_fence_never_records_a_published_output() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(evidenced_physical_work(6)),
     )
     .expect("physical planning");
@@ -13600,7 +13535,7 @@ fn receipts_preserve_typed_terminal_outcomes_and_every_node_state() {
     let problem = compile(request(1)).expect("logical compilation");
     let balanced_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -13768,7 +13703,7 @@ fn stale_binding_uses_the_plan_receipt_store_for_mutation_evidence() {
     let problem = compile(request(1)).expect("logical compilation");
     let plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
@@ -13812,14 +13747,8 @@ fn stale_binding_uses_the_plan_receipt_store_for_mutation_evidence() {
     ));
 }
 
-type T20PriorState = (
-    casa_imaging_reconstruction::FinalNormalState,
-    casa_imaging_reconstruction::FinalModelContinuation,
-);
-
-fn t20_major_cycle_harness_with_prior(
+fn t20_major_cycle_harness(
     mode: MajorCycleMode,
-    prior: Option<T20PriorState>,
 ) -> (
     casa_imaging_model::CompiledProblem,
     casa_imaging_runtime::ExecutionPlan,
@@ -13855,16 +13784,11 @@ fn t20_major_cycle_harness_with_prior(
     let physical = fragment
         .compose(&base)
         .expect("production weighting physical work");
-    let operator_pass = if prior.is_some() {
-        SpectralOperatorPass::ResidualRefresh
-    } else {
-        SpectralOperatorPass::InitialMajor
-    };
     let operator_plan = CompleteDataPlanFragment::new(
         &problem,
         weighting_plan.limits().max_block_samples(),
         replay.clone(),
-        operator_pass,
+        SpectralOperatorPass::InitialMajor,
     )
     .expect("spectral operator runtime plan");
     let (physical, operator_plan) = operator_plan
@@ -13872,7 +13796,7 @@ fn t20_major_cycle_harness_with_prior(
         .expect("T19 resources compose onto T18 replay");
     let execution_plan = plan(
         &problem,
-        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
         |_, _| Ok::<_, ()>(physical),
     )
     .expect("plan with production weighting and T19 lifecycle");
@@ -13887,16 +13811,6 @@ fn t20_major_cycle_harness_with_prior(
     executor.weighting_source_residency = Some(selected_content_residency(&problem));
     executor.weighting_plan = Some(weighting_plan);
     executor.complete_data_plan = Some(operator_plan);
-    if let Some((normal_state, continuation)) = prior {
-        *executor
-            .major_cycle_prior_normal_state
-            .lock()
-            .expect("major-cycle prior normal state lock") = Some(normal_state);
-        *executor
-            .major_cycle_continuation
-            .lock()
-            .expect("major-cycle continuation lock") = Some(continuation);
-    }
     executor.major_cycle_node = Some(match mode {
         MajorCycleMode::NodeSubstitution => WorkNodeId::new("transaction-stage-psf"),
         _ => WorkNodeId::new("post-replay-reconciliation"),
@@ -13922,21 +13836,8 @@ fn run_t20_major_cycle(
     TestRegistry,
     WorkImplementationId,
 ) {
-    run_t20_major_cycle_with_prior(mode, seed, None)
-}
-
-fn run_t20_major_cycle_with_prior(
-    mode: MajorCycleMode,
-    seed: u8,
-    prior: Option<T20PriorState>,
-) -> (
-    Result<ExecutionOutcome, RunError<io::Error>>,
-    casa_imaging_model::CompiledProblem,
-    TestRegistry,
-    WorkImplementationId,
-) {
     let (problem, execution_plan, current, implementation, executors) =
-        t20_major_cycle_harness_with_prior(mode, prior);
+        t20_major_cycle_harness(mode);
     let registry = TestRegistry {
         id: registry(3),
         metadata: implementation_metadata(&problem),
@@ -14021,41 +13922,13 @@ fn major_cycle_reconciles_t19_evidence_with_the_named_model_generation() {
 
 #[test]
 fn major_cycle_applies_pending_deltas_only_through_the_model_owner() {
-    // A pending delta is applied by a residual-refresh major cycle over the
-    // prior reconciled normal state, so the fixture runs the production
-    // initial-reconciliation then final-major sequence rather than binding a
-    // delta-applied candidate to a certified-zero initial pass.
-    let (outcome, _problem, initial_registry, initial_implementation) =
-        run_t20_major_cycle(MajorCycleMode::Confirm, 212);
-    assert_eq!(
-        outcome.expect("initial reconciliation completes"),
-        ExecutionOutcome::Succeeded
-    );
-    let initial = initial_registry.executors[&initial_implementation]
-        .major_cycle_result
-        .lock()
-        .expect("initial major-cycle result lock")
-        .take()
-        .expect("initial reconciliation recorded its runtime envelope")
-        .into_completion();
-    let prior = Some(initial.into_continuation());
-
-    let (outcome, _problem, registry, implementation) =
-        run_t20_major_cycle_with_prior(MajorCycleMode::ApplyDelta, 213, prior);
-    assert_eq!(
-        outcome.expect("delta reconciliation completes"),
-        ExecutionOutcome::Succeeded
-    );
-
-    let executor = &registry.executors[&implementation];
-    let result = executor
-        .major_cycle_result
-        .lock()
-        .expect("major-cycle result lock");
-    let result = result
-        .as_ref()
-        .expect("reconciliation recorded its runtime envelope");
-    let completion = result.completion();
+    let completion = execute_spectral_cycle_with_weighting_mode(
+        WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+        false,
+        false,
+        false,
+    )
+    .expect("the production initial/minor/final sequence completes");
     let model_completion = completion.model_completion();
     assert!(model_completion.delta().is_some());
     assert_ne!(
@@ -14145,7 +14018,7 @@ fn sealed_products_request(observation: u8) -> ImagingRequest {
     let references = default_references();
     let numerics = NumericsContract::new(
         vec![NumericPrecision::F64],
-        ReductionPolicy::Compensated,
+        ReductionPolicy::UnorderedWithinBudget,
         FiniteValuePolicy::FlagInputRejectGenerated,
         NumericalStage::ALL
             .into_iter()
@@ -14257,7 +14130,7 @@ fn sealed_products_samples(
                 time_centroid: FixtureEpoch::new(59_000.0, TimeScale::Utc),
                 interval_seconds: 1.0,
                 exposure_seconds: 1.0,
-                parallactic_angles_rad: [0.0, 0.0],
+                parallactic_angles_rad: Some([0.0, 0.0]),
                 phase_direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
                 delay_direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
                 pointing_directions: casa_imaging_model::SelectedPointingDirections {
@@ -14381,7 +14254,7 @@ fn sealed_products_round(
         WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
     )
     .expect("weighting residency plan");
-    let (selected_generation, count) = problem
+    let count = problem
         .inspect_selected_observation(
             samples
                 .iter()
@@ -14403,7 +14276,7 @@ fn sealed_products_round(
         SpectralOperatorPass::InitialMajor,
     )
     .expect("workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
+    let prepared = prepare_spectral_operator(specification, workload, 1).expect("prepare operator");
     let mut state = prepared
         .begin(problem, &generation)
         .expect("begin complete-data owner");
@@ -14413,9 +14286,8 @@ fn sealed_products_round(
     for block in &blocks {
         state.consume_block(block).expect("consume block");
     }
-    let evidence: CompleteDataOwnerResult = state
-        .complete(&summary, selected_generation, None)
-        .expect("complete T19 evidence");
+    let evidence: CompleteDataOwnerResult =
+        state.complete(&summary).expect("complete T19 evidence");
     MajorCycleOwner::from_complete_data(
         {
             let storage =
@@ -14598,6 +14470,7 @@ fn direct_product_publication_has_bounded_write_only_generation_and_one_terminal
                 serial_storage_io(),
                 1_000,
                 900_000,
+                512 << 10,
             ),
         )
         .unwrap();
@@ -14680,7 +14553,7 @@ fn direct_product_publication_has_bounded_write_only_generation_and_one_terminal
             PlanningBindings::new(
                 registry.registry_id(),
                 ResourcePolicy::Balanced,
-                planning_profile(4),
+                cost_model(4),
             ),
             authority(),
             &registry,
@@ -14782,6 +14655,7 @@ fn production_storage_profile_admits_serial_scientific_and_publication_plans() {
             storage.io_resources(),
             1_000,
             900_000,
+            512 << 10,
         ),
     )
     .expect("production publication plan");
@@ -14795,7 +14669,7 @@ fn production_storage_profile_admits_serial_scientific_and_publication_plans() {
 
     runtime_plan(
         &problem,
-        PlanningBindings::new(registry(81), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(81), ResourcePolicy::Balanced, cost_model(4)),
         &authority,
         &planning_registry,
         &receipts,
@@ -14805,7 +14679,7 @@ fn production_storage_profile_admits_serial_scientific_and_publication_plans() {
 
     runtime_plan(
         &problem,
-        PlanningBindings::new(registry(81), ResourcePolicy::Balanced, planning_profile(4)),
+        PlanningBindings::new(registry(81), ResourcePolicy::Balanced, cost_model(4)),
         &authority,
         &planning_registry,
         &receipts,
@@ -14876,7 +14750,7 @@ fn profiled_serial_plans_bind_only_their_used_storage_identities() {
     let reject = |physical| {
         let result = runtime_plan(
             &problem,
-            PlanningBindings::new(registry(82), ResourcePolicy::Balanced, planning_profile(4)),
+            PlanningBindings::new(registry(82), ResourcePolicy::Balanced, cost_model(4)),
             &authority,
             &planning_registry,
             &receipts,
@@ -14919,14 +14793,20 @@ fn profiled_serial_plans_bind_only_their_used_storage_identities() {
             &generation_demand,
             staging_residency_bytes,
             &planning_registry,
-            SerialProductPublicationPolicy::new(implementation(82), substitution, 1_000, 900_000),
+            SerialProductPublicationPolicy::new(
+                implementation(82),
+                substitution,
+                1_000,
+                900_000,
+                512 << 10,
+            ),
         )
         .expect("publication plan construction");
         let publication = publication.into_parts().0;
         if index == 1 {
             runtime_plan(
                 &problem,
-                PlanningBindings::new(registry(82), ResourcePolicy::Balanced, planning_profile(4)),
+                PlanningBindings::new(registry(82), ResourcePolicy::Balanced, cost_model(4)),
                 &authority,
                 &planning_registry,
                 &receipts,

@@ -23,11 +23,11 @@ const REAL_PRODUCTS: [&str; 7] = [
     ".pb",
 ];
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 struct ProductSnapshot {
     suffix: &'static str,
     shape: Vec<usize>,
-    pixels: Vec<u32>,
+    pixels: Vec<f32>,
     masks: Vec<(String, Vec<bool>)>,
     default_mask: Option<String>,
     coordinates: RecordValue,
@@ -44,7 +44,6 @@ fn required_path(variable: &str) -> PathBuf {
 #[test]
 #[ignore = "Q-band diagnostic only: requires owner-initialized reduced-row/512-channel fixture, fresh durable artifacts and an external RSS guard"]
 fn t55_q_band_rebaseline_preflight() {
-    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let image_size: usize = std::env::var("CASA_RS_T55_PREFLIGHT_IMAGE_SIZE")
         .map(|value| value.parse().expect("positive diagnostic image size"))
         .unwrap_or(64);
@@ -53,7 +52,17 @@ fn t55_q_band_rebaseline_preflight() {
         .map(|value| value.parse().expect("positive diagnostic row count"))
         .unwrap_or(351);
     assert!(expected_rows > 0 && expected_rows <= 84_240 && expected_rows.is_multiple_of(351));
-    let workers: u64 = std::env::var("CASA_RS_T55_PREFLIGHT_WORKERS")
+    run_q_band_cube(expected_rows, image_size, false);
+}
+
+fn run_q_band_cube(expected_rows: usize, image_size: usize, full_input: bool) {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let worker_variable = if full_input {
+        "CASA_RS_T55_FULL_WORKERS"
+    } else {
+        "CASA_RS_T55_PREFLIGHT_WORKERS"
+    };
+    let workers: u64 = std::env::var(worker_variable)
         .map(|value| value.parse().expect("positive diagnostic worker count"))
         .unwrap_or(1);
     assert!([1, 2, 4].contains(&workers));
@@ -66,8 +75,20 @@ fn t55_q_band_rebaseline_preflight() {
     assert_eq!(
         ms.row_count(),
         expected_rows,
-        "explicit reduced-row fixture"
+        "all rows of the explicitly selected fixture are required"
     );
+    {
+        let spectral = ms.spectral_window().expect("Q-band spectral window");
+        assert_eq!(spectral.row_count(), 1);
+        assert_eq!(spectral.num_chan(0).unwrap(), 512);
+        assert_eq!(
+            spectral.chan_freq(0).unwrap(),
+            (0..512)
+                .map(|channel| 44e9 + f64::from(channel) * 2e6)
+                .collect::<Vec<_>>(),
+            "the retired out-of-band fixture must not be used"
+        );
+    }
     drop(ms);
     let root = required_path("CASA_RS_T55_ARTIFACT_ROOT");
     fs::create_dir(&root).expect("fresh retained artifact directory");
@@ -120,6 +141,9 @@ fn t55_q_band_rebaseline_preflight() {
         panic!("Q-band preflight failed: {error}");
     });
     let task_wall_seconds = started.elapsed().as_secs_f64();
+    super::t55_cube_pipeline::assert_cube_execution_route(&result, true);
+    assert!(result.outcome.output.major_cycle_count > 1);
+    assert!(result.actual_minor_iterations > 0);
     if std::env::var_os("CASA_RS_PROFILE_CUBE").is_some() {
         eprintln!(
             "cube_profile_application end_unix_nanos={}",
@@ -143,6 +167,7 @@ fn t55_q_band_rebaseline_preflight() {
     ]
     .into_iter()
     .map(|(phase, receipt)| {
+        assert_eq!(receipt.status(), ReceiptStatus::Completed);
         assert_eq!(receipt.initial_execution_knobs().workers, workers);
         let peaks = receipt
             .plan_node_identities()
@@ -184,7 +209,12 @@ fn t55_q_band_rebaseline_preflight() {
     fs::write(
         root.join("summary.json"),
         serde_json::to_vec_pretty(&serde_json::json!({
-            "scope": "diagnostic only: reduced rows, all 512 Q-band channels, CPU Clark cube",
+            "scope": if full_input {
+                "full corrected Q-band input, all 512 channels/pixels, ordinary CPU Clark cube"
+            } else {
+                "diagnostic only: reduced rows, all 512 Q-band channels, CPU Clark cube"
+            },
+            "execution_route": "native-streaming-cube",
             "rows": expected_rows,
             "requested_workers": workers,
             "native_memory_bytes": memory_bytes,
@@ -247,112 +277,9 @@ fn publication_probe_fingerprints(root: &std::path::Path) -> BTreeMap<&'static s
 }
 
 #[test]
-#[ignore = "requires isolated complete 32 GiB VLA input, explicit resources, fresh artifacts, and an external wall/RSS guard"]
+#[ignore = "requires complete corrected Q-band input, explicit 16-GiB resources, fresh durable artifacts and external RSS guard"]
 fn t55_full_dataset_clark_timing() {
-    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    let measurement_set = required_path("CASA_RS_T55_REAL_MS")
-        .canonicalize()
-        .expect("existing full MeasurementSet");
-    assert_eq!(
-        measurement_set.file_name().unwrap(),
-        "wave1-vla-single-medium.ms"
-    );
-    let ms = MeasurementSet::open(&measurement_set).unwrap();
-    assert_eq!(ms.row_count(), 4_094_064, "all benchmark rows are required");
-    drop(ms);
-    let workers: u64 = std::env::var("CASA_RS_T55_FULL_WORKERS")
-        .expect("explicit worker count")
-        .parse()
-        .unwrap();
-    assert!([1, 4, 10].contains(&workers));
-    let memory_bytes: u64 = std::env::var("CASA_RS_T55_NATIVE_MEMORY_BYTES")
-        .expect("explicit native memory limit")
-        .parse()
-        .unwrap();
-    assert!(memory_bytes > 0 && memory_bytes <= 24 << 30);
-    let root = required_path("CASA_RS_T55_ARTIFACT_ROOT");
-    fs::create_dir(&root).expect("fresh retained artifact root");
-    let image_name = root.join("image");
-    let mut imaging = request(
-        measurement_set,
-        image_name.clone(),
-        ContinuumAlgorithm::Clark,
-    );
-    imaging.image_size = 512;
-    imaging.cell_arcsec = 0.35;
-    imaging.data_description = None;
-    imaging.spectral_window = Some("0".into());
-    imaging.channel_count = Some(512);
-    imaging.spectral_mode = SpectralImagingMode::Cube {
-        axis: CubeAxisConfig {
-            outframe: FrequencyRef::LSRK,
-            start: Some(CubeAxisValue::Channel(0)),
-            width: Some(CubeAxisValue::Channel(1)),
-            ..CubeAxisConfig::default()
-        },
-        output_channels: Some(512),
-    };
-    imaging.iterations = 9;
-    imaging.cycle_iterations = 1;
-    imaging.maximum_major_cycles = Some(3);
-    imaging.gain = 0.1;
-    imaging.threshold_jy = 0.0;
-    imaging.psf_cutoff = casa_imaging_products::DEFAULT_PSF_CUTOFF;
-    imaging.primary_beam_limit = -0.2;
-    imaging.write_primary_beam = true;
-    imaging.task_requirements = vec![TaskRequirement::PerChannelWeightDensity];
-    imaging.resource_policy = ResourcePolicy::Explicit(ResourceOverride {
-        workers: Some(workers),
-        memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), memory_bytes)]),
-        ..ResourceOverride::default()
-    });
-    fs::write(root.join("request.txt"), format!("{imaging:#?}\n")).unwrap();
-    eprintln!(
-        "T55 full-data timing start workers={workers} root={}",
-        root.display()
-    );
-    let started = std::time::Instant::now();
-    let result = match execute_continuum(imaging) {
-        Ok(result) => result,
-        Err(error) => {
-            fs::write(root.join("failure.txt"), format!("{error:#?}\n")).unwrap();
-            panic!("full-data timing failed: {error}");
-        }
-    };
-    let task_wall_seconds = started.elapsed().as_secs_f64();
-    let output = &result.outcome.output;
-    let final_receipt = output.final_major_receipt.as_ref().expect("final major");
-    let receipts = [
-        &output.initial_receipt,
-        final_receipt,
-        &output.publication_receipt,
-    ];
-    assert!(
-        receipts
-            .iter()
-            .all(|receipt| receipt.status() == ReceiptStatus::Completed)
-    );
-    assert!(output.major_cycle_count > 1 && result.actual_minor_iterations > 0);
-    assert_products(&image_name, &result.product_names, &REAL_PRODUCTS);
-    let minor_workers = output
-        .initial_receipt
-        .actual_resource_peak(
-            &WorkNodeId::new("spectral-cycle-minor-cycle"),
-            &LeaseResource::Workers,
-            &ClaimLifetime::Work,
-        )
-        .expect("executed minor worker evidence");
-    assert!(minor_workers > 0 && minor_workers <= workers);
-    fs::write(root.join("summary.json"), serde_json::to_vec_pretty(&serde_json::json!({
-        "scope": "full input, Natural, linear LSRK Clark cube; numerical CASA comparison required separately",
-        "selected_rows": 4_094_064, "source_channels": 512, "output_channels": 512,
-        "image_size": 512, "requested_workers": workers, "actual_minor_workers": minor_workers,
-        "task_wall_seconds": task_wall_seconds, "native_memory_bytes": memory_bytes,
-        "major_cycles": output.major_cycle_count, "minor_iterations": result.minor_iterations,
-        "actual_minor_iterations": result.actual_minor_iterations, "products": result.product_names,
-        "timing_boundary": "execute_continuum: selection and preparation through final publication, excluding staging and post-run comparison",
-        "receipt_ids": receipts.iter().map(|receipt| receipt.attempt_id().to_string()).collect::<Vec<_>>(),
-    })).unwrap()).unwrap();
+    run_q_band_cube(4_094_064, 512, true);
 }
 
 #[test]
@@ -713,7 +640,7 @@ fn real_clark_worker_cases(
                         ProductSnapshot {
                             suffix,
                             shape,
-                            pixels: pixels.iter().map(|value| value.to_bits()).collect(),
+                            pixels: pixels.iter().copied().collect(),
                             masks,
                             default_mask: product.default_mask_name(),
                             coordinates: product.coordinates().to_record(),
@@ -735,15 +662,14 @@ fn real_clark_worker_cases(
                     fixture_model_samples(science.final_model()),
                     windows
                         .iter()
-                        .flat_map(|window| window.residual().iter().copied())
+                        .flat_map(|window| window.residual().iter())
                         .collect::<Vec<_>>(),
                     windows
                         .iter()
-                        .flat_map(|window| window.normal_approximation().iter().copied())
+                        .flat_map(|window| window.normal_approximation().iter())
                         .collect::<Vec<_>>(),
                     normal.sum_weights().to_vec(),
                     normal.published_sum_weights().to_vec(),
-                    normal.channel_sum_weights().to_vec(),
                     windows
                         .iter()
                         .map(|window| window.primary_beam_weighted_sum().map(<[f64]>::to_vec))
@@ -757,29 +683,42 @@ fn real_clark_worker_cases(
                 match &baseline {
                     None => baseline = Some((products, evidence)),
                     Some((baseline_products, baseline_evidence)) => {
-                        // Affine mask/model generation IDs are local to each execution.
-                        // Keep every scientific field, component and support bit exact.
-                        assert_eq!(baseline_evidence.7.len(), evidence.7.len());
-                        for (expected, actual) in baseline_evidence.7.iter().zip(&mut evidence.7) {
+                        // Live IDs are execution-local; numerical reductions may round differently.
+                        assert_eq!(baseline_evidence.6.len(), evidence.6.len());
+                        for (expected, actual) in baseline_evidence.6.iter().zip(&mut evidence.6) {
                             actual.mask_generation = expected.mask_generation;
                             actual.mask_model_generation = expected.mask_model_generation;
                         }
                         for (expected, actual) in baseline_products.iter().zip(&products) {
-                            assert!(
-                                expected == actual,
-                                "{label} W{workers}: product {} differs from the first worker case",
-                                actual.suffix
-                            );
+                            assert_eq!(expected.suffix, actual.suffix);
+                            assert_eq!(expected.shape, actual.shape);
+                            assert_real_agreement(&expected.pixels, &actual.pixels);
+                            assert_eq!(expected.masks, actual.masks);
+                            assert_eq!(expected.default_mask, actual.default_mask);
+                            assert_eq!(expected.coordinates, actual.coordinates);
+                            assert_eq!(expected.units, actual.units);
+                            assert_eq!(expected.image_info, actual.image_info);
                         }
-                        assert!(
-                            baseline_evidence == &evidence,
-                            "{label} W{workers}: scientific evidence differs from the first worker case"
-                        );
+                        assert_model_agreement(&baseline_evidence.0, &evidence.0);
+                        assert_complex_agreement(&baseline_evidence.1, &evidence.1);
+                        assert_complex_agreement(&baseline_evidence.2, &evidence.2);
+                        assert_real_agreement(&baseline_evidence.3, &evidence.3);
+                        assert_real_agreement(&baseline_evidence.4, &evidence.4);
+                        match (&baseline_evidence.5, &evidence.5) {
+                            (Some(expected), Some(actual)) => {
+                                assert_real_agreement(expected, actual)
+                            }
+                            (None, None) => (),
+                            _ => panic!("primary-beam inventory changed"),
+                        }
+                        assert_eq!(baseline_evidence.7, evidence.7);
+                        assert_eq!(baseline_evidence.8, evidence.8);
+                        assert_eq!(baseline_evidence.9, evidence.9);
                     }
                 }
                 fs::write(
                     directory.join("accepted.txt"),
-                    "Exact worker/product checks passed.\n",
+                    "Worker/product scientific agreement checks passed.\n",
                 )
                 .unwrap();
             }

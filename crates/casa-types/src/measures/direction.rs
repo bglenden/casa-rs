@@ -74,7 +74,7 @@
 //! **Epoch + position** (need both):
 //! APP ↔ HADEC (sidereal time), HADEC ↔ AZEL, HADEC ↔ AZELGEO
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::str::FromStr;
@@ -1327,17 +1327,58 @@ fn apply_relativistic_aberration(direction: [f64; 3], beta: [f64; 3]) -> [f64; 3
 /// Geocentric direction and distance of the Sun in the J2000-compatible SOFA
 /// ephemeris axes. Casacore's deflection formula depends only weakly on the
 /// sub-milliarcsecond ephemeris-series difference.
-fn geocentric_sun_position(frame: &MeasFrame) -> Result<([f64; 3], f64), MeasureError> {
+fn geocentric_sun_position(frame: &MeasFrame) -> Result<SolarPosition, MeasureError> {
     let tdb_mjd = tdb_mjd(frame)?;
-    let (earth_heliocentric, _) =
-        sofars::eph::epv00(MJD_OFFSET, tdb_mjd).ok_or(MeasureError::SofarsError { code: -1 })?;
-    let sun = [
-        -earth_heliocentric[0][0],
-        -earth_heliocentric[0][1],
-        -earth_heliocentric[0][2],
-    ];
-    let (distance_au, unit) = sofars::vm::pn(&sun);
-    Ok((unit, distance_au))
+    SOLAR_POSITION_CACHE.with(|cache| {
+        cache.get_or_compute(tdb_mjd, || {
+            let (earth_heliocentric, _) = sofars::eph::epv00(MJD_OFFSET, tdb_mjd)
+                .ok_or(MeasureError::SofarsError { code: -1 })?;
+            let sun = [
+                -earth_heliocentric[0][0],
+                -earth_heliocentric[0][1],
+                -earth_heliocentric[0][2],
+            ];
+            let (distance_au, unit) = sofars::vm::pn(&sun);
+            Ok((unit, distance_au))
+        })
+    })
+}
+
+// Reuse the exact ephemeris input across antenna frames at the same epoch.
+// One entry per thread bounds residency independently of MS size and avoids
+// sharing mutable state between the admitted geometry workers.
+type SolarPosition = ([f64; 3], f64);
+
+struct SolarPositionCache {
+    latest: Cell<Option<(u64, SolarPosition)>>,
+}
+
+impl SolarPositionCache {
+    const fn new() -> Self {
+        Self {
+            latest: Cell::new(None),
+        }
+    }
+
+    fn get_or_compute(
+        &self,
+        tdb_mjd: f64,
+        compute: impl FnOnce() -> Result<SolarPosition, MeasureError>,
+    ) -> Result<SolarPosition, MeasureError> {
+        let key = tdb_mjd.to_bits();
+        if let Some((previous, position)) = self.latest.get()
+            && previous == key
+        {
+            return Ok(position);
+        }
+        let position = compute()?;
+        self.latest.set(Some((key, position)));
+        Ok(position)
+    }
+}
+
+thread_local! {
+    static SOLAR_POSITION_CACHE: SolarPositionCache = const { SolarPositionCache::new() };
 }
 
 /// Casacore `MeasMath::applySolarPos`: convert a J2000 mean direction to the
@@ -2236,6 +2277,109 @@ mod tests {
         let roundtrip = natural.convert_to(DirectionRef::J2000, &frame).unwrap();
         let error = sofars::vm::sepp(&direction.cosines(), &roundtrip.cosines());
         assert!(error < 1.0e-14, "J2000/JNAT roundtrip = {error} rad");
+    }
+
+    #[test]
+    fn solar_position_cache_reuses_only_the_exact_latest_epoch() {
+        let cache = SolarPositionCache::new();
+        let calls = Cell::new(0);
+        let epoch = 59_000.5_f64;
+        let adjacent = f64::from_bits(epoch.to_bits() + 1);
+        for (time, expected_calls) in [
+            (epoch, 1),
+            (epoch, 1),
+            (adjacent, 2),
+            (adjacent, 2),
+            (epoch, 3),
+        ] {
+            let position = cache
+                .get_or_compute(time, || {
+                    calls.set(calls.get() + 1);
+                    Ok(([time, 0.0, 1.0], time))
+                })
+                .unwrap();
+            assert_eq!(position, ([time, 0.0, 1.0], time));
+            assert_eq!(calls.get(), expected_calls);
+        }
+        assert!(size_of::<SolarPositionCache>() <= 64);
+    }
+
+    #[test]
+    fn solar_position_cache_propagates_errors_without_retaining_them() {
+        let cache = SolarPositionCache::new();
+        let epoch = 59_000.5;
+        let position = ([0.0, 1.0, 0.0], 1.0);
+        cache.get_or_compute(epoch, || Ok(position)).unwrap();
+        let calls = Cell::new(0);
+        for _ in 0..2 {
+            assert!(matches!(
+                cache.get_or_compute(epoch + 1.0, || {
+                    calls.set(calls.get() + 1);
+                    Err(MeasureError::SofarsError { code: -1 })
+                }),
+                Err(MeasureError::SofarsError { code: -1 })
+            ));
+        }
+        assert_eq!(calls.get(), 2);
+        assert_eq!(
+            cache
+                .get_or_compute(epoch, || panic!("successful entry was evicted by an error"))
+                .unwrap(),
+            position
+        );
+    }
+
+    #[test]
+    fn solar_position_reuse_matches_uncached_ephemeris_across_frames() {
+        for epoch in [
+            51_544.5,
+            59_000.5,
+            59_000.500_000_000_01,
+            61_000.25,
+            51_544.5,
+        ] {
+            for reference in [EpochRef::UTC, EpochRef::TT, EpochRef::TDB] {
+                let frame = runtime_frame().with_epoch(MEpoch::from_mjd(epoch, reference));
+                let time = tdb_mjd(&frame).unwrap();
+                let (earth, _) = sofars::eph::epv00(MJD_OFFSET, time).unwrap();
+                let (distance, unit) = sofars::vm::pn(&earth[0].map(|value| -value));
+                for model in [IauModel::Iau1976_1980, IauModel::Iau2006_2000A] {
+                    for position in [[1_000.0, 2_000.0, 3_000.0], [6_000.0, 5_000.0, 4_000.0]] {
+                        let antenna_frame = frame
+                            .clone()
+                            .with_position(MPosition::new_itrf(
+                                position[0],
+                                position[1],
+                                position[2],
+                            ))
+                            .with_iau_model(model);
+                        assert_eq!(
+                            geocentric_sun_position(&antenna_frame).unwrap(),
+                            (unit, distance)
+                        );
+                    }
+                }
+            }
+        }
+        let frame = MeasFrame::new();
+        assert!(matches!(
+            geocentric_sun_position(&frame),
+            Err(MeasureError::MissingFrameData { .. })
+        ));
+    }
+
+    #[test]
+    fn solar_position_cache_is_thread_local() {
+        SOLAR_POSITION_CACHE.with(|cache| {
+            cache
+                .get_or_compute(59_000.5, || Ok(([1.0, 0.0, 0.0], 1.0)))
+                .unwrap();
+        });
+        std::thread::spawn(|| {
+            SOLAR_POSITION_CACHE.with(|cache| assert!(cache.latest.get().is_none()));
+        })
+        .join()
+        .unwrap();
     }
 
     #[test]

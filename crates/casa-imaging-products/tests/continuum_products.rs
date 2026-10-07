@@ -3,7 +3,7 @@
 //! T22 continuum product algorithms driven through the direct generation and
 //! write-only output seams.
 
-use std::{convert::Infallible, mem::size_of};
+use std::mem::size_of;
 
 mod common;
 use common::{GeneratedProducts, MemoryProductOutput, full_window};
@@ -27,16 +27,16 @@ use casa_imaging_model::{
     Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
     ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection,
     ScientificContract, SelectedColumns, SelectedImageDomainProjection,
-    SelectedImageDomainProjections, SelectedMainRow, SelectedObservationGenerationId,
-    SelectedObservationRunChannel, SelectedObservationRunCorrelation, SelectedObservationRunRow,
-    SelectedObservationSample, SelectedPhaseCentreProjection, SelectedPredictionTarget,
-    SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates, SelectedSampleMetadata,
-    SelectedSpectralContribution, SelectedSpectralContributions, SelectedVisibilitySample,
-    SkyDirection, SourceGenerations, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
-    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection,
-    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection,
-    UvSelection, UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn,
-    WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
+    SelectedImageDomainProjections, SelectedMainRow, SelectedObservationRunChannel,
+    SelectedObservationRunCorrelation, SelectedObservationRunRow, SelectedObservationSample,
+    SelectedPhaseCentreProjection, SelectedPredictionTarget, SelectedRows, SelectedSampleAddress,
+    SelectedSampleCoordinates, SelectedSampleMetadata, SelectedSpectralContribution,
+    SelectedSpectralContributions, SelectedVisibilitySample, SkyDirection, SourceGenerations,
+    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
+    TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection,
+    UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope,
+    WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_products::{
     AnalyticPrimaryBeamModel, ContinuumProductControls, ContinuumProductInputs, MosaicSensitivity,
@@ -337,7 +337,7 @@ fn continuum_problem_with_domains_and_reconstruction(
             ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
             NumericsContract::new(
                 vec![NumericPrecision::F64],
-                ReductionPolicy::Compensated,
+                ReductionPolicy::UnorderedWithinBudget,
                 FiniteValuePolicy::FlagInputRejectGenerated,
                 NumericalStage::ALL
                     .into_iter()
@@ -411,7 +411,7 @@ fn fixture_samples_with_flux(
                     time_centroid: Epoch::new(59_000.0 + physical_row as f64, TimeScale::Utc),
                     interval_seconds: 1.0,
                     exposure_seconds: 1.0,
-                    parallactic_angles_rad: [0.0, 0.0],
+                    parallactic_angles_rad: Some([0.0, 0.0]),
                     phase_direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
                     delay_direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
                     pointing_directions: casa_imaging_model::SelectedPointingDirections {
@@ -541,25 +541,10 @@ fn channel_contributions(sample: &SelectedObservationSample) -> SelectedSpectral
     .expect("one exact channel-local contribution")
 }
 
-fn replay_selected_generation(
-    problem: &casa_imaging_model::CompiledProblem,
-    samples: &[SelectedObservationSample],
-) -> SelectedObservationGenerationId {
-    let (generation, count) = problem
-        .inspect_selected_observation(samples.iter().cloned().map(Ok::<_, Infallible>), |_| {
-            Ok::<_, Infallible>(())
-        })
-        .expect("inspect fixture sample stream");
-    assert_eq!(
-        usize::try_from(count).expect("fixture sample count"),
-        samples.len()
-    );
-    generation
-}
-
 /// Drive one complete T18 → T19 → T20 round and release its typed members.
 struct ContinuumRound {
     join: MajorCycleCompletion,
+    weighting: WeightingAlgorithmState,
 }
 
 fn run_continuum_round(
@@ -589,7 +574,6 @@ fn run_round_with_contributions(
         WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
     )
     .expect("weighting residency plan");
-    let selected_generation = replay_selected_generation(problem, &samples);
     let generation = freeze_weighting_generation(problem, &plan, &samples, contributions)
         .expect("freeze global weighting generation");
     let (blocks, summary) = replay(&generation, problem, &plan, &samples, contributions);
@@ -599,9 +583,8 @@ fn run_round_with_contributions(
         problem,
         attempt_byte,
         &plan,
-        &generation,
+        generation,
         (blocks, summary),
-        selected_generation,
         [casa_imaging_model::ModelDeltaTerm::new(
             casa_imaging_model::ModelCell::new(
                 0,
@@ -634,7 +617,7 @@ fn run_two_domain_round(
             .push_view(run.view())
             .expect("inspect run member");
     }
-    let (selected_generation, selected_count) = inspection.finish().expect("selected generation");
+    let selected_count = inspection.finish().expect("selected sample count");
     assert_eq!(selected_count as usize, runs.len());
 
     let mut density = begin_weighting_generation(problem, &plan).expect("density phase");
@@ -686,9 +669,8 @@ fn run_two_domain_round(
         problem,
         attempt_byte,
         &plan,
-        &generation,
+        generation,
         (blocks, summary),
-        selected_generation,
         [
             casa_imaging_model::ModelDeltaTerm::new(
                 casa_imaging_model::ModelCell::new(0, 0, 0, [4, 4]),
@@ -706,9 +688,8 @@ fn run_product_fixture_cycles(
     problem: &casa_imaging_model::CompiledProblem,
     attempt_byte: u8,
     plan: &WeightingPlan,
-    generation: &WeightingAlgorithmState,
+    generation: WeightingAlgorithmState,
     replay: (Vec<WeightingReplayChunk>, WeightingReplaySummary),
-    selected_generation: SelectedObservationGenerationId,
     delta_terms: impl IntoIterator<Item = casa_imaging_model::ModelDeltaTerm>,
 ) -> ContinuumRound {
     let (blocks, summary) = replay;
@@ -725,9 +706,9 @@ fn run_product_fixture_cycles(
             spectral_operator_workload(&specification, plan.limits().max_block_samples(), pass)
                 .expect("workload");
         let prepared =
-            prepare_spectral_operator(specification, workload).expect("prepare operator");
+            prepare_spectral_operator(specification, workload, 1).expect("prepare operator");
         let mut state = prepared
-            .begin(problem, generation)
+            .begin(problem, &generation)
             .expect("begin complete-data owner");
         state
             .bind_major_cycle_model(preparation.final_model(), prior)
@@ -735,9 +716,8 @@ fn run_product_fixture_cycles(
         for block in &blocks {
             state.consume_block(block).expect("consume weighted block");
         }
-        let evidence: CompleteDataOwnerResult = state
-            .complete(&summary, selected_generation, None)
-            .expect("complete evidence");
+        let evidence: CompleteDataOwnerResult =
+            state.complete(&summary).expect("complete evidence");
         MajorCycleOwner::from_complete_data(
             {
                 let storage =
@@ -779,8 +759,10 @@ fn run_product_fixture_cycles(
         .expect("nonzero model delta");
     let preparation =
         MajorCyclePreparation::prepare(&lifecycle, named, Some(delta)).expect("final model");
+    let join = run(&mut lifecycle, preparation, Some(normal));
     ContinuumRound {
-        join: run(&mut lifecycle, preparation, Some(normal)),
+        join,
+        weighting: generation,
     }
 }
 
@@ -788,11 +770,12 @@ fn rerun_two_domain_with_masks(
     problem: &casa_imaging_model::CompiledProblem,
     attempt_byte: u8,
     epoch: u64,
-    prior: MajorCycleCompletion,
+    prior: ContinuumRound,
     masks: &ImageDomainReconstructionMasks,
 ) -> ContinuumRound {
     let runs = two_domain_fixture_runs(problem);
-    let (prior_normal, continuation) = prior.into_continuation();
+    let (prior_normal, continuation) = prior.join.into_continuation();
+    let generation = prior.weighting;
     let (mut lifecycle, named) = ModelLifecycle::continue_from(
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem"),
         attempt(attempt_byte),
@@ -815,30 +798,7 @@ fn rerun_two_domain_with_masks(
             .push_view(run.view())
             .expect("inspect run member");
     }
-    let (selected_generation, _) = inspection.finish().expect("selected generation");
-    let mut density = begin_weighting_generation(problem, &plan).expect("density phase");
-    for run in &runs {
-        density
-            .consume(
-                problem,
-                run.view(),
-                run.channel.frequency_centre_hz,
-                run.contributions.clone(),
-            )
-            .expect("density sample");
-    }
-    let mut sum_weight = density.finish(problem).expect("sum-weight phase");
-    for run in &runs {
-        sum_weight
-            .consume(
-                problem,
-                run.view(),
-                run.channel.frequency_centre_hz,
-                run.contributions.clone(),
-            )
-            .expect("sum-weight sample");
-    }
-    let generation = sum_weight.finish().expect("weighting generation");
+    inspection.finish().expect("selected sample count");
     let mut replay = generation
         .begin_replay(problem, &plan)
         .expect("begin replay");
@@ -868,7 +828,7 @@ fn rerun_two_domain_with_masks(
         SpectralOperatorPass::ResidualRefresh,
     )
     .expect("two-domain refresh workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
+    let prepared = prepare_spectral_operator(specification, workload, 1).expect("prepare operator");
     let mut state = prepared
         .begin(problem, &generation)
         .expect("begin complete-data owner");
@@ -879,7 +839,7 @@ fn rerun_two_domain_with_masks(
         state.consume_block(block).expect("consume weighted block");
     }
     let evidence = state
-        .complete(&summary, selected_generation, None)
+        .complete(&summary)
         .expect("complete two-domain evidence");
     let joined = MajorCycleOwner::from_complete_data(
         {
@@ -897,7 +857,10 @@ fn rerun_two_domain_with_masks(
     .expect("bind exact domain masks")
     .reconcile(&mut lifecycle)
     .expect("masked two-domain reconciliation");
-    ContinuumRound { join: joined }
+    ContinuumRound {
+        join: joined,
+        weighting: generation,
+    }
 }
 
 fn freeze_weighting_generation(
@@ -1106,16 +1069,19 @@ fn direct_generation_writes_the_exact_member_set_once() {
         .expect("psf member")
         .payload();
     let sensitivity = round.join.normal_state().sum_weight();
-    let expected_psf = round
+    let raw_psf = round
         .join
         .normal_state()
         .read_window(0..1)
         .expect("single-plane continuum fixture window")
         .normal_approximation()
         .iter()
-        .map(|value| value.re as f32 / sensitivity as f32)
+        .map(|value| value.re as f32)
         .collect::<Vec<_>>();
+    let peak = raw_psf.iter().copied().fold(0.0_f32, f32::max);
+    let expected_psf = raw_psf.iter().map(|value| value / peak).collect::<Vec<_>>();
     assert_eq!(psf_payload, expected_psf);
+    assert_eq!(psf_payload.iter().copied().fold(0.0_f32, f32::max), 1.0);
 
     let sumwt_index = collected
         .members()
@@ -1226,7 +1192,7 @@ fn two_domain_members_consume_their_matching_normal_and_model_chart() {
         .expect("alternate domain masks")
         .into_parts();
     assert_ne!(masks.generation_id(), alternate_masks.generation_id());
-    let round = rerun_two_domain_with_masks(&problem, 143, 8, first_round.join, &masks);
+    let round = rerun_two_domain_with_masks(&problem, 143, 8, first_round, &masks);
     let normal = round.join.normal_state();
     assert_eq!(
         normal.image_domain_mask_generation(),
@@ -1295,11 +1261,16 @@ fn two_domain_members_consume_their_matching_normal_and_model_chart() {
             })
             .expect("domain PSF member");
         let sum_weight = domain.sum_weights()[0] as f32;
+        let peak = domain
+            .normal_approximation()
+            .iter()
+            .map(|value| value.re as f32)
+            .fold(0.0_f32, f32::max);
         let expected_psf = if sum_weight.is_finite() && sum_weight > 0.0 {
             domain
                 .normal_approximation()
                 .iter()
-                .map(|value| value.re as f32 / sum_weight)
+                .map(|value| value.re as f32 / peak)
                 .collect::<Vec<_>>()
         } else {
             vec![0.0; expected_shape[0] * expected_shape[1]]
@@ -1398,7 +1369,7 @@ fn direct_generation_rejects_same_problem_with_foreign_completions() {
         .expect("domain masks")
         .into_parts();
 
-    let second_round = rerun_two_domain_with_masks(&problem, 147, 8, first_round.join, &masks);
+    let second_round = rerun_two_domain_with_masks(&problem, 147, 8, first_round, &masks);
     let planned = {
         let second_inputs = ContinuumProductInputs::from_major_cycle(&problem, &second_round.join)
             .expect("second inputs")
@@ -1407,7 +1378,7 @@ fn direct_generation_rejects_same_problem_with_foreign_completions() {
         planned_for(&second_inputs, &ContinuumProductControls::default())
     };
 
-    let third_round = rerun_two_domain_with_masks(&problem, 148, 9, second_round.join, &masks);
+    let third_round = rerun_two_domain_with_masks(&problem, 148, 9, second_round, &masks);
     let third_inputs = ContinuumProductInputs::from_major_cycle(&problem, &third_round.join)
         .expect("third inputs")
         .with_domain_reconstruction_masks(&masks)
@@ -1734,6 +1705,57 @@ fn output_errors_fail_generation_without_a_completion_receipt() {
 }
 
 #[test]
+fn single_window_restoration_admits_inner_fft_workers_without_replica_buffers() {
+    let problem = continuum_problem(119, &CONTINUUM_PRODUCTS);
+    let round = run_continuum_round(&problem, 120);
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join).unwrap();
+    let planned = planned_for(&inputs, &ContinuumProductControls::default());
+    let serial = planned
+        .demand(&inputs, ProductStoragePlan::new(1, 1).unwrap())
+        .unwrap();
+    let serial_output = MemoryProductOutput::default();
+    let serial_generation = produce_continuum_members(
+        &planned,
+        &inputs,
+        serial.storage_plan(),
+        &(),
+        &serial_output,
+    )
+    .unwrap();
+    let serial_values = GeneratedProducts::from_output(&serial_generation, &serial_output);
+    for workers in [4, 8] {
+        let parallel = planned
+            .demand(&inputs, ProductStoragePlan::new(1, workers).unwrap())
+            .unwrap();
+        assert_eq!(
+            parallel.storage_plan().maximum_workers(),
+            if cfg!(unix) { workers } else { 1 }
+        );
+        assert_eq!(
+            parallel.algorithm_scratch_bytes(),
+            serial.algorithm_scratch_bytes()
+        );
+        assert_eq!(parallel.beam_scratch_bytes(), serial.beam_scratch_bytes());
+        assert_eq!(
+            parallel.peak_residency_bytes(),
+            serial.peak_residency_bytes()
+        );
+        let output = MemoryProductOutput::default();
+        let generated =
+            produce_continuum_members(&planned, &inputs, parallel.storage_plan(), &(), &output)
+                .unwrap();
+        let values = GeneratedProducts::from_output(&generated, &output);
+        for (actual, expected) in values.members().iter().zip(serial_values.members()) {
+            assert_eq!(actual.node(), expected.node());
+            assert_eq!(actual.validity(), expected.validity());
+            for (actual, expected) in actual.payload().iter().zip(expected.payload()) {
+                assert!((actual - expected).abs() <= 1.0e-6 * expected.abs().max(1.0));
+            }
+        }
+    }
+}
+
+#[test]
 fn generic_generation_demand_charges_exact_owned_arrays() {
     let products = [
         ProductKind::Psf,
@@ -1778,7 +1800,7 @@ fn generic_generation_demand_charges_exact_owned_arrays() {
         (SHAPE[0]
             * SHAPE[1]
             * (2 * size_of::<f32>() + size_of::<casa_imaging_model::ModelSample>())) as u64
-            + casa_imaging_reconstruction::normal_state_window_residency_bytes(SHAPE, 1, 1, 1)
+            + casa_imaging_reconstruction::normal_state_window_residency_bytes(SHAPE, 1, 1)
                 .unwrap()
             + maximum * 5
             + size_of::<Option<casa_imaging_products::ProductWindow>>() as u64,
@@ -1967,7 +1989,7 @@ fn weight_products_plan_and_produce_the_exact_normal_state_sensitivity_plane() {
         .expect("single-plane continuum fixture window")
         .sensitivity()
         .iter()
-        .map(|value| *value as f32)
+        .map(|value| value as f32)
         .collect();
     assert_eq!(weight.payload(), expected);
 }

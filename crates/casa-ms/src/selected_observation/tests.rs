@@ -36,15 +36,15 @@ use casa_imaging_model::{
     PsfPhaseCentreLaw, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
     ReconstructionControls, ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy,
     RowSelection, ScientificContract, SelectedColumns, SelectedInputWeightGroup, SelectedMainRow,
-    SelectedObservationGenerationId, SelectedObservationInspectionError,
-    SelectedObservationPassError, SelectedObservationRunChannel, SelectedObservationRunCorrelation,
-    SelectedObservationRunRow, SelectedObservationSample, SelectedRows, SelectedSpectralEvaluation,
-    SelectedVisibilitySample, SelectionBound, SkyDirection, SourceGenerations, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
-    SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
-    TaylorValidityPolicy, TimeRange, TimeScale, TimeSelection, UvSelection, UvwCoordinateLaw,
-    VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract,
-    WeightingScheme, compile, compile_observation,
+    SelectedObservationInspectionError, SelectedObservationPassError,
+    SelectedObservationRunChannel, SelectedObservationRunCorrelation, SelectedObservationRunRow,
+    SelectedObservationSample, SelectedRows, SelectedSpectralEvaluation, SelectedVisibilitySample,
+    SelectionBound, SkyDirection, SourceGenerations, SpectralContract, SpectralCoordinateSpec,
+    SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs,
+    SpectralWindowSelection, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy,
+    TimeRange, TimeScale, TimeSelection, UvSelection, UvwCoordinateLaw, VisibilityColumn,
+    VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
+    compile, compile_observation,
 };
 use casa_imaging_reconstruction::compile_spectral_stencil;
 use casa_tables::{ColumnSchema, LockMode, LockOptions, LockType, Table, TableOptions};
@@ -297,12 +297,12 @@ fn t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles() {
     request.allow_below_elevation_limit = true;
     request.duration_seconds = 3.0;
     request.integration_seconds = 1.0;
-    request.spectral_setup = SyntheticSpectralSetup {
+    request.spectral_windows = vec![SyntheticSpectralSetup {
         name: "t33-three-channel".to_string(),
         start_frequency_hz: 1.4e9,
         channel_width_hz: 1.0e6,
         channel_count: 3,
-    };
+    }];
     request.worker_policy = SyntheticWorkerPolicy::Fixed;
     request.row_workers = Some(1);
     request.channel_workers = Some(1);
@@ -312,6 +312,41 @@ fn t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles() {
     assert_eq!(report.baseline_count, 351);
     assert_eq!(report.time_sample_count, 3);
     assert_eq!(report.main_row_count, 1_053);
+
+    let ordinary_problem = compiled_problem_with_polarization(
+        &path,
+        report.main_row_count,
+        vec![PolarizationCoordinate::StokesI],
+    );
+    assert!(!ordinary_problem.requires_parallactic_angles());
+    let ordinary_source = &ordinary_problem.inputs().observation_snapshot().sources()[0];
+    let ordinary = BoundObservationSource::open(
+        &ordinary_problem,
+        ordinary_source,
+        &source_state(ordinary_source),
+        content_budget_for_rows(&ordinary_problem, ordinary_source, 37, 1),
+    )
+    .unwrap();
+    assert_eq!(
+        ordinary.geometry_engine().parallactic_angle_cache_entries(),
+        0
+    );
+    let ordinary_samples = ordinary
+        .selected_samples(&ordinary_problem)
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert!(
+        ordinary_samples
+            .iter()
+            .all(|sample| sample.coordinates.parallactic_angles_rad.is_none())
+    );
+    // This fresh engine inserts an entry on every PA evaluation, even for a
+    // non-alt-az mount. No entries means the unused PA/AZEL chain was not run.
+    assert_eq!(
+        ordinary.geometry_engine().parallactic_angle_cache_entries(),
+        0
+    );
 
     let problem = compiled_problem_with_polarization(
         &path,
@@ -324,6 +359,7 @@ fn t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles() {
         ],
     );
     let source = &problem.inputs().observation_snapshot().sources()[0];
+    assert!(problem.requires_parallactic_angles());
     let bound = BoundObservationSource::open(
         &problem,
         source,
@@ -356,6 +392,7 @@ fn t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles() {
     for (operator, physical) in first
         .coordinates
         .parallactic_angles_rad
+        .expect("polarized reconstruction requires physical angles")
         .iter()
         .zip(physical)
     {
@@ -368,12 +405,12 @@ fn t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles() {
     let mut minimum = [f64::INFINITY; 2];
     let mut maximum = [f64::NEG_INFINITY; 2];
     for row_samples in samples.as_chunks::<4>().0 {
-        let expected = row_samples[0].coordinates.parallactic_angles_rad;
+        let expected = row_samples[0].coordinates.parallactic_angles_rad.unwrap();
         assert!(expected.iter().all(|angle| angle.is_finite()));
         assert!(
             row_samples
                 .iter()
-                .all(|sample| sample.coordinates.parallactic_angles_rad == expected)
+                .all(|sample| sample.coordinates.parallactic_angles_rad == Some(expected))
         );
         for antenna in 0..2 {
             minimum[antenna] = minimum[antenna].min(expected[antenna]);
@@ -384,6 +421,7 @@ fn t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles() {
         (maximum[0] - minimum[0]).abs() > 1.0e-4 || (maximum[1] - minimum[1]).abs() > 1.0e-4,
         "realistic VLA rows must not collapse to a constant feed rotation"
     );
+    assert!(bound.geometry_engine().parallactic_angle_cache_entries() > 0);
 }
 
 #[test]
@@ -473,9 +511,9 @@ fn facet_chart_projections_are_domain_major_and_block_partition_invariant() {
         "physical block boundaries are not geometry"
     );
     assert_eq!(
-        one_row_completion.generation_id(),
-        two_row_completion.generation_id(),
-        "selected generation is invariant to block partitioning"
+        one_row_completion.sample_count(),
+        two_row_completion.sample_count(),
+        "sample count is invariant to block partitioning"
     );
     assert_eq!(one_row.len(), 480);
     for (_, raw_uvw_m, projections) in one_row {
@@ -1441,8 +1479,8 @@ fn selected_row_spectral_geometry_uses_exact_selected_centres_including_flagged_
             .complete(terminal)
             .expect("complete borrowed source");
         assert_eq!(
-            borrowed_completion.generation_id(),
-            scalar_completion.generation_id()
+            borrowed_completion.sample_count(),
+            scalar_completion.sample_count()
         );
         assert_eq!(borrowed_samples, scalar_samples);
     }
@@ -2732,7 +2770,7 @@ fn owner_rebound_requires_exhaustive_proof_and_fresh_locked_state() {
     let authorization = proof
         .authorize_rebound_completion(&rebound_completion)
         .expect("only the freshly rebound terminal completion authorizes generation and count");
-    assert_eq!(authorization.generation_id(), initial.generation_id());
+    assert_eq!(authorization.sample_count(), initial.sample_count());
     assert_eq!(authorization.sample_count(), initial.sample_count());
     drop(rebound);
 
@@ -2936,8 +2974,8 @@ fn selected_observation_residency_is_cardinality_independent_and_schedule_invari
         .traverse(&small_problem, |_| Ok::<_, Infallible>(()))
         .expect("complete double-buffered owner traversal");
     assert_eq!(
-        synchronous_completion.generation_id(),
-        double_buffered_completion.generation_id(),
+        synchronous_completion.sample_count(),
+        double_buffered_completion.sample_count(),
         "read-ahead scheduling and alternating physical buffers are absent from content identity"
     );
     assert_eq!(
@@ -3014,6 +3052,198 @@ fn selected_observation_residency_is_cardinality_independent_and_schedule_invari
 }
 
 #[test]
+fn numeric_block_consumption_preserves_v10_without_unused_pa_and_rejects_failed_work() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("numeric-stream.ms");
+    generate_fixture_with_rows(&path, 4);
+    let problem = compiled_problem(&path, 4);
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let binding = ObservationSourceBinding::new(
+        source_state(source),
+        bound_content_budget_for_rows(&problem, source, 1, 1),
+    );
+    let open = || {
+        BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding.clone()])
+            .unwrap()
+    };
+    let expected = open()
+        .traverse(&problem, |_| Ok::<_, Infallible>(()))
+        .unwrap();
+    let (mut source, mut consumer) = open().into_block_stream(&problem).unwrap();
+    let mut storage = source.create_storage(0);
+    let mut geometry = super::SelectedObservationNumericGeometry::new(1, 2).unwrap();
+    let mut callbacks = 0;
+    while source.fill_next(&mut storage).unwrap().is_some() {
+        storage
+            .project_numeric_geometry(&problem, &mut geometry)
+            .unwrap();
+        for row in 0..geometry.row_count() {
+            assert!(
+                storage
+                    .numeric_row(&geometry, row)
+                    .unwrap()
+                    .row
+                    .coordinates
+                    .parallactic_angles_rad
+                    .is_none()
+            );
+        }
+        assert_eq!(storage.parallactic_angle_cache_entries(), 0);
+        consumer
+            .consume_numeric(&storage, &geometry, || {
+                callbacks += 1;
+                Ok::<_, Infallible>(())
+            })
+            .unwrap();
+    }
+    let (_, actual) = consumer.complete(source.complete().unwrap()).unwrap();
+    assert_eq!(callbacks, 4);
+    assert_eq!(actual.sample_count(), expected.sample_count());
+    assert_eq!(actual.sample_count(), expected.sample_count());
+    assert_eq!(actual.measurements().selected_sample_handoff_bytes(), 0);
+
+    for failed_work in [false, true] {
+        let (mut source, mut consumer) = open().into_block_stream(&problem).unwrap();
+        let mut storage = source.create_storage(0);
+        source.fill_next(&mut storage).unwrap().unwrap();
+        storage
+            .project_numeric_geometry(&problem, &mut geometry)
+            .unwrap();
+        let first = consumer.consume_numeric(&storage, &geometry, || {
+            if failed_work {
+                Err(std::io::Error::other("numerical worker failed"))
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(first.is_err(), failed_work);
+        assert!(
+            consumer
+                .consume_numeric(&storage, &geometry, || Ok::<_, Infallible>(()))
+                .is_err()
+        );
+        while source.fill_next(&mut storage).unwrap().is_some() {}
+        assert!(consumer.complete(source.complete().unwrap()).is_err());
+    }
+}
+
+#[test]
+fn numeric_geometry_coarse_chunks_match_serial_for_uneven_rows_and_window() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("numeric-chunks.ms");
+    generate_fixture_with_rows(&path, 17);
+    let problem = compiled_problem(&path, 17);
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let binding = ObservationSourceBinding::new(
+        source_state(source),
+        bound_content_budget_for_rows(&problem, source, 17, 1),
+    );
+    let selected =
+        BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding]).unwrap();
+    let (mut source, mut consumer) = selected.into_block_stream(&problem).unwrap();
+    let mut storage = source.create_storage(0);
+    source.fill_next(&mut storage).unwrap().unwrap();
+    let mut serial = super::SelectedObservationNumericGeometry::new(17, 3).unwrap();
+    storage
+        .project_numeric_geometry(&problem, &mut serial)
+        .unwrap();
+    for chunk_rows in [1, 3, 5, 6] {
+        let mut parallel = super::SelectedObservationNumericGeometry::new(17, 3).unwrap();
+        storage
+            .project_numeric_geometry_with(&problem, &mut parallel, chunk_rows, |chunks| {
+                std::thread::scope(|scope| {
+                    let jobs = chunks
+                        .iter_mut()
+                        .map(|chunk| scope.spawn(move || chunk.project()))
+                        .collect::<Vec<_>>();
+                    for job in jobs {
+                        job.join().unwrap()?;
+                    }
+                    Ok(())
+                })
+            })
+            .unwrap();
+        assert_eq!(parallel.row_count(), serial.row_count());
+        assert_eq!(parallel.frequencies_hz(), serial.frequencies_hz());
+        assert_eq!(parallel.boundaries_hz(), serial.boundaries_hz());
+        assert_eq!(parallel.original_pairs_hz(), serial.original_pairs_hz());
+        for row in 0..serial.row_count() {
+            assert_eq!(
+                storage.numeric_row(&parallel, row).unwrap().row,
+                storage.numeric_row(&serial, row).unwrap().row
+            );
+        }
+    }
+    let mut incomplete = super::SelectedObservationNumericGeometry::new(17, 3).unwrap();
+    assert!(
+        storage
+            .project_numeric_geometry_with(&problem, &mut incomplete, 3, |chunks| {
+                chunks[0].project()?;
+                Err(crate::BoundObservationSourceError::StoredSampleShapeMismatch)
+            })
+            .is_err()
+    );
+    assert!(storage.numeric_row(&incomplete, 0).is_err());
+
+    consumer
+        .consume_numeric(&storage, &serial, || Ok::<_, Infallible>(()))
+        .unwrap();
+    while source.fill_next(&mut storage).unwrap().is_some() {
+        storage
+            .project_numeric_geometry(&problem, &mut serial)
+            .unwrap();
+        consumer
+            .consume_numeric(&storage, &serial, || Ok::<_, Infallible>(()))
+            .unwrap();
+    }
+    let (retained, _) = consumer.complete(source.complete().unwrap()).unwrap();
+    let (mut window_source, _) = retained
+        .into_channel_window_block_stream(&problem, 1..2)
+        .unwrap();
+    let mut window_storage = window_source.create_storage(0);
+    window_source
+        .fill_next(&mut window_storage)
+        .unwrap()
+        .unwrap();
+    let mut window_serial = super::SelectedObservationNumericGeometry::new(17, 1).unwrap();
+    window_storage
+        .project_numeric_geometry(&problem, &mut window_serial)
+        .unwrap();
+    let mut window_parallel = super::SelectedObservationNumericGeometry::new(17, 1).unwrap();
+    window_storage
+        .project_numeric_geometry_with(&problem, &mut window_parallel, 3, |chunks| {
+            std::thread::scope(|scope| {
+                let jobs = chunks
+                    .iter_mut()
+                    .map(|chunk| scope.spawn(move || chunk.project()))
+                    .collect::<Vec<_>>();
+                for job in jobs {
+                    job.join().unwrap()?;
+                }
+                Ok(())
+            })
+        })
+        .unwrap();
+    assert_eq!(
+        window_serial.frequencies_hz(),
+        window_parallel.frequencies_hz()
+    );
+    assert_eq!(
+        window_serial.original_pairs_hz(),
+        window_parallel.original_pairs_hz()
+    );
+    for row in 0..window_serial.row_count() {
+        assert_eq!(
+            window_storage
+                .numeric_row(&window_parallel, row)
+                .unwrap()
+                .row,
+            window_storage.numeric_row(&window_serial, row).unwrap().row
+        );
+    }
+}
+
+#[test]
 fn refillable_block_stream_matches_scalar_traversal_and_returns_the_owner() {
     let directory = tempfile::tempdir().expect("temporary block-stream fixture");
     let path = directory.path().join("block-stream.ms");
@@ -3046,11 +3276,46 @@ fn refillable_block_stream_matches_scalar_traversal_and_returns_the_owner() {
     let mut block_samples = Vec::new();
     let mut peak_current = 0_u64;
     let mut peak_capacity = 0_u64;
+    let mut previous_block_identity: Option<super::SelectedObservationBlockIdentity> = None;
     while source
         .fill_next(&mut storage)
         .expect("fill canonical block")
         .is_some()
     {
+        let numeric_block = storage.numeric_block().expect("filled numeric block");
+        let identity = numeric_block.identity();
+        if let Some(previous) = previous_block_identity {
+            assert_eq!(identity.access_binding(), previous.access_binding());
+            assert_eq!(identity.traversal(), previous.traversal());
+            assert_eq!(identity.ordinal(), previous.ordinal() + 1);
+        } else {
+            assert_eq!(identity.ordinal(), 1);
+        }
+        previous_block_identity = Some(identity);
+        let numeric = numeric_block.columns();
+        let samples =
+            numeric.physical_rows.len() * numeric.channel_range.count * numeric.correlation_count;
+        assert_eq!(numeric.flags.len(), samples);
+        assert_eq!(numeric.row_flags.len(), numeric.physical_rows.len());
+        match numeric.visibility {
+            crate::SelectedNumericVisibility::Float32(values) => {
+                assert_eq!(values.len(), samples);
+            }
+            crate::SelectedNumericVisibility::Complex32(values) => {
+                assert_eq!(values.len(), samples);
+            }
+        }
+        match numeric.weights {
+            crate::SelectedNumericWeights::PerRow(values) => {
+                assert_eq!(
+                    values.len(),
+                    numeric.physical_rows.len() * numeric.correlation_count
+                );
+            }
+            crate::SelectedNumericWeights::PerChannel(values) => {
+                assert_eq!(values.len(), samples);
+            }
+        }
         peak_current = peak_current.max(
             storage
                 .resident_current_bytes()
@@ -3081,8 +3346,8 @@ fn refillable_block_stream_matches_scalar_traversal_and_returns_the_owner() {
 
     assert_eq!(block_samples, scalar_samples);
     assert_eq!(
-        block_completion.generation_id(),
-        scalar_completion.generation_id()
+        block_completion.sample_count(),
+        scalar_completion.sample_count()
     );
     assert_eq!(
         block_completion.sample_count(),
@@ -3142,6 +3407,82 @@ fn windowed_block_stream_exhausts_rows_without_reading_disjoint_payload() {
         .expect("mint initial replay proof");
     assert_eq!(initial_completion.sample_count(), 16);
 
+    let (mut channel_source, mut channel_consumer) = retained
+        .into_channel_window_block_stream(&problem, 1..2)
+        .unwrap();
+    let mut channel_storage = channel_source.create_storage(0);
+    let mut geometry =
+        super::SelectedObservationNumericGeometry::new(channel_source.maximum_rows_per_block(), 2)
+            .unwrap();
+    while channel_source
+        .fill_next(&mut channel_storage)
+        .unwrap()
+        .is_some()
+    {
+        let columns = channel_storage.numeric_block().unwrap().columns();
+        assert_eq!(
+            columns.channel_range.start, 2,
+            "selected ordinal 1 is physical channel 2"
+        );
+        assert_eq!(columns.channel_range.count, 1);
+        channel_storage
+            .project_numeric_geometry(&problem, &mut geometry)
+            .unwrap();
+        channel_consumer
+            .consume_numeric(&channel_storage, &geometry, || Ok::<_, Infallible>(()))
+            .unwrap();
+    }
+    let (retained, channel_completion) = channel_consumer
+        .complete_window(channel_source.complete().unwrap())
+        .unwrap();
+    assert_eq!(
+        channel_completion.commitment_id(),
+        initial_completion.commitment_id()
+    );
+    assert_eq!(channel_completion.channel_ordinals(), Some(1..2));
+    assert_eq!(channel_completion.frequency_bounds_hz(), None);
+    assert_eq!(channel_completion.sample_count(), 8);
+    let replay_proof = initial_completion.replay_proof().unwrap();
+    assert!(
+        replay_proof.validates_rebound_window_completion(&channel_completion),
+        "the fresh restricted traversal belongs to the initial full proof"
+    );
+    assert_eq!(
+        channel_completion
+            .measurements()
+            .selected_sample_handoff_bytes(),
+        0
+    );
+    assert!(
+        channel_completion.measurements().logical_output_bytes()
+            < initial_completion.measurements().logical_output_bytes()
+    );
+
+    let (mut empty_source, empty_consumer) = retained
+        .into_channel_window_block_stream(&problem, 0..0)
+        .expect("an unmapped wave has an empty native support window");
+    let mut empty_storage = empty_source.create_storage(0);
+    assert!(
+        empty_source
+            .fill_next(&mut empty_storage)
+            .unwrap()
+            .is_none()
+    );
+    let (retained, empty_completion) = empty_consumer
+        .complete_window(empty_source.complete().unwrap())
+        .expect("empty support still exhausts the retained row domain");
+    assert_eq!(empty_completion.channel_ordinals(), Some(0..0));
+    assert_eq!(empty_completion.sample_count(), 0);
+    assert!(replay_proof.validates_rebound_window_completion(&empty_completion));
+    assert_eq!(empty_completion.measurements().stored_row_count(), 0);
+    assert_eq!(empty_completion.measurements().logical_output_bytes(), 0);
+    assert_eq!(
+        empty_completion
+            .measurements()
+            .modeled_physical_read_bytes(),
+        Some(0)
+    );
+
     let (mut window_source, mut window_consumer) = retained
         .into_windowed_block_stream(&problem, [1.5e9, 1.6e9])
         .expect("split disjoint window replay");
@@ -3165,6 +3506,7 @@ fn windowed_block_stream_exhausts_rows_without_reading_disjoint_payload() {
         .expect("complete disjoint window");
     assert_eq!(emitted_sample_count, 0);
     assert_eq!(window_completion.sample_count(), 0);
+    assert!(!replay_proof.validates_rebound_window_completion(&window_completion));
     let measurements = window_completion.measurements();
     assert_eq!(measurements.stored_row_count(), 0);
     assert_eq!(measurements.logical_output_bytes(), 0);
@@ -3386,7 +3728,7 @@ fn collect_borrowed_samples(
             .peak_consumer_scratch_current_bytes(),
         (2 * size_of::<SelectedObservationRunCorrelation>()) as u64
     );
-    let (generation, _) = problem
+    let sample_count = problem
         .inspect_selected_observation(
             samples
                 .iter()
@@ -3394,7 +3736,7 @@ fn collect_borrowed_samples(
             |_| Ok::<_, Infallible>(()),
         )
         .expect("independent borrowed sample inspection");
-    assert_eq!(generation, completion.generation_id());
+    assert_eq!(sample_count, completion.sample_count());
     samples
 }
 
@@ -3431,8 +3773,6 @@ fn borrowed_source_ranges_reject_invalid_windows_and_propagate_consumer_failure(
             .is_some()
     );
     let count = storage.selected_run_count().expect("validation run count");
-    let proof_bytes = consumer.generation_proof_bytes();
-    let proof_calls = consumer.generation_proof_hash_calls();
     for range in [std::ops::Range { start: 2, end: 1 }, 0..count + 1] {
         assert!(
             projector
@@ -3443,8 +3783,6 @@ fn borrowed_source_ranges_reject_invalid_windows_and_propagate_consumer_failure(
         );
         assert!(consumer.inspect_block_range(&storage, range).is_err());
     }
-    assert_eq!(consumer.generation_proof_bytes(), proof_bytes);
-    assert_eq!(consumer.generation_proof_hash_calls(), proof_calls);
     projector
         .visit_block_range(
             &problem,
@@ -3520,15 +3858,13 @@ fn borrowed_source_inspection_preserves_rebound_sample_counts_and_completion() {
                 .expect("inspect borrowed rebound range");
         }
     }
-    assert_eq!(consumer.generation_proof_bytes(), 0);
-    assert_eq!(consumer.generation_proof_hash_calls(), 0);
     let (_, completion) = consumer
         .complete(source.complete().expect("rebound terminal"))
         .expect("complete borrowed rebound source");
     let authorization = proof
         .authorize_rebound_completion(&completion)
         .expect("ordered borrowed windows preserve rebound authorization");
-    assert_eq!(authorization.generation_id(), initial.generation_id());
+    assert_eq!(authorization.sample_count(), initial.sample_count());
     assert_eq!(authorization.sample_count(), initial.sample_count());
 }
 
@@ -3617,7 +3953,7 @@ fn collect_indexed_samples(
         .complete(terminal)
         .expect("indexed inspection completion");
     assert_eq!(completion.sample_count(), samples.len() as u64);
-    let (generation, _) = problem
+    let sample_count = problem
         .inspect_selected_observation(
             samples
                 .iter()
@@ -3625,7 +3961,7 @@ fn collect_indexed_samples(
             |_| Ok::<_, Infallible>(()),
         )
         .expect("independent indexed sample inspection");
-    assert_eq!(generation, completion.generation_id());
+    assert_eq!(sample_count, completion.sample_count());
     samples
 }
 
@@ -3820,8 +4156,8 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
     assert_eq!(two_row_measurements.allocated_storage_buffers(), 38);
     assert_eq!(two_row_measurements.reused_storage_buffers(), 0);
     assert_eq!(
-        one_row_completion.generation_id(),
-        two_row_completion.generation_id(),
+        one_row_completion.sample_count(),
+        two_row_completion.sample_count(),
         "physical source and row blocking are absent from content identity"
     );
     assert_eq!(
@@ -3857,9 +4193,9 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
         .traverse(&problem, |_| Ok::<_, Infallible>(()))
         .expect("mint a fresh completion for a repeated retained traversal");
     assert_eq!(
-        one_row_completion.generation_id(),
-        repeated.generation_id(),
-        "content generation remains stable across attempts"
+        one_row_completion.sample_count(),
+        repeated.sample_count(),
+        "sample count remains stable across attempts"
     );
     assert!(one_row_completion.precedes(&repeated));
     assert!(!one_row_completion.same_access_binding(&two_row_completion));
@@ -4607,7 +4943,7 @@ fn multi_spw_selection_is_block_invariant_across_prediction_and_residual_replays
 fn inspect_samples(
     problem: &casa_imaging_model::CompiledProblem,
     samples: impl IntoIterator<Item = SelectedObservationSample>,
-) -> Result<(SelectedObservationGenerationId, u64), SelectedObservationInspectionError> {
+) -> Result<u64, SelectedObservationInspectionError> {
     match problem.inspect_selected_observation(samples.into_iter().map(Ok::<_, Infallible>), |_| {
         Ok::<_, Infallible>(())
     }) {
@@ -4736,16 +5072,17 @@ fn generate_fixture_with_channel_count(
     request.allow_below_elevation_limit = true;
     request.duration_seconds = row_count as f64;
     request.integration_seconds = 1.0;
-    request.spectral_setup = SyntheticSpectralSetup {
+    request.spectral_windows = vec![SyntheticSpectralSetup {
         name: "three-channel".to_string(),
         start_frequency_hz: 1.4e9,
         channel_width_hz: 1.0e6,
         channel_count,
-    };
+    }];
     request.worker_policy = SyntheticWorkerPolicy::Fixed;
     request.row_workers = Some(1);
     request.channel_workers = Some(1);
     generate_synthetic_observation_ms(&request).expect("generate bounded disk fixture");
+    set_fixture_frequency_frame_topocentric(path);
 }
 
 fn generate_fixture_with_phase_center(
@@ -4761,16 +5098,33 @@ fn generate_fixture_with_phase_center(
     request.duration_seconds = row_count as f64;
     request.integration_seconds = 1.0;
     request.phase_center_rad = phase_center_rad;
-    request.spectral_setup = SyntheticSpectralSetup {
+    request.spectral_windows = vec![SyntheticSpectralSetup {
         name: "three-channel".to_string(),
         start_frequency_hz: 1.4e9,
         channel_width_hz: 1.0e6,
         channel_count: 3,
-    };
+    }];
     request.worker_policy = SyntheticWorkerPolicy::Fixed;
     request.row_workers = Some(1);
     request.channel_workers = Some(1);
     generate_synthetic_observation_ms(&request).expect("generate fixed-centre disk fixture");
+    set_fixture_frequency_frame_topocentric(path);
+}
+
+fn set_fixture_frequency_frame_topocentric(path: &std::path::Path) {
+    let mut spectral = Table::open(TableOptions::new(path.join("SPECTRAL_WINDOW")))
+        .expect("open generated fixture spectral window");
+    spectral
+        .row_accessor_mut()
+        .set_cell(
+            0,
+            "MEAS_FREQ_REF",
+            Value::Scalar(ScalarValue::Int32(FrequencyRef::TOPO.casacore_code())),
+        )
+        .expect("set explicit TOPO fixture frame");
+    spectral
+        .flush()
+        .expect("persist explicit TOPO fixture frame");
 }
 
 #[cfg(unix)]

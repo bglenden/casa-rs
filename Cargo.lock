@@ -563,10 +563,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "casa-fft"
+version = "0.27.0"
+dependencies = [
+ "num-complex",
+ "pkg-config",
+]
+
+[[package]]
 name = "casa-images"
 version = "0.27.0"
 dependencies = [
  "casa-coordinates",
+ "casa-fft",
  "casa-lattices",
  "casa-numerics",
  "casa-provider-contracts",
@@ -577,7 +586,6 @@ dependencies = [
  "fitsio",
  "ndarray",
  "num-complex",
- "rustfft",
  "schemars",
  "serde",
  "serde_json",
@@ -604,29 +612,69 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "tracing",
+]
+
+[[package]]
+name = "casa-imaging-deconvolution"
+version = "0.27.0"
+dependencies = [
+ "casa-fft",
+ "casa-imaging-model",
+ "casa-numerics",
+ "ndarray",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
+name = "casa-imaging-metal"
+version = "0.27.0"
+dependencies = [
+ "casa-imaging-operator",
+ "objc2",
+ "objc2-foundation",
+ "objc2-metal",
+ "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
 name = "casa-imaging-model"
 version = "0.27.0"
 dependencies = [
+ "num-complex",
  "sha2",
  "smallvec",
  "thiserror 2.0.18",
 ]
 
 [[package]]
+name = "casa-imaging-operator"
+version = "0.27.0"
+dependencies = [
+ "casa-fft",
+ "casa-imaging-model",
+ "casa-numerics",
+ "ndarray",
+ "num-complex",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "casa-imaging-products"
 version = "0.27.0"
 dependencies = [
+ "casa-fft",
  "casa-imaging-model",
  "casa-imaging-reconstruction",
  "casa-numerics",
  "ndarray",
  "num-complex",
- "rustfft",
  "sha2",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -634,32 +682,33 @@ name = "casa-imaging-reconstruction"
 version = "0.27.0"
 dependencies = [
  "bytemuck",
+ "casa-fft",
  "casa-images",
  "casa-imaging-model",
  "casa-numerics",
  "casa-test-support",
- "crc32c",
  "ndarray",
  "num-complex",
- "rustfft",
  "serde_json",
  "sha2",
  "smallvec",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
 name = "casa-imaging-runtime"
 version = "0.27.0"
 dependencies = [
+ "bytemuck",
  "casa-imaging-model",
  "casa-imaging-products",
  "casa-imaging-reconstruction",
  "casa-lattices",
  "casa-ms",
+ "casa-tables",
  "casa-test-support",
  "casa-types",
- "crc32c",
  "fs2",
  "libc",
  "ndarray",
@@ -673,6 +722,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -806,10 +856,10 @@ dependencies = [
 name = "casa-simulation-synthesis"
 version = "0.27.0"
 dependencies = [
+ "casa-fft",
  "casa-numerics",
  "ndarray",
  "num-complex",
- "rustfft",
  "thiserror 2.0.18",
 ]
 
@@ -998,10 +1048,12 @@ dependencies = [
 name = "casars-imager"
 version = "0.27.0"
 dependencies = [
+ "casa-coordinates",
  "casa-images",
  "casa-imaging-application",
  "casa-logging",
  "casa-ms",
+ "casa-numerics",
  "casa-provider-contracts",
  "casa-task-runtime",
  "casa-test-support",
@@ -1268,15 +1320,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "59ed5838eebb26a2bb2e58f6d5b5316989ae9d08bab10e0e6d103e656d1b0280"
 dependencies = [
  "libc",
-]
-
-[[package]]
-name = "crc32c"
-version = "0.6.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a47af21622d091a8f0fb295b88bc886ac74efcc613efc19f5d0b21de5c89e47"
-dependencies = [
- "rustc_version",
 ]
 
 [[package]]
@@ -3030,6 +3073,7 @@ checksum = "a0125f776a10d00af4152d74616409f0d4a2053a6f57fa5b7d6aa2854ac04794"
 dependencies = [
  "bitflags 2.11.0",
  "objc2",
+ "objc2-core-foundation",
  "objc2-foundation",
 ]
 
@@ -3440,15 +3484,6 @@ checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
 dependencies = [
  "proc-macro2",
  "syn 2.0.117",
-]
-
-[[package]]
-name = "primal-check"
-version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc0d895b311e3af9902528fbb8f928688abbd95872819320517cc24ca6b2bd08"
-dependencies = [
- "num-integer",
 ]
 
 [[package]]
@@ -4082,20 +4117,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustfft"
-version = "6.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "21db5f9893e91f41798c88680037dba611ca6674703c1a18601b01a72c8adb89"
-dependencies = [
- "num-complex",
- "num-integer",
- "num-traits",
- "primal-check",
- "strength_reduce",
- "transpose",
-]
-
-[[package]]
 name = "rustix"
 version = "0.38.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4465,12 +4486,6 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
-
-[[package]]
-name = "strength_reduce"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe895eb47f22e2ddd4dabc02bce419d2e643c8e3b585c78158b349195bc24d82"
 
 [[package]]
 name = "stringprep"
@@ -4902,16 +4917,6 @@ dependencies = [
  "thread_local",
  "tracing-core",
  "tracing-log",
-]
-
-[[package]]
-name = "transpose"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ad61aed86bc3faea4300c7aee358b4c6d0c8d6ccc36524c96e4c92ccf26e77e"
-dependencies = [
- "num-integer",
- "strength_reduce",
 ]
 
 [[package]]

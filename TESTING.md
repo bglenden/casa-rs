@@ -1,7 +1,7 @@
 # Testing Strategy
 
 Truth class: normative
-Last reality check: 2026-09-02
+Last reality check: 2026-09-23
 Verification: just verify
 
 ## Test categories
@@ -28,9 +28,10 @@ Imaging evidence uses four non-substitutable tiers:
 - persistence/interoperability evidence proves durable CASA-compatible bytes,
   metadata, reopen behavior, and model-column effects.
 
-For programme #486, the reviewable and machine-checked coverage owner is
-`resources/imaging-architecture/representative-science-matrix.json`. Its
-validator is `scripts/check-representative-science-matrix.py`. A representative
+The representative scenario inventory is
+`resources/imaging-architecture/representative-science-matrix.json`; its
+rows are the T2 workloads of the imaging foundation performance pass (plan
+section 7, ticket IF-10), which regenerates their CASA oracles. A representative
 image-producing row normally has at least a 512x512 image and 1,000,000 selected
 correlation-channel samples, uses the production route, and exercises the
 mode's load-bearing dimensions. Full Stokes requires four correlations with
@@ -54,6 +55,29 @@ identity and selection, image and solver parameters, comparator, and artifact
 inventory. Regenerate only when one of those contracts changes. Tiny fixtures
 remain required when they provide faster failure localization, but a green toy
 end-to-end test cannot make a matrix row representative.
+
+Nonlinear deconvolution can amplify numerical-scale near-ties into different
+component histories. A mode-specific gate may classify cross-run pixelwise
+agreement limits as *review triggers*, rather than silently widen them or
+require bitwise component identity, only when the owner approves a versioned
+replacement rule. Structural and deterministic-product checks, independent
+convergence, resource limits, and relevant scientific checks remain hard.
+The T55 C-array v3 rule compares the saved model directly with CASA but does
+not convolve either saved model to verify publication consistency; the owner
+removed that corruption-only check on 2026-09-23. Other modes retain their
+own approved checks. A trigger is unsuccessful until a reviewed
+disposition binds the exact input/comparison, gate version, all affected
+products and planes, unchanged measurements, visual evidence, rationale and
+owner decision. Unexplained localized defects, known implementation errors,
+missing evidence and stale review identities fail closed. Similar future
+outputs may reuse the review procedure, never another output's approval. The
+measurement pass runs once per unchanged product set; a later owner review
+finalizes its saved, identity-bound report without reopening product arrays or
+repeating scientific calculations. A changed product or rule requires a new
+measurement, not a review-time verification pass. The
+T55 C-array implementation and unchanged per-plane measurements are in
+`tools/perf/imager/t55_c_array_clean_gate.py`; this paragraph alone changes
+no other mode's established thresholds or acceptance status.
 
 For #607's frozen MT-MFS row, the programme owner approved one narrow support
 rule on 2026-09-02: `.alpha` and `.alpha.error` validity is exact within CASA's
@@ -81,11 +105,9 @@ library tests, existing
 `prepared_aw_phase` import/reuse regressions, and the directly affected imager,
 provider and profile projection tests. The ignored frozen-cell tests require
 explicit surface/catalog paths; no CASA installation or model-data path is
-discovered implicitly. `perf_harness.t52_native_acceptance` binds the release
-test binary, input/source hashes, cold/warm cache payloads, full comparisons
-and a 30-minute/32-GiB process-scope guard. Supply its explicit absolute paths
-from the retained run request; generation workspace admission is a separate
-accounted bound, not a claim about total process RSS.
+discovered implicitly. The historical T51/T52 pair-driver acceptance harnesses
+were removed with their test-only Rust entry points (IF-0, #649); the native
+AW representative row is re-established by the IF-10 performance pass.
 
 T53 spectral joins use the public compiled/prepared operator and normal
 application boundaries. Run the `t53_` tests in the `continuum_application`
@@ -109,9 +131,9 @@ when the requested padded size differs from the rounded FFT grid.
 Current native-AW Taylor evidence may be reused only after checking code and
 input applicability. These rows retain the size, channel, complete-product,
 validity and resource limits above; diagnostic laws do not replace them.
-The checked-in [T53 receipt](resources/imaging-architecture/representative-science-evidence/w-multifield-cube-vla.json)
-binds the current W-cube result and the applicable standard, mosaic and native-AW
-supporting joins without replacing their individual scientific contracts.
+The historical T53 W-cube receipt is preserved under the T55 evidence roots on
+GLENDENNING; the imaging foundation performance pass (IF-10) regenerates it
+with the other T2 rows.
 
 T53 preserves the #478 named join gates
 `wproject_dirty_cube_products_track_casa_on_refim_point_withline_shared_phase_multifield`
@@ -174,6 +196,27 @@ or performance acceptance. Current results and restart authority live in the
   nextest each test has its own process. Without nextest the script falls back
   to serial `cargo test` (`RUST_TEST_THREADS=1`).
 
+### Linux temporary storage
+
+Managed-spill tests require a filesystem that can release file-backed page
+cache. On Linux, a memory-backed `/tmp` (tmpfs) can return success from
+`posix_fadvise(POSIX_FADV_DONTNEED)` while retaining pages; the runtime correctly
+rejects this with `PageCacheRetention`. Place test temporary files on a
+disk-backed filesystem instead, for example:
+
+```bash
+mkdir -p "$PWD/target/test-tmp"
+TMPDIR="$PWD/target/test-tmp" CARGO_INCREMENTAL=0 RUST_TEST_THREADS=1 \
+  RUST_MIN_STACK=33554432 cargo test -p casa-imaging-application \
+  --test continuum_application application_algorithms_do_not_invent_a_flux_staleness_bound -- --exact
+```
+
+Check the selected filesystem rather than assuming that a path named `target`
+is disk-backed. This setting relocates disposable test fixtures; retain real
+inputs and acceptance evidence in durable storage. It does not disable the
+page-cache residency check or change imaging science. macOS retains its
+existing no-cache I/O path and does not require this Linux-specific setup.
+
 ## Mocking policy
 
 - Prefer real fixtures and integration tests over internal mocks at crate boundaries.
@@ -183,15 +226,15 @@ or performance acceptance. Current results and restart authority live in the
 ## Default commands
 
 - Fast local gate: `just quick`
+- Imaging T1 end-to-end tier (synthetic MeasurementSet through the production
+  `casars-imager` route; each case under ten minutes):
+  `CARGO_INCREMENTAL=0 cargo test -p casars-imager --test t1`
 - Full default pre-review gate: `just verify`
 - Smoke/release gate: `just smoke`
 - Blocking C++ interop release gate: `just release-cpp-interop`
 - Informational release performance suite: `just release-perf`
 - Release-only install gate: `scripts/test-install-suite.sh`
 - Heavy parity suites: `scripts/test-slow.sh`
-- Targeted imaging parity: `scripts/test-imaging-parity.sh`; its complete
-  dataset preflight fails closed instead of allowing missing CASA cases to
-  report as runtime skips
 - Release/tag-only CI-like coverage: `scripts/run-coverage.sh --ci-like`
 - GitHub Actions reproduction: `scripts/ci-local.sh pr` for pull-request jobs or `scripts/ci-local.sh tag` for version-tag jobs
 - GitHub PR CI: lint/test, editable Python package, strict docs, and native GUI

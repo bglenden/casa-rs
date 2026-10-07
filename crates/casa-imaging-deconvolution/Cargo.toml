@@ -1,0 +1,19 @@
+[package]
+name = "casa-imaging-deconvolution"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Minor-cycle driver, controller and solvers (Hogbom, Clark, multiscale, Taylor)"
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-fft = { path = "../casa-fft" }
+casa-imaging-model = { path = "../casa-imaging-model" }
+casa-numerics = { path = "../casa-numerics" }
+ndarray.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

@@ -220,7 +220,10 @@ fn normal_fingerprint(normal: &casa_imaging_reconstruction::FinalNormalState) ->
             digest.update(value.im.to_bits().to_le_bytes());
         }
     }
-    for values in [window.sensitivity(), normal.sum_weights()] {
+    for values in [
+        window.sensitivity().dense().expect("AW dense sensitivity"),
+        normal.sum_weights(),
+    ] {
         digest.update((values.len() as u64).to_le_bytes());
         for value in values {
             digest.update(value.to_bits().to_le_bytes());
@@ -269,7 +272,7 @@ fn ownership_transfer_dirty_fingerprint_uses_complete_normal_arrays() {
     assert!(window.normal_moment(0).is_none());
     assert!(!window.residual().is_empty());
     assert!(!window.normal_approximation().is_empty());
-    assert!(!window.sensitivity().is_empty());
+    assert!(window.sensitivity().iter().next().is_some());
     assert!(!normal.sum_weights().is_empty());
     assert_eq!(normal_fingerprint(normal).len(), 64);
 }

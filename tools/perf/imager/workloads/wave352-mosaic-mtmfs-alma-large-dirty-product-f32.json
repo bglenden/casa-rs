@@ -31,7 +31,6 @@
     "pbcor": true,
     "standard_mfs_acceleration": "auto",
     "imaging_fft_precision": "f32",
-    "imaging_fft_backend": "rustfft",
     "imaging_memory_target_mb": 4096,
     "imaging_read_ahead_blocks": 2
   },

@@ -366,12 +366,12 @@ tools/perf/imager/run_workload.py --dry-run \
 
 ## Imaging runtime controls and telemetry
 
-`casars-imager` task protocol v3 carries the performance controls used by the
+`casars-imager` task protocol v9 carries the performance controls used by the
 current workload harness:
 
 - `parallel` selects normal planned local execution or the serial CPU
   comparison surface. `parallel=false` forces CPU acceleration, one grid and
-  prepare worker, one live source block, RustFFT product transforms, and no
+  prepare worker, one live source block, FFTW product transforms, and no
   Metal grouped-input cache.
 - `chanchunks` is the CASA-like top-level spectral channel chunk count. The
   requested count establishes the minimum slab shape; it is not an exact worker
@@ -397,8 +397,11 @@ current workload harness:
   modeled plane residency or row locality. Consumer failure cancels the
   producer after any current bounded read, wakes a blocked rendezvous send, and
   preserves the original consumer error.
-- `imaging_fft_precision` and `imaging_fft_backend` select dirty/PSF/residual
-  product transform policy independently from visibility-grid acceleration.
+- `imaging_fft_precision` selects dirty/PSF/residual product transform precision
+  independently from visibility-grid acceleration. FFTW is the sole FFT backend.
+- `CASA_RS_FFT_THREADS` sets FFTW threads per transform (default 1). Benchmark
+  records must report it separately from imaging workers; choose their product
+  within the available CPU budget rather than multiplying both independently.
 
 The shared source read-ahead path is used by standard MFS, mosaic MFS replay,
 the supported mosaic MT-MFS replay path, standard and mosaic cube slabs,

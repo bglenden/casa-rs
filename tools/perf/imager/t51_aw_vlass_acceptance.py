@@ -43,7 +43,6 @@ SERIAL_CPU_IMAGING = {
     "parallel": False,
     "standard_mfs_acceleration": "cpu",
     "imaging_fft_precision": "auto",
-    "imaging_fft_backend": "rustfft",
 }
 FORBIDDEN_RUNTIME_OVERRIDES = (
     "chanchunks",
@@ -713,7 +712,6 @@ def validate_aw_command_binding(
         "IMAGER_BENCH_SAVEMODEL": str(imaging["savemodel"]),
         "IMAGER_BENCH_STANDARD_MFS_ACCELERATION": "cpu",
         "IMAGER_BENCH_IMAGING_FFT_PRECISION": "auto",
-        "IMAGER_BENCH_IMAGING_FFT_BACKEND": str(imaging["imaging_fft_backend"]),
         "IMAGER_BENCH_PARALLEL": "0",
         "IMAGER_BENCH_WTERM": str(imaging["wterm"]),
         "IMAGER_BENCH_WPROJPLANES": str(imaging["wprojplanes"]),

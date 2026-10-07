@@ -27,8 +27,7 @@
     "write_pb": true,
     "savemodel": "none",
     "casa_pblimit": -0.2,
-    "standard_mfs_acceleration": "cpu",
-    "imaging_fft_backend": "rustfft"
+    "standard_mfs_acceleration": "cpu"
   },
   "run": {
     "repeats": 1,

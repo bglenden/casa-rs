@@ -725,6 +725,11 @@ impl MsCalEngine {
         Ok(value)
     }
 
+    #[cfg(test)]
+    pub(crate) fn parallactic_angle_cache_entries(&self) -> usize {
+        self.parallactic_angle_cache.read().unwrap().len()
+    }
+
     /// Compute the array-fiducial hour angle (radians) using the observatory position.
     pub fn hour_angle_observatory(&self, time_mjd_sec: f64, field_id: usize) -> MsResult<f64> {
         let frame =

@@ -171,7 +171,6 @@ def run_rust(args: argparse.Namespace, case: str, prefix: pathlib.Path) -> dict[
         "deconvolver": args.deconvolver,
         "nterms": 1,
         "niter": controls["niter"],
-        "fullsummary": True,
         "gain": args.gain,
         "threshold_jy": args.threshold_jy,
         "nsigma": 0.0,
@@ -184,7 +183,6 @@ def run_rust(args: argparse.Namespace, case: str, prefix: pathlib.Path) -> dict[
         if args.hogbom_iteration_mode == "casa"
         else args.hogbom_iteration_mode,
         "dirty_only": controls["dirty_only"],
-        "write_preview_pngs": False,
     }
     env = {
         "CASA_RS_STANDARD_MFS_BACKEND": "cpu",

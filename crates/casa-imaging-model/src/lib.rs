@@ -18,19 +18,19 @@ mod visibility_transform;
 pub use compiled_problem::{
     AwProjectionContract, AwProjectionContractError, CompileProblemError, CompiledProblem,
     CompiledProblemId, FiniteValuePolicy, HogbomIterationAccounting, ImagingRequest,
-    ImagingRequestVersion, InstrumentModel, InstrumentResponse, JointContinuumLineContract,
-    LogicalIdentity, MeasurementEquationContract, ModelStateIdentity, NumericPrecision,
-    NumericalStage, NumericsContract, NumericsContractId, PolarizationContract,
-    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInputIdentities,
-    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
-    ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
-    ProductValidityPolicyError, ReconstructionAlgorithm, ReconstructionBasis,
-    ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
-    RequiredCapability, RestoringBeamPolicy, ScientificContract, SpectralContract,
-    SpectralCoupling, SpectralCovariance, SpectralEdgePolicy, SpectralKernel, SpectralSamplingLaw,
-    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, UncorrectedImageMaskPolicy,
-    UvTaper, WProjectionContract, WProjectionContractError, WeightDensityScope, WeightingContract,
-    WeightingScheme, compile, validate_compiled_problem_identity,
+    ImagingRequestVersion, InstrumentModel, InstrumentResponse, LogicalIdentity,
+    MeasurementEquationContract, ModelStateIdentity, NumericPrecision, NumericalStage,
+    NumericsContract, NumericsContractId, PolarizationContract, PolarizationCoordinate,
+    PrimaryBeamValidityPolicy, ProblemInputIdentities, ProblemSpecification, ProductBlankingPolicy,
+    ProductKind, ProductNormalization, ProductRequirements, ProductSupportComparison,
+    ProductValidityPolicies, ProductValidityPolicyError, ReconstructionAlgorithm,
+    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
+    ReferenceDataKind, RequiredCapability, RestoringBeamPolicy, ScientificContract,
+    SpectralContract, SpectralCoupling, SpectralCovariance, SpectralEdgePolicy, SpectralKernel,
+    SpectralSamplingLaw, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy,
+    UncorrectedImageMaskPolicy, UvTaper, WProjectionContract, WProjectionContractError,
+    WeightDensityScope, WeightingContract, WeightingScheme, compile,
+    validate_compiled_problem_identity,
 };
 
 pub use geometry::{
@@ -59,9 +59,9 @@ pub use model_state::{
     ModelInputCommitmentIdentity, ModelInvalidContributorPolicy, ModelLifecycleContract,
     ModelLifecycleContractId, ModelLifecycleRequirements, ModelPolarizationConversionRegistry,
     ModelReprojectedSeedProjection, ModelReprojectionPolicy, ModelSample, ModelSourceShape,
-    ModelStateEncoding, ModelSupport, ModelSupportSemantics, ModelUncoveredTargetPolicy,
-    ModelValue, model_reprojected_seed_mapping_identity, model_support_identity,
-    try_model_support_identity, validate_model_lifecycle_contract_identity,
+    ModelSourceSupportInspection, ModelStateEncoding, ModelSupport, ModelSupportSemantics,
+    ModelUncoveredTargetPolicy, ModelValue, model_reprojected_seed_mapping_identity,
+    model_support_identity, try_model_support_identity, validate_model_lifecycle_contract_identity,
     validate_model_reprojection_contract_identity,
 };
 
@@ -98,15 +98,18 @@ pub use selected_observation::{
     SelectedObservationInspectionError, SelectedObservationPassError, SelectedSampleEvaluation,
 };
 
+mod selected_numeric;
+pub use selected_numeric::{SelectedNumericRow, SelectedNumericVisibility, SelectedNumericWeights};
+
 pub use selected_observation_sample::{
     AntennaResponseClass, SelectedAntennaResponses, SelectedImageDomainProjection,
-    SelectedImageDomainProjections, SelectedInputWeightGroup, SelectedObservationGenerationId,
-    SelectedObservationRunChannel, SelectedObservationRunCorrelation, SelectedObservationRunRow,
-    SelectedObservationSample, SelectedObservationSampleView, SelectedPhaseCentreProjection,
-    SelectedPointingDirections, SelectedPredictionTarget, SelectedRowSpectralGeometry,
-    SelectedSampleAddress, SelectedSampleCoordinates, SelectedSampleMetadata,
-    SelectedSpectralContribution, SelectedSpectralContributions, SelectedSpectralEvaluation,
-    SelectedSpectralInterval, SelectedVisibilitySample,
+    SelectedImageDomainProjections, SelectedInputWeightGroup, SelectedObservationRunChannel,
+    SelectedObservationRunCorrelation, SelectedObservationRunRow, SelectedObservationSample,
+    SelectedObservationSampleView, SelectedPhaseCentreProjection, SelectedPointingDirections,
+    SelectedPredictionTarget, SelectedRowSpectralGeometry, SelectedSampleAddress,
+    SelectedSampleCoordinates, SelectedSampleMetadata, SelectedSpectralContribution,
+    SelectedSpectralContributions, SelectedSpectralEvaluation, SelectedSpectralInterval,
+    SelectedVisibilitySample,
 };
 
 pub use product_graph::{
@@ -125,6 +128,5 @@ pub use transaction::{
 
 pub use visibility_transform::{
     ContinuumChannelRole, ContinuumChannelUse, ContinuumCovariancePolicy, ContinuumFitRule,
-    ContinuumFitWeightGenerationId, ContinuumTransformContractError, ContinuumTransformContractId,
-    ContinuumTransformGenerationId, SequentialContinuumTransform,
+    ContinuumTransformContractError, ContinuumTransformContractId, SequentialContinuumTransform,
 };

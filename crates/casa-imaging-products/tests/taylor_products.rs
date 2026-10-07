@@ -2,8 +2,6 @@
 
 //! T44 acceptance contract for Taylor-family product construction.
 
-use std::convert::Infallible;
-
 mod common;
 use common::{GeneratedMember, GeneratedProducts, MemoryProductOutput, full_window};
 
@@ -13,11 +11,11 @@ use casa_imaging_model::{
     DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
     DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame,
     GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    ImagingRequest, InstrumentResponse, IntentSelection, JointContinuumLineContract,
-    LogicalIdentity, MeasurementEquationContract, MeasurementSetIdentity, MetadataGeneration,
-    MetadataTableKind, ModelBounds, ModelColumnState, ModelColumnWrite, ModelExecutionAttemptId,
-    ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity,
-    MsColumnKind, NumericPrecision, NumericalStage, NumericsContract, ObservationSelection,
+    ImagingRequest, InstrumentResponse, IntentSelection, LogicalIdentity,
+    MeasurementEquationContract, MeasurementSetIdentity, MetadataGeneration, MetadataTableKind,
+    ModelBounds, ModelColumnState, ModelColumnWrite, ModelExecutionAttemptId, ModelInnerProduct,
+    ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity, MsColumnKind,
+    NumericPrecision, NumericalStage, NumericsContract, ObservationSelection,
     ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance,
     ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PolarizationContract,
     PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInputIdentities,
@@ -26,16 +24,15 @@ use casa_imaging_model::{
     ProductUnit, ProductValidityPolicies, ProductValidityRule, Projection, ReconstructionAlgorithm,
     ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
     ReferenceDataKind, RestFrequency, RestoringBeamPolicy, RowSelection, ScientificContract,
-    SelectedColumns, SelectedImageDomainProjections, SelectedMainRow,
-    SelectedObservationGenerationId, SelectedObservationSample, SelectedPhaseCentreProjection,
-    SelectedPredictionTarget, SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates,
-    SelectedSampleMetadata, SelectedSpectralContribution, SelectedSpectralContributions,
-    SelectedVisibilitySample, SkyDirection, SourceGenerations, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
-    SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
-    TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection, UvwCoordinateLaw,
-    VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract,
-    WeightingScheme, compile, compile_observation,
+    SelectedColumns, SelectedImageDomainProjections, SelectedMainRow, SelectedObservationSample,
+    SelectedPhaseCentreProjection, SelectedPredictionTarget, SelectedRows, SelectedSampleAddress,
+    SelectedSampleCoordinates, SelectedSampleMetadata, SelectedSpectralContribution,
+    SelectedSpectralContributions, SelectedVisibilitySample, SkyDirection, SourceGenerations,
+    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
+    TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection,
+    UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope,
+    WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_products::{
     AnalyticPrimaryBeamModel, ContinuumProductControls, ContinuumProductInputs,
@@ -43,9 +40,8 @@ use casa_imaging_products::{
     produce_continuum_members,
 };
 use casa_imaging_reconstruction::{
-    CoupledReconstructionMask, ExecutableModelProblem, MajorCycleCompletion, MajorCycleOwner,
-    MajorCyclePreparation, MaskBox, ModelLifecycle, ReconstructionMask, ReconstructionMaskSet,
-    SpectralOperatorSpecification, WeightingAlgorithmState, WeightingError,
+    ExecutableModelProblem, MajorCycleCompletion, MajorCycleOwner, MajorCyclePreparation,
+    ModelLifecycle, SpectralOperatorSpecification, WeightingAlgorithmState, WeightingError,
     WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk, WeightingReplaySummary,
     begin_weighting_generation, plan_weighting,
     runtime_adapter::{
@@ -68,23 +64,6 @@ const TAYLOR_PRODUCTS: [ProductKind; 9] = [
     ProductKind::Beam,
 ];
 
-fn joint_product_masks(
-    problem: &casa_imaging_model::CompiledProblem,
-    model: casa_imaging_reconstruction::ModelGenerationId,
-) -> CoupledReconstructionMask {
-    let direction = problem.geometry().domains()[0].direction();
-    let continuum = ReconstructionMask::full_plane(problem.problem_id(), model, direction, SHAPE)
-        .expect("joint continuum mask");
-    let line = ReconstructionMask::from_boxes(
-        problem.problem_id(),
-        model,
-        direction,
-        SHAPE,
-        [MaskBox::new([3, 3], [4, 4]).expect("line box")],
-    )
-    .expect("joint line mask");
-    CoupledReconstructionMask::new(continuum, line).expect("joint product masks")
-}
 const PB_PRODUCTS: [ProductKind; 9] = [
     ProductKind::Psf,
     ProductKind::Residual,
@@ -316,7 +295,7 @@ fn taylor_problem_with_fraction(
             ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
             NumericsContract::new(
                 vec![NumericPrecision::F64],
-                ReductionPolicy::Compensated,
+                ReductionPolicy::UnorderedWithinBudget,
                 FiniteValuePolicy::FlagInputRejectGenerated,
                 NumericalStage::ALL
                     .into_iter()
@@ -333,120 +312,6 @@ fn taylor_problem_with_fraction(
         ),
     ))
     .expect("compile Taylor problem")
-}
-
-fn joint_problem(
-    seed: u8,
-    products: &[ProductKind],
-    uncorrected_mask: casa_imaging_model::UncorrectedImageMaskPolicy,
-) -> casa_imaging_model::CompiledProblem {
-    let direction = DirectionCoordinateSpec::new(
-        Projection::Sin,
-        SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
-        [(SHAPE[0] / 2) as f64, (SHAPE[1] / 2) as f64],
-        [-1.0e-6, 1.0e-6],
-        [[1.0, 0.0], [0.0, 1.0]],
-        [180.0, 0.0],
-    );
-    let geometry = GeometryInput::new(
-        vec![ImageDomainSpec::new(
-            ImageDomainRole::Main,
-            ImageShape::new(SHAPE[0], SHAPE[1]),
-            direction,
-            FacetLayout::Single,
-            AxisOrder::new([
-                ImageAxis::DirectionLongitude,
-                ImageAxis::DirectionLatitude,
-                ImageAxis::Polarization,
-                ImageAxis::Spectral,
-            ]),
-        )],
-        CentreLaws::new(
-            PhaseCentreLaw::Fixed(direction.reference_direction()),
-            DelayCentreLaw::PhaseTrackingCentre,
-            PointingCentreLaw::PhaseTrackingCentre,
-        ),
-        UvwCoordinateLaw::PhaseTrackingCentre,
-        SpectralCoordinateSpec::new(
-            FrequencyFrame::Topocentric,
-            FrequencyFrame::Topocentric,
-            SpectralFrameAnchor::NotApplicable,
-            SpectralWcs::Linear {
-                channels: 2,
-                reference_pixel: 0.0,
-                reference_frequency_hz: 1.05e9,
-                increment_hz: 1.0e8,
-            },
-            RestFrequency::NotApplicable,
-            DopplerConvention::NotApplicable,
-        ),
-    );
-    let snapshot = compile_observation(ObservationSnapshotInput::new(
-        vec![source(seed)],
-        Vec::new(),
-        ModelStateIdentity::Empty,
-    ))
-    .expect("joint observation snapshot");
-    compile(ImagingRequest::new(
-        ProblemSpecification::new(
-            ScientificContract::new(
-                SpectralContract::new(
-                    SpectralSamplingLaw::IDENTITY,
-                    SpectralCoupling::CommonRestoringBeam,
-                ),
-                MeasurementEquationContract::new(
-                    InstrumentResponse::Scalar,
-                    DeclaredInnerProducts::new(
-                        ModelInnerProduct::HermitianEuclidean,
-                        VisibilityInnerProduct::HermitianEuclidean,
-                    ),
-                ),
-            ),
-            ReconstructionContract::new(
-                ReconstructionBasis::JointContinuumLine {
-                    continuum_terms: 1,
-                    line_terms: 1,
-                },
-                ReconstructionAlgorithm::JointContinuumLine {
-                    scales_px: vec![0.0],
-                    small_scale_bias: 0.0,
-                },
-                ReconstructionControls::new(2, 1.0, 0.0),
-                PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
-            )
-            .with_joint_continuum_line(JointContinuumLineContract::new(
-                [0],
-                [1],
-                1.0e6,
-            )),
-            WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
-            ProductRequirements::new(
-                products.to_vec(),
-                ProductNormalization::UnitResponse,
-                RestoringBeamPolicy::Common,
-                validity().with_uncorrected_mask(uncorrected_mask),
-            ),
-            ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
-            NumericsContract::new(
-                vec![NumericPrecision::F64],
-                ReductionPolicy::Compensated,
-                FiniteValuePolicy::FlagInputRejectGenerated,
-                NumericalStage::ALL
-                    .into_iter()
-                    .map(|stage| (stage, StageErrorBudget::new(1.0e-7, 1.0e-3)))
-                    .collect(),
-            ),
-        ),
-        geometry,
-        ProblemInputIdentities::new(snapshot),
-        ModelLifecycleRequirements::new(
-            ModelBounds::new(4_096, 4_096, 4_096, 4_096, 1.0e30, 1.0e30)
-                .expect("joint model bounds"),
-            NumericPrecision::F64,
-            ModelInputCommitment::Empty,
-        ),
-    ))
-    .expect("compile joint problem")
 }
 
 fn samples(problem: &casa_imaging_model::CompiledProblem) -> Vec<SelectedObservationSample> {
@@ -488,7 +353,7 @@ fn samples(problem: &casa_imaging_model::CompiledProblem) -> Vec<SelectedObserva
                     time_centroid: Epoch::new(59_000.0 + physical_row as f64, TimeScale::Utc),
                     interval_seconds: 1.0,
                     exposure_seconds: 1.0,
-                    parallactic_angles_rad: [0.0, 0.0],
+                    parallactic_angles_rad: Some([0.0, 0.0]),
                     phase_direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
                     delay_direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
                     pointing_directions: casa_imaging_model::SelectedPointingDirections {
@@ -517,35 +382,12 @@ fn samples(problem: &casa_imaging_model::CompiledProblem) -> Vec<SelectedObserva
         .collect()
 }
 
-fn contributions_for(
-    problem: &casa_imaging_model::CompiledProblem,
-    sample: &SelectedObservationSample,
-) -> SelectedSpectralContributions {
-    let output_channel = if matches!(
-        problem.reconstruction().basis(),
-        ReconstructionBasis::JointContinuumLine { .. }
-    ) {
-        sample.address.channel_index
-    } else {
-        0
-    };
+fn contributions_for(sample: &SelectedObservationSample) -> SelectedSpectralContributions {
     SelectedSpectralContributions::new([
-        SelectedSpectralContribution::new(output_channel, 1.0, sample.address.frequency_centre_hz),
+        SelectedSpectralContribution::new(0, 1.0, sample.address.frequency_centre_hz),
         None,
     ])
     .expect("continuum contribution")
-}
-
-fn selected_generation(
-    problem: &casa_imaging_model::CompiledProblem,
-    samples: &[SelectedObservationSample],
-) -> SelectedObservationGenerationId {
-    problem
-        .inspect_selected_observation(samples.iter().cloned().map(Ok::<_, Infallible>), |_| {
-            Ok::<_, Infallible>(())
-        })
-        .expect("inspect selected stream")
-        .0
 }
 
 fn weighting_generation(
@@ -559,7 +401,7 @@ fn weighting_generation(
             problem,
             sample,
             sample.address.frequency_centre_hz,
-            contributions_for(problem, sample),
+            contributions_for(sample),
         )?;
     }
     let mut sum_weight = density.finish(problem)?;
@@ -568,7 +410,7 @@ fn weighting_generation(
             problem,
             sample,
             sample.address.frequency_centre_hz,
-            contributions_for(problem, sample),
+            contributions_for(sample),
         )?;
     }
     sum_weight.finish()
@@ -590,7 +432,7 @@ fn replay(
                 problem,
                 sample,
                 sample.address.frequency_centre_hz,
-                contributions_for(problem, sample),
+                contributions_for(sample),
             )
             .expect("weight sample")
         {
@@ -631,13 +473,11 @@ fn run_round_with_terms(
     )
     .expect("weighting plan");
     let samples = samples(problem);
-    let selected = selected_generation(problem, &samples);
     let generation = weighting_generation(problem, &plan, &samples).expect("weighting generation");
     let (blocks, summary) = replay(&generation, problem, &plan, &samples);
     let run = |lifecycle: &mut ModelLifecycle,
                preparation: MajorCyclePreparation,
                prior: Option<casa_imaging_reconstruction::FinalNormalState>| {
-        let final_model_generation = preparation.final_model_generation();
         let specification =
             SpectralOperatorSpecification::new(problem).expect("spectral specification");
         let workload = spectral_operator_workload(
@@ -651,7 +491,7 @@ fn run_round_with_terms(
         )
         .expect("operator workload");
         let prepared =
-            prepare_spectral_operator(specification, workload).expect("prepare operator");
+            prepare_spectral_operator(specification, workload, 1).expect("prepare operator");
         let mut state = prepared
             .begin(problem, &generation)
             .expect("begin complete-data owner");
@@ -661,10 +501,9 @@ fn run_round_with_terms(
         for block in &blocks {
             state.consume_block(block).expect("consume block");
         }
-        let evidence: CompleteDataOwnerResult = state
-            .complete(&summary, selected, None)
-            .expect("complete normal state");
-        let mut owner = MajorCycleOwner::from_complete_data(
+        let evidence: CompleteDataOwnerResult =
+            state.complete(&summary).expect("complete normal state");
+        let owner = MajorCycleOwner::from_complete_data(
             {
                 let storage =
                     casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
@@ -676,16 +515,6 @@ fn run_round_with_terms(
             preparation,
         )
         .expect("major-cycle owner");
-        if matches!(
-            problem.reconstruction().basis(),
-            ReconstructionBasis::JointContinuumLine { .. }
-        ) {
-            owner = owner
-                .bind_reconstruction_masks(&ReconstructionMaskSet::Coupled(Box::new(
-                    joint_product_masks(problem, final_model_generation),
-                )))
-                .expect("bind joint final masks");
-        }
         owner.reconcile(lifecycle).expect("major-cycle join")
     };
     let mut lifecycle = ModelLifecycle::bind(
@@ -766,146 +595,6 @@ fn assert_close(actual: f32, expected: f32, context: &str) {
     );
 }
 
-#[test]
-fn t46_joint_products_publish_one_lineage_without_component_residuals() {
-    let problem = joint_problem(
-        146,
-        &[
-            ProductKind::Psf,
-            ProductKind::Residual,
-            ProductKind::Model,
-            ProductKind::RestoredImage,
-            ProductKind::SumWeights,
-            ProductKind::Mask,
-        ],
-        casa_imaging_model::UncorrectedImageMaskPolicy::None,
-    );
-    let join = run_round_with_terms(&problem, 146, &[(0, 1.0), (1, 2.0)]);
-    let masks = joint_product_masks(&problem, join.final_model().generation_id());
-    assert!(
-        join.normal_state()
-            .channel_sum_weights()
-            .iter()
-            .all(|weight| weight.is_finite() && *weight > 0.0),
-        "joint channel weights: {:?}; normal weights: {:?}",
-        join.normal_state().channel_sum_weights(),
-        join.normal_state().sum_weights()
-    );
-    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &join)
-        .expect("joint inputs")
-        .with_coupled_reconstruction_masks(&masks)
-        .expect("bind joint masks");
-    let planned = PlannedContinuumGeneration::new(&inputs, &ContinuumProductControls::default())
-        .expect("joint product plan");
-    let output = MemoryProductOutput::default();
-    let produced =
-        produce_continuum_members(&planned, &inputs, full_window(&planned), &(), &output)
-            .expect("joint product family");
-    let generated = GeneratedProducts::from_output(&produced, &output);
-
-    assert!(
-        member(&generated, ".continuum.model.ct0")
-            .payload()
-            .contains(&1.0)
-    );
-    assert!(member(&generated, ".line.model").payload().contains(&2.0));
-    assert!(member(&generated, ".total.model").payload().contains(&3.0));
-    assert_eq!(
-        member(&generated, ".line.image").payload().len(),
-        2 * SHAPE[0] * SHAPE[1]
-    );
-    assert_eq!(
-        member(&generated, ".total.image").payload().len(),
-        2 * SHAPE[0] * SHAPE[1]
-    );
-    assert_eq!(generated.restoring_beams().len(), 2);
-    assert!(generated.restoring_beams().iter().all(Option::is_some));
-    assert!(
-        member(&generated, ".psf.joint0_1")
-            .payload()
-            .iter()
-            .any(|value| *value != 0.0)
-    );
-    assert_ne!(
-        member(&generated, ".continuum.mask").payload(),
-        member(&generated, ".line.mask").payload(),
-        "distinct coupled supports must remain distinct published members"
-    );
-    let normal = join.normal_state();
-    let window = normal
-        .read_window(normal.slab().core_range())
-        .expect("coupled joint fixture window");
-    let mut expected_residual = (0..2)
-        .flat_map(|channel| {
-            let weight = join.normal_state().channel_sum_weights()[channel];
-            window
-                .joint_common_residual(channel)
-                .expect("common residual")
-                .iter()
-                .map(move |value| (value.re / weight) as f32)
-        })
-        .collect::<Vec<_>>();
-    let mut published_residual = member(&generated, ".total.residual").payload().to_vec();
-    expected_residual.sort_by(f32::total_cmp);
-    published_residual.sort_by(f32::total_cmp);
-    assert_eq!(published_residual.len(), expected_residual.len());
-    for (actual, expected) in published_residual.into_iter().zip(expected_residual) {
-        assert_close(actual, expected, "channel-normalized common residual");
-    }
-    assert_eq!(
-        generated
-            .members()
-            .iter()
-            .filter(|member| member.name().contains("residual"))
-            .map(GeneratedMember::name)
-            .collect::<Vec<_>>(),
-        [".total.residual"]
-    );
-    assert!(
-        member(&generated, ".continuum.mask")
-            .payload()
-            .iter()
-            .all(|value| *value == 1.0)
-    );
-    assert_eq!(
-        member(&generated, ".line.mask")
-            .payload()
-            .iter()
-            .filter(|value| **value == 1.0)
-            .count(),
-        8
-    );
-}
-
-#[test]
-fn joint_publication_rejects_unimplemented_primary_beam_masks_at_planning() {
-    let problem = joint_problem(
-        147,
-        &[
-            ProductKind::Psf,
-            ProductKind::Residual,
-            ProductKind::Model,
-            ProductKind::RestoredImage,
-        ],
-        casa_imaging_model::UncorrectedImageMaskPolicy::PrimaryBeam,
-    );
-    let join = run_round_with_terms(&problem, 147, &[(0, 1.0), (1, 2.0)]);
-    let masks = joint_product_masks(&problem, join.final_model().generation_id());
-    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &join)
-        .expect("joint inputs")
-        .with_coupled_reconstruction_masks(&masks)
-        .expect("bind joint masks");
-    assert_eq!(
-        PlannedContinuumGeneration::new(
-            &inputs,
-            &ContinuumProductControls::default()
-                .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaEvlaCommon),
-        )
-        .expect_err("joint publication has no PB-mask producer"),
-        ProductsError::UnsupportedProblem,
-    );
-}
-
 fn principal_residuals(join: &MajorCycleCompletion) -> [Vec<f32>; TERMS] {
     let normal = join.normal_state();
     let window = normal
@@ -974,6 +663,13 @@ fn t44_taylor_families_preserve_raw_state_and_share_one_restoring_beam() {
         .read_window(normal.slab().core_range())
         .expect("coupled Taylor fixture window");
     let principal_weight = window.normal_moment(0).expect("moment zero").sum_weight();
+    let principal_peak = window
+        .normal_moment(0)
+        .unwrap()
+        .normal_approximation()
+        .iter()
+        .map(|value| value.re as f32 / principal_weight as f32)
+        .fold(0.0_f32, f32::max);
     for term in 0..3 {
         let psf = member(&generated, &format!(".psf.tt{term}"));
         let sumwt = member(&generated, &format!(".sumwt.tt{term}"));
@@ -982,9 +678,21 @@ fn t44_taylor_families_preserve_raw_state_and_share_one_restoring_beam() {
         let moment = window.normal_moment(term).expect("normal moment");
         assert_eq!(sumwt.payload(), &[moment.sum_weight() as f32]);
         for (actual, raw) in psf.payload().iter().zip(moment.normal_approximation()) {
-            assert_close(*actual, (raw.re / principal_weight) as f32, "Taylor PSF");
+            assert_eq!(
+                *actual,
+                (raw.re as f32 / principal_weight as f32) / principal_peak,
+                "shared principal Taylor PSF normalization"
+            );
         }
     }
+    assert_eq!(
+        member(&generated, ".psf.tt0")
+            .payload()
+            .iter()
+            .copied()
+            .fold(0.0_f32, f32::max),
+        1.0
+    );
     for term in 0..TERMS {
         let raw = window
             .coefficient_term(term)
@@ -1341,9 +1049,14 @@ fn taylor_generation_demand_charges_retained_families_and_algorithm_scratch() {
     assert_eq!(demand.maximum_member_validity_bytes(), maximum);
     assert_eq!(demand.maximum_window_payload_bytes(), maximum * 4);
     assert_eq!(demand.maximum_window_validity_bytes(), maximum);
+    // Two-term 8x8 fixture: retained families, residual/PB planes, normal solve.
+    let taylor_workspace = 5_516 + 768 + 128;
+    let restoration_workspace = maximum * (4 + 2 * 16 + 4)
+        + (maximum + 64) * 16
+        + maximum * std::mem::size_of::<usize>() as u64;
     assert_eq!(
         demand.algorithm_scratch_bytes(),
-        9_100 + maximum * 10,
+        taylor_workspace + restoration_workspace + maximum * 10,
         "coupled Taylor scratch additionally overlaps its emitted member and bounded backing-write window"
     );
     assert_eq!(

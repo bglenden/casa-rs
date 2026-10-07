@@ -12,10 +12,7 @@ use casa_imaging_reconstruction::{
     ModelLifecycleError, ModelSampleStorage, ModelStorageFactory, SpectralOperatorError,
     runtime_adapter::{NormalArrayStorage, NormalStorageFactory},
 };
-use casa_lattices::{
-    Lattice, LatticeMut, PagedArray, TiledArrayStorageLayout, TiledFileIoStats, TiledShape,
-};
-use ndarray::{ArrayD, IxDyn};
+use casa_lattices::{PagedArray, TiledArrayStorageLayout, TiledFileIoStats, TiledShape};
 use tempfile::TempDir;
 
 const DIRECTORY_RANDOM_CHARS: usize = 6;
@@ -31,6 +28,8 @@ const NORMAL_DIRECTORY_PREFIX: &str = ".casa-rs-cube-normal-";
 pub(crate) struct CubeArrayLayout {
     logical_scalars: usize,
     window_scalars: usize,
+    axis0: usize,
+    axis1: usize,
     values: TiledArrayStorageLayout,
 }
 
@@ -41,22 +40,48 @@ impl CubeArrayLayout {
         window_scalars: usize,
         cache_tiles: usize,
     ) -> Result<Self, String> {
-        if logical_scalars == 0 || plane_scalars == 0 || window_scalars == 0 || cache_tiles == 0 {
+        Self::new_spatial(
+            logical_scalars,
+            plane_scalars,
+            1,
+            window_scalars,
+            cache_tiles,
+        )
+    }
+
+    /// Axis zero is the contiguous native y coordinate; axis one is x (and any
+    /// interleaved scalar/polarization factor). The third axis holds planes.
+    pub(crate) fn new_spatial(
+        logical_scalars: usize,
+        axis0: usize,
+        axis1: usize,
+        window_scalars: usize,
+        cache_tiles: usize,
+    ) -> Result<Self, String> {
+        if logical_scalars == 0
+            || axis0 == 0
+            || axis1 == 0
+            || window_scalars == 0
+            || cache_tiles == 0
+        {
             return Err("cube array dimensions, window and cache must be positive".into());
         }
-        let tile_scalars = plane_scalars.min(logical_scalars);
-        let cache_tiles = cache_tiles.min(logical_scalars.div_ceil(tile_scalars));
-        let cache_bytes = tile_scalars
+        let plane_scalars = axis0.checked_mul(axis1).ok_or("cube plane size overflow")?;
+        let planes = logical_scalars.div_ceil(plane_scalars);
+        let cache_tiles = cache_tiles.min(planes);
+        let cache_bytes = plane_scalars
             .checked_mul(cache_tiles)
             .and_then(|n| n.checked_mul(size_of::<f64>()))
             .ok_or("cube array cache capacity overflow")?;
-        let shape = TiledShape::with_tile_shape(vec![logical_scalars], vec![tile_scalars])
+        let shape = TiledShape::with_tile_shape(vec![axis0, axis1, planes], vec![axis0, axis1, 1])
             .map_err(|error| error.to_string())?;
         let values = PagedArray::<f64>::storage_layout(shape, cache_bytes)
             .map_err(|error| error.to_string())?;
         Ok(Self {
             logical_scalars,
             window_scalars: window_scalars.min(logical_scalars),
+            axis0,
+            axis1,
             values,
         })
     }
@@ -100,12 +125,10 @@ impl CubeArrayLayout {
                     .slice_scratch_bytes()
                     .map_err(|error| error.to_string())?,
             ])?,
-            write_scratch_bytes: checked_sum(&[
-                window,
-                self.values
-                    .slice_scratch_bytes()
-                    .map_err(|error| error.to_string())?,
-            ])?,
+            write_scratch_bytes: self
+                .values
+                .slice_scratch_bytes()
+                .map_err(|error| error.to_string())?,
             flush_scratch_bytes: self
                 .values
                 .flush_scratch_bytes()
@@ -119,12 +142,48 @@ impl CubeArrayLayout {
     }
 }
 
+fn transfer_range<E>(
+    axis0: usize,
+    axis1: usize,
+    start: usize,
+    len: usize,
+    mut transfer: impl FnMut([usize; 3], [usize; 3], std::ops::Range<usize>) -> Result<(), E>,
+) -> Result<(), E> {
+    let plane = axis0 * axis1;
+    let mut offset = start;
+    let end = start + len;
+    while offset < end {
+        let within_plane = offset % plane;
+        let y = within_plane % axis0;
+        let x = within_plane / axis0;
+        let channel = offset / plane;
+        let remaining = end - offset;
+        let (shape, count) = if within_plane == 0 && remaining >= plane {
+            let channels = remaining / plane;
+            ([axis0, axis1, channels], channels * plane)
+        } else if y == 0 && remaining >= axis0 {
+            let rows = (remaining / axis0).min(axis1 - x);
+            ([axis0, rows, 1], rows * axis0)
+        } else {
+            let row_values = remaining.min(axis0 - y);
+            ([row_values, 1, 1], row_values)
+        };
+        transfer(
+            [y, x, channel],
+            shape,
+            (offset - start)..(offset - start + count),
+        )?;
+        offset += count;
+    }
+    Ok(())
+}
+
 /// Complete owned payload/metadata projection for a created private backing.
 ///
 /// Prepared factory metadata is counted separately by the factory. Read/write
 /// scratch excludes the reconstruction owner's input/destination window; it
-/// includes this adapter's ndarray copy and underlying typed conversion/stride
-/// buffers. File lengths include standard metadata and packed edge-tile padding,
+/// includes the remaining model-value/support conversion vectors and underlying
+/// typed tile conversion buffers. File lengths include standard metadata and packed edge-tile padding,
 /// not filesystem inode/block-allocation overhead or allocator bookkeeping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CubeArrayLedger {
@@ -289,6 +348,7 @@ pub(crate) struct PagedNormalStorageFactory {
     layouts: Box<[(usize, CubeArrayLayout)]>,
     retentions: Box<[(usize, Arc<dyn std::fmt::Debug + Send + Sync>)]>,
     metrics: Arc<CubeBackingMetrics>,
+    scalar_sensitivity: bool,
 }
 
 impl PagedNormalStorageFactory {
@@ -297,12 +357,14 @@ impl PagedNormalStorageFactory {
         layouts: Box<[(usize, CubeArrayLayout)]>,
         retentions: Box<[(usize, Arc<dyn std::fmt::Debug + Send + Sync>)]>,
         metrics: Arc<CubeBackingMetrics>,
+        scalar_sensitivity: bool,
     ) -> Self {
         Self {
             parent: parent.into(),
             layouts,
             retentions,
             metrics,
+            scalar_sensitivity,
         }
     }
 
@@ -327,6 +389,9 @@ impl PagedNormalStorageFactory {
 }
 
 impl NormalStorageFactory for PagedNormalStorageFactory {
+    fn scalar_sensitivity(&self) -> bool {
+        self.scalar_sensitivity
+    }
     fn create(
         &self,
         allocation_ordinal: usize,
@@ -357,16 +422,15 @@ impl NormalStorageFactory for PagedNormalStorageFactory {
 
 /// Exact scalar backing with a fixed tile cache and private file lifetime.
 ///
-/// Each read additionally allocates one `f64` slice-result array, and each write
-/// allocates one `f64` ndarray copy of the supplied window. These transient
-/// arrays occupy `8 * window.len()` bytes each, beyond the cache and caller's
-/// window. Construction borrows pre-encoded standard table metadata.
-/// The caller must admit these allocations and bound the windows it supplies.
+/// Reads allocate one returned `f64` window; writes borrow the caller's slice.
+/// The backend retains one codec tile. Construction borrows pre-encoded standard
+/// table metadata. The caller must admit the returned window and bound its size.
 #[derive(Debug)]
 pub(crate) struct PagedNormalArray {
     array: Mutex<PagedArray<f64>>,
     scalars: usize,
     window_scalars: usize,
+    axes: [usize; 2],
     // Fields drop in declaration order: close the array before removing its files.
     #[allow(
         dead_code,
@@ -413,6 +477,7 @@ impl PagedNormalArray {
             array: Mutex::new(array),
             scalars,
             window_scalars: layout.window_scalars.min(scalars),
+            axes: [layout.axis0, layout.axis1],
             directory,
             observation: metrics.register(ledger),
             _retention: retention,
@@ -466,20 +531,18 @@ impl NormalArrayStorage for PagedNormalArray {
         }
         let array = self.array.lock().map_err(normal_storage_error)?;
         let before = array.io_stats();
-        let window = array
-            .get_slice(&[start], &[len], &[1])
-            .map_err(normal_storage_error)?;
-        if window.shape() != [len] || !window.is_standard_layout() {
-            return Err(normal_storage_error(
-                "normal backing slice is not contiguous",
-            ));
-        }
-        let (values, offset) = window.into_raw_vec_and_offset();
-        if offset != Some(0) || values.len() != len {
-            return Err(normal_storage_error(
-                "normal backing slice has invalid bounds",
-            ));
-        }
+        let mut values = vec![0.0; len];
+        transfer_range(
+            self.axes[0],
+            self.axes[1],
+            start,
+            len,
+            |position, shape, range| {
+                array
+                    .read_slice_into(&position, &shape, &mut values[range])
+                    .map_err(normal_storage_error)
+            },
+        )?;
         self.observation
             .record(len, array.io_stats().delta_since(before));
         Ok(std::borrow::Cow::Owned(values))
@@ -492,11 +555,17 @@ impl NormalArrayStorage for PagedNormalArray {
         }
         let array = self.array.get_mut().map_err(normal_storage_error)?;
         let before = array.io_stats();
-        let window = ArrayD::from_shape_vec(IxDyn(&[values.len()]), values.to_vec())
-            .map_err(normal_storage_error)?;
-        let result = array
-            .put_slice(&window, &[start])
-            .map_err(normal_storage_error);
+        let result = transfer_range(
+            self.axes[0],
+            self.axes[1],
+            start,
+            values.len(),
+            |position, shape, range| {
+                array
+                    .write_slice_from(&position, &shape, &values[range])
+                    .map_err(normal_storage_error)
+            },
+        );
         self.observation
             .record(values.len(), array.io_stats().delta_since(before));
         result
@@ -667,6 +736,7 @@ pub(crate) struct PagedModelSamples {
     arrays: Mutex<ModelArrays>,
     samples: usize,
     window_samples: usize,
+    axes: [usize; 2],
     // Delete after the array handles have flushed and closed.
     #[allow(
         dead_code,
@@ -722,6 +792,7 @@ impl PagedModelSamples {
             arrays: Mutex::new(ModelArrays { values, support }),
             samples: layout.logical_scalars,
             window_samples: layout.window_scalars,
+            axes: [layout.axis0, layout.axis1],
             directory,
             observation: metrics.register(ledger),
             _retention: retention,
@@ -779,14 +850,24 @@ impl ModelSampleStorage for PagedModelSamples {
         let arrays = self.arrays.lock().map_err(storage_error)?;
         let before_values = arrays.values.io_stats();
         let before_support = arrays.support.io_stats();
-        let values = arrays
-            .values
-            .get_slice(&[start], &[destination.len()], &[1])
-            .map_err(storage_error)?;
-        let support = arrays
-            .support
-            .get_slice(&[start], &[destination.len()], &[1])
-            .map_err(storage_error)?;
+        let mut values = vec![0.0; destination.len()];
+        let mut support = vec![false; destination.len()];
+        transfer_range(
+            self.axes[0],
+            self.axes[1],
+            start,
+            destination.len(),
+            |position, shape, range| {
+                arrays
+                    .values
+                    .read_slice_into(&position, &shape, &mut values[range.clone()])
+                    .map_err(storage_error)?;
+                arrays
+                    .support
+                    .read_slice_into(&position, &shape, &mut support[range])
+                    .map_err(storage_error)
+            },
+        )?;
         self.observation.record(
             destination.len(),
             arrays.values.io_stats().delta_since(before_values),
@@ -795,12 +876,6 @@ impl ModelSampleStorage for PagedModelSamples {
             destination.len(),
             arrays.support.io_stats().delta_since(before_support),
         );
-        let values = values
-            .as_slice()
-            .ok_or_else(|| storage_error("model value window is not contiguous"))?;
-        let support = support
-            .as_slice()
-            .ok_or_else(|| storage_error("model support window is not contiguous"))?;
         for ((destination, value), supported) in destination
             .iter_mut()
             .zip(values.iter().copied())
@@ -817,6 +892,72 @@ impl ModelSampleStorage for PagedModelSamples {
         Ok(())
     }
 
+    fn apply_updates(
+        &self,
+        updates: &[casa_imaging_reconstruction::ModelSampleUpdate],
+        precision: casa_imaging_model::NumericPrecision,
+        bound: f64,
+    ) -> Result<f64, ModelLifecycleError> {
+        let Some(first) = updates.first() else {
+            return Ok(0.0);
+        };
+        let start = first.index();
+        let len = updates.last().expect("nonempty updates").index() - start + 1;
+        if len > self.window_samples || start.checked_add(len).is_none_or(|end| end > self.samples)
+        {
+            return Err(ModelLifecycleError::CellOutsideShape);
+        }
+        let mut arrays = self.arrays.lock().map_err(storage_error)?;
+        let before_values = arrays.values.io_stats();
+        let before_support = arrays.support.io_stats();
+        let mut values = vec![0.0; len];
+        let mut support = vec![false; len];
+        transfer_range(
+            self.axes[0],
+            self.axes[1],
+            start,
+            len,
+            |position, shape, range| {
+                arrays
+                    .values
+                    .read_slice_into(&position, &shape, &mut values[range.clone()])
+                    .map_err(storage_error)?;
+                arrays
+                    .support
+                    .read_slice_into(&position, &shape, &mut support[range])
+                    .map_err(storage_error)
+            },
+        )?;
+        let mut maximum: f64 = 0.0;
+        for update in updates {
+            let index = update.index() - start;
+            let sample = if support[index] {
+                ModelSample::valid(ModelValue::new(values[index])?)
+            } else {
+                ModelSample::invalid()
+            };
+            values[index] = update.apply(sample, precision, bound)?.value().value();
+            maximum = maximum.max(values[index].abs());
+        }
+        transfer_range(
+            self.axes[0],
+            self.axes[1],
+            start,
+            len,
+            |position, shape, range| {
+                arrays
+                    .values
+                    .write_slice_from(&position, &shape, &values[range])
+                    .map_err(storage_error)
+            },
+        )?;
+        self.observation
+            .record(len, arrays.values.io_stats().delta_since(before_values));
+        self.observation
+            .record(len, arrays.support.io_stats().delta_since(before_support));
+        Ok(maximum)
+    }
+
     fn write(&mut self, start: usize, samples: &[ModelSample]) -> Result<(), ModelLifecycleError> {
         if start
             .checked_add(samples.len())
@@ -830,31 +971,39 @@ impl ModelSampleStorage for PagedModelSamples {
         let arrays = self.arrays.get_mut().map_err(storage_error)?;
         let before_values = arrays.values.io_stats();
         let before_support = arrays.support.io_stats();
-        let values = ArrayD::from_shape_vec(
-            IxDyn(&[samples.len()]),
-            samples
-                .iter()
-                .map(|sample| sample.value().value())
-                .collect(),
-        )
-        .map_err(storage_error)?;
-        arrays
-            .values
-            .put_slice(&values, &[start])
-            .map_err(storage_error)?;
+        let values: Vec<f64> = samples
+            .iter()
+            .map(|sample| sample.value().value())
+            .collect();
+        transfer_range(
+            self.axes[0],
+            self.axes[1],
+            start,
+            samples.len(),
+            |position, shape, range| {
+                arrays
+                    .values
+                    .write_slice_from(&position, &shape, &values[range])
+                    .map_err(storage_error)
+            },
+        )?;
         drop(values);
-        let support = ArrayD::from_shape_vec(
-            IxDyn(&[samples.len()]),
-            samples
-                .iter()
-                .map(|sample| sample.support() == ModelSupport::Valid)
-                .collect(),
-        )
-        .map_err(storage_error)?;
-        arrays
-            .support
-            .put_slice(&support, &[start])
-            .map_err(storage_error)?;
+        let support: Vec<bool> = samples
+            .iter()
+            .map(|sample| sample.support() == ModelSupport::Valid)
+            .collect();
+        transfer_range(
+            self.axes[0],
+            self.axes[1],
+            start,
+            samples.len(),
+            |position, shape, range| {
+                arrays
+                    .support
+                    .write_slice_from(&position, &shape, &support[range])
+                    .map_err(storage_error)
+            },
+        )?;
         self.observation.record(
             samples.len(),
             arrays.values.io_stats().delta_since(before_values),
@@ -889,6 +1038,54 @@ fn storage_error(error: impl std::fmt::Display) -> ModelLifecycleError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use casa_lattices::Lattice;
+
+    #[test]
+    fn spatial_layout_maps_native_ranges_and_large_cube_without_payload() {
+        let logical = 2048usize.pow(3);
+        let layout = CubeArrayLayout::new_spatial(logical, 2048, 2048, 2048 * 2048, 1).unwrap();
+        assert_eq!(layout.values.cube_shape(), &[2048, 2048, 2048]);
+        assert_eq!(layout.values.tile_shape(), &[2048, 2048, 1]);
+        assert!(layout.values.storage_bytes().unwrap() > i32::MAX as usize);
+        let large_offset = 1024usize * 2048 * 2048;
+        assert!(large_offset > i32::MAX as usize);
+        let mut large_visit = Vec::new();
+        transfer_range(2048, 2048, large_offset, 2, |start, shape, destination| {
+            large_visit.push((start, shape, destination));
+            Ok::<_, ()>(())
+        })
+        .unwrap();
+        assert_eq!(large_visit, vec![([0, 0, 1024], [2, 1, 1], 0..2)]);
+        assert!(CubeArrayLayout::new_spatial(logical, logical, 1, 1, 1).is_err());
+
+        let mut visits = Vec::new();
+        transfer_range(3, 4, 10, 8, |start, shape, destination| {
+            visits.push((start, shape, destination));
+            Ok::<_, ()>(())
+        })
+        .unwrap();
+        assert_eq!(
+            visits,
+            vec![([1, 3, 0], [2, 1, 1], 0..2), ([0, 0, 1], [3, 2, 1], 2..8),]
+        );
+        let offset = |x: usize, y: usize, channel: usize| channel * 12 + x * 3 + y;
+        assert_eq!(offset(3, 2, 7), 95);
+    }
+
+    #[test]
+    fn spatial_backing_preserves_x_y_channel_orientation_and_cross_plane_ranges() {
+        let parent = tempfile::tempdir().unwrap();
+        let layout = CubeArrayLayout::new_spatial(24, 3, 4, 24, 1).unwrap();
+        let mut array =
+            PagedNormalArray::create(parent.path(), &layout, 24, Arc::new(()), Arc::default())
+                .unwrap();
+        let values: Vec<f64> = (0..24).map(|n| n as f64 + 0.5).collect();
+        array.write(0, &values).unwrap();
+        assert_eq!(array.read(10, 5).unwrap().as_ref(), &values[10..15]);
+        let tiled = array.array.lock().unwrap();
+        assert_eq!(tiled.get_at(&[2, 3, 0]).unwrap(), values[11]);
+        assert_eq!(tiled.get_at(&[1, 2, 1]).unwrap(), values[19]);
+    }
 
     #[test]
     fn t55_metrics_release_after_files_and_before_retention() {
@@ -1015,6 +1212,7 @@ mod tests {
             ]
             .into(),
             metrics.clone(),
+            false,
         );
         let mut epoch = initial.create(0, 16).unwrap();
         let mut invariants = initial.create(1, 24).unwrap();
@@ -1034,6 +1232,7 @@ mod tests {
                 vec![(0, CubeArrayLayout::new(16, 4, 4, 1).unwrap())].into(),
                 vec![(0, Arc::new(()) as Arc<dyn std::fmt::Debug + Send + Sync>)].into(),
                 metrics.clone(),
+                false,
             );
             assert!(
                 factory.create(1, 24).is_err(),
@@ -1098,6 +1297,7 @@ mod tests {
             vec![(0, layout)].into_boxed_slice(),
             vec![(0, Arc::new(()) as Arc<dyn std::fmt::Debug + Send + Sync>)].into(),
             metrics.clone(),
+            false,
         );
         let mut storage = factory.create(0, 9).unwrap();
         assert!(factory.create(1, 9).is_err());
@@ -1141,6 +1341,7 @@ mod tests {
             vec![(0, layout)].into_boxed_slice(),
             vec![(0, Arc::new(()) as Arc<dyn std::fmt::Debug + Send + Sync>)].into(),
             Arc::default(),
+            false,
         );
         let error = factory.create(0, 9).unwrap_err();
         assert!(
@@ -1194,11 +1395,11 @@ mod tests {
             let arrays = storage.arrays.get_mut().unwrap();
             arrays
                 .values
-                .put_slice(&ArrayD::from_elem(IxDyn(&[1]), value), &[254])
+                .write_slice_from(&[6, 0, 31], &[1, 1, 1], &[value])
                 .unwrap();
             arrays
                 .support
-                .put_slice(&ArrayD::from_elem(IxDyn(&[1]), supported), &[254])
+                .write_slice_from(&[6, 0, 31], &[1, 1, 1], &[supported])
                 .unwrap();
             let failure = storage.read(254, &mut actual[..1]).unwrap_err();
             if supported {

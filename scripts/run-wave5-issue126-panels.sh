@@ -158,7 +158,7 @@ image_ms() {
     --cell-arcsec 0.00311 \
     --dirty-only \
     --weighting natural \
-    --no-preview-pngs > "$outdir/images/$label-imager-report.json"
+    > "$outdir/images/$label-imager-report.json"
 }
 
 image_ms clean "$clean_ms"

@@ -10,16 +10,16 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 410
+- Concepts: 399
 - Surfaces: 29 (27 task, 2 session)
-- Surface bindings: 581
+- Surface bindings: 570
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
 | [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 4 | <code>msexplore</code> | 68 | explore and export common MeasurementSet plotms-style plots |
 | [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 4 | <code>calibration</code> | 49 | apply, inspect, and solve CASA-style calibration workflows |
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 3 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
-| [Imager](#surface-imager)<br><code>imager</code> | task | 16 | <code>imager</code> | 102 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
+| [Imager](#surface-imager)<br><code>imager</code> | task | 18 | <code>imager</code> | 91 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
 | [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 4 | <code>simobserve</code> | 43 | Generate a CASA-compatible synthetic VLA MeasurementSet |
 | [Table Browser](#surface-tablebrowser)<br><code>tablebrowser</code> | session | 3 | <code>table_browser</code> | 7 | browse arbitrary casacore tables |
 | [ImExplore](#surface-imexplore)<br><code>imexplore</code> | session | 3 | <code>image_browser</code> | 17 | browse persistent casacore images |
@@ -219,7 +219,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Imager (<code>imager</code>)
 
 - Kind: `task`
-- Contract version: `16`
+- Contract version: `18`
 - Category: Imaging
 - Provider family: `imager`
 - Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet
@@ -255,7 +255,6 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>niter</code> | <code>parameter.niter@r1</code> | <code>integer</code> | <code>0</code>; optional | Stages | Minor-cycle iteration budget; ignored when Dirty Only is enabled |
 | <code>threshold</code> | <code>image.deconvolution.threshold@r1</code> | <code>quantity&lt;flux_density&gt; (canonical Jy); unit dimension: flux_density</code> | <code>"0.0Jy"</code>; optional | Stages | Absolute CLEAN threshold in Jy/beam; ignored when Dirty Only is enabled<br><em>Surface:</em> Canonical threshold maps to provider field threshold_jy. |
 | <code>nmajor</code> | <code>parameter.nmajor@r1</code> | <code>integer</code> | <code>-1</code>; optional | Stage Parameters | Major-cycle limit; -1 keeps CASA's unlimited default |
-| <code>fullsummary</code> | <code>parameter.fullsummary@r1</code> | <code>bool</code> | <code>false</code>; optional | Stage Parameters | Include long-form CASA-compatible summaryminor rows |
 | <code>gain</code> | <code>parameter.gain@r1</code> | <code>float</code> | <code>0.1</code>; optional | Stage Parameters | Minor-cycle loop gain |
 | <code>nsigma</code> | <code>parameter.nsigma@r1</code> | <code>float</code> | <code>0.0</code>; optional | Stage Parameters | Robust-RMS stopping multiplier |
 | <code>psfcutoff</code> | <code>parameter.psfcutoff@r1</code> | <code>float</code> | <code>0.35</code>; optional | Stage Parameters | PSF beam-fit cutoff fraction |
@@ -282,7 +281,6 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>wprojplanes</code> | <code>parameter.wprojplanes@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Stages | Explicit wproject plane budget |
 | <code>usepointing</code> | <code>parameter.usepointing@r1</code> | <code>bool</code> | <code>false</code>; optional | Advanced Wide-Field | Use POINTING-table directions instead of FIELD phase centers |
 | <code>uvtaper</code> | <code>parameter.uvtaper@r1</code> | <code>string</code> | <code>"none"</code>; optional | Stages | Gaussian UV taper: MAJOR[,MINOR[,PA]] |
-| <code>write_preview_pngs</code> | <code>parameter.write_preview_pngs@r1</code> | <code>bool</code> | <code>true</code>; optional | Products | Write PNG sidecars for the main CASA image products |
 | <code>write_pb</code> | <code>parameter.write_pb@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Write the primary-beam image used for PB correction |
 | <code>pbcor</code> | <code>parameter.pbcor@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Write mosaic primary-beam-corrected image products |
 | <code>pblimit</code> | <code>parameter.pblimit@r1</code> | <code>float</code> | <code>0.2</code>; optional | Stages | Mosaic primary-beam cutoff for flat-noise normalization |
@@ -290,9 +288,6 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>gridder</code> | <code>parameter.gridder@r1</code> | <code>choice (7 values)</code> | <code>"standard"</code>; optional | Stages | CASA tclean gridder family |
 | <code>standard_mfs_acceleration</code> | <code>parameter.standard_mfs_acceleration@r1</code> | <code>choice (4 values)</code> | <code>"cpu"</code>; optional | Stages | Backend policy for standard/MFS-compatible gridding stages |
 | <code>parallel</code> | <code>parameter.parallel@r1</code> | <code>optional&lt;bool&gt; (states: none)</code> | <code>"none"</code>; optional | Stages | Permit planned local parallel or accelerated execution; false forces the serial CPU comparison surface |
-| <code>imaging_read_ahead_blocks</code> | <code>parameter.imaging_read_ahead_blocks@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Stages | Maximum number of live source row blocks used for bounded read and prepare overlap<br><em>Surface:</em> The runtime rejects zero; Auto defaults are selected from mode and memory geometry. |
-| <code>imaging_fft_backend</code> | <code>parameter.imaging_fft_backend@r1</code> | <code>choice (4 values)</code> | <code>"rustfft"</code>; optional | Stages | Backend policy for dirty and residual product FFT transforms |
-| <code>chanchunks</code> | <code>parameter.chanchunks@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Stages | Requested number of top-level spectral channel chunks; the memory planner may select a larger active plane group when it fits<br><em>Surface:</em> Applies to cube and cubedata imaging; the runtime rejects zero and MFS use. |
 | <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | UV range selector.<br><em>Surface:</em> The complete CASA UV-range selector reaches the shared MeasurementSet selection engine. |
 | <code>intent</code> | <code>ms.selection.intent@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | Intent selector.<br><em>Surface:</em> The complete CASA intent selector reaches the shared MeasurementSet selection engine. |
 | <code>cfcache</code> | <code>parameter.cfcache@r2</code> | <code>optional&lt;path (directory)&gt; (states: none)</code> | <code>"none"</code>; required | Advanced Wide-Field | Read-only CASA AW convolution-function cache input<br><em>Surface:</em> Existing CASA CFS_/WTCFS_ input directory, imported read-only. This is never a native writable cache. |
@@ -309,14 +304,8 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>pointingoffsetsigdev</code> | <code>parameter.pointingoffsetsigdev@r1</code> | <code>string</code> | <code>"0"</code>; optional | Advanced Wide-Field | Comma-separated AW pointing grouping/refresh thresholds; non-pairs use CASA 600,600 |
 | <code>mosweight</code> | <code>parameter.mosweight@r1</code> | <code>bool</code> | <code>false</code>; optional | Advanced Wide-Field | Use per-pointing mosaic weight-density handling |
 | <code>normtype</code> | <code>parameter.normtype@r1</code> | <code>choice (3 values)</code> | <code>"flatnoise"</code>; optional | Advanced Wide-Field | Mosaic and AWProject sensitivity normalization policy |
-| <code>imaging_memory_target_mb</code> | <code>parameter.imaging_memory_target_mb@r2</code> | <code>optional&lt;integer&gt; (states: none); unit dimension: data_size</code> | <code>"none"</code>; required when imaging_memory_pressure_policy="oversubscribe" | Execution Resources | Optional shared imaging memory target in MiB<br><em>Surface:</em> none delegates to the resource-adaptive planner. auto and conservative-no-swap cap to no-swap headroom; aggressive caps to the physical process ceiling. oversubscribe requires an explicit target and alone may retain it beyond measured headroom. |
-| <code>imaging_memory_pressure_policy</code> | <code>parameter.imaging_memory_pressure_policy@r2</code> | <code>choice (4 values)</code> | <code>"auto"</code>; optional | Execution Resources | Imaging memory-pressure policy<br><em>Surface:</em> auto is the safe resource-adaptive default. conservative-no-swap and aggressive select bounded production admission behavior. oversubscribe is experimental and requires an explicit memory target. |
-| <code>imaging_prepare_buffer_mb</code> | <code>parameter.imaging_prepare_buffer_mb@r1</code> | <code>optional&lt;integer&gt; (states: none); unit dimension: data_size</code> | <code>"none"</code>; optional | Execution Resources | Optional source-stream preparation buffer in MiB |
-| <code>imaging_row_block_rows</code> | <code>parameter.imaging_row_block_rows@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Execution Resources | Optional bounded source-stream row-block override |
-| <code>imaging_prepare_workers</code> | <code>parameter.imaging_prepare_workers@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Execution Resources | Optional source-stream preparation worker count |
-| <code>imaging_fft_precision</code> | <code>parameter.imaging_fft_precision@r1</code> | <code>choice (3 values)</code> | <code>"auto"</code>; optional | Execution Resources | Imaging-wide FFT precision policy<br><em>Surface:</em> auto selects only a correctness-qualified FFT precision and reports any fallback. |
+| <code>imaging_memory_target_mb</code> | <code>parameter.imaging_memory_target_mb@r2</code> | <code>optional&lt;integer&gt; (states: none); unit dimension: data_size</code> | <code>"none"</code>; optional | Execution Resources | Optional shared imaging memory target in MiB<br><em>Surface:</em> none delegates to the resource-adaptive planner. |
 | <code>projection</code> | <code>parameter.projection@r1</code> | <code>choice (1 values)</code> | <code>"SIN"</code>; optional | Stage Parameters | Sky projection used for the image direction coordinate<br><em>Surface:</em> Unsupported projections fail before imaging; the value is never silently rewritten to SIN. |
-| <code>standard_mfs_grid_threads</code> | <code>parameter.standard_mfs_grid_threads@r1</code> | <code>optional&lt;integer&gt; (states: auto)</code> | <code>"auto"</code>; optional | Execution Resources | Grid-stage worker selection for standard, mosaic, and AWProject MFS imaging<br><em>Surface:</em> auto delegates to the resource-adaptive execution planner; a positive integer is an explicit override. |
 | <code>fitspw</code> | <code>parameter.fitspw@r1</code> | <code>string</code> | <code>"none"</code>; optional | Continuum Subtraction | Fit SPW selector. |
 | <code>fitorder</code> | <code>parameter.fitorder@r1</code> | <code>integer</code> | <code>0</code>; optional | Continuum Subtraction | Polynomial fit order. |
 | <code>save_continuum_residual</code> | <code>parameter.save_continuum_residual@r1</code> | <code>bool</code> | <code>false</code>; optional | Continuum Subtraction | Overwrite output-role selected cells in an existing CORRECTED_DATA column in place<br><em>Surface:</em> Requires continuum subtraction; fit-only and nonselected cells, flags, and weights remain unchanged. |
