@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Shared small cube contract for numerical and runtime band tests.
+//! Small cube contract for numerical band tests.
 
 use casa_imaging_model::*;
 
@@ -162,83 +162,4 @@ fn inputs() -> ProblemInputIdentities {
         ))
         .unwrap(),
     )
-}
-
-/// Full declared selected source, in canonical row/channel/correlation order.
-pub fn selected_samples(problem: &CompiledProblem) -> Vec<SelectedObservationSample> {
-    let source = problem.selected_observation().read_set().sources()[0].measurement_set();
-    let direction = SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5);
-    let mut samples = Vec::new();
-    for row in 0..5 {
-        for channel in 0..6 {
-            for correlation in 0..2 {
-                let frequency = 0.999e9 + channel as f64 * 1e6;
-                let uvw = [2.0 + row as f64, -3.0, 0.0];
-                samples.push(SelectedObservationSample {
-                    address: SelectedSampleAddress {
-                        measurement_set: source,
-                        physical_row: row,
-                        data_description_id: 0,
-                        spectral_window_id: 0,
-                        channel_index: channel,
-                        frequency_centre_hz: frequency,
-                        frequency_lower_hz: frequency - 0.5e6,
-                        frequency_upper_hz: frequency + 0.5e6,
-                        channel_width_hz: 1e6,
-                        frequency_frame: FrequencyFrame::Topocentric,
-                        polarization_id: 0,
-                        correlation_index: correlation,
-                        correlation_type: if correlation == 0 {
-                            CorrelationType::CircularRr
-                        } else {
-                            CorrelationType::CircularLl
-                        },
-                    },
-                    visibility: SelectedVisibilitySample::Complex32([
-                        0.25 + channel as f32 * 0.12,
-                        -0.8 + correlation as f32 * 0.2,
-                    ]),
-                    prediction_target: SelectedPredictionTarget::NotRequested,
-                    channel_flag: channel == 3 && correlation == 1,
-                    parallel_hand_group_flag: false,
-                    row_flag: false,
-                    input_weight: 0.7 + row as f32 * 0.1,
-                    coordinates: SelectedSampleCoordinates {
-                        raw_uvw_m: uvw,
-                        density_uvw_m: uvw,
-                        transformed_uvw_m: uvw,
-                        phase_shift_m: 0.017,
-                        uvw_law: UvwCoordinateLaw::PhaseTrackingCentre,
-                        time: Epoch::new(59_000.0 + row as f64, TimeScale::Utc),
-                        time_centroid: Epoch::new(59_000.0 + row as f64, TimeScale::Utc),
-                        interval_seconds: 1.0,
-                        exposure_seconds: 1.0,
-                        parallactic_angles_rad: Some([0.0; 2]),
-                        phase_direction: direction,
-                        delay_direction: direction,
-                        pointing_directions: SelectedPointingDirections {
-                            antenna1: direction,
-                            antenna2: direction,
-                        },
-                    },
-                    domain_projections: SelectedImageDomainProjections::one_domain_with_shared_psf(
-                        SelectedPhaseCentreProjection::new(uvw, 0.017).unwrap(),
-                    ),
-                    metadata: SelectedSampleMetadata {
-                        field_id: 0,
-                        antenna1: 0,
-                        antenna2: 1,
-                        antenna_responses: None,
-                        feed1: 0,
-                        feed2: 0,
-                        scan_number: 1,
-                        state_id: 0,
-                        observation_id: 0,
-                        array_id: 0,
-                    },
-                });
-            }
-        }
-    }
-    samples
 }

@@ -2752,7 +2752,7 @@ fn system_page_bytes() -> Result<u64, ManagedSpillError> {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use std::{
         collections::{BTreeMap, BTreeSet},
         convert::Infallible,
@@ -2943,7 +2943,7 @@ pub(crate) mod tests {
         assert_eq!(aggregate.buffer_reuses(), 3);
     }
 
-    pub(crate) fn test_authority(
+    fn test_authority(
         root: &Path,
         available_storage_bytes: u64,
     ) -> (ResourceAuthority, ManagedSpillStorage) {

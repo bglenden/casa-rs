@@ -57,31 +57,20 @@ use crate::{
 };
 
 pub(crate) mod bulk_source;
-#[cfg(test)]
-mod native_preparation;
 mod replay_preparation;
-#[cfg(test)]
-pub(crate) use native_preparation::NativePreparationPlan;
 use replay_preparation::ReplayPreparation;
 pub(crate) use replay_preparation::ReplayPreparationPlan;
 
 #[derive(Clone, Copy, Debug)]
 enum PreparationPlan {
     Replay(ReplayPreparationPlan),
-    #[cfg(test)]
-    Native(NativePreparationPlan),
-    Bulk {
-        workers: usize,
-        heap_bytes: u64,
-    },
+    Bulk { workers: usize, heap_bytes: u64 },
 }
 
 impl PreparationPlan {
     fn workers(self) -> usize {
         match self {
             Self::Replay(plan) => plan.workers(),
-            #[cfg(test)]
-            Self::Native(plan) => plan.workers,
             Self::Bulk { workers, .. } => workers,
         }
     }
@@ -89,8 +78,6 @@ impl PreparationPlan {
     fn admitted_heap_bytes(self) -> Result<u64, WeightingError> {
         match self {
             Self::Replay(plan) => plan.admitted_heap_bytes(),
-            #[cfg(test)]
-            Self::Native(plan) => Ok(plan.heap_bytes),
             Self::Bulk { heap_bytes, .. } => Ok(heap_bytes),
         }
     }
@@ -1338,12 +1325,6 @@ impl<'a> WeightingPlanFragment<'a> {
         preparation: Option<ReplayPreparationPlan>,
     ) -> Self {
         self.replay_preparation = preparation.map(PreparationPlan::Replay);
-        self
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_native_preparation(mut self, preparation: NativePreparationPlan) -> Self {
-        self.replay_preparation = Some(PreparationPlan::Native(preparation));
         self
     }
 
@@ -2918,56 +2899,6 @@ impl WeightingExecutionState {
         self.accept_initial_stream(context, fragment, problem, binding, completed)
     }
 
-    #[cfg(test)]
-    pub(crate) fn traverse_native_initial_stream<F>(
-        &mut self,
-        context: WorkExecutionContext<'_>,
-        fragment: &WeightingPlanFragment<'_>,
-        problem: &CompiledProblem,
-        selected: BoundSelectedObservation,
-        emit: F,
-    ) -> Result<(), WeightingReplayError<io::Error>>
-    where
-        F: FnMut(
-                &[&casa_imaging_reconstruction::runtime_adapter::NativeBlock],
-                &casa_imaging_reconstruction::runtime_adapter::NativeLayout,
-            ) -> io::Result<()>
-            + Send
-            + Sync,
-    {
-        self.begin_measurement_scope();
-        if !matches!(self.phase, WeightingExecutionPhase::Empty)
-            || fragment.streaming != Some(WeightingStreamingMode::NaturalInitial)
-            || problem.visibility_transform().is_some()
-        {
-            return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
-        }
-        let Some(PreparationPlan::Native(preparation)) = fragment.replay_preparation else {
-            return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
-        };
-        fragment
-            .authorize_source_observation(context, problem, selected.residency_certificate())
-            .map_err(WeightingReplayError::Evidence)?;
-        let plan = fragment
-            .bounded_stream_plan(context, true)
-            .map_err(WeightingReplayError::Evidence)?;
-        let completed = match native_preparation::execute(
-            problem,
-            selected,
-            plan,
-            preparation,
-            fragment.plan,
-            emit,
-        ) {
-            Ok(completed) => completed,
-            Err(failure) => {
-                self.latest_stream_measurements = Some(*failure.measurements);
-                return Err(*failure.error);
-            }
-        };
-        self.accept_initial_stream(context, fragment, problem, None, completed)
-    }
-
     fn accept_initial_stream<E>(
         &mut self,
         context: WorkExecutionContext<'_>,
@@ -3523,28 +3454,6 @@ impl WeightingExecutionState {
         self.density = None;
         self.imported = None;
         Ok(())
-    }
-
-    /// Transfer the original completed traversal with an owned native copy of
-    /// its samples. This is not a new selected-observation traversal.
-    #[cfg(test)]
-    pub(crate) fn release_retaining_replay(
-        &mut self,
-        context: WorkExecutionContext<'_>,
-        fragment: &WeightingPlanFragment<'_>,
-    ) -> Result<WeightingReplayCompletion, WeightingEvidenceError> {
-        fragment.authorize_release(context)?;
-        if !self.matches_attempt(context, fragment) {
-            return Err(WeightingEvidenceError);
-        }
-        let WeightingExecutionPhase::Replayed { completion, .. } = std::mem::take(&mut self.phase)
-        else {
-            return Err(WeightingEvidenceError);
-        };
-        self.retained_observation = None;
-        self.density = None;
-        self.imported = None;
-        Ok(*completion)
     }
 
     /// Return whether the planned release has consumed all externally retained state.
