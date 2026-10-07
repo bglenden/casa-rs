@@ -111,9 +111,14 @@ The internal disk is small. Do not fill it.
 
 ## Merging
 
-- Marking a PR ready for review is the go-ahead to merge. Mark it ready only
-  with the user's go-ahead, then immediately run `gh pr merge --auto --merge`;
-  GitHub merges it once the required CI checks on `main` pass.
+- Marking a PR ready for review is the go-ahead to merge: mark it ready, then
+  immediately run `gh pr merge --auto --merge`; GitHub merges it once the
+  required CI checks on `main` pass.
+- Mark a PR ready without asking once its gates are green, any independent
+  review it needs is done with every finding resolved, and no deviation or
+  question is open for the owner; then report that it is merging. Ask first
+  when any of those is missing, when the PR touches an Ask First item, or when
+  it is a PR you did not create.
 - Science, persistence, and interoperability changes need an independent
   review by a separate agent or person before they are marked ready. Docs,
   tests, and tooling need only green CI.
