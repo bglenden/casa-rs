@@ -56,6 +56,9 @@ reviewed against. Section 11 is process.
 - Review gates: at logical points the owner has Fable and (probably) OpenAI
   Astra review the implementation for drift from these goals and replan from
   discoveries. Section 9.3 defines them.
+- D2 agreed, with the addition that CPU f32 grids are a user-selectable
+  switch for large problems. Obit and LibRA are to be surveyed for processing
+  techniques worth adopting; adopted ones are recorded in section 5.9.
 
 ## 3. Decisions requested from the owner
 
@@ -73,12 +76,16 @@ unless the owner strikes one.
   rather than gridding the residual visibilities. The performance pass (IF-10)
   may add a bounded tap-plan cache as an execution strategy over the same
   operator if measurement shows it pays.
-- **D2 Metal precision.** Metal is one implementation of the backend trait and
-  accumulates in f32 with atomic adds (nondeterministic order). The CPU
-  accumulates in f64 by default. This is consistent with the owner's
-  2026-09-24 numerical direction: acceptance is the 1e-3 normalised tolerance,
-  not bitwise agreement. Metal cube planes may use f32 grids on CPU as well
-  (grid precision is a parameter).
+- **D2 Grid precision (owner agreed 2026-10-07).** Metal is one
+  implementation of the backend trait and accumulates in f32 with atomic adds
+  (nondeterministic order). The CPU accumulates in f64 by default. This is
+  consistent with the owner's 2026-09-24 numerical direction: acceptance is
+  the 1e-3 normalised tolerance, not bitwise agreement. Grid precision is a
+  user-selectable request field, `gridprecision = auto | f32 | f64`, exposed
+  in the parameter catalog. `auto` selects f64 for constant and Taylor bases
+  on CPU and f32 for channel-local cubes and for Metal. `f32` halves grid and
+  accumulator memory so large problems become tractable on this workstation;
+  the CPU backend supports both precisions for every convolution-function set.
 - **D3 AW convolution-function cache.** Replace the private content-addressed
   prepared-artifact store (manifest schema 7, 18 hash domains, eviction
   ledger; about 15k lines across `aw_cache.rs`, `prepared_aw_phase.rs`,
@@ -341,7 +348,9 @@ device API; no crate but `casars-imager` and `application` reads `std::env`.
 
 ```rust
 /// One selected row×channel sample after flagging, phase-centre shift and
-/// correlation routing. Flagged samples are not placed.
+/// correlation routing. Flagged samples are not placed; samples whose kernel
+/// support would leave the padded grid are dropped here (CASA rule), so the
+/// kernels have no bounds tests.
 #[derive(Clone, Copy)]
 pub struct Placement {
     pub u: f64, pub v: f64, pub w: f64,  // wavelengths at this sample's frequency
@@ -352,14 +361,19 @@ pub struct Placement {
     pub gradient: [f32; 2],              // pointing phase gradient (rad per cell); 0 otherwise
 }
 
+/// Two-level cell key (HPG `CFSimpleIndexer`): `group` linearises the
+/// variable-support axes (w-plane, frequency cell, PA cell, antenna-type
+/// pair); `cube` indexes fixed-size slices inside the group. Mueller planes
+/// live inside the cell, not in the key. Conjugation is decided in the
+/// kernel from `sign(w)` and the direction; baseline-order conjugation for
+/// heterogeneous arrays is baked into the cell by the CF set.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CfKey {
-    pub w_plane: u16, pub freq_cell: u16, pub pa_cell: u16, pub pair: u16,
-    pub mueller: u8, pub conjugate: bool,
-}
+pub struct CfKey { pub group: u16, pub cube: u16 }
 
 /// Structure-of-arrays view of one bounded block. `values` and `weights` are
 /// `npol × n`, sample-major. Weight 0 never appears (flagged samples are dropped).
+/// Values are pre-multiplied by the phase-centre phasor and the weight once,
+/// here, not per tap.
 pub struct SampleBlock<'a> {
     pub placements: &'a [Placement],
     pub values: &'a [Complex32],
@@ -368,26 +382,32 @@ pub struct SampleBlock<'a> {
 }
 
 pub enum TapLayout<'a> {
-    /// Standard: one real row per oversampled offset, `rows[offset*support + i]`.
+    /// Standard: one real row per oversampled offset, `rows[offset*support + i]`,
+    /// oversampling-major so one fractional offset is one contiguous row.
     SeparableReal { rows: &'a [f32], support: u16, oversampling: u16 },
-    /// W, AW, mosaic: dense complex kernel, `data[(oy*support_x + ox) * ...]`
-    /// laid out oversampling-major so one fractional offset is contiguous.
-    Dense { data: &'a [Complex32], support: [u16; 2], oversampling: u16 },
+    /// W, AW, mosaic: dense complex kernel ordered `[oy][ox][mueller][iy][ix]`
+    /// (x fastest; one fractional offset contiguous), with `padding` major
+    /// cells per edge so the fine-offset sign selects the major index without
+    /// a branch (HPG layout). `mueller_planes` is 1 for scalar kernels.
+    Dense { data: &'a [Complex32], support: [u16; 2], oversampling: u16,
+            padding: u8, mueller_planes: u8 },
 }
 
-pub enum Direction { Adjoint, Forward }
+/// Which CF Mueller plane serves each (grid pol, visibility pol) pair, for
+/// the adjoint with w > 0 (`direct`) and its conjugate partner. The kernel
+/// swaps tables on `sign(w)` and on direction and flips the imaginary part
+/// (HPG `mueller_indexes` / `conjugate_mueller_indexes`). `None` skips a pair.
+pub struct MuellerRouting { pub direct: Vec<Vec<Option<u8>>>, pub conjugate: Vec<Vec<Option<u8>>> }
 
 pub trait ConvolutionFunctionSet: Send + Sync {
     /// Pure. Row context carries PA, antenna pair, field pointing offset, time.
-    fn key(&self, row: &RowContext, freq_hz: f64, w_lambda: f64, pol: usize,
-           direction: Direction) -> CfKey;
+    fn key(&self, row: &RowContext, freq_hz: f64, w_lambda: f64) -> CfKey;
     fn taps(&self, key: CfKey) -> TapLayout<'_>;
     /// FT[PB²] taps for the weight/sensitivity image (mosaic, AW); None otherwise.
     fn weight_taps(&self, key: CfKey) -> Option<TapLayout<'_>>;
+    fn mueller(&self) -> &MuellerRouting;
     /// Paired image-domain gridding correction (separable 1-D vectors per axis).
     fn image_correction(&self) -> &ImageCorrection;
-    /// Σ taps for sumwt accounting (AW); 1.0 otherwise.
-    fn normalization(&self, key: CfKey) -> f32;
 }
 ```
 
@@ -397,37 +417,54 @@ section 5.6), `MosaicPb` (per frequency and antenna-class pair, Lanczos
 oversampling 10, re-phased per pointing). Each keeps the CASA-pinned
 rounding and conjugation rules listed in section 4.3 in its own `key()`.
 
-Kernel contract (both backends implement exactly this):
+Kernel contract (both backends implement exactly this; integer grid and
+fine-offset coordinates are rounded in the kernel once per sample from
+(u, v, ν) with one rule shared by CPU and Metal):
 
 ```
-adjoint:  for each sample, tap' = (key.conjugate ? conj(t) : t) · e^{i(ix·gx + iy·gy)}
-          grid[plane, pol][u0+ix, v0+iy] += W · V · e^{iφ} · tap'         (Data)
-                                          += W · tap'                       (Psf: V = 1)
-                                          += W · weight_tap' at uvw = 0     (Weight)
-          sumwt[plane, pol] += W · normalization(key)
-          Taylor: term t grid receives W · s^t (data: t < N_t; psf: t < 2N_t−1)
-forward:  V_pred = e^{−iφ} · Σ_t s^t · Σ_{ix,iy} conj(tap'_t) · model[t][u0+ix, v0+iy]
-          AW divides by conj(normalization(key)).
+adjoint:  table = w > 0 ? mueller.direct : mueller.conjugate
+          for each (gpol, vpol) with table[gpol][vpol] = Some(m):
+            tap' = (w > 0 ? t : conj(t))[m] · e^{i(ix·gx + iy·gy)}
+            grid[plane, gpol][v0+iy, u0+ix] += V'_vpol · tap'                 (Data; V' = W·V·e^{iφ})
+                                             += W_vpol · tap'                 (Psf: V = 1)
+                                             += W_vpol · weight_tap' at uvw=0 (Weight)
+            sumwt[plane, gpol] += W_vpol · |Σ taps used|
+          Taylor: term t grid receives the same with W · s^t (data: t < N_t; psf: t < 2N_t−1)
+forward:  table swapped (w > 0 ? conjugate : direct); tap' conjugated
+          V_pred_vpol = e^{−iφ} · Σ_t s^t · Σ_{gpol,ix,iy} conj(tap'_t) · model[t][gpol][v0+iy, u0+ix]
+                        ÷ Σ taps used (unconjugated)
+residual: V − V_pred, then the adjoint on the residual in the same dispatch
 ```
 
 ```rust
 pub enum Mode { Data, Psf, Weight }
 pub enum GridPrecision { F32, F64 }
 
-/// Per-worker grid storage: planes × pols × terms over a plane or a tile with halo.
+/// Per-worker grid storage: `[plane][pol][term][y][x]`, x fastest, interleaved
+/// complex, over a whole plane or a tile with halo. Owns `sumwt` as f64.
+/// The same layout is the Metal buffer, so a device copy is one memcpy.
 pub struct GridAccumulator { /* private */ }
 
+pub enum Work<'a> {
+    Grid { mode: Mode, acc: &'a mut GridAccumulator },
+    Predict { model: &'a PreparedModelGrids, out: &'a mut [Complex32] },
+    /// Predict, subtract, grid the residual in one dispatch; optionally hand
+    /// the residual samples back (final pass writing MODEL_DATA/CORRECTED).
+    ResidualGrid { model: &'a PreparedModelGrids, acc: &'a mut GridAccumulator,
+                   residual_out: Option<&'a mut [Complex32]> },
+}
+
 pub trait GridBackend: Send {
-    fn grid(&mut self, block: &SampleBlock, cf: &dyn ConvolutionFunctionSet,
-            mode: Mode, acc: &mut GridAccumulator) -> Result<(), OperatorError>;
-    fn degrid(&mut self, block: &SampleBlock, cf: &dyn ConvolutionFunctionSet,
-              model: &PreparedModelGrids, out: &mut [Complex32]) -> Result<(), OperatorError>;
+    fn apply(&mut self, block: &SampleBlock, cf: &dyn ConvolutionFunctionSet,
+             work: Work<'_>) -> Result<(), OperatorError>;
 }
 ```
 
 `CpuBackend` is support-generic over both tap layouts with a specialised
-seven-tap separable path. `MetalBackend` (IF-4) implements the same trait with
-support-generic kernels and `float2` dense kernel storage.
+seven-tap separable path whose inner loop is one vector multiply-add per v
+row over the interleaved, x-contiguous grid row (Obit `fast_grid7` shape on
+NEON). `MetalBackend` (IF-4) implements the same trait with support-generic
+kernels and `float2` dense kernel storage.
 
 ```rust
 pub enum Basis { Constant, ChannelLocal { planes: u32 }, Taylor { terms: u32, reference_hz: f64 } }
@@ -530,6 +567,12 @@ pub struct MinorCycleView<'a> {
 }
 pub struct Controller { /* global, cycle and effective thresholds; inclusive flag; 1% check; divergence */ }
 
+/// A pixel component today; a Gaussian "aspen" (amplitude, sub-pixel centre,
+/// width) when an ASP solver lands. `accept` may revise earlier accepted
+/// components (ASP re-fits its active set), so `Update` is a list.
+pub enum Candidate { Pixel { index: usize, scale: u8, flux: Vec<f64> },
+                     Gaussian { amplitude: f64, centre: [f64; 2], width: f64 } }
+
 pub trait Solver {
     type State;
     fn initialize(&self, view: &MinorCycleView) -> Self::State;
@@ -554,13 +597,20 @@ team, not raw threads. CASA auto `cycleniter` semantics (#341) are part of
 
 ### 5.6 AW and mosaic convolution functions
 
-`AwCatalog::open_casa(path)` reads CASA `CFS_*`/`WTCFS_*` images into typed
-cells on demand with an in-memory LRU bounded by the reservation.
-`AwCatalog::generate_native(...)` (the existing native EVLA generation) writes
-CASA-format CF images into `<cache>/cfcache/` so the same loader serves both.
-No manifest, no payload hash, no eviction ledger. `MosaicPb` builds projectors
-per (frequency, antenna-class pair) from the PB model and caches re-phased
-kernels per pointing pair.
+`AwCatalog::open_casa(path)` reads only the CF image headers at open
+(support, sampling, W, frequency, Mueller and PA lists; LibRA's lazy-fill
+`CFCache`) and reads cell pixels on demand into an in-memory LRU bounded by
+the reservation. `AwCatalog::generate_native(...)` (the existing native EVLA
+generation) writes CASA-format CF images into `<cache>/cfcache/` so the same
+loader serves both. No manifest, no payload hash, no eviction ledger. The
+index rules are pinned to LibRA/CASA: `w_index = clamp(round(√(wIncr·|w|)),
+0, nW−1)` with `wVal[i] = i²/dW`; frequency cell = nearest listed value,
+precomputed per (spw, channel) with the conjugate map at √(2f0²−f²); PA cell
+by `|PA − PA_cf| ≤ dPA`; each cell normalised by its un-oversampled area
+before use. For AW the bounded source iterates spectral-window-major so one
+CF group is resident at a time. `MosaicPb` builds projectors per (frequency,
+antenna-class pair) from the PB model and caches re-phased kernels per
+pointing pair.
 
 ### 5.7 Products and normalisation (`casa-imaging-products`)
 
@@ -587,12 +637,77 @@ masks (#217) are rows in this table.
 
 `ImagingRequest` is one serde struct whose field names, choices and defaults
 are the provider-contracts catalog entries; `casars-imager` fills it from the
-resolved catalog values and nothing else. `validate()` runs once. `compile()`
+resolved catalog values and nothing else. New catalog entries introduced by
+this plan: `gridprecision` (D2), `backend = cpu | metal` (IF-4), and the
+`diagnostics` group (section 8.1). Each is added to the catalog in the ticket
+that lands the behaviour, with the Python wrappers and parameter reference
+regenerated in the same PR. `validate()` runs once. `compile()`
 returns `CompiledProblem` with no identity hashes except the AW cache key.
 `availability::check(&CompiledProblem, &HostResources)` is the one gate for
 capabilities that are not installed (Taylor-basis mosaic, Metal on
 non-macOS, joint continuum-line). Capabilities that are rejected are not in
 the catalog.
+
+### 5.9 Techniques adopted from Obit and LibRA/HPG
+
+Surveyed 2026-10-07 from the local Obit checkout (`ebc1c229`, GPL-2+, used as
+design reference only) and LibRA `0ab99e26` with vendored HPG 3.3.0. The
+section 5.3 signatures already reflect the "adopt now" rows.
+
+| Technique | Source | Where it lands |
+|---|---|---|
+| Mueller routing tables (direct and conjugate) selected by sign(w) and direction in the kernel; no per-sample Mueller index | HPG `gridding.hpp:605-680`, `hpg.hpp:1158` | `MuellerRouting`, kernel contract (IF-1) |
+| Two-level CF key: variable-support `group`, fixed `cube`; Mueller planes inside the cell | HPG `indexing.hpp:82-190` | `CfKey` (IF-1), `AwCatalog` (IF-3) |
+| Dense CF layout `[oy][ox][mueller][iy][ix]`, two padding cells per edge so the fine-offset sign selects the major index without a branch | HPG `impl.hpp:231-262`, `gridding.hpp:331-355` | `TapLayout::Dense` (IF-1) |
+| Separable kernel tabulated oversampling-major so one fractional offset is one contiguous row; seven-tap row as one vector multiply-add over an interleaved, x-contiguous grid row | Obit `ObitUVGrid.c:ConvFunc 1247-1438`, `fast_grid7 1902-1989` | `TapLayout::SeparableReal`, `CpuBackend` (IF-1) |
+| Samples whose support leaves the padded grid are dropped at placement, so kernels have no bounds tests; zero-weight samples never reach the tap loop | Obit `fast_prep_grid 1296-1348`; HPG `as_weight(flag)` | `Placement` construction (IF-1) |
+| Values pre-multiplied by phasor and weight once per sample; one fused predict → residual → grid dispatch per block | HPG `gridding.hpp:806-866` | `SampleBlock`, `Work::ResidualGrid` (IF-1, IF-4) |
+| sumwt accumulated in the tap loop as `W·|Σ taps used|`; degrid divides by the unconjugated sum of the taps used | HPG `gridding.hpp:590-680`; CASA `AWVisResampler.cc:404,558` | kernel contract (IF-1) |
+| Accumulator layout `[plane][pol][term][y][x]`, x fastest, shared by CPU and device so a device copy is one memcpy | HPG LayoutLeft grid | `GridAccumulator` (IF-1), `MetalBackend` (IF-4) |
+| f64 grid with f32 CF and visibilities as the default; f32 grid as the production precision when memory demands it | HPG `core.hpp:55-70`; Obit f32 grids with f64 phase | D2, `GridPrecision` |
+| Per-plane FFTs single-threaded on the worker team; FFTW threads never nested inside worker parallelism | Obit `ObitUVGridFFT2ImPar 852-1047` | `MajorCyclePass` finish rule (IF-2); FFTW threads only for the single-plane case, measured in IF-10 |
+| Memory admission as one arithmetic formula over visibility buffer, grids and images | Obit `ObitUVImagerGetNumPar 863-921` | `admit()` (D5, IF-6) |
+| Metadata-first CF cache: read headers at open, cell pixels on demand; pinned index rules for w, frequency (with conjugate map), PA and area normalisation | LibRA `CFCache.cc:231-560`, `CFBuffer.h:253-262`, `CFBuffer.cc:520-580`, `AWConvFunc.cc:463,546-553` | `AwCatalog` (IF-3), section 5.6 |
+| Spectral-window-major source order for AW so one CF group is resident at a time | LibRA `DataBase.h:165-192` | `BoundedSource` ordering (IF-3) |
+| Device stream rotation: upload of block k+1 overlaps gridding of block k; per-stream visibility buffers | HPG `runtime.hpp:333-575, 2249-2262` | `MetalBackend` buffer ring (IF-4) |
+| Weight image = visibility 1 at uvw 0 with the FT[PB²] set; PSF = visibility 1 at true uvw; same kernel, three accumulators in one pass | LibRA roadrunner modes, `HPGVisBuffer.inc:160-220` | `Mode::{Data,Psf,Weight}` (already planned) |
+| `Candidate` as an enum with a Gaussian variant and `accept` allowed to revise earlier components, so an ASP solver can land without changing the trait | LibRA `AspMatrixCleaner.cc` | `Solver` (IF-5) |
+| sumwt image carries `useweightimage`/`imagingmode` miscinfo for CASA-tool compatibility | LibRA `roadrunner.cc:878-918` | products (IF-8) |
+| Component merging at equal positions before prediction (already the behaviour of `ModelDelta`) | Obit `ObitTableCCUtilMergeSel` | kept |
+
+Performance-pass candidates (IF-10), each gated by a T0 law or a measurement
+before adoption:
+
+- Hermitian half-plane gridding with guard columns and conjugate folding
+  (Obit `ObitUVGridSetup`, `ThreadFlip`, `ThreadMerge`): halves grid memory
+  and FFT work for Hermitian plane sets only; needs a T0 law (half-plane =
+  full-plane to 1e-6) and a rule that cross-hand correlation grids are
+  excluded. Decided at gate R1 whether `GridAccumulator` reserves the layout.
+- Replica-merge partition (planes × sample chunks with private grids and an
+  O(grid) merge per replica; Obit `ObitThreadGridSetupMF`): a third
+  decomposition between `Planes` and `Regions`, measured against `Regions`
+  for single-plane MFS.
+- Shared-grid atomics (HPG) versus region or lane ownership on Metal for
+  wide-support W/AW kernels.
+- Vectorised sin/cos for the phase rotation (Obit `ObitSinCosVec`, Pommier
+  polynomial) only if profiling shows the phasor in the top costs.
+- CF prefetch of the next spectral window on a helper thread (LibRA
+  `CFServer`).
+- Bounded tap-plan cache as a `MajorCyclePass` strategy (D1 follow-up).
+- Parallel active-list subtraction in Clark (Obit `ThreadCLEAN`: split the
+  pixel list across workers, each subtracts and finds a local peak, reduce).
+- FFTW threading for single-plane 4096² MFS.
+
+Rejected for this plan, with reasons: Obit faceting as the W-term method
+(changes the product contract; VLASS parity uses AW); beam-peak
+normalisation (differs from CASA sumwt); DFT component prediction (loses to
+gridded prediction at 10⁷–10⁸ samples); the common-resolution frequency
+taper and joint subband CLEAN (not CASA MT-MFS semantics); Obit autoWindow
+(cheaper but weaker than CASA automask, and parity needs automask); Obit's
+"middle loop" of patch-only residual updates between major cycles (our Clark
+exact refresh already covers it); LibRA's disk-image process split per stage
+(full-image round trips per major cycle); the persistent in-place residual
+visibility file (pays only with DFT prediction of few components).
 
 ## 6. Deletion list
 
@@ -636,8 +751,9 @@ both backends:
 - PSF peak = 1 after normalisation and PSF Hermitian symmetry;
 - point-source dirty image = flux × shifted PSF within 1e-3;
 - sumwt = Σ W (standard, mosaic) and the AW rule;
-- worker-count invariance within tolerance (bitwise for CPU `Partition::Planes`;
-  1e-6 for `Regions`; 1e-4 for Metal);
+- worker-count invariance within tolerance (bitwise for CPU f64
+  `Partition::Planes`; 1e-6 for f64 `Regions`; 1e-4 for CPU f32 and Metal);
+- f32 versus f64 CPU grids agree within 1e-4 normalised on every CF set;
 - mosaic: weight image equals Σ_k PB_k² at the pointing centres; W: zero
   |w| reduces to the standard kernel; AW: cold and warm catalogs give identical
   keys and taps;
@@ -748,11 +864,13 @@ the umbrella issue.
 `SampleBlock`, `CfKey`, `TapLayout`, `ConvolutionFunctionSet`, `Spheroidal`,
 `GridBackend`, `CpuBackend` (support-generic plus the specialised seven-tap
 path, both precisions, Taylor terms, Data/Psf/Weight modes),
-`GridAccumulator`, `MeasurementOperator` (`accumulator`, `prepare_model`,
-`finish`), `ImageCorrection`, FFT centring (one implementation),
-`PolarizationRouting`, the single spectral resampler, `WeightingGeneration`
-and `build_density_grid` (moved cell rules). T0 laws for `Spheroidal` on
-`CpuBackend`. No production caller yet; this is the pattern ticket.
+`GridAccumulator`, `MuellerRouting`, `Work`, `MeasurementOperator`
+(`accumulator`, `prepare_model`, `finish`), `ImageCorrection`, FFT centring
+(one implementation), `PolarizationRouting`, the single spectral resampler,
+`WeightingGeneration` and `build_density_grid` (moved cell rules). The
+section 5.9 "adopt now" rows for IF-1 are part of the contract. T0 laws for
+`Spheroidal` on `CpuBackend`, both precisions. No production caller yet; this
+is the pattern ticket.
 Deletions: none (IF-2 deletes the drivers). Acceptance: T0 green; rustdoc on
 every public item states the contract; file sizes under 1,500 lines.
 
@@ -780,9 +898,11 @@ mosaic, W, AW synthetic; T1.5 `refim_alma_mosaic`, `refim_mawproject`,
 warm AW catalogs give identical products.
 
 **IF-4 Metal backend (Opus).** `casa-imaging-metal`: `MetalBackend`
-implementing `GridBackend` for both tap layouts, support-generic kernels,
-one dispatch path (validate, map, commit, pending), one buffer ring, status
-bits for errors. `BackendChoice::Metal` selectable from the request on macOS
+implementing `GridBackend::apply` for both tap layouts and all three `Work`
+variants, support-generic kernels, one dispatch path (validate, map, commit,
+pending), a per-stream buffer ring with upload of block k+1 overlapping
+gridding of block k, status bits for errors, grids in the shared
+`GridAccumulator` layout. `BackendChoice::Metal` selectable from the request on macOS
 only. Delete the two Metal drivers and dead MSL kernels (section 6 row 6).
 Acceptance: T0 Metal versus CPU within 1e-4 for every CF set; T1 cube and MFS
 on Metal; T1.5 pilot Metal W4 time recorded.
@@ -826,10 +946,10 @@ stage-timing consumers. Acceptance: checker green; T1 with
 run every T2 row before and after each optimisation; bars: within 10% of the
 section 4.3 checkpoints for cube Metal W4, MFS pilot W1/W4/Metal, MFS 512²
 W1/W4, and the #625 serial AW/MT-MFS bar; peak RSS at or below the recorded
-values. Candidate optimisations only from measurement: bounded tap-plan
-cache strategy, tile/lane ownership for wide-support Metal kernels, FFTW
-threading in the driver. Acceptance: a results table in the umbrella issue;
-no new abstraction without a measured win.
+values. Candidate optimisations only from measurement, taken from the
+section 5.9 candidate list in the order the profile suggests. Acceptance: a
+results table in the umbrella issue; no new abstraction without a measured
+win.
 
 **IF-11 Docs and closure (Fable).** `ARCHITECTURE.md`, `TESTING.md`,
 `docs/agent-reference.md`, `.agents/skills`, ADR index; delete
@@ -864,10 +984,13 @@ discovery invalidated a section 3 decision or a section 5 signature?
 - **R1, after IF-1 (pattern gate).** Reviews the operator core before any
   caller depends on it. Specific questions: are `Placement`/`SampleBlock`
   sufficient for W, AW, mosaic and Taylor without extension (check against
-  section 5.1's table); does `GridBackend` fit the Metal kernel plan; are the
-  CASA-pinned rules placed in `key()` where IF-3 expects them; is the T0 law
-  set strong enough to replace the fixture tests IF-2 will delete. Replan
-  output: amended signatures in section 5.3, amended IF-2/IF-3/IF-4 bodies.
+  section 5.1's table and the HPG record); does `GridBackend::apply` with
+  `Work` fit the Metal kernel plan; are the CASA-pinned rules placed in
+  `key()` and `MuellerRouting` where IF-3 expects them; does
+  `GridAccumulator` reserve or exclude the Hermitian half-plane layout
+  (section 5.9 candidate); is the T0 law set strong enough to replace the
+  fixture tests IF-2 will delete. Replan output: amended signatures in
+  section 5.3, amended IF-2/IF-3/IF-4 bodies.
 - **R2, after IF-4 (operator complete gate).** All drivers deleted, both
   backends live, replay gone. Specific questions: did D1 cost anything visible
   on the pilot (W4 time versus 15.8 s) and is a tap cache now justified or
