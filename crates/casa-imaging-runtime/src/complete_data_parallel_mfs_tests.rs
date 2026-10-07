@@ -1303,7 +1303,7 @@ fn fixture() -> &'static Fixture {
         request.polarization_setup =
             SyntheticPolarizationSetup::new(SyntheticPolarizationBasis::Circular, 1)
                 .expect("one circular correlation");
-        request.spectral_setup.channel_count = 1;
+        request.spectral_windows[0].channel_count = 1;
         request.worker_policy = SyntheticWorkerPolicy::Fixed;
         request.row_workers = Some(1);
         request.channel_workers = Some(1);

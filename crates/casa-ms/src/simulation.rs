@@ -4,7 +4,7 @@
 //! This module owns the first reusable MS-writing slice of the VLA simulation
 //! vertical. It mirrors the CASA `simobserve` setup order at the data-model
 //! level: validate a model image path, set array configuration, define the
-//! spectral window and field, sample the requested observing time range, and
+//! spectral windows and fields, sample the requested observing time range, and
 //! write CASA-compatible MS subtables plus uncorrupted visibility rows.
 
 use casa_coordinates::fits::{FitsHeader, from_fits_header};
@@ -39,11 +39,12 @@ use crate::derived::engine::polarization_operator_angle;
 use crate::error::{MsError, MsResult};
 use crate::flagging::shadowed_antennas_from_projected_baselines;
 use crate::schema::{self, SubtableId};
-use crate::write_session::{
-    MeasurementSetCreateTarget, MeasurementSetWriteBatch, MeasurementSetWritePlan,
-    MeasurementSetWriteResources, MeasurementSetWriteSession,
-};
+use crate::write_session::{MeasurementSetCreateTarget, MeasurementSetWriteSession};
 use crate::{MeasurementSet, MeasurementSetBuilder, OptionalMainColumn};
+
+mod main_columns;
+
+use main_columns::MainArrayWriter;
 
 const DEFAULT_SIMOBSERVE_ELEVATION_LIMIT_RAD: f64 = 20.0_f64.to_radians();
 const SIDEREAL_DAY_SECONDS: f64 = 86_164.090_5;
@@ -277,7 +278,7 @@ const VLA_A_ANTENNAS: &[VLaAntennaDef] = &[
     },
 ];
 
-/// Single LSRK spectral-window setup for an idealized synthetic observation.
+/// One LSRK spectral window of an idealized synthetic observation.
 ///
 /// Channel frequencies are used directly for prediction and recorded as LSRK
 /// in the MeasurementSet. The simulator does not model time-dependent TOPO
@@ -594,13 +595,23 @@ fn default_line_sigma_fraction() -> f64 {
 }
 
 impl SyntheticAnalyticSpectrum {
-    /// Evaluate the component flux density for one spectral channel.
-    pub fn flux_for_channel(&self, spectral_setup: &SyntheticSpectralSetup, channel: usize) -> f64 {
+    /// Evaluate the component flux density for one channel of `window`.
+    ///
+    /// The continuum is a single power law across every window of the
+    /// observation, referenced to `reference_frequency_hz` or, when that is
+    /// absent, to `observation_reference_frequency_hz` (the first window's
+    /// reference frequency for a generated observation). Line and absorption
+    /// profiles are placed by fraction of `window`'s own channel range.
+    pub fn flux_for_channel(
+        &self,
+        window: &SyntheticSpectralSetup,
+        channel: usize,
+        observation_reference_frequency_hz: f64,
+    ) -> f64 {
         let reference_frequency_hz = self
             .reference_frequency_hz
-            .unwrap_or_else(|| spectral_setup.reference_frequency_hz());
-        let frequency_hz =
-            spectral_setup.start_frequency_hz + channel as f64 * spectral_setup.channel_width_hz;
+            .unwrap_or(observation_reference_frequency_hz);
+        let frequency_hz = window.start_frequency_hz + channel as f64 * window.channel_width_hz;
         let continuum = if reference_frequency_hz > 0.0 && frequency_hz > 0.0 {
             self.flux_jy * (frequency_hz / reference_frequency_hz).powf(self.spectral_index)
         } else {
@@ -611,14 +622,14 @@ impl SyntheticAnalyticSpectrum {
                 self.line_peak_jy,
                 self.line_center_fraction,
                 self.line_sigma_fraction,
-                spectral_setup.channel_count,
+                window.channel_count,
                 channel,
             )
             - gaussian_channel_profile(
                 self.absorption_peak_jy,
                 self.absorption_center_fraction,
                 self.absorption_sigma_fraction,
-                spectral_setup.channel_count,
+                window.channel_count,
                 channel,
             )
     }
@@ -691,8 +702,13 @@ pub struct SyntheticObservationRequest {
     pub allow_below_elevation_limit: bool,
     /// Antenna configuration.
     pub antennas: Vec<SyntheticAntenna>,
-    /// Spectral-window setup.
-    pub spectral_setup: SyntheticSpectralSetup,
+    /// Spectral windows, observed simultaneously.
+    ///
+    /// Window `i` writes `SPECTRAL_WINDOW` row `i` and `DATA_DESCRIPTION` row
+    /// `i`, and every time sample writes one MAIN row per baseline per window
+    /// with `DATA_DESC_ID = i`. A FITS model's spectral planes and bandpass
+    /// corruption gains index the windows' channels concatenated in order.
+    pub spectral_windows: Vec<SyntheticSpectralSetup>,
     /// Polarization/correlation setup.
     #[serde(default)]
     pub polarization_setup: SyntheticPolarizationSetup,
@@ -742,12 +758,12 @@ impl SyntheticObservationRequest {
             elevation_limit_rad: default_simobserve_elevation_limit_rad(),
             allow_below_elevation_limit: false,
             antennas,
-            spectral_setup: SyntheticSpectralSetup {
+            spectral_windows: vec![SyntheticSpectralSetup {
                 name: "Qband".to_string(),
                 start_frequency_hz: 44.0e9,
                 channel_width_hz: 128.0e6,
                 channel_count: 1,
-            },
+            }],
             polarization_setup: SyntheticPolarizationSetup::default(),
             predict_model: true,
             corruption: None,
@@ -757,6 +773,44 @@ impl SyntheticObservationRequest {
             channel_workers: None,
         }
     }
+
+    /// Default analytic continuum reference: the first window's reference frequency.
+    fn reference_frequency_hz(&self) -> f64 {
+        self.spectral_windows[0].reference_frequency_hz()
+    }
+
+    fn total_channel_count(&self) -> usize {
+        self.spectral_windows
+            .iter()
+            .map(|window| window.channel_count)
+            .sum()
+    }
+
+    fn observed_windows(&self) -> Vec<ObservedWindow<'_>> {
+        let mut first_channel = 0;
+        self.spectral_windows
+            .iter()
+            .enumerate()
+            .map(|(data_description_id, setup)| {
+                let window = ObservedWindow {
+                    data_description_id,
+                    setup,
+                    first_channel,
+                };
+                first_channel += setup.channel_count;
+                window
+            })
+            .collect()
+    }
+}
+
+/// One spectral window with the index of its first channel in the
+/// observation's concatenated channel list.
+#[derive(Clone, Copy)]
+struct ObservedWindow<'a> {
+    data_description_id: usize,
+    setup: &'a SyntheticSpectralSetup,
+    first_channel: usize,
 }
 
 /// Deterministic corruption controls for tutorial-grade synthetic observations.
@@ -909,7 +963,7 @@ pub struct SyntheticObservationReport {
     pub time_sample_count: usize,
     /// Number of main-table rows written.
     pub main_row_count: usize,
-    /// Number of channels written in the spectral window.
+    /// Number of channels written, summed over all spectral windows.
     pub channel_count: usize,
     /// Number of correlations written per visibility row.
     #[serde(default)]
@@ -968,22 +1022,24 @@ pub struct SyntheticMainRowTimingReport {
     pub prediction_gather_millis: u128,
     /// Time spent applying deterministic corruption/noise.
     pub corruption_millis: u128,
-    /// Time spent waiting to enqueue DATA row batches to the background writer.
+    /// Time spent handing MAIN array rows to the column writers: enqueueing
+    /// batches for the background writer, or writing rows directly when the
+    /// windows have mixed channel counts.
     #[serde(default)]
     pub data_io_enqueue_millis: u128,
-    /// Session lifetime available to the producer, excluding bounded-queue wait.
+    /// Write-session lifetime available to the producer, excluding queue wait.
     #[serde(default)]
     pub data_io_producer_millis: u128,
-    /// Time the producer was blocked by the bounded writer queue.
+    /// Time the producer was blocked by the bounded background-writer queue.
     #[serde(default)]
     pub data_io_queue_wait_millis: u128,
-    /// Time spent joining and finalizing the background DATA writer.
+    /// Time spent finalizing and installing the MAIN array-column writers.
     #[serde(default)]
     pub data_io_finalize_millis: u128,
-    /// Time spent packing DATA rows into tiled storage buffers.
+    /// Time spent packing MAIN array rows into tiled storage buffers.
     #[serde(default)]
     pub data_io_assemble_millis: u128,
-    /// Time spent writing DATA tile buffers to disk.
+    /// Time spent writing MAIN array tiles to disk.
     #[serde(default)]
     pub data_io_write_millis: u128,
     /// Bytes written through the streamed tiled MAIN column writers.
@@ -1058,9 +1114,9 @@ pub fn generate_synthetic_observation_ms(
     populate_antennas(&mut ms, &request.antennas)?;
     populate_field(&mut ms, request)?;
     populate_pointing(&mut ms, request, &sample_times)?;
-    populate_spectral_window(&mut ms, &request.spectral_setup)?;
+    populate_spectral_windows(&mut ms, &request.spectral_windows)?;
     populate_polarization(&mut ms, &request.polarization_setup)?;
-    populate_data_description(&mut ms)?;
+    populate_data_descriptions(&mut ms, request.spectral_windows.len())?;
     populate_state(&mut ms)?;
     populate_feed(&mut ms, request, &request.polarization_setup)?;
     populate_observation(&mut ms, request, &sample_times)?;
@@ -1072,18 +1128,11 @@ pub fn generate_synthetic_observation_ms(
     let model_started = Instant::now();
     let model = prepare_sky_model(request)?;
     let model_prepare_millis = elapsed_millis(model_started.elapsed());
-    let write_resources = MeasurementSetWriteResources::from_system_memory(2)
-        .map_err(|error| MsError::SyntheticObservation(error.to_string()))?;
-    let write_plan = MeasurementSetWritePlan::visibility_creation(
+    let mut main_column_writer = MainArrayWriter::start(
+        request,
         baseline_count * time_sample_count,
-        request.polarization_setup.correlation_count,
-        request.spectral_setup.channel_count,
-        &request.telescope_name,
-        write_resources,
-    )
-    .map_err(|error| MsError::SyntheticObservation(error.to_string()))?;
-    let mut main_column_writer = MeasurementSetWriteSession::start(&physical_output_ms, write_plan)
-        .map_err(|error| MsError::SyntheticObservation(error.to_string()))?;
+        &physical_output_ms,
+    )?;
     let mut main_rows = populate_main_rows(
         request,
         &sample_times,
@@ -1097,6 +1146,7 @@ pub fn generate_synthetic_observation_ms(
         column_overrides.insert_deferred(column);
     }
     let write_telemetry = main_column_writer
+        .session
         .save_and_finish(&mut ms, &column_overrides)
         .map_err(|error| MsError::SyntheticObservation(error.to_string()))?;
     main_rows.timing.data_io_producer_millis =
@@ -1137,8 +1187,8 @@ pub fn generate_synthetic_observation_ms(
         observation_mode: request.observation_mode,
         baseline_count,
         time_sample_count,
-        main_row_count: baseline_count * time_sample_count,
-        channel_count: request.spectral_setup.channel_count,
+        main_row_count: main_rows.row_count,
+        channel_count: request.total_channel_count(),
         correlation_count: request.polarization_setup.correlation_count,
         nonzero_visibility_count: main_rows.nonzero_visibility_count,
         flagged_row_count: main_rows.flagged_row_count,
@@ -1192,7 +1242,7 @@ fn prepare_sky_model(request: &SyntheticObservationRequest) -> MsResult<Option<P
                 (*model_peak_jy_per_pixel).or(request.model_peak_jy_per_pixel),
                 *direction_reference_rad,
                 *cell_size_rad,
-                request.spectral_setup.channel_count,
+                request.total_channel_count(),
             )?,
         )))),
         Some(SyntheticSkyModel::AnalyticComponents {
@@ -1225,7 +1275,7 @@ fn prepare_sky_model(request: &SyntheticObservationRequest) -> MsResult<Option<P
                 request.model_peak_jy_per_pixel,
                 None,
                 None,
-                request.spectral_setup.channel_count,
+                request.total_channel_count(),
             )?,
         )))),
     }
@@ -1494,24 +1544,27 @@ fn validate_request(request: &SyntheticObservationRequest) -> MsResult<()> {
             )));
         }
     }
-    if request.spectral_setup.channel_count == 0 {
+    if request.spectral_windows.is_empty() {
         return Err(MsError::SyntheticObservation(
-            "spectral setup must include at least one channel".to_string(),
+            "synthetic observation requires at least one spectral window".to_string(),
         ));
     }
-    if request.spectral_setup.start_frequency_hz <= 0.0
-        || !request.spectral_setup.start_frequency_hz.is_finite()
-    {
-        return Err(MsError::SyntheticObservation(
-            "spectral start frequency must be positive".to_string(),
-        ));
-    }
-    if request.spectral_setup.channel_width_hz == 0.0
-        || !request.spectral_setup.channel_width_hz.is_finite()
-    {
-        return Err(MsError::SyntheticObservation(
-            "spectral channel width must be finite and non-zero".to_string(),
-        ));
+    for (index, window) in request.spectral_windows.iter().enumerate() {
+        if window.channel_count == 0 {
+            return Err(MsError::SyntheticObservation(format!(
+                "spectral window {index} must include at least one channel"
+            )));
+        }
+        if window.start_frequency_hz <= 0.0 || !window.start_frequency_hz.is_finite() {
+            return Err(MsError::SyntheticObservation(format!(
+                "spectral window {index} start frequency must be positive"
+            )));
+        }
+        if window.channel_width_hz == 0.0 || !window.channel_width_hz.is_finite() {
+            return Err(MsError::SyntheticObservation(format!(
+                "spectral window {index} channel width must be finite and non-zero"
+            )));
+        }
     }
     if request.row_workers == Some(0) || request.channel_workers == Some(0) {
         return Err(MsError::SyntheticObservation(
@@ -1816,43 +1869,44 @@ fn direction_poly_array(direction_rad: [f64; 2]) -> Value {
     ))
 }
 
-fn populate_spectral_window(
+fn populate_spectral_windows(
     ms: &mut MeasurementSet,
-    spectral_setup: &SyntheticSpectralSetup,
+    windows: &[SyntheticSpectralSetup],
 ) -> MsResult<()> {
-    let frequencies = spectral_setup.channel_frequencies_hz();
-    let widths = vec![spectral_setup.channel_width_hz; spectral_setup.channel_count];
-    let row = row_from_defs(
-        schema::spectral_window::REQUIRED_COLUMNS,
-        &[
-            ("NUM_CHAN", i(spectral_setup.channel_count as i32)),
-            ("NAME", s(&spectral_setup.name)),
-            ("REF_FREQUENCY", f(spectral_setup.reference_frequency_hz())),
-            ("TOTAL_BANDWIDTH", f(spectral_setup.total_bandwidth_hz())),
-            (
-                "CHAN_FREQ",
-                f64_array(&frequencies, vec![frequencies.len()]),
-            ),
-            ("CHAN_WIDTH", f64_array(&widths, vec![widths.len()])),
-            ("EFFECTIVE_BW", f64_array(&widths, vec![widths.len()])),
-            ("RESOLUTION", f64_array(&widths, vec![widths.len()])),
-            ("MEAS_FREQ_REF", i(FrequencyRef::LSRK.casacore_code())),
-            (
-                "NET_SIDEBAND",
-                i(if spectral_setup.channel_width_hz >= 0.0 {
-                    1
-                } else {
-                    -1
-                }),
-            ),
-            ("FREQ_GROUP", i(0)),
-            ("FREQ_GROUP_NAME", s("")),
-            ("IF_CONV_CHAIN", i(0)),
-            ("FLAG_ROW", b(false)),
-        ],
-    );
     let spectral_window = subtable_mut(ms, SubtableId::SpectralWindow)?;
-    spectral_window.add_row(row)?;
+    for window in windows {
+        let frequencies = window.channel_frequencies_hz();
+        let widths = vec![window.channel_width_hz; window.channel_count];
+        spectral_window.add_row(row_from_defs(
+            schema::spectral_window::REQUIRED_COLUMNS,
+            &[
+                ("NUM_CHAN", i(window.channel_count as i32)),
+                ("NAME", s(&window.name)),
+                ("REF_FREQUENCY", f(window.reference_frequency_hz())),
+                ("TOTAL_BANDWIDTH", f(window.total_bandwidth_hz())),
+                (
+                    "CHAN_FREQ",
+                    f64_array(&frequencies, vec![frequencies.len()]),
+                ),
+                ("CHAN_WIDTH", f64_array(&widths, vec![widths.len()])),
+                ("EFFECTIVE_BW", f64_array(&widths, vec![widths.len()])),
+                ("RESOLUTION", f64_array(&widths, vec![widths.len()])),
+                ("MEAS_FREQ_REF", i(FrequencyRef::LSRK.casacore_code())),
+                (
+                    "NET_SIDEBAND",
+                    i(if window.channel_width_hz >= 0.0 {
+                        1
+                    } else {
+                        -1
+                    }),
+                ),
+                ("FREQ_GROUP", i(0)),
+                ("FREQ_GROUP_NAME", s("")),
+                ("IF_CONV_CHAIN", i(0)),
+                ("FLAG_ROW", b(false)),
+            ],
+        ))?;
+    }
     for column in ["CHAN_FREQ", "REF_FREQUENCY"] {
         TableMeasDesc::new_variable_int(
             column,
@@ -1903,16 +1957,18 @@ fn populate_polarization(
     Ok(())
 }
 
-fn populate_data_description(ms: &mut MeasurementSet) -> MsResult<()> {
-    let row = row_from_defs(
-        schema::data_description::REQUIRED_COLUMNS,
-        &[
-            ("SPECTRAL_WINDOW_ID", i(0)),
-            ("POLARIZATION_ID", i(0)),
-            ("FLAG_ROW", b(false)),
-        ],
-    );
-    subtable_mut(ms, SubtableId::DataDescription)?.add_row(row)?;
+fn populate_data_descriptions(ms: &mut MeasurementSet, window_count: usize) -> MsResult<()> {
+    let data_description = subtable_mut(ms, SubtableId::DataDescription)?;
+    for spectral_window_id in 0..window_count {
+        data_description.add_row(row_from_defs(
+            schema::data_description::REQUIRED_COLUMNS,
+            &[
+                ("SPECTRAL_WINDOW_ID", i(spectral_window_id as i32)),
+                ("POLARIZATION_ID", i(0)),
+                ("FLAG_ROW", b(false)),
+            ],
+        ))?;
+    }
     Ok(())
 }
 
@@ -2039,15 +2095,17 @@ fn populate_main_rows(
     request: &SyntheticObservationRequest,
     sample_times: &[f64],
     model: Option<&PreparedSkyModel>,
-    main_column_writer: &mut MeasurementSetWriteSession,
+    writer: &mut MainArrayWriter,
 ) -> MsResult<MainRowsReport> {
     let measures: std::sync::Arc<dyn MeasuresProvider> = crate::open_measures_runtime()?;
-    let samples = sample_times.len();
     let num_corr = request.polarization_setup.correlation_count;
-    let num_chan = request.spectral_setup.channel_count;
-    let channel_prediction_workers = simobserve_channel_worker_count(request, num_chan);
+    let windows = request.observed_windows();
+    let window_prediction_workers = windows
+        .iter()
+        .map(|window| simobserve_channel_worker_count(request, window.setup.channel_count))
+        .collect::<Vec<_>>();
     let field_plan_started = Instant::now();
-    let field_plans = build_field_plans(request, model)?;
+    let field_plans = build_field_plans(request, &windows, model)?;
     if trace_simobserve_setup() {
         eprintln!(
             "simobserve_setup_trace stage=field_plans fields={} total_millis={}",
@@ -2059,43 +2117,148 @@ fn populate_main_rows(
         SyntheticCorruptionState::new(
             config,
             request.antennas.len(),
-            request.spectral_setup.channel_count,
-            samples,
+            request.total_channel_count(),
+            sample_times.len(),
         )
     });
     let mut nonzero_visibility_count = 0usize;
     let mut timing = MainRowTimingDurations {
-        channel_prediction_workers,
+        channel_prediction_workers: window_prediction_workers.iter().copied().max().unwrap_or(1),
         ..MainRowTimingDurations::default()
     };
-    let row_pairs = observation_row_pairs(request);
-    let baseline_count = row_pairs.len();
-    let total_row_count = samples * baseline_count;
     let observatory = simulation_observatory_position(
         &request.telescope_name,
         &request.antennas,
         measures.as_ref(),
     );
-    let elevation_margin_rad = antenna_elevation_margin_rad(&request.antennas, &observatory);
-    let uvw_production_trace = SimobserveUvwProductionTrace::from_env();
-    let mut flagged_row_count = 0usize;
-    let mut elevation_flagged_row_count = 0usize;
-    let mut shadow_flagged_row_count = 0usize;
+    let mut geometry = SampleGeometry {
+        request,
+        elevation_margin_rad: antenna_elevation_margin_rad(&request.antennas, &observatory),
+        measures,
+        observatory,
+        row_pairs: observation_row_pairs(request),
+        uvw_production_trace: SimobserveUvwProductionTrace::from_env(),
+        window_count: windows.len(),
+        flag_counts: SampleFlagCounts::default(),
+    };
 
     for (sample, time) in sample_times.iter().copied().enumerate() {
         let uvw_started = Instant::now();
         let field_id = sample % field_plans.len();
         let field_plan = &field_plans[field_id];
+        let rows = geometry.rows(sample, time, field_plan.phase_center_rad)?;
+        timing.uvw_and_row_setup += uvw_started.elapsed();
+
+        for (window, prediction_workers) in windows.iter().zip(&window_prediction_workers) {
+            let prediction_started = Instant::now();
+            let prediction = predicted_data_values_for_rows_with_workers_timed(
+                field_plan
+                    .window_predictors
+                    .as_ref()
+                    .map(|predictors| &predictors[window.data_description_id]),
+                window.setup,
+                &rows.uvws,
+                num_corr,
+                *prediction_workers,
+            );
+            let mut data_rows = prediction.rows;
+            if let Some(parallactic_angles) = &rows.parallactic_angles {
+                apply_fractional_stokes_to_linear_rows(
+                    &request.polarization_setup,
+                    &rows.specs,
+                    parallactic_angles,
+                    &mut data_rows,
+                    window.setup.channel_count,
+                );
+            }
+            timing.prediction_worker_wall += prediction.worker_wall;
+            timing.prediction_gather += prediction.gather;
+            timing.prediction += prediction_started.elapsed();
+            let corruption_started = Instant::now();
+            nonzero_visibility_count += apply_corruption_and_count_rows_with_workers(
+                request,
+                corruption.as_ref(),
+                &rows.specs,
+                &mut data_rows,
+                *window,
+                sample,
+            );
+            timing.corruption += corruption_started.elapsed();
+            let scalar_started = Instant::now();
+            push_synthetic_scalar_rows(
+                &mut writer.session,
+                &geometry.row_pairs,
+                &rows.flags,
+                SyntheticRowIdentity {
+                    sample,
+                    time,
+                    field_id,
+                    data_description_id: window.data_description_id,
+                },
+                request.integration_seconds,
+                request.observation_mode,
+            )?;
+            timing.scalar_column += scalar_started.elapsed();
+            let data_io_started = Instant::now();
+            writer.push_rows(
+                [num_corr, window.setup.channel_count],
+                data_rows,
+                &rows.flags,
+                &rows.uvws,
+            )?;
+            timing.data_io_enqueue += data_io_started.elapsed();
+        }
+    }
+    let flag_counts = geometry.flag_counts;
+    Ok(MainRowsReport {
+        row_count: sample_times.len() * geometry.row_pairs.len() * windows.len(),
+        nonzero_visibility_count,
+        flagged_row_count: flag_counts.flagged,
+        elevation_flagged_row_count: flag_counts.elevation,
+        shadow_flagged_row_count: flag_counts.shadow,
+        timing: timing.into_report(),
+    })
+}
+
+/// Observation-wide context for building each time sample's baseline rows.
+struct SampleGeometry<'a> {
+    request: &'a SyntheticObservationRequest,
+    measures: std::sync::Arc<dyn MeasuresProvider>,
+    observatory: MPosition,
+    elevation_margin_rad: f64,
+    row_pairs: Vec<BaselinePair>,
+    uvw_production_trace: Option<SimobserveUvwProductionTrace>,
+    window_count: usize,
+    flag_counts: SampleFlagCounts,
+}
+
+/// One time sample's baseline rows, shared by every spectral window.
+struct SampleRows {
+    specs: Vec<MainRowVisibilitySpec>,
+    uvws: Vec<[f64; 3]>,
+    flags: Vec<bool>,
+    /// Per-antenna feed angles, present only for fractional source polarization.
+    parallactic_angles: Option<Vec<f64>>,
+}
+
+impl SampleGeometry<'_> {
+    fn rows(
+        &mut self,
+        sample: usize,
+        time: f64,
+        phase_center_rad: [f64; 2],
+    ) -> MsResult<SampleRows> {
+        let request = self.request;
         let antenna_uvws = antenna_uvw_positions(
             &request.antennas,
-            field_plan.phase_center_rad,
+            phase_center_rad,
             time,
-            &observatory,
-            std::sync::Arc::clone(&measures),
+            &self.observatory,
+            std::sync::Arc::clone(&self.measures),
         )?;
-        let mut row_specs = Vec::with_capacity(baseline_count);
-        let mut row_uvws = Vec::with_capacity(baseline_count);
-        for (baseline_index, pair) in row_pairs.iter().copied().enumerate() {
+        let mut specs = Vec::with_capacity(self.row_pairs.len());
+        let mut uvws = Vec::with_capacity(self.row_pairs.len());
+        for (baseline_index, pair) in self.row_pairs.iter().copied().enumerate() {
             let uvw = if pair.antenna1 == pair.antenna2 {
                 [0.0, 0.0, 0.0]
             } else {
@@ -2105,138 +2268,113 @@ fn populate_main_rows(
                     antenna_uvws[pair.antenna2][2] - antenna_uvws[pair.antenna1][2],
                 ]
             };
-            let row_number = sample * baseline_count + baseline_index;
-            if uvw_production_trace
+            if self
+                .uvw_production_trace
                 .as_ref()
                 .is_some_and(|trace| trace.matches(pair.antenna1, pair.antenna2, time))
             {
                 trace_simobserve_production_uvw(
-                    row_number,
+                    sample * self.row_pairs.len() * self.window_count + baseline_index,
                     sample,
                     pair.antenna1,
                     pair.antenna2,
                     time,
-                    field_plan.phase_center_rad,
-                    &observatory,
+                    phase_center_rad,
+                    &self.observatory,
                     &request.antennas,
                     &antenna_uvws,
                     uvw,
                 );
             }
-            row_specs.push(MainRowVisibilitySpec {
+            specs.push(MainRowVisibilitySpec {
                 antenna1: pair.antenna1,
                 antenna2: pair.antenna2,
                 uvw,
             });
-            row_uvws.push(uvw);
+            uvws.push(uvw);
         }
         let shadowed_antennas = if request.observation_mode == SyntheticObservationMode::TotalPower
         {
             vec![false; request.antennas.len()]
         } else {
-            shadowed_antennas_for_rows(&row_specs, &request.antennas)
+            shadowed_antennas_for_rows(&specs, &request.antennas)
         };
         let low_elevation_antennas = antennas_below_elevation_limit(
-            field_plan.phase_center_rad,
+            phase_center_rad,
             time,
             &request.antennas,
-            &observatory,
-            elevation_margin_rad,
+            &self.observatory,
+            self.elevation_margin_rad,
             request.elevation_limit_rad,
-            std::sync::Arc::clone(&measures),
+            std::sync::Arc::clone(&self.measures),
         )?;
-        timing.uvw_and_row_setup += uvw_started.elapsed();
-
-        let prediction_started = Instant::now();
-        let prediction = predicted_data_values_for_rows_with_workers_timed(
-            field_plan.predictors.as_ref(),
-            &request.spectral_setup,
-            &row_uvws,
-            num_corr,
-            channel_prediction_workers,
+        let flags = self.flag_counts.flag_rows(
+            &specs,
+            &low_elevation_antennas,
+            &shadowed_antennas,
+            self.window_count,
         );
-        let mut data_rows = prediction.rows;
-        if request
+        let parallactic_angles = request
             .polarization_setup
             .source_stokes_fractional_quv
             .iter()
             .any(|fraction| *fraction != 0.0)
-        {
-            let parallactic_angles = request
-                .antennas
-                .iter()
-                .map(|antenna| {
-                    field_parallactic_angle_rad(
-                        field_plan.phase_center_rad,
-                        time,
-                        antenna,
-                        std::sync::Arc::clone(&measures),
-                    )
-                    .map(polarization_operator_angle)
-                })
-                .collect::<MsResult<Vec<_>>>()?;
-            apply_fractional_stokes_to_linear_rows(
-                &request.polarization_setup,
-                &row_specs,
-                &parallactic_angles,
-                &mut data_rows,
-                num_chan,
-            );
-        }
-        timing.prediction_worker_wall += prediction.worker_wall;
-        timing.prediction_gather += prediction.gather;
-        timing.prediction += prediction_started.elapsed();
-        let corruption_started = Instant::now();
-        nonzero_visibility_count += apply_corruption_and_count_rows_with_workers(
-            request,
-            corruption.as_ref(),
-            &row_specs,
-            &mut data_rows,
-            num_chan,
-            sample,
-        );
-        timing.corruption += corruption_started.elapsed();
-        let mut flag_rows = Vec::with_capacity(row_specs.len());
-        for spec in &row_specs {
-            let elevation_flagged =
-                low_elevation_antennas[spec.antenna1] || low_elevation_antennas[spec.antenna2];
-            let shadow_flagged =
-                shadowed_antennas[spec.antenna1] || shadowed_antennas[spec.antenna2];
-            elevation_flagged_row_count += usize::from(elevation_flagged);
-            shadow_flagged_row_count += usize::from(shadow_flagged);
-            flagged_row_count += usize::from(elevation_flagged || shadow_flagged);
-            flag_rows.push(elevation_flagged || shadow_flagged);
-        }
-        let scalar_started = Instant::now();
-        push_synthetic_scalar_rows(
-            main_column_writer,
-            &row_pairs,
-            &flag_rows,
-            sample,
-            time,
-            field_plans.len(),
-            request.integration_seconds,
-            request.observation_mode,
-        )?;
-        timing.scalar_column += scalar_started.elapsed();
-        let data_io_started = Instant::now();
-        main_column_writer
-            .send_batch(MeasurementSetWriteBatch::Rows {
-                data_rows,
-                flag_rows,
-                uvw_rows: row_uvws,
+            .then(|| {
+                request
+                    .antennas
+                    .iter()
+                    .map(|antenna| {
+                        field_parallactic_angle_rad(
+                            phase_center_rad,
+                            time,
+                            antenna,
+                            std::sync::Arc::clone(&self.measures),
+                        )
+                        .map(polarization_operator_angle)
+                    })
+                    .collect::<MsResult<Vec<_>>>()
             })
-            .map_err(|error| MsError::SyntheticObservation(error.to_string()))?;
-        timing.data_io_enqueue += data_io_started.elapsed();
+            .transpose()?;
+        Ok(SampleRows {
+            specs,
+            uvws,
+            flags,
+            parallactic_angles,
+        })
     }
-    Ok(MainRowsReport {
-        row_count: total_row_count,
-        nonzero_visibility_count,
-        flagged_row_count,
-        elevation_flagged_row_count,
-        shadow_flagged_row_count,
-        timing: timing.into_report(),
-    })
+}
+
+/// MAIN rows flagged by elevation and shadowing, counted over every window.
+#[derive(Default)]
+struct SampleFlagCounts {
+    flagged: usize,
+    elevation: usize,
+    shadow: usize,
+}
+
+impl SampleFlagCounts {
+    /// Return one sample's per-baseline `FLAG_ROW` values, counting each
+    /// flagged baseline once per window row it produces.
+    fn flag_rows(
+        &mut self,
+        row_specs: &[MainRowVisibilitySpec],
+        low_elevation_antennas: &[bool],
+        shadowed_antennas: &[bool],
+        window_count: usize,
+    ) -> Vec<bool> {
+        row_specs
+            .iter()
+            .map(|spec| {
+                let elevation =
+                    low_elevation_antennas[spec.antenna1] || low_elevation_antennas[spec.antenna2];
+                let shadow = shadowed_antennas[spec.antenna1] || shadowed_antennas[spec.antenna2];
+                self.elevation += window_count * usize::from(elevation);
+                self.shadow += window_count * usize::from(shadow);
+                self.flagged += window_count * usize::from(elevation || shadow);
+                elevation || shadow
+            })
+            .collect()
+    }
 }
 
 fn shadowed_antennas_for_rows(
@@ -2433,16 +2571,17 @@ fn apply_corruption_and_count_rows_with_workers(
     corruption: Option<&SyntheticCorruptionState>,
     row_specs: &[MainRowVisibilitySpec],
     data_rows: &mut [Vec<Complex32>],
-    channel_count: usize,
+    window: ObservedWindow<'_>,
     sample_index: usize,
 ) -> usize {
-    let worker_count = simobserve_row_worker_count(request, data_rows.len(), channel_count);
+    let worker_count =
+        simobserve_row_worker_count(request, data_rows.len(), window.setup.channel_count);
     if worker_count <= 1 {
         return apply_corruption_and_count_rows(
             corruption,
             row_specs,
             data_rows,
-            channel_count,
+            window,
             sample_index,
         );
     }
@@ -2459,7 +2598,7 @@ fn apply_corruption_and_count_rows_with_workers(
                     corruption,
                     spec_chunk,
                     data_chunk,
-                    channel_count,
+                    window,
                     sample_index,
                 )
             }));
@@ -2479,7 +2618,7 @@ fn apply_corruption_and_count_rows(
     corruption: Option<&SyntheticCorruptionState>,
     row_specs: &[MainRowVisibilitySpec],
     data_rows: &mut [Vec<Complex32>],
-    channel_count: usize,
+    window: ObservedWindow<'_>,
     sample_index: usize,
 ) -> usize {
     let mut nonzero_visibility_count = 0usize;
@@ -2489,7 +2628,7 @@ fn apply_corruption_and_count_rows(
                 data_values,
                 spec.antenna1,
                 spec.antenna2,
-                channel_count,
+                window,
                 sample_index,
             );
         }
@@ -2514,20 +2653,25 @@ struct MainRowsReport {
     timing: SyntheticMainRowTimingReport,
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Time sample, field and data description shared by one batch of MAIN rows.
+#[derive(Clone, Copy)]
+struct SyntheticRowIdentity {
+    sample: usize,
+    time: f64,
+    field_id: usize,
+    data_description_id: usize,
+}
+
 fn push_synthetic_scalar_rows(
     writer: &mut MeasurementSetWriteSession,
     row_pairs: &[BaselinePair],
     flag_rows: &[bool],
-    sample: usize,
-    time: f64,
-    field_count: usize,
+    identity: SyntheticRowIdentity,
     integration_seconds: f64,
     observation_mode: SyntheticObservationMode,
 ) -> MsResult<()> {
-    let field_id = (sample % field_count) as i32;
     let scan_number = if observation_mode == SyntheticObservationMode::TotalPower {
-        sample as i32 + 1
+        identity.sample as i32 + 1
     } else {
         1
     };
@@ -2536,19 +2680,22 @@ fn push_synthetic_scalar_rows(
             ("ANTENNA1", ScalarValue::Int32(pair.antenna1 as i32)),
             ("ANTENNA2", ScalarValue::Int32(pair.antenna2 as i32)),
             ("ARRAY_ID", ScalarValue::Int32(0)),
-            ("DATA_DESC_ID", ScalarValue::Int32(0)),
+            (
+                "DATA_DESC_ID",
+                ScalarValue::Int32(identity.data_description_id as i32),
+            ),
             ("EXPOSURE", ScalarValue::Float64(integration_seconds)),
             ("FEED1", ScalarValue::Int32(0)),
             ("FEED2", ScalarValue::Int32(0)),
-            ("FIELD_ID", ScalarValue::Int32(field_id)),
+            ("FIELD_ID", ScalarValue::Int32(identity.field_id as i32)),
             ("FLAG_ROW", ScalarValue::Bool(*flag_row)),
             ("INTERVAL", ScalarValue::Float64(integration_seconds)),
             ("OBSERVATION_ID", ScalarValue::Int32(0)),
             ("PROCESSOR_ID", ScalarValue::Int32(0)),
             ("SCAN_NUMBER", ScalarValue::Int32(scan_number)),
             ("STATE_ID", ScalarValue::Int32(0)),
-            ("TIME", ScalarValue::Float64(time)),
-            ("TIME_CENTROID", ScalarValue::Float64(time)),
+            ("TIME", ScalarValue::Float64(identity.time)),
+            ("TIME_CENTROID", ScalarValue::Float64(identity.time)),
         ] {
             writer
                 .push_scalar_row(column, Some(value))
@@ -2726,11 +2873,14 @@ impl ModelPhaseOffset {
 
 struct SyntheticFieldPlan {
     phase_center_rad: [f64; 2],
-    predictors: Option<SyntheticFieldPredictor>,
+    /// One predictor per spectral window, indexed by data description id;
+    /// absent when the request does not predict a model.
+    window_predictors: Option<Vec<SyntheticFieldPredictor>>,
 }
 
 fn build_field_plans(
     request: &SyntheticObservationRequest,
+    windows: &[ObservedWindow<'_>],
     model: Option<&PreparedSkyModel>,
 ) -> MsResult<Vec<SyntheticFieldPlan>> {
     let primary_beam = synthetic_primary_beam(request);
@@ -2745,45 +2895,56 @@ fn build_field_plans(
     effective_fields(request)
         .into_iter()
         .map(|field| {
-            let predictors = match model {
-                Some(PreparedSkyModel::Sampled(model)) => {
-                    if request.observation_mode == SyntheticObservationMode::TotalPower {
-                        Some(SyntheticFieldPredictor::SampledTotalPower(
-                            build_total_power_sampled_values(
-                                model,
-                                request,
-                                field.phase_center_rad,
-                                pointing_offset_rad,
-                                primary_beam,
-                            ),
-                        ))
-                    } else {
-                        Some(SyntheticFieldPredictor::Sampled(build_channel_predictors(
-                            model,
-                            request,
-                            field.phase_center_rad,
-                            pointing_offset_rad,
-                            primary_beam,
-                        )?))
-                    }
-                }
-                Some(PreparedSkyModel::Analytic(model)) => Some(SyntheticFieldPredictor::Analytic(
-                    build_analytic_field_predictor(
-                        model,
-                        request,
-                        field.phase_center_rad,
-                        pointing_offset_rad,
-                        primary_beam,
-                    )?,
-                )),
-                None => None,
+            let pointing = FieldPointing {
+                phase_center_rad: field.phase_center_rad,
+                pointing_offset_rad,
+                primary_beam,
             };
+            let window_predictors = model
+                .map(|model| {
+                    windows
+                        .iter()
+                        .map(|window| field_window_predictor(model, request, *window, pointing))
+                        .collect::<MsResult<Vec<_>>>()
+                })
+                .transpose()?;
             Ok(SyntheticFieldPlan {
                 phase_center_rad: field.phase_center_rad,
-                predictors,
+                window_predictors,
             })
         })
         .collect()
+}
+
+/// Field direction and primary-beam context shared by every window's predictor.
+#[derive(Clone, Copy)]
+struct FieldPointing {
+    phase_center_rad: [f64; 2],
+    pointing_offset_rad: [f64; 2],
+    primary_beam: SyntheticPrimaryBeam,
+}
+
+fn field_window_predictor(
+    model: &PreparedSkyModel,
+    request: &SyntheticObservationRequest,
+    window: ObservedWindow<'_>,
+    pointing: FieldPointing,
+) -> MsResult<SyntheticFieldPredictor> {
+    Ok(match model {
+        PreparedSkyModel::Sampled(model)
+            if request.observation_mode == SyntheticObservationMode::TotalPower =>
+        {
+            SyntheticFieldPredictor::SampledTotalPower(build_total_power_sampled_values(
+                model, window, pointing,
+            ))
+        }
+        PreparedSkyModel::Sampled(model) => SyntheticFieldPredictor::Sampled(
+            build_channel_predictors(model, request, window, pointing)?,
+        ),
+        PreparedSkyModel::Analytic(model) => SyntheticFieldPredictor::Analytic(
+            build_analytic_field_predictor(model, request, window, pointing)?,
+        ),
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -2829,43 +2990,39 @@ fn synthetic_primary_beam(request: &SyntheticObservationRequest) -> SyntheticPri
 fn build_channel_predictors(
     model: &FitsModelImage,
     request: &SyntheticObservationRequest,
-    phase_center_rad: [f64; 2],
-    pointing_offset_rad: [f64; 2],
-    primary_beam: SyntheticPrimaryBeam,
+    window: ObservedWindow<'_>,
+    pointing: FieldPointing,
 ) -> MsResult<Vec<SyntheticChannelPredictor>> {
     let geometry = ImageGeometry {
         image_shape: [model.pixels.shape()[0], model.pixels.shape()[1]],
         cell_size_rad: model.cell_size_rad,
     };
-    let phase_offset = casa_model_phase_offset(model, phase_center_rad);
+    let phase_offset = casa_model_phase_offset(model, pointing.phase_center_rad);
     let context = ChannelPredictorContext {
         model,
-        spectral_setup: &request.spectral_setup,
+        window,
         geometry,
-        phase_center_rad,
+        pointing,
         phase_offset,
-        pointing_offset_rad,
-        primary_beam,
     };
-    let worker_count =
-        simobserve_channel_worker_count(request, request.spectral_setup.channel_count);
-    if worker_count <= 1 || request.spectral_setup.channel_count <= 1 {
-        return build_channel_predictor_range(&context, 0, request.spectral_setup.channel_count);
+    let channel_count = window.setup.channel_count;
+    let worker_count = simobserve_channel_worker_count(request, channel_count);
+    if worker_count <= 1 || channel_count <= 1 {
+        return build_channel_predictor_range(&context, 0, channel_count);
     }
 
-    let chunk_size = request.spectral_setup.channel_count.div_ceil(worker_count);
+    let chunk_size = channel_count.div_ceil(worker_count);
     thread::scope(|scope| {
         let mut handles = Vec::new();
-        for start_channel in (0..request.spectral_setup.channel_count).step_by(chunk_size) {
-            let end_channel =
-                (start_channel + chunk_size).min(request.spectral_setup.channel_count);
+        for start_channel in (0..channel_count).step_by(chunk_size) {
+            let end_channel = (start_channel + chunk_size).min(channel_count);
             let worker_context = context;
             handles.push(scope.spawn(move || {
                 build_channel_predictor_range(&worker_context, start_channel, end_channel)
             }));
         }
 
-        let mut predictors = Vec::with_capacity(request.spectral_setup.channel_count);
+        let mut predictors = Vec::with_capacity(channel_count);
         for handle in handles {
             predictors.extend(
                 handle
@@ -2879,22 +3036,20 @@ fn build_channel_predictors(
 
 fn build_total_power_sampled_values(
     model: &FitsModelImage,
-    request: &SyntheticObservationRequest,
-    phase_center_rad: [f64; 2],
-    pointing_offset_rad: [f64; 2],
-    primary_beam: SyntheticPrimaryBeam,
+    window: ObservedWindow<'_>,
+    pointing: FieldPointing,
 ) -> Vec<Complex32> {
-    (0..request.spectral_setup.channel_count)
+    (0..window.setup.channel_count)
         .map(|channel| {
-            let frequency_hz = request.spectral_setup.start_frequency_hz
-                + channel as f64 * request.spectral_setup.channel_width_hz;
+            let frequency_hz =
+                window.setup.start_frequency_hz + channel as f64 * window.setup.channel_width_hz;
             let beam_corrected_pixels = apply_simulator_primary_beam(
                 model,
-                model.pixels_for_channel(channel),
-                phase_center_rad,
+                model.pixels_for_channel(window.first_channel + channel),
+                pointing.phase_center_rad,
                 frequency_hz,
-                pointing_offset_rad,
-                primary_beam,
+                pointing.pointing_offset_rad,
+                pointing.primary_beam,
             );
             Complex32::new(beam_corrected_pixels.iter().sum::<f32>(), 0.0)
         })
@@ -2904,38 +3059,36 @@ fn build_total_power_sampled_values(
 fn build_analytic_field_predictor(
     model: &PreparedAnalyticSkyModel,
     request: &SyntheticObservationRequest,
-    field_phase_center_rad: [f64; 2],
-    pointing_offset_rad: [f64; 2],
-    primary_beam: SyntheticPrimaryBeam,
+    window: ObservedWindow<'_>,
+    pointing: FieldPointing,
 ) -> MsResult<AnalyticFieldPredictor> {
-    let mut components = Vec::with_capacity(model.components.len());
-    let inverse_wavelengths_m = (0..request.spectral_setup.channel_count)
-        .map(|channel| {
-            let frequency_hz = request.spectral_setup.start_frequency_hz
-                + channel as f64 * request.spectral_setup.channel_width_hz;
-            frequency_hz / 299_792_458.0
-        })
+    let frequencies_hz = window.setup.channel_frequencies_hz();
+    let inverse_wavelengths_m = frequencies_hz
+        .iter()
+        .map(|frequency_hz| frequency_hz / 299_792_458.0)
         .collect::<Vec<_>>();
+    let mut components = Vec::with_capacity(model.components.len());
     for component in &model.components {
         let shifted = analytic_component_for_field(
             component,
             request.phase_center_rad,
-            field_phase_center_rad,
+            pointing.phase_center_rad,
         )?;
-        let channel_amplitudes_jy = (0..request.spectral_setup.channel_count)
-            .map(|channel| {
-                let frequency_hz = request.spectral_setup.start_frequency_hz
-                    + channel as f64 * request.spectral_setup.channel_width_hz;
-                shifted
-                    .spectrum
-                    .flux_for_channel(&request.spectral_setup, channel)
-                    * analytic_primary_beam_taper_for_direction(
-                        shifted.l_rad,
-                        shifted.m_rad,
-                        pointing_offset_rad,
-                        primary_beam,
-                        frequency_hz,
-                    )
+        let channel_amplitudes_jy = frequencies_hz
+            .iter()
+            .enumerate()
+            .map(|(channel, &frequency_hz)| {
+                shifted.spectrum.flux_for_channel(
+                    window.setup,
+                    channel,
+                    request.reference_frequency_hz(),
+                ) * analytic_primary_beam_taper_for_direction(
+                    shifted.l_rad,
+                    shifted.m_rad,
+                    pointing.pointing_offset_rad,
+                    pointing.primary_beam,
+                    frequency_hz,
+                )
             })
             .collect();
         components.push(AnalyticFieldComponent {
@@ -2971,12 +3124,10 @@ fn analytic_component_for_field(
 #[derive(Clone, Copy)]
 struct ChannelPredictorContext<'a> {
     model: &'a FitsModelImage,
-    spectral_setup: &'a SyntheticSpectralSetup,
+    window: ObservedWindow<'a>,
     geometry: ImageGeometry,
-    phase_center_rad: [f64; 2],
+    pointing: FieldPointing,
     phase_offset: ModelPhaseOffset,
-    pointing_offset_rad: [f64; 2],
-    primary_beam: SyntheticPrimaryBeam,
 }
 
 fn build_channel_predictor_range(
@@ -3027,16 +3178,19 @@ fn build_one_channel_predictor(
     channel: usize,
 ) -> MsResult<(SyntheticChannelPredictor, ChannelPredictorBuildTiming)> {
     let mut timing = ChannelPredictorBuildTiming::default();
-    let frequency_hz = context.spectral_setup.start_frequency_hz
-        + channel as f64 * context.spectral_setup.channel_width_hz;
+    let window = context.window;
+    let frequency_hz =
+        window.setup.start_frequency_hz + channel as f64 * window.setup.channel_width_hz;
     let primary_beam_started = Instant::now();
     let beam_corrected_pixels = apply_simulator_primary_beam(
         context.model,
-        context.model.pixels_for_channel(channel),
-        context.phase_center_rad,
+        context
+            .model
+            .pixels_for_channel(window.first_channel + channel),
+        context.pointing.phase_center_rad,
         frequency_hz,
-        context.pointing_offset_rad,
-        context.primary_beam,
+        context.pointing.pointing_offset_rad,
+        context.pointing.primary_beam,
     );
     timing.primary_beam = primary_beam_started.elapsed();
     let orientation_started = Instant::now();
@@ -3071,7 +3225,7 @@ fn build_one_channel_predictor(
         SyntheticChannelPredictor {
             predictor,
             phase_offset: context.phase_offset,
-            phase_center_rad: context.phase_center_rad,
+            phase_center_rad: context.pointing.phase_center_rad,
             model_reference_direction_rad: context.model.reference_direction_rad,
         },
         timing,
@@ -3808,7 +3962,9 @@ struct SyntheticCorruptionState {
     seed: u64,
     simplenoise_jy: f32,
     gains_by_sample: Vec<Vec<[Complex32; 2]>>,
+    /// Per-antenna gains over the observation's concatenated channels.
     bandpass_gains: Vec<Vec<Complex32>>,
+    total_channel_count: usize,
     leakage_terms: Vec<[Complex32; 2]>,
 }
 
@@ -3816,7 +3972,7 @@ impl SyntheticCorruptionState {
     fn new(
         config: &SyntheticCorruptionConfig,
         antenna_count: usize,
-        channel_count: usize,
+        total_channel_count: usize,
         sample_count: usize,
     ) -> Self {
         let mut rng = DeterministicRng::new(config.seed);
@@ -3828,7 +3984,7 @@ impl SyntheticCorruptionState {
         );
         let bandpass_gains = (0..antenna_count)
             .map(|_| {
-                (0..channel_count)
+                (0..total_channel_count)
                     .map(|_| {
                         if let Some(bandpass) = &config.bandpass {
                             let amplitude = 1.0 + rng.gaussian_f32() * bandpass.amplitude[0];
@@ -3859,18 +4015,22 @@ impl SyntheticCorruptionState {
                 .unwrap_or(0.0),
             gains_by_sample,
             bandpass_gains,
+            total_channel_count,
             leakage_terms,
         }
     }
 
+    /// Corrupt one row of `window`. Bandpass gains and noise draws are keyed
+    /// by the observation-wide channel, so every window sees independent noise.
     fn apply(
         &self,
         values: &mut [Complex32],
         antenna1: usize,
         antenna2: usize,
-        channel_count: usize,
+        window: ObservedWindow<'_>,
         sample_index: usize,
     ) {
+        let channel_count = window.setup.channel_count;
         let gains = &self.gains_by_sample[sample_index % self.gains_by_sample.len()];
         let Some(correlation_count) = values.len().checked_div(channel_count) else {
             return;
@@ -3879,9 +4039,9 @@ impl SyntheticCorruptionState {
             return;
         }
         for (index, value) in values.iter_mut().enumerate() {
-            let channel = index / correlation_count;
+            let channel = window.first_channel + index / correlation_count;
             let correlation = index % correlation_count;
-            let logical_index = correlation * channel_count + channel;
+            let logical_index = correlation * self.total_channel_count + channel;
             let baseline_gain = gains[antenna1][correlation]
                 * gains[antenna2][correlation].conj()
                 * self.bandpass_gains[antenna1][channel]
@@ -5433,16 +5593,19 @@ mod tests {
                 SyntheticAntenna::vla("A1", "A1", [1.0, 0.0, 0.0]),
             ],
         );
-        request.spectral_setup = spectral_setup.clone();
+        request.spectral_windows = vec![spectral_setup.clone()];
         build_analytic_field_predictor(
             &prepared,
             &request,
-            request.phase_center_rad,
-            [0.0, 0.0],
-            SyntheticPrimaryBeam {
-                use_casa_vla_q_table: false,
-                dish_diameter_m: 25.0,
-                blockage_diameter_m: 0.0,
+            request.observed_windows()[0],
+            FieldPointing {
+                phase_center_rad: request.phase_center_rad,
+                pointing_offset_rad: [0.0, 0.0],
+                primary_beam: SyntheticPrimaryBeam {
+                    use_casa_vla_q_table: false,
+                    dish_diameter_m: 25.0,
+                    blockage_diameter_m: 0.0,
+                },
             },
         )
         .expect("build analytic predictor")
@@ -5755,15 +5918,17 @@ mod tests {
         let mut request = SyntheticObservationRequest::vla_ppdisk("model.fits", "out.ms", vec![]);
         request.worker_policy = SyntheticWorkerPolicy::Fixed;
         request.row_workers = Some(4);
+        request.spectral_windows[0].channel_count = 16;
+        let window = request.observed_windows()[0];
 
         let serial_nonzero =
-            apply_corruption_and_count_rows(Some(&corruption), &row_specs, &mut serial, 16, 3);
+            apply_corruption_and_count_rows(Some(&corruption), &row_specs, &mut serial, window, 3);
         let parallel_nonzero = apply_corruption_and_count_rows_with_workers(
             &request,
             Some(&corruption),
             &row_specs,
             &mut parallel,
-            16,
+            window,
             3,
         );
 

@@ -262,7 +262,7 @@ fn runtime_observation_fixture(channel_count: usize) -> &'static Path {
             request.worker_policy = SyntheticWorkerPolicy::Fixed;
             request.row_workers = Some(1);
             request.channel_workers = Some(1);
-            request.spectral_setup.channel_count = channel_count;
+            request.spectral_windows[0].channel_count = channel_count;
             if channel_count == 2 {
                 request.model = Some(SyntheticSkyModel::AnalyticComponents {
                     path: None,

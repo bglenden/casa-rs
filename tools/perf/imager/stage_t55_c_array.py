@@ -46,8 +46,8 @@ def prepare_geometry(args):
         phase_center_rad=PHASE_CENTER, fields=[], overwrite=False,
         predict_model=False, corruption=None,
         output_ms=str(args.outputs / "geometry.ms"),
-        spectral_setup=dict(name="q-band-endpoints", start_frequency_hz=START_HZ,
-                            channel_width_hz=511 * STEP_HZ, channel_count=2))
+        spectral_windows=[dict(name="q-band-endpoints", start_frequency_hz=START_HZ,
+                               channel_width_hz=511 * STEP_HZ, channel_count=2)])
     save(args.records / "geometry-request.json", request)
     distances = [math.dist(a["position_m"], b["position_m"])
                  for i, a in enumerate(antennas) for b in antennas[i + 1:]]
@@ -275,8 +275,8 @@ def build_sky(args):
     save(args.records / "sky-v2-truth.json", result)
     request = json.loads((args.records / "geometry-request.json").read_text())
     request["request"].update(predict_model=True, model_image=str(args.outputs / SKY_FILES[0]),
-        spectral_setup=dict(name="q-band-c-array-512", start_frequency_hz=START_HZ,
-                            channel_width_hz=STEP_HZ, channel_count=CHANNELS),
+        spectral_windows=[dict(name="q-band-c-array-512", start_frequency_hz=START_HZ,
+                               channel_width_hz=STEP_HZ, channel_count=CHANNELS)],
         corruption=dict(seed=212530740382147, noise=dict(mode="simplenoise", simplenoise_jy=0.05)))
     for name, integration in (("turnaround", 243.0), ("full", 10.0)):
         current = copy.deepcopy(request)

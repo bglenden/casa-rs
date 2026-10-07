@@ -74,12 +74,14 @@ Run that analytic model:
     "output_ms": "out/spectral-cube.ms",
     "overwrite": true,
     "telescope_name": "VLA",
-    "spectral_setup": {
-      "name": "Qband",
-      "start_frequency_hz": 44000000000.0,
-      "channel_width_hz": 128000000.0,
-      "channel_count": 64
-    },
+    "spectral_windows": [
+      {
+        "name": "Qband",
+        "start_frequency_hz": 44000000000.0,
+        "channel_width_hz": 128000000.0,
+        "channel_count": 64
+      }
+    ],
     "worker_policy": "auto",
     "row_workers": 8,
     "channel_workers": 8

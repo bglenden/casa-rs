@@ -297,12 +297,12 @@ fn t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles() {
     request.allow_below_elevation_limit = true;
     request.duration_seconds = 3.0;
     request.integration_seconds = 1.0;
-    request.spectral_setup = SyntheticSpectralSetup {
+    request.spectral_windows = vec![SyntheticSpectralSetup {
         name: "t33-three-channel".to_string(),
         start_frequency_hz: 1.4e9,
         channel_width_hz: 1.0e6,
         channel_count: 3,
-    };
+    }];
     request.worker_policy = SyntheticWorkerPolicy::Fixed;
     request.row_workers = Some(1);
     request.channel_workers = Some(1);
@@ -5072,12 +5072,12 @@ fn generate_fixture_with_channel_count(
     request.allow_below_elevation_limit = true;
     request.duration_seconds = row_count as f64;
     request.integration_seconds = 1.0;
-    request.spectral_setup = SyntheticSpectralSetup {
+    request.spectral_windows = vec![SyntheticSpectralSetup {
         name: "three-channel".to_string(),
         start_frequency_hz: 1.4e9,
         channel_width_hz: 1.0e6,
         channel_count,
-    };
+    }];
     request.worker_policy = SyntheticWorkerPolicy::Fixed;
     request.row_workers = Some(1);
     request.channel_workers = Some(1);
@@ -5098,12 +5098,12 @@ fn generate_fixture_with_phase_center(
     request.duration_seconds = row_count as f64;
     request.integration_seconds = 1.0;
     request.phase_center_rad = phase_center_rad;
-    request.spectral_setup = SyntheticSpectralSetup {
+    request.spectral_windows = vec![SyntheticSpectralSetup {
         name: "three-channel".to_string(),
         start_frequency_hz: 1.4e9,
         channel_width_hz: 1.0e6,
         channel_count: 3,
-    };
+    }];
     request.worker_policy = SyntheticWorkerPolicy::Fixed;
     request.row_workers = Some(1);
     request.channel_workers = Some(1);
