@@ -1055,6 +1055,7 @@ where
             runtime.storage_io.clone(),
             runtime.stage_nanos,
             runtime.confidence_parts_per_million,
+            runtime.authority.topology().native_thread_stack_bytes,
         ),
     )?;
     let (physical, publication, window) = publication_plan.into_parts();

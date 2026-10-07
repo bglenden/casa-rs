@@ -230,10 +230,10 @@ not claimed. This supersedes the earlier prerequisite below to resolve those
 approximations before larger comparison generation; no oversampled simulation
 or new forward-model implementation is included in this intermediate.
 
-The [CASA fixture driver](../../tools/perf/imager/mfs_4096_pilot.py) creates
+The [CASA fixture driver](https://github.com/bglenden/casa-rs/blob/0dc50a57162126ca334b3ec6386b3051e20959db/tools/perf/imager/mfs_4096_pilot.py) creates
 separate A/C observations, concatenates them, flags the approved channel edges
 and predicts the analytic sky. The
-[native diagnostic](../../crates/casa-imaging-application/tests/continuum_application/t55_mfs_pilot.rs)
+[native diagnostic](https://github.com/bglenden/casa-rs/blob/0dc50a57162126ca334b3ec6386b3051e20959db/crates/casa-imaging-application/tests/continuum_application/t55_mfs_pilot.rs)
 calls the existing `execute_continuum` entry with explicit one/four-worker and
 16-GiB planning settings. It does not add a new imaging implementation.
 
@@ -337,8 +337,8 @@ new-workload CLEAN, sky-model, W4 performance or T55 acceptance. No push/merge.
 
 ## Initial workload checkpoint: sky and geometry prepared
 
-The [preview script](../../tools/perf/imager/prepare_mfs_4096.py) and
-[focused checks](../../tools/perf/imager/test_prepare_mfs_4096.py) implement
+The [preview script](https://github.com/bglenden/casa-rs/blob/0dc50a57162126ca334b3ec6386b3051e20959db/tools/perf/imager/prepare_mfs_4096.py) and
+[focused checks](https://github.com/bglenden/casa-rs/blob/0dc50a57162126ca334b3ec6386b3051e20959db/tools/perf/imager/test_prepare_mfs_4096.py) implement
 the proposed recipe. At this initial checkpoint there was no generated MS or
 CLEAN result; the generation pilot above supersedes that status.
 Durable scripts, array snapshots, commands, logs and images live under
@@ -438,10 +438,10 @@ would not satisfy the owner's intent:
   1024 square over 44--45.022 GHz. Its interesting line morphology is not an
   adequate substitute for a broad-band continuum/MT-MFS truth sky.
 
-Evidence: [control manifest](../../tools/perf/imager/workloads/issue607-standard-mfs-representative.json),
-[registry](../../tools/perf/imager/wave1_dataset_registry.json),
-[Wave 1 source generator](../../tools/perf/imager/stage_wave1_datasets.py),
-[C-array source generator](../../tools/perf/imager/stage_t55_c_array.py).
+Evidence: [control manifest](https://github.com/bglenden/casa-rs/blob/0dc50a57162126ca334b3ec6386b3051e20959db/tools/perf/imager/workloads/issue607-standard-mfs-representative.json),
+[registry](https://github.com/bglenden/casa-rs/blob/0dc50a57162126ca334b3ec6386b3051e20959db/tools/perf/imager/wave1_dataset_registry.json),
+[Wave 1 source generator](https://github.com/bglenden/casa-rs/blob/0dc50a57162126ca334b3ec6386b3051e20959db/tools/perf/imager/stage_wave1_datasets.py),
+[C-array source generator](https://github.com/bglenden/casa-rs/blob/0dc50a57162126ca334b3ec6386b3051e20959db/tools/perf/imager/stage_t55_c_array.py).
 The existing on-disk request and MS are under
 `/Volumes/GLENDENNING/casa-rs-imperformance/wave1/vla/single/small/`.
 No existing input has been changed.

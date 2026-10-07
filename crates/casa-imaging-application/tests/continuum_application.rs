@@ -2254,8 +2254,15 @@ fn uniform_multi_spw_mfs_clark_matches_serial_with_four_admitted_workers() {
 }
 
 fn assert_uniform_mfs_workers(measurement_set: PathBuf, root: &Path, selection: &str) {
+    // Admission caps explicit worker overrides at the host thread count, so a
+    // team larger than this host is infeasible rather than a parity failure.
+    let host_threads = std::thread::available_parallelism().unwrap().get() as u64;
+    assert!(host_threads >= 4, "parity needs at least four host threads");
     let mut prefixes = Vec::new();
-    for workers in [1, 4, 8] {
+    for workers in [1, 4, 8]
+        .into_iter()
+        .filter(|&workers| workers <= host_threads)
+    {
         let prefix = root.join(format!("uniform-mfs-{selection}-w{workers}"));
         let mut imaging = request(
             measurement_set.clone(),
@@ -2317,11 +2324,15 @@ fn assert_uniform_mfs_workers(measurement_set: PathBuf, root: &Path, selection: 
         assert_standard_products(&prefix, &result.product_names);
         prefixes.push(prefix);
     }
-    for (reference, candidate) in [(0, 1), (0, 2)] {
+    assert!(
+        prefixes.len() >= 2,
+        "parity needs a serial and a parallel run"
+    );
+    for candidate in 1..prefixes.len() {
         for suffix in PRODUCT_SUFFIXES {
             let left = PagedImage::<f32>::open(PathBuf::from(format!(
                 "{}{suffix}",
-                prefixes[reference].display()
+                prefixes[0].display()
             )))
             .unwrap();
             let right = PagedImage::<f32>::open(PathBuf::from(format!(

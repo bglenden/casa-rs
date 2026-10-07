@@ -170,6 +170,7 @@ fn publication_lifecycle_rejects_duplicates_without_losing_completion() {
                 serial_storage_io(),
                 1_000,
                 900_000,
+                512 << 10,
             ),
         )
         .unwrap();

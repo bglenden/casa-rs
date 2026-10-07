@@ -29,6 +29,7 @@ fn production_inventory_override_is_one_time_and_process_authority_is_singleton(
             rate_resources: Vec::new(),
             queue_resources: Vec::new(),
             logical_cpu_threads: 2,
+            native_thread_stack_bytes: 512 << 10,
             performance_cpu_cores: CpuClassCapacity::Unknown,
             cache_capacity_bytes: 500,
             lock_capacity: 4,

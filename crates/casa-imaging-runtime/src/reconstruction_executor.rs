@@ -64,39 +64,15 @@ pub(crate) struct PlaneExecutionPlan {
 
 /// FFTW's pthread pool can survive between phases, so its default stack bound
 /// is also reserved as process-lifetime external-library overhead by planning.
-pub(crate) fn native_fft_stack_bytes(threads: usize) -> io::Result<u64> {
+/// `thread_stack_bytes` is the host's default native thread stack from
+/// `ResourceTopology::native_thread_stack_bytes`.
+pub(crate) fn native_fft_stack_bytes(threads: usize, thread_stack_bytes: u64) -> io::Result<u64> {
     if threads <= 1 {
         return Ok(0);
     }
-    #[cfg(unix)]
-    {
-        let mut attributes = std::mem::MaybeUninit::<libc::pthread_attr_t>::uninit();
-        let mut stack_bytes = 0;
-        // A null pthread_create attribute uses the same platform defaults.
-        let status = unsafe { libc::pthread_attr_init(attributes.as_mut_ptr()) };
-        if status != 0 {
-            return Err(io::Error::from_raw_os_error(status));
-        }
-        let mut attributes = unsafe { attributes.assume_init() };
-        let status = unsafe { libc::pthread_attr_getstacksize(&attributes, &mut stack_bytes) };
-        let destroyed = unsafe { libc::pthread_attr_destroy(&mut attributes) };
-        if status != 0 || destroyed != 0 {
-            return Err(io::Error::from_raw_os_error(if status != 0 {
-                status
-            } else {
-                destroyed
-            }));
-        }
-        ((threads - 1) as u64)
-            .checked_mul(stack_bytes as u64)
-            .ok_or_else(|| io::Error::other("native FFT stack overflow"))
-    }
-    #[cfg(not(unix))]
-    {
-        Err(io::Error::other(
-            "native FFT stack admission is unavailable",
-        ))
-    }
+    ((threads - 1) as u64)
+        .checked_mul(thread_stack_bytes)
+        .ok_or_else(|| io::Error::other("native FFT stack overflow"))
 }
 
 impl PlaneExecutionPlan {
@@ -189,11 +165,10 @@ pub(crate) fn execute(
     }
     if std::env::var_os("CASA_RS_TRACE_IMAGING_STAGE_TIMING").is_some() {
         eprintln!(
-            "imaging_minor_cycle_execution_budget admitted_workers={} plane_workers={} fft_threads={} native_stack_bytes={}",
+            "imaging_minor_cycle_execution_budget admitted_workers={} plane_workers={} fft_threads={}",
             workers,
             workspace.plane_count().min(workers as usize),
-            plan.fft_threads,
-            native_fft_stack_bytes(plan.fft_threads)?
+            plan.fft_threads
         );
     }
     match execute_bounded_resident(
@@ -444,30 +419,16 @@ mod tests {
             .expect("independent reconstruction planes")
     }
 
-    #[cfg(unix)]
-    fn default_pthread_stack_bytes() -> u64 {
-        let mut attributes = std::mem::MaybeUninit::<libc::pthread_attr_t>::uninit();
-        let initialized = unsafe { libc::pthread_attr_init(attributes.as_mut_ptr()) };
-        assert_eq!(initialized, 0);
-        let mut attributes = unsafe { attributes.assume_init() };
-        let mut stack_bytes = 0;
-        let queried = unsafe { libc::pthread_attr_getstacksize(&attributes, &mut stack_bytes) };
-        let destroyed = unsafe { libc::pthread_attr_destroy(&mut attributes) };
-        assert_eq!(queried, 0);
-        assert_eq!(destroyed, 0);
-        stack_bytes as u64
-    }
+    const THREAD_STACK_BYTES: u64 = 8 << 20;
 
-    #[cfg(unix)]
     #[test]
     fn one_plane_clark_separates_persistent_fft_stacks_from_outer_worker_stack_claim() {
         let workspace = plane_workspace(1, ReconstructionAlgorithm::Clark);
         let serial = PlaneExecutionPlan::new(workspace, 1).unwrap();
-        let pthread_stack_bytes = default_pthread_stack_bytes();
 
         for workers in [1, 4, 8] {
             let plan = PlaneExecutionPlan::new(workspace, workers).unwrap();
-            let expected_native_stack = (workers as u64 - 1) * pthread_stack_bytes;
+            let expected_native_stack = (workers as u64 - 1) * THREAD_STACK_BYTES;
 
             assert_eq!(plan.workers, workers);
             assert_eq!(plan.fft_threads, workers);
@@ -485,7 +446,7 @@ mod tests {
             );
             assert_eq!(plan.heap_bytes, serial.heap_bytes + row_heap);
             assert_eq!(
-                native_fft_stack_bytes(workers).unwrap(),
+                native_fft_stack_bytes(workers, THREAD_STACK_BYTES).unwrap(),
                 expected_native_stack
             );
             // The cycle alternative reserves these native stacks under
@@ -502,7 +463,10 @@ mod tests {
 
         assert_eq!(plan.workers, 4);
         assert_eq!(plan.fft_threads, 1);
-        assert_eq!(native_fft_stack_bytes(plan.fft_threads).unwrap(), 0);
+        assert_eq!(
+            native_fft_stack_bytes(plan.fft_threads, THREAD_STACK_BYTES).unwrap(),
+            0
+        );
         assert_eq!(plan.stack_bytes, 4 * BOUNDED_WORKER_STACK_BYTES as u64,);
     }
 

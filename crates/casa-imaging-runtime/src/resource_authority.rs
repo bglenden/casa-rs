@@ -340,6 +340,9 @@ pub struct ResourceTopology {
     pub queue_resources: Vec<QueueResource>,
     /// Logical CPU threads available to the process.
     pub logical_cpu_threads: u64,
+    /// Stack reservation of one native thread created with default
+    /// attributes, which is what FFTW's worker pool uses.
+    pub native_thread_stack_bytes: u64,
     /// Performance-oriented CPU cores available to the process.
     pub performance_cpu_cores: CpuClassCapacity,
     /// Process-wide resident-cache capacity.
@@ -775,6 +778,7 @@ impl HostInventory {
         let logical_cpu_threads = std::thread::available_parallelism()
             .map_err(|error| ResourceError::Detection(error.to_string()))?
             .get() as u64;
+        let native_thread_stack_bytes = detect_native_thread_stack_bytes()?;
         let performance_cpu_cores = detect_performance_cpu_cores()
             .map(|cores| CpuClassCapacity::Known(cores.clamp(1, logical_cpu_threads)))
             .unwrap_or(CpuClassCapacity::Unknown);
@@ -840,6 +844,7 @@ impl HostInventory {
             rate_resources,
             queue_resources,
             logical_cpu_threads,
+            native_thread_stack_bytes,
             performance_cpu_cores,
             cache_capacity_bytes: physical_memory_bytes,
             // Table and synchronization capacity has no portable detector.
@@ -4654,6 +4659,38 @@ fn checked_sum(
 fn checked_add(left: u64, right: u64, category: &'static str) -> Result<u64, ResourceError> {
     left.checked_add(right)
         .ok_or(ResourceError::Overflow(category))
+}
+
+/// Query the stack size `pthread_create` gives a thread with default
+/// attributes, which native thread pools such as FFTW's rely on.
+#[cfg(unix)]
+fn detect_native_thread_stack_bytes() -> Result<u64, ResourceError> {
+    let os_error = |status: libc::c_int| {
+        ResourceError::Detection(std::io::Error::from_raw_os_error(status).to_string())
+    };
+    let mut attributes = std::mem::MaybeUninit::<libc::pthread_attr_t>::uninit();
+    let status = unsafe { libc::pthread_attr_init(attributes.as_mut_ptr()) };
+    if status != 0 {
+        return Err(os_error(status));
+    }
+    let mut attributes = unsafe { attributes.assume_init() };
+    let mut stack_bytes = 0;
+    let queried = unsafe { libc::pthread_attr_getstacksize(&attributes, &mut stack_bytes) };
+    let destroyed = unsafe { libc::pthread_attr_destroy(&mut attributes) };
+    if queried != 0 {
+        return Err(os_error(queried));
+    }
+    if destroyed != 0 {
+        return Err(os_error(destroyed));
+    }
+    Ok(stack_bytes as u64)
+}
+
+#[cfg(not(unix))]
+fn detect_native_thread_stack_bytes() -> Result<u64, ResourceError> {
+    Err(ResourceError::Detection(
+        "native thread stack size is unavailable".to_string(),
+    ))
 }
 
 #[cfg(target_os = "linux")]

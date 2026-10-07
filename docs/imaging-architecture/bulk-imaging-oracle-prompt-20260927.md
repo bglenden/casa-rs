@@ -148,8 +148,8 @@ for selected_row in row_patches:
         copy_from_slice(corr_count * element_size)  # 16 bytes in this case
 ```
 
-It produces [channel][row][correlation] memory. NativeBlock instead stores
-[row][channel][correlation]. Native writer then loops tile(channel), block part,
+It produces `[channel][row][correlation]` memory. NativeBlock instead stores
+`[row][channel][correlation]`. Native writer then loops tile(channel), block part,
 row, tile channel, correlation and serializes individual little-endian values
 into per-channel frames. Therefore even a bulk source has tiny transpose/copy
 operations and a second layout transition before replay.

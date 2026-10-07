@@ -66,20 +66,25 @@ pub struct SerialProductPublicationPolicy {
     storage_io: StorageIoResourceBinding,
     stage_nanos: u64,
     confidence_parts_per_million: u32,
+    native_thread_stack_bytes: u64,
 }
 impl SerialProductPublicationPolicy {
-    /// Bind the implementation, output storage, and prediction inputs.
+    /// Bind the implementation, output storage, prediction inputs, and the
+    /// host's default native thread stack
+    /// (`ResourceTopology::native_thread_stack_bytes`).
     pub fn new(
         implementation: WorkImplementationId,
         storage_io: StorageIoResourceBinding,
         stage_nanos: u64,
         confidence_parts_per_million: u32,
+        native_thread_stack_bytes: u64,
     ) -> Self {
         Self {
             implementation,
             storage_io,
             stage_nanos,
             confidence_parts_per_million,
+            native_thread_stack_bytes,
         }
     }
 }
@@ -371,7 +376,10 @@ fn build_physical<R: ImplementationRegistry>(
             ],
             workers: CountDemand::new(workers, workers),
             overhead: RuntimeOverheadDemand {
-                external_library_bytes: publication_fft_stack_bytes(workers as usize)?,
+                external_library_bytes: publication_fft_stack_bytes(
+                    workers as usize,
+                    policy.native_thread_stack_bytes,
+                )?,
                 ..RuntimeOverheadDemand::zero()
             },
             storage: vec![StorageDemand {
@@ -566,13 +574,13 @@ fn layout_id(artifact: ArtifactIdentity) -> PhysicalLayoutId {
     PhysicalLayoutId::from_sha256(hash.finalize().into())
 }
 
-fn publication_fft_stack_bytes(workers: usize) -> Result<u64, SerialProductPublicationPlanError> {
-    if !cfg!(unix) {
-        return Ok(0);
-    }
+fn publication_fft_stack_bytes(
+    workers: usize,
+    thread_stack_bytes: u64,
+) -> Result<u64, SerialProductPublicationPlanError> {
     // Single- and double-precision FFTW pools can both survive imaging into
     // publication. Bound both by the admitted CPU budget, not by window lanes.
-    crate::reconstruction_executor::native_fft_stack_bytes(workers)
+    crate::reconstruction_executor::native_fft_stack_bytes(workers, thread_stack_bytes)
         .map_err(SerialProductPublicationPlanError::NativeFftStacks)?
         .checked_mul(2)
         .ok_or(SerialProductPublicationPlanError::Overflow)
@@ -582,14 +590,15 @@ fn publication_fft_stack_bytes(workers: usize) -> Result<u64, SerialProductPubli
 mod tests {
     #[test]
     fn publication_charges_persistent_native_pools_without_replica_images() {
+        const THREAD_STACK_BYTES: u64 = 8 << 20;
         for workers in [1, 2, 4, 8, 16] {
-            let expected = if cfg!(unix) {
-                2 * crate::reconstruction_executor::native_fft_stack_bytes(workers).unwrap()
-            } else {
-                0
-            };
+            let expected = 2 * crate::reconstruction_executor::native_fft_stack_bytes(
+                workers,
+                THREAD_STACK_BYTES,
+            )
+            .unwrap();
             assert_eq!(
-                super::publication_fft_stack_bytes(workers).unwrap(),
+                super::publication_fft_stack_bytes(workers, THREAD_STACK_BYTES).unwrap(),
                 expected
             );
         }

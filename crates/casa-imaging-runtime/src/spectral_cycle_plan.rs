@@ -77,6 +77,7 @@ fn native_fft_pool_stack_bytes(
     // FFTW single- and double-precision workers have separate persistent pools.
     crate::reconstruction_executor::native_fft_stack_bytes(
         usize::try_from(workers).map_err(|_| SpectralCyclePlanError::Overflow)?,
+        policy.authority.topology().native_thread_stack_bytes,
     )
     .map_err(SpectralCyclePlanError::MinorWorkspace)
     .and_then(|bytes| {

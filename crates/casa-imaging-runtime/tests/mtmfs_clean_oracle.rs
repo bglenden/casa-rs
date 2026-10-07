@@ -843,6 +843,7 @@ fn runtime_inventory(artifact_root: &std::path::Path, source_root: PathBuf) -> H
                 QueueResource::new(transaction_queue.clone(), 4),
             ],
             logical_cpu_threads: 1,
+            native_thread_stack_bytes: 512 << 10,
             performance_cpu_cores: CpuClassCapacity::Known(1),
             cache_capacity_bytes: 64 << 20,
             lock_capacity: 8,

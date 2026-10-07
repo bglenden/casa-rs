@@ -8370,6 +8370,7 @@ fn runtime_inventory(available_locks: u64) -> HostInventory {
                 QueueResource::new(transaction_queue.clone(), 4),
             ],
             logical_cpu_threads: 4,
+            native_thread_stack_bytes: 512 << 10,
             performance_cpu_cores: CpuClassCapacity::Known(4),
             cache_capacity_bytes: 1_048_576,
             lock_capacity: 4,
@@ -14468,6 +14469,7 @@ fn direct_product_publication_has_bounded_write_only_generation_and_one_terminal
                 serial_storage_io(),
                 1_000,
                 900_000,
+                512 << 10,
             ),
         )
         .unwrap();
@@ -14652,6 +14654,7 @@ fn production_storage_profile_admits_serial_scientific_and_publication_plans() {
             storage.io_resources(),
             1_000,
             900_000,
+            512 << 10,
         ),
     )
     .expect("production publication plan");
@@ -14789,7 +14792,13 @@ fn profiled_serial_plans_bind_only_their_used_storage_identities() {
             &generation_demand,
             staging_residency_bytes,
             &planning_registry,
-            SerialProductPublicationPolicy::new(implementation(82), substitution, 1_000, 900_000),
+            SerialProductPublicationPolicy::new(
+                implementation(82),
+                substitution,
+                1_000,
+                900_000,
+                512 << 10,
+            ),
         )
         .expect("publication plan construction");
         let publication = publication.into_parts().0;

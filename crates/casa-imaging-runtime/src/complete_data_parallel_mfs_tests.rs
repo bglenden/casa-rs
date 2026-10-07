@@ -1417,6 +1417,7 @@ pub(super) fn runtime_inventory_with_roots(
                 QueueResource::new(transaction_queue.clone(), 4),
             ],
             logical_cpu_threads: 4,
+            native_thread_stack_bytes: 512 << 10,
             performance_cpu_cores: CpuClassCapacity::Known(4),
             cache_capacity_bytes: 1 << 20,
             lock_capacity: 4,

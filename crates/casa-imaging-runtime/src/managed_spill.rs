@@ -2934,6 +2934,7 @@ mod tests {
             ],
             queue_resources: vec![QueueResource::new(queue.clone(), 1)],
             logical_cpu_threads: 1,
+            native_thread_stack_bytes: 512 << 10,
             performance_cpu_cores: CpuClassCapacity::Known(1),
             cache_capacity_bytes: 1 << 20,
             lock_capacity: 0,
