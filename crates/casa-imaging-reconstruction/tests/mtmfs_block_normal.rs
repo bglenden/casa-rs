@@ -10,37 +10,36 @@ use casa_imaging_model::{
     DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
     DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame,
     GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    ImagingRequest, InstrumentModel, InstrumentResponse, IntentSelection,
-    JointContinuumLineContract, LogicalIdentity, MeasurementEquationContract,
-    MeasurementSetIdentity, MetadataGeneration, MetadataTableKind, MissingPointingPolicy,
-    ModelBounds, ModelCell, ModelColumnState, ModelColumnWrite, ModelDeltaTerm,
-    ModelExecutionAttemptId, ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements,
-    ModelSample, ModelStateIdentity, ModelSupport, ModelValue, MsColumnKind, NumericPrecision,
-    NumericalStage, NumericsContract, ObservationPointingLaw, ObservationSelection,
-    ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance,
-    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
-    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
-    PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
-    ProblemInputIdentities, ProblemSpecification, ProductBlankingPolicy, ProductKind,
-    ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
-    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
-    ReconstructionControls, ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy,
-    RowSelection, ScientificContract, SelectedColumns, SelectedImageDomainProjections,
-    SelectedMainRow, SelectedObservationSample, SelectedPhaseCentreProjection,
-    SelectedPredictionTarget, SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates,
-    SelectedSampleMetadata, SelectedSpectralContributions, SelectedSpectralEvaluation,
-    SelectedSpectralInterval, SelectedVisibilitySample, SkyDirection, SourceGenerations,
-    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSamplingLaw, SpectralWcs, SpectralWindowCoordinateCatalog, SpectralWindowSelection,
-    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection,
-    UvSelection, UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn,
-    WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
+    ImagingRequest, InstrumentModel, InstrumentResponse, IntentSelection, LogicalIdentity,
+    MeasurementEquationContract, MeasurementSetIdentity, MetadataGeneration, MetadataTableKind,
+    MissingPointingPolicy, ModelBounds, ModelCell, ModelColumnState, ModelColumnWrite,
+    ModelDeltaTerm, ModelExecutionAttemptId, ModelInnerProduct, ModelInputCommitment,
+    ModelLifecycleRequirements, ModelSample, ModelStateIdentity, ModelSupport, ModelValue,
+    MsColumnKind, NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
+    ObservationSelection, ObservationSnapshotInput, ObservationSourceInput,
+    ObservationSourceProvenance, ObservationTransactionRequirements, PhaseCentreLaw,
+    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
+    PrimaryBeamValidityPolicy, ProblemInputIdentities, ProblemSpecification, ProductBlankingPolicy,
+    ProductKind, ProductNormalization, ProductRequirements, ProductSupportComparison,
+    ProductValidityPolicies, Projection, ReconstructionAlgorithm, ReconstructionBasis,
+    ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
+    RestFrequency, RestoringBeamPolicy, RowSelection, ScientificContract, SelectedColumns,
+    SelectedImageDomainProjections, SelectedMainRow, SelectedObservationSample,
+    SelectedPhaseCentreProjection, SelectedPredictionTarget, SelectedRows, SelectedSampleAddress,
+    SelectedSampleCoordinates, SelectedSampleMetadata, SelectedSpectralContributions,
+    SelectedSpectralEvaluation, SelectedSpectralInterval, SelectedVisibilitySample, SkyDirection,
+    SourceGenerations, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
+    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, SpectralWindowCoordinateCatalog,
+    SpectralWindowSelection, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy,
+    TimeScale, TimeSelection, UvSelection, UvwCoordinateLaw, VisibilityColumn,
+    VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
+    compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
-    ChannelCyclePolicy, CoupledReconstructionMask, ExecutableModelProblem, FinalNormalState,
-    FrozenWeightingBinding, MajorCycleOwner, MajorCyclePreparation, MinorCycleError,
-    MinorCycleProgram, ModelGeneration, ModelLifecycle, NormalStateCatalog, ReconstructionCycle,
-    ReconstructionCycleError, ReconstructionMask, ReconstructionMaskPlan, SpectralChannelValidity,
+    ChannelCyclePolicy, ExecutableModelProblem, FinalNormalState, FrozenWeightingBinding,
+    MajorCycleOwner, MajorCyclePreparation, MinorCycleProgram, ModelLifecycle, NormalStateCatalog,
+    ReconstructionCycle, ReconstructionMask, SpectralChannelValidity,
     SpectralOperatorSpecification, SpectralPrimitiveCatalog, SpectralStencilValidity,
     WeightingAlgorithmState, WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk,
     WeightingReplaySummary, begin_weighting_generation, compile_spectral_stencil,
@@ -400,17 +399,6 @@ fn mosaic_source() -> ObservationSourceInput {
     ))
 }
 
-fn joint_source() -> ObservationSourceInput {
-    source_with_selection(ObservationSelection::new(
-        SelectedRows::from_ordered_main_rows(1, [SelectedMainRow::new(0, 0)])
-            .expect("one selected row"),
-        row_selection(),
-        vec![DataDescriptionSelection::new(0, 0, 0)],
-        vec![SpectralWindowSelection::new(0, vec![0, 1])],
-        correlations(),
-    ))
-}
-
 fn channel_major_source(channels: usize) -> ObservationSourceInput {
     source_with_selection(ObservationSelection::new(
         SelectedRows::from_ordered_main_rows(1, [SelectedMainRow::new(0, 0)])
@@ -486,10 +474,6 @@ fn problem_with_shape_response_and_mosaic(
     mosaic: bool,
     model_input: ModelInputCommitment,
 ) -> casa_imaging_model::CompiledProblem {
-    let is_joint = matches!(
-        reconstruction.basis(),
-        ReconstructionBasis::JointContinuumLine { .. }
-    );
     let is_channel_major = matches!(
         reconstruction.basis(),
         ReconstructionBasis::TaylorViaChannelMajor { .. }
@@ -500,10 +484,6 @@ fn problem_with_shape_response_and_mosaic(
         ReconstructionBasis::Taylor { terms }
         | ReconstructionBasis::TaylorViaChannelMajor { terms, .. } => terms,
         ReconstructionBasis::ChannelLocal { channels } => channels,
-        ReconstructionBasis::JointContinuumLine {
-            continuum_terms,
-            line_terms,
-        } => continuum_terms + line_terms,
     };
     let mut product_kinds = vec![
         ProductKind::Psf,
@@ -512,9 +492,6 @@ fn problem_with_shape_response_and_mosaic(
         ProductKind::SumWeights,
         ProductKind::Sensitivity,
     ];
-    if is_joint {
-        product_kinds.retain(|product| *product != ProductKind::Sensitivity);
-    }
     if matches!(
         reconstruction.basis(),
         ReconstructionBasis::Taylor { .. } | ReconstructionBasis::TaylorViaChannelMajor { .. }
@@ -586,8 +563,6 @@ fn problem_with_shape_response_and_mosaic(
     let snapshot = compile_observation(ObservationSnapshotInput::new(
         vec![if mosaic {
             mosaic_source()
-        } else if is_joint {
-            joint_source()
         } else if is_channel_major {
             channel_major_source(spectral_channels)
         } else {
@@ -794,35 +769,6 @@ fn channel_major_primary_beam_problem(
     )
 }
 
-fn joint_problem() -> casa_imaging_model::CompiledProblem {
-    joint_problem_with_condition(1.0e6)
-}
-
-fn joint_problem_with_condition(
-    maximum_condition_number: f64,
-) -> casa_imaging_model::CompiledProblem {
-    problem_with(
-        ReconstructionContract::new(
-            ReconstructionBasis::JointContinuumLine {
-                continuum_terms: 1,
-                line_terms: 1,
-            },
-            ReconstructionAlgorithm::JointContinuumLine {
-                scales_px: vec![0.0],
-                small_scale_bias: 0.0,
-            },
-            ReconstructionControls::new(16, 1.0, 1.0e-9),
-            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
-        )
-        .with_joint_continuum_line(JointContinuumLineContract::new(
-            [0],
-            [1],
-            maximum_condition_number,
-        )),
-        2,
-    )
-}
-
 fn samples(problem: &casa_imaging_model::CompiledProblem) -> [SelectedObservationSample; 2] {
     let measurement_set = problem.selected_observation().read_set().sources()[0].measurement_set();
     [
@@ -842,14 +788,6 @@ fn mosaic_samples(problem: &casa_imaging_model::CompiledProblem) -> [SelectedObs
         });
     }
     selected
-}
-
-fn joint_samples(problem: &casa_imaging_model::CompiledProblem) -> [SelectedObservationSample; 2] {
-    let measurement_set = problem.selected_observation().read_set().sources()[0].measurement_set();
-    [
-        sample(measurement_set, 0, 0, 0, 1.0e9, 2.0, [1.0, 0.0]),
-        sample(measurement_set, 0, 0, 1, 1.001e9, 2.0, [3.0, 0.0]),
-    ]
 }
 
 fn channel_major_samples(
@@ -1186,69 +1124,6 @@ fn run_final_normal_state(
     (normal, expected)
 }
 
-fn run_joint_final_normal_state(
-    problem: &casa_imaging_model::CompiledProblem,
-    selected: &[SelectedObservationSample],
-) -> (ModelLifecycle, FinalNormalState, ModelGeneration) {
-    let executable =
-        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable joint problem");
-    let mut lifecycle = ModelLifecycle::bind(
-        executable,
-        ModelExecutionAttemptId::new(identity(46, 120)),
-        1,
-        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
-            .expect("positive model window"),
-    )
-    .expect("bind joint model lifecycle");
-    let initial = lifecycle.initial_empty().expect("empty joint model");
-    let preparation =
-        MajorCyclePreparation::prepare(&lifecycle, initial, None).expect("prepare joint model");
-    let (complete_data, _, _) = run_operator(problem, selected, 1, 1, Some(&preparation));
-    let completion = MajorCycleOwner::from_complete_data(
-        {
-            let storage =
-                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
-                    complete_data.primitives().slab().total_channels(),
-                )
-                .expect("fixture normal window");
-            complete_data
-                .seal(&storage)
-                .expect("seal fixture normal state")
-        },
-        preparation,
-    )
-    .expect("join joint complete-data evidence")
-    .reconcile(&mut lifecycle)
-    .expect("reconcile joint normal state");
-    let (normal, _, model) = completion.into_parts();
-    (lifecycle, normal, model)
-}
-
-fn full_joint_masks(
-    normal: &FinalNormalState,
-    model: &ModelGeneration,
-) -> CoupledReconstructionMask {
-    let centre = normal.shape()[0] as f64 / 2.0;
-    let coordinate = DirectionCoordinateSpec::new(
-        Projection::Sin,
-        SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
-        [centre, centre],
-        [-1.0e-6, 1.0e-6],
-        [[1.0, 0.0], [0.0, 1.0]],
-        [180.0, 0.0],
-    );
-    let mask = || {
-        ReconstructionMask::full_plane(
-            normal.problem_id(),
-            model.generation_id(),
-            coordinate,
-            normal.shape(),
-        )
-        .expect("full joint mask")
-    };
-    CoupledReconstructionMask::new(mask(), mask()).expect("same-lineage joint masks")
-}
-
 struct FrozenTaylorReplay {
     weighting: WeightingAlgorithmState,
     plan: WeightingPlan,
@@ -1382,9 +1257,6 @@ fn complete_frozen_taylor_operator(
 ) -> CompleteDataOwnerResult {
     let channels = match problem.reconstruction().basis() {
         ReconstructionBasis::TaylorViaChannelMajor { channels, .. } => channels,
-        ReconstructionBasis::JointContinuumLine { .. } => {
-            problem.geometry().spectral().output_channels()
-        }
         _ => 1,
     };
     complete_frozen_taylor_operator_slab(problem, frozen, preparation, pass, prior, 0, channels)
@@ -1637,7 +1509,6 @@ fn compile_compact_program(
 
 struct CompactTaylorResult {
     residual: Vec<num_complex::Complex64>,
-    common_residual: Option<Vec<num_complex::Complex64>>,
     routing: GriddedNormalRoutingMeasurements,
     grid_residency: GriddedNormalExecutionResidency,
 }
@@ -1767,7 +1638,6 @@ fn execute_compact_taylor(
         .expect("finish compact Taylor apply");
     CompactTaylorResult {
         residual: complete.primitives().dirty().complex().unwrap().to_vec(),
-        common_residual: complete.primitives().common_residual().map(<[_]>::to_vec),
         routing,
         grid_residency,
     }
@@ -2546,122 +2416,6 @@ fn t47_mosaic_mtmfs_executes_signed_normal_moments() {
 }
 
 #[test]
-fn t46_joint_block_accumulates_cross_terms_once_and_is_partition_deterministic() {
-    let problem = joint_problem();
-    let samples = joint_samples(&problem);
-    let (one_sample_blocks, _, _) = run_operator(&problem, &samples, 1, 1, None);
-    let (one_full_block, _, _) = run_operator(&problem, &samples, samples.len(), 2, None);
-
-    for result in [&one_sample_blocks, &one_full_block] {
-        assert_eq!(
-            result.completion().primitive_catalog(),
-            SpectralPrimitiveCatalog::UnnormalizedJointBlockV1
-        );
-        let primitives = result.primitives();
-        assert_eq!(primitives.coefficient_term_count(), 2);
-        assert_eq!(primitives.joint_continuum_term_count(), Some(1));
-        assert_eq!(primitives.normal_moment_count(), 4);
-        assert_eq!(primitives.normal_moment_index(0, 0), Some(0));
-        assert_eq!(primitives.normal_moment_index(0, 1), Some(1));
-        assert_eq!(primitives.normal_moment_index(1, 0), Some(2));
-        assert_eq!(primitives.normal_moment_index(1, 1), Some(3));
-
-        let cells = IMAGE_WIDTH * IMAGE_WIDTH;
-        let cross = &primitives.psf().complex().unwrap()[cells..2 * cells];
-        assert!(
-            cross.iter().any(|value| value.norm() > 0.0),
-            "the line-bearing visibility must contribute the continuum-line cross block"
-        );
-        assert_eq!(
-            &primitives.psf().complex().unwrap()[cells..2 * cells],
-            &primitives.psf().complex().unwrap()[2 * cells..3 * cells],
-            "the two explicitly retained cross blocks must be Hermitian-equal for real weights"
-        );
-    }
-
-    assert_eq!(
-        one_sample_blocks
-            .primitives()
-            .normal_state_content_identity(),
-        one_full_block.primitives().normal_state_content_identity(),
-        "block size and density partitioning cannot alter the joint reduction"
-    );
-}
-
-#[test]
-fn t46_joint_minor_cycle_recovers_mixed_components_in_one_atomic_delta() {
-    let problem = joint_problem();
-    let selected = joint_samples(&problem);
-    let (lifecycle, normal, model) = run_joint_final_normal_state(&problem, &selected);
-    let coordinate = full_joint_masks(&normal, &model).continuum().coordinate();
-    let mask_plan = ReconstructionMaskPlan::Coupled {
-        continuum: Box::new(ReconstructionMaskPlan::FullPlane { coordinate }),
-        line: Box::new(ReconstructionMaskPlan::FullPlane { coordinate }),
-    };
-    let (masks, auto_masks) = mask_plan
-        .materialize_coupled(&model, &normal)
-        .expect("materialize one coupled mask generation");
-    assert_eq!(auto_masks, [None, None]);
-    let result = ReconstructionCycle::new(
-        ChannelCyclePolicy::Coupled,
-        MinorCycleProgram::for_problem(&problem)
-            .expect("joint controls")
-            .limit_iterations(1)
-            .expect("one joint iteration"),
-    )
-    .run_coupled(&lifecycle, &model, &normal, &masks)
-    .expect("joint block solve through the shared reconstruction cycle");
-
-    assert_eq!(result.evidence().iterations(), 1);
-    let terms = result.delta().expect("one atomic joint delta").terms();
-    assert_eq!(terms.len(), 2);
-    assert_eq!(terms[0].cell().coefficient(), 0);
-    assert_eq!(terms[1].cell().coefficient(), 1);
-    assert_eq!(terms[0].cell().pixel(), terms[1].cell().pixel());
-    assert!((terms[0].increment().value() - 1.0).abs() < 1.0e-6);
-    assert!((terms[1].increment().value() - 2.0).abs() < 1.0e-6);
-    assert!(result.evidence().final_peak_flux() < 1.0e-6);
-}
-
-#[test]
-fn t46_joint_minor_cycle_rejects_an_active_block_above_the_condition_ceiling() {
-    let problem = joint_problem_with_condition(1.0);
-    let selected = joint_samples(&problem);
-    let (lifecycle, normal, model) = run_joint_final_normal_state(&problem, &selected);
-    let masks = full_joint_masks(&normal, &model);
-    let error = ReconstructionCycle::new(
-        ChannelCyclePolicy::Coupled,
-        MinorCycleProgram::for_problem(&problem).expect("joint controls"),
-    )
-    .run_coupled(&lifecycle, &model, &normal, &masks)
-    .expect_err("ill-conditioned active block must fail closed");
-    assert!(matches!(
-        error,
-        ReconstructionCycleError::Minor(MinorCycleError::SingularJointNormalBlock)
-    ));
-}
-
-#[test]
-fn t46_joint_cycle_rejects_missing_positive_weight_support() {
-    let problem = joint_problem();
-    let mut selected = joint_samples(&problem);
-    selected[0].input_weight = 0.0;
-    selected[1].input_weight = 0.0;
-    let (lifecycle, normal, model) = run_joint_final_normal_state(&problem, &selected);
-    let masks = full_joint_masks(&normal, &model);
-    let error = ReconstructionCycle::new(
-        ChannelCyclePolicy::Coupled,
-        MinorCycleProgram::for_problem(&problem).expect("joint controls"),
-    )
-    .run_coupled(&lifecycle, &model, &normal, &masks)
-    .expect_err("zero-weight joint support must fail closed");
-    assert!(matches!(
-        error,
-        ReconstructionCycleError::InvalidJointSupport
-    ));
-}
-
-#[test]
 fn t42_final_normal_state_exposes_taylor_terms_and_hankel_blocks_without_channel_aliases() {
     let problem = problem();
     let samples = samples(&problem);
@@ -2854,79 +2608,4 @@ fn t42_compact_replay_matches_direct_residual_across_workers() {
             + serial.grid_residency.merge_complex_values()
     );
     assert!(serial.grid_residency.metadata_bytes() > 0);
-}
-
-#[test]
-fn t46_joint_compact_replay_matches_direct_residual_across_workers() {
-    let problem = joint_problem();
-    let selected = joint_samples(&problem);
-    let frozen = freeze_taylor_replay(&problem, &selected);
-    let preparation = nonzero_taylor_model(&problem);
-    let (program, blocks) = compile_compact_program(&problem, &frozen);
-
-    assert_eq!(program.record_bytes(), GRIDDED_NORMAL_OPERATOR_RECORD_BYTES);
-    assert_eq!(program.prediction_width(), 1);
-    let direct_prior = initial_normal_from_frozen(&problem, &frozen);
-    let initial_content = direct_prior.diagnostic_content_identity().unwrap();
-    assert_eq!(direct_prior.coefficient_term_count(), 2);
-    assert_eq!(direct_prior.normal_moment_count(), 4);
-    let direct = complete_frozen_taylor_operator(
-        &problem,
-        &frozen,
-        &preparation,
-        SpectralOperatorPass::ResidualRefresh,
-        Some(direct_prior),
-    );
-    assert_eq!(
-        direct.completion().primitive_catalog(),
-        SpectralPrimitiveCatalog::UnnormalizedJointBlockV1
-    );
-    let expected = direct.primitives().dirty().complex().unwrap();
-    let expected_common = direct
-        .primitives()
-        .common_residual()
-        .expect("joint operator retains the channel-local common residual");
-    let mut serial_residual: Option<Vec<num_complex::Complex64>> = None;
-    let mut serial_common_residual: Option<Vec<num_complex::Complex64>> = None;
-
-    for workers in [1, 2] {
-        let prior = initial_normal_from_frozen(&problem, &frozen);
-        assert_eq!(
-            prior.diagnostic_content_identity().unwrap(),
-            initial_content
-        );
-        let compact = execute_compact_taylor(
-            &problem,
-            &frozen,
-            &program,
-            &blocks,
-            &preparation,
-            prior,
-            workers,
-        );
-        let nrms = complex_nrms(&compact.residual, expected);
-        assert!(
-            nrms <= 0.001,
-            "compact joint dirty-Hx must match selected-sample residual refresh: NRMS={nrms:e}"
-        );
-        let common = compact
-            .common_residual
-            .as_deref()
-            .expect("compact joint replay retains the common residual");
-        let common_nrms = complex_nrms(common, expected_common);
-        assert!(
-            common_nrms <= 0.001,
-            "compact joint common residual must match selected-sample refresh: NRMS={common_nrms:e}"
-        );
-        if let Some(serial) = &serial_residual {
-            assert!(complex_nrms(&compact.residual, serial) <= 1e-3);
-        } else {
-            serial_residual = Some(compact.residual.clone());
-        }
-        if let Some(serial) = &serial_common_residual {
-            assert!(complex_nrms(common, serial) <= 1e-3);
-        } else {
-            serial_common_residual = Some(common.to_vec());
-        }
-    }
 }

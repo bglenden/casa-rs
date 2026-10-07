@@ -146,13 +146,10 @@ impl BandPlan {
             ])?);
         }
         let normal_metadata = if normal {
-            add(&[
-                mul(
-                    depth,
-                    2 * size_of::<f64>() + size_of::<crate::SpectralChannelValidity>(),
-                )?,
-                mul(self.total_channels, size_of::<Option<usize>>())?,
-            ])?
+            mul(
+                depth,
+                2 * size_of::<f64>() + size_of::<crate::SpectralChannelValidity>(),
+            )?
         } else {
             0
         };

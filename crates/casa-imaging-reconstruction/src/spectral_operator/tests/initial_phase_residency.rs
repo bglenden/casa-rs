@@ -151,12 +151,6 @@ fn t51_initial_phase_residency_is_geometry_derived_and_fail_closed() {
     excluded.basis = SpectralBasisPlan::ChannelLocal;
     exclusions.push(excluded);
     let mut excluded = small.clone();
-    excluded.basis = SpectralBasisPlan::Joint {
-        continuum: BlockNormalPlan::taylor(1.0e9, 2).unwrap(),
-        line_terms: 1,
-    };
-    exclusions.push(excluded);
-    let mut excluded = small.clone();
     excluded.charts = vec![small.charts[0].clone(); 2].into_boxed_slice();
     exclusions.push(excluded);
     let mut excluded = small.clone();
@@ -258,7 +252,6 @@ fn t51_initial_phase_residency_bounds_actual_formation_and_identity_transfer() {
         phases.accumulation_bytes()
     );
     assert!(source.residual_grids.is_none());
-    assert!(source.common_residual_grids.is_none());
     assert!(source.primary_beam.is_none() && source.mosaic_normal.is_none());
     assert!(provider_lifetime.upgrade().is_some());
     let mut received_local = false;
@@ -271,7 +264,6 @@ fn t51_initial_phase_residency_bounds_actual_formation_and_identity_transfer() {
             // The chart owner releases its grids before transferring the primitives.
             assert!(provider_lifetime.upgrade().is_none());
             received_local = true;
-            assert!(local.common_residual.is_none() && local.invariant_common_dirty.is_none());
             assert!(
                 local.primary_beam_weighted_sum.is_none() && local.major_cycle_residual.is_none()
             );

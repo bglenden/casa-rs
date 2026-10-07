@@ -138,8 +138,7 @@ pub(crate) fn maximum_spectral_terms(problem: &CompiledProblem) -> usize {
     match problem.reconstruction().basis() {
         ReconstructionBasis::Constant | ReconstructionBasis::Taylor { .. } => 1,
         ReconstructionBasis::TaylorViaChannelMajor { .. }
-        | ReconstructionBasis::ChannelLocal { .. }
-        | ReconstructionBasis::JointContinuumLine { .. } => {
+        | ReconstructionBasis::ChannelLocal { .. } => {
             match problem.science().spectral().sampling().kernel() {
                 SpectralKernel::Identity | SpectralKernel::Nearest => 1,
                 SpectralKernel::Linear => 2,

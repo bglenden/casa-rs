@@ -20,7 +20,7 @@ pub use casa_imaging_reconstruction::MosaicSensitivity;
 const FWHM_TO_SIGMA: f64 = 1.0 / 2.354_820_045_030_949_3;
 
 /// Publication uses the principal PSF's measured peak, not its sum weight.
-/// Coupled Taylor/joint terms must all use this same divisor.
+/// Coupled Taylor terms must all use this same divisor.
 pub(crate) fn psf_peak(mut values: impl Iterator<Item = f32>) -> Result<f32, ProductsError> {
     values.try_fold(0.0_f32, |peak, value| {
         value

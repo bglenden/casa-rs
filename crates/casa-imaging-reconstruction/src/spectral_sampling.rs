@@ -734,8 +734,7 @@ pub fn compile_spectral_stencil<'a>(
             one_term(0, 1.0, frequency_hz)?
         }
         ReconstructionBasis::TaylorViaChannelMajor { .. }
-        | ReconstructionBasis::ChannelLocal { .. }
-        | ReconstructionBasis::JointContinuumLine { .. } => {
+        | ReconstructionBasis::ChannelLocal { .. } => {
             channel_local_terms(problem, sample, evaluation, frequency_hz)?
         }
     };

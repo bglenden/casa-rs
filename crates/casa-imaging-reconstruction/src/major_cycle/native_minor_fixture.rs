@@ -433,7 +433,6 @@ fn build_problem(
         input_model_generation: base.generation_id(),
         final_model_generation: base.generation_id(),
 
-        coupled_mask_generation: None,
         image_domain_mask_generation: None,
         primitives: crate::spectral_operator::normal_storage::NormalStatePrimitives::Coupled(
             primitives,

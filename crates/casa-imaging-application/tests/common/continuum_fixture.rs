@@ -170,10 +170,10 @@ pub(super) fn thirty_two_channel_multi_row_measurement_set(root: &Path) -> PathB
     )
 }
 
-pub(super) fn joint_measurement_set(root: &Path) -> PathBuf {
+pub(super) fn four_channel_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,
-        "joint-input.ms",
+        "four-channel-input.ms",
         MeasurementSetFixtureOptions::new(false, false, 4, 1, 2, 1, false),
     )
 }

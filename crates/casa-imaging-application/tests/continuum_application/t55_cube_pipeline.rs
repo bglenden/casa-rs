@@ -287,7 +287,7 @@ fn t55_shifted_cube_density_retains_native_endpoint_weights() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
-    let measurement_set = joint_measurement_set(root.path());
+    let measurement_set = four_channel_measurement_set(root.path());
     let mut imaging = request(
         measurement_set,
         root.path().join("shifted-density"),

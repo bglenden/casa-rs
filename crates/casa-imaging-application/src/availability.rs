@@ -484,9 +484,7 @@ fn coupled_basis_requires_independent_polarization(
 ) -> bool {
     matches!(
         basis,
-        ReconstructionBasis::Taylor { .. }
-            | ReconstructionBasis::TaylorViaChannelMajor { .. }
-            | ReconstructionBasis::JointContinuumLine { .. }
+        ReconstructionBasis::Taylor { .. } | ReconstructionBasis::TaylorViaChannelMajor { .. }
     ) && coordinates != [PolarizationCoordinate::StokesI]
 }
 
@@ -591,13 +589,6 @@ mod tests {
     }
 
     #[test]
-    fn optional_joint_reconstruction_is_not_installed_at_the_application_boundary() {
-        assert!(!supports_capability(
-            RequiredCapability::JointContinuumLineReconstruction
-        ));
-    }
-
-    #[test]
     fn t41_primary_beam_response_is_installed_at_the_application_boundary() {
         assert!(supports_capability(RequiredCapability::PrimaryBeamResponse));
     }
@@ -631,12 +622,12 @@ mod tests {
     }
 
     #[test]
-    fn coupled_basis_polarization_constraint_covers_taylor_and_joint() {
+    fn coupled_basis_polarization_constraint_covers_taylor() {
         for basis in [
             ReconstructionBasis::Taylor { terms: 2 },
-            ReconstructionBasis::JointContinuumLine {
-                continuum_terms: 2,
-                line_terms: 1,
+            ReconstructionBasis::TaylorViaChannelMajor {
+                terms: 2,
+                channels: 4,
             },
         ] {
             assert!(!coupled_basis_requires_independent_polarization(

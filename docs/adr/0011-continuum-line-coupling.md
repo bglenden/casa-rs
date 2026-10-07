@@ -4,7 +4,7 @@ Status: accepted
 Date: 2026-08-31
 Truth class: normative
 Supersedes:
-Superseded by: ADR-0014 for product sealing/attestation only; scientific coupling remains normative.
+Superseded by: ADR-0014 for product sealing/attestation only; ADR-0016.
 
 ## Context
 

@@ -110,10 +110,6 @@ impl PlannedContinuumGeneration {
             || inputs.normal_state_completion() != self.normal_state_completion()
             || inputs.final_model().generation_id() != self.final_model_generation()
             || inputs.reconstruction_mask_generation() != self.reconstruction_mask_generation()
-            || inputs
-                .coupled_reconstruction_masks()
-                .map(|masks| masks.line().generation_id())
-                != self.line_reconstruction_mask_generation()
         {
             return Err(ProductsError::SourceLineageMismatch);
         }
@@ -162,8 +158,7 @@ impl PlannedContinuumGeneration {
             0
         };
         let workers = match inputs.normal_state().catalog() {
-            NormalStateCatalog::UnnormalizedTaylorBlockV1
-            | NormalStateCatalog::UnnormalizedJointBlockV1 => 1,
+            NormalStateCatalog::UnnormalizedTaylorBlockV1 => 1,
             _ if cfg!(unix)
                 && maximum_windows == 1
                 && self.members().iter().any(|member| {
@@ -184,14 +179,12 @@ impl PlannedContinuumGeneration {
 
         let mut algorithm_scratch_bytes = match inputs.normal_state().catalog() {
             NormalStateCatalog::UnnormalizedTaylorBlockV1 => taylor_scratch_bytes(inputs)?,
-            NormalStateCatalog::UnnormalizedJointBlockV1 => generic_scratch_bytes(self, inputs)?,
             NormalStateCatalog::UnnormalizedPlaneV1
             | NormalStateCatalog::UnnormalizedChannelSlabV1 => generic_scratch_bytes(self, inputs)?,
         };
         if matches!(
             inputs.normal_state().catalog(),
             NormalStateCatalog::UnnormalizedTaylorBlockV1
-                | NormalStateCatalog::UnnormalizedJointBlockV1
         ) {
             algorithm_scratch_bytes = checked_add(
                 algorithm_scratch_bytes,
@@ -222,7 +215,6 @@ impl PlannedContinuumGeneration {
         if !matches!(
             inputs.normal_state().catalog(),
             NormalStateCatalog::UnnormalizedTaylorBlockV1
-                | NormalStateCatalog::UnnormalizedJointBlockV1
         ) {
             algorithm_scratch_bytes = checked_add(
                 algorithm_scratch_bytes,
@@ -235,7 +227,6 @@ impl PlannedContinuumGeneration {
         let transient_bytes = if matches!(
             inputs.normal_state().catalog(),
             NormalStateCatalog::UnnormalizedTaylorBlockV1
-                | NormalStateCatalog::UnnormalizedJointBlockV1
         ) {
             checked_add(
                 algorithm_scratch_bytes,
@@ -287,7 +278,6 @@ impl PlannedContinuumGeneration {
         } else {
             match state.catalog() {
                 NormalStateCatalog::UnnormalizedTaylorBlockV1 => 1,
-                NormalStateCatalog::UnnormalizedJointBlockV1 => state.channel_count(),
                 _ => domains
                     .checked_mul(state.channel_count())
                     .and_then(|count| count.checked_mul(state.polarization_count()))
@@ -436,7 +426,6 @@ fn generic_scratch_bytes(
             casa_imaging_reconstruction::normal_state_window_residency_bytes(
                 shape,
                 inputs.normal_state().polarization_count(),
-                inputs.normal_state().channel_count(),
                 1,
             )?,
             "generic normal-state input window",

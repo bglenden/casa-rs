@@ -11,9 +11,7 @@ use crate::{
     ComponentDivergence, Encoder, FinalNormalState, MinorCycleError, MinorCycleEvidence,
     MinorCycleModelPlane, MinorCycleProgram, MinorCycleStopReason, ModelDelta, ModelGeneration,
     ModelLifecycle, ModelLifecycleError, ModelSupport, SpectralChannelValidity,
-    minor_cycle::{
-        run_image_domain_minor_cycle, run_joint_minor_cycle, run_minor_cycle, run_minor_cycle_plane,
-    },
+    minor_cycle::{run_image_domain_minor_cycle, run_minor_cycle, run_minor_cycle_plane},
 };
 
 const RECONSTRUCTION_CYCLE_EVIDENCE_DOMAIN: &[u8] = b"casa-rs-reconstruction-cycle-evidence";
@@ -421,7 +419,6 @@ impl ReconstructionCycle {
             if !matches!(
                 normal.catalog(),
                 crate::NormalStateCatalog::UnnormalizedTaylorBlockV1
-                    | crate::NormalStateCatalog::UnnormalizedJointBlockV1
             ) {
                 return Err(ReconstructionCycleError::UnsupportedCoupledPolicy);
             }
@@ -447,12 +444,7 @@ impl ReconstructionCycle {
                     },
                 });
             }
-            let program =
-                if normal.catalog() == crate::NormalStateCatalog::UnnormalizedTaylorBlockV1 {
-                    self.program.clone().with_global_convergence_check()
-                } else {
-                    self.program.clone()
-                };
+            let program = self.program.clone().with_global_convergence_check();
             let result = run_minor_cycle(lifecycle, base, normal, mask, program)?;
             let (delta, minor_cycle) = result.into_parts();
             let channels = vec![ChannelCycleEvidence {
@@ -523,47 +515,6 @@ impl ReconstructionCycle {
             plane_count,
             terms: Vec::new(),
             channels: Vec::with_capacity(plane_count),
-        })
-    }
-
-    /// Run one joint continuum-line solve with independently committed masks.
-    pub fn run_coupled(
-        &self,
-        lifecycle: &ModelLifecycle,
-        base: &ModelGeneration,
-        normal: &FinalNormalState,
-        masks: &crate::CoupledReconstructionMask,
-    ) -> Result<ReconstructionCycleResult, ReconstructionCycleError> {
-        if self.policy != ChannelCyclePolicy::Coupled
-            || normal.catalog() != crate::NormalStateCatalog::UnnormalizedJointBlockV1
-        {
-            return Err(ReconstructionCycleError::UnsupportedCoupledPolicy);
-        }
-        if normal
-            .channel_validity()
-            .iter()
-            .any(|validity| *validity != SpectralChannelValidity::Valid)
-        {
-            return Err(ReconstructionCycleError::InvalidJointSupport);
-        }
-        let result = run_joint_minor_cycle(lifecycle, base, normal, masks, self.program.clone())?;
-        let (delta, evidence) = result.into_parts();
-        let channels = vec![ChannelCycleEvidence {
-            output_channel: normal.slab().core_range().start,
-            polarization: 0,
-            validity: SpectralChannelValidity::Valid,
-            minor_cycle: Some(evidence),
-        }];
-        let evidence_id =
-            reconstruction_cycle_evidence_id(lifecycle, normal, self.policy, &channels);
-        Ok(ReconstructionCycleResult {
-            delta,
-            evidence: ReconstructionCycleEvidence {
-                evidence_id,
-                problem: lifecycle.problem(),
-                policy: self.policy,
-                channels: channels.into_boxed_slice(),
-            },
         })
     }
 }
@@ -1211,12 +1162,9 @@ pub enum ReconstructionCycleError {
     /// A coordinator could not load the required authoritative Normal State.
     #[error(transparent)]
     NormalAccess(#[from] crate::SpectralOperatorError),
-    /// No jointly coupled channel solver is approved by T38.
-    #[error("coupled channel reconstruction requires an approved joint solver")]
+    /// The channel-cycle policy does not match the Normal State catalog.
+    #[error("channel-cycle policy does not match the normal-state catalog")]
     UnsupportedCoupledPolicy,
-    /// At least one declared anchor or line channel lacks positive weighted support.
-    #[error("joint reconstruction requires positive weighted support on every declared channel")]
-    InvalidJointSupport,
     /// The normal-state slab cannot expose all of its declared core planes.
     #[error("normal-state slab storage does not match its declared channel interval")]
     InvalidNormalStateSlab,

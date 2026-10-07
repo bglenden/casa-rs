@@ -17,8 +17,7 @@ use casa_imaging_reconstruction::{
     ChannelCyclePolicy, ExecutableModelProblem, FinalModelCompletion, FinalModelContinuation,
     FinalNormalState, ImageDomainReconstructionMaskPlans, MajorCycleCompletion,
     MajorCyclePreparation, MinorCycleProgram, ModelDeltaId, ModelLifecycle, NormalStateCatalog,
-    ReconstructionCycle, ReconstructionCycleError, ReconstructionCycleEvidence,
-    ReconstructionMaskSet,
+    ReconstructionCycle, ReconstructionCycleEvidence, ReconstructionMaskSet,
 };
 
 use crate::complete_data_operator::{GriddedNormalReplayCompilation, PendingCompleteDataSlabFold};
@@ -3365,73 +3364,43 @@ impl MajorCycleOperatorResult {
     ) -> Result<ReconstructionCyclePhaseCompletion, io::Error> {
         let completion = self.into_completion();
         let (normal_state, continuation) = completion.into_continuation();
-        let policy = if matches!(
-            normal_state.catalog(),
-            NormalStateCatalog::UnnormalizedTaylorBlockV1
-                | NormalStateCatalog::UnnormalizedJointBlockV1
-        ) {
+        let policy = if normal_state.catalog() == NormalStateCatalog::UnnormalizedTaylorBlockV1 {
             ChannelCyclePolicy::Coupled
         } else {
             ChannelCyclePolicy::Independent
         };
-        let (masks, auto_masks, cycle) =
-            if normal_state.catalog() == NormalStateCatalog::UnnormalizedJointBlockV1 {
-                if mask_plans.len() != 1 {
-                    return Err(io::Error::other(ReconstructionCycleError::Minor(
-                        casa_imaging_reconstruction::MinorCycleError::Mask(
-                            casa_imaging_reconstruction::MaskError::DomainCardinalityMismatch,
-                        ),
-                    )));
-                }
-                let (masks, auto_masks) = mask_plans
-                    .primary()
-                    .materialize_coupled(continuation.generation(), &normal_state)
-                    .map_err(io::Error::other)?;
-                let cycle = ReconstructionCycle::new(policy, program)
-                    .run_coupled(lifecycle, continuation.generation(), &normal_state, &masks)
-                    .map_err(io::Error::other)?;
-                (
-                    ReconstructionMaskSet::Coupled(Box::new(masks)),
-                    auto_masks
-                        .into_iter()
-                        .collect::<Vec<_>>()
-                        .into_boxed_slice(),
-                    cycle,
+        let (masks, auto_masks) = mask_plans
+            .materialize(continuation.generation(), &normal_state)
+            .map_err(io::Error::other)?
+            .into_parts();
+        let cycle = if normal_state.catalog() == NormalStateCatalog::UnnormalizedPlaneV1
+            && normal_state.domain_count() > 1
+        {
+            ReconstructionCycle::new(policy, program)
+                .run_domains(lifecycle, continuation.generation(), &normal_state, &masks)
+                .map_err(io::Error::other)?
+        } else if policy == ChannelCyclePolicy::Independent {
+            let cycle = ReconstructionCycle::new(policy, program);
+            let work = cycle
+                .prepare_independent(
+                    lifecycle,
+                    continuation.generation(),
+                    &normal_state,
+                    masks.primary(),
                 )
-            } else {
-                let (masks, auto_masks) = mask_plans
-                    .materialize(continuation.generation(), &normal_state)
-                    .map_err(io::Error::other)?
-                    .into_parts();
-                let cycle = if normal_state.catalog() == NormalStateCatalog::UnnormalizedPlaneV1
-                    && normal_state.domain_count() > 1
-                {
-                    ReconstructionCycle::new(policy, program)
-                        .run_domains(lifecycle, continuation.generation(), &normal_state, &masks)
-                        .map_err(io::Error::other)?
-                } else if policy == ChannelCyclePolicy::Independent {
-                    let cycle = ReconstructionCycle::new(policy, program);
-                    let work = cycle
-                        .prepare_independent(
-                            lifecycle,
-                            continuation.generation(),
-                            &normal_state,
-                            masks.primary(),
-                        )
-                        .map_err(io::Error::other)?;
-                    crate::reconstruction_executor::execute(work, context, pass, measurements)?
-                } else {
-                    ReconstructionCycle::new(policy, program)
-                        .run(
-                            lifecycle,
-                            continuation.generation(),
-                            &normal_state,
-                            masks.primary(),
-                        )
-                        .map_err(io::Error::other)?
-                };
-                (ReconstructionMaskSet::Domains(masks), auto_masks, cycle)
-            };
+                .map_err(io::Error::other)?;
+            crate::reconstruction_executor::execute(work, context, pass, measurements)?
+        } else {
+            ReconstructionCycle::new(policy, program)
+                .run(
+                    lifecycle,
+                    continuation.generation(),
+                    &normal_state,
+                    masks.primary(),
+                )
+                .map_err(io::Error::other)?
+        };
+        let masks = ReconstructionMaskSet::Domains(masks);
         let (delta, evidence) = cycle.into_parts();
         Ok(ReconstructionCyclePhaseCompletion {
             normal_state,
@@ -3467,18 +3436,6 @@ impl ReconstructionCyclePhaseCompletion {
         &self,
     ) -> Option<casa_imaging_reconstruction::AutoMultithreshEvidence> {
         self.auto_masks[0]
-    }
-
-    /// Return line-mask auto-multithreshold diagnostics for a joint solve.
-    #[must_use]
-    pub const fn line_auto_mask_evidence(
-        &self,
-    ) -> Option<casa_imaging_reconstruction::AutoMultithreshEvidence> {
-        if self.auto_masks.len() > 1 {
-            self.auto_masks[1]
-        } else {
-            None
-        }
     }
 
     /// Return auto-mask evidence by canonical image-domain ordinal.

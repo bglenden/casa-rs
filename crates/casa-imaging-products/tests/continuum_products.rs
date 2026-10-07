@@ -1800,7 +1800,7 @@ fn generic_generation_demand_charges_exact_owned_arrays() {
         (SHAPE[0]
             * SHAPE[1]
             * (2 * size_of::<f32>() + size_of::<casa_imaging_model::ModelSample>())) as u64
-            + casa_imaging_reconstruction::normal_state_window_residency_bytes(SHAPE, 1, 1, 1)
+            + casa_imaging_reconstruction::normal_state_window_residency_bytes(SHAPE, 1, 1)
                 .unwrap()
             + maximum * 5
             + size_of::<Option<casa_imaging_products::ProductWindow>>() as u64,

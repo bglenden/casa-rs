@@ -102,21 +102,6 @@ pub enum ContinuumAlgorithm {
         /// CASA small-scale preference in `[0, 1]`.
         small_scale_bias: f64,
     },
-    /// Reconstruct one smooth continuum basis and channel-local line basis jointly.
-    JointContinuumLine {
-        /// Number of smooth continuum coefficients.
-        continuum_terms: usize,
-        /// Channels where line coefficients are structurally absent.
-        continuum_anchor_channels: Vec<usize>,
-        /// Channels carrying one channel-local line coefficient each.
-        line_channels: Vec<usize>,
-        /// Maximum admitted active-block condition estimate.
-        maximum_condition_number: f64,
-        /// Canonical scale sizes in image pixels.
-        scales_px: Vec<f64>,
-        /// CASA small-scale preference in `[0, 1]`.
-        small_scale_bias: f64,
-    },
 }
 
 /// Native continuum visibility-weighting law.
@@ -144,13 +129,6 @@ pub enum ContinuumBeamPolicy {
 /// Reconstruction-mask policy evaluated at the initial major-cycle boundary.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ContinuumMask {
-    /// Independently commit continuum and line spatial support for a joint solve.
-    Coupled {
-        /// Continuum-component support.
-        continuum: Box<ContinuumMask>,
-        /// Line-component support.
-        line: Box<ContinuumMask>,
-    },
     /// Admit every valid model pixel.
     FullPlane,
     /// Admit the union of inclusive target-grid pixel boxes.
@@ -320,8 +298,6 @@ pub enum ContinuumStopReason {
 pub enum SpectralImagingMode {
     /// One constant-basis continuum plane over every selected source channel.
     Continuum,
-    /// Preserve one exact output channel for every selected source channel.
-    JointContinuumLine,
     /// One independently reconstructed model plane per output cube channel.
     Cube {
         /// CASA-compatible output-axis and interpolation controls.
@@ -600,58 +576,6 @@ fn prepare_spectral_axis(
                 sampling: SpectralSamplingLaw::IDENTITY,
                 basis: ReconstructionBasis::Constant,
                 output_channels: 1,
-                reference_frequency_hz,
-                increment_hz,
-            })
-        }
-        SpectralImagingMode::JointContinuumLine => {
-            let [window] = spectral_windows else {
-                return Err(boxed(
-                    "joint continuum-line imaging requires exactly one selected spectral window",
-                ));
-            };
-            let selected = selected_channels(request, window.spw_id, &window.frequencies_hz)?;
-            let frequencies = selected
-                .iter()
-                .map(|channel| window.frequencies_hz[*channel])
-                .collect::<Vec<_>>();
-            let reference_frequency_hz = frequencies[0];
-            let increment_hz = if frequencies.len() > 1 {
-                frequencies[1] - frequencies[0]
-            } else {
-                window.channel_widths_hz[selected[0]]
-            };
-            if !increment_hz.is_finite()
-                || increment_hz == 0.0
-                || frequencies.iter().enumerate().any(|(index, frequency)| {
-                    let expected = reference_frequency_hz + index as f64 * increment_hz;
-                    (*frequency - expected).abs() > expected.abs().max(1.0) * 1.0e-12
-                })
-            {
-                return Err(boxed(
-                    "joint continuum-line output requires a finite linear selected source axis",
-                ));
-            }
-            Ok(PreparedSpectralAxis {
-                selected_source_channels: BTreeMap::from([(window.spw_id, selected)]),
-                source_frame,
-                output_frequency_reference: source_frequency_reference,
-                output_frame: source_frame,
-                anchor: SpectralFrameAnchor::NotApplicable,
-                wcs: SpectralWcs::Linear {
-                    channels: frequencies.len(),
-                    reference_pixel: 0.0,
-                    reference_frequency_hz,
-                    increment_hz,
-                },
-                rest_frequency: RestFrequency::NotApplicable,
-                image_rest_frequency_hz: spectral_window_midpoint_hz(window),
-                doppler: DopplerConvention::NotApplicable,
-                sampling: SpectralSamplingLaw::IDENTITY,
-                basis: ReconstructionBasis::ChannelLocal {
-                    channels: frequencies.len(),
-                },
-                output_channels: frequencies.len(),
                 reference_frequency_hz,
                 increment_hz,
             })
@@ -1759,11 +1683,6 @@ fn prepare(
     let digest = request_digest(&request, b"selection");
     let reconstruction_planes = match &request.algorithm {
         ContinuumAlgorithm::Mtmfs { terms, .. } => *terms,
-        ContinuumAlgorithm::JointContinuumLine {
-            continuum_terms,
-            line_channels,
-            ..
-        } => continuum_terms.saturating_add(line_channels.len()),
         _ => prepared_spectral.output_channels,
     };
     let model_samples = prepared_domains
@@ -2693,12 +2612,6 @@ const fn direction_ref(frame: DirectionFrame) -> DirectionRef {
     }
 }
 
-fn spectral_window_midpoint_hz(window: &SourceSpectralWindow) -> f64 {
-    let first = window.frequencies_hz[0];
-    let last = window.frequencies_hz[window.frequencies_hz.len() - 1];
-    first + (last - first) / 2.0
-}
-
 const fn stokes_type(coordinate: PolarizationCoordinate) -> StokesType {
     match coordinate {
         PolarizationCoordinate::StokesI => StokesType::I,
@@ -2866,12 +2779,6 @@ fn reconstruction_mask_plan(
     image_size: usize,
 ) -> Result<ReconstructionMaskPlan, crate::ApplicationError> {
     Ok(match mask {
-        ContinuumMask::Coupled { continuum, line } => ReconstructionMaskPlan::Coupled {
-            continuum: Box::new(reconstruction_mask_plan(
-                *continuum, coordinate, image_size,
-            )?),
-            line: Box::new(reconstruction_mask_plan(*line, coordinate, image_size)?),
-        },
         ContinuumMask::FullPlane => ReconstructionMaskPlan::FullPlane { coordinate },
         ContinuumMask::Boxes(boxes) => ReconstructionMaskPlan::Boxes {
             coordinate,
@@ -2990,17 +2897,6 @@ fn specification(
         (_, ContinuumAlgorithm::Mtmfs { terms, .. }) => {
             ReconstructionBasis::Taylor { terms: *terms }
         }
-        (
-            _,
-            ContinuumAlgorithm::JointContinuumLine {
-                continuum_terms,
-                line_channels,
-                ..
-            },
-        ) => ReconstructionBasis::JointContinuumLine {
-            continuum_terms: *continuum_terms,
-            line_terms: line_channels.len(),
-        },
         _ => spectral.basis,
     };
     // CASA disables cube density for MFS and MT-MFS-via-cube requests.
@@ -3026,7 +2922,7 @@ fn specification(
             density_scope,
         ),
     };
-    let mut reconstruction = ReconstructionContract::new(
+    let reconstruction = ReconstructionContract::new(
         basis,
         algorithm.clone(),
         if algorithm == ReconstructionAlgorithm::Dirty {
@@ -3047,21 +2943,6 @@ fn specification(
         },
         PolarizationContract::new(request.polarizations.clone()),
     );
-    if let ContinuumAlgorithm::JointContinuumLine {
-        continuum_anchor_channels,
-        line_channels,
-        maximum_condition_number,
-        ..
-    } = &request.algorithm
-    {
-        reconstruction = reconstruction.with_joint_continuum_line(
-            casa_imaging_model::JointContinuumLineContract::new(
-                continuum_anchor_channels.clone(),
-                line_channels.clone(),
-                *maximum_condition_number,
-            ),
-        );
-    }
     let measurement_equation = MeasurementEquationContract::new(
         if instrument_model.is_some() {
             InstrumentResponse::PrimaryBeam
@@ -3083,10 +2964,7 @@ fn specification(
         SpectralContract::new(
             spectral.sampling,
             match (&request.algorithm, request.beam_policy) {
-                (ContinuumAlgorithm::Mtmfs { .. }, _)
-                | (ContinuumAlgorithm::JointContinuumLine { .. }, _) => {
-                    SpectralCoupling::CommonRestoringBeam
-                }
+                (ContinuumAlgorithm::Mtmfs { .. }, _) => SpectralCoupling::CommonRestoringBeam,
                 (_, ContinuumBeamPolicy::PerPlane) => SpectralCoupling::Independent,
                 (_, ContinuumBeamPolicy::Common) => SpectralCoupling::CommonRestoringBeam,
             },
@@ -3115,8 +2993,7 @@ fn specification(
             ),
             request.normalization,
             match (&request.algorithm, request.beam_policy) {
-                (ContinuumAlgorithm::Mtmfs { .. }, _)
-                | (ContinuumAlgorithm::JointContinuumLine { .. }, _) => RestoringBeamPolicy::Common,
+                (ContinuumAlgorithm::Mtmfs { .. }, _) => RestoringBeamPolicy::Common,
                 (_, ContinuumBeamPolicy::PerPlane) => RestoringBeamPolicy::PerPlane,
                 (_, ContinuumBeamPolicy::Common) => RestoringBeamPolicy::Common,
             },
@@ -3215,14 +3092,6 @@ fn reconstruction_algorithm(algorithm: &ContinuumAlgorithm) -> ReconstructionAlg
             small_scale_bias,
             ..
         } => ReconstructionAlgorithm::Mtmfs {
-            scales_px: scales_px.clone(),
-            small_scale_bias: *small_scale_bias,
-        },
-        ContinuumAlgorithm::JointContinuumLine {
-            scales_px,
-            small_scale_bias,
-            ..
-        } => ReconstructionAlgorithm::JointContinuumLine {
             scales_px: scales_px.clone(),
             small_scale_bias: *small_scale_bias,
         },
@@ -3392,14 +3261,6 @@ fn planned_minor_cycle_bytes(
 ) -> u64 {
     let basis = match algorithm {
         ContinuumAlgorithm::Mtmfs { terms, .. } => ReconstructionBasis::Taylor { terms: *terms },
-        ContinuumAlgorithm::JointContinuumLine {
-            continuum_terms,
-            line_channels,
-            ..
-        } => ReconstructionBasis::JointContinuumLine {
-            continuum_terms: *continuum_terms,
-            line_terms: line_channels.len(),
-        },
         _ => ReconstructionBasis::Constant,
     };
     minor_cycle_workspace_bytes(

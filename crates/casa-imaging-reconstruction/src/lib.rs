@@ -140,17 +140,16 @@ pub use major_cycle::{
     NormalStateCatalog, normal_state_window_residency_bytes,
 };
 pub use mask::{
-    AutoMultithreshControls, AutoMultithreshEvidence, CoupledReconstructionMask,
-    ImageDomainMaskMaterialization, ImageDomainReconstructionMaskPlans,
-    ImageDomainReconstructionMasks, MaskBox, MaskError, ReconstructionMask,
-    ReconstructionMaskGenerationId, ReconstructionMaskPlan, ReconstructionMaskSet,
-    auto_multithresh, reproject_mask_support,
+    AutoMultithreshControls, AutoMultithreshEvidence, ImageDomainMaskMaterialization,
+    ImageDomainReconstructionMaskPlans, ImageDomainReconstructionMasks, MaskBox, MaskError,
+    ReconstructionMask, ReconstructionMaskGenerationId, ReconstructionMaskPlan,
+    ReconstructionMaskSet, auto_multithresh, reproject_mask_support,
 };
 pub use minor_cycle::{
     ClarkApproximation, ComponentDivergence, ImageDomainMinorCycleEvidence, MinorCycleComponent,
     MinorCycleError, MinorCycleEvidence, MinorCycleEvidenceId, MinorCycleModelPlane,
     MinorCycleProgram, MinorCycleResult, MinorCycleStopReason, MinorCycleValidity,
-    minor_cycle_workspace_bytes, run_joint_minor_cycle, run_minor_cycle,
+    minor_cycle_workspace_bytes, run_minor_cycle,
 };
 pub use polarization_operator::{
     FeedBasis, MuellerMatrix, PolarizationOperator, PolarizationOperatorError,
@@ -1978,7 +1977,6 @@ const fn polynomial_terms(basis: ReconstructionBasis) -> Option<usize> {
         ReconstructionBasis::Taylor { terms }
         | ReconstructionBasis::TaylorViaChannelMajor { terms, .. } => Some(terms),
         ReconstructionBasis::ChannelLocal { .. } => None,
-        ReconstructionBasis::JointContinuumLine { .. } => None,
     }
 }
 

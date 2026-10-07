@@ -1827,50 +1827,6 @@ fn t31_application_canonicalizes_reversed_outliers_before_domain_indexed_derivat
 }
 
 #[test]
-fn optional_joint_application_route_fails_closed_before_execution() {
-    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
-    let root = tempfile::tempdir().expect("test root");
-    let measurement_set = joint_measurement_set(root.path());
-    let image_name = root.path().join("joint-continuum-line");
-    let mut imaging = request(
-        measurement_set,
-        image_name.clone(),
-        ContinuumAlgorithm::JointContinuumLine {
-            continuum_terms: 1,
-            continuum_anchor_channels: vec![0, 1],
-            line_channels: vec![2, 3],
-            maximum_condition_number: 1.0e12,
-            scales_px: vec![0.0],
-            small_scale_bias: 0.0,
-        },
-    );
-    imaging.spectral_window = Some("0:0~3".to_string());
-    imaging.channel_count = Some(4);
-    imaging.spectral_mode = SpectralImagingMode::JointContinuumLine;
-    imaging.beam_policy = ContinuumBeamPolicy::Common;
-    imaging.mask = ContinuumMask::Coupled {
-        continuum: Box::new(ContinuumMask::FullPlane),
-        line: Box::new(ContinuumMask::Boxes(vec![ContinuumMaskBox {
-            blc: [7, 7],
-            trc: [8, 8],
-        }])),
-    };
-
-    let error = match execute_continuum(imaging) {
-        Ok(_) => panic!("optional joint reconstruction reached production execution"),
-        Err(error) => error,
-    };
-    assert!(
-        error
-            .to_string()
-            .contains("JointContinuumLineReconstruction"),
-        "wrong fail-closed error: {error}"
-    );
-    assert!(!PathBuf::from(format!("{}.psf", image_name.display())).exists());
-}
-
-#[test]
 fn application_preserves_the_bounded_source_budget_across_multiple_rows() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();

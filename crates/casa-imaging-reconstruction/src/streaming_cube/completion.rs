@@ -65,7 +65,6 @@ impl SpectralOperatorPrimitives {
             size_of_val(self.sum_weights.as_ref()),
             size_of_val(self.published_sum_weights.as_ref()),
             size_of_val(self.validity.as_ref()),
-            size_of_val(self.joint_line_term_by_channel.as_ref()),
         ];
         fields
             .into_iter()
@@ -110,11 +109,6 @@ impl SpectralOperatorPrimitives {
             || self.invariant_dirty.is_some()
             || self.major_cycle_residual.is_some()
             || self.primary_beam_weighted_sum.is_some()
-            || self.common_residual.is_some()
-            || self.invariant_common_dirty.is_some()
-            || !self.channel_sum_weights.is_empty()
-            || self.joint_line_term_by_channel.len() != total_channels
-            || self.joint_line_term_by_channel.iter().any(Option::is_some)
         {
             return Err(SpectralOperatorError::ReusableNormalStateMismatch);
         }
@@ -181,7 +175,6 @@ impl SpectralOperatorPrimitives {
             },
             basis: SpectralBasisPlan::ChannelLocal,
             polarizations: 1,
-            joint_line_term_by_channel: vec![None; total_channels].into(),
             // The controller consumes the exact residual. Retain the data-side
             // dirty image by moving it, avoiding the old clone-then-promotion copy.
             dirty: Box::new([]),
@@ -191,14 +184,11 @@ impl SpectralOperatorPrimitives {
                 psf: psf.into_boxed_slice(),
             }),
             invariant_dirty: None,
-            common_residual: None,
-            invariant_common_dirty: None,
             psf: Box::new([]),
             sensitivity: Box::new([]),
             primary_beam_weighted_sum: None,
             published_sum_weights: sum_weight.clone().into_boxed_slice(),
             sum_weights: sum_weight.into_boxed_slice(),
-            channel_sum_weights: Box::new([]),
             validity,
             major_cycle_residual: None,
             major_cycle_residual_promoted: true,
@@ -376,8 +366,7 @@ fn compact_reads_and_diagnostic_cover_pixels_without_retaining_widened_buffers()
     let expected = size_of::<SpectralDomainPrimitives>()
         + 4 * size_of::<f32>()
         + 2 * size_of::<f64>()
-        + size_of::<SpectralChannelValidity>()
-        + size_of::<Option<usize>>();
+        + size_of::<SpectralChannelValidity>();
     for _ in 0..3 {
         assert_eq!(domains.owned_bytes(), expected);
         let p = domains.primary();

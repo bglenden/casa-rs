@@ -30,11 +30,11 @@ use casa_numerics::solve_symmetric_ldlt_casacore_dynamic;
 use thiserror::Error;
 
 use crate::{
-    CoupledReconstructionMask, Encoder, FinalNormalState, FinalNormalStateCompletionId,
-    ImageDomainReconstructionMasks, ModelDelta, ModelGeneration, ModelGenerationId,
-    ModelGenerationWindow, ModelLifecycle, ModelLifecycleError, ReconstructionMask,
-    ReconstructionMaskGenerationId, ScienceTraceDigest, SpectralOperatorError,
-    imaging_science_trace_enabled, major_cycle::FinalNormalStatePlane, trace_real_values,
+    Encoder, FinalNormalState, FinalNormalStateCompletionId, ImageDomainReconstructionMasks,
+    ModelDelta, ModelGeneration, ModelGenerationId, ModelGenerationWindow, ModelLifecycle,
+    ModelLifecycleError, ReconstructionMask, ReconstructionMaskGenerationId, ScienceTraceDigest,
+    SpectralOperatorError, imaging_science_trace_enabled, major_cycle::FinalNormalStatePlane,
+    trace_real_values,
 };
 
 const MINOR_CYCLE_EVIDENCE_DOMAIN: &[u8] = b"casa-rs-minor-cycle-evidence";
@@ -88,20 +88,12 @@ pub(crate) fn minor_cycle_workspace(
     let terms = match basis {
         ReconstructionBasis::Taylor { terms }
         | ReconstructionBasis::TaylorViaChannelMajor { terms, .. } => terms,
-        ReconstructionBasis::JointContinuumLine {
-            continuum_terms,
-            line_terms,
-        } => continuum_terms.saturating_add(line_terms),
         _ => 1,
     };
-    let coupled = matches!(
-        algorithm,
-        ReconstructionAlgorithm::Mtmfs { .. } | ReconstructionAlgorithm::JointContinuumLine { .. }
-    );
+    let coupled = matches!(algorithm, ReconstructionAlgorithm::Mtmfs { .. });
     let scales_px: &[f64] = match algorithm {
         ReconstructionAlgorithm::Multiscale { scales_px, .. }
-        | ReconstructionAlgorithm::Mtmfs { scales_px, .. }
-        | ReconstructionAlgorithm::JointContinuumLine { scales_px, .. } => scales_px,
+        | ReconstructionAlgorithm::Mtmfs { scales_px, .. } => scales_px,
         _ => &[],
     };
     let terms = sat_u64(terms);
@@ -290,7 +282,6 @@ pub struct MinorCycleProgram {
     cycle_threshold: Option<CycleThresholdControls>,
     fixed_cycle_threshold: Option<f64>,
     component_sequence_limit: Option<usize>,
-    maximum_condition_number: Option<f64>,
     image_response: Option<crate::MinorCycleImageResponse>,
     requires_image_response: bool,
     fft_threads: usize,
@@ -384,10 +375,6 @@ impl MinorCycleProgram {
             &mut algorithm,
             problem.reconstruction().controls(),
         )?;
-        program.maximum_condition_number = problem
-            .reconstruction()
-            .joint_continuum_line()
-            .map(|contract| contract.maximum_condition_number());
         program.requires_image_response =
             matches!(program.algorithm, ReconstructionAlgorithm::Mtmfs { .. })
                 && problem
@@ -416,13 +403,11 @@ impl MinorCycleProgram {
                 | ReconstructionAlgorithm::Clark
                 | ReconstructionAlgorithm::Multiscale { .. }
                 | ReconstructionAlgorithm::Mtmfs { .. }
-                | ReconstructionAlgorithm::JointContinuumLine { .. }
         ) {
             return Err(MinorCycleError::UnsupportedAlgorithm);
         }
         if let ReconstructionAlgorithm::Multiscale { scales_px, .. }
-        | ReconstructionAlgorithm::Mtmfs { scales_px, .. }
-        | ReconstructionAlgorithm::JointContinuumLine { scales_px, .. } = algorithm
+        | ReconstructionAlgorithm::Mtmfs { scales_px, .. } = algorithm
         {
             if scales_px.is_empty()
                 || scales_px
@@ -539,7 +524,6 @@ impl MinorCycleProgram {
             cycle_threshold: None,
             fixed_cycle_threshold: None,
             component_sequence_limit: None,
-            maximum_condition_number: None,
             image_response: None,
             requires_image_response: false,
             fft_threads: 1,
@@ -1262,15 +1246,9 @@ pub enum MinorCycleError {
     /// The selected solver and authoritative Normal State catalogs disagree.
     #[error("minor-cycle algorithm does not match the Normal State catalog")]
     InvalidNormalStateCatalog,
-    /// Joint reconstruction requires both immutable spatial supports.
-    #[error("joint continuum-line reconstruction requires distinct continuum and line masks")]
-    CoupledMaskRequired,
     /// The coupled Taylor normal block is singular or numerically dependent.
     #[error("MT-MFS normal block is singular or numerically dependent")]
     SingularTaylorNormalBlock,
-    /// The applicable joint continuum-line normal sub-block is singular.
-    #[error("joint continuum-line normal block is singular or numerically dependent")]
-    SingularJointNormalBlock,
     /// A multiscale program omitted scales or supplied a negative/non-finite scale.
     #[error("multiscale CLEAN requires finite non-negative scales")]
     InvalidScale,
@@ -1369,9 +1347,6 @@ pub fn run_minor_cycle(
     mask: &ReconstructionMask,
     controls: MinorCycleProgram,
 ) -> Result<MinorCycleResult, MinorCycleError> {
-    if view.catalog() == crate::NormalStateCatalog::UnnormalizedJointBlockV1 {
-        return Err(MinorCycleError::CoupledMaskRequired);
-    }
     if view.catalog() == crate::NormalStateCatalog::UnnormalizedTaylorBlockV1 {
         if controls.problem != Some(view.problem_id()) {
             return Err(MinorCycleError::CompiledProblemRequired);
@@ -1753,342 +1728,6 @@ const fn image_domain_stop_priority(reason: MinorCycleStopReason) -> u8 {
     }
 }
 
-/// Run one atomic joint continuum-plus-line Minor Cycle.
-///
-/// The two spatial supports remain distinct while every admitted component is
-/// solved against the applicable principal sub-block of the same dense normal
-/// operator. The returned delta contains both coefficient families and is
-/// minted once through the shared model lifecycle.
-pub fn run_joint_minor_cycle(
-    lifecycle: &ModelLifecycle,
-    base: &ModelGeneration,
-    view: &FinalNormalState,
-    masks: &CoupledReconstructionMask,
-    controls: MinorCycleProgram,
-) -> Result<MinorCycleResult, MinorCycleError> {
-    if view.catalog() != crate::NormalStateCatalog::UnnormalizedJointBlockV1 {
-        return Err(MinorCycleError::InvalidNormalStateCatalog);
-    }
-    if controls.problem != Some(view.problem_id()) {
-        return Err(MinorCycleError::CompiledProblemRequired);
-    }
-    run_joint_block_minor_cycle(lifecycle, base, view, masks, controls)
-}
-
-#[allow(clippy::too_many_lines)]
-fn run_joint_block_minor_cycle(
-    lifecycle: &ModelLifecycle,
-    base: &ModelGeneration,
-    view: &FinalNormalState,
-    masks: &CoupledReconstructionMask,
-    controls: MinorCycleProgram,
-) -> Result<MinorCycleResult, MinorCycleError> {
-    let view = &view.read_window(view.slab().core_range())?;
-    lifecycle.validate_named_generation(base)?;
-    let base = &base.read_window(
-        controls.model_plane().domain(),
-        0..base.shape().coefficients(),
-    )?;
-    let ReconstructionAlgorithm::JointContinuumLine {
-        scales_px,
-        small_scale_bias,
-    } = controls.algorithm()
-    else {
-        return Err(MinorCycleError::InvalidNormalStateCatalog);
-    };
-    let shape = view.shape();
-    let terms_count = view.coefficient_term_count();
-    let continuum_terms = view
-        .joint_continuum_term_count()
-        .ok_or(MinorCycleError::InvalidNormalStateCatalog)?;
-    let primary = controls.model_plane();
-    if continuum_terms == 0
-        || continuum_terms >= terms_count
-        || view.normal_moment_count() != terms_count * terms_count
-        || base.shape().coefficients() != terms_count
-        || base
-            .shape()
-            .domains()
-            .get(primary.domain())
-            .is_none_or(|domain| domain.pixels() != shape)
-        || primary.coefficient() != 0
-        || primary.polarization() >= base.shape().polarizations()
-        || base.sample_count() != base.shape().sample_count()
-    {
-        return Err(MinorCycleError::ModelShapeMismatch);
-    }
-    if base.generation_id() != view.final_model_generation() {
-        return Err(MinorCycleError::ForeignNormalState);
-    }
-    validate_joint_mask(masks.continuum(), view, base, shape)?;
-    validate_joint_mask(masks.line(), view, base, shape)?;
-
-    let effective_scales = scales_px
-        .iter()
-        .copied()
-        .filter(|scale| *scale <= (shape[0] / 2) as f64 && *scale <= (shape[1] / 2) as f64)
-        .collect::<Vec<_>>();
-    if effective_scales.is_empty() {
-        return Err(MinorCycleError::InvalidScale);
-    }
-    let moment_zero = view
-        .normal_block(0, 0)
-        .ok_or(MinorCycleError::ModelShapeMismatch)?;
-    let psf_peak_index = taylor_psf_peak_index(
-        moment_zero.normal_approximation(),
-        shape,
-        effective_scales.last().copied().unwrap_or(0.0),
-    )
-    .ok_or(MinorCycleError::InvalidPsfPeak)?;
-    let psf_peak = moment_zero.normal_approximation()[psf_peak_index].re;
-    if !psf_peak.is_finite() || psf_peak <= 0.0 {
-        return Err(MinorCycleError::InvalidPsfPeak);
-    }
-    let psf_peak_pixel = plane_pixel(psf_peak_index, shape);
-    let psf_support = taylor_psf_support(shape, effective_scales.last().copied().unwrap_or(0.0));
-    let kernels = build_scale_kernels(&effective_scales, *small_scale_bias);
-    let systems = build_joint_scale_systems(
-        view,
-        shape,
-        psf_peak_pixel,
-        &kernels,
-        continuum_terms,
-        controls
-            .maximum_condition_number
-            .ok_or(MinorCycleError::CompiledProblemRequired)?,
-    )?;
-    let mut residuals = (0..terms_count)
-        .map(|term| {
-            view.coefficient_term(term)
-                .ok_or(MinorCycleError::ModelShapeMismatch)?
-                .residual()
-                .iter()
-                .map(|value| {
-                    value
-                        .re
-                        .is_finite()
-                        .then_some(value.re)
-                        .ok_or(MinorCycleError::GeneratedNonfinite)
-                })
-                .collect::<Result<Vec<_>, _>>()
-        })
-        .collect::<Result<Vec<_>, MinorCycleError>>()?;
-    let mut initial_candidate = select_joint_candidate(
-        &residuals,
-        shape,
-        base,
-        primary,
-        continuum_terms,
-        masks,
-        &kernels,
-        &systems,
-        None,
-    );
-    if initial_candidate.is_none() {
-        return finish_taylor_minor_cycle(
-            lifecycle,
-            base,
-            view,
-            masks.continuum(),
-            Some(masks.line()),
-            controls,
-            0,
-            0.0,
-            0.0,
-            0.0,
-            None,
-            0.0,
-            None,
-            MinorCycleStopReason::ThresholdReached,
-            BTreeMap::new(),
-            Vec::new(),
-        );
-    }
-    let initial_peak = joint_candidate_peak(initial_candidate.as_ref().expect("checked"));
-    let noise_rms = controls
-        .noise_sigma()
-        .map(|_| {
-            robust_supported_rms(
-                &residuals[0],
-                shape,
-                base,
-                MinorCycleModelPlane::new(primary.domain(), 0, primary.polarization()),
-            )
-            .map(|rms| rms / psf_peak)
-        })
-        .transpose()?;
-    let global_threshold = noise_rms
-        .zip(controls.noise_sigma())
-        .map_or(controls.threshold(), |(rms, sigma)| {
-            controls.threshold().max(rms * sigma)
-        });
-    let cycle_threshold = if controls.fixed_cycle_threshold.is_some() {
-        controls.fixed_cycle_threshold
-    } else if controls.cycle_threshold.is_some() {
-        let psf = moment_zero
-            .normal_approximation()
-            .iter()
-            .map(|value| value.re as f32)
-            .collect::<Vec<_>>();
-        let sidelobe = crate::fitted_psf_sidelobe_fraction(&psf, shape)?;
-        controls.cycle_threshold_for(initial_peak, sidelobe)
-    } else {
-        None
-    };
-    let effective_threshold =
-        cycle_threshold.map_or(global_threshold, |value| value.max(global_threshold));
-    let mut model_terms = BTreeMap::<usize, f64>::new();
-    let mut recorded = Vec::new();
-    let mut controller = MinorCycleController::new(&controls, effective_threshold, true);
-    let mut search_window = None;
-
-    for _ in 0..controller.iteration_limit() {
-        let candidate = initial_candidate.take().or_else(|| {
-            select_joint_candidate(
-                &residuals,
-                shape,
-                base,
-                primary,
-                continuum_terms,
-                masks,
-                &kernels,
-                &systems,
-                search_window,
-            )
-        });
-        let Some(candidate) = candidate else {
-            controller.stop(MinorCycleStopReason::ThresholdReached);
-            break;
-        };
-        let current_peak = joint_candidate_peak(&candidate);
-        let updates = candidate
-            .coefficients
-            .iter()
-            .map(|value| controls.gain() * value)
-            .collect::<Vec<_>>();
-        if updates.iter().any(|value| !value.is_finite()) {
-            return Err(MinorCycleError::GeneratedNonfinite);
-        }
-        let charged = updates.iter().map(|value| value.abs()).sum::<f64>();
-        if !controller.admit(current_peak, charged, false) {
-            break;
-        }
-        let pixel = plane_pixel(candidate.index, shape);
-        let kernel = &kernels[candidate.scale_index];
-        for (residual_term, residual) in residuals.iter_mut().enumerate() {
-            for (coefficient, update) in updates.iter().enumerate() {
-                if *update == 0.0 {
-                    continue;
-                }
-                let psf = view
-                    .normal_block(residual_term, coefficient)
-                    .ok_or(MinorCycleError::ModelShapeMismatch)?;
-                subtract_scaled_psf(
-                    residual,
-                    psf.normal_approximation(),
-                    shape,
-                    pixel,
-                    psf_peak_pixel,
-                    kernel,
-                    *update,
-                )?;
-            }
-        }
-        for (coefficient, update) in updates.into_iter().enumerate() {
-            if update == 0.0 {
-                continue;
-            }
-            let model_plane =
-                MinorCycleModelPlane::new(primary.domain(), coefficient, primary.polarization());
-            add_scaled_terms(
-                &mut model_terms,
-                base,
-                model_plane,
-                shape,
-                pixel,
-                kernel,
-                update,
-            );
-            if controls
-                .component_sequence_limit()
-                .is_some_and(|limit| recorded.len() < limit)
-            {
-                recorded.push(MinorCycleComponent {
-                    cell: model_cell(model_plane, shape, pixel)
-                        .expect("selected joint pixel is valid"),
-                    flux: update,
-                    scale_px: kernel.scale_px,
-                });
-            }
-        }
-        search_window = Some(TaylorSearchWindow::around(pixel, psf_support, shape));
-        controller.accepted(charged);
-    }
-    if !model_terms.is_empty() {
-        refresh_taylor_residuals(
-            &mut residuals,
-            view,
-            shape,
-            psf_peak_pixel,
-            base,
-            &model_terms,
-            TaylorSolveResponse::new(view, None)?,
-        )?;
-    }
-    let final_peak = select_joint_candidate(
-        &residuals,
-        shape,
-        base,
-        primary,
-        continuum_terms,
-        masks,
-        &kernels,
-        &systems,
-        None,
-    )
-    .as_ref()
-    .map_or(0.0, joint_candidate_peak);
-    let (iterations, total_flux, stop_reason) = controller.finish();
-    finish_taylor_minor_cycle(
-        lifecycle,
-        base,
-        view,
-        masks.continuum(),
-        Some(masks.line()),
-        controls,
-        iterations,
-        total_flux,
-        initial_peak,
-        final_peak,
-        noise_rms,
-        global_threshold,
-        cycle_threshold,
-        stop_reason,
-        model_terms,
-        recorded,
-    )
-}
-
-fn validate_joint_mask(
-    mask: &ReconstructionMask,
-    view: &FinalNormalState,
-    base: &ModelGeneration,
-    shape: [usize; 2],
-) -> Result<(), MinorCycleError> {
-    if mask.shape() != shape {
-        return Err(MinorCycleError::MaskShapeMismatch);
-    }
-    if mask.problem_id() != view.problem_id()
-        || mask.model_generation() != base.generation_id()
-        || mask
-            .normal_state_completion()
-            .is_some_and(|id| id != view.completion_id())
-    {
-        return Err(MinorCycleError::ForeignMask);
-    }
-    Ok(())
-}
-
 #[allow(clippy::too_many_lines)]
 fn run_taylor_minor_cycle(
     lifecycle: &ModelLifecycle,
@@ -2215,7 +1854,6 @@ fn run_taylor_minor_cycle(
             base,
             view,
             mask,
-            None,
             controls,
             0,
             0.0,
@@ -2392,7 +2030,6 @@ fn run_taylor_minor_cycle(
         base,
         view,
         mask,
-        None,
         controls,
         iterations,
         total_flux,
@@ -2413,7 +2050,6 @@ fn finish_taylor_minor_cycle(
     base: &crate::ModelGenerationWindow<'_>,
     view: &FinalNormalState,
     mask: &ReconstructionMask,
-    secondary_mask: Option<&ReconstructionMask>,
     controls: MinorCycleProgram,
     iterations: usize,
     total_flux: f64,
@@ -2469,17 +2105,13 @@ fn finish_taylor_minor_cycle(
     let effective_threshold =
         cycle_threshold.map_or(global_threshold, |value| value.max(global_threshold));
     let controller_iterations = controls.controller_iterations(iterations, stop_reason);
-    let mask_generations = secondary_mask.map_or_else(
-        || vec![mask.generation_id()],
-        |secondary| vec![mask.generation_id(), secondary.generation_id()],
-    );
     let evidence_id = minor_cycle_evidence_id(
         lifecycle.authority(),
         lifecycle.attempt(),
         lifecycle.epoch(),
         base.generation_id(),
         view.completion_id(),
-        &mask_generations,
+        &[mask.generation_id()],
         &controls,
         iterations,
         controller_iterations,
@@ -3181,19 +2813,6 @@ struct TaylorCandidate {
     score: f64,
 }
 
-#[derive(Debug)]
-struct ActiveBlockSystem {
-    coefficients: Box<[usize]>,
-    inverse: Vec<f64>,
-}
-
-#[derive(Debug)]
-struct JointScaleSystems {
-    continuum: ActiveBlockSystem,
-    line: ActiveBlockSystem,
-    full: ActiveBlockSystem,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct TaylorSearchWindow {
     start: [usize; 2],
@@ -3378,238 +2997,6 @@ fn build_taylor_scale_systems(
             Ok(TaylorScaleSystem { inverse, h00 })
         })
         .collect()
-}
-
-fn build_joint_scale_systems(
-    view: &crate::FinalNormalStateWindow<'_>,
-    shape: [usize; 2],
-    psf_peak: [usize; 2],
-    kernels: &[ScaleKernel],
-    continuum_terms: usize,
-    maximum_condition_number: f64,
-) -> Result<Vec<JointScaleSystems>, MinorCycleError> {
-    let terms = view.coefficient_term_count();
-    let continuum = (0..continuum_terms).collect::<Vec<_>>();
-    let line = (continuum_terms..terms).collect::<Vec<_>>();
-    let full = (0..terms).collect::<Vec<_>>();
-    kernels
-        .iter()
-        .map(|kernel| {
-            Ok(JointScaleSystems {
-                continuum: build_active_block_system(
-                    view,
-                    shape,
-                    psf_peak,
-                    kernel,
-                    &continuum,
-                    maximum_condition_number,
-                )?,
-                line: build_active_block_system(
-                    view,
-                    shape,
-                    psf_peak,
-                    kernel,
-                    &line,
-                    maximum_condition_number,
-                )?,
-                full: build_active_block_system(
-                    view,
-                    shape,
-                    psf_peak,
-                    kernel,
-                    &full,
-                    maximum_condition_number,
-                )?,
-            })
-        })
-        .collect()
-}
-
-fn build_active_block_system(
-    view: &crate::FinalNormalStateWindow<'_>,
-    shape: [usize; 2],
-    psf_peak: [usize; 2],
-    kernel: &ScaleKernel,
-    coefficients: &[usize],
-    maximum_condition_number: f64,
-) -> Result<ActiveBlockSystem, MinorCycleError> {
-    let count = coefficients.len();
-    let mut normal = vec![0.0; count * count];
-    for (local_row, &row) in coefficients.iter().enumerate() {
-        for (local_column, &column) in coefficients.iter().enumerate().skip(local_row) {
-            let block = view
-                .normal_block(row, column)
-                .ok_or(MinorCycleError::ModelShapeMismatch)?;
-            normal[local_row * count + local_column] =
-                multiscale_normalization(block.normal_approximation(), shape, psf_peak, kernel);
-            normal[local_column * count + local_row] = normal[local_row * count + local_column];
-        }
-    }
-    if taylor_rows_nearly_dependent(&normal, count) {
-        return Err(MinorCycleError::SingularJointNormalBlock);
-    }
-    let mut inverse = vec![0.0; count * count];
-    for column in 0..count {
-        let mut unit = vec![0.0; count];
-        unit[column] = 1.0;
-        let solution = solve_symmetric_ldlt_casacore_dynamic(normal.clone(), &unit)
-            .ok_or(MinorCycleError::SingularJointNormalBlock)?;
-        for row in 0..count {
-            inverse[row * count + column] = solution[row];
-        }
-    }
-    let normal_norm = normal
-        .chunks_exact(count)
-        .map(|row| row.iter().map(|value| value.abs()).sum::<f64>())
-        .fold(0.0_f64, f64::max);
-    let inverse_norm = (0..count)
-        .map(|row| {
-            (0..count)
-                .map(|column| inverse[row * count + column].abs())
-                .sum::<f64>()
-        })
-        .fold(0.0_f64, f64::max);
-    let condition = normal_norm * inverse_norm;
-    if !condition.is_finite() || condition > maximum_condition_number {
-        return Err(MinorCycleError::SingularJointNormalBlock);
-    }
-    Ok(ActiveBlockSystem {
-        coefficients: coefficients.into(),
-        inverse,
-    })
-}
-
-#[allow(clippy::too_many_arguments)]
-fn select_joint_candidate(
-    residuals: &[Vec<f64>],
-    shape: [usize; 2],
-    base: &ModelGenerationWindow<'_>,
-    primary: MinorCycleModelPlane,
-    continuum_terms: usize,
-    masks: &CoupledReconstructionMask,
-    kernels: &[ScaleKernel],
-    systems: &[JointScaleSystems],
-    search_window: Option<TaylorSearchWindow>,
-) -> Option<TaylorCandidate> {
-    let mut best = None;
-    for (scale_index, (kernel, systems)) in kernels.iter().zip(systems).enumerate() {
-        let mut scale_best = None;
-        for index in 0..residuals[0].len() {
-            let pixel = plane_pixel(index, shape);
-            if search_window.is_some_and(|window| !window.contains(pixel)) {
-                continue;
-            }
-            let continuum = joint_kernel_fits(
-                base,
-                primary,
-                shape,
-                pixel,
-                0..continuum_terms,
-                masks.continuum(),
-                kernel,
-            );
-            let line = joint_kernel_fits(
-                base,
-                primary,
-                shape,
-                pixel,
-                continuum_terms..residuals.len(),
-                masks.line(),
-                kernel,
-            );
-            let system = match (continuum, line) {
-                (true, true) => &systems.full,
-                (true, false) => &systems.continuum,
-                (false, true) => &systems.line,
-                (false, false) => continue,
-            };
-            let rhs = system
-                .coefficients
-                .iter()
-                .map(|&coefficient| convolve_at(&residuals[coefficient], shape, pixel, kernel))
-                .collect::<Vec<_>>();
-            let active = system.coefficients.len();
-            let mut coefficients = vec![0.0; residuals.len()];
-            for (local_row, &coefficient) in system.coefficients.iter().enumerate() {
-                coefficients[coefficient] = (0..active)
-                    .map(|column| system.inverse[local_row * active + column] * rhs[column])
-                    .sum();
-            }
-            let score = system
-                .coefficients
-                .iter()
-                .enumerate()
-                .map(|(local, &coefficient)| coefficients[coefficient] * rhs[local])
-                .sum::<f64>();
-            let candidate = TaylorCandidate {
-                index,
-                scale_index,
-                coefficients,
-                score,
-            };
-            if scale_best
-                .as_ref()
-                .is_none_or(|current| prefer_taylor_within_scale(&candidate, current))
-            {
-                scale_best = Some(candidate);
-            }
-        }
-        if let Some(candidate) = scale_best
-            && best
-                .as_ref()
-                .is_none_or(|current| prefer_taylor_across_scales(&candidate, current, kernels))
-        {
-            best = Some(candidate);
-        }
-    }
-    best
-}
-
-fn joint_candidate_peak(candidate: &TaylorCandidate) -> f64 {
-    candidate
-        .coefficients
-        .iter()
-        .map(|value| value.abs())
-        .fold(0.0, f64::max)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn joint_kernel_fits(
-    base: &ModelGenerationWindow<'_>,
-    primary: MinorCycleModelPlane,
-    shape: [usize; 2],
-    centre: [usize; 2],
-    coefficients: std::ops::Range<usize>,
-    mask: &ReconstructionMask,
-    kernel: &ScaleKernel,
-) -> bool {
-    if !within_multiscale_border(centre, shape, kernel.search_border) {
-        return false;
-    }
-    let overlap = kernel
-        .samples
-        .iter()
-        .filter_map(|(offset, weight)| {
-            offset_pixel(centre, *offset, shape)
-                .filter(|pixel| {
-                    mask.contains(*pixel)
-                        && coefficients.clone().all(|coefficient| {
-                            valid_support(
-                                base,
-                                shape,
-                                MinorCycleModelPlane::new(
-                                    primary.domain(),
-                                    coefficient,
-                                    primary.polarization(),
-                                ),
-                                *pixel,
-                            )
-                        })
-                })
-                .map(|_| *weight)
-        })
-        .sum::<f64>();
-    overlap > CASA_MTMFS_SCALE_MASK_MINIMUM_OVERLAP
 }
 
 fn taylor_rows_nearly_dependent(normal: &[f64], count: usize) -> bool {
@@ -4275,17 +3662,6 @@ fn minor_cycle_evidence_id(
             }
             encoder.u64(crate::canonical_f64_bits(*small_scale_bias));
         }
-        ReconstructionAlgorithm::JointContinuumLine {
-            scales_px,
-            small_scale_bias,
-        } => {
-            encoder.u8(4);
-            encoder.usize(scales_px.len());
-            for scale in scales_px {
-                encoder.u64(crate::canonical_f64_bits(*scale));
-            }
-            encoder.u64(crate::canonical_f64_bits(*small_scale_bias));
-        }
         _ => unreachable!("minor-cycle programs admit only implemented solvers"),
     }
     encoder.u64(crate::canonical_f64_bits(controls.gain()));
@@ -4334,13 +3710,6 @@ fn minor_cycle_evidence_id(
             encoder.u8(1);
             encoder.usize(limit);
         }
-    }
-    match controls.maximum_condition_number {
-        Some(limit) => {
-            encoder.u8(1);
-            encoder.u64(crate::canonical_f64_bits(limit));
-        }
-        None => encoder.u8(0),
     }
     encoder.u8(u8::from(controls.requires_image_response));
     match controls.image_response {

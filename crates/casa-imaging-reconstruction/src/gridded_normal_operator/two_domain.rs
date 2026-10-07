@@ -33,8 +33,9 @@ fn planned_prediction_lane(
         GriddedNormalRecordLayout::Scalar
         | GriddedNormalRecordLayout::ChannelLocal { .. }
         | GriddedNormalRecordLayout::TaylorWithCoordinates(_)
-        | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. }
-        | GriddedNormalRecordLayout::Joint { .. } => (planned_vec(0)?, planned_vec(0)?),
+        | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. } => {
+            (planned_vec(0)?, planned_vec(0)?)
+        }
         GriddedNormalRecordLayout::Taylor(_) => {
             let mut model_scratch = planned_vec(prediction_width)?;
             model_scratch.resize(prediction_width, Complex64::default());
@@ -860,8 +861,7 @@ impl PreparedGriddedNormalTwoDomainWindow {
                     GriddedNormalRecordLayout::Scalar
                     | GriddedNormalRecordLayout::ChannelLocal { .. }
                     | GriddedNormalRecordLayout::TaylorWithCoordinates(_)
-                    | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. }
-                    | GriddedNormalRecordLayout::Joint { .. } => {
+                    | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. } => {
                         let mut group_start = 0usize;
                         let mut group_needed = false;
                         let mut group_prediction_records = 0_u64;
@@ -1615,8 +1615,7 @@ impl GriddedNormalOperatorApply {
                     GriddedNormalRecordLayout::Scalar
                     | GriddedNormalRecordLayout::ChannelLocal { .. }
                     | GriddedNormalRecordLayout::TaylorWithCoordinates(_)
-                    | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. }
-                    | GriddedNormalRecordLayout::Joint { .. } => {
+                    | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. } => {
                         for (local, group) in prepared.groups[group_range].iter().enumerate() {
                             if !group.prediction_needed {
                                 owner.values[local] = Complex64::default();
@@ -1796,8 +1795,7 @@ impl GriddedNormalOperatorApply {
                                 GriddedNormalRecordLayout::Scalar
                                 | GriddedNormalRecordLayout::ChannelLocal { .. }
                                 | GriddedNormalRecordLayout::TaylorWithCoordinates(_)
-                                | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. }
-                                | GriddedNormalRecordLayout::Joint { .. } => {
+                                | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. } => {
                                     let record = decode_domain_record(
                                         record_bytes,
                                         &self.tile_catalogs,

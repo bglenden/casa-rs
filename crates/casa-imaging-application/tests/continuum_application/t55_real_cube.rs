@@ -670,7 +670,6 @@ fn real_clark_worker_cases(
                         .collect::<Vec<_>>(),
                     normal.sum_weights().to_vec(),
                     normal.published_sum_weights().to_vec(),
-                    normal.channel_sum_weights().to_vec(),
                     windows
                         .iter()
                         .map(|window| window.primary_beam_weighted_sum().map(<[f64]>::to_vec))
@@ -685,8 +684,8 @@ fn real_clark_worker_cases(
                     None => baseline = Some((products, evidence)),
                     Some((baseline_products, baseline_evidence)) => {
                         // Live IDs are execution-local; numerical reductions may round differently.
-                        assert_eq!(baseline_evidence.7.len(), evidence.7.len());
-                        for (expected, actual) in baseline_evidence.7.iter().zip(&mut evidence.7) {
+                        assert_eq!(baseline_evidence.6.len(), evidence.6.len());
+                        for (expected, actual) in baseline_evidence.6.iter().zip(&mut evidence.6) {
                             actual.mask_generation = expected.mask_generation;
                             actual.mask_model_generation = expected.mask_model_generation;
                         }
@@ -705,17 +704,16 @@ fn real_clark_worker_cases(
                         assert_complex_agreement(&baseline_evidence.2, &evidence.2);
                         assert_real_agreement(&baseline_evidence.3, &evidence.3);
                         assert_real_agreement(&baseline_evidence.4, &evidence.4);
-                        assert_real_agreement(&baseline_evidence.5, &evidence.5);
-                        match (&baseline_evidence.6, &evidence.6) {
+                        match (&baseline_evidence.5, &evidence.5) {
                             (Some(expected), Some(actual)) => {
                                 assert_real_agreement(expected, actual)
                             }
                             (None, None) => (),
                             _ => panic!("primary-beam inventory changed"),
                         }
+                        assert_eq!(baseline_evidence.7, evidence.7);
                         assert_eq!(baseline_evidence.8, evidence.8);
                         assert_eq!(baseline_evidence.9, evidence.9);
-                        assert_eq!(baseline_evidence.10, evidence.10);
                     }
                 }
                 fs::write(

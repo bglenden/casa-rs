@@ -8,9 +8,9 @@
 
 use casa_imaging_model::{CompiledProblem, ImageDomainRole};
 use casa_imaging_reconstruction::{
-    CoupledReconstructionMask, FinalNormalState, FinalNormalStateCompletionId,
-    ImageDomainReconstructionMasks, MajorCycleCompletion, MajorCycleCompletionId, ModelGeneration,
-    ReconstructionMask, ReconstructionMaskGenerationId,
+    FinalNormalState, FinalNormalStateCompletionId, ImageDomainReconstructionMasks,
+    MajorCycleCompletion, MajorCycleCompletionId, ModelGeneration, ReconstructionMask,
+    ReconstructionMaskGenerationId,
 };
 
 use crate::error::ProductsError;
@@ -28,7 +28,6 @@ pub struct ContinuumProductInputs<'a> {
     final_model: &'a ModelGeneration,
     reconstruction_mask: Option<&'a ReconstructionMask>,
     domain_reconstruction_masks: Option<&'a ImageDomainReconstructionMasks>,
-    coupled_masks: Option<&'a CoupledReconstructionMask>,
 }
 
 impl<'a> ContinuumProductInputs<'a> {
@@ -52,7 +51,6 @@ impl<'a> ContinuumProductInputs<'a> {
             final_model: join.final_model(),
             reconstruction_mask: None,
             domain_reconstruction_masks: None,
-            coupled_masks: None,
         })
     }
 
@@ -70,25 +68,6 @@ impl<'a> ContinuumProductInputs<'a> {
         }
         self.reconstruction_mask = Some(mask);
         self.domain_reconstruction_masks = None;
-        self.coupled_masks = None;
-        Ok(self)
-    }
-
-    /// Bind both exact spatial supports used by a joint solve.
-    pub fn with_coupled_reconstruction_masks(
-        mut self,
-        masks: &'a CoupledReconstructionMask,
-    ) -> Result<Self, ProductsError> {
-        for mask in [masks.continuum(), masks.line()] {
-            if mask.problem_id() != self.problem.problem_id()
-                || mask.shape() != self.normal_state.shape()
-            {
-                return Err(ProductsError::SourceLineageMismatch);
-            }
-        }
-        self.reconstruction_mask = Some(masks.continuum());
-        self.domain_reconstruction_masks = None;
-        self.coupled_masks = Some(masks);
         Ok(self)
     }
 
@@ -112,7 +91,6 @@ impl<'a> ContinuumProductInputs<'a> {
             return Err(ProductsError::SourceLineageMismatch);
         }
         self.reconstruction_mask = None;
-        self.coupled_masks = None;
         self.domain_reconstruction_masks = Some(masks);
         Ok(self)
     }
@@ -210,11 +188,5 @@ impl<'a> ContinuumProductInputs<'a> {
                 self.reconstruction_mask
                     .map(ReconstructionMask::generation_id)
             })
-    }
-
-    /// Borrow both joint reconstruction masks, when supplied.
-    #[must_use]
-    pub const fn coupled_reconstruction_masks(&self) -> Option<&CoupledReconstructionMask> {
-        self.coupled_masks
     }
 }

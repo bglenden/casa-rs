@@ -763,9 +763,6 @@ impl<S: SerialProductPublicationSink> WorkImplementation for SerialProductPublic
                     ReconstructionMaskSet::Domains(masks) => {
                         inputs.with_domain_reconstruction_masks(masks)
                     }
-                    ReconstructionMaskSet::Coupled(masks) => {
-                        inputs.with_coupled_reconstruction_masks(masks)
-                    }
                 }
                 .map_err(SerialProductPublicationExecutionError::Products)?;
             }

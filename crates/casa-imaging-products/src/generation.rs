@@ -10,8 +10,8 @@
 use casa_imaging_model::{
     AxisOrder, CompiledProblem, CompiledProblemId, ImageAxis, ImageDomainRole, ProductAxes,
     ProductBeamRule, ProductGraphId, ProductNodeId, ProductNormalization, ProductPixelMask,
-    ProductRole, ProductSchema, ProductStorageContract, ProductSupportComparison, ProductTerm,
-    ProductUnit, ProductValidityRule, ReconstructionBasis, RestoringBeamPolicy,
+    ProductRole, ProductSchema, ProductStorageContract, ProductSupportComparison, ProductUnit,
+    ProductValidityRule, ReconstructionBasis, RestoringBeamPolicy,
 };
 use casa_imaging_reconstruction::{
     FinalNormalPlaneReader, ModelGeneration, NormalStateCatalog, SpectralChannelValidity,
@@ -21,8 +21,8 @@ use crate::ProductStoragePlan;
 use crate::beam::{RestoringBeam, fit_restoring_beam};
 use crate::error::ProductsError;
 use crate::restore::{
-    MosaicSensitivity, fft_convolve, gaussian_beam_image, normalize_plane, normalized_psf_value,
-    psf_peak, rescale_residual_to_beam, restore_model_plane,
+    MosaicSensitivity, normalize_plane, normalized_psf_value, psf_peak, rescale_residual_to_beam,
+    restore_model_plane,
 };
 use crate::source::ContinuumProductInputs;
 use crate::storage::{ProductMemberWriter, ProductOutput};
@@ -170,9 +170,7 @@ fn ensure_producible(role: ProductRole) -> Result<(), ProductsError> {
         | ProductRole::SpectralIndexError
         | ProductRole::PbCorrectedSpectralIndex
         | ProductRole::Sensitivity
-        | ProductRole::CleanMask
-        | ProductRole::ContinuumCleanMask
-        | ProductRole::LineCleanMask => Ok(()),
+        | ProductRole::CleanMask => Ok(()),
         role => Err(ProductsError::UnsupportedProductRole {
             role,
             catalog: CONTINUUM_ALGORITHM_CATALOG_VERSION,
@@ -193,8 +191,6 @@ pub struct PlannedContinuumGeneration {
     members: Box<[PlannedMember]>,
     final_model_generation: casa_imaging_reconstruction::ModelGenerationId,
     reconstruction_mask_generation:
-        Option<casa_imaging_reconstruction::ReconstructionMaskGenerationId>,
-    line_reconstruction_mask_generation:
         Option<casa_imaging_reconstruction::ReconstructionMaskGenerationId>,
 }
 
@@ -223,13 +219,7 @@ impl PlannedContinuumGeneration {
             let requires_primary_beam = needs_primary_beam(node.validity())
                 || matches!(node.storage().pixel_mask(), ProductPixelMask::Explicit(rule)
                     if needs_primary_beam(rule));
-            if requires_primary_beam
-                && (controls.primary_beam_model.is_none()
-                    || matches!(
-                        inputs.problem().reconstruction().basis(),
-                        ReconstructionBasis::JointContinuumLine { .. }
-                    ))
-            {
+            if requires_primary_beam && controls.primary_beam_model.is_none() {
                 return Err(ProductsError::UnsupportedProblem);
             }
             let axes = node.axes();
@@ -265,9 +255,6 @@ impl PlannedContinuumGeneration {
             members: members.into_boxed_slice(),
             final_model_generation: inputs.final_model().generation_id(),
             reconstruction_mask_generation: inputs.reconstruction_mask_generation(),
-            line_reconstruction_mask_generation: inputs
-                .coupled_reconstruction_masks()
-                .map(|masks| masks.line().generation_id()),
         })
     }
 
@@ -327,12 +314,6 @@ impl PlannedContinuumGeneration {
         &self,
     ) -> Option<casa_imaging_reconstruction::ReconstructionMaskGenerationId> {
         self.reconstruction_mask_generation
-    }
-
-    pub(crate) const fn line_reconstruction_mask_generation(
-        &self,
-    ) -> Option<casa_imaging_reconstruction::ReconstructionMaskGenerationId> {
-        self.line_reconstruction_mask_generation
     }
 }
 
@@ -538,18 +519,8 @@ pub fn produce_continuum_members(
     if inputs.reconstruction_mask_generation() != planned.reconstruction_mask_generation {
         return Err(ProductsError::SourceLineageMismatch);
     }
-    if inputs
-        .coupled_reconstruction_masks()
-        .map(|masks| masks.line().generation_id())
-        != planned.line_reconstruction_mask_generation
-    {
-        return Err(ProductsError::SourceLineageMismatch);
-    }
     if inputs.normal_state().catalog() == NormalStateCatalog::UnnormalizedTaylorBlockV1 {
         return produce_taylor_members(planned, inputs, storage_plan, output);
-    }
-    if inputs.normal_state().catalog() == NormalStateCatalog::UnnormalizedJointBlockV1 {
-        return produce_joint_members(planned, inputs, storage_plan, output);
     }
     let normal_state = inputs.normal_state();
     let channel_count = normal_state.channel_count();
@@ -849,356 +820,6 @@ fn produce_taylor_members(
         writer.finish()?;
     }
     published_generation(planned, fitted_beams, restoring_beams)
-}
-
-fn produce_joint_members(
-    planned: &PlannedContinuumGeneration,
-    inputs: &ContinuumProductInputs<'_>,
-    storage_plan: ProductStoragePlan,
-    output: &dyn ProductOutput,
-) -> Result<PublishedContinuumGeneration, ProductsError> {
-    let normal = inputs.normal_state();
-    let normal = &normal.read_window(normal.slab().core_range())?;
-    if normal.domain_count() != 1 || inputs.final_model().shape().domains().len() != 1 {
-        return Err(ProductsError::SourceLineageMismatch);
-    }
-    let domain_role = normal
-        .domain(0)
-        .ok_or(ProductsError::SourceLineageMismatch)?
-        .role()
-        .clone();
-    let shape = normal.shape();
-    let channels = normal.slab().total_channels();
-    if normal.slab().core_range() != (0..channels)
-        || inputs.coupled_reconstruction_masks().is_none()
-    {
-        return Err(ProductsError::SourceLineageMismatch);
-    }
-    let ReconstructionBasis::JointContinuumLine {
-        continuum_terms,
-        line_terms,
-    } = inputs.problem().reconstruction().basis()
-    else {
-        return Err(ProductsError::SourceLineageMismatch);
-    };
-    if normal.coefficient_term_count() != continuum_terms + line_terms
-        || normal.normal_moment_count() != (continuum_terms + line_terms).pow(2)
-        || inputs.final_model().shape().coefficients() != continuum_terms + line_terms
-        || normal.channel_sum_weights().len() != channels
-    {
-        return Err(ProductsError::SourceLineageMismatch);
-    }
-    let h00 = normal
-        .normal_block(0, 0)
-        .ok_or(ProductsError::SourceLineageMismatch)?;
-    let normalization_weight = h00.sum_weight();
-    if !normalization_weight.is_finite() || normalization_weight <= 0.0 {
-        return Err(ProductsError::SourceLineageMismatch);
-    }
-    let principal_psf_peak = psf_peak(
-        h00.normal_approximation()
-            .iter()
-            .map(|value| value.re as f32),
-    )?;
-    let requires_beam = planned
-        .members
-        .iter()
-        .any(|member| member.beam_rule != ProductBeamRule::None);
-    let fitted_beam = requires_beam
-        .then(|| {
-            fit_restoring_beam(
-                &h00.normal_approximation()
-                    .iter()
-                    .map(|value| value.re as f32)
-                    .collect::<Vec<_>>(),
-                shape,
-                inputs.cell_size_rad_for_domain(&domain_role)?,
-                planned.psf_cutoff(),
-            )
-        })
-        .transpose()?;
-    let restoring_beam = match inputs.problem().products().restoring_beam() {
-        RestoringBeamPolicy::None => None,
-        RestoringBeamPolicy::PerPlane | RestoringBeamPolicy::Common => fitted_beam,
-    };
-    let fitted_beams = fitted_beam.map_or_else(Box::default, |beam| {
-        vec![Some(beam); channels].into_boxed_slice()
-    });
-    let restoring_beams = restoring_beam.map_or_else(Box::default, |beam| {
-        vec![Some(beam); channels].into_boxed_slice()
-    });
-    for member in &planned.members {
-        let (payload, mut validity) = produce_joint_member(
-            member,
-            inputs,
-            shape,
-            channels,
-            continuum_terms,
-            principal_psf_peak,
-            fitted_beam,
-            restoring_beam,
-        )?;
-        if member.storage.pixel_mask() == ProductPixelMask::Absent {
-            validity.fill(true);
-        }
-        if payload.len() != member.payload_values || validity.len() != member.payload_values {
-            return Err(ProductsError::PayloadLengthMismatch {
-                expected: member.payload_values,
-                actual: payload.len(),
-            });
-        }
-        let layout = storage_plan.layout(member.axes())?;
-        let member_beams = beams_for_member(
-            member,
-            &planned.members,
-            member.beam_rule,
-            &fitted_beams,
-            &restoring_beams,
-        )?;
-        let writer = output.begin_member(member, layout, &member_beams)?;
-        let mut writer = ProductMemberWriter::new(layout, writer)?;
-        writer.write_coupled(&payload, &validity)?;
-        writer.finish()?;
-    }
-    published_generation(planned, fitted_beams, restoring_beams)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn produce_joint_member(
-    member: &PlannedMember,
-    inputs: &ContinuumProductInputs<'_>,
-    shape: [usize; 2],
-    channels: usize,
-    continuum_terms: usize,
-    principal_psf_peak: f32,
-    fitted_beam: Option<RestoringBeam>,
-    restoring_beam: Option<RestoringBeam>,
-) -> Result<(Vec<f32>, Vec<bool>), ProductsError> {
-    let normal = inputs.normal_state();
-    let normal = &normal.read_window(normal.slab().core_range())?;
-    let mut payload = vec![0.0_f32; member.payload_values];
-    let mut validity = vec![true; member.payload_values];
-    match member.role {
-        ProductRole::Psf(ProductTerm::JointNormal { row, column }) => {
-            let block = normal
-                .normal_block(row, column)
-                .ok_or(ProductsError::SourceLineageMismatch)?;
-            payload = block
-                .normal_approximation()
-                .iter()
-                .map(|value| normalized_psf_value(value.re as f32, principal_psf_peak))
-                .collect();
-        }
-        ProductRole::SumWeights(ProductTerm::JointNormal { row, column }) => {
-            let block = normal
-                .normal_block(row, column)
-                .ok_or(ProductsError::SourceLineageMismatch)?;
-            scatter_plane_state(&mut payload, member.axes(), 0, block.sum_weight() as f32)?;
-        }
-        ProductRole::Weight(ProductTerm::JointNormal { row, column }) => {
-            let block = normal
-                .normal_block(row, column)
-                .ok_or(ProductsError::SourceLineageMismatch)?;
-            payload = block
-                .sensitivity()
-                .iter()
-                .map(|value| *value as f32)
-                .collect();
-        }
-        ProductRole::Model(ProductTerm::Continuum(term)) => {
-            payload = model_real_plane(inputs.final_model(), 0, term, 0, shape)?;
-        }
-        ProductRole::Model(ProductTerm::Line) | ProductRole::Model(ProductTerm::Total) => {
-            for channel in 0..channels {
-                let plane = evaluate_joint_model_plane(
-                    inputs,
-                    shape,
-                    channel,
-                    continuum_terms,
-                    matches!(member.role, ProductRole::Model(ProductTerm::Line)),
-                )?;
-                scatter_image_plane(&mut payload, member.axes(), channel, shape, &plane)?;
-            }
-        }
-        ProductRole::Residual(ProductTerm::Total) => {
-            for channel in 0..channels {
-                let plane = evaluate_joint_residual_plane(
-                    inputs,
-                    shape,
-                    channel,
-                    required_normalization(member)?,
-                )?;
-                scatter_image_plane(&mut payload, member.axes(), channel, shape, &plane)?;
-                if inputs.normal_state().channel_validity()[channel]
-                    != SpectralChannelValidity::Valid
-                {
-                    let blank = vec![false; shape[0] * shape[1]];
-                    scatter_image_plane(&mut validity, member.axes(), channel, shape, &blank)?;
-                }
-            }
-        }
-        ProductRole::RestoredImage(ProductTerm::Line | ProductTerm::Total) => {
-            let fitted_beam = fitted_beam.ok_or_else(|| {
-                ProductsError::BeamFitFailed("joint restoration requires a fitted beam".to_string())
-            })?;
-            let restoring_beam = restoring_beam.ok_or_else(|| {
-                ProductsError::BeamFitFailed(
-                    "joint restoration requires a restoring beam".to_string(),
-                )
-            })?;
-            let line_only = member.role == ProductRole::RestoredImage(ProductTerm::Line);
-            let cell_size = inputs.cell_size_rad_for_domain(member.axes().domain())?;
-            let kernel = gaussian_beam_image(shape, &restoring_beam, cell_size);
-            for channel in 0..channels {
-                let model =
-                    evaluate_joint_model_plane(inputs, shape, channel, continuum_terms, line_only)?;
-                let mut restored =
-                    fft_convolve(&model, kernel.as_slice().expect("contiguous"), shape);
-                let residual = evaluate_joint_residual_plane(
-                    inputs,
-                    shape,
-                    channel,
-                    required_normalization(member)?,
-                )?;
-                let residual = rescale_residual_to_beam(
-                    &residual,
-                    shape,
-                    cell_size,
-                    fitted_beam,
-                    restoring_beam,
-                )?
-                .into_values();
-                for (restored, residual) in restored.iter_mut().zip(residual) {
-                    *restored += residual;
-                }
-                scatter_image_plane(&mut payload, member.axes(), channel, shape, &restored)?;
-                if inputs.normal_state().channel_validity()[channel]
-                    != SpectralChannelValidity::Valid
-                {
-                    let blank = vec![false; shape[0] * shape[1]];
-                    scatter_image_plane(&mut validity, member.axes(), channel, shape, &blank)?;
-                }
-            }
-        }
-        ProductRole::ContinuumCleanMask | ProductRole::LineCleanMask => {
-            let masks = inputs
-                .coupled_reconstruction_masks()
-                .ok_or(ProductsError::SourceLineageMismatch)?;
-            let mask = if member.role == ProductRole::ContinuumCleanMask {
-                masks.continuum()
-            } else {
-                masks.line()
-            };
-            for channel in 0..channels {
-                let plane = mask
-                    .support()
-                    .iter()
-                    .map(|selected| if *selected { 1.0 } else { 0.0 })
-                    .collect::<Vec<_>>();
-                scatter_image_plane(&mut payload, member.axes(), channel, shape, &plane)?;
-            }
-        }
-        ProductRole::Sensitivity => {
-            for channel in 0..channels {
-                let plane = h00_sensitivity(inputs)?;
-                scatter_image_plane(&mut payload, member.axes(), channel, shape, &plane)?;
-            }
-        }
-        role => {
-            return Err(ProductsError::UnsupportedProductRole {
-                role,
-                catalog: CONTINUUM_ALGORITHM_CATALOG_VERSION,
-            });
-        }
-    }
-    Ok((payload, validity))
-}
-
-fn evaluate_joint_model_plane(
-    inputs: &ContinuumProductInputs<'_>,
-    shape: [usize; 2],
-    channel: usize,
-    continuum_terms: usize,
-    line_only: bool,
-) -> Result<Vec<f32>, ProductsError> {
-    let mut output = vec![0.0_f32; shape[0] * shape[1]];
-    if !line_only {
-        let reference = inputs
-            .normal_state()
-            .reference_frequency_hz()
-            .ok_or(ProductsError::SourceLineageMismatch)?;
-        let frequency = inputs
-            .problem()
-            .geometry()
-            .spectral()
-            .channel_centre_hz(channel)
-            .ok_or(ProductsError::SourceLineageMismatch)?;
-        let x = (frequency - reference) / reference;
-        for term in 0..continuum_terms {
-            let plane = model_real_plane(inputs.final_model(), 0, term, 0, shape)?;
-            let factor =
-                x.powi(i32::try_from(term).map_err(|_| ProductsError::UnsupportedProblem)?);
-            for (output, value) in output.iter_mut().zip(plane) {
-                *output += (factor * f64::from(value)) as f32;
-            }
-        }
-    }
-    if let Some(line) = joint_line_term(inputs.problem(), channel)? {
-        let plane = model_real_plane(inputs.final_model(), 0, continuum_terms + line, 0, shape)?;
-        for (output, value) in output.iter_mut().zip(plane) {
-            *output += value;
-        }
-    }
-    Ok(output)
-}
-
-fn evaluate_joint_residual_plane(
-    inputs: &ContinuumProductInputs<'_>,
-    shape: [usize; 2],
-    channel: usize,
-    normalization: ProductNormalization,
-) -> Result<Vec<f32>, ProductsError> {
-    let normal = inputs.normal_state();
-    let normal = &normal.read_window(normal.slab().core_range())?;
-    let residual = normal
-        .joint_common_residual(channel)
-        .ok_or(ProductsError::SourceLineageMismatch)?;
-    if residual.len() != shape[0] * shape[1] {
-        return Err(ProductsError::SourceLineageMismatch);
-    }
-    let output = residual
-        .iter()
-        .map(|value| value.re as f32)
-        .collect::<Vec<_>>();
-    let normalization_weight = *inputs
-        .normal_state()
-        .channel_sum_weights()
-        .get(channel)
-        .ok_or(ProductsError::SourceLineageMismatch)?;
-    normalize_plane(&output, normalization, normalization_weight)
-}
-
-fn joint_line_term(
-    problem: &CompiledProblem,
-    channel: usize,
-) -> Result<Option<usize>, ProductsError> {
-    let contract = problem
-        .reconstruction()
-        .joint_continuum_line()
-        .ok_or(ProductsError::SourceLineageMismatch)?;
-    Ok(contract.line_channels().binary_search(&channel).ok())
-}
-
-fn h00_sensitivity(inputs: &ContinuumProductInputs<'_>) -> Result<Vec<f32>, ProductsError> {
-    let normal = inputs.normal_state();
-    let normal = &normal.read_window(normal.slab().core_range())?;
-    Ok(normal
-        .normal_block(0, 0)
-        .ok_or(ProductsError::SourceLineageMismatch)?
-        .sensitivity()
-        .iter()
-        .map(|value| *value as f32)
-        .collect())
 }
 
 struct PlaneMemberRequest<'request, 'inputs, 'plane> {
@@ -1602,24 +1223,6 @@ fn model_real_plane(
     Ok(plane)
 }
 
-fn scatter_image_plane<T: Copy>(
-    payload: &mut [T],
-    axes: &ProductAxes,
-    output_channel: usize,
-    plane_shape: [usize; 2],
-    plane: &[T],
-) -> Result<(), ProductsError> {
-    scatter_image_polarization_plane(
-        payload,
-        axes.order(),
-        axes.shape(),
-        0,
-        output_channel,
-        plane_shape,
-        plane,
-    )
-}
-
 fn scatter_image_polarization_plane<T: Copy>(
     payload: &mut [T],
     order: &AxisOrder,
@@ -1664,15 +1267,6 @@ fn scatter_image_polarization_plane<T: Copy>(
         }
     }
     Ok(())
-}
-
-fn scatter_plane_state(
-    payload: &mut [f32],
-    axes: &ProductAxes,
-    output_channel: usize,
-    value: f32,
-) -> Result<(), ProductsError> {
-    scatter_polarization_plane_state(payload, axes, axes.shape(), 0, output_channel, value)
 }
 
 fn scatter_polarization_plane_state(

@@ -5639,11 +5639,6 @@ fn t55_initial_clean_executes_parallel_preparation_across_bounded_slabs() {
                     .iter()
                     .map(|value| value.to_bits())
                     .collect::<Vec<_>>(),
-                normal
-                    .channel_sum_weights()
-                    .iter()
-                    .map(|value| value.to_bits())
-                    .collect::<Vec<_>>(),
                 planes,
                 cycle.iterations(),
                 cycle.controller_iterations(),

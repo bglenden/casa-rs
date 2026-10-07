@@ -147,7 +147,6 @@ pub(crate) fn direction_world_to_pixel(
 const MASK_DOMAIN: &[u8] = b"casa-rs-reconstruction-mask";
 const MASK_VERSION: u32 = 2;
 static NEXT_MASK_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-const COUPLED_MASK_DOMAIN: &[u8] = b"casa-rs-coupled-reconstruction-mask";
 const IMAGE_DOMAIN_MASKS_DOMAIN: &[u8] = b"casa-rs-image-domain-reconstruction-masks";
 
 /// Run-local identity of one immutable reconstruction-mask generation, not its content.
@@ -180,14 +179,6 @@ pub struct MaskBox {
 /// Deferred static mask construction evaluated at an exact major-cycle boundary.
 #[derive(Debug, Clone)]
 pub enum ReconstructionMaskPlan {
-    /// Materialize the independently committed continuum and line supports of
-    /// one joint reconstruction boundary.
-    Coupled {
-        /// Continuum-component spatial support.
-        continuum: Box<ReconstructionMaskPlan>,
-        /// Channel-local line-component spatial support.
-        line: Box<ReconstructionMaskPlan>,
-    },
     /// Admit every model-support pixel.
     FullPlane {
         /// Target model direction coordinate.
@@ -239,7 +230,6 @@ impl ReconstructionMaskPlan {
         evolution_stopped: bool,
     ) -> Self {
         match self {
-            Self::Coupled { .. } => self.clone(),
             Self::AutoMultithresh {
                 coordinate,
                 controls,
@@ -266,7 +256,6 @@ impl ReconstructionMaskPlan {
         let model_generation = base.generation_id();
         let shape = normal.shape();
         match self {
-            Self::Coupled { .. } => Err(MaskError::CoupledPlanRequired),
             Self::FullPlane { coordinate } => Ok((
                 ReconstructionMask::full_plane(problem, model_generation, *coordinate, shape)?,
                 None,
@@ -328,57 +317,6 @@ impl ReconstructionMaskPlan {
                 )?;
                 Ok((mask, Some(evidence)))
             }
-        }
-    }
-
-    /// Materialize the two immutable supports of a joint reconstruction.
-    pub fn materialize_coupled(
-        &self,
-        base: &crate::ModelGeneration,
-        normal: &FinalNormalState,
-    ) -> Result<
-        (
-            CoupledReconstructionMask,
-            [Option<AutoMultithreshEvidence>; 2],
-        ),
-        MaskError,
-    > {
-        let Self::Coupled { continuum, line } = self else {
-            return Err(MaskError::CoupledPlanRequired);
-        };
-        let (continuum, continuum_evidence) = continuum.materialize(base, normal)?;
-        let (line, line_evidence) = line.materialize(base, normal)?;
-        Ok((
-            CoupledReconstructionMask::new(continuum, line)?,
-            [continuum_evidence, line_evidence],
-        ))
-    }
-
-    /// Advance both live supports to the next joint major-cycle boundary.
-    #[must_use]
-    pub fn next_coupled_cycle(
-        &self,
-        current: &CoupledReconstructionMask,
-        completed_major_cycles: usize,
-        cycle_threshold_reached: bool,
-        evolution_stopped: [bool; 2],
-    ) -> Self {
-        let Self::Coupled { continuum, line } = self else {
-            return self.clone();
-        };
-        Self::Coupled {
-            continuum: Box::new(continuum.next_cycle(
-                current.continuum(),
-                completed_major_cycles,
-                cycle_threshold_reached,
-                evolution_stopped[0],
-            )),
-            line: Box::new(line.next_cycle(
-                current.line(),
-                completed_major_cycles,
-                cycle_threshold_reached,
-                evolution_stopped[1],
-            )),
         }
     }
 }
@@ -493,17 +431,6 @@ pub struct ImageDomainMaskMaterialization {
     auto_mask_evidence: Box<[Option<AutoMultithreshEvidence>]>,
 }
 
-/// The two independently committed spatial supports of one joint solve.
-///
-/// Continuum and line components may occupy different sky regions. This value
-/// keeps both immutable generations together and rejects mixed lineage before
-/// the coupled solver observes either support.
-#[derive(Debug, Clone)]
-pub struct CoupledReconstructionMask {
-    continuum: ReconstructionMask,
-    line: ReconstructionMask,
-}
-
 /// Exact spatial-support generation consumed by one reconstruction cycle.
 #[derive(Debug, Clone)]
 pub enum ReconstructionMaskSet {
@@ -511,27 +438,15 @@ pub enum ReconstructionMaskSet {
     Shared(Box<ReconstructionMask>),
     /// One canonical spatial support for every compiled image domain.
     Domains(ImageDomainReconstructionMasks),
-    /// Independently committed continuum and line supports.
-    Coupled(Box<CoupledReconstructionMask>),
 }
 
 impl ReconstructionMaskSet {
-    /// Return the primary (or continuum) support.
+    /// Return the primary support.
     #[must_use]
     pub const fn primary(&self) -> &ReconstructionMask {
         match self {
             Self::Shared(mask) => mask,
             Self::Domains(masks) => masks.primary(),
-            Self::Coupled(masks) => masks.continuum(),
-        }
-    }
-
-    /// Return both supports when this is a joint reconstruction.
-    #[must_use]
-    pub const fn coupled(&self) -> Option<&CoupledReconstructionMask> {
-        match self {
-            Self::Shared(_) | Self::Domains(_) => None,
-            Self::Coupled(masks) => Some(masks),
         }
     }
 
@@ -540,7 +455,7 @@ impl ReconstructionMaskSet {
     pub const fn domains(&self) -> Option<&ImageDomainReconstructionMasks> {
         match self {
             Self::Domains(masks) => Some(masks),
-            Self::Shared(_) | Self::Coupled(_) => None,
+            Self::Shared(_) => None,
         }
     }
 }
@@ -664,8 +579,7 @@ impl ImageDomainReconstructionMaskPlans {
                     *source_coordinate,
                     *source_shape,
                 )?,
-                ReconstructionMaskPlan::Coupled { .. }
-                | ReconstructionMaskPlan::AutoMultithresh { .. } => {
+                ReconstructionMaskPlan::AutoMultithresh { .. } => {
                     return Err(MaskError::UnsupportedMultiDomainPlan);
                 }
             };
@@ -762,42 +676,6 @@ impl ImageDomainReconstructionMasks {
     /// Iterate supports in canonical domain order.
     pub fn iter(&self) -> impl ExactSizeIterator<Item = &ReconstructionMask> {
         self.masks.iter()
-    }
-}
-
-impl CoupledReconstructionMask {
-    /// Bind distinct continuum and line masks from the same model grid.
-    pub fn new(continuum: ReconstructionMask, line: ReconstructionMask) -> Result<Self, MaskError> {
-        if continuum.problem != line.problem
-            || continuum.model_generation != line.model_generation
-            || continuum.normal_state != line.normal_state
-            || continuum.coordinate != line.coordinate
-            || continuum.shape != line.shape
-        {
-            return Err(MaskError::ShapeMismatch);
-        }
-        Ok(Self { continuum, line })
-    }
-
-    /// Return the continuum-component support.
-    #[must_use]
-    pub const fn continuum(&self) -> &ReconstructionMask {
-        &self.continuum
-    }
-
-    /// Return the channel-local line-component support.
-    #[must_use]
-    pub const fn line(&self) -> &ReconstructionMask {
-        &self.line
-    }
-
-    /// Return one immutable identity binding both independently committed supports.
-    #[must_use]
-    pub fn generation_id(&self) -> ReconstructionMaskGenerationId {
-        let mut encoder = Encoder::new(COUPLED_MASK_DOMAIN, 1);
-        encoder.identity(self.continuum.generation_id().as_bytes());
-        encoder.identity(self.line.generation_id().as_bytes());
-        ReconstructionMaskGenerationId(LogicalIdentity::from_sha256(encoder.finish()))
     }
 }
 
@@ -1214,9 +1092,6 @@ pub enum MaskError {
     /// This multi-domain slice supports only static full-plane, box, or reprojected masks.
     #[error("multi-domain reconstruction does not support this mask plan")]
     UnsupportedMultiDomainPlan,
-    /// A joint solve requires a plan carrying both component supports.
-    #[error("joint reconstruction requires a coupled mask plan")]
-    CoupledPlanRequired,
     /// Source and target direction grids cannot be mapped by the accepted law.
     #[error("mask direction grids require a supported exact reprojection")]
     UnsupportedReprojection,

@@ -255,14 +255,6 @@ pub struct NativeMinorCycleOutcome {
     pub mask_normal_state: Option<casa_imaging_reconstruction::FinalNormalStateCompletionId>,
     /// Auto-multithreshold diagnostics, when that mask mode generated support.
     pub auto_mask: Option<casa_imaging_reconstruction::AutoMultithreshEvidence>,
-    /// Exact line-component support for a joint solve.
-    pub line_mask_support: Option<Vec<bool>>,
-    /// Immutable line-mask generation for a joint solve.
-    pub line_mask_generation: Option<casa_imaging_reconstruction::ReconstructionMaskGenerationId>,
-    /// Current Normal State consumed to generate an automatic line mask.
-    pub line_mask_normal_state: Option<casa_imaging_reconstruction::FinalNormalStateCompletionId>,
-    /// Auto-multithreshold diagnostics for the line mask, when selected.
-    pub line_auto_mask: Option<casa_imaging_reconstruction::AutoMultithreshEvidence>,
 }
 
 /// Stable application spelling of the scientific minor-cycle terminal reason.
@@ -548,7 +540,6 @@ where
             let mut minor_outcomes = Vec::new();
             loop {
                 let applied_masks = minor.masks().clone();
-                let line_mask = applied_masks.coupled().map(|masks| masks.line());
                 let iterations_entering = total_iterations;
                 let actual_iterations_entering = total_actual_iterations;
                 total_iterations = total_iterations
@@ -581,11 +572,6 @@ where
                     mask_model_generation: minor.mask().model_generation(),
                     mask_normal_state: minor.mask().normal_state_completion(),
                     auto_mask: minor.auto_mask_evidence(),
-                    line_mask_support: line_mask.map(|mask| mask.support().to_vec()),
-                    line_mask_generation: line_mask.map(|mask| mask.generation_id()),
-                    line_mask_normal_state: line_mask
-                        .and_then(|mask| mask.normal_state_completion()),
-                    line_auto_mask: minor.line_auto_mask_evidence(),
                 };
                 eprintln!(
                     "imaging_minor_cycle_summary cycle={} associated_replay_ordinal={} controller_iterations_entering={} controller_iterations={} controller_iterations_total={} actual_iterations_entering={} actual_iterations={} actual_iterations_total={} initial_peak_flux={} final_peak_flux={} model_update_abs_flux={} global_threshold={} effective_threshold={} cycle_threshold={} stop_reason={:?} clark_refreshes={}",
@@ -624,23 +610,6 @@ where
                             })
                             .collect::<Vec<_>>(),
                     )?,
-                    ReconstructionMaskSet::Coupled(masks) => {
-                        ImageDomainReconstructionMaskPlans::new([mask_plans
-                            .primary()
-                            .next_coupled_cycle(
-                                masks,
-                                cycle,
-                                minor.evidence().cycle_threshold_is_global(),
-                                [
-                                    minor_outcome
-                                        .auto_mask
-                                        .is_some_and(|evidence| evidence.channel_stopped),
-                                    minor_outcome
-                                        .line_auto_mask
-                                        .is_some_and(|evidence| evidence.channel_stopped),
-                                ],
-                            )])?
-                    }
                     ReconstructionMaskSet::Shared(_) => {
                         return Err(boxed(
                             "native application received a non-domain reconstruction mask",
@@ -1046,9 +1015,6 @@ where
         if let Some(masks) = reconstruction_masks.as_ref() {
             inputs = match masks {
                 ReconstructionMaskSet::Shared(mask) => inputs.with_reconstruction_mask(mask)?,
-                ReconstructionMaskSet::Coupled(masks) => {
-                    inputs.with_coupled_reconstruction_masks(masks)?
-                }
                 ReconstructionMaskSet::Domains(masks) => {
                     inputs.with_domain_reconstruction_masks(masks)?
                 }

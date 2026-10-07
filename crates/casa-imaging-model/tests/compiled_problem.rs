@@ -6,18 +6,18 @@ use casa_imaging_model::{
     DirectionCoordinateSpec, DirectionFrame, DopplerConvention, Epoch, FacetLayout,
     FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec,
     ImageShape, ImagingRequest, InstrumentModel, InstrumentResponse, ItrfPosition,
-    JointContinuumLineContract, MeasurementEquationContract, MissingPointingPolicy,
-    ModelColumnWrite, ModelInnerProduct, ModelStateIdentity, NumericPrecision, NumericalStage,
-    NumericsContract, ObservationPointingLaw, ObservationSnapshotInput,
-    ObservationTransactionRequirements, PairedMeasurementTransform, PhaseCentreLaw,
-    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
-    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
-    PrimaryBeamValidityPolicy, ProblemInputIdentities, ProblemSpecification, ProductAxisKind,
-    ProductBeamRule, ProductBlankingPolicy, ProductKind, ProductNormalization, ProductRequirements,
-    ProductRole, ProductSchema, ProductSupportComparison, ProductTerm, ProductUnit,
-    ProductValidityPolicies, ProductValidityRule, Projection, ReconstructionAlgorithm,
-    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
-    ReferenceDataKind, RequiredCapability, RestFrequency, RestoringBeamPolicy, ScientificContract,
+    MeasurementEquationContract, MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct,
+    ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
+    ObservationSnapshotInput, ObservationTransactionRequirements, PairedMeasurementTransform,
+    PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
+    PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
+    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInputIdentities,
+    ProblemSpecification, ProductAxisKind, ProductBeamRule, ProductBlankingPolicy, ProductKind,
+    ProductNormalization, ProductRequirements, ProductRole, ProductSchema,
+    ProductSupportComparison, ProductTerm, ProductUnit, ProductValidityPolicies,
+    ProductValidityRule, Projection, ReconstructionAlgorithm, ReconstructionBasis,
+    ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
+    RequiredCapability, RestFrequency, RestoringBeamPolicy, ScientificContract,
     SequentialContinuumTransform, SkyDirection, SpectralContract, SpectralCoordinateSpec,
     SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, StageErrorBudget,
     TaylorSupportReference, TaylorValidityPolicy, TimeScale, UvTaper, UvwCoordinateLaw,
@@ -194,183 +194,6 @@ fn geometry() -> GeometryInput {
             DopplerConvention::NotApplicable,
         ),
     )
-}
-
-fn joint_geometry() -> GeometryInput {
-    let direction = DirectionCoordinateSpec::new(
-        Projection::Sin,
-        SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
-        [31.0, 31.0],
-        [-4.848_136_811_095_36e-6, 4.848_136_811_095_36e-6],
-        [[1.0, 0.0], [0.0, 1.0]],
-        [180.0, 0.0],
-    );
-    GeometryInput::new(
-        vec![ImageDomainSpec::new(
-            ImageDomainRole::Main,
-            ImageShape::new(64, 64),
-            direction,
-            FacetLayout::Single,
-            AxisOrder::new([
-                ImageAxis::DirectionLongitude,
-                ImageAxis::DirectionLatitude,
-                ImageAxis::Polarization,
-                ImageAxis::Spectral,
-            ]),
-        )],
-        CentreLaws::new(
-            PhaseCentreLaw::Fixed(direction.reference_direction()),
-            DelayCentreLaw::PhaseTrackingCentre,
-            PointingCentreLaw::PhaseTrackingCentre,
-        ),
-        UvwCoordinateLaw::PhaseTrackingCentre,
-        SpectralCoordinateSpec::new(
-            FrequencyFrame::Topocentric,
-            FrequencyFrame::Topocentric,
-            SpectralFrameAnchor::NotApplicable,
-            SpectralWcs::Linear {
-                channels: 8,
-                reference_pixel: 3.5,
-                reference_frequency_hz: 1.4e9,
-                increment_hz: 1.0e6,
-            },
-            RestFrequency::NotApplicable,
-            DopplerConvention::NotApplicable,
-        ),
-    )
-}
-
-fn joint_specification(contract: JointContinuumLineContract) -> ProblemSpecification {
-    ProblemSpecification::new(
-        science(),
-        ReconstructionContract::new(
-            ReconstructionBasis::JointContinuumLine {
-                continuum_terms: 2,
-                line_terms: 2,
-            },
-            ReconstructionAlgorithm::JointContinuumLine {
-                scales_px: vec![0.0],
-                small_scale_bias: 0.0,
-            },
-            ReconstructionControls::new(100, 0.1, 0.0),
-            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
-        )
-        .with_joint_continuum_line(contract),
-        weighting(),
-        ProductRequirements::new(
-            vec![
-                ProductKind::Psf,
-                ProductKind::Residual,
-                ProductKind::Model,
-                ProductKind::SumWeights,
-            ],
-            ProductNormalization::UnitResponse,
-            RestoringBeamPolicy::None,
-            product_validity(),
-        ),
-        read_only_transaction(),
-        numerics(false),
-    )
-}
-
-#[test]
-fn t46_joint_contract_is_canonical_identifiable_and_distinct() {
-    let first = compile_with_geometry(
-        joint_specification(JointContinuumLineContract::new(
-            [0, 1, 2, 5, 6, 7],
-            [3, 4],
-            1.0e8,
-        )),
-        joint_geometry(),
-        inputs(false),
-    )
-    .expect("compile identifiable joint contract");
-    let reordered = compile_with_geometry(
-        joint_specification(JointContinuumLineContract::new(
-            [7, 2, 6, 0, 5, 1],
-            [4, 3],
-            1.0e8,
-        )),
-        joint_geometry(),
-        inputs(false),
-    )
-    .expect("canonicalize support ordering");
-
-    assert_eq!(first.problem_id(), reordered.problem_id());
-    assert_eq!(
-        first.reconstruction().joint_continuum_line(),
-        reordered.reconstruction().joint_continuum_line()
-    );
-    assert!(
-        first
-            .required_capabilities()
-            .contains(&RequiredCapability::JointContinuumLineReconstruction)
-    );
-    let graph = first.product_graph();
-    assert!(
-        graph
-            .node(ProductRole::Residual(ProductTerm::Total))
-            .is_some()
-    );
-    assert!(
-        graph
-            .node(ProductRole::Residual(ProductTerm::Line))
-            .is_none()
-    );
-    for term in [
-        ProductTerm::Continuum(0),
-        ProductTerm::Continuum(1),
-        ProductTerm::Line,
-        ProductTerm::Total,
-    ] {
-        assert!(graph.node(ProductRole::Model(term)).is_some());
-    }
-    assert_eq!(
-        graph
-            .node(ProductRole::Model(ProductTerm::Continuum(0)))
-            .expect("continuum coefficient product")
-            .axes()
-            .shape()[3],
-        1
-    );
-    assert_eq!(
-        graph
-            .node(ProductRole::Model(ProductTerm::Line))
-            .expect("line cube product")
-            .axes()
-            .shape()[3],
-        8
-    );
-    assert_eq!(
-        graph
-            .nodes()
-            .iter()
-            .filter(|node| {
-                matches!(
-                    node.role(),
-                    ProductRole::Psf(ProductTerm::JointNormal { .. })
-                )
-            })
-            .count(),
-        16
-    );
-
-    for invalid in [
-        JointContinuumLineContract::new([], [0, 1, 2, 3, 4, 5, 6, 7], 1.0e8),
-        JointContinuumLineContract::new([0, 1, 2, 3, 4, 5, 6, 7], [], 1.0e8),
-        JointContinuumLineContract::new([0, 1, 2, 5, 6, 7], [2, 3], 1.0e8),
-        JointContinuumLineContract::new([0], [1, 2, 3, 4, 5, 6, 7], 1.0e8),
-        JointContinuumLineContract::new([0, 1, 2, 5, 6, 7], [3, 3], 1.0e8),
-    ] {
-        assert!(matches!(
-            compile_with_geometry(
-                joint_specification(invalid),
-                joint_geometry(),
-                inputs(false),
-            ),
-            Err(CompileProblemError::InvalidCapabilityCombination { .. })
-        ));
-    }
 }
 
 fn specification(reverse: bool) -> ProblemSpecification {
@@ -1843,7 +1666,7 @@ fn canonical_identity_normalizes_signed_zero_but_changes_with_science() {
         positive_zero.weighting().commitment_id()
     );
     assert_ne!(positive_zero.problem_id(), changed.problem_id());
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 25);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 26);
 }
 
 #[test]
@@ -2307,13 +2130,13 @@ fn invalid_polarization_is_a_reconstruction_contract_error() {
 }
 
 #[test]
-fn compiled_problem_identity_has_a_pinned_schema_twenty_five_digest() {
+fn compiled_problem_identity_has_a_pinned_schema_twenty_six_digest() {
     let compiled = compile_request(specification(false), inputs(false)).expect("compile problem");
 
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 25);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 26);
     assert_eq!(
         compiled.problem_id().to_string(),
-        "20d7a473af8e69ed52734aa165a8cbca1adbe67308615c28b8c292b4898024c8"
+        "ad436425a54249ca67e1582e56bb8bc036be7f810bb948d5ac1b8d4037174eb3"
     );
     let lifecycle = casa_imaging_model::LogicalIdentity::from_sha256(
         compiled.model_lifecycle().contract_id().as_bytes(),

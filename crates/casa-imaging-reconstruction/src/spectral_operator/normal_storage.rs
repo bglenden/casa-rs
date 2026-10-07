@@ -191,12 +191,9 @@ mod tests {
                 },
                 basis: SpectralBasisPlan::ChannelLocal,
                 polarizations: POLARIZATIONS,
-                joint_line_term_by_channel: vec![None; CHANNELS].into(),
                 dirty: complex(0.25),
                 cube_real: None,
                 invariant_dirty: Some(complex(0.5)),
-                common_residual: None,
-                invariant_common_dirty: None,
                 psf: complex(-0.125),
                 clark_workspace: std::sync::Mutex::new(None),
                 sensitivity: values.clone().map(|i| i as f64 * 0.25).collect(),
@@ -206,7 +203,6 @@ mod tests {
                     .clone()
                     .map(|i| (i + 1) as f64 + if published_differ { 0.5 } else { 0.0 })
                     .collect(),
-                channel_sum_weights: Box::new([]),
                 validity: planes
                     .map(|i| match i % 3 {
                         0 => SpectralChannelValidity::Valid,
@@ -438,7 +434,6 @@ mod tests {
                     input.primitives.basis = SpectralBasisPlan::Polynomial(
                         super::super::BlockNormalPlan::constant(1.0e9).unwrap(),
                     );
-                    input.primitives.joint_line_term_by_channel = vec![None].into();
                     if ordinal == 1 {
                         input.domain_role = ImageDomainRole::Outlier("constant".into());
                         input.primitives.shape = [2, 3];
@@ -1146,10 +1141,8 @@ pub(crate) struct NormalDomainMetadata<'a> {
     pub(crate) coefficient_terms: usize,
     pub(crate) normal_moments: usize,
     pub(crate) reference_frequency_hz: Option<f64>,
-    pub(crate) joint_continuum_terms: Option<usize>,
     pub(crate) sum_weights: &'a [f64],
     pub(crate) published_sum_weights: &'a [f64],
-    pub(crate) channel_sum_weights: &'a [f64],
     pub(crate) validity: &'a [SpectralChannelValidity],
 }
 
@@ -1264,10 +1257,8 @@ impl NormalStatePrimitives {
                     coefficient_terms: d.total_channels,
                     normal_moments: d.total_channels,
                     reference_frequency_hz: None,
-                    joint_continuum_terms: None,
                     sum_weights: &d.sum_weights,
                     published_sum_weights: &d.published_sum_weights,
-                    channel_sum_weights: &[],
                     validity: &d.validity,
                 }
             }
@@ -1281,10 +1272,8 @@ impl NormalStatePrimitives {
                     coefficient_terms: p.coefficient_term_count(),
                     normal_moments: p.normal_moment_count(),
                     reference_frequency_hz: p.reference_frequency_hz(),
-                    joint_continuum_terms: p.joint_continuum_term_count(),
                     sum_weights: p.sum_weights(),
                     published_sum_weights: p.published_sum_weights(),
-                    channel_sum_weights: p.channel_sum_weights(),
                     validity: p.channel_validity(),
                 }
             }
@@ -1595,7 +1584,7 @@ pub(crate) struct StoredChannelNormalDomain {
 ///
 /// Each field read loads only that field and polarization. The reader borrows
 /// the global completion owner and retains no image payload or cache.
-/// Multi-term Taylor and joint families use their existing complete-family readers.
+/// Multi-term Taylor families use their existing complete-family readers.
 #[derive(Debug)]
 pub struct FinalNormalPlaneReader<'a> {
     backing: NormalPlaneBacking<'a>,
@@ -1913,12 +1902,7 @@ impl StoredChannelNormalDomain {
                 || compact.is_some_and(|real| real.invariant_dirty.is_some()))
                 != self.fields.invariant_dirty.is_some()
             || p.major_cycle_residual.is_some() != self.fields.major_cycle_residual.is_some()
-            || p.common_residual.is_some()
-            || p.invariant_common_dirty.is_some()
             || p.primary_beam_weighted_sum.is_some()
-            || !p.channel_sum_weights.is_empty()
-            || p.joint_line_term_by_channel.len() != self.total_channels
-            || p.joint_line_term_by_channel.iter().any(Option::is_some)
         {
             return Err(SpectralOperatorError::ProblemMismatch);
         }
@@ -2139,7 +2123,6 @@ impl StoredChannelNormalDomain {
                 },
                 basis: SpectralBasisPlan::ChannelLocal,
                 polarizations: self.polarizations,
-                joint_line_term_by_channel: vec![None; self.total_channels].into_boxed_slice(),
                 dirty: self
                     .read_complex(&self.fields.dirty, offset, values)?
                     .into_owned()
@@ -2154,8 +2137,6 @@ impl StoredChannelNormalDomain {
                             .map(|v| v.into_owned().into_boxed_slice())
                     })
                     .transpose()?,
-                common_residual: None,
-                invariant_common_dirty: None,
                 psf: self
                     .read_complex(&self.fields.psf, offset, values)?
                     .into_owned()
@@ -2176,7 +2157,6 @@ impl StoredChannelNormalDomain {
                 primary_beam_weighted_sum: None,
                 sum_weights: self.sum_weights[plane_range.clone()].into(),
                 published_sum_weights: self.published_sum_weights[plane_range.clone()].into(),
-                channel_sum_weights: Box::new([]),
                 validity: self.validity[plane_range].into(),
                 major_cycle_residual: self
                     .fields
