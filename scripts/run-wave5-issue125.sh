@@ -98,8 +98,7 @@ time_json_stdout rust-tclean "$outdir/rust-tclean-wall-timing.json" "$outdir/rus
   --weighting natural \
   --niter 0 \
   --threshold-jy 0 \
-  --datacolumn DATA \
-  --no-preview-pngs
+  --datacolumn DATA
 
 target/release/imexplore imhead "$rust_image.image" --json > "$outdir/rust-imhead.json"
 target/release/imexplore imstat "$rust_image.image" --json > "$outdir/rust-imstat.json"
@@ -351,7 +350,6 @@ invalid = subprocess.run(
         "--cell-arcsec",
         "1",
         "--dirty-only",
-        "--no-preview-pngs",
     ],
     text=True,
     capture_output=True,

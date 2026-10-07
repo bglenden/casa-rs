@@ -2,7 +2,7 @@
 format = 1
 surface = "imager"
 kind = "task"
-contract = 17
+contract = 18
 
 [parameters]
 vis = ["VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms"]
@@ -28,7 +28,6 @@ weighting = "briggs"
 robust = 1
 wprojplanes = 32
 usepointing = true
-write_preview_pngs = false
 write_pb = true
 pblimit = 0.0001
 gridder = "awproject"

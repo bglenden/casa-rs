@@ -406,8 +406,8 @@ mod tests {
                 "--gridder".into(),
                 "awproject".into(),
                 "--no-psterm".into(),
-                "--imaging-memory-pressure-policy".into(),
-                "conservative-no-swap".into(),
+                "--standard-mfs-acceleration".into(),
+                "multi-cpu".into(),
             ],
         )
         .unwrap();
@@ -426,8 +426,8 @@ mod tests {
         );
         assert_eq!(patch.values["psterm"], ParameterValue::Bool(false));
         assert_eq!(
-            patch.values["imaging_memory_pressure_policy"],
-            ParameterValue::String("conservative-no-swap".into())
+            patch.values["standard_mfs_acceleration"],
+            ParameterValue::String("multi-cpu".into())
         );
 
         let alias = parse_parameter_cli_overrides(&bundle, &["--threshold".into(), "1Jy".into()])

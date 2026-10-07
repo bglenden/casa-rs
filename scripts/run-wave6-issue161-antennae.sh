@@ -246,8 +246,7 @@ PY
     --deconvolver hogbom \
     --niter 0 \
     --threshold-jy 0 \
-    --dirty-only \
-    --no-preview-pngs
+    --dirty-only
   run_casars_imager \
     --ms "$north_ms" \
     --imagename "$run_dir/rust-antennae-north-cont-clean" \
@@ -261,8 +260,7 @@ PY
     --minor-cycle-length 32 \
     --casa-hogbom-iterations \
     --gain 0.1 \
-    --threshold-jy 0.0004 \
-    --no-preview-pngs
+    --threshold-jy 0.0004
   run_casars_imager \
     --ms "$south_ms" \
     --imagename "$run_dir/rust-antennae-south-cont-clean" \
@@ -276,8 +274,7 @@ PY
     --minor-cycle-length 32 \
     --casa-hogbom-iterations \
     --gain 0.1 \
-    --threshold-jy 0.0004 \
-    --no-preview-pngs
+    --threshold-jy 0.0004
   record_timing rust_continuum_seconds "$rust_start"
 
   rust_line_start="$(now_seconds)"
@@ -298,8 +295,7 @@ PY
     --dirty-only \
     --threshold-jy 0 \
     --perchanweightdensity \
-    --pblimit 0.2 \
-    --no-preview-pngs
+    --pblimit 0.2
   record_timing rust_line_cube_probe_seconds "$rust_line_start"
 fi
 

@@ -208,7 +208,6 @@ def test_successful_process_with_malformed_managed_result_is_rejected(
         tasks.imager(
             vis="input.ms",
             imagename="dirty",
-            write_preview_pngs=False,
             workspace=tmp_path,
             binary=binary,
             env={"FAKE_CASARS_LOG": str(tmp_path / "invocation.json")},
@@ -223,7 +222,6 @@ def test_imager_ineligibility_raises_exact_typed_owner_reason_before_process(
             vis="input.ms",
             imagename="products/image",
             imaging_memory_target_mb=32768,
-            write_preview_pngs=False,
             workspace=tmp_path,
             binary=tmp_path / "missing-casars",
         )

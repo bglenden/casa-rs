@@ -4,9 +4,8 @@
 use std::{error::Error, fmt};
 
 use casa_imaging_model::{
-    CompiledProblem, ImageDomainRole, InstrumentModel, InstrumentResponse, ModelStateIdentity,
-    PhaseCentreLaw, PolarizationCoordinate, ProductKind, ReconstructionBasis, RequiredCapability,
-    UvwCoordinateLaw,
+    CompiledProblem, ImageDomainRole, InstrumentModel, InstrumentResponse, PolarizationCoordinate,
+    ProductKind, ReconstructionBasis, RequiredCapability, UvwCoordinateLaw,
 };
 
 /// A task-surface requirement not represented by [`CompiledProblem`].
@@ -42,58 +41,24 @@ pub enum TaskRequirement {
     FixedTileCpu,
     /// Metal gridding override.
     MetalGridder,
-    /// Metal row-run gridding override.
-    MetalRowRunGridder,
     /// Grouped Metal row-run gridding override.
     MetalRowRunGroupedGridder,
     /// Non-Stokes-I or raw-correlation selection.
     PolarizationSelection,
     /// UV tapering.
     UvTaper,
-    /// Long-form minor-cycle summary.
-    FullSummary,
-    /// Cube channel chunking.
-    ChannelChunks,
     /// Per-channel weighting-density control.
     PerChannelWeightDensity,
     /// Explicit W-projection plane budget.
     WProjectionPlanes,
-    /// Explicit standard-MFS grid worker count.
-    GridThreads,
-    /// Explicit fixed-tile anchor.
-    TileAnchor,
-    /// Explicit residual backend override.
-    ResidualBackend,
-    /// Explicit initial-dirty backend override.
-    InitialDirtyBackend,
-    /// Metal minor-cycle chunk override.
-    MetalMinorCycleChunk,
-    /// Metal grouped-input cache override.
-    MetalGroupedInputCache,
     /// Explicit source-stream memory target.
     MemoryTarget,
-    /// Explicit non-default source-stream memory-pressure policy.
-    MemoryPressurePolicy,
-    /// Explicit source-stream prepare-buffer budget.
-    PrepareBuffer,
-    /// Explicit source row-block size.
-    RowBlockRows,
-    /// Explicit source preparation worker count.
-    PrepareWorkers,
-    /// Explicit source read-ahead count.
-    ReadAheadBlocks,
-    /// Explicit FFT precision.
-    FftPrecision,
-    /// Preview sidecar publication.
-    PreviewPng,
-    /// Unknown backend spelling.
-    UnknownBackend,
 }
 
 impl TaskRequirement {
     /// Complete stable task-only capability catalog for the current application
     /// contract.
-    pub const ALL: [Self; 38] = [
+    pub const ALL: [Self; 21] = [
         Self::SpectralCube,
         Self::SpectralCubedata,
         Self::SpectralCubeSource,
@@ -109,29 +74,12 @@ impl TaskRequirement {
         Self::ExecutionAuto,
         Self::FixedTileCpu,
         Self::MetalGridder,
-        Self::MetalRowRunGridder,
         Self::MetalRowRunGroupedGridder,
         Self::PolarizationSelection,
         Self::UvTaper,
-        Self::FullSummary,
-        Self::ChannelChunks,
         Self::PerChannelWeightDensity,
         Self::WProjectionPlanes,
-        Self::GridThreads,
-        Self::TileAnchor,
-        Self::ResidualBackend,
-        Self::InitialDirtyBackend,
-        Self::MetalMinorCycleChunk,
-        Self::MetalGroupedInputCache,
         Self::MemoryTarget,
-        Self::MemoryPressurePolicy,
-        Self::PrepareBuffer,
-        Self::RowBlockRows,
-        Self::PrepareWorkers,
-        Self::ReadAheadBlocks,
-        Self::FftPrecision,
-        Self::PreviewPng,
-        Self::UnknownBackend,
     ];
 
     /// Return the stable application-catalog identity.
@@ -153,29 +101,12 @@ impl TaskRequirement {
             Self::ExecutionAuto => "execution_auto",
             Self::FixedTileCpu => "fixed_tile_cpu",
             Self::MetalGridder => "metal_gridder",
-            Self::MetalRowRunGridder => "metal_row_run_gridder",
             Self::MetalRowRunGroupedGridder => "metal_row_run_grouped_gridder",
             Self::PolarizationSelection => "polarization_selection",
             Self::UvTaper => "uv_taper",
-            Self::FullSummary => "full_summary",
-            Self::ChannelChunks => "channel_chunks",
             Self::PerChannelWeightDensity => "per_channel_weight_density",
             Self::WProjectionPlanes => "w_projection_planes",
-            Self::GridThreads => "grid_threads",
-            Self::TileAnchor => "tile_anchor",
-            Self::ResidualBackend => "residual_backend",
-            Self::InitialDirtyBackend => "initial_dirty_backend",
-            Self::MetalMinorCycleChunk => "metal_minor_cycle_chunk",
-            Self::MetalGroupedInputCache => "metal_grouped_input_cache",
             Self::MemoryTarget => "memory_target",
-            Self::MemoryPressurePolicy => "memory_pressure_policy",
-            Self::PrepareBuffer => "prepare_buffer",
-            Self::RowBlockRows => "row_block_rows",
-            Self::PrepareWorkers => "prepare_workers",
-            Self::ReadAheadBlocks => "read_ahead_blocks",
-            Self::FftPrecision => "fft_precision",
-            Self::PreviewPng => "preview_png",
-            Self::UnknownBackend => "unknown_backend",
         }
     }
 }
@@ -187,18 +118,10 @@ pub enum UnsupportedRequirement {
     Capability(RequiredCapability),
     /// A task-only requirement has no installed implementation.
     Task(TaskRequirement),
-    /// The implementation requires exactly one observation source.
-    SingleObservationSource,
     /// Facet execution currently requires the constant spectral basis.
     ConstantBasisForFacets,
     /// Non-Stokes-I or multi-polarization execution requires an independent-plane basis.
     IndependentBasisForPolarizationSelection,
-    /// The implementation requires a fixed phase centre.
-    FixedPhaseCentre,
-    /// The implementation does not accept an initial model.
-    EmptyInitialModel,
-    /// The implementation does not write `MODEL_DATA`.
-    NoModelColumnWrite,
     /// The implementation requires a scalar measurement equation.
     ScalarInstrumentResponse,
     /// W projection is not installed for mosaic UVW geometry.
@@ -212,12 +135,8 @@ impl UnsupportedRequirement {
         match self {
             Self::Capability(_) => "capability",
             Self::Task(_) => "task",
-            Self::SingleObservationSource
-            | Self::ConstantBasisForFacets
+            Self::ConstantBasisForFacets
             | Self::IndependentBasisForPolarizationSelection
-            | Self::FixedPhaseCentre
-            | Self::EmptyInitialModel
-            | Self::NoModelColumnWrite
             | Self::ScalarInstrumentResponse
             | Self::WProjectionWithMosaic => "constraint",
         }
@@ -231,14 +150,10 @@ impl UnsupportedRequirement {
                 format!("capability.{}", requirement.catalog_id())
             }
             Self::Task(requirement) => format!("task.{}", requirement.catalog_id()),
-            Self::SingleObservationSource => "constraint.single_observation_source".to_string(),
             Self::ConstantBasisForFacets => "constraint.constant_basis_for_facets".to_string(),
             Self::IndependentBasisForPolarizationSelection => {
                 "constraint.independent_basis_for_polarization_selection".to_string()
             }
-            Self::FixedPhaseCentre => "constraint.fixed_phase_centre".to_string(),
-            Self::EmptyInitialModel => "constraint.empty_initial_model".to_string(),
-            Self::NoModelColumnWrite => "constraint.no_model_column_write".to_string(),
             Self::ScalarInstrumentResponse => "constraint.scalar_instrument_response".to_string(),
             Self::WProjectionWithMosaic => "constraint.w_projection_with_mosaic".to_string(),
         }
@@ -383,9 +298,6 @@ pub fn validate_installed_implementation(
             .map(UnsupportedRequirement::Task),
     );
 
-    if problem.inputs().observation_snapshot().sources().len() != 1 {
-        unsupported.push(UnsupportedRequirement::SingleObservationSource);
-    }
     debug_assert_eq!(
         problem.geometry().domains()[0].role(),
         &ImageDomainRole::Main
@@ -403,15 +315,6 @@ pub fn validate_installed_implementation(
         problem.reconstruction().polarization().coordinates(),
     ) {
         unsupported.push(UnsupportedRequirement::IndependentBasisForPolarizationSelection);
-    }
-    if matches!(
-        problem.geometry().centres().phase_tracking(),
-        PhaseCentreLaw::Observation
-    ) {
-        unsupported.push(UnsupportedRequirement::FixedPhaseCentre);
-    }
-    if !matches!(problem.inputs().model(), ModelStateIdentity::Empty) {
-        unsupported.push(UnsupportedRequirement::EmptyInitialModel);
     }
     let installed_response = instrument_response_is_installed(
         problem
@@ -509,7 +412,6 @@ const fn supports_task(requirement: TaskRequirement) -> bool {
             | TaskRequirement::PerChannelWeightDensity
             | TaskRequirement::SerialCpu
             | TaskRequirement::FixedTileCpu
-            | TaskRequirement::PreviewPng
     )
 }
 
@@ -706,7 +608,7 @@ mod tests {
             metal.unsupported().is_none(),
             cfg!(all(target_os = "macos", not(coverage)))
         );
-        assert!(!supports_task(TaskRequirement::MetalRowRunGridder));
+        assert!(!supports_task(TaskRequirement::MetalRowRunGroupedGridder));
     }
 
     #[test]

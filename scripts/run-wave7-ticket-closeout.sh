@@ -75,7 +75,6 @@ run_imager_profiles() {
     --ms "$antennae_ms" \
     --imagename "$outdir/issue197-antennae-rust" \
     --managed-output true \
-    --no-preview-pngs \
     --phasecenter-field 12 \
     --spw "0:1~50;120~164" \
     --datacolumn DATA \
@@ -101,7 +100,6 @@ run_imager_profiles() {
     --ms "$vla_ms" \
     --imagename "$outdir/issue197-3c391-rust" \
     --managed-output true \
-    --no-preview-pngs \
     --phasecenter-field 0 \
     --deconvolver multiscale \
     --scales 0,5,15,45 \

@@ -90,7 +90,6 @@ fn t61_vlass_controls_reach_the_real_snapshot_and_exact_typed_unavailability()
             ParameterValue::String("flatnoise".into()),
         ),
         ("parallel".into(), ParameterValue::Bool(false)),
-        ("write_preview_pngs".into(), ParameterValue::Bool(false)),
     ]);
     let bundle = builtin_surface_bundle("imager")?;
     let mut open = OpenSessionRequest::defaults(bundle.clone(), staging.path());
@@ -163,7 +162,6 @@ fn t61_vlass_controls_reach_the_real_snapshot_and_exact_typed_unavailability()
         ("gridder".into(), ParameterValue::String("standard".into())),
         ("niter".into(), ParameterValue::Integer(0)),
         ("parallel".into(), ParameterValue::Bool(false)),
-        ("write_preview_pngs".into(), ParameterValue::Bool(false)),
     ]);
     let mut supported_open = OpenSessionRequest::defaults(bundle, staging.path());
     supported_open.override_patch = ResolutionPatch {

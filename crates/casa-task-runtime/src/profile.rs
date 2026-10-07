@@ -1191,8 +1191,8 @@ cell = "0.0002777777777777778deg"
                 ("nterms", ParameterValue::Integer(2)),
                 ("parallel", ParameterValue::Bool(false)),
                 (
-                    "imaging_memory_pressure_policy",
-                    ParameterValue::String("auto".into()),
+                    "standard_mfs_acceleration",
+                    ParameterValue::String("cpu".into()),
                 ),
             ] {
                 assert_eq!(resolved.values[name], expected, "{label}.{name}");
@@ -1200,8 +1200,8 @@ cell = "0.0002777777777777778deg"
             assert!(
                 !resolved
                     .explicit_overrides
-                    .contains_key("imaging_memory_pressure_policy"),
-                "{label}.imaging_memory_pressure_policy must adopt the current default"
+                    .contains_key("standard_mfs_acceleration"),
+                "{label}.standard_mfs_acceleration must adopt the current default"
             );
             for name in ["cfcache", "cf_resident_mb", "wprojplanes", "usepointing"] {
                 assert!(

@@ -164,34 +164,29 @@ def test_shared_cross_surface_profile_matches_canonical_expected_values(
     if surface == "imager":
         invocation = loaded.provider_invocation()
         assert invocation.protocol_name == "casa_imager_task"
-        assert invocation.protocol_version == 8
+        assert invocation.protocol_version == 10
         assert json.loads(invocation.stdin or "null") == expected["request"]
         unsupported = {reason.id for reason in invocation.unsupported_reasons}
         assert "task.aw_projection" not in unsupported
-        assert unsupported >= {
-            "task.grid_threads",
-            "task.memory_target",
-            "task.memory_pressure_policy",
-        }
+        assert unsupported >= {"task.memory_target"}
 
 
 @pytest.mark.parametrize(
     ("name", "overrides", "expected_reason"),
     [
-        ("continuum", {"write_preview_pngs": False}, None),
+        ("continuum", {}, None),
         (
             "cube",
             {
                 "specmode": "cube",
                 "channel_count": 4,
                 "perchanweightdensity": False,
-                "write_preview_pngs": False,
             },
             None,
         ),
         (
             "mosaic",
-            {"gridder": "mosaic", "usepointing": True, "write_preview_pngs": False},
+            {"gridder": "mosaic", "usepointing": True},
             None,
         ),
         (
@@ -207,7 +202,6 @@ def test_shared_cross_surface_profile_matches_canonical_expected_values(
                 "native_cf_cache_bytes": 2147483648,
                 "native_cf_maximum_cells": 1024,
                 "wprojplanes": 32,
-                "write_preview_pngs": False,
             },
             None,
         ),
@@ -229,7 +223,7 @@ def test_imager_python_profiles_round_trip_exact_provider_requests(
 
     assert before == after
     assert before.protocol_name == "casa_imager_task"
-    assert before.protocol_version == 8
+    assert before.protocol_version == 10
     request = json.loads(before.stdin or "null")["request"]
     assert request["measurement_set"] == f"{name}.ms"
     if name == "native-aw":

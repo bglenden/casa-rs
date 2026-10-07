@@ -57,8 +57,7 @@ target/release/casars-imager \
   --threshold-jy 0 \
   --datacolumn DATA \
   --fitspw '0:0~239;281~383' \
-  --fitorder 0 \
-  --no-preview-pngs
+  --fitorder 0
 ```
 
 ## Evidence
@@ -156,8 +155,7 @@ target/release/casars-imager \
   --phasecenter-field 5 \
   --niter 0 \
   --threshold-jy 0 \
-  --datacolumn DATA \
-  --no-preview-pngs
+  --datacolumn DATA
 ```
 
 Current weighted-cube comparison:

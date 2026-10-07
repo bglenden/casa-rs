@@ -751,18 +751,10 @@ mod tests {
         assert_eq!(request, expected["request"]);
         let error = ensure_supported_invocation("imager", &invocation)
             .expect_err("unconsumed source-stream controls must fail closed");
-        for reason in [
-            "task/task.fft_precision",
-            "task/task.grid_threads",
-            "task/task.memory_pressure_policy",
-            "task/task.memory_target",
-            "task/task.prepare_buffer",
-            "task/task.prepare_workers",
-            "task/task.read_ahead_blocks",
-            "task/task.row_block_rows",
-        ] {
-            assert!(error.contains(reason), "missing {reason} in {error}");
-        }
+        assert!(
+            error.contains("task/task.memory_target"),
+            "missing task/task.memory_target in {error}"
+        );
     }
 
     #[test]

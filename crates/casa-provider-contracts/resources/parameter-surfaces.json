@@ -7936,7 +7936,7 @@
     {
       "kind": "task",
       "id": "imager",
-      "contract_version": 17,
+      "contract_version": 18,
       "display_name": "Imager",
       "category": "Imaging",
       "summary": "Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet",
@@ -8878,56 +8878,6 @@
           "reviewed_homonym": null
         },
         {
-          "name": "chanchunks",
-          "concept": {
-            "id": "parameter.chanchunks",
-            "semantic_revision": 1
-          },
-          "order": 66,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": "Applies to cube and cubedata imaging; the runtime rejects zero and MFS use.",
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--chanchunks"
-              ],
-              "false_flags": [],
-              "metavar": "N"
-            },
-            "provider": {
-              "field": "chanchunks",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "chanchunks",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Channel Chunks",
-              "group": "Stages",
-              "advanced": true,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
           "name": "start",
           "concept": {
             "id": "parameter.start",
@@ -9537,56 +9487,6 @@
             },
             "presentation": {
               "label": "Major Cycles",
-              "group": "Stage Parameters",
-              "advanced": true,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "fullsummary",
-          "concept": {
-            "id": "parameter.fullsummary",
-            "semantic_revision": 1
-          },
-          "order": 29,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "bool",
-              "value": false
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--fullsummary"
-              ],
-              "false_flags": [],
-              "metavar": null
-            },
-            "provider": {
-              "field": "fullsummary",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "fullsummary",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Full Summary",
               "group": "Stage Parameters",
               "advanced": true,
               "hidden": false
@@ -10897,56 +10797,6 @@
           "reviewed_homonym": null
         },
         {
-          "name": "write_preview_pngs",
-          "concept": {
-            "id": "parameter.write_preview_pngs",
-            "semantic_revision": 1
-          },
-          "order": 56,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [],
-              "false_flags": [
-                "--no-preview-pngs"
-              ],
-              "metavar": null
-            },
-            "provider": {
-              "field": "write_preview_pngs",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "write_preview_pngs",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Preview PNGs",
-              "group": "Products",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
           "name": "write_pb",
           "concept": {
             "id": "parameter.write_pb",
@@ -11290,56 +11140,6 @@
             },
             "presentation": {
               "label": "Parallel",
-              "group": "Stages",
-              "advanced": true,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "imaging_read_ahead_blocks",
-          "concept": {
-            "id": "parameter.imaging_read_ahead_blocks",
-            "semantic_revision": 1
-          },
-          "order": 64,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": "The runtime rejects zero; Auto defaults are selected from mode and memory geometry.",
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--imaging-read-ahead-blocks"
-              ],
-              "false_flags": [],
-              "metavar": "N"
-            },
-            "provider": {
-              "field": "imaging_read_ahead_blocks",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "imaging_read_ahead_blocks",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Read-Ahead Blocks",
               "group": "Stages",
               "advanced": true,
               "hidden": false
@@ -12621,17 +12421,12 @@
             }
           },
           "required_when": {
-            "kind": "equals",
-            "parameter": "imaging_memory_pressure_policy",
-            "value": {
-              "kind": "string",
-              "value": "oversubscribe"
-            }
+            "kind": "never"
           },
           "active_when": {
             "kind": "always"
           },
-          "surface_note": "none delegates to the resource-adaptive planner. auto and conservative-no-swap cap to no-swap headroom; aggressive caps to the physical process ceiling. oversubscribe requires an explicit target and alone may retain it beyond measured headroom.",
+          "surface_note": "none delegates to the resource-adaptive planner.",
           "projections": {
             "cli": {
               "flags": [
@@ -12648,261 +12443,6 @@
             },
             "presentation": {
               "label": "Memory Target (MiB)",
-              "group": "Execution Resources",
-              "advanced": true,
-              "hidden": false
-            }
-          }
-        },
-        {
-          "name": "imaging_memory_pressure_policy",
-          "concept": {
-            "id": "parameter.imaging_memory_pressure_policy",
-            "semantic_revision": 2
-          },
-          "order": 84,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "auto"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "surface_note": "auto is the safe resource-adaptive default. conservative-no-swap and aggressive select bounded production admission behavior. oversubscribe is experimental and requires an explicit memory target.",
-          "projections": {
-            "cli": {
-              "flags": [
-                "--imaging-memory-pressure-policy"
-              ],
-              "metavar": "POLICY"
-            },
-            "provider": {
-              "field": "imaging_memory_pressure_policy",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "imaging_memory_pressure_policy"
-            },
-            "presentation": {
-              "label": "Memory Pressure Policy",
-              "group": "Execution Resources",
-              "advanced": true,
-              "hidden": false
-            }
-          }
-        },
-        {
-          "name": "imaging_prepare_buffer_mb",
-          "concept": {
-            "id": "parameter.imaging_prepare_buffer_mb",
-            "semantic_revision": 1
-          },
-          "order": 85,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "projections": {
-            "cli": {
-              "flags": [
-                "--imaging-prepare-buffer-mb"
-              ],
-              "metavar": "MIB"
-            },
-            "provider": {
-              "field": "imaging_prepare_buffer_mb",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "imaging_prepare_buffer_mb"
-            },
-            "presentation": {
-              "label": "Prepare Buffer (MiB)",
-              "group": "Execution Resources",
-              "advanced": true,
-              "hidden": false
-            }
-          }
-        },
-        {
-          "name": "imaging_row_block_rows",
-          "concept": {
-            "id": "parameter.imaging_row_block_rows",
-            "semantic_revision": 1
-          },
-          "order": 86,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "projections": {
-            "cli": {
-              "flags": [
-                "--imaging-row-block-rows"
-              ],
-              "metavar": "ROWS"
-            },
-            "provider": {
-              "field": "imaging_row_block_rows",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "imaging_row_block_rows"
-            },
-            "presentation": {
-              "label": "Row Block Rows",
-              "group": "Execution Resources",
-              "advanced": true,
-              "hidden": false
-            }
-          }
-        },
-        {
-          "name": "imaging_prepare_workers",
-          "concept": {
-            "id": "parameter.imaging_prepare_workers",
-            "semantic_revision": 1
-          },
-          "order": 87,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "projections": {
-            "cli": {
-              "flags": [
-                "--imaging-prepare-workers"
-              ],
-              "metavar": "N"
-            },
-            "provider": {
-              "field": "imaging_prepare_workers",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "imaging_prepare_workers"
-            },
-            "presentation": {
-              "label": "Prepare Workers",
-              "group": "Execution Resources",
-              "advanced": true,
-              "hidden": false
-            }
-          }
-        },
-        {
-          "name": "imaging_fft_precision",
-          "concept": {
-            "id": "parameter.imaging_fft_precision",
-            "semantic_revision": 1
-          },
-          "order": 88,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "auto"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "surface_note": "auto selects only a correctness-qualified FFT precision and reports any fallback.",
-          "projections": {
-            "cli": {
-              "flags": [
-                "--imaging-fft-precision"
-              ],
-              "metavar": "POLICY"
-            },
-            "provider": {
-              "field": "imaging_fft_precision",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "imaging_fft_precision"
-            },
-            "presentation": {
-              "label": "FFT Precision",
-              "group": "Execution Resources",
-              "advanced": true,
-              "hidden": false
-            }
-          }
-        },
-        {
-          "name": "standard_mfs_grid_threads",
-          "concept": {
-            "id": "parameter.standard_mfs_grid_threads",
-            "semantic_revision": 1
-          },
-          "order": 90,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "auto"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "surface_note": "auto delegates to the resource-adaptive execution planner; a positive integer is an explicit override.",
-          "projections": {
-            "cli": {
-              "flags": [
-                "--standard-mfs-grid-threads"
-              ],
-              "metavar": "AUTO|N"
-            },
-            "provider": {
-              "field": "standard_mfs_grid_threads",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "standard_mfs_grid_threads"
-            },
-            "presentation": {
-              "label": "Grid Workers",
               "group": "Execution Resources",
               "advanced": true,
               "hidden": false

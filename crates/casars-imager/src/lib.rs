@@ -145,54 +145,6 @@ pub enum SaveModelMode {
     ModelColumn,
 }
 
-/// Imaging memory-pressure policy transported by the task surface.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Default,
-    PartialEq,
-    Eq,
-    serde::Serialize,
-    serde::Deserialize,
-    schemars::JsonSchema,
-)]
-#[serde(rename_all = "kebab-case")]
-pub enum ImagingMemoryPressurePolicy {
-    /// Resource-adaptive default.
-    #[default]
-    Auto,
-    /// Require physical-memory headroom.
-    ConservativeNoSwap,
-    /// Permit compression or incidental swapping.
-    Aggressive,
-    /// Permit explicit oversubscription experiments.
-    Oversubscribe,
-}
-
-/// Dirty/residual FFT precision request.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Default,
-    PartialEq,
-    Eq,
-    serde::Serialize,
-    serde::Deserialize,
-    schemars::JsonSchema,
-)]
-#[serde(rename_all = "kebab-case")]
-pub enum ImagingFftPrecisionPolicy {
-    /// Use the application default.
-    #[default]
-    Auto,
-    /// Force f64 where available.
-    F64,
-    /// Force f32 where available.
-    F32,
-}
-
 /// Explicit standard-MFS acceleration request.
 #[derive(
     Debug,
@@ -216,6 +168,22 @@ pub enum StandardMfsAccelerationPolicy {
     MultiCpu,
     /// Select Metal acceleration.
     Metal,
+}
+
+/// Explicit standard-MFS backend override.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum StandardMfsBackend {
+    /// Serial CPU gridding.
+    SerialCpu,
+    /// Fixed-tile CPU gridding.
+    FixedTileCpu,
+    /// Metal gridding.
+    Metal,
+    /// Grouped Metal row-run gridding.
+    MetalRowRunGrouped,
 }
 
 /// Parsed standalone-imager task configuration.
@@ -293,8 +261,6 @@ pub struct CliConfig {
     pub niter: usize,
     /// Major-cycle limit.
     pub nmajor: Option<usize>,
-    /// Long-form minor summary toggle.
-    pub fullsummary: bool,
     /// Minor-cycle gain.
     pub gain: f32,
     /// Absolute threshold in Jy/beam.
@@ -341,44 +307,14 @@ pub struct CliConfig {
     pub dirty_only: bool,
     /// Explicit CASA-like local parallel execution intent.
     pub parallel: Option<bool>,
-    /// Cube chunk count.
-    pub chanchunks: Option<usize>,
     /// Acceleration request.
     pub standard_mfs_acceleration: StandardMfsAccelerationPolicy,
     /// Explicit standard-MFS backend.
-    pub standard_mfs_backend: Option<String>,
-    /// Explicit grid thread count.
-    pub standard_mfs_grid_threads: Option<String>,
-    /// Explicit fixed-tile anchor.
-    pub standard_mfs_tile_anchor: Option<String>,
-    /// Explicit residual backend.
-    pub standard_mfs_residual_backend: Option<String>,
-    /// Explicit initial-dirty backend.
-    pub standard_mfs_initial_dirty_backend: Option<String>,
-    /// Metal minor-cycle chunk.
-    pub standard_mfs_metal_minor_cycle_chunk: Option<String>,
-    /// Metal grouped-cache toggle.
-    pub standard_mfs_metal_grouped_input_cache: Option<bool>,
+    pub standard_mfs_backend: Option<StandardMfsBackend>,
     /// Standard-MFS memory target.
     pub standard_mfs_memory_target_mb: Option<usize>,
-    /// Standard-MFS prepare buffer.
-    pub standard_mfs_prepare_buffer_mb: Option<usize>,
     /// Shared imaging memory target.
     pub imaging_memory_target_mb: Option<usize>,
-    /// Memory-pressure policy.
-    pub imaging_memory_pressure_policy: ImagingMemoryPressurePolicy,
-    /// Shared prepare buffer.
-    pub imaging_prepare_buffer_mb: Option<usize>,
-    /// Source row-block size.
-    pub imaging_row_block_rows: Option<usize>,
-    /// Prepare-worker count.
-    pub imaging_prepare_workers: Option<usize>,
-    /// Read-ahead block count.
-    pub imaging_read_ahead_blocks: Option<usize>,
-    /// FFT precision request.
-    pub imaging_fft_precision: ImagingFftPrecisionPolicy,
-    /// Preview PNG toggle.
-    pub write_preview_pngs: bool,
 }
 
 impl CliConfig {
@@ -487,10 +423,6 @@ impl CliConfig {
                         _ => return Err("--nmajor expects -1 or a non-negative value".to_string()),
                     };
                 }
-                "--fullsummary" => {
-                    config.fullsummary = true;
-                    consumed = 1;
-                }
                 "--gain" => config.gain = parse(value(1)?, flag)?,
                 "--threshold-jy" | "--threshold" => config.threshold_jy = parse(value(1)?, flag)?,
                 "--nsigma" => config.nsigma = parse(value(1)?, flag)?,
@@ -560,14 +492,6 @@ impl CliConfig {
                 "--no-parallel" => {
                     apply_parallel_runtime_control(Some(false), &mut config)?;
                     consumed = 1;
-                }
-                "--chanchunks" => config.chanchunks = Some(parse(value(1)?, flag)?),
-                "--no-preview-pngs" => {
-                    config.write_preview_pngs = false;
-                    consumed = 1;
-                }
-                "--write-preview-pngs" => {
-                    config.write_preview_pngs = parse_bool(value(1)?, flag)?;
                 }
                 "--cfcache" => {
                     aw_controls(&mut config).source =
@@ -639,37 +563,22 @@ impl CliConfig {
                     consumed = 1;
                 }
                 "--normtype" => config.normalization = parse_aw_normalization(value(1)?)?,
-                "--imaging-fft-precision" => {
-                    config.imaging_fft_precision = parse_fft_precision(value(1)?)?
-                }
-                "--imaging-memory-pressure-policy" => {
-                    config.imaging_memory_pressure_policy = parse_memory_policy(value(1)?)?
-                }
                 "--imaging-memory-target-mb" => {
                     config.imaging_memory_target_mb = Some(parse(value(1)?, flag)?)
-                }
-                "--imaging-prepare-buffer-mb" => {
-                    config.imaging_prepare_buffer_mb = Some(parse(value(1)?, flag)?)
-                }
-                "--imaging-row-block-rows" => {
-                    config.imaging_row_block_rows = Some(parse(value(1)?, flag)?)
-                }
-                "--imaging-prepare-workers" => {
-                    config.imaging_prepare_workers = Some(parse(value(1)?, flag)?)
-                }
-                "--imaging-read-ahead-blocks" => {
-                    config.imaging_read_ahead_blocks = Some(parse(value(1)?, flag)?)
                 }
                 "--standard-mfs-acceleration" => {
                     config.standard_mfs_acceleration = parse_acceleration(value(1)?)?;
                 }
                 "--standard-mfs-backend" => {
-                    config.standard_mfs_backend = Some(value(1)?.to_string());
-                }
-                "--standard-mfs-grid-threads" => {
-                    let threads = value(1)?;
-                    config.standard_mfs_grid_threads =
-                        (threads != "auto").then(|| threads.to_string());
+                    config.standard_mfs_backend = Some(match value(1)? {
+                        "cpu" | "serial" | "serial-cpu" => StandardMfsBackend::SerialCpu,
+                        "fixed-tile" | "fixed-tile-cpu" => StandardMfsBackend::FixedTileCpu,
+                        "metal" | "metal-gridder" => StandardMfsBackend::Metal,
+                        "metal-row-run-grouped" | "metal-row-run-grouped-gridder" => {
+                            StandardMfsBackend::MetalRowRunGrouped
+                        }
+                        other => return Err(format!("unsupported standard-MFS backend {other:?}")),
+                    });
                 }
                 other => return Err(format!("unknown casars-imager option {other:?}")),
             }
@@ -737,7 +646,6 @@ impl CliConfig {
             small_scale_bias: 0.0,
             niter: 0,
             nmajor: None,
-            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -761,25 +669,10 @@ impl CliConfig {
             aw_project: None,
             dirty_only: false,
             parallel: None,
-            chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Cpu,
             standard_mfs_backend: None,
-            standard_mfs_grid_threads: None,
-            standard_mfs_tile_anchor: None,
-            standard_mfs_residual_backend: None,
-            standard_mfs_initial_dirty_backend: None,
-            standard_mfs_metal_minor_cycle_chunk: None,
-            standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
-            standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
-            imaging_memory_pressure_policy: ImagingMemoryPressurePolicy::Auto,
-            imaging_prepare_buffer_mb: None,
-            imaging_row_block_rows: None,
-            imaging_prepare_workers: None,
-            imaging_read_ahead_blocks: None,
-            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
-            write_preview_pngs: false,
         }
     }
 
@@ -829,7 +722,6 @@ impl CliConfig {
         config.channel_count = optional_usize(values, "channel_count")?;
         config.correlation = Some(text("stokes")?);
         config.spectral_mode = SpectralMode::parse(&text("specmode")?)?;
-        config.chanchunks = optional_usize(values, "chanchunks")?;
         if let Some(value) = optional_text("outframe")? {
             config.cube_axis.outframe = value
                 .parse()
@@ -871,7 +763,6 @@ impl CliConfig {
             value if value >= 0 => Some(value as usize),
             value => return Err(format!("nmajor expects -1 or non-negative, found {value}")),
         };
-        config.fullsummary = boolean("fullsummary")?;
         config.gain = float("gain")? as f32;
         config.nsigma = float("nsigma")? as f32;
         config.psf_cutoff = float("psfcutoff")? as f32;
@@ -918,7 +809,6 @@ impl CliConfig {
         config.uv_taper = optional_text("uvtaper")?
             .map(|value| parse_uv_taper(&value))
             .transpose()?;
-        config.write_preview_pngs = boolean("write_preview_pngs")?;
         config.write_pb = boolean("write_pb")?;
         config.pbcor = boolean("pbcor")?;
         config.mosaic_pb_limit = float("pblimit")? as f32;
@@ -932,7 +822,6 @@ impl CliConfig {
         config.standard_mfs_acceleration = parse_acceleration(&text("standard_mfs_acceleration")?)?;
         config.parallel = optional_bool(values, "parallel")?;
         validate_parallel_acceleration(config.parallel, config.standard_mfs_acceleration)?;
-        config.imaging_read_ahead_blocks = optional_usize(values, "imaging_read_ahead_blocks")?;
         config.uvrange = optional_text("uvrange")?;
         config.intent = optional_text("intent")?;
         if config.aw_project.is_some() {
@@ -963,14 +852,6 @@ impl CliConfig {
             controls.normalization = normalization;
         }
         config.imaging_memory_target_mb = optional_usize(values, "imaging_memory_target_mb")?;
-        config.imaging_memory_pressure_policy =
-            parse_memory_policy(&text("imaging_memory_pressure_policy")?)?;
-        config.imaging_prepare_buffer_mb = optional_usize(values, "imaging_prepare_buffer_mb")?;
-        config.imaging_row_block_rows = optional_usize(values, "imaging_row_block_rows")?;
-        config.imaging_prepare_workers = optional_usize(values, "imaging_prepare_workers")?;
-        config.imaging_fft_precision = parse_fft_precision(&text("imaging_fft_precision")?)?;
-        config.standard_mfs_grid_threads =
-            optional_usize(values, "standard_mfs_grid_threads")?.map(|value| value.to_string());
         if !text("projection")?.eq_ignore_ascii_case("sin") {
             return Err("only SIN projection is supported".to_string());
         }
@@ -1548,15 +1429,6 @@ fn set_gridder(config: &mut CliConfig, value: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn parse_fft_precision(value: &str) -> Result<ImagingFftPrecisionPolicy, String> {
-    match value {
-        "auto" => Ok(ImagingFftPrecisionPolicy::Auto),
-        "f64" => Ok(ImagingFftPrecisionPolicy::F64),
-        "f32" => Ok(ImagingFftPrecisionPolicy::F32),
-        _ => Err(format!("unsupported FFT precision {value:?}")),
-    }
-}
-
 fn parse_acceleration(value: &str) -> Result<StandardMfsAccelerationPolicy, String> {
     match value {
         "auto" => Ok(StandardMfsAccelerationPolicy::Auto),
@@ -1564,16 +1436,6 @@ fn parse_acceleration(value: &str) -> Result<StandardMfsAccelerationPolicy, Stri
         "multi-cpu" => Ok(StandardMfsAccelerationPolicy::MultiCpu),
         "metal" => Ok(StandardMfsAccelerationPolicy::Metal),
         _ => Err(format!("unsupported acceleration {value:?}")),
-    }
-}
-
-fn parse_memory_policy(value: &str) -> Result<ImagingMemoryPressurePolicy, String> {
-    match value {
-        "auto" => Ok(ImagingMemoryPressurePolicy::Auto),
-        "conservative-no-swap" => Ok(ImagingMemoryPressurePolicy::ConservativeNoSwap),
-        "aggressive" => Ok(ImagingMemoryPressurePolicy::Aggressive),
-        "oversubscribe" => Ok(ImagingMemoryPressurePolicy::Oversubscribe),
-        _ => Err(format!("unsupported memory policy {value:?}")),
     }
 }
 

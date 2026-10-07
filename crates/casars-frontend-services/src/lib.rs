@@ -10059,10 +10059,6 @@ mod tests {
                 "parallel".to_string(),
                 SurfaceParameterValue::Bool { value: false },
             ),
-            (
-                "write_preview_pngs".to_string(),
-                SurfaceParameterValue::Bool { value: false },
-            ),
         ]);
         let invocation = parameter_provider_invocation("imager".to_string(), values)
             .expect("typed imager invocation");
@@ -10074,7 +10070,7 @@ mod tests {
             invocation.protocol_name.as_deref(),
             Some("casa_imager_task")
         );
-        assert_eq!(invocation.protocol_version, Some(9));
+        assert_eq!(invocation.protocol_version, Some(10));
         assert!(invocation.unsupported_reasons.is_empty());
         let request: serde_json::Value =
             serde_json::from_str(invocation.stdin.as_deref().expect("stdin JSON")).unwrap();
@@ -10164,7 +10160,7 @@ mod tests {
             invocation.protocol_name.as_deref(),
             Some("casa_imager_task")
         );
-        assert_eq!(invocation.protocol_version, Some(9));
+        assert_eq!(invocation.protocol_version, Some(10));
         let reasons = invocation
             .unsupported_reasons
             .iter()
@@ -10172,16 +10168,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             reasons,
-            [
-                "task.grid_threads",
-                "task.memory_target",
-                "task.memory_pressure_policy",
-                "task.prepare_buffer",
-                "task.row_block_rows",
-                "task.prepare_workers",
-                "task.read_ahead_blocks",
-                "task.fft_precision",
-            ],
+            ["task.memory_target"],
             "the installed imager must report the exact unconsumed source-stream controls"
         );
         let canonical_profile = uniffi_snapshot
@@ -10202,7 +10189,7 @@ mod tests {
                     | "cell"
                     | "niter"
                     | "imaging_memory_target_mb"
-                    | "imaging_memory_pressure_policy"
+                    | "standard_mfs_acceleration"
             )
         }) {
             let argument = arguments
@@ -10224,23 +10211,18 @@ mod tests {
             .expect("memory target UI argument");
         assert_eq!(memory_target.default.as_deref(), Some("none"));
         assert_eq!(memory_target.concept_revision, Some(2));
-        let memory_policy = arguments
+        let acceleration = arguments
             .iter()
-            .find(|argument| argument.id == "imaging_memory_pressure_policy")
-            .expect("memory pressure policy UI argument");
-        assert_eq!(memory_policy.default.as_deref(), Some("auto"));
+            .find(|argument| argument.id == "standard_mfs_acceleration")
+            .expect("acceleration UI argument");
+        assert_eq!(acceleration.default.as_deref(), Some("cpu"));
         assert_eq!(
-            memory_policy
+            acceleration
                 .parser
                 .choices
                 .as_ref()
                 .map(|choices| { choices.iter().map(String::as_str).collect::<Vec<_>>() }),
-            Some(vec![
-                "auto",
-                "conservative-no-swap",
-                "aggressive",
-                "oversubscribe",
-            ])
+            Some(vec!["auto", "cpu", "metal", "multi-cpu"])
         );
     }
 

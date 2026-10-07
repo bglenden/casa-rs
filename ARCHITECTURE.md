@@ -717,14 +717,11 @@ budget or admission authority.
 The app uses one shared bounded producer/consumer primitive for source
 read-ahead across standard and mosaic MFS replay, standard MT-MFS, standard
 and mosaic cube slabs, cubedata preparation, and trace preparation.
-`imaging_read_ahead_blocks` is a maximum live row-block count, not a queue-depth
-request. The default is two: one producer-owned block and one consumer-owned
-block. An explicit larger cap is admitted only within the assigned CPU and
-memory slice. Queue capacity is `max_live_row_blocks - 2`, so the default
-two-block case uses a rendezvous channel and cannot retain a third queued block.
-A value of one runs synchronously. Full-slab spectral routes remain single-block
-by default and accept explicit read-ahead only when the planner does not lose
-plane residency or row locality. Consumer failure
+The read-ahead bound is a maximum live row-block count, not a queue depth. The
+default is two: one producer-owned block and one consumer-owned block. Queue
+capacity is `max_live_row_blocks - 2`, so the default two-block case uses a
+rendezvous channel and cannot retain a third queued block. A value of one runs
+synchronously. Full-slab spectral routes remain single-block. Consumer failure
 sets a shared cancellation token, drops the rendezvous receiver to wake a
 blocked producer, and prevents another bounded source read after the current
 in-flight read; the original consumer error remains the returned context.
@@ -746,28 +743,25 @@ remain independent of mosaic projection coordinates. Start-model, outlier,
 multi-MS, and higher-term combinations outside those admitted slices still
 reject during planning.
 
-Imager task protocol v9 carries the local execution controls (`parallel`,
-`chanchunks`, shared source memory/row-block/worker/read-ahead settings, and
-dirty-product FFT precision). Diagnostic progress events expose
+Imager task protocol v10 carries the local execution controls (`parallel` and
+the shared imaging memory target). Diagnostic progress events expose
 planned and measured memory, source bytes and read bandwidth, read/prepare
 overlap, producer/consumer blocking, live-block high water, worker/queue state,
 stage timings, and backend selection or fallback reasons. The task protocol is
-v9, the newline-delimited progress event schema is v1, and the embedded
+v10, the newline-delimited progress event schema is v1, and the embedded
 observability snapshot schema is v2. `parallel=false` selects the serial CPU
 comparison surface, including one live source block and FFTW product
 transforms.
 
-`chanchunks` supplies a minimum spectral-slab residency shape, not an exact
-worker cap or a switch for shared-source concurrency. For every cube plan, the
-runtime derives active-plane and worker concurrency from plane/channel geometry,
-hardware capacity, the exact source-cache size, the per-plane working set, and
-the run-level memory target. If all planes fit, it uses the ordinary one-slab
-route. Any selected multi-slab shape is eligible for bounded shared-source reuse
-when the same formula proves the source cache and concurrent plane state
-resident; neither dataset identity nor a particular `chanchunks` value selects
-that route. Dirty cubes may therefore execute as multiple bounded slabs. Bulk
-cube CLEAN also processes memory-admitted channel-band waves rather than
-requiring every plane resident together. The shared reader feeds each wave;
+For every cube plan, the runtime derives active-plane and worker concurrency
+from plane/channel geometry, hardware capacity, the exact source-cache size, the
+per-plane working set, and the run-level memory target. If all planes fit, it
+uses the ordinary one-slab route. Any selected multi-slab shape is eligible for
+bounded shared-source reuse when the same formula proves the source cache and
+concurrent plane state resident; dataset identity does not select that route.
+Dirty cubes may therefore execute as multiple bounded slabs. Bulk cube CLEAN
+also processes memory-admitted channel-band waves rather than requiring every
+plane resident together. The shared reader feeds each wave;
 after initial spectral discovery, source reads are restricted to the wave's
 required native channel window, including interpolation support. Model and
 normal-state buffers use the shared residency and paged-storage machinery

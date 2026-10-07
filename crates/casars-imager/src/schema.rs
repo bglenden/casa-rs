@@ -177,17 +177,13 @@ mod tests {
         assert_eq!(default_for("pblimit"), "0.2");
         assert_eq!(default_for("minor_cycle_length"), "1000");
         assert_eq!(default_for("minpsffraction"), "0.05");
-        assert_eq!(default_for("chanchunks"), "none");
         assert_eq!(default_for("parallel"), "none");
-        assert_eq!(default_for("imaging_read_ahead_blocks"), "none");
         assert_eq!(default_for("imaging_memory_target_mb"), "none");
-        assert_eq!(default_for("imaging_memory_pressure_policy"), "auto");
+        assert_eq!(default_for("standard_mfs_acceleration"), "cpu");
         for id in [
-            "chanchunks",
             "parallel",
-            "imaging_read_ahead_blocks",
             "imaging_memory_target_mb",
-            "imaging_memory_pressure_policy",
+            "standard_mfs_acceleration",
         ] {
             let argument = schema
                 .arguments
@@ -196,21 +192,21 @@ mod tests {
                 .unwrap_or_else(|| panic!("missing {id}"));
             assert!(argument.advanced, "{id} should remain an advanced control");
         }
-        let memory_policy = schema
+        let acceleration = schema
             .arguments
             .iter()
-            .find(|argument| argument.id == "imaging_memory_pressure_policy")
-            .expect("imaging_memory_pressure_policy");
-        let UiArgumentParser::Option { choices, .. } = &memory_policy.parser else {
-            panic!("imaging_memory_pressure_policy should use an option parser");
+            .find(|argument| argument.id == "standard_mfs_acceleration")
+            .expect("standard_mfs_acceleration");
+        let UiArgumentParser::Option { choices, .. } = &acceleration.parser else {
+            panic!("standard_mfs_acceleration should use an option parser");
         };
         assert_eq!(
             choices,
             &vec![
                 "auto".to_string(),
-                "conservative-no-swap".to_string(),
-                "aggressive".to_string(),
-                "oversubscribe".to_string(),
+                "cpu".to_string(),
+                "metal".to_string(),
+                "multi-cpu".to_string(),
             ]
         );
         assert!(

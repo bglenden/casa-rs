@@ -746,7 +746,7 @@ final class WorkbenchStoreTests: XCTestCase {
             "vis", "imagename", "imsize", "cell", "field", "phasecenter_field",
             "spw", "datacolumn", "specmode", "channel_count", "start", "width",
             "outframe", "restfreq", "deconvolver", "weighting", "robust",
-            "gridder", "standard_mfs_acceleration", "standard_mfs_grid_threads",
+            "gridder", "standard_mfs_acceleration",
             "perchanweightdensity",
             "restoringbeam", "niter", "nmajor", "gain",
             "threshold", "usemask", "noisethreshold", "sidelobethreshold",
@@ -1415,12 +1415,6 @@ final class WorkbenchStoreTests: XCTestCase {
             instanceID: "tab-imager",
             argumentID: "imagename",
             value: "products/supported"
-        )
-        supportedStore.setGenericTaskToggle(
-            taskID: "imager",
-            instanceID: "tab-imager",
-            argumentID: "write_preview_pngs",
-            value: false
         )
 
         XCTAssertEqual(
@@ -3196,10 +3190,8 @@ final class WorkbenchStoreTests: XCTestCase {
             "--perchanweightdensity",
             "--gridder", "wproject",
             "--standard-mfs-acceleration", "metal",
-            "--standard-mfs-grid-threads", "auto",
             "--write-pb",
-            "--pbcor",
-            "--no-preview-pngs"
+            "--pbcor"
         ]
         let request = GenericTaskRequest(
             runID: "run-1",
@@ -5050,7 +5042,6 @@ final class WorkbenchStoreTests: XCTestCase {
         store.setGenericTaskValue(taskID: "imager", argumentID: "imsize", value: "256")
         store.setGenericTaskValue(taskID: "imager", argumentID: "cell", value: "0.25arcsec")
         store.setGenericTaskValue(taskID: "imager", argumentID: "weighting", value: "briggs")
-        store.setGenericTaskToggle(taskID: "imager", argumentID: "write_preview_pngs", value: false)
         store.runTask()
 
         XCTAssertEqual(taskClient.requests.count, 1)
@@ -5124,7 +5115,6 @@ final class WorkbenchStoreTests: XCTestCase {
         store.selectTask("imager")
         store.setGenericTaskConfirmation(taskID: "imager", confirmed: true)
         store.setGenericTaskValue(taskID: "imager", argumentID: "imagename", value: "casa-rs-runs/progress")
-        store.setGenericTaskToggle(taskID: "imager", argumentID: "write_preview_pngs", value: false)
         store.runTask()
 
         let runID = try XCTUnwrap(store.state.taskRun.runID)
@@ -5200,7 +5190,6 @@ final class WorkbenchStoreTests: XCTestCase {
         store.selectTask("imager")
         store.setGenericTaskConfirmation(taskID: "imager", confirmed: true)
         store.setGenericTaskValue(taskID: "imager", argumentID: "imagename", value: "casa-rs-runs/success")
-        store.setGenericTaskToggle(taskID: "imager", argumentID: "write_preview_pngs", value: false)
         store.runTask()
 
         let runID = try XCTUnwrap(store.state.taskRun.runID)
@@ -5678,7 +5667,6 @@ final class WorkbenchStoreTests: XCTestCase {
         store.selectTask("imager")
         store.setGenericTaskConfirmation(taskID: "imager", confirmed: true)
         store.setGenericTaskValue(taskID: "imager", argumentID: "imagename", value: "casa-rs-runs/cancel")
-        store.setGenericTaskToggle(taskID: "imager", argumentID: "write_preview_pngs", value: false)
         store.runTask()
 
         XCTAssertNotNil(
@@ -6716,9 +6704,7 @@ private func makeManagedImagerStdout(
           "kind": "image",
           "label": "Image",
           "path": "\(imagename).image",
-          "exists": true,
-          "preview_png_path": "\(imagename).image.png",
-          "preview_png_exists": true
+          "exists": true
         }
       ]
     }

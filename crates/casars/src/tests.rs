@@ -260,7 +260,7 @@ fn tui_typed_session_matches_shared_imager_cross_surface_profile() {
     let preflight = app
         .execution_stdin_for_test()
         .expect_err("unconsumed source-stream controls must surface owner diagnostics first");
-    assert!(preflight.contains("task/task.grid_threads"), "{preflight}");
+    assert!(preflight.contains("task/task.memory_target"), "{preflight}");
 
     for name in ["vis", "imagename", "imsize", "cell", "niter"] {
         assert_eq!(
