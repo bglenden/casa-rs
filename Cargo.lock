@@ -1048,10 +1048,12 @@ dependencies = [
 name = "casars-imager"
 version = "0.27.0"
 dependencies = [
+ "casa-coordinates",
  "casa-images",
  "casa-imaging-application",
  "casa-logging",
  "casa-ms",
+ "casa-numerics",
  "casa-provider-contracts",
  "casa-task-runtime",
  "casa-test-support",

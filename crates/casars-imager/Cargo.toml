@@ -24,7 +24,9 @@ serde_json = "1"
 tracing.workspace = true
 
 [dev-dependencies]
+casa-coordinates = { path = "../casa-coordinates" }
 casa-images = { path = "../casa-images" }
+casa-numerics = { path = "../casa-numerics" }
 casa-test-support = { path = "../casa-test-support" }
 image = { version = "0.25", default-features = false, features = ["png"] }
 ndarray.workspace = true
