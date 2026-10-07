@@ -126,6 +126,10 @@ pub enum UnsupportedRequirement {
     ScalarInstrumentResponse,
     /// W projection is not installed for mosaic UVW geometry.
     WProjectionWithMosaic,
+    /// Metal cube initial wave cannot size coarse output channels; use the CPU
+    /// backend. Each output channel must span at most one selected native
+    /// channel spacing, which must be known before planning.
+    MetalCubeCoarseOutputChannels,
 }
 
 impl UnsupportedRequirement {
@@ -138,7 +142,8 @@ impl UnsupportedRequirement {
             Self::ConstantBasisForFacets
             | Self::IndependentBasisForPolarizationSelection
             | Self::ScalarInstrumentResponse
-            | Self::WProjectionWithMosaic => "constraint",
+            | Self::WProjectionWithMosaic
+            | Self::MetalCubeCoarseOutputChannels => "constraint",
         }
     }
 
@@ -156,6 +161,9 @@ impl UnsupportedRequirement {
             }
             Self::ScalarInstrumentResponse => "constraint.scalar_instrument_response".to_string(),
             Self::WProjectionWithMosaic => "constraint.w_projection_with_mosaic".to_string(),
+            Self::MetalCubeCoarseOutputChannels => {
+                "constraint.metal_cube_coarse_output_channels".to_string()
+            }
         }
     }
 }
@@ -276,6 +284,7 @@ pub fn validate_installed_implementation(
         .map(UnsupportedRequirement::Capability)
         .collect::<Vec<_>>();
 
+    let mut coarse_metal_cube = false;
     unsupported.extend(
         task_requirements
             .into_iter()
@@ -291,12 +300,18 @@ pub fn validate_installed_implementation(
                         problem.reconstruction().basis(),
                         ReconstructionBasis::Constant
                     ) && casa_imaging_runtime::supports_metal_normal(problem);
+                    coarse_metal_cube = cube
+                        && metal_cube_output_to_native_width(problem)
+                            .is_none_or(|ratio| ratio > 1.0 + METAL_CUBE_WIDTH_TOLERANCE);
                     return !supports_task(*requirement) || !(cube || scalar);
                 }
                 !supports_task(*requirement)
             })
             .map(UnsupportedRequirement::Task),
     );
+    if coarse_metal_cube {
+        unsupported.push(UnsupportedRequirement::MetalCubeCoarseOutputChannels);
+    }
 
     debug_assert_eq!(
         problem.geometry().domains()[0].role(),
@@ -349,6 +364,31 @@ pub fn validate_installed_implementation(
     } else {
         Err(ImplementationUnavailable { unsupported })
     }
+}
+
+/// Output/native width ratio still treated as one native channel per output,
+/// so equal widths survive per-row frequency-frame conversion.
+const METAL_CUBE_WIDTH_TOLERANCE: f64 = 1.0e-3;
+
+/// The Metal cube sizes its first initial wave before observing rows, for one
+/// CASA fine sample per output channel and row. Compare the output increment
+/// with the first selected native pair, which seeds that row-local CASA grid.
+fn metal_cube_output_to_native_width(problem: &CompiledProblem) -> Option<f64> {
+    let spectral = problem.geometry().spectral();
+    let output_hz = spectral.channel_centre_hz(1)? - spectral.channel_centre_hz(0)?;
+    let [source] = problem.selected_observation().read_set().sources() else {
+        return None;
+    };
+    let [spectral_window] = source.selection().spectral_windows() else {
+        return None;
+    };
+    let &[first, second, ..] = spectral_window.channel_indices() else {
+        return None;
+    };
+    let catalog = spectral_window.coordinate_catalog()?;
+    let native_hz = catalog.channel_frequency_hz(second as usize)?
+        - catalog.channel_frequency_hz(first as usize)?;
+    Some((output_hz / native_hz).abs())
 }
 
 fn instrument_response_is_installed(
