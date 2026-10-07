@@ -196,7 +196,9 @@ or performance acceptance. Current results and restart authority live in the
 - GitHub Actions reproduction: `scripts/ci-local.sh pr` for pull-request jobs or `scripts/ci-local.sh tag` for version-tag jobs
 - GitHub PR CI: lint/test, editable Python package, strict docs, and native GUI
   checks (Swift core unit tests, then the `just gui-test` interaction gate) for
-  non-draft PRs
+  non-draft PRs. The required check is `gui_gate`, which passes only when
+  `native_gui` actually ran and passed; it is red on drafts by design, because
+  GitHub would count a skipped `native_gui` as passing
 - GitHub tag CI: lint/test and editable Python package checks plus smoke,
   suite-install, and CI-like coverage
 - Main-branch pushes run the rustdoc and MkDocs deployment workflow
