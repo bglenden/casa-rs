@@ -73,9 +73,6 @@ while read -r binary; do
       ;;
     mstransform)
       ;;
-    casars-casa-task)
-      "$installed" --task plotcal --protocol-info >/dev/null
-      ;;
     *)
       "$installed" --protocol-info >/dev/null
       ;;

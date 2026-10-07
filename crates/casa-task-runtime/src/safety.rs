@@ -178,9 +178,12 @@ mod tests {
 
     #[test]
     fn product_writes_drive_only_the_interactive_gate() {
-        let bundle = builtin_surface_bundle("simanalyze").unwrap();
+        let bundle = builtin_surface_bundle("simobserve").unwrap();
         let mut session = ParameterSession::defaults(bundle).unwrap();
 
+        session
+            .set("overwrite", ParameterValue::Bool(true))
+            .unwrap();
         let requirements = session.required_run_safety().unwrap();
         assert!(requirements.requires_interactive_confirmation());
         assert!(requirements.requires_overwrite_confirmation());

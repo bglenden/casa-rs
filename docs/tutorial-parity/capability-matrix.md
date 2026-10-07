@@ -20,6 +20,15 @@ Status legend:
 - `external`: external CASA/pipeline/viewer behavior is not an implementation
   target.
 
+Removed CASA-backed adapters (2026-10-06): `imcollapse`, `imfit`,
+`widebandpbcor`, `imcontsub`, `concat`, `statwt`, `hanningsmooth`, `clearcal`,
+`delmod`, `ft`, `simanalyze`, and `simalma` were briefly shipped as casa-rs
+tasks through a `casars-casa-task` bridge that ran CASA's own Python
+`casatasks`. They were not native implementations and have been removed; each
+is not implemented natively until a casa-rs implementation lands. CASA is a
+correctness and performance oracle only (`AGENTS.md`, Engineering Rules;
+enforced by `scripts/check-no-casa-runtime.py` in `scripts/arch-check.sh`).
+
 ## Current Supported Surfaces Used By The Matrix
 
 - `casa-tables`: persistent tables, storage, TaQL, table browsing.
@@ -50,7 +59,7 @@ Status legend:
 | `split` | partial | `casa-ms`, `casa-tables` | no dedicated task surface yet | corrected-data split, selected column/subset output, metadata preservation | CASA `split` output MS, 2x2 MS interop as needed | tutorial split timings | #118, #121 |
 | `mstransform` | missing/limited | `casa-ms` | none | spectral regrid/channel selection tutorial subset | CASA `mstransform` output MS | transform timing on VLA tutorials | #123 |
 | visibility-domain continuum subtraction | native | `casa-imaging-model`, `casa-imaging-reconstruction`, `casa-imaging-runtime`, `casa-imaging-application` | inline `casars-imager --fitspw ... --fitorder ...`; Python imager projection | wider fit orders and selector tails | CASA `uvcontsub` residual visibilities and downstream line cubes | TW Hydra residual/cube parity note; transform stream peak residency | #119, #123, #526 |
-| `imcontsub` | missing | `casa-images` | none | image-domain continuum subtraction for VLA HI breadth | CASA image products | breadth-wave timings | #128 |
+| `imcontsub` | missing | `casa-images` | none (CASA-backed adapter removed) | image-domain continuum subtraction for VLA HI breadth | CASA image products | breadth-wave timings | #128 |
 | `gaincal` | partial/available | `casa-calibration` | `calibrate`, Python calibration tasks | selfcal loops, selection tails, solution diagnostics | CASA caltables and apply results | calibration benchmark scripts | #118, #122 |
 | `applycal` | partial/available | `casa-calibration`, `casa-tables` | `calibrate`, Python calibration tasks | apply-path performance, tutorial selection tails, corrected split handoff | CASA corrected MS columns | `scripts/bench-calibrate-vs-casa.sh` | #94, #118, #122 |
 | `bandpass` | partial/available | `casa-calibration` | `calibrate` | VLA tutorial parameter coverage, BPOLY tails | CASA bandpass caltables | calibration benchmark scripts | #122, #128 |
@@ -59,29 +68,29 @@ Status legend:
 | `gencal` | partial/available | `casa-calibration` | `calibrate gencal`, Python calibration wrapper | automatic antenna-position lookup, remaining caltypes beyond antpos/gceff/opac | CASA generated caltables | tutorial prior-cal timings | #121 |
 | `flagdata` | partial | `casa-ms` | `flagdata` CLI, Rust library | manual, clip-zero, quack, tfcrop-family, rflag-family, extend, and summary exist; needs full same-input VLA flagging guide comparison once tutorial MS artifact is restaged | CASA FLAG column deltas | flagging timing on tutorial MS | #121, #128, #174 |
 | `flagmanager` | partial | `casa-ms` | `flagmanager` CLI, Rust library | save/list/restore/delete/rename flag-version operations exist; needs CASA flag-version product comparison on the VLA flagging guide MS | CASA flag version products | VLA/ALMA breadth timing | #127, #128, #174 |
-| `statwt` | missing | `casa-ms` | none | weight recomputation for data-combination tutorials | CASA WEIGHT/SIGMA columns | tutorial timing | #127, #128 |
-| `concat` | missing/partial | `casa-ms`, `casa-tables` | none | MS concatenation metadata and weights | CASA `concat` output MS | data-combination timings | #127, #128 |
-| `hanningsmooth` | missing | `casa-ms` | none | P-band tutorial subset | CASA smoothed MS | breadth timing | #128 |
-| `clearcal` / `delmod` | missing/partial | `casa-ms`, `casa-calibration` | none | model/corrected column lifecycle | CASA MS column state | calibration/imaging timings | #128 |
-| `ft` | missing/partial | `casa-imaging`, `casa-ms` | none | model prediction for source subtraction | CASA MODEL_DATA comparison | source-subtraction timing | #128 |
+| `statwt` | missing | `casa-ms` | none (CASA-backed adapter removed) | weight recomputation for data-combination tutorials | CASA WEIGHT/SIGMA columns | tutorial timing | #127, #128 |
+| `concat` | missing/partial | `casa-ms`, `casa-tables` | none (CASA-backed adapter removed) | MS concatenation metadata and weights | CASA `concat` output MS | data-combination timings | #127, #128 |
+| `hanningsmooth` | missing | `casa-ms` | none (CASA-backed adapter removed) | P-band tutorial subset | CASA smoothed MS | breadth timing | #128 |
+| `clearcal` / `delmod` | missing/partial | `casa-ms`, `casa-calibration` | none (CASA-backed adapters removed) | model/corrected column lifecycle | CASA MS column state | calibration/imaging timings | #128 |
+| `ft` | missing/partial | `casa-imaging`, `casa-ms` | none (CASA-backed adapter removed) | model prediction for source subtraction | CASA MODEL_DATA comparison | source-subtraction timing | #128 |
 | component list tool `cl.addcomponent` | missing | future model/component owner | none | source subtraction and simulation component-list support | CASA component list / predicted MS | source-subtraction/simulation timings | #128, #129 |
 | `imhead` | partial/available | `casa-images`, `casa-coordinates` | `imexplore imhead`, `casars.tasks.imhead`; VLA imaging slice includes `mode='put', hdkey='bunit'` | broader edit modes and long-tail metadata formatting | CASA `imhead` output and image keywords | image-analysis timing | #120, #125, #175 |
 | `imstat` | partial/available | `casa-images`, `casa-lattices` | `imexplore imstat`, `casars.tasks.imstat` | full region grammar and long-tail CASA parameters | CASA `imstat` numeric output | image-analysis timing | #120, #125 |
 | `immoments` | partial/available | `casa-images`, `casa-lattices`, `casa-coordinates` | `immoments`, `casars.tasks.immoments` | moments outside -1..3 and output-coordinate tails | CASA moment images | image-analysis timing | #120, #123 |
 | `impbcor` | partial/available | `casa-images`, `casars-imager` | `immath` division for regular PB correction; `casars-imager --pbcor` for direct PB-corrected products | CASA task-name compatibility is not a target; VLA imaging uses equivalent image/PB division with casa-rs-generated `.pb` products | CASA `impbcor` image products | image-analysis timing inside #175 runner | #120, #163, #175 |
-| `widebandpbcor` | partial/available | `casars-imager`, `casa-images` | `casars-imager --pbcor` writes MTMFS `.pbcor.image.tt0` plus PB spectral-index-corrected `.pbcor.image.alpha` for the VLA imaging guide | broader CASA task-name and multi-action parameter surface | CASA `widebandpbcor` products | #175 runner timing | #175 |
+| `widebandpbcor` | partial/available | `casars-imager`, `casa-images` | `casars-imager --pbcor` writes MTMFS `.pbcor.image.tt0` plus PB spectral-index-corrected `.pbcor.image.alpha` for the VLA imaging guide; no `widebandpbcor` task (CASA-backed adapter removed) | broader CASA task-name and multi-action parameter surface | CASA `widebandpbcor` products | #175 runner timing | #175 |
 | `exportfits` | partial/available | `casa-images`, `casa-coordinates` | `exportfits`, `casars.tasks.exportfits` | full FITS-header fidelity and binary-table needs | CASA FITS headers and WCS | export timing | #120 |
 | `importfits` | partial | `casa-images`, `casa-coordinates` | future task/Python projection | simulation model-image ingestion | CASA imported image metadata | simulation setup timing | #124 |
 | `imregrid` | missing/partial | `casa-images`, `casa-coordinates` | none | data-combination and feathering image alignment | CASA regridded image | breadth timing | #127 |
 | `immath` | partial/available | `casa-images` | `immath`, `casars.tasks.immath` | broader CASA expression grammar beyond tutorial binary operations and scalar multiples of `IM0` | CASA image products | breadth timing | #120, #127, #175 |
-| `imsubimage` / `imcollapse` | missing/partial | `casa-images`, `casa-lattices` | future task/Python projection | region/channel slicing and collapsed outputs | CASA output images | breadth timing | #127 |
-| `imfit` | missing | `casa-images` | none | Gaussian/source fitting for polarization/source-subtraction tutorials | CASA fit records | breadth timing | #127, #128 |
+| `imsubimage` / `imcollapse` | missing/partial | `casa-images`, `casa-lattices` | future task/Python projection (`imcollapse` CASA-backed adapter removed) | region/channel slicing and collapsed outputs | CASA output images | breadth timing | #127 |
+| `imfit` | missing | `casa-images` | none (CASA-backed adapter removed) | Gaussian/source fitting for polarization/source-subtraction tutorials | CASA fit records | breadth timing | #127, #128 |
 | `impv` | missing | `casa-images`, `casa-coordinates` | none | position-velocity extraction and metadata | CASA PV image output | VLA IRC timing | #123 |
 | image tool `ia.open` | partial via object layer | `casa-images`, `casars-python` | `casars.data.Image` | CASA tool-method parity is not direct API target | CASA tool output where needed | image object timing | #120, #127 |
 | viewer / CARTA flows | external | none | none | do not implement viewer; support exported products | product-open/read checks only | none | classified external |
 | `simobserve` | missing | simulation owner, likely `casa-ms` plus image/coordinate support | future simulation task/Python surface | model prediction, antenna configs, time/frequency sampling, MS writes | CASA `simobserve` output MS | simulation generation timing | #124 |
-| `simanalyze` | missing as workflow | composition of simulation, imaging, image analysis | future simulation task/Python surface | workflow orchestration without cloning CASA pipeline semantics | CASA `simanalyze` products | simulation analysis timing | #125 |
-| `simalma` | missing | simulation owner | future task | ALMA/ACA array combinations | CASA `simalma` products | breadth timing | #129 |
+| `simanalyze` | missing as workflow | composition of simulation, imaging, image analysis | future simulation task/Python surface (CASA-backed adapter removed) | workflow orchestration without cloning CASA pipeline semantics | CASA `simanalyze` products | simulation analysis timing | #125 |
+| `simalma` | missing | simulation owner | future task (CASA-backed adapter removed) | ALMA/ACA array combinations | CASA `simalma` products | breadth timing | #129 |
 | simulator tool `sm.open` / `sm.predict` | missing | simulation owner, `casa-ms` | future task/object projection | synthetic MS lifecycle and prediction | CASA simulator-tool output MS | simulation timing | #124, #129 |
 | simulator tool `sm.setnoise` / `sm.setgain` / `sm.corrupt` | partial | simulation owner, calibration/noise models | `simobserve` task/Python corruption controls | deterministic simple noise, gain/phase, bandpass, polarization leakage, and primary-beam pointing offset; not full calibration-table corruption | CASA simulator noise+gain reference plus native common-corruption output | corrupted vs uncorrupted timing | #126 |
 | `rmtables` | available through filesystem/task orchestration | app/test support | none as public task | cleanup convenience only | file existence behavior | none | no feature issue |

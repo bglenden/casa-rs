@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! CASA-backed compatibility task adapter for GUI/TUI parity gaps.
+//! `casars-plotcal` - native calibration-table and corrected-data plots.
+//!
+//! Projects the canonical `plotcal` parameter surface onto
+//! [`casa_calibration::build_calibration_plot_payload`].
 
 use std::collections::BTreeMap;
 use std::env;
 use std::ffi::OsString;
-use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
 
 use casa_calibration::{
     CalibrationPlotPreset, CalibrationPlotRequest, build_calibration_plot_payload,
@@ -24,8 +25,7 @@ use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
 
-const DEFAULT_CASA_TASKS_PYTHON: &str =
-    "/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python";
+const SURFACE_ID: &str = "plotcal";
 
 fn main() {
     if let Err(error) = run(env::args_os().skip(1).collect()) {
@@ -35,30 +35,24 @@ fn main() {
 }
 
 fn run(args: Vec<OsString>) -> Result<(), String> {
-    let task = extract_task(&args)?;
-    let bundle = adapter_surface(task)?;
+    let bundle = plotcal_surface()?;
 
     if has_flag(&args, "-h") || has_flag(&args, "--help") {
         print!(
             "{}\n\n{}\n",
             command_schema(&bundle).render_help().trim_end(),
-            casa_task_runtime::task_cli_machine_help("CasaAdapterTaskRequest")
+            casa_task_runtime::task_cli_machine_help("PlotcalTaskRequest")
         );
         return Ok(());
     }
-    let task_name = task.to_string();
-    let execution_bundle = bundle.clone();
-    let host =
-        casa_task_runtime::TaskCliHost::new(adapter_task_schema_bundle(&bundle), move |request| {
-            execute_adapter(&task_name, &execution_bundle, request)
-        });
+    let host = casa_task_runtime::TaskCliHost::new(plotcal_task_schema_bundle(&bundle), execute);
     if let Some(output) = host.dispatch(&args).map_err(|error| error.to_string())? {
         print!("{output}");
         return Ok(());
     }
 
     let values = parse_values(&bundle, &args)?;
-    let result = execute_adapter(task, &bundle, CasaAdapterTaskRequest { values })?;
+    let result = execute(PlotcalTaskRequest { values })?;
     print!(
         "{}",
         serde_json::to_string_pretty(&result.output).map_err(|error| error.to_string())?
@@ -67,30 +61,30 @@ fn run(args: Vec<OsString>) -> Result<(), String> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-struct CasaAdapterTaskRequest {
+struct PlotcalTaskRequest {
     values: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-struct CasaAdapterTaskResult {
+struct PlotcalTaskResult {
     task: String,
     output: JsonValue,
 }
 
-fn adapter_protocol_descriptor() -> ProviderProtocolDescriptor {
+fn plotcal_protocol_descriptor() -> ProviderProtocolDescriptor {
     ProviderProtocolDescriptor::new(
-        "casars_casa_task_adapter",
+        "casars_plotcal",
         1,
         ProviderSurfaceKind::Task,
         env!("CARGO_PKG_VERSION"),
     )
 }
 
-fn adapter_task_schema_bundle(bundle: &SurfaceContractBundle) -> TaskProviderContract {
-    let request_schema = schema_for!(CasaAdapterTaskRequest);
-    let result_schema = schema_for!(CasaAdapterTaskResult);
+fn plotcal_task_schema_bundle(bundle: &SurfaceContractBundle) -> TaskProviderContract {
+    let request_schema = schema_for!(PlotcalTaskRequest);
+    let result_schema = schema_for!(PlotcalTaskResult);
     TaskProviderContract {
-        protocol: adapter_protocol_descriptor(),
+        protocol: plotcal_protocol_descriptor(),
         semantic: TaskSemanticContract {
             request_schema: request_schema.clone(),
             result_schema: result_schema.clone(),
@@ -101,9 +95,7 @@ fn adapter_task_schema_bundle(bundle: &SurfaceContractBundle) -> TaskProviderCon
             }],
         },
         components: merged_components([&request_schema, &result_schema]),
-        annotations: json!({
-            "backend": if bundle.surface.id() == "plotcal" { "casa-rs" } else { "casatasks" }
-        }),
+        annotations: json!({ "backend": "casa-rs" }),
         projections: ProviderProjectionMetadata {
             cli: Some(ProviderCliProjection {
                 machine_actions: ProviderCliMachineActions {
@@ -124,52 +116,16 @@ fn adapter_task_schema_bundle(bundle: &SurfaceContractBundle) -> TaskProviderCon
     }
 }
 
-fn execute_adapter(
-    task: &str,
-    bundle: &SurfaceContractBundle,
-    request: CasaAdapterTaskRequest,
-) -> Result<CasaAdapterTaskResult, String> {
-    let output = if task == "plotcal" {
-        run_plotcal(request.values)?
-    } else {
-        run_casatask(task, bundle, request.values)?
-    };
-    Ok(CasaAdapterTaskResult {
-        task: task.to_string(),
-        output,
+fn execute(request: PlotcalTaskRequest) -> Result<PlotcalTaskResult, String> {
+    Ok(PlotcalTaskResult {
+        task: SURFACE_ID.to_string(),
+        output: run_plotcal(request.values)?,
     })
 }
 
-fn adapter_surface(task: &str) -> Result<SurfaceContractBundle, String> {
-    let bundle = builtin_surface_bundle(task)
-        .map_err(|error| format!("unknown CASA-backed task {task:?}: {error}"))?;
-    let execution = bundle.surface.execution();
-    let routed_here = execution.invocation_name == "casars-casa-task"
-        && execution
-            .fixed_args
-            .windows(2)
-            .any(|args| args[0] == "--task" && args[1] == task);
-    if !routed_here {
-        return Err(format!(
-            "task {task:?} is not routed through casars-casa-task"
-        ));
-    }
-    Ok(bundle)
-}
-
-fn extract_task(args: &[OsString]) -> Result<&str, String> {
-    for (index, arg) in args.iter().enumerate() {
-        if arg == "--task" {
-            return args
-                .get(index + 1)
-                .and_then(|value| value.to_str())
-                .ok_or_else(|| "--task requires a value".to_string());
-        }
-        if let Some(value) = arg.to_str().and_then(|value| value.strip_prefix("--task=")) {
-            return Ok(value);
-        }
-    }
-    Err("--task is required".to_string())
+fn plotcal_surface() -> Result<SurfaceContractBundle, String> {
+    builtin_surface_bundle(SURFACE_ID)
+        .map_err(|error| format!("load {SURFACE_ID} parameter surface: {error}"))
 }
 
 fn has_flag(args: &[OsString], flag: &str) -> bool {
@@ -178,12 +134,8 @@ fn has_flag(args: &[OsString], flag: &str) -> bool {
 
 fn command_schema(bundle: &SurfaceContractBundle) -> UiCommandSchema {
     let mut schema: UiCommandSchema = serde_json::from_value(project_ui_form(bundle))
-        .expect("canonical adapter UI projection must match UiCommandSchema");
-    schema.usage = format!(
-        "{} {} [parameters]",
-        schema.invocation_name,
-        bundle.surface.execution().fixed_args.join(" ")
-    );
+        .expect("canonical plotcal UI projection must match UiCommandSchema");
+    schema.usage = format!("{} [parameters]", schema.invocation_name);
     schema
 }
 
@@ -211,13 +163,7 @@ fn parse_values(
         let raw = args[index]
             .to_str()
             .ok_or_else(|| format!("argument {index} is not valid UTF-8"))?;
-        if raw == "--task" {
-            index += 2;
-            continue;
-        }
-        if raw.starts_with("--task=")
-            || matches!(raw, "--json-schema" | "--protocol-info" | "-h" | "--help")
-        {
+        if matches!(raw, "--json-schema" | "--protocol-info" | "-h" | "--help") {
             index += 1;
             continue;
         }
@@ -247,7 +193,7 @@ fn parse_values(
                 &bundle
                     .catalog
                     .concept(&binding.concept)
-                    .expect("validated adapter concept")
+                    .expect("validated plotcal concept")
                     .value_domain,
             ) {
                 let enabled = !projection.false_flags.iter().any(|flag| flag == raw);
@@ -302,141 +248,6 @@ fn is_bool_domain(domain: &ParameterType) -> bool {
         ParameterType::Bool => true,
         ParameterType::Optional { value, .. } => is_bool_domain(value),
         _ => false,
-    }
-}
-
-fn run_casatask(
-    task: &str,
-    bundle: &SurfaceContractBundle,
-    values: BTreeMap<String, String>,
-) -> Result<JsonValue, String> {
-    let python = env::var_os("CASA_RS_CASATASKS_PYTHON")
-        .unwrap_or_else(|| OsString::from(DEFAULT_CASA_TASKS_PYTHON));
-    let payload = serde_json::to_string(&json!({
-        "task": task,
-        "values": values,
-        "param_types": bundle.surface.bindings().iter().map(|binding| {
-            let name = binding.projections.python.as_ref()
-                .map_or(binding.name.as_str(), |projection| projection.name.as_str());
-            let domain = &bundle.catalog.concept(&binding.concept)
-                .expect("validated adapter concept").value_domain;
-            (name, value_type_name(domain))
-        }).collect::<BTreeMap<_, _>>()
-    }))
-    .map_err(|error| error.to_string())?;
-
-    let script = r#"
-import ast
-import contextlib
-import io
-import inspect
-import json
-import os
-import sys
-
-request = json.loads(sys.stdin.read())
-task_name = request["task"]
-values = request["values"]
-param_types = request["param_types"]
-
-os.environ.setdefault("MPLCONFIGDIR", "/private/tmp/casa-rs-mpl")
-with contextlib.redirect_stdout(io.StringIO()) as captured:
-    import casatasks
-
-task = getattr(casatasks, task_name)
-signature = inspect.signature(task)
-
-def convert(name, value):
-    kind = param_types.get(name, "string")
-    if kind == "bool":
-        return str(value).lower() == "true"
-    if kind == "integer":
-        return int(value)
-    if kind == "float":
-        return float(value)
-    if kind == "array":
-        text = str(value)
-        try:
-            parsed = ast.literal_eval(text)
-            return list(parsed) if isinstance(parsed, (list, tuple)) else [parsed]
-        except Exception:
-            return [part.strip() for part in text.split(",") if part.strip()]
-    text = str(value)
-    if text == "":
-        return text
-    default = signature.parameters.get(name).default if name in signature.parameters else inspect._empty
-    if isinstance(default, bool):
-        return text.lower() == "true"
-    if isinstance(default, int) and not isinstance(default, bool):
-        return int(text)
-    if isinstance(default, float):
-        return float(text)
-    if isinstance(default, (list, tuple, dict)):
-        try:
-            return ast.literal_eval(text)
-        except Exception:
-            return text
-    if text[0:1] in "[{(":
-        try:
-            return ast.literal_eval(text)
-        except Exception:
-            return text
-    return text
-
-kwargs = {name: convert(name, value) for name, value in values.items()}
-result = task(**kwargs)
-print(json.dumps({"task": task_name, "kwargs": kwargs, "result": result}, default=str, indent=2))
-"#;
-    let mut child = Command::new(&python)
-        .arg("-c")
-        .arg(script)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| {
-            format!(
-                "spawn CASA Python {}: {error}",
-                PathBuf::from(&python).display()
-            )
-        })?;
-    child
-        .stdin
-        .as_mut()
-        .ok_or_else(|| "failed to open CASA Python stdin".to_string())?
-        .write_all(payload.as_bytes())
-        .map_err(|error| format!("write CASA task payload: {error}"))?;
-    let output = child
-        .wait_with_output()
-        .map_err(|error| format!("wait for CASA Python: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "CASA task {} exited with {}: {}",
-            task,
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if !stderr.trim().is_empty() {
-        eprintln!("{}", stderr.trim());
-    }
-    serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("parse CASA task {task} output: {error}"))
-}
-
-fn value_type_name(domain: &ParameterType) -> &'static str {
-    match domain {
-        ParameterType::Bool => "bool",
-        ParameterType::Integer => "integer",
-        ParameterType::Float => "float",
-        ParameterType::Array { .. } => "array",
-        ParameterType::Table { .. } => "table",
-        ParameterType::Optional { value, .. } => value_type_name(value),
-        ParameterType::String
-        | ParameterType::Path { .. }
-        | ParameterType::Choice { .. }
-        | ParameterType::Quantity { .. } => "string",
     }
 }
 
@@ -508,45 +319,35 @@ fn parse_plotcal_preset(value: &str) -> Result<CalibrationPlotPreset, String> {
 
 #[cfg(test)]
 mod tests {
-    use casa_provider_contracts::{SurfaceContractBundle, builtin_surface_catalog};
+    use casa_provider_contracts::SurfaceContractBundle;
 
     use super::*;
 
     #[test]
-    fn schema_bundles_embed_each_current_adapter_parameter_contract() {
-        let aggregate = builtin_surface_catalog().expect("built-in parameter catalog");
-        let adapter_surfaces = aggregate
-            .surfaces
-            .iter()
-            .filter(|surface| surface.execution().invocation_name == "casars-casa-task")
-            .collect::<Vec<_>>();
-        assert!(!adapter_surfaces.is_empty());
-        for surface in adapter_surfaces {
-            let expected_id = surface.id();
-            let contract = adapter_surface(expected_id).expect("current adapter surface");
-            let typed_bundle = adapter_task_schema_bundle(&contract);
-            typed_bundle
-                .validate()
-                .expect("valid adapter provider contract");
-            let bundle =
-                serde_json::to_value(&typed_bundle).expect("serialize adapter schema bundle");
+    fn schema_bundle_embeds_the_plotcal_parameter_contract() {
+        let contract = plotcal_surface().expect("plotcal surface");
+        assert_eq!(
+            contract.surface.execution().invocation_name,
+            "casars-plotcal"
+        );
+        let typed_bundle = plotcal_task_schema_bundle(&contract);
+        typed_bundle
+            .validate()
+            .expect("valid plotcal provider contract");
+        let bundle = serde_json::to_value(&typed_bundle).expect("serialize plotcal schema bundle");
 
-            assert_eq!(
-                bundle["protocol"]["protocol_name"],
-                "casars_casa_task_adapter"
-            );
-            assert!(bundle["request_schema"].is_object());
-            assert!(bundle["result_schema"].is_object());
+        assert_eq!(bundle["protocol"]["protocol_name"], "casars_plotcal");
+        assert!(bundle["request_schema"].is_object());
+        assert!(bundle["result_schema"].is_object());
 
-            let surfaces = serde_json::from_value::<Vec<SurfaceContractBundle>>(
-                bundle["parameter_surfaces"].clone(),
-            )
-            .expect("serialized adapter parameter surface");
-            assert_eq!(surfaces.len(), 1);
-            assert_eq!(surfaces[0].surface.id(), expected_id);
-            surfaces[0]
-                .validate()
-                .expect("embedded adapter parameter surface");
-        }
+        let surfaces = serde_json::from_value::<Vec<SurfaceContractBundle>>(
+            bundle["parameter_surfaces"].clone(),
+        )
+        .expect("serialized plotcal parameter surface");
+        assert_eq!(surfaces.len(), 1);
+        assert_eq!(surfaces[0].surface.id(), SURFACE_ID);
+        surfaces[0]
+            .validate()
+            .expect("embedded plotcal parameter surface");
     }
 }
