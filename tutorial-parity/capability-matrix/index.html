@@ -789,6 +789,14 @@ and oracle map; it does not add public APIs.</p>
 <li><code>external</code>: external CASA/pipeline/viewer behavior is not an implementation
   target.</li>
 </ul>
+<p>Removed CASA-backed adapters (2026-10-06): <code>imcollapse</code>, <code>imfit</code>,
+<code>widebandpbcor</code>, <code>imcontsub</code>, <code>concat</code>, <code>statwt</code>, <code>hanningsmooth</code>, <code>clearcal</code>,
+<code>delmod</code>, <code>ft</code>, <code>simanalyze</code>, and <code>simalma</code> were briefly shipped as casa-rs
+tasks through a <code>casars-casa-task</code> bridge that ran CASA's own Python
+<code>casatasks</code>. They were not native implementations and have been removed; each
+is not implemented natively until a casa-rs implementation lands. CASA is a
+correctness and performance oracle only (<code>AGENTS.md</code>, Engineering Rules;
+enforced by <code>scripts/check-no-casa-runtime.py</code> in <code>scripts/arch-check.sh</code>).</p>
 <h2 id="current-supported-surfaces-used-by-the-matrix">Current Supported Surfaces Used By The Matrix<a class="headerlink" href="#current-supported-surfaces-used-by-the-matrix" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>casa-tables</code>: persistent tables, storage, TaQL, table browsing.</li>
@@ -915,7 +923,7 @@ and oracle map; it does not add public APIs.</p>
 <td><code>imcontsub</code></td>
 <td>missing</td>
 <td><code>casa-images</code></td>
-<td>none</td>
+<td>none (CASA-backed adapter removed)</td>
 <td>image-domain continuum subtraction for VLA HI breadth</td>
 <td>CASA image products</td>
 <td>breadth-wave timings</td>
@@ -1005,7 +1013,7 @@ and oracle map; it does not add public APIs.</p>
 <td><code>statwt</code></td>
 <td>missing</td>
 <td><code>casa-ms</code></td>
-<td>none</td>
+<td>none (CASA-backed adapter removed)</td>
 <td>weight recomputation for data-combination tutorials</td>
 <td>CASA WEIGHT/SIGMA columns</td>
 <td>tutorial timing</td>
@@ -1015,7 +1023,7 @@ and oracle map; it does not add public APIs.</p>
 <td><code>concat</code></td>
 <td>missing/partial</td>
 <td><code>casa-ms</code>, <code>casa-tables</code></td>
-<td>none</td>
+<td>none (CASA-backed adapter removed)</td>
 <td>MS concatenation metadata and weights</td>
 <td>CASA <code>concat</code> output MS</td>
 <td>data-combination timings</td>
@@ -1025,7 +1033,7 @@ and oracle map; it does not add public APIs.</p>
 <td><code>hanningsmooth</code></td>
 <td>missing</td>
 <td><code>casa-ms</code></td>
-<td>none</td>
+<td>none (CASA-backed adapter removed)</td>
 <td>P-band tutorial subset</td>
 <td>CASA smoothed MS</td>
 <td>breadth timing</td>
@@ -1035,7 +1043,7 @@ and oracle map; it does not add public APIs.</p>
 <td><code>clearcal</code> / <code>delmod</code></td>
 <td>missing/partial</td>
 <td><code>casa-ms</code>, <code>casa-calibration</code></td>
-<td>none</td>
+<td>none (CASA-backed adapters removed)</td>
 <td>model/corrected column lifecycle</td>
 <td>CASA MS column state</td>
 <td>calibration/imaging timings</td>
@@ -1045,7 +1053,7 @@ and oracle map; it does not add public APIs.</p>
 <td><code>ft</code></td>
 <td>missing/partial</td>
 <td><code>casa-imaging</code>, <code>casa-ms</code></td>
-<td>none</td>
+<td>none (CASA-backed adapter removed)</td>
 <td>model prediction for source subtraction</td>
 <td>CASA MODEL_DATA comparison</td>
 <td>source-subtraction timing</td>
@@ -1105,7 +1113,7 @@ and oracle map; it does not add public APIs.</p>
 <td><code>widebandpbcor</code></td>
 <td>partial/available</td>
 <td><code>casars-imager</code>, <code>casa-images</code></td>
-<td><code>casars-imager --pbcor</code> writes MTMFS <code>.pbcor.image.tt0</code> plus PB spectral-index-corrected <code>.pbcor.image.alpha</code> for the VLA imaging guide</td>
+<td><code>casars-imager --pbcor</code> writes MTMFS <code>.pbcor.image.tt0</code> plus PB spectral-index-corrected <code>.pbcor.image.alpha</code> for the VLA imaging guide; no <code>widebandpbcor</code> task (CASA-backed adapter removed)</td>
 <td>broader CASA task-name and multi-action parameter surface</td>
 <td>CASA <code>widebandpbcor</code> products</td>
 <td>#175 runner timing</td>
@@ -1155,7 +1163,7 @@ and oracle map; it does not add public APIs.</p>
 <td><code>imsubimage</code> / <code>imcollapse</code></td>
 <td>missing/partial</td>
 <td><code>casa-images</code>, <code>casa-lattices</code></td>
-<td>future task/Python projection</td>
+<td>future task/Python projection (<code>imcollapse</code> CASA-backed adapter removed)</td>
 <td>region/channel slicing and collapsed outputs</td>
 <td>CASA output images</td>
 <td>breadth timing</td>
@@ -1165,7 +1173,7 @@ and oracle map; it does not add public APIs.</p>
 <td><code>imfit</code></td>
 <td>missing</td>
 <td><code>casa-images</code></td>
-<td>none</td>
+<td>none (CASA-backed adapter removed)</td>
 <td>Gaussian/source fitting for polarization/source-subtraction tutorials</td>
 <td>CASA fit records</td>
 <td>breadth timing</td>
@@ -1215,7 +1223,7 @@ and oracle map; it does not add public APIs.</p>
 <td><code>simanalyze</code></td>
 <td>missing as workflow</td>
 <td>composition of simulation, imaging, image analysis</td>
-<td>future simulation task/Python surface</td>
+<td>future simulation task/Python surface (CASA-backed adapter removed)</td>
 <td>workflow orchestration without cloning CASA pipeline semantics</td>
 <td>CASA <code>simanalyze</code> products</td>
 <td>simulation analysis timing</td>
@@ -1225,7 +1233,7 @@ and oracle map; it does not add public APIs.</p>
 <td><code>simalma</code></td>
 <td>missing</td>
 <td>simulation owner</td>
-<td>future task</td>
+<td>future task (CASA-backed adapter removed)</td>
 <td>ALMA/ACA array combinations</td>
 <td>CASA <code>simalma</code> products</td>
 <td>breadth timing</td>

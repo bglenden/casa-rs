@@ -9808,7 +9808,7 @@
 <a href=#9808 id=9808 data-nosnippet>9808</a>    </span><span class="kw">fn </span>application_catalog_exposes_canonical_frontend_projection() {
 <a href=#9809 id=9809 data-nosnippet>9809</a>        <span class="kw">let </span>catalog = application_catalog().expect(<span class="string">"application catalog"</span>);
 <a href=#9810 id=9810 data-nosnippet>9810</a>        <span class="kw">let </span>applications = catalog.applications;
-<a href=#9811 id=9811 data-nosnippet>9811</a>        <span class="macro">assert_eq!</span>(applications.len(), <span class="number">42</span>);
+<a href=#9811 id=9811 data-nosnippet>9811</a>        <span class="macro">assert_eq!</span>(applications.len(), <span class="number">30</span>);
 <a href=#9812 id=9812 data-nosnippet>9812</a>        <span class="macro">assert!</span>(applications.iter().any(|application| {
 <a href=#9813 id=9813 data-nosnippet>9813</a>            application.id == <span class="string">"imager"
 <a href=#9814 id=9814 data-nosnippet>9814</a>                </span>&amp;&amp; application.kind == <span class="string">"task"
@@ -9845,13 +9845,13 @@
 <a href=#9845 id=9845 data-nosnippet>9845</a>        <span class="kw">let </span>catalog =
 <a href=#9846 id=9846 data-nosnippet>9846</a>            casa_provider_contracts::builtin_surface_catalog().expect(<span class="string">"parameter catalog"</span>);
 <a href=#9847 id=9847 data-nosnippet>9847</a>        <span class="kw">let </span>surfaces = <span class="kw-2">&amp;</span>catalog.surfaces;
-<a href=#9848 id=9848 data-nosnippet>9848</a>        <span class="macro">assert_eq!</span>(surfaces.len(), <span class="number">41</span>);
+<a href=#9848 id=9848 data-nosnippet>9848</a>        <span class="macro">assert_eq!</span>(surfaces.len(), <span class="number">29</span>);
 <a href=#9849 id=9849 data-nosnippet>9849</a>        <span class="macro">assert_eq!</span>(
 <a href=#9850 id=9850 data-nosnippet>9850</a>            surfaces
 <a href=#9851 id=9851 data-nosnippet>9851</a>                .iter()
 <a href=#9852 id=9852 data-nosnippet>9852</a>                .filter(|surface| surface.kind() == SurfaceKind::Task)
 <a href=#9853 id=9853 data-nosnippet>9853</a>                .count(),
-<a href=#9854 id=9854 data-nosnippet>9854</a>            <span class="number">39
+<a href=#9854 id=9854 data-nosnippet>9854</a>            <span class="number">27
 <a href=#9855 id=9855 data-nosnippet>9855</a>        </span>);
 <a href=#9856 id=9856 data-nosnippet>9856</a>        <span class="macro">assert_eq!</span>(
 <a href=#9857 id=9857 data-nosnippet>9857</a>            surfaces
