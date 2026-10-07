@@ -4,6 +4,8 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
+    # Runs on main warm the Rust build caches that pull requests restore.
+    branches: [main]
     tags:
       - "v*.*.*"
 
@@ -17,17 +19,26 @@ env:
 jobs:
   lint_test:
     runs-on: ubuntu-latest
+    env:
+      # Line tables keep file:line in panic backtraces while avoiding full
+      # debug info in ~130 linked test binaries.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+      - name: Install FFTW development libraries
+        run: sudo apt-get update && sudo apt-get install -y libfftw3-dev pkg-config
         with:
           components: rustfmt, clippy
 
-      - name: Install FFTW development libraries
-        run: sudo apt-get update && sudo apt-get install -y libfftw3-dev pkg-config
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Only main saves; pull requests restore main's cache.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Check architecture
         run: scripts/arch-check.sh
@@ -41,9 +52,6 @@ jobs:
       - name: Lint
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: Free lint build artifacts
-        run: cargo clean
-
       - name: Install explicit measures runtime for integration tests
         run: |
           mkdir -p "$RUNNER_TEMP/casa-measures"
@@ -51,15 +59,16 @@ jobs:
           cp crates/casa-measures-data/data/casa-measures-runtime.provenance.json "$RUNNER_TEMP/casa-measures/.casa-rs-measures-provenance.json"
           echo "CASA_RS_MEASURESPATH=$RUNNER_TEMP/casa-measures" >> "$GITHUB_ENV"
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Run tests
         env:
-          # casars-imager progress instrumentation is process-global and its
-          # unit tests intentionally exercise that shared context.
-          RUST_TEST_THREADS: 1
+          NEXTEST_PROFILE: ci
           # Debug builds of the bounded imaging stack legitimately exceed the
           # default test-thread stack; production uses release frames.
           RUST_MIN_STACK: 33554432
-        run: cargo test --workspace
+        run: scripts/test-workspace.sh
 
   python_package:
     runs-on: ubuntu-latest
@@ -72,6 +81,11 @@ jobs:
 
       - name: Install FFTW development libraries
         run: sudo apt-get update && sudo apt-get install -y libfftw3-dev pkg-config
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Only main saves; pull requests restore main's cache.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -82,7 +96,7 @@ jobs:
         run: scripts/test-python-package.sh
 
   docs:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -93,6 +107,11 @@ jobs:
 
       - name: Install FFTW development libraries
         run: sudo apt-get update && sudo apt-get install -y libfftw3-dev pkg-config
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Only main saves; pull requests restore main's cache.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -106,10 +125,12 @@ jobs:
         run: scripts/build-python-docs.sh site
 
   native_gui:
-    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
-    runs-on: macos-15
+    if: >-
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false)
+      || github.ref == 'refs/heads/main'
+    runs-on: macos-26
     env:
-      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -119,6 +140,11 @@ jobs:
 
       - name: Install FFTW development libraries
         run: brew install fftw pkg-config
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Only main saves; pull requests restore main's cache.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install just
         uses: taiki-e/install-action@just
@@ -131,7 +157,15 @@ jobs:
       - name: Check generated frontend bindings
         run: scripts/generate-frontend-bindings.sh --check
 
+      - name: Build frontend services library for Swift tests
+        run: cargo build -p casars-frontend-services --lib
+
+      - name: Run Swift core unit tests
+        run: swift test --package-path apps/casars-mac
+
       - name: Run native GUI interaction gate
+        # Main runs only warm the build cache; the gate runs on pull requests.
+        if: github.event_name == 'pull_request'
         run: just gui-test
 
       - name: Retain GUI test result bundle
@@ -144,6 +178,24 @@ jobs:
             apps/casars-mac/.gui-test/gui-test.evidence.json
           if-no-files-found: warn
 
+  gui_gate:
+    # The required check for the GUI gate. GitHub counts a skipped required
+    # check as passing, and native_gui is skipped on drafts, so requiring
+    # native_gui directly let a PR merge the moment it was marked ready. This
+    # job fails unless native_gui actually ran and passed; drafts show it red.
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    needs: native_gui
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require a passing native GUI gate
+        env:
+          RESULT: ${{ needs.native_gui.result }}
+        run: |
+          if [ "$RESULT" != "success" ]; then
+            echo "::error::native_gui result is '$RESULT'; it runs only on non-draft pull requests"
+            exit 1
+          fi
+
   smoke:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
@@ -153,9 +205,6 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Install FFTW development libraries
-        run: sudo apt-get update && sudo apt-get install -y libfftw3-dev pkg-config
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -175,9 +224,6 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install FFTW development libraries
-        run: sudo apt-get update && sudo apt-get install -y libfftw3-dev pkg-config
-
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
@@ -195,9 +241,6 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Install FFTW development libraries
-        run: sudo apt-get update && sudo apt-get install -y libfftw3-dev pkg-config
 
       - name: Install LLVM coverage tools
         run: rustup component add llvm-tools-preview

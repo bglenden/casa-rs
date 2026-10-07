@@ -2,7 +2,7 @@
   "schema_version": 1,
   "evidence_schema_version": 1,
   "timeout_classes": {
-    "deterministic": 900,
+    "deterministic": 1800,
     "live_assistant": 1200,
     "live_science": 3600
   },

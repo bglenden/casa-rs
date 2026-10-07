@@ -108,33 +108,21 @@ fn launcher_lists_registered_apps_in_expected_order() {
             "plotcal",
             "flagdata",
             "flagmanager",
-            "imcollapse",
-            "imfit",
             "impbcor",
-            "widebandpbcor",
-            "imcontsub",
             "impv",
             "imsubimage",
             "immath",
             "imregrid",
             "feather",
-            "importfits",
-            "concat",
-            "statwt",
-            "hanningsmooth",
-            "clearcal",
-            "delmod",
-            "ft",
-            "simanalyze",
-            "simalma"
+            "importfits"
         ]
     );
 }
 
 #[test]
 fn mutating_tui_task_requires_second_run_key_to_confirm() {
-    let app = resolve_app(Some("statwt")).expect("statwt app");
-    let schema = app.load_schema().expect("statwt schema");
+    let app = resolve_app(Some("applycal")).expect("applycal app");
+    let schema = app.load_schema().expect("applycal schema");
     let mut app = AppState::from_schema(app, schema);
 
     app.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
@@ -167,19 +155,18 @@ fn tui_notebook_bypass_is_visible_and_reversible_before_the_next_run() {
 }
 
 #[test]
-fn tui_confirmation_is_driven_by_catalog_safety_for_adapter_mutations() {
-    for id in ["statwt", "clearcal", "delmod", "ft"] {
-        let temp = tempdir().expect("tempdir");
-        let app_definition = resolve_app(Some(id)).expect("registered adapter task");
-        let schema = app_definition.load_schema().expect("canonical UI schema");
-        let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
-        let app = AppState::from_schema_with_config(app_definition, schema, config);
-        assert_eq!(
-            app.requires_run_confirmation_for_test(),
-            Ok(true),
-            "{id} must require interactive confirmation"
-        );
-    }
+fn tui_confirmation_is_driven_by_catalog_safety_for_input_mutations() {
+    let id = "applycal";
+    let temp = tempdir().expect("tempdir");
+    let app_definition = resolve_app(Some(id)).expect("registered mutating task");
+    let schema = app_definition.load_schema().expect("canonical UI schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let app = AppState::from_schema_with_config(app_definition, schema, config);
+    assert_eq!(
+        app.requires_run_confirmation_for_test(),
+        Ok(true),
+        "{id} must require interactive confirmation"
+    );
 }
 
 #[test]

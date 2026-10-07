@@ -85,14 +85,14 @@ mod tests {
     #[test]
     fn builtins_cover_exact_current_configurable_catalog() {
         let catalog = builtin_surface_catalog().expect("valid built-in parameter catalog");
-        assert_eq!(catalog.surfaces.len(), 41);
+        assert_eq!(catalog.surfaces.len(), 29);
         assert_eq!(
             catalog
                 .surfaces
                 .iter()
                 .filter(|surface| surface.kind() == SurfaceKind::Task)
                 .count(),
-            39
+            27
         );
         assert_eq!(
             catalog
@@ -172,8 +172,8 @@ mod tests {
                 cell_bindings += 1;
             }
         }
-        assert_eq!(imsize_bindings, 3);
-        assert_eq!(cell_bindings, 3);
+        assert_eq!(imsize_bindings, 1);
+        assert_eq!(cell_bindings, 1);
     }
 
     #[test]
@@ -224,7 +224,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             surfaces.len(),
-            22,
+            18,
             "update the safety inventory intentionally"
         );
         for (surface, binding) in surfaces {
@@ -602,12 +602,6 @@ mod tests {
                 "width",
                 "ms.transform.width",
                 Some("mstransform"),
-            ),
-            (
-                &["simalma", "simanalyze"][..],
-                "image",
-                "simulation.image",
-                Some("simalma"),
             ),
         ] {
             for surface in surfaces {

@@ -1,279 +1,145 @@
 # Agent Operating Contract
 
 Truth class: normative
-Last reality check: 2026-09-29
+Last reality check: 2026-10-07
 Verification: just docs-check
 
-## Purpose
+casa-rs is a native Rust implementation of casacore/CASA libraries and
+applications.
 
-Implement native Rust libraries and applications for casacore-compatible
-persistent data while preserving on-disk interoperability.
+## Core Contracts And Priorities
 
-## Scope Of This File
+- **Interoperability:** data written here must be readable by casacore C++,
+  and vice versa. This is non-negotiable.
+- **Agreement with CASA:** outputs should agree with CASA, not bit for bit,
+  but typically to about 0.001 normalized RMS. CASA has bugs; a justified
+  divergence is fine when it is explained and recorded (see
+  `docs/CASA (C++) bugs.md`).
+- **Performance is a top priority.** Measure before and after; do not trade
+  speed away without saying so.
+- **Clarity follows the mathematics.** Structure code around the underlying
+  equations. Imaging modes share one structure (one compile/plan/run path and
+  shared operators) rather than growing quasi-independent per-mode paths.
+  Prefer deleting and consolidating over adding parallel code.
 
-Keep this always-loaded contract short and practical. Put only durable,
-repo-wide behavior here. Use the closest authoritative source for details:
+## Where Things Live
 
-- `ARCHITECTURE.md`: workspace boundaries and dependency direction
-- `TESTING.md`: test selection, evidence, CI, data, and GUI gate policy
-- `docs/agent-reference.md`: situational workstation, CASA, data, release, and
-  TUI evidence recipes
-- `apps/casars-mac/AGENTS.md`: native macOS workbench rules
-- `.agents/skills/`: repository-specific domain procedures; generic development
-  procedures come from user-level skills and are not vendored here
-- accepted ADRs: durable design decisions
+- `ARCHITECTURE.md`: crates, boundaries, dependency direction
+- `TESTING.md`: which gates to run, CI, test data, GUI testing
+- `docs/agent-reference.md`: workstation, CASA/C++ oracle, data and storage
+  locations, release recipes
+- `docs/adr/`: accepted decisions; binding, and not edited without approval
+- `apps/casars-mac/AGENTS.md`: macOS workbench rules
+- `.agents/skills/`: casa-rs domain skills (e.g. imaging performance); generic
+  workflows come from the user-level skills
+- `GLOSSARY.md`: domain vocabulary; use its terms
 
-## Truth Order
+When sources disagree: code/tests/CI > ADRs > ARCHITECTURE/TESTING > issues.
 
-1. Code, tests, CI, and interoperability behavior.
-2. Accepted ADRs.
-3. `ARCHITECTURE.md` and `TESTING.md`.
-4. GitHub issues and pull requests.
+## Commands And Toolchain
 
-## Essential Commands
+- Rust 1.99 or newer (`rustup update stable`); set `CARGO_INCREMENTAL=0` for
+  raw cargo. Install `cargo-nextest` (`brew install cargo-nextest`) so tests run
+  in parallel; without it `scripts/test-workspace.sh` runs them serially.
+- `just quick` is the normal gate; `just verify` is for milestones and
+  releases; `just --list` shows everything else.
+- Swift tests: `cargo build -p casars-frontend-services --lib`, then
+  `swift test --package-path apps/casars-mac`.
+- `scripts/check-imaging-dependencies.py` (in `just arch-check`) enforces the
+  imaging crate layering and source rules of ADR-0016; its grandfathered-file
+  lists only shrink.
 
-- Discover commands: `just --list`
-- Setup: `just setup`
-- Fast loop: `just quick`
-- Pre-review gate: `just verify`
-- Architecture/docs: `just arch-check`, `just docs-check`, `just graph`
+## Engineering Rules
 
-Use `TESTING.md` to select heavier gates. For raw Cargo checks outside `just`,
-set `CARGO_INCREMENTAL=0`.
+- Before implementing casacore/CASA behaviour, read the upstream C++ and keep
+  its semantics unless there is a stated reason to diverge. For parity
+  differences, instrument both implementations; do not guess.
+- casa-rs tasks are native implementations. CASA is a test and evidence
+  oracle only; never ship a task, app, or surface that delegates to CASA
+  (casatasks, casatools, or a CASA install) at runtime
+  (`scripts/check-no-casa-runtime.py` enforces this).
+- Idiomatic Rust, not a C++ API mirror. Search for existing behaviour before
+  adding code.
+- Crate names: `casa-*` for libraries, `casars-*` for apps and runtimes.
+- Public APIs get rustdoc comparable in depth to the casacore doxygen.
+- No `TODO`, `FIXME`, `XXX`, or `HACK` without a GitHub issue reference.
 
-## Engineering Direction
+## Storage
 
-- **Worker scalability (owner direction, 2026-09-29):** Keep imaging worker
-  counts parameterized beyond four, including W8 and larger systems; admit work
-  against the actual CPU/memory budget, not a hard four- or eight-worker ceiling.
-  W4 is this workstation's validated application checkpoint, not an architecture
-  limit. Further optimization of the current cube worker-scaling path is deferred
-  until a larger system with more high-performance cores is available, unless
-  the owner revises this direction. Do not resume local W8 tuning or full-W8
-  performance runs merely because earlier plans list them. Preserve larger-W
-  support and correctness coverage. This does not declare performance targets
-  or outstanding scientific acceptance complete. See the current owner decision
-  in `docs/imaging-architecture/cube-parallel-scaling-plan.md`.
-- **Performance and numerical agreement (owner direction, 2026-09-24):**
-  Minimize runtime and peak memory rather than paying for optional bookkeeping,
-  bitwise reproducibility, or slightly closer numerical agreement beyond the
-  scientific acceptance requirement. Do not retain exact/order-independent
-  accumulators, compensation buffers, extra passes or copies solely to make
-  different worker counts, reduction orders or compiler optimizations produce
-  identical floating-point bits. Such differences are normal. Extra precision
-  or compensation must have a demonstrated accuracy need, not a nicety.
-  This supersedes older bitwise floating-output requirements; replace affected
-  tests with scientific tolerance checks, not weaker or missing coverage.
-  Preserve the standard scientific algorithm and semantics (normally CASA)
-  and approximately 1e-3 normalized agreement, using the established comparison
-  metric and retaining any stricter existing scientific checks. This is the
-  conservative interpretation of the owner's "10E-3", not permission for 1%.
-  Discuss actual scientific algorithm changes or relaxation of that agreement
-  with the user before proceeding. Equivalent implementations and ordinary
-  rounding changes within acceptance do not require such discussion. Required
-  shape, mask, metadata, ownership, bounded-memory, I/O and persistence checks
-  remain; this does not authorize removing correctness guarantees.
-- ADR-0014 forbids production product-content hashing or full-array rereads
-  solely to authorize publication from trusted in-process generation. Use
-  bounded ownership transfer to the CASA-compatible writer, preserving shape,
-  inventory, run/lifecycle, I/O and individual-image atomic replacement checks.
-  Publication failure fails the run and leaves an incomplete output set requiring
-  rerun, not per-member resumable recovery or whole-set rollback. Do not restore
-  attestation under another name or flag. Reintroduction requires an explicit
-  architectural decision and user approval, a concrete failure model and
-  measured cost. Historical sealing requirements are non-normative; unrelated
-  persistence/external-input checksums and test/benchmark fingerprints remain.
-- The same ownership rule applies to trusted reconstruction-model handoffs.
-  Validate values/support where introduced or modified, not by content-attesting
-  every lifecycle transition. Routine telemetry must not serialize/hash/rewrite
-  whole plans or scan historical receipts; keep lightweight progress and final
-  summaries. Exceptions require a concrete failure model and demonstrated benefit.
-- ADR-0015 extends this rule to within-run imaging input, weighting, replay,
-  model updates and reprojection targets. Use live ownership and exact structural
-  checks, not scientific-content fingerprints. Trusted private spill retains
-  framing/order/length and I/O checks, not payload or header-transcript CRCs.
-  External artifact integrity and opt-in diagnostic fingerprints are distinct.
+The internal disk is small. Do not fill it.
 
-This project is early and is not constrained by an existing external user
-base. Prefer the best long-term code, architecture, API, and testing shape over
-the smallest local patch, even when that means changing more in-repo code now.
+- Internal disk: source, builds, and only small durable items needed for quick
+  tests on small datasets (`~/SoftwareProjects/casa-rs-evidence/`).
+- Large or long-lived artifacts go on the NAS (`/Volumes/home/casa-rs/`). The
+  external disk (`/Volumes/GLENDENNING/`) is working space for large datasets
+  and runs, never the only copy of anything that matters.
+- Development artifacts (intermediate images, sweep outputs, probe results)
+  are disposable. Delete them once the code has moved past them; keep only
+  what an issue or PR needs as evidence, summarized there.
+- Worktrees share the main `target/` (`CARGO_TARGET_DIR`) or delete their own
+  `target/` when done; a separate build tree is tens of GB.
+- Check free space before large runs. If the internal disk would drop below
+  about 40 GB free, stop and ask.
+- Evidence needed later never lives only in a temporary directory.
 
-- Reduce and consolidate public API surface when it improves the design.
-  Remove weak APIs, duplicate paths, compatibility shims, and awkward
-  abstractions instead of preserving them solely because they exist. Update
-  call sites, tests, docs, and examples in the same change.
-- Private crates and substantial dependencies are allowed when they create a
-  cleaner ownership boundary or materially improve the implementation. Assess
-  license, build, distribution, and maintenance effects rather than rejecting
-  them because of size alone.
-- Before adding library functionality, search the existing Rust surface for
-  reusable behavior. Delegate a bounded search when it saves time alongside
-  useful local work; a direct lookup does not require an agent handoff.
-- Before implementing behavior that exists in CASA/casacore C++, inspect the
-  relevant upstream task, tool, or library path and preserve its semantics
-  unless there is an explicit reason to diverge.
-- For imaging performance, inspect the hot function and its counterpart at
-  `fff9c2d553eace4b6a57b1df9ded4773f2263ceb` early. Consult CASA/casacore
-  for science semantics and LibRA for relevant implementation techniques, not
-  as a mandatory three-repository survey before every local experiment. Reuse
-  proven mechanisms without restoring displaced packages or duplicate routes.
-- For parity or correctness differences, instrument both implementations
-  instead of relying on blind parameter experiments or speculative fixes.
-- Prefer idiomatic Rust over direct C++ API mirroring; this is not a wrapper
-  around casacore C++.
-- Use the shared least-squares helper for polynomial or linear least-squares
-  solves; do not add ad hoc normal-equation or Gaussian-elimination solvers.
-- Use `casa-*` for reusable libraries and `casars-*` for app/runtime crates.
-- Public API docs belong in source comments rendered by `cargo doc`; new
-  casacore-C++ functionality should have roughly corresponding doxygen depth.
-- Do not add backlog-style `TODO`, `FIXME`, `XXX`, or `HACK` comments unless
-  they reference a GitHub issue.
+## Work And Git
 
-## Plan First And Anti-Slop
+- Issues and pull requests are the work record. PRs say `Work issue: #N` (or
+  `Work source: <reason>`); use `Closes #N` only when merge should close it.
+- One PR per outcome, not per edit. Iterate as a draft; mark it ready once
+  (see Merging: ready means merge when green).
+- Do not commit directly to `main`, except docs-only changes that pass
+  `just docs-check`.
+- Merge `main` into long-lived branches regularly.
+- Remove the worktrees and branches you create once their work is merged or
+  pushed. `just tidy` lists leftovers already merged into `main`;
+  `just tidy --apply` removes them.
+- The repository is public; copying its source to any host is fine. Never copy
+  credentials, secrets, or non-public datasets.
 
-For substantial structural changes, identify reuse, ownership, migration/deletion,
-and affected verification before editing. For a local change, a concrete code
-hypothesis and focused check are enough. Once the evidence distinguishes the next
-implementation decision, test it instead of extending the measurement machinery.
+## Ask First
 
-- Prefer the simplest coherent architecture, not the smallest patch or the
-  fewest lines.
-- Avoid unnecessary defensive handling, type-system escapes, one-use
-  scaffolding, narration comments, trivial wrappers, speculative abstractions,
-  helper proliferation, deep nesting, and repeated conditional ladders.
-- Do not keep appending unrelated decisions to an existing complexity hotspot.
-  Redistribute responsibility along real domain or ownership boundaries.
-- After correctness, perform a bounded anti-slop pass over touched and directly
-  exposed code. Simplify findings inside the approved scope and report larger
-  adjacent erosion instead of silently expanding the approved work.
+- New top-level apps or product families
+- Adding or changing public APIs, persisted formats, provider-contract bundles,
+  or other external contracts (removing APIs inside approved work is fine)
+- Changing dependency direction, the runtime or concurrency model, or a major
+  performance algorithm
+- Editing accepted ADRs
+- Reducing approved scope or acceptance checks, or weakening tests without a
+  replacement
+- Merging, releasing, or deleting branches and worktrees you did not create
 
-## Work Record And State
+## Merging
 
-Anything needed after the current execution (inputs, reference binaries,
-results, logs, receipts, checkpoints, or handoffs) must live in durable storage,
-never under `/private` or any temporary/`tmp` directory. Use temporary storage
-only for disposable scratch. Keep restart-critical evidence outside removable
-worktrees and follow `docs/agent-reference.md` for verified checkpoints.
+- Marking a PR ready for review is the go-ahead to merge. Mark it ready only
+  with the user's go-ahead, then immediately run `gh pr merge --auto --merge`;
+  GitHub merges it once the required CI checks on `main` pass.
+- Science, persistence, and interoperability changes need an independent
+  review by a separate agent or person before they are marked ready. Docs,
+  tests, and tooling need only green CI.
+- If CI fails after a PR is marked ready, auto-merge waits; fix it on the
+  branch, or convert the PR back to a draft if the fix is not quick.
+- "Merge as-is" from the user waives the review and check gates for that PR:
+  merge with `gh pr merge --admin --merge` and record the waiver on the PR.
 
-GitHub issues and pull requests are the authoritative work record. Generic
-shaping, research, TDD, diagnosis, design, review, and conflict-resolution
-procedures belong to the globally installed Matt Pocock skills; this repository
-stores only casa-rs-specific policy and domain guidance.
+## Verification And Done
 
-The casa-rs repository source is fully open source and publicly available on
-GitHub. Agents may copy repository source to any execution host or location
-needed for authorized project work; do not classify repository source copying
-as sensitive-data egress. This does not authorize copying credentials, secrets,
-unrelated personal data, or non-public external datasets.
+- Run the gates the change can affect; one green run is enough.
+- Missing test data or disk space is an environment problem, not a code
+  regression; say so.
+- Done means the relevant gates are green, the evidence is recorded on the
+  issue or PR, and the docs match reality.
 
-- Before implementation, the issue or an equivalent user-approved record states
-  the outcome, included issues, non-goals, acceptance evidence, and stop
-  conditions.
-- Approved outcome, included issues, and acceptance checks must not be reduced,
-  deferred, or moved out of scope without explicit user signoff recorded in the
-  issue and pull request. Newly discovered adjacent work may use a follow-up.
-- Issue-driven pull requests include `Work issue: #N`. Automation or gate
-  repairs without a real issue include `Work source: automation <name>`. Use
-  `Closes #N` only when merge should close that issue.
-- Work state is read from issues and pull requests; there is no separate board
-  state. An open issue without a linked open pull request is queued; an issue
-  with a linked open pull request is active; an issue is done only when it is
-  closed with its evidence recorded. Draft/readiness and review state live on
-  the pull request. A merge does not mean done until the issue closes.
+## Imaging Foundation (#648, tickets IF-0 to IF-11)
 
-For the imaging foundation (#648, tickets IF-0 to IF-11), the owner-approved
-plan `docs/imaging-architecture/imaging-foundation-plan-20261007.md` and
-ADR-0016 are the work contract: ticket bodies carry outcome, deletion rows and
-acceptance; section 10 of the plan is the review checklist; section 9.3
-defines the review gates. One ticket is active at a time unless the plan says
-otherwise. Programme #486 and its rules are retired.
-
-## Final Authority
-
-Implementation authority does not include final merge, branch/worktree cleanup,
-or release. Those actions require an independent final review of scope, diff,
-acceptance evidence, and current checks, plus explicit user authorization for
-the action. The final reviewer must be independent of the implementation pass.
-
-For an exact pull request, an explicit user instruction to merge or close out
-"as-is" after the agent has reported the outstanding review or check evidence
-is an informed waiver of the independent-final-review and current-check
-requirements for that merge. Obey the waiver instead of restoring the default
-gate. Record the waived evidence and the user's direction on the pull request
-and issue. The waiver does not change the accepted scientific, persistence, or
-interoperability contract and does not authorize release, branch/worktree
-cleanup, or another pull request.
-
-For imaging foundation tickets, the per-ticket contract review against the
-issue body and plan section 10 is the review; the gates R1–R4 in plan section
-9.3 are the only additional checkpoints. Cleanup, release, and branch/worktree
-deletion remain separate stop points.
-
-## Stop And Ask Before
-
-- adding a new top-level app or product family
-- adding or expanding public APIs, persisted formats, provider-contract
-  bundles, or other external contracts; scoped API removal and consolidation
-  inside an approved work item do not require separate permission
-- changing dependency direction, runtime model, concurrency guarantees, or a
-  major performance algorithm
-- moving approved outcome, included issues, or acceptance checks into a
-  follow-up, deferral, non-goal, or out-of-scope bucket
-- expanding implementation beyond the approved outcome or directly exposed
-  supporting work
-- weakening or deleting tests without replacement
-- editing accepted ADRs except for explicitly requested supersession metadata
-- committing directly to `main`
-- merging, pruning branches, deleting worktrees, or publishing a release without
-  explicit user authorization and an independent final review, except for an
-  exact merge covered by the informed as-is waiver above
-
-For imaging foundation tickets, the Rust API changes, deletions and
-dependency-direction changes written in the plan are already approved.
-Persisted CASA-interoperable formats, cleanup, release, and branch/worktree
-deletion remain stop points.
-
-## Project Boundaries
-
-- Follow `docs/provider-contracts.md` for provider contracts. Versioned schema
-  bundles are the boundary contract and must not become a second source of
-  science semantics.
-- Follow `docs/casars-tui-framework.md` for `casars` TUI work.
-- Scientific-notebook work follows ADR-0007. A material interaction change
-  returns to its prototype approval gate before production integration.
-- Follow `apps/casars-mac/AGENTS.md` for native workbench changes.
-- Use `docs/agent-reference.md` for CASA/C++ oracle execution, shared-data
-  locations, TUI capture, release, and install recipes.
-
-## Verification
-
-- `just quick` is the normal iteration gate; `just verify` is the default full
-  pre-review gate.
-- One current green run in a documented equivalent local or hosted environment
-  is sufficient. Do not duplicate a green gate solely for assurance.
-- Reuse recent green evidence when no code, test, build, dependency, or runtime
-  configuration change could affect it. Documentation-only or review-only
-  changes require only the affected checks.
-- Before long gates, confirm required data and disk headroom. Unavailable data
-  and disk pressure, including `No space left on device`, are environmental
-  evidence rather than source regressions unless the failure reproduces with
-  those prerequisites available.
-- Release/tag-only smoke, install, coverage, interoperability, and performance
-  gates are not routine pull-request requirements unless requested or required
-  by the approved work. `TESTING.md` owns the exact matrix.
-- For imaging foundation tickets, the gates are the ticket's T0/T1/T1.5 tests,
-  `cargo clippy -D warnings` on touched crates, the dependency checker, and
-  `just quick` at ticket end (plan section 9.1). T2 datasets run only in the
-  performance pass (IF-10).
-
-## Done
-
-Work is complete only after relevant tests pass; one current `just verify`
-result or recorded exclusion exists; the issue and pull request record the
-actual acceptance evidence; docs and ADRs match reality; and every
-approved-scope deferral records explicit user signoff. Merge, cleanup, and
-release remain separate independently reviewed actions.
-
-For imaging foundation tickets, the ticket's acceptance tests, `just quick`
-and the contract review are sufficient for closure; `just verify` runs once at
-IF-11.
+The owner-approved plan
+`docs/imaging-architecture/imaging-foundation-plan-20261007.md` and ADR-0016
+are the work contract. Each ticket body carries outcome, deletion rows and
+acceptance tests; plan section 10 is the review checklist; section 9.3 defines
+the review gates R1–R4. Gates per ticket are its T0/T1/T1.5 tests, clippy
+`-D warnings` on touched crates, the dependency checker and `just quick`;
+`just verify` runs once at IF-11. The Rust API changes, deletions and
+dependency-direction changes written in the plan are pre-approved; persisted
+CASA-interoperable formats, cleanup and release still need approval. Record
+disagreements between plan and code under `## Deviations` on the ticket as
+they occur. Programme #486 and its rules are retired.

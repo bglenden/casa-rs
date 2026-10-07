@@ -188,12 +188,13 @@ or performance acceptance. Current results and restart authority live in the
   must not select them implicitly.
 - Heavy parity suites stay behind explicit opt-in gates such as `scripts/test-slow.sh`.
 - Release-only Cargo integration suites should stay out of the default compile path via explicit `[[test]]` entries and `required-features`, not only file-local `cfg` guards.
-- Standard workspace gates set `RUST_TEST_THREADS=1`. The imager progress
-  observer is process-global so that worker threads contribute to one run; a
-  parallel libtest harness can otherwise attach unrelated imaging work to an
-  active progress-test context and poison the shared test lock after the first
-  assertion failure. This serializes test cases, not the worker concurrency
-  exercised inside an imaging run.
+- Workspace gates run Rust tests through `scripts/test-workspace.sh`, which uses
+  `cargo-nextest` (one process per test, in parallel) plus `cargo test --doc`.
+  The imager progress observer is process-global so that worker threads
+  contribute to one run; in libtest's shared-process harness, parallel tests
+  could attach unrelated imaging work to an active progress-test context. Under
+  nextest each test has its own process. Without nextest the script falls back
+  to serial `cargo test` (`RUST_TEST_THREADS=1`).
 
 ### Linux temporary storage
 
@@ -237,7 +238,10 @@ existing no-cache I/O path and does not require this Linux-specific setup.
 - Release/tag-only CI-like coverage: `scripts/run-coverage.sh --ci-like`
 - GitHub Actions reproduction: `scripts/ci-local.sh pr` for pull-request jobs or `scripts/ci-local.sh tag` for version-tag jobs
 - GitHub PR CI: lint/test, editable Python package, strict docs, and native GUI
-  checks for non-draft PRs
+  checks (Swift core unit tests, then the `just gui-test` interaction gate) for
+  non-draft PRs. The required check is `gui_gate`, which passes only when
+  `native_gui` actually ran and passed; it is red on drafts by design, because
+  GitHub would count a skipped `native_gui` as passing
 - GitHub tag CI: lint/test and editable Python package checks plus smoke,
   suite-install, and CI-like coverage
 - Main-branch pushes run the rustdoc and MkDocs deployment workflow
@@ -542,7 +546,9 @@ The executable GUI layer follows these rules:
 - Attach screenshots and useful accessibility diagnostics on failure, but do
   not use screenshot review as the only assertion that an interaction works.
 - Keep Core/store tests as the broad, fast base of the pyramid. UI tests prove
-  only behavior that requires the launched application boundary.
+  only behavior that requires the launched application boundary. The macOS CI
+  job runs the core tests with `swift test --package-path apps/casars-mac`
+  after building `casars-frontend-services`, before the interaction gate.
 - Keep the same `just gui-test` command available locally and in the supported
   macOS CI job. One green consolidated run in either environment satisfies the
   interaction gate; the other is optional unless needed for diagnosis or
@@ -550,7 +556,8 @@ The executable GUI layer follows these rules:
   stop and record the blocker rather than replacing the gate with manual or
   computer-use testing.
 - Pin the CI job's Xcode selection explicitly; the current gate uses the
-  `macos-15` image with Xcode 26.2, matching the locally established compiler.
+  `macos-26` image with Xcode 26.6, the newest Xcode on GitHub-hosted runners.
+  Move it forward when a newer Xcode reaches the runners.
 - Run locally from a logged-in GUI session with Xcode automation permission and
   no active system-authentication prompt. Diagnose failures from
   `apps/casars-mac/.gui-test/CasarsMacUITests.xcresult`, which retains the
@@ -722,7 +729,7 @@ For each notebook program phase:
 - approved outcome, included issues, and acceptance checks are not deferred or
   descoped without explicit user signoff recorded in the issue or PR
 - release work also runs the smoke gate, the blocking C++ interop gate, and the suite-install gate; CI-like coverage remains a version-tag CI gate and is run locally only for `scripts/release.sh --full` or explicit coverage reproduction
-- ordinary non-release merges stay on `just verify` plus targeted tests unless the user explicitly asks to exercise release/tag-only heavy gates
+- ordinary non-release merges stay on the affected gates (`just quick` or focused checks) plus CI unless the user explicitly asks to exercise release/tag-only heavy gates; `just verify` is for milestones and releases
 - release performance evidence is informational by default and becomes blocking only when `CASA_RS_ENFORCE_PERF=1`
 - slow CASA parity checks run when the approved work touches those concerns
 
@@ -730,7 +737,7 @@ For each notebook program phase:
 
 Work is not complete until:
 
-- `just verify` passes or any intentional exclusion is called out explicitly
+- the gates the change can affect pass (`just quick` or focused checks, plus CI)
 - tests cover the claimed behavior
 - native macOS GUI changes pass `just gui-test` locally or in hosted CI for
   changed critical interactions
@@ -738,11 +745,11 @@ Work is not complete until:
 - reviewers checked for shallow or tautological tests on medium/high-risk work
 - docs or ADRs were updated if reality changed
 - any approved-scope deferral records explicit user signoff
-- final merge, cleanup, and release actions receive an independent review and
-  explicit authorization
+- the PR was marked ready with the user's go-ahead (which enables auto-merge
+  on green CI), and science, persistence, and interoperability changes also
+  have an independent review
 
-For an exact pull request, the repository `AGENTS.md` informed as-is waiver may
-replace the independent-final-review and current-check portions of this gate.
-Record each waived item on the pull request and issue; do not describe waived
-evidence as passing. The waiver changes process evidence only, never the
-accepted behavior or persistent-interoperability contract.
+A user's "merge as-is" for a pull request waives its review and check gates.
+Record the waiver on the pull request; do not describe waived evidence as
+passing. The waiver changes process evidence only, never the accepted behavior
+or persistent-interoperability contract.

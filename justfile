@@ -11,7 +11,7 @@ quick:
     ./scripts/check-spdx.sh
     cargo fmt --all -- --check
     CARGO_INCREMENTAL=0 cargo clippy --workspace --all-targets -- -D warnings
-    CARGO_INCREMENTAL=0 RUST_TEST_THREADS=1 cargo test --workspace
+    bash scripts/test-workspace.sh
     python3 scripts/test-task-cli-hosts.py
     python3 apps/casars-mac/script/test_gui_acceptance.py
 
@@ -35,7 +35,7 @@ typecheck:
     CARGO_INCREMENTAL=0 cargo check --workspace --all-targets
 
 test:
-    CARGO_INCREMENTAL=0 RUST_TEST_THREADS=1 cargo test --workspace
+    bash scripts/test-workspace.sh
     ./scripts/test-python-package.sh
     bash scripts/test-smoke.sh
     ./scripts/test-install-suite.sh
@@ -192,6 +192,10 @@ arch-check:
 
 docs-check:
     bash scripts/docs-check.sh
+
+# List (or with --apply, remove) worktrees and local branches already merged into origin/main.
+tidy *args:
+    bash scripts/tidy-git.sh {{args}}
 
 gui-test:
     python3 apps/casars-mac/script/gui_acceptance.py run gui-test

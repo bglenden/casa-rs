@@ -1,7 +1,7 @@
 # Agent Reference
 
 Truth class: normative
-Last reality check: 2026-07-18
+Last reality check: 2026-10-06
 Verification: just docs-check
 
 This is situational guidance for agents. Read only the section relevant to the
@@ -54,47 +54,42 @@ Slow, release, parity, and tutorial gates run shared-data preflight and report
 the selected root. Do not use `/private/tmp` as a canonical dataset location or
 add personal workstation archives as implicit default-gate fallbacks.
 
-## Durable Work Records And Checkpoints
+## Storage Locations
 
-Anything needed in a later turn, session, restart, comparison, or review belongs
-in durable storage from creation. This includes input copies with generated
-owner metadata, immutable configuration, reference executables/products, raw
-measurements, logs, manifests, rejected hypotheses, and current handoffs.
-Do not put these under `/private`, `/tmp`, a `tmp`/temporary directory, or a
-safe-to-delete cache. Check both the supplied path and its resolved symlink
-target. Disposable scratch and automatically deleted unit-test fixtures are
-the only temporary-storage cases; neither may be the sole copy of evidence.
+Follow the storage rules in `AGENTS.md`. Current locations:
 
-For travel work on this workstation, use
-`/Users/brianglendenning/SoftwareProjects/casa-rs-evidence/<work-item>/<run-id>/`.
-This survives worktree removal and does not require GLENDENNING. Check free
-space and permissions before launching. Large external-data gates still use
-their approved dataset/evidence volume; local evidence does not waive them.
+- Internal disk (small; keep at least about 40 GB free): source, builds, and
+  small durable evidence for quick tests under
+  `/Users/brianglendenning/SoftwareProjects/casa-rs-evidence/<work-item>/`.
+- NAS `storage` over Tailscale, mounted at `/Volumes/home`: large or
+  long-lived artifacts under `/Volumes/home/casa-rs/`. Shared CASA test data is
+  at `/Volumes/home/casatestdata`.
+- External disk `GLENDENNING` at `/Volumes/GLENDENNING/`: fast working space
+  for large datasets and runs. It has had repeated disconnects, so it is never
+  the only copy of anything that matters. Its preserved datasets are mirrored
+  at `/Volumes/home/casa-rs-glendenning-preserve/GLENDENNING/` (see
+  `/Volumes/GLENDENNING/README.md` for the path mapping).
 
-- Keep one current Markdown record with source/run identity, commands,
-  outcomes, rejected hypotheses, acceptance gaps, and the next executable step.
-- Keep controller-owned configuration/history unchanged in its working
-  location. After each completed trial, and before pausing or cleanup, copy it
-  and all restart-critical evidence to a new numbered checkpoint in the durable
-  root. Never overwrite an older checkpoint or edit its embedded absolute paths.
-- Capture source revision plus local patches, exact executable hashes,
-  dataset identity/owner metadata, all five paired results, guard outputs, and
-  references or an exact executable-backed reproduction recipe. Do not retain
-  only the headline ratio or assume a future rebuild is the same binary.
-- Generate a SHA-256 manifest after the copy, read every file back to verify it,
-  and record missing artifacts explicitly. Publish a checkpoint as complete only
-  after verification; keep failed copies visibly partial. A reconstructed
-  narrative is never a substitute for lost raw measurements or frozen state.
-- Maintain a second verified copy on an approved backup destination. A second
-  folder on the same disk protects against accidental worktree cleanup, not disk
-  loss. Report backup status as unverified until the exact checkpoint can be
-  read back; do not assume Time Machine includes it. Uploading or publishing
-  evidence still requires the applicable authorization and data review.
+Keep an MS or large output only when it will be reused and would take hours to
+regenerate: a fixed timing input, or a long CASA run used as a correctness
+reference, kept with the exact MS it ran on. Record its generator, parameters
+and timings in a manifest beside the archive. T55's manifest is
+`/Volumes/home/casa-rs-glendenning-preserve/GLENDENNING/casa-rs-evidence/t55/GOLDEN-DATASETS.md`.
 
-Before restarting, verify the manifest and immutable controls and inspect the
-current controller status. If exact continuity cannot be restored, obtain
-approval for a fresh baseline, preserving remaining trial allowances and retired
-hypotheses. Never reconstruct controller events or weaken acceptance to recover.
+Delete development artifacts once the code has moved past them. For a long
+benchmark campaign that must survive restarts, keep one current Markdown record
+(source revision, commands, results, next step) next to its evidence on the NAS
+and replace superseded runs rather than accumulating them.
+
+## Workstation Toolchain
+
+- Keep Xcode and the Command Line Tools on the same major version. If `cc`
+  links fail with `tapi error ... unknown architecture` (for example while
+  building `fitsio-sys`), `xcrun` is resolving a newer Command Line Tools SDK
+  than Xcode's linker understands: update Xcode, or set
+  `SDKROOT=$(xcode-select -p)/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk`.
+- After an Xcode update, run `sudo xcodebuild -license accept` and
+  `sudo xcodebuild -runFirstLaunch`; until then `git` and `cc` fail.
 
 ## Release And Installation
 
