@@ -3731,11 +3731,7 @@ fn execute_spectral_cycle_with_weighting_mode(
     .expect("production final-major plan");
     let final_plan = runtime_plan(
         &problem,
-        PlanningBindings::new(
-            registry(73),
-            final_resource_policy.clone(),
-            cost_model(4),
-        ),
+        PlanningBindings::new(registry(73), final_resource_policy.clone(), cost_model(4)),
         authority(),
         &planning_registry,
         &receipts,
