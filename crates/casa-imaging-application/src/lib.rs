@@ -384,8 +384,8 @@ where
     S::Error: Send + Sync,
 {
     if std::env::var_os("CASA_RS_IF2_OLD_ROUTE").is_none()
-        && !input.write_model_column
         && !input.write_corrected_data
+        && problem.visibility_transform().is_none()
     {
         return run_pass_route(problem, input);
     }
@@ -416,6 +416,16 @@ where
         return Err(boxed("A-projection preparation has no pass route"));
     }
     publication.controls.validate_for_problem(problem)?;
+    let model_column = input
+        .write_model_column
+        .then(|| {
+            Ok::<_, ApplicationError>(imaging::ModelColumnTarget {
+                path: PathBuf::from(input.observation.locator()),
+                expected: input.initial_access.source_state().clone(),
+                selection: visibility_write_selection(problem, input.observation.selection())?,
+            })
+        })
+        .transpose()?;
     let access = SelectedObservationSourceResources::finalize_access(
         problem,
         input.initial_access,
@@ -428,6 +438,7 @@ where
         access,
         masks: input.masks,
         image_response: input.minor_cycle_image_response,
+        model_column,
         authority: &runtime.authority,
         policy: &runtime.resource_policy,
         spill_directory: spill.directory(),
@@ -446,7 +457,7 @@ where
             major_cycle_count: outcome.major_cycle_count,
             total_minor_iterations: outcome.total_minor_iterations,
             total_actual_minor_iterations: outcome.total_actual_minor_iterations,
-            visibility_products: None,
+            visibility_products: outcome.visibility_products,
             visibility_replay: None,
             visibility_output_receipt: None,
             workers: outcome.workers,

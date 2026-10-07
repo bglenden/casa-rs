@@ -6,9 +6,11 @@
 mod cycle;
 mod images;
 mod measurement;
+mod model_column;
 mod source;
 
 pub(crate) use cycle::{ImagingInputs, run};
+pub(crate) use model_column::ModelColumnTarget;
 
 use casa_imaging_operator::OperatorError;
 use casa_imaging_reconstruction::{

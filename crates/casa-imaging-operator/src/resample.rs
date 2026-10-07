@@ -11,6 +11,7 @@
 
 use num_complex::{Complex32, Complex64};
 
+use crate::backend::{GridBackend, PreparedModelGrids, Work};
 use crate::convolution::RowContext;
 use crate::error::OperatorError;
 use crate::operator::{Basis, MeasurementOperator};
@@ -211,6 +212,112 @@ enum Sampling {
 enum Source {
     Channel(usize),
     Pair { left: usize, right_factor: f64 },
+}
+
+/// Reusable buffers for [`SpectralResampler::predict_row`]; one per worker.
+#[derive(Debug, Default)]
+pub struct PredictionScratch {
+    buffer: Option<SampleBuffer>,
+    zeros: Vec<Complex32>,
+    ones: Vec<f32>,
+    predicted: Vec<Complex32>,
+    sources: Vec<usize>,
+    values: Vec<Complex32>,
+}
+
+impl PredictionScratch {
+    /// Clear every buffer for a row of `npol` polarizations.
+    fn reset(&mut self, npol: usize) {
+        if self.zeros.len() != npol {
+            self.zeros = vec![Complex32::default(); npol];
+            self.ones = vec![1.0; npol];
+        }
+        let buffer = self.buffer.get_or_insert_with(|| SampleBuffer::new(npol));
+        if buffer.npol() != npol {
+            *buffer = SampleBuffer::new(npol);
+        }
+        buffer.clear();
+        self.sources.clear();
+    }
+}
+
+/// CASA `FTMachine::interpolateFrequencyFromgrid`: output-channel
+/// predictions `values` (`[channel][pol]`, zero where the row was not
+/// degridded) on CASA's image-frequency grid, refined to `floor(width
+/// ratio)` repeated points per channel when output channels are wider than
+/// native ones, interpolated linearly to every mapped native channel; the
+/// end pair extrapolates (casacore `InterpolateArray1D` linear).
+fn interpolate_from_grid(
+    axis: SpectralAxis,
+    row: &NativeRow<'_>,
+    values: &[Complex32],
+    npol: usize,
+    out: &mut [Complex32],
+) {
+    let native = row.frequencies_hz;
+    let width = (axis.increment_hz / (native[1] - native[0])).abs();
+    let per_channel = if width > 1.0 {
+        width.floor() as usize
+    } else {
+        1
+    };
+    let fine_increment = axis.increment_hz / per_channel as f64;
+    let fine_start = if per_channel > 1 {
+        axis.first_hz - axis.increment_hz / 2.0 + fine_increment / 2.0
+    } else {
+        axis.first_hz
+    };
+    let points = axis.channels as usize * per_channel;
+    let point = |index: usize| fine_start + index as f64 * fine_increment;
+    for (channel, frequency_hz) in native.iter().enumerate() {
+        if axis.nearest_channel(*frequency_hz).is_none() {
+            continue;
+        }
+        let position = (frequency_hz - fine_start) / fine_increment;
+        let left = (position.floor().max(0.0) as usize).min(points - 2);
+        let fraction = ((frequency_hz - point(left)) / (point(left + 1) - point(left))) as f32;
+        let (low, high) = (left / per_channel, (left + 1) / per_channel);
+        for pol in 0..npol {
+            if !row.flags[channel * npol + pol] {
+                let a = values[low * npol + pol];
+                let b = values[high * npol + pol];
+                out[channel * npol + pol] = a + (b - a) * fraction;
+            }
+        }
+    }
+}
+
+/// A placement predicting `row` on `plane` at `frequency_hz`, when its kernel
+/// support fits the padded grid.
+fn prediction_placement(
+    operator: &MeasurementOperator,
+    basis: Basis,
+    row: &NativeRow<'_>,
+    plane: u32,
+    frequency_hz: f64,
+) -> Option<Placement> {
+    let scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+    let w = row.uvw_m[2] * scale;
+    let cf = operator.cf();
+    let key = cf.key(&row.context, frequency_hz, w);
+    let (u, v) = (row.uvw_m[0] * scale, row.uvw_m[1] * scale);
+    let geometry = operator.geometry();
+    let taps = cf.taps(key);
+    geometry
+        .fits(
+            geometry.locate(u, v, taps.oversampling()),
+            taps.half_support(),
+        )
+        .then_some(Placement {
+            u,
+            v,
+            w,
+            phase: std::f64::consts::TAU * row.phase_shift_m * scale,
+            plane,
+            spectral: basis.spectral(frequency_hz),
+            cf: key,
+            gradient: [0.0, 0.0],
+        })
 }
 
 /// Turns native rows into placed, weighted samples for one operator.
@@ -502,6 +609,124 @@ impl SpectralResampler {
             return None;
         }
         Some(weight)
+    }
+
+    /// The model visibility of every selected sample of `row`, written to
+    /// `out` as `[channel][correlation]`, the way CASA predicts `MODEL_DATA`
+    /// (`GridFT::get`, then `FTMachine::interpolateFrequencyFromgrid`).
+    ///
+    /// A flagged row, a flagged correlation, a native channel outside the
+    /// output axis and a sample whose kernel leaves the grid predict zero.
+    /// A constant or Taylor basis, `nearest` mapping and the one-channel
+    /// bypass degrid each native channel at its own frequency on its mapped
+    /// plane. `linear` mapping degrids every output channel between the
+    /// row's lowest and highest mapped channel at the channel centre, repeats
+    /// each value `floor(width ratio)` times on CASA's fine grid when output
+    /// channels are wider than native ones, and interpolates linearly to the
+    /// native frequencies (extrapolating from the end pair); unmapped output
+    /// channels contribute zeros to that grid.
+    #[allow(clippy::too_many_arguments)]
+    pub fn predict_row(
+        &self,
+        operator: &MeasurementOperator,
+        backend: &mut dyn GridBackend,
+        model: &PreparedModelGrids,
+        row: &NativeRow<'_>,
+        scratch: &mut PredictionScratch,
+        out: &mut [Complex32],
+    ) -> Result<(), OperatorError> {
+        let npol = operator.polarization().correlations().len();
+        self.validate_row(operator, row, npol)?;
+        if out.len() != row.values.len() {
+            return Err(OperatorError::NativeRow {
+                reason: "the prediction holds one value per selected sample",
+            });
+        }
+        out.fill(Complex32::default());
+        if row.row_flag {
+            return Ok(());
+        }
+        let native = row.frequencies_hz;
+        let linear = match self.sampling {
+            Sampling::Linear(axis) if axis.channels > 1 && native.len() > 1 => Some(axis),
+            Sampling::Direct | Sampling::Nearest(_) | Sampling::Linear(_) => None,
+        };
+        scratch.reset(npol);
+        let PredictionScratch {
+            buffer,
+            zeros,
+            ones,
+            predicted,
+            sources,
+            values,
+        } = scratch;
+        let buffer = buffer.as_mut().expect("reset installs the buffer");
+        let mut place = |plane: u32, frequency_hz: f64, source: usize| {
+            if let Some(placement) =
+                prediction_placement(operator, self.basis, row, plane, frequency_hz)
+            {
+                buffer.push(placement, zeros, ones);
+                sources.push(source);
+            }
+        };
+        match linear {
+            None => {
+                for (channel, frequency_hz) in native.iter().enumerate() {
+                    let plane = match self.sampling {
+                        Sampling::Direct => Some(0),
+                        Sampling::Nearest(axis) | Sampling::Linear(axis) => {
+                            axis.nearest_channel(*frequency_hz)
+                        }
+                    };
+                    if let Some(plane) = plane {
+                        place(plane, *frequency_hz, channel);
+                    }
+                }
+            }
+            Some(axis) => {
+                let mapped = native
+                    .iter()
+                    .filter_map(|frequency_hz| axis.nearest_channel(*frequency_hz));
+                let (Some(lowest), Some(highest)) = (mapped.clone().min(), mapped.max()) else {
+                    return Ok(());
+                };
+                for channel in lowest..=highest {
+                    place(channel, axis.centre_hz(channel), channel as usize);
+                }
+            }
+        }
+        predicted.resize(buffer.len() * npol, Complex32::default());
+        if !buffer.is_empty() {
+            backend.apply(
+                &buffer.block(),
+                operator.cf(),
+                Work::Predict {
+                    model,
+                    out: predicted,
+                },
+            )?;
+        }
+        match linear {
+            None => {
+                for (index, channel) in sources.iter().enumerate() {
+                    for pol in 0..npol {
+                        if !row.flags[channel * npol + pol] {
+                            out[channel * npol + pol] = predicted[index * npol + pol];
+                        }
+                    }
+                }
+            }
+            Some(axis) => {
+                values.clear();
+                values.resize(axis.channels as usize * npol, Complex32::default());
+                for (index, channel) in sources.iter().enumerate() {
+                    values[channel * npol..(channel + 1) * npol]
+                        .copy_from_slice(&predicted[index * npol..(index + 1) * npol]);
+                }
+                interpolate_from_grid(axis, row, values, npol, out);
+            }
+        }
+        Ok(())
     }
 
     fn value(&self, row: &NativeRow<'_>, npol: usize, source: Source, pol: usize) -> Complex32 {

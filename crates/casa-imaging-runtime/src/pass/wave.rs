@@ -5,12 +5,13 @@
 use std::ops::Range;
 
 use casa_imaging_operator::{
-    CpuBackend, GridAccumulator, GridBackend, Mode, NormalImages, PlaneRange, PreparedModelGrids,
-    SampleBuffer, Work,
+    CpuBackend, GridAccumulator, GridBackend, Mode, NormalImages, PlaneRange, PredictionScratch,
+    PreparedModelGrids, SampleBuffer, Work,
 };
+use num_complex::Complex32;
 
 use super::partition::Router;
-use super::{MajorCyclePass, NativeBlock, Partition, PassError, WorkerTeam};
+use super::{MajorCyclePass, ModelColumnSink, NativeBlock, Partition, PassError, WorkerTeam};
 
 /// Row chunks per worker in the placement stage; enough to balance rows
 /// whose channel counts differ after flagging and the support test.
@@ -23,12 +24,14 @@ struct Owner {
     images: Option<NormalImages>,
 }
 
-/// One row chunk's placements, routed by owner.
+/// One row chunk's placements, routed by owner, and its prediction scratch.
 struct Chunk {
     rows: Range<usize>,
     scratch: SampleBuffer,
     owned: Vec<SampleBuffer>,
     placed: u64,
+    backend: CpuBackend,
+    prediction: PredictionScratch,
 }
 
 pub(super) struct Wave<'w, 'p> {
@@ -38,6 +41,7 @@ pub(super) struct Wave<'w, 'p> {
     model: Option<&'w PreparedModelGrids>,
     owners: Vec<Owner>,
     chunks: Vec<Chunk>,
+    predictions: Vec<Complex32>,
     samples: u64,
 }
 
@@ -65,6 +69,7 @@ impl<'w, 'p> Wave<'w, 'p> {
             model,
             owners,
             chunks: Vec::new(),
+            predictions: Vec::new(),
             samples: 0,
         }
     }
@@ -74,11 +79,14 @@ impl<'w, 'p> Wave<'w, 'p> {
         self.samples
     }
 
-    /// Place every row of `block` and accumulate the placements.
+    /// Place every row of `block` and accumulate the placements; with a
+    /// model-column sink, also predict every selected sample of the block
+    /// from the wave's model and hand the predictions to it.
     pub(super) fn consume(
         &mut self,
         block: &NativeBlock,
         team: &WorkerTeam,
+        model_column: Option<&mut ModelColumnSink<'_>>,
     ) -> Result<(), PassError> {
         let npol = self.pass.operator.polarization().correlations().len();
         let owners = self.owners.len();
@@ -90,7 +98,13 @@ impl<'w, 'p> Wave<'w, 'p> {
                 scratch: SampleBuffer::new(npol),
                 owned: (0..owners).map(|_| SampleBuffer::new(npol)).collect(),
                 placed: 0,
+                backend: CpuBackend::new(),
+                prediction: PredictionScratch::default(),
             });
+        }
+        if let Some(sink) = model_column {
+            self.predict(block, team, count)?;
+            sink(block, &self.predictions).map_err(PassError::ModelColumn)?;
         }
         for (index, chunk) in self.chunks[..count].iter_mut().enumerate() {
             chunk.rows = index * rows / count..(index + 1) * rows / count;
@@ -139,6 +153,45 @@ impl<'w, 'p> Wave<'w, 'p> {
                     continue;
                 }
                 accumulate(pass, &mut owner.backend, &block, model, acc)?;
+            }
+            Ok::<_, PassError>(())
+        })
+    }
+
+    /// Model visibilities of every selected sample of `block`, `[row]
+    /// [channel][correlation]`, into `self.predictions`; zero without a model.
+    fn predict(
+        &mut self,
+        block: &NativeBlock,
+        team: &WorkerTeam,
+        count: usize,
+    ) -> Result<(), PassError> {
+        let cells = block.channels() * block.correlations();
+        let rows = block.len();
+        self.predictions.clear();
+        self.predictions.resize(rows * cells, Complex32::default());
+        let Some(model) = self.model else {
+            return Ok(());
+        };
+        let pass = self.pass;
+        let mut pieces = Vec::with_capacity(count);
+        let mut remaining = self.predictions.as_mut_slice();
+        for (index, chunk) in self.chunks[..count].iter_mut().enumerate() {
+            let rows = index * rows / count..(index + 1) * rows / count;
+            let (head, tail) = remaining.split_at_mut(rows.len() * cells);
+            remaining = tail;
+            pieces.push((rows, chunk, head));
+        }
+        team.for_each_mut(&mut pieces, |_, (rows, chunk, out)| {
+            for (local, row) in rows.clone().enumerate() {
+                pass.resampler.predict_row(
+                    pass.operator,
+                    &mut chunk.backend,
+                    model,
+                    &block.row(row),
+                    &mut chunk.prediction,
+                    &mut out[local * cells..(local + 1) * cells],
+                )?;
             }
             Ok::<_, PassError>(())
         })

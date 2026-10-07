@@ -81,6 +81,23 @@ pub struct VisibilityProductCompletion {
 }
 
 impl VisibilityProductCompletion {
+    /// The record of `sample_count` model visibilities predicted from
+    /// `final_model` for `problem` under `weighting_generation`.
+    #[must_use]
+    pub const fn new(
+        problem: CompiledProblemId,
+        final_model: ModelGenerationId,
+        weighting_generation: WeightingGenerationId,
+        sample_count: u64,
+    ) -> Self {
+        Self {
+            problem,
+            final_model,
+            weighting_generation,
+            sample_count,
+        }
+    }
+
     /// Return the compiled problem identity.
     #[must_use]
     pub const fn problem_id(self) -> CompiledProblemId {

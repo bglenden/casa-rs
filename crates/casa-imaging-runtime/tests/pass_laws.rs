@@ -203,10 +203,17 @@ fn run(
     };
     let team = WorkerTeam::new(workers).expect("team");
     let mut waves = Vec::new();
-    let summary = run_major_cycle(&pass, source, &team, &Cancel::new(), &mut |images| {
-        waves.push(images);
-        Ok(())
-    })
+    let summary = run_major_cycle(
+        &pass,
+        source,
+        &team,
+        &Cancel::new(),
+        &mut |images| {
+            waves.push(images);
+            Ok(())
+        },
+        None,
+    )
     .expect("pass");
     assert!(summary.samples > 0 && summary.blocks > 0);
     let mut joined = waves.remove(0);
@@ -501,9 +508,14 @@ fn a_cancelled_pass_stops_with_a_typed_error() {
     let cancel = Cancel::new();
     cancel.cancel();
     let team = WorkerTeam::new(2).expect("team");
-    let result = run_major_cycle(&pass, &mut rows, &team, &cancel, &mut |_| {
-        panic!("a cancelled pass hands back no images")
-    });
+    let result = run_major_cycle(
+        &pass,
+        &mut rows,
+        &team,
+        &cancel,
+        &mut |_| panic!("a cancelled pass hands back no images"),
+        None,
+    );
     assert!(matches!(result, Err(PassError::Cancelled)), "{result:?}");
 }
 
