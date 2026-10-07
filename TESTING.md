@@ -105,11 +105,9 @@ library tests, existing
 `prepared_aw_phase` import/reuse regressions, and the directly affected imager,
 provider and profile projection tests. The ignored frozen-cell tests require
 explicit surface/catalog paths; no CASA installation or model-data path is
-discovered implicitly. `perf_harness.t52_native_acceptance` binds the release
-test binary, input/source hashes, cold/warm cache payloads, full comparisons
-and a 30-minute/32-GiB process-scope guard. Supply its explicit absolute paths
-from the retained run request; generation workspace admission is a separate
-accounted bound, not a claim about total process RSS.
+discovered implicitly. The historical T51/T52 pair-driver acceptance harnesses
+were removed with their test-only Rust entry points (IF-0, #649); the native
+AW representative row is re-established by the IF-10 performance pass.
 
 T53 spectral joins use the public compiled/prepared operator and normal
 application boundaries. Run the `t53_` tests in the `continuum_application`

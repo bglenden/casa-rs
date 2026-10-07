@@ -805,8 +805,8 @@ they exercise, once the IF-7 admission test covers the same guarantee
 | `science_trace: bool` | `CASA_RS_TRACE_IMAGING_SCIENCE`, `CASA_RS_IMAGING_SCIENCE_PROBE`, `CASA_RS_TRACE_AW_*` |
 
 All emission is `tracing` events at `info`/`debug` through `casa-logging`.
-`tools/perf/imager/t51_pair_driver.py` and the stage-timing consumers are
-updated to parse the structured log lines.
+Stage-timing consumers under `tools/perf/imager/` are updated to parse the
+structured log lines (the T51 pair driver was deleted in IF-0).
 
 ### 8.2 Removed
 
@@ -939,8 +939,8 @@ product inventory, WCS and normalisation; T1.5 `refim_alma_mosaic` flatnoise
 and flatsky residual/pb/pbcor within 1e-3.
 
 **IF-9 Diagnostics and logging (Opus).** Section 8; delete all `CASA_RS_*`
-reads and `eprintln!` in library crates; update `t51_pair_driver.py` and
-stage-timing consumers. Acceptance: checker green; T1 with
+reads and `eprintln!` in library crates; update the stage-timing consumers
+under `tools/perf/imager/`. Acceptance: checker green; T1 with
 `diagnostics.stage_timing` emits one line per phase.
 
 **IF-10 Performance and memory pass (Opus with owner).** Regenerate T2 oracles;
