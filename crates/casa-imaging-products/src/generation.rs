@@ -710,13 +710,18 @@ pub fn produce_continuum_members(
                         }
                         let output_channel = plane.output_channel() - window_start;
                         if matches!(member.role, ProductRole::SumWeights(_)) {
+                            // CASA's `.sumwt` holds the PSF gridding's sum
+                            // (`refim_mawproject`: 8987.97 is the weight
+                            // cell's norms, the data gridding's imaging
+                            // cell sums 0.24 % lower); the residual is
+                            // still divided by its own gridding's sum.
                             scatter_polarization_plane_state(
                                 &mut output.payload,
                                 member.axes(),
                                 output.shape,
                                 polarization,
                                 output_channel,
-                                plane.published_sum_weight() as f32,
+                                plane.sum_weight() as f32,
                             )?;
                             continue;
                         }

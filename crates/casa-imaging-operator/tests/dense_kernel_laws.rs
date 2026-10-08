@@ -288,12 +288,13 @@ fn prediction_divides_once_by_the_norm_summed_over_mueller_planes() {
         let g_xx = prepared.block::<f64>(0, 0, 0)[cell];
         let g_yy = prepared.block::<f64>(0, 1, 0)[cell];
         let (own, other) = if placement.w > 0.0 {
-            (c.conj(), c)
-        } else {
             (c, c.conj())
+        } else {
+            (c.conj(), c)
         };
-        // Adjoint conjugation for w ≤ 0 conjugates the taps, the forward
-        // gather conjugates them back; the norm follows the same rule.
+        // Adjoint conjugation for w > 0 conjugates the taps (CASA
+        // `wprojgrid.f`, `AWVisResampler`), the forward gather conjugates
+        // them back; the norm follows the same rule.
         let expected = (g_xx + own * g_yy) / (Complex64::new(1.0, 0.0) + other);
         let phasor = Complex64::from_polar(1.0, -placement.phase);
         let expected = expected * phasor;

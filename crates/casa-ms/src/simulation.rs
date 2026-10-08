@@ -3700,8 +3700,9 @@ fn predict_channel_visibility_preprojected(
     }
     let w_lambda = prediction_uvw_m[2] / wavelength_m;
     let phase = std::f64::consts::TAU
-        * (u_lambda * predictor.phase_offset.l_rad + v_lambda * predictor.phase_offset.m_rad
-            - w_lambda * predictor.phase_offset.n_minus_one);
+        * (u_lambda * predictor.phase_offset.l_rad
+            + v_lambda * predictor.phase_offset.m_rad
+            + w_lambda * predictor.phase_offset.n_minus_one);
     let phase_shift = Complex32::new(phase.cos() as f32, phase.sin() as f32);
     predictor.predictor.predict(u_lambda, v_lambda) * phase_shift
 }
@@ -3744,8 +3745,9 @@ fn predict_analytic_visibility(
             amplitude *= attenuation;
         }
         let phase = std::f64::consts::TAU
-            * (u_lambda * component.l_rad + v_lambda * component.m_rad
-                - w_lambda * component.n_minus_one);
+            * (u_lambda * component.l_rad
+                + v_lambda * component.m_rad
+                + w_lambda * component.n_minus_one);
         visibility += Complex32::new(
             (amplitude * phase.cos()) as f32,
             (amplitude * phase.sin()) as f32,
@@ -3773,8 +3775,9 @@ fn predict_analytic_row_values(
     for field_component in &predictor.components {
         let component = &field_component.component;
         let phase_coefficient = std::f64::consts::TAU
-            * (uvw_m[0] * component.l_rad + uvw_m[1] * component.m_rad
-                - uvw_m[2] * component.n_minus_one);
+            * (uvw_m[0] * component.l_rad
+                + uvw_m[1] * component.m_rad
+                + uvw_m[2] * component.n_minus_one);
         let (mut phase_sin, mut phase_cos) = (phase_coefficient * inverse_wavelength_0).sin_cos();
         let (step_sin, step_cos) = (phase_coefficient * inverse_wavelength_step).sin_cos();
         let gaussian_scale = component.major_sigma_rad.map(|major_sigma_rad| {
@@ -6333,8 +6336,9 @@ mod tests {
         let v_lambda = prediction_uvw_m[1] / wavelength_m;
         let w_lambda = prediction_uvw_m[2] / wavelength_m;
         let phase = std::f64::consts::TAU
-            * (u_lambda * phase_offset.l_rad + v_lambda * phase_offset.m_rad
-                - w_lambda * phase_offset.n_minus_one);
+            * (u_lambda * phase_offset.l_rad
+                + v_lambda * phase_offset.m_rad
+                + w_lambda * phase_offset.n_minus_one);
         let phase_shift = Complex32::new(phase.cos() as f32, phase.sin() as f32);
         let native_gridder = predictor.predict(u_lambda, v_lambda);
         let native = native_gridder * phase_shift;

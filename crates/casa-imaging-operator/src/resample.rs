@@ -473,6 +473,9 @@ fn locate_sample(
 ) -> Option<(Placement, CellLocation)> {
     let scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
     let w = row.uvw_m[2] * scale;
+    if !cf.admits(w) {
+        return None;
+    }
     let key = cf.key(&row.context, frequency_hz, w);
     let (u, v) = (row.uvw_m[0] * scale, row.uvw_m[1] * scale);
     let oversampling = cf.taps(key, hold).oversampling();

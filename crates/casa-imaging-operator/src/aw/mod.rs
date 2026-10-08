@@ -142,10 +142,13 @@ struct CellFiles {
 #[derive(Clone, Debug)]
 struct Group {
     cells: Vec<CellFiles>,
-    /// The largest declared half support over the group's imaging and
-    /// weight cells: every dense cell of the group is padded to it, so one
-    /// support serves gridding, the PSF and the weight image.
-    half_support: [u16; 2],
+    /// The largest declared half support over the group's imaging cells:
+    /// the imaging dense cell is padded to it, and `AWVisResampler`'s
+    /// `onGrid` test for a data row uses it (`CF Support: 4 (6)` in CASA's
+    /// log is the imaging support with the weight support in brackets).
+    imaging_half_support: [u16; 2],
+    /// The same over the weight cells, which the PSF and weight image use.
+    weight_half_support: [u16; 2],
 }
 
 /// The loaded taps of one group.
@@ -365,19 +368,20 @@ impl AwCatalog {
                     .ok_or_else(|| {
                         cache_error(&root, "a (PA, frequency, w) group lacks a Mueller element")
                     })?;
-                let half_support = cells.iter().fold([0_u16; 2], |half, cell| {
-                    [
-                        half[0]
-                            .max(cell.imaging.support[0])
-                            .max(cell.weight.support[0]),
-                        half[1]
-                            .max(cell.imaging.support[1])
-                            .max(cell.weight.support[1]),
-                    ]
-                });
+                let largest = |select: fn(&CellFiles) -> &CellHeader| {
+                    cells.iter().map(select).fold([0_u16; 2], |half, header| {
+                        [
+                            half[0].max(header.support[0]),
+                            half[1].max(header.support[1]),
+                        ]
+                    })
+                };
+                let imaging_half_support = largest(|cell| &cell.imaging);
+                let weight_half_support = largest(|cell| &cell.weight);
                 Ok(Group {
                     cells,
-                    half_support,
+                    imaging_half_support,
+                    weight_half_support,
                 })
             })
             .collect::<Result<Vec<_>, AwCatalogError>>()?;
@@ -741,13 +745,12 @@ impl ConvolutionFunctionSet for AwCatalog {
         hold.lend_keyed(key, 2, || self.loaded(usize::from(key.cube)).0)
     }
 
+    /// The imaging cell's support: `AWVisResampler::DataToGrid` drops a
+    /// data row by it (`onGrid`), and the PSF, gridded with the wider
+    /// weight cell, re-checks its own support per mode. The prediction
+    /// cell's support is checked again by the predictor.
     fn placement_half_support(&self, key: CfKey, _hold: &mut CellHold) -> [u16; 2] {
-        let gridding = self.groups[usize::from(key.group)].half_support;
-        let prediction = self.groups[usize::from(key.cube)].half_support;
-        [
-            gridding[0].max(prediction[0]),
-            gridding[1].max(prediction[1]),
-        ]
+        self.groups[usize::from(key.group)].imaging_half_support
     }
 
     fn mueller(&self) -> &MuellerRouting {
@@ -1016,11 +1019,12 @@ fn cf_area(plane: &[Complex32], shape: [usize; 2], support: [u16; 2], sampling: 
 
 /// Load one group's Mueller planes into an imaging and a weight cell:
 /// every plane normalised by its own area (`AWConvFunc::cfArea`), tiled at
-/// the group's largest support with zero beyond a smaller plane's image.
+/// its kind's largest support with zero beyond a smaller plane's image.
 fn load_group(group: &Group, sampling: u16) -> Result<Loaded, AwCatalogError> {
-    let build = |select: fn(&CellFiles) -> &CellHeader| -> Result<Arc<DenseCell>, AwCatalogError> {
+    let build = |select: fn(&CellFiles) -> &CellHeader,
+                 half: [u16; 2]|
+     -> Result<Arc<DenseCell>, AwCatalogError> {
         let headers = group.cells.iter().map(select).collect::<Vec<_>>();
-        let half = group.half_support;
         let mut planes = Vec::with_capacity(headers.len());
         for header in &headers {
             let mut plane = read_plane(header)?;
@@ -1037,8 +1041,8 @@ fn load_group(group: &Group, sampling: u16) -> Result<Loaded, AwCatalogError> {
         Ok(Arc::new(dense_cell_padded(&planes, half, sampling)))
     };
     Ok(Loaded {
-        imaging: build(|cell| &cell.imaging)?,
-        weight: build(|cell| &cell.weight)?,
+        imaging: build(|cell| &cell.imaging, group.imaging_half_support)?,
+        weight: build(|cell| &cell.weight, group.weight_half_support)?,
         last_use: 0,
     })
 }

@@ -305,7 +305,9 @@ impl MosaicPb {
             support = support.max(dish.support_pixels(increment[0], image_frequency_hz));
         }
         support = support.min(nx.max(ny));
-        let conv_size = next_larger_even_composite(support) / 16 * 16;
+        // `CompositeNumber::nextLargerEven` returns the first even
+        // composite strictly above its argument.
+        let conv_size = next_larger_even_composite(support + 1) / 16 * 16;
         if conv_size < 16 {
             return Err(OperatorError::ConvolutionFunction {
                 reason: "the mosaic screen is smaller than 16 pixels",
@@ -528,6 +530,14 @@ impl ConvolutionFunctionSet for MosaicPb {
 
     fn image_correction(&self) -> &ImageCorrection {
         &self.correction
+    }
+
+    /// `MosaicFT::finalizeToSky` transforms the gridded weight functions
+    /// into `skyCoverage_p` without the sinc `getImage` divides by
+    /// (`refim_alma_mosaic` against CASA: the corrected weight sat
+    /// `1/sinc` high, 0.4 % at the field edge).
+    fn corrects_weight_image(&self) -> bool {
+        false
     }
 
     /// `fmosaic.f` `sectgmosd2`, `gmoswgtd`: `sumwt += weight`; `sectdmos2`

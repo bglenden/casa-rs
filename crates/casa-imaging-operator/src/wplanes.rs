@@ -100,10 +100,14 @@ impl WPlanes {
         let w_scale = f64::from(((planes - 1) * (planes - 1)) as f32) / max_uvw;
         let sampling = if planes > 1 { W_OVERSAMPLING } else { 1 };
         // `convSize = nextLargerEven(max(Int(nx*padding), Int(ny*padding)))`;
+        // `CompositeNumber::nextLargerEven` returns the first even composite
+        // strictly above its argument, so a padded size that is itself
+        // composite (1200 → 1440) steps up (to 1458); the grid keeps 1440
+        // because `FTMachine` asks for the composite above `Int(1.2 n − 0.5)`.
         // CASA keeps the raw size for one plane, which may be odd, so the
         // one-plane case takes the same even composite size here.
         let padded = ((nx as f64 * PADDING) as usize).max((ny as f64 * PADDING) as usize);
-        let conv_size = next_larger_even_composite(padded);
+        let conv_size = next_larger_even_composite(padded + 1);
         let inner = conv_size / usize::from(sampling);
         // The screen's sky sampling: `incr · convSampling · padding·n/convSize`.
         let screen_increment = [
@@ -270,12 +274,24 @@ impl WPlanes {
         self.w_scale
     }
 
-    /// The plane of `w_lambda`: `nint(√(wScale · |w|))` clamped to the
-    /// planes (`wprojgrid.f` `swp`, `locuvw` with `doW`).
+    /// The plane of `w_lambda`: `nint(√(wScale · |w|))` (`wprojgrid.f`
+    /// `swp`), clamped to the planes for a key; a row beyond the last plane
+    /// is not gridded ([`Self::admits`]).
     #[must_use]
     pub fn plane_of(&self, w_lambda: f64) -> usize {
-        let plane = (self.w_scale * w_lambda.abs()).sqrt().round() as usize;
-        plane.min(self.planes.len() - 1)
+        self.plane_index(w_lambda).min(self.planes.len() - 1)
+    }
+
+    /// `nint(√(wScale · |w|))` before clamping.
+    fn plane_index(&self, w_lambda: f64) -> usize {
+        (self.w_scale * w_lambda.abs()).sqrt().round() as usize
+    }
+
+    /// Whether `wprojgrid.f` grids a row at `w_lambda`: `owp` rejects a
+    /// plane index past the last plane (`loc(3) > wconvsize`).
+    #[must_use]
+    pub fn admits(&self, w_lambda: f64) -> bool {
+        self.plane_index(w_lambda) < self.planes.len()
     }
 
     /// Half support of plane `plane`.
@@ -327,6 +343,10 @@ impl ConvolutionFunctionSet for WPlanes {
 
     fn pointing_ramp(&self) -> bool {
         false
+    }
+
+    fn admits(&self, w_lambda: f64) -> bool {
+        Self::admits(self, w_lambda)
     }
 }
 

@@ -64,6 +64,12 @@ impl CpuBackend {
                 Mode::Data | Mode::Psf => (placement.u, placement.v),
             };
             let location = layout.geometry().locate(u, v, taps.oversampling());
+            // CASA tests `onGrid` with the support of the cell each mode
+            // reads (`AWVisResampler::DataToGrid`), so a PSF gridded with a
+            // wider weight cell drops rows the data gridding keeps.
+            if !layout.geometry().fits(location, taps.half_support()) {
+                continue;
+            }
             spectral_powers(powers, placement.spectral, terms.len());
             spread_sample(
                 layout,
@@ -196,6 +202,13 @@ impl CpuBackend {
         let location = layout
             .geometry()
             .locate(placement.u, placement.v, taps.oversampling());
+        if !layout.geometry().fits(location, taps.half_support()) {
+            // `GridToData` skips a row whose prediction cell overruns the
+            // grid; its model visibility stays zero.
+            prediction.clear();
+            prediction.resize(npol, Complex64::default());
+            return;
+        }
         let w_positive = placement.w > 0.0;
         let table = cf.mueller().table(w_positive, true);
         let plane = layout.planes().local(placement.plane);
@@ -211,7 +224,7 @@ impl CpuBackend {
                     continue;
                 };
                 if divide {
-                    norms[vpol] += kernel::norm(&taps, location, mueller, !w_positive);
+                    norms[vpol] += kernel::norm(&taps, location, mueller, w_positive);
                 }
                 for (power, term) in powers.iter().zip(terms.clone()) {
                     let offset = layout.block_offset(plane, gpol, term);
@@ -222,7 +235,7 @@ impl CpuBackend {
                         location,
                         &taps,
                         mueller,
-                        !w_positive,
+                        w_positive,
                         placement.gradient,
                     );
                     prediction[vpol] += sum * *power;
@@ -330,10 +343,10 @@ fn spread_sample<T: GridScalar>(
             let norm = match rule {
                 KernelNormalisation::UnitSum => 1.0,
                 KernelNormalisation::RealSum => {
-                    kernel::norm(taps, location, mueller, !w_positive).re
+                    kernel::norm(taps, location, mueller, w_positive).re
                 }
                 KernelNormalisation::KernelSum => {
-                    kernel::norm(taps, location, mueller, !w_positive).norm()
+                    kernel::norm(taps, location, mueller, w_positive).norm()
                 }
             };
             for (power, term) in powers.iter().zip(terms.clone()) {
@@ -348,7 +361,7 @@ fn spread_sample<T: GridScalar>(
                     location,
                     taps,
                     mueller,
-                    !w_positive,
+                    w_positive,
                     placement.gradient,
                     value,
                 );

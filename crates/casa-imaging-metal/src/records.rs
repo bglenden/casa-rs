@@ -278,9 +278,9 @@ pub(crate) fn prepare(
                     }
                     let norm = match rule {
                         KernelNormalisation::UnitSum => 1.0,
-                        KernelNormalisation::RealSum => table.norm(location, m, !w_positive).re,
+                        KernelNormalisation::RealSum => table.norm(location, m, w_positive).re,
                         KernelNormalisation::KernelSum => {
-                            table.norm(location, m, !w_positive).norm()
+                            table.norm(location, m, w_positive).norm()
                         }
                     };
                     for (power, term) in powers.iter().zip(terms.clone()) {
@@ -301,7 +301,7 @@ pub(crate) fn prepare(
             for row in mueller.table(w_positive, true) {
                 for (vpol, plane_index) in row.iter().enumerate() {
                     if let Some(m) = *plane_index {
-                        norms[vpol] += table.norm(location, m, !w_positive);
+                        norms[vpol] += table.norm(location, m, w_positive);
                     }
                 }
             }

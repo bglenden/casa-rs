@@ -283,7 +283,7 @@ impl MeasurementOperator {
             .table(w_positive, true)
             .iter()
             .filter_map(|row| row[vpol])
-            .map(|mueller| crate::cpu::kernel::norm(&taps, location, mueller, !w_positive))
+            .map(|mueller| crate::cpu::kernel::norm(&taps, location, mueller, w_positive))
             .sum()
     }
 
@@ -482,7 +482,8 @@ impl MeasurementOperator {
                     for (gpol, image) in gpol_images.iter_mut().enumerate() {
                         work.copy_from_slice(acc.block::<T>(plane_local, gpol, term));
                         fft.transform(&mut work, true)?;
-                        *image = self.cropped_image(&work);
+                        let correct = mode != Mode::Weight || self.cf.corrects_weight_image();
+                        *image = self.cropped_image(&work, correct);
                     }
                     for pol in 0..pols {
                         images[slot].push(self.requested_image(pol, &gpol_images, mode));
@@ -518,9 +519,9 @@ impl MeasurementOperator {
         matches!(self.basis, Basis::ChannelLocal { .. })
     }
 
-    /// Correction and crop of one transformed grid plane, `[y][x]` over the
-    /// image extent.
-    fn cropped_image<T: GridScalar>(&self, grid: &[Complex<T>]) -> Vec<Complex64> {
+    /// Correction (when `correct`) and crop of one transformed grid plane,
+    /// `[y][x]` over the image extent.
+    fn cropped_image<T: GridScalar>(&self, grid: &[Complex<T>], correct: bool) -> Vec<Complex64> {
         let [nx, _] = self.geometry.grid_shape();
         let [ix, iy] = self.geometry.image_origin();
         let [width, height] = self.geometry.image().shape;
@@ -529,7 +530,11 @@ impl MeasurementOperator {
         for y in 0..height {
             for x in 0..width {
                 let cell = grid[(iy + y) * nx + ix + x];
-                let factor = correction.at(ix + x, iy + y);
+                let factor = if correct {
+                    correction.at(ix + x, iy + y)
+                } else {
+                    1.0
+                };
                 image.push(Complex64::new(
                     cell.re.into_f64() * factor,
                     cell.im.into_f64() * factor,

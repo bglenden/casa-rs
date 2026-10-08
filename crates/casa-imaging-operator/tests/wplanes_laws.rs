@@ -125,24 +125,30 @@ fn dirty(operator: &MeasurementOperator, block: &SampleBuffer) -> (Array2<f32>, 
 }
 
 #[test]
-fn plane_index_is_casa_nint_of_the_root_clamped_to_the_planes() {
+fn plane_index_is_casa_nint_of_the_root_and_rows_past_the_last_plane_are_dropped() {
     let planes = w_planes(8);
     // wScale = (nW−1)² / (0.25/|Δx|).
     let expected_scale = 49.0 / (0.25 / WIDE_INCREMENT_RAD);
     assert!((planes.w_scale() - expected_scale).abs() < 1.0e-9 * expected_scale);
     let w_for = |root: f64| root * root / planes.w_scale();
-    for (root, plane) in [
-        (0.0, 0),
-        (0.49, 0),
-        (0.51, 1),
-        (1.4, 1),
-        (1.6, 2),
-        (6.6, 7),
-        (7.4, 7),
-        (40.0, 7),
+    // `wprojgrid.f`: `swp` rounds the root, `owp` drops a row whose plane
+    // lies past the last one (`loc(3) > wconvsize`); the key clamps only
+    // for rows the set admits.
+    for (root, plane, admitted) in [
+        (0.0, 0, true),
+        (0.49, 0, true),
+        (0.51, 1, true),
+        (1.4, 1, true),
+        (1.6, 2, true),
+        (6.6, 7, true),
+        (7.4, 7, true),
+        (7.6, 7, false),
+        (40.0, 7, false),
     ] {
         assert_eq!(planes.plane_of(w_for(root)), plane, "root {root}");
         assert_eq!(planes.plane_of(-w_for(root)), plane, "root −{root}");
+        assert_eq!(planes.admits(w_for(root)), admitted, "root {root}");
+        assert_eq!(planes.admits(-w_for(root)), admitted, "root −{root}");
         let key = planes.key(&context(), 1.0e9, w_for(root));
         assert_eq!(
             key,
@@ -411,12 +417,14 @@ fn point_model(pixel: [usize; 2]) -> ModelImages {
 }
 
 #[test]
-fn the_w_term_carries_the_opposite_sign_to_the_uv_term() {
+fn the_w_term_carries_the_same_sign_as_the_uv_term() {
     // `V(u, v, w) = ∫ I(l, m) e^{−2πi(ul + vm + w(n − 1))}` for the
-    // MeasurementSet's uvw; placements carry CASA's gridder coordinates,
-    // `u` and `v` negated and `w` kept (`FTMachine::negateUV`), so whichever
+    // MeasurementSet's uvw: the three terms share one sign, so whichever
     // sign the transform gives the placement `(u, v)` term, the `w` term
-    // carries the opposite one. A plane's `w` is taken exactly, so no
+    // carries the same one. CASA realises this by conjugating the kernel
+    // of a positive-w sample (`wprojgrid.f`), and `refim_point_wterm_vlad`
+    // against CASA (IF-3 T1.5) pins it: the opposite parity decoheres the
+    // far point to 0.46 of its flux. A plane's `w` is taken exactly, so no
     // quantisation enters; the phase `2π w (n − 1)` is 0.47 rad here, and
     // the wrong sign would miss the expectation by 0.9.
     let mut rng = Rng::new(31);
@@ -474,7 +482,7 @@ fn the_w_term_carries_the_opposite_sign_to_the_uv_term() {
             "sample {index}: the (u, v) phase {uv_phase} is neither sign of {direction}"
         );
         let sign = if minus < plus { -1.0 } else { 1.0 };
-        let expected = Complex64::from_polar(1.0, -sign * std::f64::consts::TAU * w * n_minus_one);
+        let expected = Complex64::from_polar(1.0, sign * std::f64::consts::TAU * w * n_minus_one);
         let ratio = lifted / flat;
         assert!(
             (ratio - expected).norm() < 0.15,

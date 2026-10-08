@@ -237,11 +237,16 @@ fn generated_cells_open_with_casa_index_rules_and_swapped_mueller_tables() {
         }
     );
     // makeConjPolMap: RR reads the RR plane on the direct table and the LL
-    // plane on the conjugate one; the forward transform swaps them.
+    // plane on the conjugate one. The adjoint reads the direct table for a
+    // positive-w row and the conjugate one otherwise
+    // (`AWVisResampler::getConvFunc_p`: `mNdx` for `wVal > 0`, else
+    // `conjMNdx`), while the cell itself is conjugated for `wVal > 0`; the
+    // forward transform swaps the tables.
     let mueller = catalog.mueller();
     assert_eq!(mueller.direct, vec![vec![Some(0), Some(1)]]);
     assert_eq!(mueller.conjugate, vec![vec![Some(1), Some(0)]]);
     assert_eq!(mueller.table(true, false), &mueller.direct[..]);
+    assert_eq!(mueller.table(false, false), &mueller.conjugate[..]);
     assert_eq!(mueller.table(true, true), &mueller.conjugate[..]);
     assert_eq!(catalog.normalisation(), KernelNormalisation::KernelSum);
     assert!(catalog.pointing_ramp());
@@ -386,8 +391,8 @@ fn predictions_divide_by_the_kernel_sum_of_the_swapped_plane() {
             ..*placement
         };
         // The forward transform of a w > 0 row reads RR through the LL
-        // plane unconjugated; the mirrored row reads LL through the LL
-        // plane conjugated: the norms are conjugates of each other.
+        // plane conjugated; the mirrored row reads LL through the LL
+        // plane unconjugated: the norms are conjugates of each other.
         let (positive, negative) = if placement.w > 0.0 {
             (placement, &mirrored)
         } else {

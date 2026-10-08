@@ -197,10 +197,13 @@ pub enum KernelNormalisation {
 /// polarization) pair.
 ///
 /// `direct` is the adjoint table for `w > 0`; `conjugate` its partner for
-/// `w ≤ 0`. The kernel swaps the tables on the sign of `w` and on the
-/// direction of the transform and conjugates the taps (HPG
-/// `mueller_indexes` / `conjugate_mueller_indexes`). `None` skips a pair.
-/// Both tables are `[grid pol][visibility pol]`.
+/// `w ≤ 0`. `AWVisResampler::getConvFunc_p` reads `mNdx` for `wVal > 0`
+/// and `conjMNdx` otherwise, while `accumulateToGrid` conjugates the cell
+/// for `wVal > 0`: the table swap and the tap conjugation sit on opposite
+/// signs of `w`. The kernel swaps the tables on the sign of `w` and on the
+/// direction of the transform (HPG `mueller_indexes` /
+/// `conjugate_mueller_indexes`). `None` skips a pair. Both tables are
+/// `[grid pol][visibility pol]`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MuellerRouting {
     /// Adjoint table for `w > 0`.
@@ -241,8 +244,8 @@ impl MuellerRouting {
         self.direct.first().map_or(0, Vec::len)
     }
 
-    /// The table for one transform: the adjoint uses `direct` for `w > 0`,
-    /// the forward transform swaps them.
+    /// The table for one transform: the adjoint uses `direct` for `w > 0`
+    /// and `conjugate` otherwise, the forward transform swaps them.
     #[must_use]
     pub fn table(&self, w_positive: bool, forward: bool) -> &[Vec<Option<u8>>] {
         if w_positive != forward {
@@ -410,5 +413,25 @@ pub trait ConvolutionFunctionSet: Send + Sync {
     /// the largest of every tap layout the key can lend.
     fn placement_half_support(&self, key: CfKey, hold: &mut CellHold) -> [u16; 2] {
         self.taps(key, hold).half_support()
+    }
+
+    /// Whether a sample at `w_lambda` is gridded at all. `WProjectFT`'s
+    /// gridder drops a row whose plane index `nint(√(wScale·|w|))` lies
+    /// beyond the last plane (`wprojgrid.f` `owp` tests the unclamped
+    /// `loc(3)`); every other set accepts every `w` (the AW catalog clamps,
+    /// `CFBuffer::nearestWNdx`).
+    fn admits(&self, w_lambda: f64) -> bool {
+        let _ = w_lambda;
+        true
+    }
+
+    /// Whether the weight (sensitivity) image receives the image-side
+    /// correction. `AWProjectFT::getWeightImage` divides its average PB by
+    /// the sampling sinc as `getImage` does; `MosaicFT` publishes the
+    /// transform of its gridded weight functions as `skyCoverage_p` with
+    /// no correction at all, while its `getImage` divides the data and PSF
+    /// by the sinc.
+    fn corrects_weight_image(&self) -> bool {
+        true
     }
 }
