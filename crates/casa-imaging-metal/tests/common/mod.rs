@@ -34,11 +34,15 @@ pub fn metal(operator: &MeasurementOperator) -> Option<MetalBackend<'_>> {
 }
 
 pub fn geometry() -> GridGeometry {
+    geometry_of(IMAGE)
+}
+
+fn geometry_of(image: usize) -> GridGeometry {
     GridGeometry::new(
         ImageExtent {
-            shape: [IMAGE, IMAGE],
+            shape: [image, image],
             increment_rad: INCREMENT_RAD,
-            reference_pixel: [IMAGE / 2, IMAGE / 2],
+            reference_pixel: [image / 2, image / 2],
         },
         GridPadding::CasaComposite,
     )
@@ -50,9 +54,27 @@ fn routing() -> PolarizationRouting {
 }
 
 fn correction() -> ImageCorrection {
-    let template = Spheroidal::new(&geometry(), &routing());
+    correction_of(IMAGE)
+}
+
+fn correction_of(image: usize) -> ImageCorrection {
+    let template = Spheroidal::new(&geometry_of(image), &routing());
     let correction = template.image_correction();
     ImageCorrection::new(correction.x().to_vec(), correction.y().to_vec())
+}
+
+/// An `f32` operator over an `image × image` grid with complex dense taps
+/// of `support` taps per axis, for throughput measurements.
+pub fn wide_dense_operator(image: usize, support: u16, rng: &mut Rng) -> MeasurementOperator {
+    let mut cf = Dense::new(support, 8, rng);
+    cf.correction = correction_of(image);
+    MeasurementOperator::new(
+        geometry_of(image),
+        Basis::Constant,
+        routing(),
+        Box::new(cf),
+        GridPrecision::F32,
+    )
 }
 
 /// The kernel sets every law runs on.
