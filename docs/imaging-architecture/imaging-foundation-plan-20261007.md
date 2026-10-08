@@ -297,7 +297,7 @@ grid and d the selected unweighted visibility samples. The forward operator
 A : X → D and its adjoint A* are composed as
 
 ```
-A   = Degrid ∘ Fft ∘ Correction⁻¹ ∘ PolBasis⁻¹ ∘ ModelPrescale
+A   = Degrid ∘ Fft ∘ Correction ∘ PolBasis⁻¹ ∘ ModelPrescale   (R1: the same diagonal 1/grdsf on both sides, CASA GridFT)
 A*  = PolBasis ∘ Correction ∘ Fft⁻¹ ∘ Grid
 W   = diag(input weight · taper · density weight), flags removed from D
 b   = A* W d          dirty image (unnormalised)
@@ -387,11 +387,14 @@ pub enum TapLayout<'a> {
     /// oversampling-major so one fractional offset is one contiguous row.
     SeparableReal { rows: &'a [f32], support: u16, oversampling: u16 },
     /// W, AW, mosaic: dense complex kernel ordered `[oy][ox][mueller][iy][ix]`
-    /// (x fastest; one fractional offset contiguous), with `padding` major
-    /// cells per edge so the fine-offset sign selects the major index without
-    /// a branch (HPG layout). `mueller_planes` is 1 for scalar kernels.
+    /// (x fastest; one fractional offset contiguous) with `oversampling + 1`
+    /// fractional rows per axis and no padding cells (R1): `GridGeometry::locate`
+    /// is the one rounding rule (anchor = nearest cell, offset =
+    /// round((anchor − coordinate)·oversampling) + oversampling/2, even
+    /// oversampling), under which the fine-offset sign never changes the
+    /// major index. `mueller_planes` is 1 for scalar kernels.
     Dense { data: &'a [Complex32], support: [u16; 2], oversampling: u16,
-            padding: u8, mueller_planes: u8 },
+            mueller_planes: u8 },
 }
 
 /// Which CF Mueller plane serves each (grid pol, visibility pol) pair, for
@@ -429,16 +432,32 @@ adjoint:  table = w > 0 ? mueller.direct : mueller.conjugate
             grid[plane, gpol][v0+iy, u0+ix] += V'_vpol · tap'                 (Data; V' = W·V·e^{iφ})
                                              += W_vpol · tap'                 (Psf: V = 1)
                                              += W_vpol · weight_tap' at uvw=0 (Weight)
-            sumwt[plane, gpol] += W_vpol · |Σ taps used|
+            sumwt[plane, gpol] += W_vpol · |Σ (w > 0 ? t : conj(t))[m]|   (the norm, before the gradient)
           Taylor: term t grid receives the same with W · s^t (data: t < N_t; psf: t < 2N_t−1)
 forward:  table swapped (w > 0 ? conjugate : direct); tap' conjugated
           V_pred_vpol = e^{−iφ} · Σ_t s^t · Σ_{gpol,ix,iy} conj(tap'_t) · model[t][gpol][v0+iy, u0+ix]
-                        ÷ Σ taps used (unconjugated)
+                        ÷ N_vpol,   N_vpol = Σ_{gpol: table[gpol][vpol] = Some(m)} Σ_{ix,iy} (w > 0 ? t : conj(t))[m]
+                        (R1: one division per visibility over every routed Mueller plane; the
+                         norm omits the pointing gradient; N = 0 predicts 0 —
+                         CASA `AWVisResampler::GridToData`, `faccumulateFromGrid`)
 residual: V − V_pred, then the adjoint on the residual in the same dispatch
 ```
 
+Adjoint law (R1): with `N` the per-visibility norm above, the pair is
+exactly adjoint once each sample's data are divided by the conjugate norm,
+`⟨A x, d⟩_W = ⟨x, A*(W d ⊘ conj N)⟩`; `MeasurementOperator::prediction_norm`
+exposes `N` and `sumwt` accumulates `W·|N|`. The unnormalised law
+`⟨A x, d⟩_W = ⟨x, A* W d⟩` is the special case `N ≡ 1` (unit-sum spheroidal
+rows). The image-domain polarization conversion is CASA's `½·Sᴴ`
+(`StokesImageUtil::From`), so a Stokes request from correlation planes
+carries CASA's factor (2 for `[I, Q]` from `[XX, YY]`); the T0 tests pin both.
+
 ```rust
 pub enum Mode { Data, Psf, Weight }
+/// The modes one pass accumulates (`DATA`, `PSF`, `DATA_PSF`, `ALL`); sizes
+/// the accumulator so a later major cycle never pays for PSF terms and the
+/// planner knows what it charges (R1).
+pub struct ModeSet { pub data: bool, pub psf: bool, pub weight: bool }
 pub enum GridPrecision { F32, F64 }
 
 /// Per-worker grid storage: `[plane][pol][term][y][x]`, x fastest, interleaved
@@ -478,7 +497,13 @@ pub struct MeasurementOperator {
     precision: GridPrecision,
 }
 impl MeasurementOperator {
-    pub fn accumulator(&self, planes: PlaneRange, tile: Option<Tile>) -> GridAccumulator;
+    /// Planner input (R1): the layout of the pass a caller intends; admission
+    /// charges `layout.bytes(precision)` before anything is allocated.
+    pub fn accumulator_layout(&self, planes: PlaneRange, tile: Option<Tile>, modes: ModeSet) -> AccumulatorLayout;
+    /// Allocates exactly `accumulator_layout(planes, tile, modes)`, zeroed.
+    pub fn accumulator(&self, planes: PlaneRange, tile: Option<Tile>, modes: ModeSet) -> GridAccumulator;
+    /// The kernel norm `N` of one placement for one visibility polarization (R1 law).
+    pub fn prediction_norm(&self, placement: &Placement, vpol: usize) -> Complex64;
     /// model (× PB prescale when the product contract says flatnoise) ÷ correction → FFT
     pub fn prepare_model(&self, model: &ModelImages, prescale: ModelPrescale) -> PreparedModelGrids;
     /// FFT⁻¹, × correction, crop: unnormalised dirty/psf/weight planes + sumwt
@@ -487,12 +512,14 @@ impl MeasurementOperator {
 
 pub struct NormalImages {
     pub planes: Vec<NormalPlane>,  // one per output plane; Taylor terms inside
+    // plus `first_plane`, `pols`, `data_terms`, `psf_terms`; indexing goes through
+    // `data(plane, term, pol)`, `psf`, `weight` and the `*_sumwt` accessors (R1)
 }
 pub struct NormalPlane {
-    pub data: Vec<Array2<f32>>,    // residual/dirty per term (N_t) and pol
-    pub psf: Vec<Array2<f32>>,     // 2N_t−1 terms
-    pub weight: Option<Array2<f32>>, // mosaic/AW sensitivity
-    pub sumwt: Vec<f64>,
+    pub data: Vec<Array2<f32>>,    // residual/dirty, `[term][pol]` (N_t terms)
+    pub psf: Vec<Array2<f32>>,     // `[term][pol]`, 2N_t−1 terms
+    pub weight: Vec<Array2<f32>>,  // mosaic/AW sensitivity, one per pol; empty otherwise
+    pub sumwt: Vec<f64>,           // one per image, in the order data, psf, weight (R1)
 }
 ```
 
@@ -501,7 +528,10 @@ Weighting:
 ```rust
 pub enum WeightingGeneration {
     Natural { taper: Option<Taper> },
-    Density { grid: DensityGrid, robust: Option<f64>, taper: Option<Taper> },
+    /// `robust: None` is uniform; `bandwidth` is CASA `briggsbwtaper`
+    /// (`BriggsCubeWeightor::uvDistanceFactor`) and needs `robust` (R1).
+    Density { grid: DensityGrid, robust: Option<RobustFactors>,
+              bandwidth: Option<BandwidthTaper>, taper: Option<Taper> },
 }
 impl WeightingGeneration {
     /// Pure per-sample function; CASA cell rules live in `DensityGrid::lookup`.
@@ -683,7 +713,10 @@ before adoption:
   (Obit `ObitUVGridSetup`, `ThreadFlip`, `ThreadMerge`): halves grid memory
   and FFT work for Hermitian plane sets only; needs a T0 law (half-plane =
   full-plane to 1e-6) and a rule that cross-hand correlation grids are
-  excluded. Decided at gate R1 whether `GridAccumulator` reserves the layout.
+  excluded. R1: `GridAccumulator` neither reserves nor excludes it; all
+  addressing goes through `AccumulatorLayout::block_offset` and `Tile`, so
+  the layout is a `Tile` variant plus a conjugate fold in `finish`, with no
+  change to `GridBackend::apply`.
 - Replica-merge partition (planes × sample chunks with private grids and an
   O(grid) merge per replica; Obit `ObitThreadGridSetupMF`): a third
   decomposition between `Planes` and `Regions`, measured against `Regions`
@@ -836,9 +869,14 @@ totals, product list. It is the only runtime record. If
   warnings` on touched crates, the checker (D6), T0 for touched operators,
   T1 for touched capabilities, and `just quick` at ticket end. T1.5 runs
   before review for science-bearing tickets.
-- Review per ticket: one contract review (owner or Fable) against the issue's
-  outcome, deletion rows and section 10. Preferences cannot block; a cited
-  rule or a failing acceptance test can.
+- Review per ticket: one independent review by a separate agent or person
+  (so far OpenAI Astra, posted under the owner's login) against the issue's
+  outcome, deletion rows, section 10 and the CASA source. Preferences cannot
+  block; a cited rule or a failing acceptance test can. Once the gates are
+  green, the review's findings are resolved and no deviation is open for the
+  owner, the implementer marks the PR ready and arms auto-merge without
+  asking (AGENTS.md, Merging); the owner is consulted only for section 3
+  decisions, external contracts and the Ask First list.
 - Intermediate breakage is accepted and stated: between IF-2 and IF-4 Metal
   is unavailable; between IF-2 and IF-3 W, AW and mosaic are unavailable.
   `availability::check` rejects them with a typed reason during that window.
@@ -963,10 +1001,14 @@ IF-10 → IF-11. IF-5 may run in parallel with IF-3/IF-4 (different crate).
 
 ### 9.3 Review gates
 
-Each gate is a scheduled review by the owner with Fable and (probably) OpenAI
-Astra. The implementer prepares the inputs; the reviewers answer the
-questions; the owner records the outcome as a dated section appended to this
-document (`## Gate Rn outcome — date`), including any replanning. A gate that
+Each gate is the independent review of the gate ticket's PR plus the owner's
+decisions on the deviations recorded on that ticket. The implementer
+prepares the inputs below, posts deviations as they occur and asks the owner
+only what needs the owner (section 3 decisions, external contracts); the
+reviewer answers the gate questions; the implementer records the outcome as
+a dated section appended to this document (`## Gate Rn outcome — date`),
+including any replanning. The gate closes when that section is on `main`
+and the ticket's PR is merged under the AGENTS.md merge rule. A gate that
 replans edits the affected ticket bodies before the next ticket starts.
 
 Inputs for every gate: the merged PR list with diff stats; current non-test
@@ -1091,7 +1133,96 @@ Philosophy of Software Design* (deep modules; define errors out of existence).
   tables) lives under `/Volumes/GLENDENNING/casa-rs-evidence/if/<ticket>/`
   with a `README.md` naming the commit, command and result. Nothing
   restart-critical under `/tmp`.
-- Merge, cleanup and release remain owner-authorised actions. Closing the
-  #486 family (D7) happens in IF-0 after this plan is approved.
+- A ticket PR merges without asking once its gates are green, its
+  independent review is resolved and no deviation is open for the owner
+  (AGENTS.md, Merging; decided at R1). Cleanup and release remain
+  owner-authorised actions. Closing the #486 family (D7) happened in IF-0.
 - AGENTS.md is updated in IF-0 to point programme text at this plan and
   remove the #486-specific rules.
+
+## Gate R1 outcome — 2026-10-07
+
+Gate ticket IF-1 (#650), PR #662 on `claude/if-1-operator-core`, final
+commit 71a27e7cd4. Reviewers: OpenAI Astra (independent review of the PR at
+45386478de, posted under the owner's login, five findings), the owner
+(deviation decisions, the normalisation decision), Fable (implementer).
+
+### Inputs
+
+| Input | Value |
+|---|---|
+| PR | #662: 4 commits, 24 files, +6,636 / −4 lines, base `main` |
+| `casa-imaging-operator` | 4,443 non-test lines (`src/`, largest file 589), 2,201 test lines |
+| Tests | 46 (9 unit, 37 integration), each under a second, both precisions; `just quick` green at 71a27e7cd4: 4,514 passed, 68 skipped |
+| T1 / T1.5 | none (no production caller until IF-2) |
+| Pilot W4 time | none yet; IF-2 records the first |
+| Deviations | eleven on #650, each with an owner decision |
+| Implementer note | the IF-1 retrospective on #648 (eight rules, applied to IF-2 … IF-11 as per-ticket comments) |
+
+### Answers to the R1 questions
+
+- **`Placement`/`SampleBlock` sufficient for W, AW, mosaic and Taylor
+  without extension.** Yes. `w` and `CfKey { group, cube }` carry the
+  W-plane and AW cell, `gradient` the mosaic pointing phasor, `phase` the
+  phase-centre shift, `spectral` the Taylor power; `RowContext` carries
+  time, antennas, parallactic angles, field and pointing offset for `key()`.
+  The dense kernel laws run with complex taps, gradients and a two-plane
+  Mueller routing. IF-3 confirms this against the CASA AW and mosaic
+  machines.
+- **`GridBackend::apply` with `Work` fits the Metal plan.** Yes. The
+  accumulator layout `[plane][pol][term][y][x]`, interleaved complex, is the
+  device buffer and `AccumulatorLayout::bytes(precision)` sizes it exactly.
+  Metal accumulates in f32, so `gridprecision = f64` with the Metal backend
+  is a typed rejection (IF-4); the rounding rule in `GridGeometry::locate`
+  is shared by both backends.
+- **CASA-pinned rules placed where IF-3 expects them.** `key()` on the CF
+  set (cache index, conjugate-beam frequency map), `MuellerRouting::table`
+  (the w-sign and direction swap), `Placement::gradient` and `phase` (the
+  pointing phasor), `CpuBackend` with `kernel::norm` and `prediction_norm`
+  (the AW normalisation). Each rule's rustdoc names the CASA function
+  (`StokesImageUtil`, `VisImagingWeight`, `BriggsCubeWeightor`,
+  `FTMachine::matchChannel`, `interpolateFrequencyTogrid`,
+  `AWVisResampler::GridToData`, `faccumulateFromGrid`).
+- **Hermitian half plane.** Neither reserved nor excluded (section 5.9): a
+  `Tile` variant plus a conjugate fold in `finish`; stays an IF-10 candidate.
+- **T0 law set strong enough to replace the fixture tests IF-2 deletes.**
+  After the review, yes. Three of the five findings came from laws tested on
+  the convenient case (real unit-sum taps, equal XX/YY weights, several
+  channels); the fix added the general-case laws (complex taps with
+  gradients and leakage routing, polarized PSF, one-channel image and
+  one-channel row). Retrospective rule 2 makes that the standard for every
+  later ticket.
+
+### Decisions
+
+- Deviations 1–11 on #650: `ModeSet` on `accumulator` plus
+  `accumulator_layout` as the planner's memory input (kept); HPG padding
+  dropped; `NormalSection` dropped for the plan's vectors with one `sumwt`
+  per image; `briggsbwtaper` kept as `BandwidthTaper`; operator-local input
+  types; the paired correction on both sides; polarization pinned to CASA
+  `StokesImageUtil`; CASA's unpolarized weight and any-correlation-flagged
+  rule; the density pass on the resampler's blocks; the Hermitian layout
+  neither reserved nor excluded.
+- Normalisation (the review's contract question): CASA's normalisation
+  kept; the law is "exactly adjoint once each sample's data are divided by
+  the conjugate kernel norm", with the unnormalised law as the `N ≡ 1` case.
+- The five review findings fixed in 71a27e7cd4 and answered inline on the PR.
+
+### Replanning
+
+- Section 5.3 amended in place (marked R1): `TapLayout::Dense` without
+  padding, the kernel contract's single division by the norm and the
+  adjoint law, `ModeSet`, `accumulator_layout`/`accumulator`/
+  `prediction_norm`, `NormalPlane`/`NormalImages`,
+  `WeightingGeneration::Density`. Section 5.9's Hermitian row records the
+  decision.
+- Ticket bodies: IF-2 … IF-11 each carry a "Learnings from IF-1" comment
+  with the interfaces to build on; IF-3 is reassigned to Fable (the densest
+  CASA-pinned science); IF-4 notes that Metal implies f32 accumulation and
+  that the rounding-rule choice is separate.
+- Process: a ticket PR merges without an owner consult once its gates are
+  green, its independent review is resolved and no deviation is open for the
+  owner (AGENTS.md, Merging; sections 9.1, 9.3 and 11 amended). Gates R2 to
+  R4 close the same way: outcome section on `main`, PR merged.
+
+Gate closed: #662 marked ready and auto-merge armed on 2026-10-07.
