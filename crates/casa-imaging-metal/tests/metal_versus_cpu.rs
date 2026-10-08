@@ -427,7 +427,17 @@ fn misplaced_samples_and_host_accumulators_are_refused_before_the_device() {
     let Some(mut metal) = metal(&operator) else {
         return;
     };
-    let placed = placements(&operator, full(&operator), 2_000, 1, &mut rng);
+    // 3,001 samples are three ring sub-blocks of 1,001; the one misplaced
+    // sample (anchored left of the tile) sits in the third, so the panic
+    // comes after two sub-blocks are committed.
+    let tile = region(&operator);
+    let [nx, ny] = operator.geometry().grid_shape();
+    let outside = Tile {
+        origin: [0, 0],
+        shape: [nx / 4, ny / 3],
+    };
+    let mut placed = placements(&operator, tile, 3_000, 1, &mut rng);
+    placed.insert(2_500, placements(&operator, outside, 1, 1, &mut rng)[0]);
     let buffer = block(&placed, &mut rng);
     let planes = PlaneRange::single(0);
     let panic_message = |outcome: Result<(), Box<dyn std::any::Any + Send>>| {
@@ -438,10 +448,8 @@ fn misplaced_samples_and_host_accumulators_are_refused_before_the_device() {
             .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_string()))
             .unwrap_or_default()
     };
-    let tile = region(&operator);
-    let mut tiled =
-        MetalBackend::accumulator(operator.accumulator_layout(planes, Some(tile), ModeSet::DATA))
-            .expect("device");
+    let layout = operator.accumulator_layout(planes, Some(tile), ModeSet::DATA);
+    let mut tiled = MetalBackend::accumulator(layout.clone()).expect("device");
     let message = panic_message(catch_unwind(AssertUnwindSafe(|| {
         let _ = metal.apply(
             &buffer.block(),
@@ -455,6 +463,33 @@ fn misplaced_samples_and_host_accumulators_are_refused_before_the_device() {
     assert!(
         message.contains("outside the accumulator tile"),
         "{message}"
+    );
+    // The panic left `apply` only after the committed sub-blocks finished:
+    // the tile already holds exactly their samples.
+    let mut committed = SampleBuffer::new(2);
+    let whole = buffer.block();
+    for sample in 0..2_002 {
+        committed.push(
+            whole.placements[sample],
+            whole.values_of(sample),
+            whole.weights_of(sample),
+        );
+    }
+    let mut cpu = operator.accumulator(planes, Some(tile), ModeSet::DATA);
+    CpuBackend::new()
+        .apply(
+            &committed.block(),
+            operator.cf(),
+            Work::Grid {
+                mode: Mode::Data,
+                acc: &mut cpu,
+            },
+        )
+        .expect("cpu");
+    assert_close(
+        <f32 as GridScalar>::cells(tiled.storage()),
+        <f32 as GridScalar>::cells(cpu.storage()),
+        "the committed sub-blocks",
     );
     let mut host = operator.accumulator(planes, None, ModeSet::DATA);
     let message = panic_message(catch_unwind(AssertUnwindSafe(|| {

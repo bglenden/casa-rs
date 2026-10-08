@@ -304,40 +304,43 @@ impl<'cf> MetalBackend<'cf> {
         self.usage.applies += 1;
         self.usage.samples += samples as u64;
         self.usage.sub_blocks += samples.div_ceil(sub) as u64;
-        let mut outcome = Ok(());
-        let mut start = 0;
-        while start < samples {
-            let end = (start + sub).min(samples);
-            let slot = self.next;
-            self.next = (self.next + 1) % RING;
-            outcome = self.retire(slot, block, &mut readback);
-            if outcome.is_err() {
-                break;
+        // A misplaced sample panics in `prepare` after earlier sub-blocks are
+        // committed: drain the ring before the panic leaves `apply`, so the
+        // device never writes the accumulator once the caller holds it again.
+        let dispatched = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut start = 0;
+            while start < samples {
+                let end = (start + sub).min(samples);
+                let slot = self.next;
+                self.next = (self.next + 1) % RING;
+                self.retire(slot, block, &mut readback)?;
+                let started = std::time::Instant::now();
+                let filled = self.fill(
+                    slot,
+                    kernel,
+                    block,
+                    start..end,
+                    targets,
+                    sumwt.as_deref_mut(),
+                );
+                self.usage.prepare += started.elapsed();
+                filled?;
+                self.commit(slot, kernel, grid, model, params, start..end)?;
+                start = end;
             }
-            let started = std::time::Instant::now();
-            outcome = self.fill(
-                slot,
-                kernel,
-                block,
-                start..end,
-                targets,
-                sumwt.as_deref_mut(),
-            );
-            self.usage.prepare += started.elapsed();
-            outcome =
-                outcome.and_then(|()| self.commit(slot, kernel, grid, model, params, start..end));
-            if outcome.is_err() {
-                break;
-            }
-            start = end;
-        }
+            Ok::<_, OperatorError>(())
+        }));
+        let mut drained = Ok(());
         for slot in 0..RING {
             let retired = self.retire(slot, block, &mut readback);
-            if outcome.is_ok() {
-                outcome = retired;
+            if drained.is_ok() {
+                drained = retired;
             }
         }
-        outcome
+        match dispatched {
+            Ok(outcome) => outcome.and(drained),
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
     }
 
     /// Write the records, values, weights and inverse norms of samples
@@ -550,6 +553,13 @@ impl Arena {
 
 impl Drop for MetalBackend<'_> {
     fn drop(&mut self) {
+        // `run` drains the ring before returning or unwinding; this only
+        // keeps a dropped backend from outliving work it committed.
+        for slot in &mut self.ring {
+            if let Some(Command(command)) = slot.command.take() {
+                command.waitUntilCompleted();
+            }
+        }
         let Usage {
             applies,
             samples,
