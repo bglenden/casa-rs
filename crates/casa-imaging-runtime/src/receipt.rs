@@ -6768,6 +6768,9 @@ fn project_centres(fields: &mut BTreeMap<String, String>, geometry: &CompiledGeo
                 "phase_tracking_centre",
             );
         }
+        PointingCentreLaw::FieldCentre => {
+            evidence_field(fields, "geometry.centres.pointing.kind", "field_centre");
+        }
         PointingCentreLaw::Fixed(direction) => {
             evidence_field(fields, "geometry.centres.pointing.kind", "fixed");
             project_sky_direction(fields, "geometry.centres.pointing.direction", *direction);

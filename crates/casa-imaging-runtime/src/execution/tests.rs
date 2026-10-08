@@ -2135,11 +2135,12 @@ fn scheduler_rejects_discrete_metal_memory_instead_of_inventing_a_mac_model() {
     ));
 }
 
-/// Metal work is refused, typed, before the Resource Authority is asked:
-/// even under a policy admission would refuse for want of memory, the error
-/// is the missing backend, and the whole host memory stays available.
+/// Metal work nodes are refused, typed, before the Resource Authority is
+/// asked (Metal runs inside the major-cycle pass): even under a policy
+/// admission would refuse for want of memory, the error is the Metal node,
+/// and the whole host memory stays available.
 #[test]
-fn scheduler_refuses_metal_work_before_admission_until_the_backend_exists() {
+fn scheduler_refuses_metal_work_nodes_before_admission() {
     let (authority, plan) = metal_plan(true);
     let no_memory = ResourcePolicy::Explicit(crate::ResourceOverride {
         memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 0)]),

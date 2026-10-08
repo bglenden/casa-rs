@@ -164,7 +164,7 @@ def test_shared_cross_surface_profile_matches_canonical_expected_values(
     if surface == "imager":
         invocation = loaded.provider_invocation()
         assert invocation.protocol_name == "casa_imager_task"
-        assert invocation.protocol_version == 10
+        assert invocation.protocol_version == 11
         assert json.loads(invocation.stdin or "null") == expected["request"]
         unsupported = {reason.id for reason in invocation.unsupported_reasons}
         # AW and W projection are typed unavailable from IF-2 until IF-3
@@ -230,7 +230,7 @@ def test_imager_python_profiles_round_trip_exact_provider_requests(
 
     assert before == after
     assert before.protocol_name == "casa_imager_task"
-    assert before.protocol_version == 10
+    assert before.protocol_version == 11
     request = json.loads(before.stdin or "null")["request"]
     assert request["measurement_set"] == f"{name}.ms"
     if name == "native-aw":

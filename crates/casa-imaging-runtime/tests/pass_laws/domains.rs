@@ -118,6 +118,7 @@ fn outlier_cube_waves_equal_one_resident_pass() {
                 model: Some(&prepare),
                 modes: ModeSet::DATA,
                 native_spacing_hz: WIDTH_HZ,
+                ..Run::initial()
             },
         )
     };

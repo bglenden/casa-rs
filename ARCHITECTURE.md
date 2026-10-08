@@ -73,9 +73,10 @@ and depends inward on the model plus reconstruction's opaque executable-problem
 brand. That reconstruction edge is limited to admitting owner-prepared model
 inputs at the execution and receipt boundary; runtime does not own or invoke
 reprojection algorithms. It owns the major-cycle pass, its worker team and
-bounded source stream, and the paged cube state (see Imaging execution). The
-scheduler rejects Metal work until IF-4 installs a Metal backend in the pass;
-there is no CPU substitution. Runtime also
+bounded source stream, and the paged cube state (see Imaging execution). Metal
+runs inside the pass: with `backend = metal` every owner grids through its
+own `casa_imaging_metal::MetalBackend`, and the execution scheduler refuses
+Metal work nodes. Runtime also
 owns content-addressed prepared implementation artifacts: an exact artifact
 identity, a separate cache identity, bounded generation or load, integrity
 validation, private atomic caching, and deterministic eviction. Artifact
@@ -730,11 +731,22 @@ and stage timings through `tracing`. `parallel=false` runs the pass with one
 worker. All production FFTs use FFTW; there is no FFT backend selector or
 fallback.
 
-W-projection, AW-projection, mosaics (including `mtmfs` via cube), Metal
-execution, facets and cubic spectral interpolation are typed unavailability in
+W-projection, AW-projection, mosaics (including `mtmfs` via cube), facets and
+cubic spectral interpolation are typed unavailability in
 `casa-imaging-application`'s availability check, before planning, until the
-convolution-function sets of IF-3 and the Metal backend of IF-4 install them
-in the pass (cubic and facets await owner decisions on #651).
+convolution-function sets of IF-3 install them in the pass (facets #664 and
+cubic #42 follow IF-4).
+
+`backend = metal` (macOS, a unified-memory Metal 3 device) grids every pass on
+the Metal device: `casa-imaging-metal` implements the operator's
+`GridBackend` with support-generic kernels (one SIMD group per sample, `f32`
+atomic adds) into accumulators whose cells live in shared device memory
+(`GridStorage::Device`). The host locates every sample with the operator's
+rounding rule and accumulates `sumwt` in `f64`, so tap selection and `sumwt`
+equal the CPU's; every dispatch completes inside `apply`, cut into
+sub-blocks over a three-slot ring. Operators are `f32` for every basis on
+Metal (D2). Placement and the native-channel predictions of multi-domain or
+linearly interpolated residuals stay on the CPU workers.
 Reconstruction's AW, mosaic and primary-beam modules, the runtime
 prepared-artifact store and the application's AW preparation are kept, unused,
 for IF-3. Application availability is the capability boundary: component
@@ -802,9 +814,9 @@ presence alone never makes a route available.
 - The imaging foundation refactor (#648, ADR-0016) is in progress; the plan in
   `docs/imaging-architecture/imaging-foundation-plan-20261007.md` is the
   target. IF-2 replaced the gridding drivers and replay cache with the
-  major-cycle pass. Product publication still runs through the runtime's
-  plan, executor and receipt layers, which IF-6 deletes; W, AW, mosaic and
-  Metal imaging are unavailable until IF-3 and IF-4.
+  major-cycle pass, and IF-4 added the Metal backend. Product publication
+  still runs through the runtime's plan, executor and receipt layers, which
+  IF-6 deletes; W, AW and mosaic imaging are unavailable until IF-3.
 
 ## ADR index
 

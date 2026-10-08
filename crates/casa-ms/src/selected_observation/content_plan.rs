@@ -410,7 +410,9 @@ pub(crate) fn selected_content_requirements(
                 crate::PointingDirectionColumn::Target
             }
         }),
-        PointingCentreLaw::PhaseTrackingCentre | PointingCentreLaw::Fixed(_) => None,
+        PointingCentreLaw::PhaseTrackingCentre
+        | PointingCentreLaw::FieldCentre
+        | PointingCentreLaw::Fixed(_) => None,
     };
     for description in source.selection().data_descriptions() {
         let channels = source

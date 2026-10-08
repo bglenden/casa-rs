@@ -43,6 +43,7 @@ use casa_imaging_model::{
     WeightingContract, WeightingScheme,
 };
 use casa_imaging_reconstruction::{MinorCycleImageResponse, ReconstructionMaskPlan};
+use casa_imaging_runtime::pass::BackendChoice;
 use casa_imaging_runtime::{
     BuildIdentity, ExecutionAttemptId, ExecutionReceiptStore, ImplementationRegistryId,
     PagedStateDirectory, PlannerCostModelProfileId, ProductionStorageProfile, ReceiptRetention,
@@ -427,6 +428,9 @@ pub struct ContinuumImagingRequest {
     pub task_requirements: Vec<TaskRequirement>,
     /// User-selected host-use policy carried unchanged into physical planning.
     pub resource_policy: ResourcePolicy,
+    /// Where the major-cycle passes grid. Metal grids in `f32` for every
+    /// basis (D2) and needs a unified-memory Metal 3 device.
+    pub backend: BackendChoice,
 }
 
 /// Small presentation projection of one completed native continuum run.
@@ -1591,7 +1595,11 @@ fn prepare(
         CentreLaws::new(
             phase_centre_law,
             DelayCentreLaw::PhaseTrackingCentre,
-            continuum_pointing_centre_law(mosaic_use_pointing, aw_use_pointing),
+            continuum_pointing_centre_law(
+                mosaic || request.aw_projection.is_some(),
+                mosaic_use_pointing,
+                aw_use_pointing,
+            ),
         ),
         if mosaic || request.aw_projection.is_some() {
             UvwCoordinateLaw::MosaicPhaseTrackingCentre
@@ -1951,9 +1959,21 @@ fn prepare(
         .with_ephemeris(ephemeris),
         write_model_column: request.save_model_column,
         write_corrected_data: request.save_continuum_residual,
-        task_requirements: request.task_requirements,
+        task_requirements: backend_requirement(request.task_requirements, request.backend),
         native,
     })
+}
+
+/// The task requirements with the Metal backend's own when `backend` asks
+/// for it, so availability rejects Metal where it is not installed.
+fn backend_requirement(
+    mut requirements: Vec<TaskRequirement>,
+    backend: BackendChoice,
+) -> Vec<TaskRequirement> {
+    if backend == BackendChoice::Metal && !requirements.contains(&TaskRequirement::MetalGridder) {
+        requirements.push(TaskRequirement::MetalGridder);
+    }
+    requirements
 }
 
 const CASA_DEFAULT_AW_POINTING_OFFSET_SIGDEV_ARCSEC: [f64; 2] = [600.0, 600.0];
@@ -1978,9 +1998,12 @@ fn effective_aw_pointing_offset_sigdev_arcsec(
 }
 
 /// Where each row points: the POINTING table under tclean `usepointing`
-/// (AW samples it at the visibility time, mosaic interpolates it), else the
-/// field's phase-tracking centre (`usepointing=False`, the tclean default).
+/// (AW samples it at the visibility time, mosaic interpolates it); each
+/// row's FIELD direction for a mosaic or A-projection run without it
+/// (`usepointing=False`, the tclean default); the phase-tracking centre
+/// for a direction-independent run.
 fn continuum_pointing_centre_law(
+    direction_dependent: bool,
     mosaic_use_pointing: bool,
     aw_use_pointing: bool,
 ) -> PointingCentreLaw {
@@ -2002,6 +2025,8 @@ fn continuum_pointing_centre_law(
             PointingExtrapolation::Reject,
             MissingPointingPolicy::Reject,
         ))
+    } else if direction_dependent {
+        PointingCentreLaw::FieldCentre
     } else {
         PointingCentreLaw::PhaseTrackingCentre
     }
@@ -3271,6 +3296,7 @@ fn runtime(
         paged_state_storage,
         confidence_parts_per_million: 900_000,
         resource_policy: request.resource_policy.clone(),
+        backend: request.backend,
         cost_model: PlannerCostModelProfileId::from_sha256(hash(b"spectral-cycle-cost-v1")),
         authority,
         receipts: ExecutionReceiptStore::new(receipts, ReceiptRetention::new(512, 256 << 20)?)?,
@@ -3433,7 +3459,8 @@ mod tests {
 
     #[test]
     fn aw_pointing_compiles_casa_visibility_sampling_law() {
-        let PointingCentreLaw::Observation(law) = continuum_pointing_centre_law(false, true) else {
+        let PointingCentreLaw::Observation(law) = continuum_pointing_centre_law(true, false, true)
+        else {
             panic!("AW usepointing must compile an observation pointing law");
         };
 
@@ -3446,10 +3473,15 @@ mod tests {
     #[test]
     fn mosaic_points_at_the_field_centre_unless_usepointing() {
         assert!(matches!(
-            continuum_pointing_centre_law(false, false),
+            continuum_pointing_centre_law(false, false, false),
             PointingCentreLaw::PhaseTrackingCentre
         ));
-        let PointingCentreLaw::Observation(law) = continuum_pointing_centre_law(true, false) else {
+        assert!(matches!(
+            continuum_pointing_centre_law(true, false, false),
+            PointingCentreLaw::FieldCentre
+        ));
+        let PointingCentreLaw::Observation(law) = continuum_pointing_centre_law(true, true, false)
+        else {
             panic!("mosaic usepointing must compile an observation pointing law");
         };
 

@@ -4,8 +4,9 @@
 
 use std::sync::Arc;
 
-use num_complex::Complex32;
+use num_complex::{Complex32, Complex64};
 
+use crate::geometry::CellLocation;
 use crate::sample::CfKey;
 
 /// Taps of one convolution-function cell in the layout the kernels read.
@@ -70,6 +71,16 @@ impl TapLayout<'_> {
             Self::SeparableReal { .. } => 1,
             Self::Dense { mueller_planes, .. } => *mueller_planes,
         }
+    }
+
+    /// The kernel norm `Σ (conjugate ? conj(t) : t)` of Mueller plane
+    /// `mueller` at the fine offsets of `location`, summed in `f64` without
+    /// the pointing ramp: the forward normalisation every backend divides
+    /// by and whose magnitude `sumwt` accumulates (CASA
+    /// `AWVisResampler::faccumulateFromGrid`).
+    #[must_use]
+    pub fn norm(&self, location: CellLocation, mueller: u8, conjugate: bool) -> Complex64 {
+        crate::cpu::kernel::norm(self, location, mueller, conjugate)
     }
 }
 

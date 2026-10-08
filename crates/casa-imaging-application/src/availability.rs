@@ -39,10 +39,8 @@ pub enum TaskRequirement {
     ExecutionAuto,
     /// Fixed-tile CPU execution override.
     FixedTileCpu,
-    /// Metal gridding override.
+    /// Gridding on the Metal backend (`backend = metal`); macOS only.
     MetalGridder,
-    /// Grouped Metal row-run gridding override.
-    MetalRowRunGroupedGridder,
     /// Non-Stokes-I or raw-correlation selection.
     PolarizationSelection,
     /// UV tapering.
@@ -58,7 +56,7 @@ pub enum TaskRequirement {
 impl TaskRequirement {
     /// Complete stable task-only capability catalog for the current application
     /// contract.
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 20] = [
         Self::SpectralCube,
         Self::SpectralCubedata,
         Self::SpectralCubeSource,
@@ -74,7 +72,6 @@ impl TaskRequirement {
         Self::ExecutionAuto,
         Self::FixedTileCpu,
         Self::MetalGridder,
-        Self::MetalRowRunGroupedGridder,
         Self::PolarizationSelection,
         Self::UvTaper,
         Self::PerChannelWeightDensity,
@@ -101,7 +98,6 @@ impl TaskRequirement {
             Self::ExecutionAuto => "execution_auto",
             Self::FixedTileCpu => "fixed_tile_cpu",
             Self::MetalGridder => "metal_gridder",
-            Self::MetalRowRunGroupedGridder => "metal_row_run_grouped_gridder",
             Self::PolarizationSelection => "polarization_selection",
             Self::UvTaper => "uv_taper",
             Self::PerChannelWeightDensity => "per_channel_weight_density",
@@ -318,26 +314,29 @@ fn coupled_basis_requires_independent_polarization(
 
 /// Task surfaces the major-cycle pass runs, with the standard, W-plane,
 /// mosaic and AW kernel sets. Multi-term continuum through cube major
-/// cycles (`mvc`) has no pass implementation; Metal gridding waits for the
-/// Metal backend (IF-4, #653).
+/// cycles (`mvc`) has no pass implementation; the Metal backend exists only
+/// on macOS.
 const fn supports_task(requirement: TaskRequirement) -> bool {
-    matches!(
-        requirement,
-        TaskRequirement::SpectralCube
-            | TaskRequirement::SpectralCubedata
-            | TaskRequirement::SpectralCubeSource
-            | TaskRequirement::MosaicGridder
-            | TaskRequirement::WProjection
-            | TaskRequirement::WProjectionPlanes
-            | TaskRequirement::AwProjection
-            | TaskRequirement::PolarizationSelection
-            | TaskRequirement::Automasking
-            | TaskRequirement::MaskProduct
-            | TaskRequirement::ModelColumnWrite
-            | TaskRequirement::PerChannelWeightDensity
-            | TaskRequirement::SerialCpu
-            | TaskRequirement::FixedTileCpu
-    )
+    match requirement {
+        TaskRequirement::MetalGridder => cfg!(target_os = "macos"),
+        _ => matches!(
+            requirement,
+            TaskRequirement::SpectralCube
+                | TaskRequirement::SpectralCubedata
+                | TaskRequirement::SpectralCubeSource
+                | TaskRequirement::MosaicGridder
+                | TaskRequirement::WProjection
+                | TaskRequirement::WProjectionPlanes
+                | TaskRequirement::AwProjection
+                | TaskRequirement::PolarizationSelection
+                | TaskRequirement::Automasking
+                | TaskRequirement::MaskProduct
+                | TaskRequirement::ModelColumnWrite
+                | TaskRequirement::PerChannelWeightDensity
+                | TaskRequirement::SerialCpu
+                | TaskRequirement::FixedTileCpu
+        ),
+    }
 }
 
 /// Scientific capabilities of the major-cycle pass. Faceted geometry has no
@@ -396,14 +395,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn metal_facets_and_mtmfs_via_cube_wait_for_their_tickets() {
-        for task in [
-            TaskRequirement::SpectralMtmfsViaCube,
-            TaskRequirement::MetalGridder,
-            TaskRequirement::MetalRowRunGroupedGridder,
-        ] {
-            assert!(!supports_task(task), "{task:?}");
-        }
+    fn mtmfs_via_cube_and_facets_wait_and_metal_needs_macos() {
+        assert!(!supports_task(TaskRequirement::SpectralMtmfsViaCube));
+        assert_eq!(
+            supports_task(TaskRequirement::MetalGridder),
+            cfg!(target_os = "macos")
+        );
         for capability in [
             RequiredCapability::FacetedGeometry,
             RequiredCapability::Product(ProductKind::PbCorrectedSpectralIndex),
@@ -534,10 +531,12 @@ mod tests {
                 .iter()
                 .find(|entry| {
                     entry.requirement()
-                        == ImagingCapabilityRequirement::Task(TaskRequirement::MetalGridder)
+                        == ImagingCapabilityRequirement::Task(TaskRequirement::SpectralMtmfsViaCube)
                 })
                 .and_then(ImagingCapabilityCatalogEntry::unsupported),
-            Some(UnsupportedRequirement::Task(TaskRequirement::MetalGridder))
+            Some(UnsupportedRequirement::Task(
+                TaskRequirement::SpectralMtmfsViaCube
+            ))
         );
         assert!(
             catalog

@@ -10070,7 +10070,7 @@ mod tests {
             invocation.protocol_name.as_deref(),
             Some("casa_imager_task")
         );
-        assert_eq!(invocation.protocol_version, Some(10));
+        assert_eq!(invocation.protocol_version, Some(11));
         assert!(invocation.unsupported_reasons.is_empty());
         let request: serde_json::Value =
             serde_json::from_str(invocation.stdin.as_deref().expect("stdin JSON")).unwrap();
@@ -10160,7 +10160,7 @@ mod tests {
             invocation.protocol_name.as_deref(),
             Some("casa_imager_task")
         );
-        assert_eq!(invocation.protocol_version, Some(10));
+        assert_eq!(invocation.protocol_version, Some(11));
         let reasons = invocation
             .unsupported_reasons
             .iter()
@@ -10228,7 +10228,20 @@ mod tests {
                 .choices
                 .as_ref()
                 .map(|choices| { choices.iter().map(String::as_str).collect::<Vec<_>>() }),
-            Some(vec!["auto", "cpu", "metal", "multi-cpu"])
+            Some(vec!["auto", "cpu", "multi-cpu"])
+        );
+        let backend = arguments
+            .iter()
+            .find(|argument| argument.id == "backend")
+            .expect("backend UI argument");
+        assert_eq!(backend.default.as_deref(), Some("cpu"));
+        assert_eq!(
+            backend
+                .parser
+                .choices
+                .as_ref()
+                .map(|choices| { choices.iter().map(String::as_str).collect::<Vec<_>>() }),
+            Some(vec!["cpu", "metal"])
         );
     }
 

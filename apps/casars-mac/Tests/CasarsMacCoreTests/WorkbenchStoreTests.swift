@@ -4,7 +4,7 @@ import XCTest
 @testable import CasarsMacCore
 
 /// Mirrors `IMAGER_TASK_PROTOCOL_VERSION` in `crates/casars-imager/src/task_contract.rs`.
-private let imagerTaskProtocolVersion: UInt32 = 10
+private let imagerTaskProtocolVersion: UInt32 = 11
 
 final class WorkbenchStoreTests: XCTestCase {
     func testAssistantContextsUseEachTaskTabSessionAndPreserveUserSelection() throws {
@@ -3201,7 +3201,7 @@ final class WorkbenchStoreTests: XCTestCase {
             "--weighting", "briggsbwtaper",
             "--perchanweightdensity",
             "--gridder", "wproject",
-            "--standard-mfs-acceleration", "metal",
+            "--backend", "metal",
             "--write-pb",
             "--pbcor"
         ]

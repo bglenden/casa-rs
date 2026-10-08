@@ -10,16 +10,16 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 399
+- Concepts: 400
 - Surfaces: 29 (27 task, 2 session)
-- Surface bindings: 570
+- Surface bindings: 571
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
 | [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 4 | <code>msexplore</code> | 68 | explore and export common MeasurementSet plotms-style plots |
 | [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 4 | <code>calibration</code> | 49 | apply, inspect, and solve CASA-style calibration workflows |
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 3 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
-| [Imager](#surface-imager)<br><code>imager</code> | task | 18 | <code>imager</code> | 91 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
+| [Imager](#surface-imager)<br><code>imager</code> | task | 19 | <code>imager</code> | 92 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
 | [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 4 | <code>simobserve</code> | 43 | Generate a CASA-compatible synthetic VLA MeasurementSet |
 | [Table Browser](#surface-tablebrowser)<br><code>tablebrowser</code> | session | 3 | <code>table_browser</code> | 7 | browse arbitrary casacore tables |
 | [ImExplore](#surface-imexplore)<br><code>imexplore</code> | session | 3 | <code>image_browser</code> | 17 | browse persistent casacore images |
@@ -219,7 +219,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Imager (<code>imager</code>)
 
 - Kind: `task`
-- Contract version: `18`
+- Contract version: `19`
 - Category: Imaging
 - Provider family: `imager`
 - Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet
@@ -286,7 +286,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>pblimit</code> | <code>parameter.pblimit@r1</code> | <code>float</code> | <code>0.2</code>; optional | Stages | Mosaic primary-beam cutoff for flat-noise normalization |
 | <code>wterm</code> | <code>parameter.wterm@r1</code> | <code>choice (3 values)</code> | <code>"none"</code>; optional | Stages | W-term correction mode |
 | <code>gridder</code> | <code>parameter.gridder@r1</code> | <code>choice (7 values)</code> | <code>"standard"</code>; optional | Stages | CASA tclean gridder family |
-| <code>standard_mfs_acceleration</code> | <code>parameter.standard_mfs_acceleration@r1</code> | <code>choice (4 values)</code> | <code>"cpu"</code>; optional | Stages | Backend policy for standard/MFS-compatible gridding stages |
+| <code>standard_mfs_acceleration</code> | <code>parameter.standard_mfs_acceleration@r2</code> | <code>choice (3 values)</code> | <code>"cpu"</code>; optional | Stages | CPU execution policy for standard/MFS-compatible gridding stages |
 | <code>parallel</code> | <code>parameter.parallel@r1</code> | <code>optional&lt;bool&gt; (states: none)</code> | <code>"none"</code>; optional | Stages | Permit planned local parallel or accelerated execution; false forces the serial CPU comparison surface |
 | <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | UV range selector.<br><em>Surface:</em> The complete CASA UV-range selector reaches the shared MeasurementSet selection engine. |
 | <code>intent</code> | <code>ms.selection.intent@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | Intent selector.<br><em>Surface:</em> The complete CASA intent selector reaches the shared MeasurementSet selection engine. |
@@ -317,6 +317,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>native_cf_oversampling</code> | <code>parameter.native_cf_oversampling@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; required | Advanced Wide-Field | Native AW convolution oversampling<br><em>Surface:</em> Explicit integer convolution-plane oversampling; validated by the native application owner. |
 | <code>native_cf_cache_bytes</code> | <code>parameter.native_cf_cache_bytes@r1</code> | <code>optional&lt;integer&gt; (states: none); unit dimension: data_size</code> | <code>"none"</code>; required | Advanced Wide-Field | Native AW durable-storage ceiling<br><em>Surface:</em> Explicit catalog-wide storage bound in bytes, independent of cropped cell size. This is a request bound, not saved cache inventory. |
 | <code>native_cf_maximum_cells</code> | <code>parameter.native_cf_maximum_cells@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; required | Advanced Wide-Field | Native AW maximum catalog cells<br><em>Surface:</em> Explicit maximum admitted metadata-only paired-cell count, not serialized compiled catalog state. |
+| <code>backend</code> | <code>parameter.backend@r1</code> | <code>choice (2 values)</code> | <code>"cpu"</code>; optional | Stages | Gridding backend of the major-cycle passes: cpu, or metal on macOS |
 
 <a id="surface-simobserve"></a>
 

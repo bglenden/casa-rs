@@ -77,9 +77,8 @@ fn compact_evla_antennas() -> Vec<SyntheticAntenna> {
         ]
     });
     for antenna in &mut antennas {
-        for axis in 0..3 {
-            antenna.position_m[axis] =
-                centroid[axis] + (antenna.position_m[axis] - centroid[axis]) / CONFIGURATION_SHRINK;
+        for (position, centre) in antenna.position_m.iter_mut().zip(centroid) {
+            *position = centre + (*position - centre) / CONFIGURATION_SHRINK;
         }
     }
     antennas
@@ -118,10 +117,33 @@ fn local_peak(
     (value, [centre[0] - half + x, centre[1] - half + y], offset)
 }
 
+/// The off-axis point as the standard gridder sees it: the simulator's
+/// attenuated flux, with no beam applied or corrected.
+fn standard_off_axis_peak_jy(observation: &Observation) -> f64 {
+    let (_, products) = observation.image(
+        "aw-standard",
+        json!({
+            "weighting": { "kind": "natural" },
+            "deconvolver": "hogbom",
+            "niter": 3000,
+            "threshold_jy": THRESHOLD_JY,
+            "force_standard_gridder": true,
+        }),
+    );
+    let off_axis_pixel = observation.geometry().pixel(OFF_AXIS);
+    let (peak_jy, at, offset) = local_peak(&products.get(".image").pixels, off_axis_pixel, 6);
+    eprintln!(
+        "T1 AW standard control: off-axis peak {peak_jy:.5} Jy at {at:?} offset {offset:.3?}"
+    );
+    assert_eq!(at, off_axis_pixel);
+    f64::from(peak_jy)
+}
+
 #[test]
 fn aw_projection_generates_its_catalog_and_recovers_the_sky() {
     let observation =
         Observation::synthesise_setup(setup(), &[("centre", CENTRE), ("off-axis", OFF_AXIS)]);
+    let attenuated_off_axis_jy = standard_off_axis_peak_jy(&observation);
     let surface = observation.scratch("evla.surface");
     std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
     let catalog = observation.scratch("native-cf");
@@ -224,16 +246,24 @@ fn aw_projection_generates_its_catalog_and_recovers_the_sky() {
         (model_centre - CENTRE.flux_jy).abs() < 0.02 * CENTRE.flux_jy,
         "centre model {model_centre} Jy"
     );
+    // Off axis the flat-noise image holds the attenuated flux the standard
+    // gridder measures (the catalog's beam applied once by the adjoint and
+    // divided out once by `sqrt(weight)`), and the PB-corrected image
+    // divides it by the catalog's beam; the injected flux comes back to
+    // within the two beam models' disagreement.
+    assert!(
+        (off_axis_flat_noise - attenuated_off_axis_jy).abs() < 0.03 * attenuated_off_axis_jy,
+        "off-axis flat-noise peak {off_axis_flat_noise} Jy, standard gridder \
+         {attenuated_off_axis_jy} Jy"
+    );
+    let expected_pbcor = attenuated_off_axis_jy / pb_off_axis;
+    assert!(
+        (f64::from(off_axis_peak) - expected_pbcor).abs() < 0.03 * expected_pbcor,
+        "off-axis PB-corrected peak {off_axis_peak} Jy, attenuated / pb {expected_pbcor} Jy"
+    );
     assert!(
         (f64::from(off_axis_peak) - OFF_AXIS.flux_jy).abs() < 0.1 * OFF_AXIS.flux_jy,
         "off-axis PB-corrected peak {off_axis_peak} Jy, injected {} Jy",
         OFF_AXIS.flux_jy
-    );
-    // The flat-noise image is the sky times `.pb`.
-    assert!(
-        (off_axis_flat_noise - f64::from(off_axis_peak) * pb_off_axis).abs()
-            < 0.02 * OFF_AXIS.flux_jy,
-        "off-axis flat-noise peak {off_axis_flat_noise} Jy, pbcor × pb {}",
-        f64::from(off_axis_peak) * pb_off_axis
     );
 }

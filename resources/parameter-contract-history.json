@@ -367,6 +367,11 @@
       "fingerprint": "d9cca213f0d8e13017804cd560194fcdcf0c579a128441e60fe070b058071431"
     },
     {
+      "id": "parameter.backend",
+      "semantic_revision": 1,
+      "fingerprint": "ac08a281af51a928646b71eaf9c4be999bb9e466721f6fbea707498531e8897e"
+    },
+    {
       "id": "parameter.band",
       "semantic_revision": 1,
       "fingerprint": "04d83ce6f03866633780e7972961b44e14597ab0bcf455ffc8683ad050191394"
@@ -1802,6 +1807,11 @@
       "fingerprint": "cc8981d5a461922890969c2f429351cde1f8e5cf440ee191d7dad9512aaf9e57"
     },
     {
+      "id": "parameter.standard_mfs_acceleration",
+      "semantic_revision": 2,
+      "fingerprint": "51afe1cb0595aa41771682fb778b335e344842302190eed41d4eb2546a80072a"
+    },
+    {
       "id": "parameter.standard_mfs_grid_threads",
       "semantic_revision": 1,
       "fingerprint": "7f0081f87a374c74a6ec32188825b88f4579c64e50f1fefd2b86cdd8088718f3"
@@ -2477,6 +2487,11 @@
       "id": "imager",
       "contract_version": 18,
       "fingerprint": "e461a97df94280b20c456130793c7a5a63eca1ce1a97e7ee52e6c30fe3f40504"
+    },
+    {
+      "id": "imager",
+      "contract_version": 19,
+      "fingerprint": "805c90031a278263549c5e3e1cf9b797b9e5f7d181270af4d4d314cbb820069c"
     },
     {
       "id": "imcollapse",

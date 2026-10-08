@@ -84,6 +84,7 @@ fn residual_vanishes_in_waves(
                 model: Some(&prepare),
                 modes: ModeSet::DATA,
                 native_spacing_hz: spacing_hz,
+                ..Run::initial()
             },
         )
     };

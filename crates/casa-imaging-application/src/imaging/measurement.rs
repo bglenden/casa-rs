@@ -13,6 +13,7 @@ use casa_imaging_operator::{
     MosaicWindow, PolarizationRouting, SpectralAxis, SpectralResampler, Spheroidal, WPlaneCount,
     WPlanes,
 };
+use casa_imaging_runtime::pass::BackendChoice;
 
 use super::ImagingError;
 use crate::AwCatalogDeployment;
@@ -91,12 +92,15 @@ pub(crate) fn reference_frequency_hz(problem: &CompiledProblem) -> Result<f64, I
     }
 }
 
-/// Grid precision of plan decision D2 (`gridprecision = auto`): f64 for the
-/// constant and Taylor bases, f32 for channel-local cubes.
-pub(crate) const fn precision(basis: Basis) -> GridPrecision {
-    match basis {
-        Basis::Constant | Basis::Taylor { .. } => GridPrecision::F64,
-        Basis::ChannelLocal { .. } => GridPrecision::F32,
+/// Grid precision of plan decision D2 (`gridprecision = auto`): f32 on
+/// Metal, which accumulates in `f32` for every basis; on the CPU f64 for
+/// the constant and Taylor bases and f32 for channel-local cubes.
+pub(crate) const fn precision(basis: Basis, backend: BackendChoice) -> GridPrecision {
+    match (backend, basis) {
+        (BackendChoice::Cpu, Basis::Constant | Basis::Taylor { .. }) => GridPrecision::F64,
+        (BackendChoice::Cpu, Basis::ChannelLocal { .. }) | (BackendChoice::Metal, _) => {
+            GridPrecision::F32
+        }
     }
 }
 
@@ -132,15 +136,23 @@ fn kernel_set_kind(problem: &CompiledProblem) -> KernelSetKind {
 /// The operator of `domain` with the kernel set the problem names: the
 /// standard spheroidal set, W-projection planes sized by the W contract,
 /// the mosaic primary beams of the selected windows, or the AW catalog of
-/// `aw_catalog`. Mosaic and AW grid without padding (CASA `MosaicFT`,
-/// `AWProjectFT`); the others on CASA's composite-padded grid.
+/// `aw_catalog`, in the precision `backend` grids at. Mosaic and AW grid
+/// without padding (CASA `MosaicFT`, `AWProjectFT`); the others on CASA's
+/// composite-padded grid. The Metal backend grids the standard set until
+/// its W, mosaic and AW rows land at gate R2 (#653).
 pub(crate) fn domain_operator(
     problem: &CompiledProblem,
     domain: &CompiledImageDomain,
     correlations: &[CorrelationType],
+    backend: BackendChoice,
     aw_catalog: Option<&AwCatalogDeployment>,
 ) -> Result<DomainOperator, ImagingError> {
     let kind = kernel_set_kind(problem);
+    if backend == BackendChoice::Metal && kind != KernelSetKind::Standard {
+        return Err(ImagingError::Unsupported {
+            reason: "the Metal backend grids the standard kernel set; W, mosaic and AW wait for R2",
+        });
+    }
     let padding = match kind {
         KernelSetKind::Standard | KernelSetKind::WPlanes => GridPadding::CasaComposite,
         KernelSetKind::Mosaic | KernelSetKind::Aw => GridPadding::None,
@@ -202,7 +214,13 @@ pub(crate) fn domain_operator(
         }
     };
     Ok(DomainOperator {
-        operator: MeasurementOperator::new(geometry, basis, polarization, cf, precision(basis)),
+        operator: MeasurementOperator::new(
+            geometry,
+            basis,
+            polarization,
+            cf,
+            precision(basis, backend),
+        ),
         resampler,
         weight_image: matches!(kind, KernelSetKind::Mosaic | KernelSetKind::Aw),
     })

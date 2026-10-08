@@ -7,7 +7,7 @@ use casa_imaging_operator::{
     SpectralResampler, WeightingGeneration, build_density_grid,
 };
 use casa_imaging_runtime::pass::{
-    Cancel, MajorCyclePass, Partition, PassDomain, PassError, Residency, WorkerTeam,
+    BackendChoice, Cancel, MajorCyclePass, Partition, PassDomain, PassError, Residency, WorkerTeam,
     run_density_pass, run_major_cycle,
 };
 use num_complex::Complex32;
@@ -132,6 +132,7 @@ fn a_cancelled_pass_stops_with_a_typed_error() {
         model: None,
         residency: Residency::All,
         native_spacing_hz: WIDTH_HZ,
+        backend: BackendChoice::Cpu,
     };
     let cancel = Cancel::new();
     cancel.cancel();

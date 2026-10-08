@@ -94,6 +94,7 @@
    "casa-imaging-operator"
   ],
   "casa-imaging-runtime": [
+   "casa-imaging-metal",
    "casa-imaging-model",
    "casa-imaging-operator",
    "casa-imaging-products",

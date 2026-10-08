@@ -5,9 +5,10 @@
 //!
 //! A pass reads blocks of native rows, projected on every image domain, from
 //! a [`BoundedSource`] through a two-slot stream, places each row with each
-//! domain's spectral resampler and the imaging weights, routes the
-//! placements to the owners of the domain's [`Partition`] and accumulates
-//! them with the CPU backend: the residual `V − Σ_d A_d·m_d` of every
+//! domain's spectral resampler and the imaging weights on the CPU worker
+//! team, routes the placements to the owners of the domain's [`Partition`]
+//! and accumulates them with each owner's backend ([`BackendChoice`]): the
+//! residual `V − Σ_d A_d·m_d` of every
 //! domain's model when a model is present (CASA `SIMapperCollection::degrid`
 //! sums every mapper's prediction before `grid` forms the residual), `V`
 //! otherwise. Each wave of planes ([`Residency`]) ends with the per-plane
@@ -167,6 +168,22 @@ pub struct PassDomain<'a> {
     pub partition: Partition,
 }
 
+/// The gridding backend every owner of a pass dispatches to.
+///
+/// With [`BackendChoice::Metal`] each owner grids on the shared Metal
+/// device into an `f32` accumulator in device memory (D2), so every
+/// operator of the pass must be `f32`; placement and the native-channel
+/// predictions of a multi-domain or linearly interpolated residual stay on
+/// the CPU workers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BackendChoice {
+    /// [`casa_imaging_operator::CpuBackend`].
+    #[default]
+    Cpu,
+    /// [`casa_imaging_metal::MetalBackend`].
+    Metal,
+}
+
 /// One major-cycle pass over the selected visibilities.
 pub struct MajorCyclePass<'a> {
     /// The image domains; rows arrive projected on each, in this order.
@@ -184,20 +201,25 @@ pub struct MajorCyclePass<'a> {
     /// a model it sizes each wave's model halo
     /// ([`SpectralResampler::model_planes`]).
     pub native_spacing_hz: f64,
+    /// Where the owners grid.
+    pub backend: BackendChoice,
+}
+
+/// Whether a pass over `domains` forms its residual at native channels: with
+/// a model, when several domains' predictions must be summed before
+/// subtracting, or when the resampler interpolates onto the output channels
+/// ([`SpectralResampler::forms_native_residuals`]).
+fn native_residuals(domains: &[PassDomain<'_>], with_model: bool) -> bool {
+    with_model
+        && (domains.len() > 1
+            || domains
+                .iter()
+                .any(|domain| domain.resampler.forms_native_residuals()))
 }
 
 impl MajorCyclePass<'_> {
-    /// Whether the pass forms its residual at native channels: with a model,
-    /// when several domains' predictions must be summed before subtracting,
-    /// or when the resampler interpolates onto the output channels
-    /// ([`SpectralResampler::forms_native_residuals`]).
     fn native_residuals(&self) -> bool {
-        self.model.is_some()
-            && (self.domains.len() > 1
-                || self
-                    .domains
-                    .iter()
-                    .any(|domain| domain.resampler.forms_native_residuals()))
+        native_residuals(self.domains, self.model.is_some())
     }
 
     /// Whether a wave must read whole rows: a native-channel prediction under
@@ -221,6 +243,7 @@ impl MajorCyclePass<'_> {
             with_model: self.model.is_some(),
             native_spacing_hz: self.native_spacing_hz,
             workers,
+            backend: self.backend,
         }
     }
 }
@@ -282,7 +305,7 @@ pub fn run_major_cycle(
                     .collect::<Result<Vec<_>, _>>()
             })
             .transpose()?;
-        let mut wave = Wave::new(pass, planes, models.as_deref(), native_residuals)
+        let mut wave = Wave::new(pass, planes, models.as_deref(), native_residuals)?
             .checking_spacing(!restrict && pass.residency != Residency::All);
         summary.blocks += stream_blocks(source, cancel, |block| {
             wave.consume(block, team, visibilities.as_deref_mut())

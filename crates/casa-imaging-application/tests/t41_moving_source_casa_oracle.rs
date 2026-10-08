@@ -246,6 +246,7 @@ fn request(measurement_set: PathBuf, image_name: PathBuf) -> ContinuumImagingReq
                 ..Default::default()
             },
         ),
+        backend: casa_imaging_application::BackendChoice::Cpu,
     }
 }
 

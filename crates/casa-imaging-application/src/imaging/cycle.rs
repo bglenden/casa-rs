@@ -23,11 +23,13 @@ use casa_imaging_reconstruction::{
     WeightingGenerationId,
 };
 use casa_imaging_runtime::pass::{
-    Cancel, MajorCyclePass, ModelPreparation, Partition, PassDomain, PassError, PassSummary,
-    Residency, VisibilitySink, WaveDemand, WorkerTeam, run_density_pass, run_major_cycle,
+    BackendChoice, Cancel, MajorCyclePass, ModelPreparation, Partition, PassDomain, PassError,
+    PassSummary, Residency, VisibilitySink, WaveDemand, WorkerTeam, run_density_pass,
+    run_major_cycle,
 };
 use casa_imaging_runtime::{
-    CubeState, MinorCycleOutcome, ResourceAuthority, ResourcePolicy, run_minor_cycle,
+    AcceleratorKind, CubeState, MinorCycleOutcome, ResourceAuthority, ResourcePolicy,
+    run_minor_cycle,
 };
 use casa_ms::ResolvedSelectedObservationAccess;
 
@@ -52,6 +54,7 @@ pub(crate) struct ImagingInputs<'a> {
     pub(crate) spill_directory: &'a Path,
     /// The AW catalog of an A-projection run.
     pub(crate) aw_catalog: Option<AwCatalogDeployment>,
+    pub(crate) backend: BackendChoice,
 }
 
 /// The final reconciliation and the record of the cycles that led to it.
@@ -79,6 +82,7 @@ struct Run<'a> {
     cube: Option<CubeState>,
     budget: u64,
     native_spacing_hz: f64,
+    backend: BackendChoice,
     attempts: u64,
     visibility_write: Option<VisibilityWriteTarget>,
     /// Planes per wave of the most finely waved pass so far.
@@ -190,13 +194,32 @@ impl<'a> Run<'a> {
     /// The operators, worker team, source and imaging weights of a run.
     fn open(inputs: ImagingInputs<'a>) -> Result<Self, ImagingError> {
         let problem = inputs.problem;
+        let backend = inputs.backend;
+        if backend == BackendChoice::Metal
+            && !inputs
+                .authority
+                .topology()
+                .accelerators
+                .iter()
+                .any(|accelerator| accelerator.kind == AcceleratorKind::Metal)
+        {
+            return Err(ImagingError::Unsupported {
+                reason: "the Metal backend needs a unified-memory Metal 3 device",
+            });
+        }
         let correlations = selected_correlations(problem)?;
         let domains = problem
             .geometry()
             .domains()
             .iter()
             .map(|domain| {
-                domain_operator(problem, domain, &correlations, inputs.aw_catalog.as_ref())
+                domain_operator(
+                    problem,
+                    domain,
+                    &correlations,
+                    backend,
+                    inputs.aw_catalog.as_ref(),
+                )
             })
             .collect::<Result<Vec<_>, _>>()?;
         let weight_image = domains.iter().any(|domain| domain.weight_image);
@@ -243,6 +266,7 @@ impl<'a> Run<'a> {
             cube,
             budget: memory.saturating_sub(memory / 4),
             native_spacing_hz: native_spacing_hz(problem),
+            backend,
             attempts: 0,
             visibility_write: inputs.visibility_write,
             planes_per_wave: None,
@@ -451,6 +475,7 @@ impl<'a> Run<'a> {
                 with_model,
                 native_spacing_hz: self.native_spacing_hz,
                 workers: self.team.workers(),
+                backend: self.backend,
             },
             self.budget,
         )?)
@@ -479,6 +504,7 @@ impl<'a> Run<'a> {
             model: model.map(|_| &prepare as &ModelPreparation<'_>),
             residency,
             native_spacing_hz: self.native_spacing_hz,
+            backend: self.backend,
         };
         let predictions = writer.as_deref().map(VisibilityWriter::needs_predictions);
         let mut write = |block: &_, predictions: &[_]| match writer.as_deref_mut() {

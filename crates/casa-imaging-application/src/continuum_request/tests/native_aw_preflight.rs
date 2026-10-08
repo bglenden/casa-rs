@@ -84,6 +84,7 @@ fn native_aw_request(w_plane_count: Option<usize>) -> ContinuumImagingRequest {
         }),
         resource_policy: resource_policy_for_task_requirements(&requirements),
         task_requirements: requirements,
+        backend: crate::BackendChoice::Cpu,
     }
 }
 

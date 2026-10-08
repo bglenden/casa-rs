@@ -265,6 +265,7 @@ pub(crate) fn application_request(config: &CliConfig) -> Result<ContinuumImaging
             }),
         task_requirements,
         resource_policy,
+        backend: config.backend.choice(),
     })
 }
 
@@ -349,16 +350,11 @@ fn backend_requirements(config: &CliConfig) -> Vec<TaskRequirement> {
         StandardMfsAccelerationPolicy::MultiCpu => {
             requirements.push(TaskRequirement::FixedTileCpu);
         }
-        StandardMfsAccelerationPolicy::Metal => {
-            requirements.push(TaskRequirement::MetalRowRunGroupedGridder);
-        }
     }
     if let Some(backend) = config.standard_mfs_backend {
         requirements.push(match backend {
             StandardMfsBackend::SerialCpu => TaskRequirement::SerialCpu,
             StandardMfsBackend::FixedTileCpu => TaskRequirement::FixedTileCpu,
-            StandardMfsBackend::Metal => TaskRequirement::MetalGridder,
-            StandardMfsBackend::MetalRowRunGrouped => TaskRequirement::MetalRowRunGroupedGridder,
         });
     }
     requirements
@@ -399,7 +395,7 @@ mod tests {
     use std::ffi::OsString;
 
     use casa_imaging_application::{
-        ContinuumAlgorithm, ImagingCapabilityRequirement, PolarizationCoordinate,
+        BackendChoice, ContinuumAlgorithm, ImagingCapabilityRequirement, PolarizationCoordinate,
         ProductNormalization, ResourcePolicy, installed_imaging_capability_catalog,
     };
 
@@ -782,22 +778,12 @@ mod tests {
                 StandardMfsBackend::FixedTileCpu,
                 TaskRequirement::FixedTileCpu,
             ),
-            (
-                "metal",
-                StandardMfsBackend::Metal,
-                TaskRequirement::MetalGridder,
-            ),
-            (
-                "metal-row-run-grouped",
-                StandardMfsBackend::MetalRowRunGrouped,
-                TaskRequirement::MetalRowRunGroupedGridder,
-            ),
         ] {
             let config = config(&["--standard-mfs-backend", spelling]);
             assert_eq!(config.standard_mfs_backend, Some(backend));
             assert!(backend_requirements(&config).contains(&requirement));
         }
-        for unsupported in ["metal-row-run", "gpu"] {
+        for unsupported in ["metal", "metal-row-run-grouped", "gpu"] {
             assert!(
                 CliConfig::parse(
                     [
@@ -817,10 +803,31 @@ mod tests {
     }
 
     #[test]
-    fn metal_acceleration_requires_the_uninstalled_grouped_row_run_implementation() {
+    fn the_backend_parameter_selects_the_metal_backend_for_every_capability() {
         assert_eq!(
-            backend_requirements(&config(&["--standard-mfs-acceleration", "metal"])),
-            vec![TaskRequirement::MetalRowRunGroupedGridder]
+            application_request(&config(&[])).unwrap().backend,
+            BackendChoice::Cpu
         );
+        assert_eq!(
+            application_request(&config(&["--backend", "metal"]))
+                .unwrap()
+                .backend,
+            BackendChoice::Metal
+        );
+        for displaced in [
+            ["--standard-mfs-acceleration", "metal"],
+            ["--backend", "gpu"],
+        ] {
+            assert!(
+                CliConfig::parse(
+                    ["--ms", "fixture.ms", "--imagename", "image"]
+                        .into_iter()
+                        .chain(displaced)
+                        .map(OsString::from),
+                )
+                .is_err(),
+                "{displaced:?}"
+            );
+        }
     }
 }

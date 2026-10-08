@@ -7451,14 +7451,13 @@
     },
     {
       "id": "parameter.standard_mfs_acceleration",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "standard_mfs_acceleration",
       "value_domain": {
         "kind": "choice",
         "values": [
           "auto",
           "cpu",
-          "metal",
           "multi-cpu"
         ]
       },
@@ -7469,10 +7468,37 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Backend policy for standard/MFS-compatible gridding stages",
+        "summary": "CPU execution policy for standard/MFS-compatible gridding stages",
         "details": null,
         "examples": [
           "auto"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.backend",
+      "semantic_revision": 1,
+      "casa_name": "backend",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "cpu",
+          "metal"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Gridding backend of the major-cycle passes: cpu, or metal on macOS",
+        "details": "metal grids every image in f32 on the Metal device and needs a unified-memory Metal 3 GPU; placement and native-channel predictions stay on the CPU workers.",
+        "examples": [
+          "cpu",
+          "metal"
         ]
       },
       "persistence_class": "profile"

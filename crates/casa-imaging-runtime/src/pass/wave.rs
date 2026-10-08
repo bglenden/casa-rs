@@ -5,30 +5,45 @@
 
 use std::ops::Range;
 
+use casa_imaging_metal::MetalBackend;
 use casa_imaging_operator::{
-    CpuBackend, GridAccumulator, GridBackend, Mode, NativeRow, NormalImages, PlaneRange,
-    PredictionScratch, PreparedModelGrids, SampleBuffer, Work,
+    CpuBackend, GridAccumulator, GridBackend, GridPrecision, Mode, NativeRow, NormalImages,
+    PlaneRange, PredictionScratch, PreparedModelGrids, SampleBuffer, Work,
 };
 use num_complex::Complex32;
 
 use super::partition::Router;
-use super::{MajorCyclePass, NativeBlock, Partition, PassError, VisibilitySink, WorkerTeam};
+use super::{
+    BackendChoice, MajorCyclePass, NativeBlock, Partition, PassError, VisibilitySink, WorkerTeam,
+};
 
 /// Row chunks per worker in the placement stage; enough to balance rows
 /// whose channel counts differ after flagging and the support test.
 const CHUNKS_PER_WORKER: usize = 4;
 
-/// One owner's accumulator and backend scratch.
-struct Owner {
+/// One owner's accumulator and backend.
+struct Owner<'w> {
     acc: Option<GridAccumulator>,
-    backend: CpuBackend,
+    backend: OwnerBackend<'w>,
     images: Option<NormalImages>,
+}
+
+/// The backend an owner dispatches to. The CPU grids each placement chunk
+/// as it comes; a Metal owner first gathers its share of every chunk of a
+/// source block into `staging`, so each device dispatch is one block's
+/// worth of samples rather than one chunk's.
+enum OwnerBackend<'w> {
+    Cpu(CpuBackend),
+    Metal {
+        backend: Box<MetalBackend<'w>>,
+        staging: SampleBuffer,
+    },
 }
 
 /// One image domain's share of a wave.
 struct Domain<'w> {
     router: Router,
-    owners: Vec<Owner>,
+    owners: Vec<Owner<'w>>,
     model: Option<&'w PreparedModelGrids>,
 }
 
@@ -67,31 +82,53 @@ impl<'w, 'p> Wave<'w, 'p> {
         planes: PlaneRange,
         models: Option<&'w [PreparedModelGrids]>,
         native_residuals: bool,
-    ) -> Self {
+    ) -> Result<Self, PassError> {
         let domains = pass
             .domains
             .iter()
             .enumerate()
             .map(|(index, domain)| {
                 let router = Router::new(&domain.partition, planes);
+                let operator = domain.operator;
                 let owners = (0..router.owners())
                     .map(|owner| {
                         let (range, tile) = router.target(&domain.partition, planes, owner);
-                        Owner {
-                            acc: Some(domain.operator.accumulator(range, tile, pass.modes)),
-                            backend: CpuBackend::new(),
-                            images: None,
-                        }
+                        Ok(match pass.backend {
+                            BackendChoice::Cpu => Owner {
+                                acc: Some(operator.accumulator(range, tile, pass.modes)),
+                                backend: OwnerBackend::Cpu(CpuBackend::new()),
+                                images: None,
+                            },
+                            BackendChoice::Metal => {
+                                assert_eq!(
+                                    operator.precision(),
+                                    GridPrecision::F32,
+                                    "Metal grids are f32 (D2)"
+                                );
+                                Owner {
+                                    acc: Some(MetalBackend::accumulator(
+                                        operator.accumulator_layout(range, tile, pass.modes),
+                                    )?),
+                                    backend: OwnerBackend::Metal {
+                                        backend: Box::new(MetalBackend::new(operator.cf())?),
+                                        staging: SampleBuffer::new(
+                                            operator.polarization().correlations().len(),
+                                        ),
+                                    },
+                                    images: None,
+                                }
+                            }
+                        })
                     })
-                    .collect();
-                Domain {
+                    .collect::<Result<_, PassError>>()?;
+                Ok(Domain {
                     router,
                     owners,
                     model: models.map(|models| &models[index]),
-                }
+                })
             })
-            .collect();
-        Self {
+            .collect::<Result<_, PassError>>()?;
+        Ok(Self {
             pass,
             planes,
             domains,
@@ -100,7 +137,7 @@ impl<'w, 'p> Wave<'w, 'p> {
             chunks: Vec::new(),
             predictions: Vec::new(),
             samples: 0,
-        }
+        })
     }
 
     /// Check every row's native spacing against the pass's
@@ -276,20 +313,45 @@ impl<'w, 'p> Wave<'w, 'p> {
                 .acc
                 .as_mut()
                 .expect("owners accumulate until finished");
-            for chunk in chunks {
-                let block = chunk.owned[owner_index].block();
-                if block.is_empty() {
-                    continue;
+            let operator = target.operator;
+            // Each owner grids the weight image over its own placements
+            // unless the image has one owner, who grids every placement
+            // below.
+            let own_weight = weight_owner.is_none();
+            match &mut owner.backend {
+                OwnerBackend::Cpu(backend) => {
+                    for chunk in chunks {
+                        let block = chunk.owned[owner_index].block();
+                        if !block.is_empty() {
+                            accumulate(pass, operator, backend, &block, model, acc, own_weight)?;
+                        }
+                    }
                 }
-                accumulate(
-                    pass,
-                    target.operator,
-                    &mut owner.backend,
-                    &block,
-                    model,
-                    acc,
-                    weight_owner.is_none(),
-                )?;
+                OwnerBackend::Metal { backend, staging } => {
+                    staging.clear();
+                    for chunk in chunks {
+                        let block = chunk.owned[owner_index].block();
+                        for sample in 0..block.len() {
+                            staging.push(
+                                block.placements[sample],
+                                block.values_of(sample),
+                                block.weights_of(sample),
+                            );
+                        }
+                    }
+                    if !staging.is_empty() {
+                        let backend: &mut MetalBackend<'_> = backend;
+                        accumulate(
+                            pass,
+                            operator,
+                            backend,
+                            &staging.block(),
+                            model,
+                            acc,
+                            own_weight,
+                        )?;
+                    }
+                }
             }
             if pass.modes.weight && weight_owner == Some(owner_index) {
                 for chunk in chunks {
@@ -297,14 +359,16 @@ impl<'w, 'p> Wave<'w, 'p> {
                     if block.is_empty() {
                         continue;
                     }
-                    owner.backend.apply(
-                        &block,
-                        target.operator.cf(),
-                        Work::Grid {
-                            mode: Mode::Weight,
-                            acc,
-                        },
-                    )?;
+                    let work = Work::Grid {
+                        mode: Mode::Weight,
+                        acc,
+                    };
+                    match &mut owner.backend {
+                        OwnerBackend::Cpu(backend) => backend.apply(&block, operator.cf(), work)?,
+                        OwnerBackend::Metal { backend, .. } => {
+                            backend.apply(&block, operator.cf(), work)?;
+                        }
+                    }
                 }
             }
             Ok::<_, PassError>(())
@@ -329,7 +393,11 @@ impl<'w, 'p> Wave<'w, 'p> {
             return Ok(());
         }
         let pass = self.pass;
-        let domains = &self.domains;
+        let models = self
+            .domains
+            .iter()
+            .map(|domain| domain.model)
+            .collect::<Vec<_>>();
         let mut pieces = Vec::with_capacity(count);
         let mut remaining = self.predictions.as_mut_slice();
         for chunk in &mut self.chunks[..count] {
@@ -341,8 +409,8 @@ impl<'w, 'p> Wave<'w, 'p> {
             chunk.predicted.resize(cells, Complex32::default());
             for (local, row) in chunk.rows.clone().enumerate() {
                 let out = &mut out[local * cells..(local + 1) * cells];
-                for (index, (target, domain)) in pass.domains.iter().zip(domains).enumerate() {
-                    let Some(model) = domain.model else {
+                for (index, (target, model)) in pass.domains.iter().zip(&models).enumerate() {
+                    let Some(model) = model else {
                         continue;
                     };
                     target.resampler.predict_row(
@@ -406,7 +474,7 @@ impl<'w, 'p> Wave<'w, 'p> {
 fn accumulate(
     pass: &MajorCyclePass<'_>,
     operator: &casa_imaging_operator::MeasurementOperator,
-    backend: &mut CpuBackend,
+    backend: &mut dyn GridBackend,
     block: &casa_imaging_operator::SampleBlock<'_>,
     model: Option<&PreparedModelGrids>,
     acc: &mut GridAccumulator,

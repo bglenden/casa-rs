@@ -431,6 +431,7 @@ mod tests {
             parallel: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
             standard_mfs_backend: None,
+            backend: crate::ImagingBackend::Cpu,
             standard_mfs_memory_target_mb: None,
             imaging_memory_target_mb: None,
         }
@@ -613,6 +614,7 @@ mod tests {
                 parallel: None,
                 standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
                 standard_mfs_backend: None,
+                backend: crate::ImagingBackend::Cpu,
                 standard_mfs_memory_target_mb: None,
                 imaging_memory_target_mb: None,
                 progress: None,

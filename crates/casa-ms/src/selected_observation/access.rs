@@ -2897,6 +2897,10 @@ fn evaluate_row_geometry(
             antenna1: phase_direction,
             antenna2: phase_direction,
         },
+        PointingCentreLaw::FieldCentre => SelectedPointingDirections {
+            antenna1: observation_direction,
+            antenna2: observation_direction,
+        },
         PointingCentreLaw::Fixed(direction) => {
             let direction = require_fixed_j2000(*direction)?;
             SelectedPointingDirections {

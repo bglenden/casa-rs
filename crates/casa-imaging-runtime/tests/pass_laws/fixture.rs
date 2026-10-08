@@ -9,9 +9,9 @@ use casa_imaging_operator::{
     SpectralKernel, SpectralResampler, Spheroidal, WeightingGeneration,
 };
 use casa_imaging_runtime::pass::{
-    BoundedSource, Cancel, DomainProjection, MajorCyclePass, ModelPreparation, NativeBlock,
-    NativeRowHeader, Partition, PassDomain, PassError, PassSummary, Residency, RowAddress,
-    SourceError, WorkerTeam, run_major_cycle,
+    BackendChoice, BoundedSource, Cancel, DomainProjection, MajorCyclePass, ModelPreparation,
+    NativeBlock, NativeRowHeader, Partition, PassDomain, PassError, PassSummary, Residency,
+    RowAddress, SourceError, WorkerTeam, run_major_cycle,
 };
 use ndarray::Array2;
 use num_complex::Complex32;
@@ -330,10 +330,12 @@ pub struct Run<'a> {
     pub model: Option<&'a ModelPreparation<'a>>,
     pub modes: ModeSet,
     pub native_spacing_hz: f64,
+    pub backend: BackendChoice,
 }
 
 impl Run<'_> {
-    /// Data and PSF without a model, every plane resident, one worker.
+    /// Data and PSF without a model, every plane resident, one worker, on
+    /// the CPU.
     pub fn initial() -> Self {
         Self {
             residency: Residency::All,
@@ -341,6 +343,7 @@ impl Run<'_> {
             model: None,
             modes: ModeSet::DATA_PSF,
             native_spacing_hz: WIDTH_HZ,
+            backend: BackendChoice::Cpu,
         }
     }
 }
@@ -360,6 +363,7 @@ pub fn try_run(
         model: run.model,
         residency: run.residency,
         native_spacing_hz: run.native_spacing_hz,
+        backend: run.backend,
     };
     let team = WorkerTeam::new(run.workers).expect("team");
     let mut joined: Vec<Option<NormalImages>> = (0..domains.len()).map(|_| None).collect();

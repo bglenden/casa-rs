@@ -12,14 +12,15 @@ workspace = true
 
 [dependencies]
 casa-imaging-operator = { path = "../casa-imaging-operator" }
-thiserror.workspace = true
-tracing.workspace = true
 
 [target.'cfg(all(target_os = "macos", not(coverage)))'.dependencies]
+num-complex.workspace = true
+tracing.workspace = true
 objc2 = "0.6.4"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSString", "NSError"] }
 objc2-metal = { version = "0.3.2", default-features = false, features = [
     "objc2-core-foundation",
+    "MTLAllocation",
     "MTLBuffer",
     "MTLCommandBuffer",
     "MTLCommandEncoder",
@@ -31,3 +32,8 @@ objc2-metal = { version = "0.3.2", default-features = false, features = [
     "MTLResource",
     "MTLTypes",
 ] }
+
+[dev-dependencies]
+casa-imaging-model = { path = "../casa-imaging-model" }
+ndarray.workspace = true
+num-complex.workspace = true

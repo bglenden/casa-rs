@@ -754,6 +754,7 @@ pub(super) fn request(
         aw_projection: None,
         task_requirements: Vec::new(),
         resource_policy: casa_imaging_runtime::ResourcePolicy::Balanced,
+        backend: casa_imaging_application::BackendChoice::Cpu,
     }
 }
 
