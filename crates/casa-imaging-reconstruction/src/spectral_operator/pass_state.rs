@@ -53,7 +53,9 @@ pub struct PassImages {
     pub sum_weights: Vec<f64>,
 }
 
-#[expect(
+// `allow`, not `expect`: whether the variants differ enough to trip the
+// lint depends on the target's lock and allocator layouts.
+#[allow(
     clippy::large_enum_variant,
     reason = "one state per image domain, replaced in place; boxing saves nothing"
 )]
