@@ -633,12 +633,13 @@ dependencies = [
 name = "casa-imaging-metal"
 version = "0.27.0"
 dependencies = [
+ "casa-imaging-model",
  "casa-imaging-operator",
+ "ndarray",
+ "num-complex",
  "objc2",
  "objc2-foundation",
  "objc2-metal",
- "thiserror 2.0.18",
- "tracing",
 ]
 
 [[package]]

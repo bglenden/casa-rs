@@ -72,4 +72,27 @@ pub enum OperatorError {
         /// Which rule failed.
         reason: &'static str,
     },
+    /// A device backend could not run a dispatch.
+    #[error("gridding device: {0}")]
+    Device(DeviceFailure),
+}
+
+/// Why a device backend could not run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum DeviceFailure {
+    /// The host has no device the backend can use.
+    #[error("no device is available")]
+    Unavailable,
+    /// The device could not hold a buffer of `bytes`.
+    #[error("a {bytes}-byte buffer exceeds what the device can allocate")]
+    Allocation {
+        /// Requested size.
+        bytes: u64,
+    },
+    /// A command failed on the device (Metal `MTLCommandBufferError` code).
+    #[error("a device command failed with code {code}")]
+    CommandFailed {
+        /// The device's error code.
+        code: i64,
+    },
 }

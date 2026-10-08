@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The backend contract: one dispatch over one sample block.
 
+use std::any::Any;
+use std::sync::OnceLock;
+
 use num_complex::{Complex, Complex32};
 
 use crate::accumulator::{
@@ -13,17 +16,39 @@ use crate::sample::SampleBlock;
 /// Model grids ready for degridding: the forward FFT of the corrected,
 /// polarization-expanded model, one full-grid block per
 /// `(plane, grid pol, Taylor term)` in the operator's precision.
-#[derive(Clone, Debug, PartialEq)]
+///
+/// The grids are immutable. A device backend keeps its copy of them in the
+/// grids themselves ([`PreparedModelGrids::device_copy`]), made once and
+/// dropped with them.
 pub struct PreparedModelGrids {
     layout: AccumulatorLayout,
     storage: GridStorage,
+    device: OnceLock<Box<dyn Any + Send + Sync>>,
 }
 
 impl PreparedModelGrids {
     pub(crate) fn new(layout: AccumulatorLayout, storage: GridStorage) -> Self {
         debug_assert_eq!(storage.len(), layout.cells());
         debug_assert!(layout.is_full_grid());
-        Self { layout, storage }
+        Self {
+            layout,
+            storage,
+            device: OnceLock::new(),
+        }
+    }
+
+    /// A device backend's copy of the grids, made by `copy` from the cells
+    /// the first time any caller asks; later calls, from any thread, return
+    /// the same copy. A failed copy is kept like a successful one, so a
+    /// backend stores a `Result` when copying can fail.
+    ///
+    /// Panics when an earlier caller stored a copy of another type: one
+    /// backend type serves a model.
+    pub fn device_copy<C: Any + Send + Sync>(&self, copy: impl FnOnce(&GridStorage) -> C) -> &C {
+        self.device
+            .get_or_init(|| Box::new(copy(&self.storage)))
+            .downcast_ref()
+            .expect("one device backend type serves a model")
     }
 
     /// Layout of the grids (data terms only, full grid).
@@ -54,6 +79,29 @@ impl PreparedModelGrids {
     ) -> &[Complex<T>] {
         let offset = self.layout.block_offset(plane_local, pol, term);
         &T::cells(&self.storage)[offset..offset + self.layout.block_cells()]
+    }
+}
+
+impl Clone for PreparedModelGrids {
+    /// The clone holds no device copy.
+    fn clone(&self) -> Self {
+        Self::new(self.layout.clone(), self.storage.clone())
+    }
+}
+
+impl PartialEq for PreparedModelGrids {
+    fn eq(&self, other: &Self) -> bool {
+        self.layout == other.layout && self.storage == other.storage
+    }
+}
+
+impl std::fmt::Debug for PreparedModelGrids {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PreparedModelGrids")
+            .field("layout", &self.layout)
+            .field("storage", &self.storage)
+            .finish_non_exhaustive()
     }
 }
 
@@ -90,7 +138,8 @@ pub enum Work<'a> {
 /// A gridding backend: CPU or device. One implementation of the kernel
 /// contract in plan section 5.3, selected by the runtime.
 pub trait GridBackend: Send {
-    /// Apply `work` to one block with kernel set `cf`.
+    /// Apply `work` to one block with kernel set `cf`; the work is complete
+    /// when this returns.
     ///
     /// Every placement must lie on a plane the target holds and have its
     /// whole support inside the target's tile; the block's polarization
