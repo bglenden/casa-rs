@@ -67,9 +67,12 @@
  "native_package_workspace_dependencies": {
   "casa-imaging-model": [],
   "casa-imaging-operator": [
+   "casa-coordinates",
    "casa-fft",
+   "casa-images",
    "casa-imaging-model",
-   "casa-numerics"
+   "casa-numerics",
+   "casa-types"
   ],
   "casa-imaging-deconvolution": [
    "casa-fft",

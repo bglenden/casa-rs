@@ -31,6 +31,7 @@
 //! `StokesImageUtil` including its `1/2` factors and `sumwt` rule.
 
 mod accumulator;
+mod aw;
 mod backend;
 mod convolution;
 mod cpu;
@@ -50,6 +51,10 @@ mod wplanes;
 pub use accumulator::{
     AccumulatorLayout, GridAccumulator, GridPrecision, GridScalar, GridStorage, Mode, ModeSet,
     PlaneRange, Tile,
+};
+pub use aw::{
+    AwCatalog, AwCatalogError, AwIndexing, EvlaApertureGrid, EvlaApertureModel, EvlaAwWorkspace,
+    NativeAwGenerationError, NativeAwPair, NativeAwPlane,
 };
 pub use backend::{GridBackend, PreparedModelGrids, Work};
 pub use convolution::{

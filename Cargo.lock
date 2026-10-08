@@ -655,12 +655,16 @@ dependencies = [
 name = "casa-imaging-operator"
 version = "0.27.0"
 dependencies = [
+ "casa-coordinates",
  "casa-fft",
+ "casa-images",
  "casa-imaging-model",
  "casa-numerics",
+ "casa-types",
  "ndarray",
  "num-complex",
  "num-traits",
+ "tempfile",
  "thiserror 2.0.18",
  "tracing",
 ]
