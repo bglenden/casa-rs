@@ -115,8 +115,41 @@ fn uniform_and_briggs_weights_follow_the_casa_formulae() {
     assert!((f2 - 25.0 / (19.0 / 7.0)).abs() < 1e-12, "f2 = {f2}");
     let expected = 1.0 / (3.0 * f2 + 1.0);
     assert!((f64::from(weight(&briggs, -250.0, 125.0, 1.0)) - expected).abs() < 1e-7);
-    // An empty cell under standard Briggs keeps the input weight.
-    assert_eq!(weight(&briggs, 100.0, 100.0, 1.0), 1.0);
+    // An empty cell weighs nothing under Briggs too
+    // (`VisImagingWeight::weightUniform` divides only when `a_gwt > 0`).
+    assert_eq!(weight(&briggs, 100.0, 100.0, 1.0), 0.0);
+}
+
+/// CASA's cell origin is the integer `n/2` (`uorigin_p = nx/2`, `GridFT`'s
+/// `offset_p` likewise): on a 7 × 7 grid it is cell 3, not 3.5. With
+/// `Δx = −1e-3` the scale is `−7e-3`, so the sample at `u = 100` sits at
+/// `x = 3 ∓ 0.7` with its conjugate:
+/// - standard (truncate): 2.3 → 2 and 3.7 → 3, where a half-cell origin
+///   gives 2.8 → 2 and 4.2 → 4;
+/// - cube build (`nint(x + 1) − 1`): 3.3 → 2 and 4.7 → 4, where a half-cell
+///   origin gives 3.8 → 3; the cube lookup rounds 2.3 → 2, not 2.8 → 3.
+#[test]
+fn odd_sizes_put_the_density_origin_on_the_lower_middle_cell() {
+    let odd = |rule| DensityGridShape {
+        width: 7,
+        height: 7,
+        planes: 1,
+        padding: 0,
+        increment_rad: [-1.0e-3, 1.0e-3],
+        rule,
+    };
+    // (rule, density at columns 2, 3 and 4 of row 3)
+    for (rule, expected) in [
+        (DensityCellRule::Standard, [2.0, 1.0 + 1.0 + 2.0, 0.0]),
+        (DensityCellRule::Cube, [2.0, 1.0 + 1.0, 2.0]),
+    ] {
+        let buffer = density_buffer(&[(0.0, 0.0, 1.0), (100.0, 0.0, 2.0)]);
+        let grid = build_density_grid(std::iter::once(buffer.block()), odd(rule));
+        let row = &grid.plane(0)[3 * 7..4 * 7];
+        assert_eq!(row[2..5], expected, "{rule:?}");
+        assert_eq!(grid.lookup(0, uv(100.0, 0.0)), Some(2.0), "{rule:?}");
+        assert_eq!(grid.lookup(0, uv(0.0, 0.0)), Some(expected[1]), "{rule:?}");
+    }
 }
 
 #[test]

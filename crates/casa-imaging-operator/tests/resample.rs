@@ -115,6 +115,8 @@ fn direct_sampling_places_every_unflagged_channel_on_plane_zero() {
     resampler
         .place(&operator, &natural(), &row, &mut out)
         .expect("place");
+    // CASA `FTMachine::setSpectralFlag` flags every correlation of a channel
+    // when any one is flagged (pseudo-I aside), before gridding.
     assert_eq!(
         out.len(),
         2,
@@ -602,6 +604,89 @@ fn density_pass_carries_the_unpolarized_weight_without_a_support_test() {
         resampler.place_density(&operator, &row, &shape, &mut wrong),
         Err(OperatorError::NativeRow { .. })
     ));
+}
+
+/// CASA grids the cube density with natural weights linearly interpolated
+/// onto its fine grid (`BriggsCubeWeightor` uses a `GridFT` without a
+/// Briggs weightor), not the nearest native weight: a sample a quarter of
+/// the way from a weight-2 to a weight-6 channel carries 3.
+#[test]
+fn cube_density_samples_interpolate_native_weights_linearly() {
+    // Output channels at 1.025 and 1.075 GHz, 50 MHz wide, over natives at
+    // 1.0 and 1.1 GHz: the output centres are a quarter and three quarters
+    // of the way between them.
+    let resampler = SpectralResampler::channel_local(axis(1.025, 0.05, 2), SpectralKernel::Linear);
+    let operator = operator(GridPrecision::F64, resampler.basis(), &XX_YY, &STOKES_I);
+    let frequencies = [1.0e9, 1.1e9];
+    let row = NativeRow {
+        uvw_m: [10.0, 10.0, 0.0],
+        phase_shift_m: 0.0,
+        frequencies_hz: &frequencies,
+        values: &[Complex32::new(1.0, 0.0); 4],
+        weights: &[2.0, 2.0, 6.0, 6.0],
+        flags: &[false; 4],
+        row_flag: false,
+        context: context(),
+    };
+    let shape = DensityGridShape {
+        width: 64,
+        height: 64,
+        planes: 2,
+        padding: 0,
+        increment_rad: [-2.0e-5, 2.0e-5],
+        rule: DensityCellRule::Cube,
+    };
+    let mut out = SampleBuffer::new(1);
+    resampler
+        .place_density(&operator, &row, &shape, &mut out)
+        .expect("density");
+    let block = out.block();
+    let weights = (0..block.placements.len())
+        .map(|index| (block.placements[index].plane, block.weights_of(index)[0]))
+        .collect::<Vec<_>>();
+    assert_eq!(weights, [(0, 3.0), (1, 5.0)]);
+}
+
+/// An autocorrelation weighs in the density grid, as CASA's
+/// `VisImagingWeight` and its cube weightor's `GridFT` (`usezero = true`)
+/// count it, but is neither gridded nor predicted (`GridFT::put`/`get` with
+/// `usezero = false`).
+#[test]
+fn autocorrelations_reach_the_density_but_not_the_grid() {
+    let operator = operator(GridPrecision::F64, Basis::Constant, &XX_YY, &STOKES_I);
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("resampler");
+    let frequencies = [1.0e9];
+    let row = NativeRow {
+        uvw_m: [0.0; 3],
+        phase_shift_m: 0.0,
+        frequencies_hz: &frequencies,
+        values: &[Complex32::new(1.0, 0.0); 2],
+        weights: &[1.0, 1.0],
+        flags: &[false; 2],
+        row_flag: false,
+        context: RowContext {
+            antennas: [3, 3],
+            ..context()
+        },
+    };
+    let shape = DensityGridShape {
+        width: 64,
+        height: 64,
+        planes: 1,
+        padding: 0,
+        increment_rad: [-2.0e-5, 2.0e-5],
+        rule: DensityCellRule::Standard,
+    };
+    let mut density = SampleBuffer::new(1);
+    resampler
+        .place_density(&operator, &row, &shape, &mut density)
+        .expect("density");
+    assert_eq!(density.len(), 1);
+    let mut placed = SampleBuffer::new(2);
+    resampler
+        .place(&operator, &natural(), &row, &mut placed)
+        .expect("place");
+    assert!(placed.is_empty());
 }
 
 #[test]

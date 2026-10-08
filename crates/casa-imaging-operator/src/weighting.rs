@@ -90,44 +90,65 @@ impl DensityGridShape {
         }
     }
 
+    /// CASA's integer cell origin `[nx/2, ny/2]` (`uorigin_p`, `vorigin_p`;
+    /// `GridFT`'s `offset_p` likewise): integer division, so an odd size
+    /// puts the origin on the lower of the two middle cells.
+    fn origin(&self) -> [usize; 2] {
+        [self.width / 2, self.height / 2]
+    }
+
+    /// CASA's `Float` cell scales `uscale_p = nx·Δx`, `vscale_p = ny·Δy`,
+    /// each rounded once from the double product
+    /// (`VisImagingWeight::VisImagingWeight`, `BriggsCubeWeightor::init`).
+    fn scale(&self) -> [f32; 2] {
+        [
+            (self.width as f64 * self.increment_rad[0]) as f32,
+            (self.height as f64 * self.increment_rad[1]) as f32,
+        ]
+    }
+
     /// The cell a density placement adds to. Standard placements carry
     /// [`DensityUv`] coordinates; cube placements carry the double
-    /// coordinates CASA grids its weight density with.
+    /// coordinates CASA grids its weight density with (`GridFT::put`'s
+    /// `locuvw`: `nint(scale·u + offset + 1)` in Fortran indexing).
     fn build_cell(&self, plane: usize, u: f64, v: f64) -> Option<usize> {
         match self.rule {
             DensityCellRule::Standard => self.standard_cell(plane, u as f32, v as f32),
             DensityCellRule::Cube => {
-                let width = self.width as f64;
-                let height = self.height as f64;
-                let x =
-                    (u * width * self.increment_rad[0] + width / 2.0 + 1.0).round() as isize - 1;
-                let y =
-                    (-v * height * self.increment_rad[1] + height / 2.0 + 1.0).round() as isize - 1;
+                let [origin_x, origin_y] = self.origin().map(|origin| origin as f64);
+                let x = (u * self.width as f64 * self.increment_rad[0] + origin_x + 1.0).round()
+                    as isize
+                    - 1;
+                let y = (-v * self.height as f64 * self.increment_rad[1] + origin_y + 1.0).round()
+                    as isize
+                    - 1;
                 self.cell_index(plane, x, y)
             }
         }
     }
 
+    /// The cell a lookup reads: `BriggsCubeWeightor::getWeightUniform`
+    /// rounds `uscale·u + uorigin` in `Float`, with `v` mirrored.
     fn lookup_cell(&self, plane: usize, uv: DensityUv) -> Option<usize> {
         match self.rule {
             DensityCellRule::Standard => self.standard_cell(plane, uv.u, uv.v),
             DensityCellRule::Cube => {
-                let width = self.width as f32;
-                let height = self.height as f32;
-                let x = (uv.u * width * (self.increment_rad[0] as f32) + width / 2.0).round();
-                let y = (-uv.v * height * (self.increment_rad[1] as f32) + height / 2.0).round();
+                let [scale_x, scale_y] = self.scale();
+                let [origin_x, origin_y] = self.origin().map(|origin| origin as f32);
+                let x = (scale_x * uv.u + origin_x).round();
+                let y = (scale_y * -uv.v + origin_y).round();
                 self.cell_index(plane, x as isize, y as isize)
             }
         }
     }
 
-    /// CASA keeps the scale in `Float` and truncates the cell coordinate
+    /// `VisImagingWeight`: `Int(uscale·u + uorigin)` in `Float`, truncated
     /// toward zero.
     fn standard_cell(&self, plane: usize, u: f32, v: f32) -> Option<usize> {
-        let width = self.width as f32;
-        let height = self.height as f32;
-        let x = (u * width * (self.increment_rad[0] as f32) + width / 2.0) as isize;
-        let y = (v * height * (self.increment_rad[1] as f32) + height / 2.0) as isize;
+        let [scale_x, scale_y] = self.scale();
+        let [origin_x, origin_y] = self.origin().map(|origin| origin as f32);
+        let x = (scale_x * u + origin_x) as isize;
+        let y = (scale_y * v + origin_y) as isize;
         self.cell_index(plane, x, y)
     }
 
@@ -421,21 +442,19 @@ impl WeightingGeneration {
                 let Some(plane) = grid.shape.plane_of(placement.plane) else {
                     return 0.0;
                 };
-                let Some(density) = grid.lookup(plane, density_uv) else {
+                // CASA weighs a sample whose density cell is empty or off
+                // the grid at zero, under uniform and Briggs alike
+                // (`VisImagingWeight::weightUniform` requires `a_gwt > 0`;
+                // `BriggsCubeWeightor::getWeightUniform` likewise).
+                let Some(density) = grid
+                    .lookup(plane, density_uv)
+                    .filter(|density| *density > 0.0)
+                else {
                     return 0.0;
                 };
                 let weighted = match robust {
-                    None => {
-                        if density > 0.0 {
-                            input / density
-                        } else {
-                            0.0
-                        }
-                    }
+                    None => input / density,
                     Some(factors) => {
-                        if grid.shape.rule == DensityCellRule::Cube && density <= 0.0 {
-                            return 0.0;
-                        }
                         let distance = bandwidth.map_or(1.0, |bandwidth| {
                             bandwidth.uv_distance_factor(&grid.shape, placement.u, placement.v)
                         });

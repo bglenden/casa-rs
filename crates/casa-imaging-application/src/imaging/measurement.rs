@@ -217,7 +217,14 @@ pub(crate) fn density_shape(
     let [width, height] = domain.shape().pixels();
     let (planes, padding, rule) = match problem.weighting().density_scope() {
         WeightDensityScope::PerOutputChannel => {
-            let padding = problem.weighting().casa_cube_density_padding().unwrap_or(0);
+            // CASA always pads the cube density axis
+            // (`BriggsCubeWeightor::estimateSwingChanPad`); a contract without
+            // the padding cannot reproduce it.
+            let padding = problem.weighting().casa_cube_density_padding().ok_or(
+                ImagingError::Unsupported {
+                    reason: "a per-channel weight density needs its compiled padding",
+                },
+            )?;
             let planes = padding
                 .checked_mul(2)
                 .and_then(|padding| {

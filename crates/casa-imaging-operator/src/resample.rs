@@ -844,19 +844,29 @@ impl SpectralResampler {
         }
     }
 
-    /// CASA's unpolarized input weight of a sample, from the nearest native
-    /// channel of a pair, or `None` when the sample is flagged.
+    /// CASA's unpolarized input weight of a density sample, or `None` when
+    /// the sample is flagged: its channel's, or for an interpolated pair the
+    /// linear interpolation of the two channels' weights, taking one end's
+    /// own at that end. CASA grids the cube density with a `GridFT` whose
+    /// Briggs weightor is unset (`BriggsCubeWeightor::initImgWeightCol`), so
+    /// `FTMachine::interpolateFrequencyTogrid` interpolates its natural
+    /// weights linearly (casacore `InterpolateArray1D`).
     fn input_weight(&self, row: &NativeRow<'_>, npol: usize, source: Source) -> Option<f32> {
         if sample_flagged(row, npol, source) {
             return None;
         }
-        let channel = match source {
-            Source::Channel(channel) => channel,
-            // CASA nearest-weight interpolation keeps the left element at a tie.
-            Source::Pair { left, right_factor } if right_factor > 0.5 => left + 1,
-            Source::Pair { left, .. } => left,
+        let weight = |channel| unpolarized_weight(row, npol, channel);
+        let weight = match source {
+            Source::Channel(channel) => weight(channel),
+            Source::Pair { left, right_factor } if right_factor <= f64::EPSILON => weight(left),
+            Source::Pair { left, right_factor } if right_factor >= 1.0 - f64::EPSILON => {
+                weight(left + 1)
+            }
+            Source::Pair { left, right_factor } => {
+                let (low, high) = (weight(left), weight(left + 1));
+                low + (high - low) * right_factor as f32
+            }
         };
-        let weight = unpolarized_weight(row, npol, channel);
         (weight.is_finite() && weight > 0.0).then_some(weight)
     }
 

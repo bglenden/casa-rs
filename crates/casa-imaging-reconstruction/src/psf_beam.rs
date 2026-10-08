@@ -33,17 +33,32 @@ const REGION_PADDING: usize = 5;
 /// Heap envelope for the bounded two-pass lobe extraction, excluding its
 /// borrowed full PSF. The Gaussian solve uses fixed-size stack matrices.
 ///
-/// The fit's fixed patch bounds clamp both dimensions before arithmetic.
+/// The lobe search patch is at most `2·20 + 1` pixels per axis; the fit
+/// window is the CASA window ([`fit_window`]) of a whole patch around the
+/// image centre, where CASA's PSF peaks. On a non-square plane squaring by
+/// index makes that window span the gap between the two centre pixels.
 #[must_use]
 pub fn psf_fit_workspace_bytes(shape: [usize; 2]) -> u64 {
     let first_samples = shape
         .map(|axis| axis.min(2 * PSF_PATCH_RADIUS + 1))
         .into_iter()
         .product::<usize>();
-    let window_cells = shape
-        .map(|axis| axis.min(2 * PSF_PATCH_RADIUS + 1 + 2 * REGION_PADDING))
-        .into_iter()
-        .product::<usize>();
+    let radius = PSF_PATCH_RADIUS
+        .min(shape[0].saturating_sub(1))
+        .min(shape[1].saturating_sub(1));
+    let centre = shape.map(|axis| axis / 2);
+    let (_, extent) = fit_window(
+        shape,
+        (
+            centre[0].saturating_sub(radius),
+            centre[1].saturating_sub(radius),
+        ),
+        (
+            (centre[0] + radius).min(shape[0].saturating_sub(1)),
+            (centre[1] + radius).min(shape[1].saturating_sub(1)),
+        ),
+    );
+    let window_cells = extent[0] * extent[1];
     let resampled_cells = window_cells.max(TARGET_INTERPOLATED_POINTS);
     let index_vectors = 2 * (first_samples + resampled_cells) * size_of::<SampleIndex>();
     let image_vectors = (window_cells + resampled_cells) * size_of::<f32>();
@@ -347,6 +362,23 @@ struct LobeSearchResult {
     trc: (usize, usize),
 }
 
+/// The fit window's corner and extent for a lobe whose bounding box is
+/// `blc..=trc` on a plane of `shape`: CASA `FindNpoints` squares the box by
+/// index, both axes taking the smaller corner and the larger far corner
+/// (`StokesImageUtil.cc`), and `FitGaussianPSF` expands it by
+/// `expand_pixel` and clips each axis to the plane, so a non-square plane
+/// can leave a non-square window.
+fn fit_window(
+    shape: [usize; 2],
+    blc: (usize, usize),
+    trc: (usize, usize),
+) -> ([usize; 2], [usize; 2]) {
+    let low = blc.0.min(blc.1).saturating_sub(REGION_PADDING);
+    let high = trc.0.max(trc.1) + REGION_PADDING;
+    let last = shape.map(|axis| high.min(axis.saturating_sub(1)));
+    ([low, low], last.map(|last| last + 1 - low))
+}
+
 /// Faithful port of `StokesImageUtil::extractCasaFitSamples`.
 ///
 /// `cutoff` is the CASA `psfcutoff` fraction of the ACTUAL PSF peak: the
@@ -367,19 +399,7 @@ fn extract_fit_samples(
         .min(shape[1].saturating_sub(1));
     let first_pass = find_points_in_lobe(psf, shape, peak_index, nrow, cutoff * peak)?;
 
-    // CASA `FindNpoints` squares the lobe's bounding box by index: both
-    // axes take the smaller corner and the larger far corner. The caller
-    // then expands it by `expand_pixel` and clips each axis to the plane,
-    // so a non-square plane can leave a non-square window.
-    let low = first_pass.blc.0.min(first_pass.blc.1);
-    let high = first_pass.trc.0.max(first_pass.trc.1);
-    let blc_x = low.saturating_sub(REGION_PADDING);
-    let blc_y = blc_x;
-    let trc_x = (high + REGION_PADDING).min(shape[0] - 1);
-    let trc_y = (high + REGION_PADDING).min(shape[1] - 1);
-
-    let nx = trc_x - blc_x + 1;
-    let ny = trc_y - blc_y + 1;
+    let ([blc_x, blc_y], [nx, ny]) = fit_window(shape, first_pass.blc, first_pass.trc);
     let mut window = Array2::<f32>::zeros((nx, ny));
     for x in 0..nx {
         for y in 0..ny {
@@ -966,6 +986,30 @@ fn casa_wrap_beam_position_angle(mut angle: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// On a 1024 × 512 plane the PSF peaks at (512, 256); a lobe filling the
+    /// 41-pixel search patch spans x 492‥532 and y 236‥276. Squared by
+    /// index it covers 236‥532 on both axes, expanded by 5 and clipped:
+    /// x 231‥537 and y 231‥511, so 307 × 281 cells, which the workspace
+    /// envelope must hold (a 51-pixel square bound holds 2601).
+    #[test]
+    fn the_fit_envelope_covers_the_casa_window_of_a_non_square_plane() {
+        assert_eq!(
+            fit_window([1024, 512], (492, 236), (532, 276)),
+            ([231, 231], [307, 281])
+        );
+        let window = 307 * 281;
+        let resampled = window.max(TARGET_INTERPOLATED_POINTS);
+        let at_least = (window + resampled) * size_of::<f32>()
+            + resampled * size_of::<FitSample>()
+            + 2 * resampled * size_of::<SampleIndex>();
+        assert!(psf_fit_workspace_bytes([1024, 512]) >= at_least as u64);
+        // A square plane keeps the 51-pixel window.
+        assert_eq!(
+            fit_window([512, 512], (236, 236), (276, 276)),
+            ([231, 231], [51, 51])
+        );
+    }
 
     #[test]
     fn lm_recovers_sigma_from_dense_exact_samples() {
