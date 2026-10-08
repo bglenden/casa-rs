@@ -224,7 +224,11 @@ impl CpuBackend {
                     continue;
                 };
                 if divide {
-                    norms[vpol] += kernel::norm(&taps, location, mueller, w_positive);
+                    // `accumulateFromGrid.inc` conjugates the prediction tap
+                    // for w ≤ 0 and sums that same tap into its norm: the
+                    // forward norm carries the opposite conjugation from
+                    // the adjoint's (`w_positive`), as the gather does.
+                    norms[vpol] += kernel::norm(&taps, location, mueller, !w_positive);
                 }
                 for (power, term) in powers.iter().zip(terms.clone()) {
                     let offset = layout.block_offset(plane, gpol, term);

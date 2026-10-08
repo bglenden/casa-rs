@@ -9,10 +9,10 @@ use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 use casa_imaging_operator::{
     Basis, DensityCellRule, DensityGridShape, DensityUv, GridGeometry, GridPadding, GridPrecision,
     ImageExtent, MeasurementOperator, NativeRow, OperatorError, PolarizationRouting, RowContext,
-    SampleBuffer, SpectralAxis, SpectralKernel, SpectralResampler, Spheroidal, WeightingGeneration,
-    build_density_grid,
+    SampleBuffer, SpectralAxis, SpectralKernel, SpectralResampler, Spheroidal, WPlaneCount,
+    WPlanes, WeightingGeneration, build_density_grid,
 };
-use common::operator;
+use common::{geometry, operator};
 use num_complex::Complex32;
 
 const C: f64 = 299_792_458.0;
@@ -772,4 +772,45 @@ fn standard_density_cells_use_casa_single_precision_coordinates() {
         .expect("place");
     assert_eq!(placed.len(), 1);
     assert_eq!(placed.block().weights_of(0), &[1.0, 1.0]);
+}
+
+#[test]
+fn a_row_past_the_last_w_plane_is_not_placed() {
+    // `wprojgrid.f`: `swp` rounds the plane of the unclamped w and `owp`
+    // drops the row, so it reaches no grid, PSF or sumwt; the prediction
+    // shares the placement. Plane 2 of four is kept, plane 4 is not.
+    let polarization = PolarizationRouting::compile(&XX_YY, &STOKES_I).expect("routing");
+    let planes = WPlanes::new(&geometry(), &polarization, WPlaneCount::Fixed(4)).expect("planes");
+    let w_scale = planes.w_scale();
+    let operator = MeasurementOperator::new(
+        geometry(),
+        Basis::Constant,
+        polarization,
+        Box::new(planes),
+        GridPrecision::F64,
+    );
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
+    let frequencies = [1.0e9];
+    let wavelength_m = C / frequencies[0];
+    let values = [Complex32::new(1.0, 0.0); 2];
+    let weights = [1.0_f32; 2];
+    let flags = [false; 2];
+    for (root, placed) in [(2.0_f64, 1), (4.0, 0)] {
+        let row = NativeRow {
+            uvw_m: [10.0, 10.0, root * root / w_scale * wavelength_m],
+            phase_shift_m: 0.0,
+            pointing_offset_rad: [0.0; 2],
+            frequencies_hz: &frequencies,
+            values: &values,
+            weights: &weights,
+            flags: &flags,
+            row_flag: false,
+            context: context(),
+        };
+        let mut out = SampleBuffer::new(2);
+        resampler
+            .place(&operator, &natural(), &row, &mut out)
+            .expect("place");
+        assert_eq!(out.len(), placed, "root {root}");
+    }
 }

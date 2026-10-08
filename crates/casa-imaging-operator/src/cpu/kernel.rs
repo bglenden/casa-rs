@@ -149,8 +149,11 @@ pub(super) fn gather<T: GridScalar>(
 }
 
 /// `Σ (conjugate ? conj(t) : t)` over the support of Mueller plane
-/// `mueller` at the sample's fine offset, without the pointing ramp: the
-/// forward normalisation, whose magnitude `sumwt` accumulates.
+/// `mueller` at the sample's fine offset, without the pointing ramp. The
+/// adjoint passes its own conjugation (`w > 0`) and `sumwt` accumulates
+/// the magnitude; the forward passes the opposite
+/// (`accumulateFromGrid.inc` conjugates for `w ≤ 0` and sums the taps it
+/// multiplies the grid by) and divides the gather by the result.
 pub(crate) fn norm(
     taps: &TapLayout<'_>,
     location: CellLocation,

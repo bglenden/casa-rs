@@ -305,8 +305,12 @@ impl MosaicPb {
             support = support.max(dish.support_pixels(increment[0], image_frequency_hz));
         }
         support = support.min(nx.max(ny));
-        // `CompositeNumber::nextLargerEven` returns the first even
-        // composite strictly above its argument.
+        // `HetArrayConvFunc::findConvFunction`: the support limited by the
+        // image extent, `CompositeNumber::nextLargerEven` (the first even
+        // composite strictly above its argument), then `/16*16`.
+        // `SimplePBConvFunc` sizes its screen from
+        // `Int(max(nx,ny)/2)*2*convSamp` instead; this set follows the
+        // heterogeneous-array class whose cells it builds.
         let conv_size = next_larger_even_composite(support + 1) / 16 * 16;
         if conv_size < 16 {
             return Err(OperatorError::ConvolutionFunction {

@@ -51,6 +51,7 @@ pub enum WPlaneCount {
 pub struct WPlanes {
     planes: Vec<DenseCell>,
     w_scale: f64,
+    screen_size: usize,
     max_half_support: u16,
     mueller: MuellerRouting,
     correction: ImageCorrection,
@@ -99,15 +100,21 @@ impl WPlanes {
         // `wScale = Float((wConvSize-1)*(wConvSize-1))/maxUVW`.
         let w_scale = f64::from(((planes - 1) * (planes - 1)) as f32) / max_uvw;
         let sampling = if planes > 1 { W_OVERSAMPLING } else { 1 };
-        // `convSize = nextLargerEven(max(Int(nx*padding), Int(ny*padding)))`;
-        // `CompositeNumber::nextLargerEven` returns the first even composite
-        // strictly above its argument, so a padded size that is itself
-        // composite (1200 → 1440) steps up (to 1458); the grid keeps 1440
-        // because `FTMachine` asks for the composite above `Int(1.2 n − 0.5)`.
-        // CASA keeps the raw size for one plane, which may be odd, so the
-        // one-plane case takes the same even composite size here.
+        // `convSize = max(Int(nx*padding), Int(ny*padding))`, stepped to
+        // `nextLargerEven` for more than one plane only. `CompositeNumber::
+        // nextLargerEven` returns the first even composite strictly above
+        // its argument, so a padded size that is itself composite (1200 →
+        // 1440) steps up (to 1458); the grid keeps 1440 because `FTMachine`
+        // asks for the composite above `Int(1.2 n − 0.5)`. One plane keeps
+        // the raw padded size; CASA transforms it odd as well, while the
+        // plane FFT here swaps quadrants of even sides only, so an odd raw
+        // size (101 → 121) takes the next even one (#652, record 43).
         let padded = ((nx as f64 * PADDING) as usize).max((ny as f64 * PADDING) as usize);
-        let conv_size = next_larger_even_composite(padded + 1);
+        let conv_size = if planes > 1 {
+            next_larger_even_composite(padded + 1)
+        } else {
+            padded + padded % 2
+        };
         let inner = conv_size / usize::from(sampling);
         // The screen's sky sampling: `incr · convSampling · padding·n/convSize`.
         let screen_increment = [
@@ -252,6 +259,7 @@ impl WPlanes {
             max_half_support: u16::try_from(last_support).expect("support fits u16"),
             planes: cells,
             w_scale,
+            screen_size: conv_size,
             mueller: MuellerRouting::scalar(polarization.pol_map(), polarization.grid_pols()),
             correction: ImageCorrection::split(
                 image_correction(grid_nx),
@@ -272,6 +280,14 @@ impl WPlanes {
     #[must_use]
     pub const fn w_scale(&self) -> f64 {
         self.w_scale
+    }
+
+    /// CASA `convSize`: the side of the screen the planes were transformed
+    /// on, the padded image size stepped to the even composite strictly
+    /// above it for more than one plane.
+    #[must_use]
+    pub const fn screen_size(&self) -> usize {
+        self.screen_size
     }
 
     /// The plane of `w_lambda`: `nint(√(wScale · |w|))` (`wprojgrid.f`

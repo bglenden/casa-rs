@@ -11,8 +11,8 @@ use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 use casa_imaging_operator::{
     Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend, GridBackend, GridPrecision,
     ImageCorrection, KernelNormalisation, MeasurementOperator, Mode, ModeSet, ModelImages,
-    ModelPlane, ModelPrescale, MuellerRouting, PlaneRange, PolarizationRouting, RowContext,
-    SampleBuffer, Spheroidal, TapLayout, Work,
+    ModelPlane, ModelPrescale, MuellerRouting, Placement, PlaneRange, PolarizationRouting,
+    RowContext, SampleBuffer, Spheroidal, TapLayout, Work,
 };
 use common::{IMAGE, Rng, geometry, placements, samples};
 use ndarray::Array2;
@@ -240,8 +240,9 @@ fn complex_kernels_with_pointing_gradients_are_adjoint_up_to_the_kernel_norm() {
 fn prediction_divides_once_by_the_norm_summed_over_mueller_planes() {
     // One-tap planes: plane 0 is 1, plane 1 is c, plane 2 is empty. With
     // the leakage routing XX reads grid XX through plane 0 and grid YY
-    // through plane 1, so P_XX = (g_XX + conj(c)·g_YY) / (1 + c), not the
-    // sum of two separately normalised terms.
+    // through plane 1, so P_XX = (g_XX + c·g_YY) / (1 + c) for w > 0 and
+    // the conjugate pair for w ≤ 0, not the sum of two separately
+    // normalised terms.
     let c = Complex32::new(0.5, 0.25);
     let mut rng = Rng::new(43);
     let cf = ComplexDense::new(
@@ -287,15 +288,11 @@ fn prediction_divides_once_by_the_norm_summed_over_mueller_planes() {
         let cell = location.y as usize * nx + location.x as usize;
         let g_xx = prepared.block::<f64>(0, 0, 0)[cell];
         let g_yy = prepared.block::<f64>(0, 1, 0)[cell];
-        let (own, other) = if placement.w > 0.0 {
-            (c, c.conj())
-        } else {
-            (c.conj(), c)
-        };
-        // Adjoint conjugation for w > 0 conjugates the taps (CASA
-        // `wprojgrid.f`, `AWVisResampler`), the forward gather conjugates
-        // them back; the norm follows the same rule.
-        let expected = (g_xx + own * g_yy) / (Complex64::new(1.0, 0.0) + other);
+        // `accumulateFromGrid.inc`: the forward tap is conjugated for
+        // w ≤ 0 and the norm sums those same taps, so the leakage plane
+        // and the denominator share one conjugation.
+        let own = if placement.w > 0.0 { c } else { c.conj() };
+        let expected = (g_xx + own * g_yy) / (Complex64::new(1.0, 0.0) + own);
         let phasor = Complex64::from_polar(1.0, -placement.phase);
         let expected = expected * phasor;
         let actual = predicted[index * 2];
@@ -303,6 +300,71 @@ fn prediction_divides_once_by_the_norm_summed_over_mueller_planes() {
             (Complex64::new(f64::from(actual.re), f64::from(actual.im)) - expected).norm()
                 <= 1.0e-5 * expected.norm().max(1.0),
             "sample {index}: {actual} vs {expected}"
+        );
+    }
+}
+
+#[test]
+fn a_constant_complex_tap_cancels_in_the_prediction_for_every_sign_of_w() {
+    // `accumulateFromGrid.inc` divides Σ wt·grid by Σ wt with one
+    // conjugation of wt on the sign of w, so a constant tap k = 0.6 + 0.8i
+    // with a non-real sum cancels exactly: the prediction is the mean of
+    // the grid over the support for w > 0, w = 0 and w < 0 alike.
+    // Dividing by the adjoint's norm instead multiplies by
+    // k/conj(k) = e^{2i·arg k}.
+    let k = Complex32::new(0.6, 0.8);
+    let mut rng = Rng::new(53);
+    let cf = ComplexDense::new(3, 2, &[Box::new(move |_, _, _| k)], &mut rng);
+    let operator = operator_with(cf);
+    let images = (0..2)
+        .map(|_| Array2::from_shape_fn((IMAGE, IMAGE), |_| rng.signed() as f32))
+        .collect();
+    let model = ModelImages {
+        first_plane: 0,
+        planes: vec![ModelPlane { images }],
+    };
+    let prepared = operator
+        .prepare_model(&model, ModelPrescale::Unit)
+        .expect("prepared");
+    let mut placed = Vec::new();
+    for base in placements(operator.geometry(), 6, 1, &mut rng) {
+        for w in [25.0, 0.0, -25.0] {
+            placed.push(Placement { w, ..base });
+        }
+    }
+    let mut block = SampleBuffer::new(2);
+    for placement in &placed {
+        block.push(*placement, &[Complex32::default(); 2], &[1.0; 2]);
+    }
+    let mut predicted = vec![Complex32::default(); placed.len() * 2];
+    CpuBackend::new()
+        .apply(
+            &block.block(),
+            operator.cf(),
+            Work::Predict {
+                model: &prepared,
+                out: &mut predicted,
+            },
+        )
+        .expect("predict");
+    let [nx, _] = operator.geometry().grid_shape();
+    for (index, placement) in placed.iter().enumerate() {
+        let location = operator.geometry().locate(placement.u, placement.v, 2);
+        // One plane with the leakage routing: XX reads both grids through it.
+        let mut sum = Complex64::default();
+        for iy in 0..3 {
+            for ix in 0..3 {
+                let cell = (location.y as usize + iy - 1) * nx + location.x as usize + ix - 1;
+                sum += prepared.block::<f64>(0, 0, 0)[cell] + prepared.block::<f64>(0, 1, 0)[cell];
+            }
+        }
+        let expected = sum / 18.0 * Complex64::from_polar(1.0, -placement.phase);
+        let actual = predicted[index * 2];
+        assert!(
+            (Complex64::new(f64::from(actual.re), f64::from(actual.im)) - expected).norm()
+                <= 1.0e-5 * expected.norm().max(1.0),
+            "w {}: {actual} vs {expected}",
+            placement.w
         );
     }
 }

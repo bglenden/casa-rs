@@ -163,6 +163,42 @@ fn plane_index_is_casa_nint_of_the_root_and_rows_past_the_last_plane_are_dropped
 }
 
 #[test]
+fn the_screen_is_the_padded_image_stepped_to_the_strict_even_composite_for_several_planes() {
+    // `WPConvFunc::findConvFunction`: `convSize = max(Int(1.2 nx), Int(1.2 ny))`
+    // and, for `wConvSize > 1` only, `CompositeNumber::nextLargerEven`,
+    // which returns the first even composite strictly above its argument
+    // (1440 → 1458, 120 → 128, 76 → 80); one plane keeps the raw padded
+    // size. CASA transforms an odd raw size as is; the plane FFT here takes
+    // even sides, so 121 becomes 122 (recorded deviation, #652 record 43).
+    let polarization = PolarizationRouting::compile(&XX_YY, &STOKES_I).expect("routing");
+    for (image, planes, expected) in [
+        (64, 8, 80),
+        (64, 1, 76),
+        (100, 2, 128),
+        (100, 1, 120),
+        (101, 1, 122),
+        (1200, 2, 1458),
+    ] {
+        let geometry = GridGeometry::new(
+            ImageExtent {
+                shape: [image, image],
+                increment_rad: [-WIDE_INCREMENT_RAD, WIDE_INCREMENT_RAD],
+                reference_pixel: [image / 2, image / 2],
+            },
+            GridPadding::CasaComposite,
+        )
+        .expect("geometry");
+        let set =
+            WPlanes::new(&geometry, &polarization, WPlaneCount::Fixed(planes)).expect("planes");
+        assert_eq!(
+            set.screen_size(),
+            expected,
+            "{image} pixels, {planes} planes"
+        );
+    }
+}
+
+#[test]
 fn the_zero_w_plane_is_the_spheroidal_kernel() {
     // Plane 0 is `FT[grdsf taper]` sampled four times per cell; the standard
     // set tabulates the analytic `(1 − ν²)·grdsf` at a hundred. At the

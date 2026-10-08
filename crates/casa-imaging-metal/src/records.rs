@@ -298,10 +298,13 @@ pub(crate) fn prepare(
             }
             inverse.fill(Complex32::default());
             let mut norms = [Complex64::default(); MAX_POLS];
+            // The forward norm sums the taps the gather multiplies the grid
+            // by, conjugated for w ≤ 0 (`accumulateFromGrid.inc`): the
+            // opposite conjugation from the adjoint's `sumwt` norm above.
             for row in mueller.table(w_positive, true) {
                 for (vpol, plane_index) in row.iter().enumerate() {
                     if let Some(m) = *plane_index {
-                        norms[vpol] += table.norm(location, m, w_positive);
+                        norms[vpol] += table.norm(location, m, !w_positive);
                     }
                 }
             }

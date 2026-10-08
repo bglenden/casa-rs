@@ -149,6 +149,52 @@ struct Group {
     imaging_half_support: [u16; 2],
     /// The same over the weight cells, which the PSF and weight image use.
     weight_half_support: [u16; 2],
+    /// The smallest declared half support over both kinds: the row filter
+    /// keeps every row some cell of the group fits.
+    smallest_half_support: [u16; 2],
+}
+
+impl Group {
+    fn new(cells: Vec<CellFiles>) -> Self {
+        let largest = |select: fn(&CellFiles) -> &CellHeader| {
+            cells.iter().map(select).fold([0_u16; 2], |half, header| {
+                [
+                    half[0].max(header.support[0]),
+                    half[1].max(header.support[1]),
+                ]
+            })
+        };
+        let imaging_half_support = largest(|cell| &cell.imaging);
+        let weight_half_support = largest(|cell| &cell.weight);
+        let smallest_half_support = cells
+            .iter()
+            .flat_map(|cell| [&cell.imaging, &cell.weight])
+            .fold([u16::MAX; 2], |half, header| {
+                [
+                    half[0].min(header.support[0]),
+                    half[1].min(header.support[1]),
+                ]
+            });
+        Self {
+            cells,
+            imaging_half_support,
+            weight_half_support,
+            smallest_half_support,
+        }
+    }
+}
+
+/// The support `locate_sample` tests a row against: the smallest cell the
+/// gridding group or the prediction group can select. Every mode re-tests
+/// the support of the cell it reads (`AWVisResampler::DataToGrid` and
+/// `GridToData` call `onGrid` with the selected cell's support), so the
+/// filter only has to keep every row CASA grids with any of them.
+fn placement_half_support(gridding: &Group, prediction: &Group) -> [u16; 2] {
+    let (g, p) = (
+        gridding.smallest_half_support,
+        prediction.smallest_half_support,
+    );
+    [g[0].min(p[0]), g[1].min(p[1])]
 }
 
 /// The loaded taps of one group.
@@ -368,21 +414,7 @@ impl AwCatalog {
                     .ok_or_else(|| {
                         cache_error(&root, "a (PA, frequency, w) group lacks a Mueller element")
                     })?;
-                let largest = |select: fn(&CellFiles) -> &CellHeader| {
-                    cells.iter().map(select).fold([0_u16; 2], |half, header| {
-                        [
-                            half[0].max(header.support[0]),
-                            half[1].max(header.support[1]),
-                        ]
-                    })
-                };
-                let imaging_half_support = largest(|cell| &cell.imaging);
-                let weight_half_support = largest(|cell| &cell.weight);
-                Ok(Group {
-                    cells,
-                    imaging_half_support,
-                    weight_half_support,
-                })
+                Ok(Group::new(cells))
             })
             .collect::<Result<Vec<_>, AwCatalogError>>()?;
         let mueller = routing(&mueller_elements, polarization).ok_or_else(|| {
@@ -745,12 +777,19 @@ impl ConvolutionFunctionSet for AwCatalog {
         hold.lend_keyed(key, 2, || self.loaded(usize::from(key.cube)).0)
     }
 
-    /// The imaging cell's support: `AWVisResampler::DataToGrid` drops a
-    /// data row by it (`onGrid`), and the PSF, gridded with the wider
-    /// weight cell, re-checks its own support per mode. The prediction
-    /// cell's support is checked again by the predictor.
+    /// The smallest support of the cells the key can select, over the
+    /// gridding group (imaging and weight cells) and the prediction group
+    /// (its native-frequency cell). The data gridding, the PSF and weight
+    /// image, and the predictor each re-test the support of the cell they
+    /// read (`AWVisResampler::DataToGrid` and `GridToData` call `onGrid`
+    /// with the selected cell's), so a row the imaging cell overruns is
+    /// still gridded into the PSF and weight image, or predicted, when its
+    /// smaller cell fits.
     fn placement_half_support(&self, key: CfKey, _hold: &mut CellHold) -> [u16; 2] {
-        self.groups[usize::from(key.group)].imaging_half_support
+        placement_half_support(
+            &self.groups[usize::from(key.group)],
+            &self.groups[usize::from(key.cube)],
+        )
     }
 
     fn mueller(&self) -> &MuellerRouting {
@@ -1220,6 +1259,49 @@ fn write_cell(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_row_filter_keeps_every_row_the_smallest_selectable_cell_fits() {
+        let header = |support: [u16; 2]| CellHeader {
+            path: PathBuf::new(),
+            shape: [16, 16],
+            sampling: 1,
+            support,
+            mueller: 0,
+            w_value: 0.0,
+            working_field_rad: None,
+            w_increment: 0.0,
+            pa_deg: 0.0,
+            frequency_hz: 1.0e9,
+        };
+        let group = |cells: &[([u16; 2], [u16; 2])]| {
+            Group::new(
+                cells
+                    .iter()
+                    .map(|(imaging, weight)| CellFiles {
+                        imaging: header(*imaging),
+                        weight: header(*weight),
+                    })
+                    .collect(),
+            )
+        };
+        // Imaging 6 over weight 4: the PSF and weight image keep rows the
+        // imaging cell overruns, so the filter admits down to the weight
+        // cell; each mode's own `onGrid` test does the rest.
+        let wide_imaging = group(&[([6, 6], [4, 4]), ([5, 6], [4, 3])]);
+        assert_eq!(wide_imaging.imaging_half_support, [6, 6]);
+        assert_eq!(wide_imaging.weight_half_support, [4, 4]);
+        assert_eq!(placement_half_support(&wide_imaging, &wide_imaging), [4, 3]);
+        // Weight 6 over imaging 4: the data gridding keeps rows the weight
+        // cell overruns.
+        let wide_weight = group(&[([4, 4], [6, 6])]);
+        assert_eq!(placement_half_support(&wide_weight, &wide_weight), [4, 4]);
+        // A native-frequency prediction cell narrower than every gridding
+        // cell: `GridToData` predicts rows `DataToGrid` drops.
+        let narrow = group(&[([3, 2], [7, 7])]);
+        assert_eq!(placement_half_support(&wide_weight, &narrow), [3, 2]);
+        assert_eq!(placement_half_support(&narrow, &wide_weight), [3, 2]);
+    }
 
     #[test]
     fn index_rules_follow_casa() {

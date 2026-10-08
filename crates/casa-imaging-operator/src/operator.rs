@@ -266,10 +266,12 @@ impl MeasurementOperator {
 
     /// The kernel norm a prediction of `placement`'s visibility
     /// polarization `vpol` is divided by: the sum, over the Mueller planes
-    /// the forward table routes to `vpol`, of the w-conjugated taps at the
-    /// sample's fine offset, without the pointing ramp. `sumwt` accumulates
-    /// `W · |norm|` on the adjoint side, so the operator pair is exactly
-    /// adjoint once each sample's data are divided by the conjugate norm.
+    /// the forward table routes to `vpol`, of the taps at the sample's fine
+    /// offset conjugated for `w ≤ 0` (`accumulateFromGrid.inc` sums the
+    /// taps it multiplies the grid by), without the pointing ramp. `sumwt`
+    /// accumulates `W · |norm|` on the adjoint side, so the operator pair
+    /// is exactly adjoint once each sample's data are divided by the
+    /// conjugate norm.
     #[must_use]
     pub fn prediction_norm(&self, placement: &Placement, vpol: usize) -> Complex64 {
         let mut hold = CellHold::new();
@@ -283,7 +285,7 @@ impl MeasurementOperator {
             .table(w_positive, true)
             .iter()
             .filter_map(|row| row[vpol])
-            .map(|mueller| crate::cpu::kernel::norm(&taps, location, mueller, w_positive))
+            .map(|mueller| crate::cpu::kernel::norm(&taps, location, mueller, !w_positive))
             .sum()
     }
 
