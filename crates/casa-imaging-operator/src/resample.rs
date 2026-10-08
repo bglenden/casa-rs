@@ -285,6 +285,86 @@ fn interpolate_from_grid(
     }
 }
 
+/// CASA's flag of a sample: the row flag, then any selected correlation of
+/// its channel; for an interpolated pair, of the left channel at its end, of
+/// the right channel at its end and of either between (casacore
+/// `InterpolateArray1D` linear with flags).
+fn sample_flagged(row: &NativeRow<'_>, npol: usize, source: Source) -> bool {
+    let flagged = |channel: usize| {
+        row.flags[channel * npol..(channel + 1) * npol]
+            .iter()
+            .any(|flag| *flag)
+    };
+    row.row_flag
+        || match source {
+            Source::Channel(channel) => flagged(channel),
+            Source::Pair { left, right_factor } if right_factor <= f64::EPSILON => flagged(left),
+            Source::Pair { left, right_factor } if right_factor >= 1.0 - f64::EPSILON => {
+                flagged(left + 1)
+            }
+            Source::Pair { left, .. } => flagged(left) || flagged(left + 1),
+        }
+}
+
+/// CASA's unpolarized input weight `(w_first + w_last)/2` of a native channel.
+fn unpolarized_weight(row: &NativeRow<'_>, npol: usize, channel: usize) -> f32 {
+    let weights = &row.weights[channel * npol..(channel + 1) * npol];
+    (weights[0] + weights[npol - 1]) / 2.0
+}
+
+/// The imaging weight of an unflagged sample at `placement`.
+///
+/// CASA's cube Briggs weightor (`BriggsCubeWeightor`, the cube density
+/// rule) weights each output sample from the nearest native input weight.
+/// Every other generation weights native channels at their own frequencies
+/// (`VisImagingWeight`), and `FTMachine::interpolateFrequencyTogrid`
+/// interpolates those weights linearly to an output frequency between two
+/// native channels, taking one end's weight at that end.
+fn sample_weight(
+    weighting: &WeightingGeneration,
+    row: &NativeRow<'_>,
+    npol: usize,
+    source: Source,
+    placement: &Placement,
+    frequency_hz: f64,
+) -> f32 {
+    let channel_weight = |channel: usize| {
+        let input = unpolarized_weight(row, npol, channel);
+        if !input.is_finite() {
+            return 0.0;
+        }
+        let frequency_hz = row.frequencies_hz[channel];
+        let scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+        let native = Placement {
+            u: row.uvw_m[0] * scale,
+            v: row.uvw_m[1] * scale,
+            ..*placement
+        };
+        weighting.imaging_weight(&native, DensityUv::casa(row.uvw_m, frequency_hz), input)
+    };
+    match source {
+        Source::Pair { left, right_factor } if !weighting.weights_output_samples() => {
+            if right_factor <= f64::EPSILON {
+                channel_weight(left)
+            } else if right_factor >= 1.0 - f64::EPSILON {
+                channel_weight(left + 1)
+            } else {
+                let (low, high) = (channel_weight(left), channel_weight(left + 1));
+                low + (high - low) * right_factor as f32
+            }
+        }
+        Source::Pair { left, right_factor } => {
+            let nearest = if right_factor > 0.5 { left + 1 } else { left };
+            let input = unpolarized_weight(row, npol, nearest);
+            if !input.is_finite() {
+                return 0.0;
+            }
+            weighting.imaging_weight(placement, DensityUv::casa(row.uvw_m, frequency_hz), input)
+        }
+        Source::Channel(channel) => channel_weight(channel),
+    }
+}
+
 /// A placement predicting `row` on `plane` at `frequency_hz`, when its kernel
 /// support fits the padded grid.
 fn prediction_placement(
@@ -379,9 +459,9 @@ impl SpectralResampler {
         let mut values = vec![Complex32::default(); npol];
         let mut weights = vec![0.0_f32; npol];
         self.for_each_sample(row, |plane, frequency_hz, source| {
-            let Some(input_weight) = self.input_weight(row, npol, source) else {
+            if sample_flagged(row, npol, source) {
                 return;
-            };
+            }
             let scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
             let w = row.uvw_m[2] * scale;
             let key = cf.key(&row.context, frequency_hz, w);
@@ -402,11 +482,7 @@ impl SpectralResampler {
                 cf: key,
                 gradient: [0.0, 0.0],
             };
-            let weight = weighting.imaging_weight(
-                &placement,
-                DensityUv::casa(row.uvw_m, frequency_hz),
-                input_weight,
-            );
+            let weight = sample_weight(weighting, row, npol, source, &placement, frequency_hz);
             if weight <= 0.0 {
                 return;
             }
@@ -424,8 +500,10 @@ impl SpectralResampler {
 
     /// Place one row's density-pass samples: one polarization carrying
     /// CASA's unpolarized input weight, zero values, no support test. Under
-    /// the standard cell rule `u` and `v` are the [`DensityUv`] coordinates
-    /// CASA accumulates with; under the cube rule they are the double
+    /// the standard cell rule every unflagged native channel is a sample at
+    /// its own frequency whose `u` and `v` are the [`DensityUv`] coordinates
+    /// (`VisImagingWeight` accumulates native channels); under the cube
+    /// rule the samples are the resampled output samples at the double
     /// coordinates CASA grids its weight density with.
     pub fn place_density(
         &self,
@@ -442,7 +520,7 @@ impl SpectralResampler {
             });
         }
         let cf = operator.cf();
-        self.for_each_sample(row, |plane, frequency_hz, source| {
+        let mut visit = |plane: u32, frequency_hz: f64, source: Source| {
             let Some(input_weight) = self.input_weight(row, npol, source) else {
                 return;
             };
@@ -466,7 +544,15 @@ impl SpectralResampler {
                 gradient: [0.0, 0.0],
             };
             out.push(placement, &[Complex32::default()], &[input_weight]);
-        });
+        };
+        match rule {
+            DensityCellRule::Standard => {
+                for (channel, frequency_hz) in row.frequencies_hz.iter().enumerate() {
+                    visit(0, *frequency_hz, Source::Channel(channel));
+                }
+            }
+            DensityCellRule::Cube => self.for_each_sample(row, visit),
+        }
         Ok(())
     }
 
@@ -578,50 +664,20 @@ impl SpectralResampler {
         }
     }
 
-    /// CASA's unpolarized input weight `(w_first + w_last)/2` of a sample,
-    /// or `None` when the row or any selected correlation is flagged.
+    /// CASA's unpolarized input weight of a sample, from the nearest native
+    /// channel of a pair, or `None` when the sample is flagged.
     fn input_weight(&self, row: &NativeRow<'_>, npol: usize, source: Source) -> Option<f32> {
-        if row.row_flag {
+        if sample_flagged(row, npol, source) {
             return None;
         }
-        let (channel, right_factor) = match source {
-            Source::Channel(channel) => (channel, None),
-            Source::Pair { left, right_factor } => (left, Some(right_factor)),
+        let channel = match source {
+            Source::Channel(channel) => channel,
+            // CASA nearest-weight interpolation keeps the left element at a tie.
+            Source::Pair { left, right_factor } if right_factor > 0.5 => left + 1,
+            Source::Pair { left, .. } => left,
         };
-        let flagged = |channel: usize| {
-            row.flags[channel * npol..(channel + 1) * npol]
-                .iter()
-                .any(|flag| *flag)
-        };
-        let unpolarized = |channel: usize| {
-            let weights = &row.weights[channel * npol..(channel + 1) * npol];
-            (weights[0] + weights[npol - 1]) / 2.0
-        };
-        let (flag, weight) = match right_factor {
-            None => (flagged(channel), unpolarized(channel)),
-            Some(right_factor) => {
-                let left_flag = flagged(channel);
-                let right_flag = flagged(channel + 1);
-                let flag = if right_factor <= f64::EPSILON {
-                    left_flag
-                } else if right_factor >= 1.0 - f64::EPSILON {
-                    right_flag
-                } else {
-                    left_flag || right_flag
-                };
-                // CASA nearest-weight interpolation keeps the left element at a tie.
-                let nearest = if right_factor > 0.5 {
-                    channel + 1
-                } else {
-                    channel
-                };
-                (flag, unpolarized(nearest))
-            }
-        };
-        if flag || !weight.is_finite() || weight <= 0.0 {
-            return None;
-        }
-        Some(weight)
+        let weight = unpolarized_weight(row, npol, channel);
+        (weight.is_finite() && weight > 0.0).then_some(weight)
     }
 
     /// The model visibility of every selected sample of `row`, written to

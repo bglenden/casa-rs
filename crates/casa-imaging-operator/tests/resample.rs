@@ -220,7 +220,7 @@ fn nearest_mapping_rounds_the_spectral_pixel() {
 }
 
 #[test]
-fn linear_mapping_interpolates_values_keeps_the_nearer_weight_and_ors_flags() {
+fn linear_mapping_interpolates_values_and_channel_weights_and_ors_flags() {
     let resampler = SpectralResampler::channel_local(axis(1.05, 0.1, 2), SpectralKernel::Linear);
     let operator = operator(GridPrecision::F64, resampler.basis(), &XX_YY, &STOKES_I);
     let frequencies = [1.0e9, 1.1e9, 1.2e9];
@@ -257,12 +257,71 @@ fn linear_mapping_interpolates_values_keeps_the_nearer_weight_and_ors_flags() {
         "fine frequency"
     );
     let block = out.block();
-    // Midpoint ties keep the left weight: 2 then 4; values (1+3)/2·2 and (3+5)/2·4.
-    assert_eq!(block.weights_of(0), &[2.0, 2.0]);
-    assert_eq!(block.weights_of(1), &[4.0, 4.0]);
-    assert!((block.values_of(0)[0].re - 4.0).abs() < 1e-5);
-    assert!((block.values_of(0)[1].re - 40.0).abs() < 1e-5);
-    assert!((block.values_of(1)[0].re - 16.0).abs() < 1e-5);
+    // CASA weights native channels (`VisImagingWeight`) and interpolates the
+    // weights linearly: 3 then 6 at the midpoints; values (1+3)/2·3 and
+    // (3+5)/2·6.
+    assert_eq!(block.weights_of(0), &[3.0, 3.0]);
+    assert_eq!(block.weights_of(1), &[6.0, 6.0]);
+    assert!((block.values_of(0)[0].re - 6.0).abs() < 1e-5);
+    assert!((block.values_of(0)[1].re - 60.0).abs() < 1e-5);
+    assert!((block.values_of(1)[0].re - 24.0).abs() < 1e-5);
+
+    // A global density accumulates the native channels, which share one
+    // cell here (2 + 4 + 8); the channels' uniform weights then
+    // interpolate: (2 + 4)/2/14 and (4 + 8)/2/14.
+    let global = DensityGridShape {
+        width: 64,
+        height: 64,
+        planes: 1,
+        increment_rad: [-2.0e-5, 2.0e-5],
+        rule: DensityCellRule::Standard,
+    };
+    let mut density = SampleBuffer::new(1);
+    resampler
+        .place_density(&operator, &row, DensityCellRule::Standard, &mut density)
+        .expect("density");
+    assert_eq!(density.len(), 3, "one density sample per native channel");
+    let uniform = WeightingGeneration::density(
+        build_density_grid(std::iter::once(density.block()), global),
+        None,
+        None,
+        None,
+    )
+    .expect("uniform");
+    out.clear();
+    resampler
+        .place(&operator, &uniform, &row, &mut out)
+        .expect("place");
+    let block = out.block();
+    assert!((block.weights_of(0)[0] - 3.0 / 14.0).abs() < 1e-6);
+    assert!((block.weights_of(1)[0] - 6.0 / 14.0).abs() < 1e-6);
+
+    // CASA's cube Briggs weightor weights each output sample from the
+    // nearest native weight instead, a tie keeping the left one; this
+    // robustness makes the density term vanish.
+    let per_channel = DensityGridShape {
+        planes: 2,
+        rule: DensityCellRule::Cube,
+        ..global
+    };
+    let mut density = SampleBuffer::new(1);
+    resampler
+        .place_density(&operator, &row, DensityCellRule::Cube, &mut density)
+        .expect("density");
+    let briggs = WeightingGeneration::density(
+        build_density_grid(std::iter::once(density.block()), per_channel),
+        Some(10.0),
+        None,
+        None,
+    )
+    .expect("briggs");
+    out.clear();
+    resampler
+        .place(&operator, &briggs, &row, &mut out)
+        .expect("place");
+    let block = out.block();
+    assert!((block.weights_of(0)[0] - 2.0).abs() < 1e-5);
+    assert!((block.weights_of(1)[0] - 4.0).abs() < 1e-5);
 
     let mut flagged = [false; 6];
     flagged[2] = true;

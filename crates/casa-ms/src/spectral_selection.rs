@@ -369,151 +369,6 @@ fn channel_mode_single_output_width_hz(
     Ok((high_edge_hz - low_edge_hz).abs())
 }
 
-fn channel_mode_output_centers(
-    all_source_frequencies_hz: &[f64],
-    all_source_channel_widths_hz: &[f64],
-    start_channel: i32,
-    width_channels: i32,
-    nchan: usize,
-) -> MsResult<Vec<f64>> {
-    if width_channels == 0 {
-        return Err(MsError::VersionError(
-            "cube channel width must not be zero".to_string(),
-        ));
-    }
-    let nchannels = i32::try_from(all_source_frequencies_hz.len()).map_err(|_| {
-        MsError::VersionError("spectral window channel count exceeds i32".to_string())
-    })?;
-    if all_source_channel_widths_hz.len() != all_source_frequencies_hz.len() {
-        return Err(MsError::VersionError(format!(
-            "channel-mode cube axis requires matching frequency/width arrays, got {} and {}",
-            all_source_frequencies_hz.len(),
-            all_source_channel_widths_hz.len()
-        )));
-    }
-    if all_source_frequencies_hz.first() <= all_source_frequencies_hz.last() {
-        return channel_mode_output_centers_simple(
-            all_source_frequencies_hz,
-            all_source_channel_widths_hz,
-            start_channel,
-            width_channels,
-            nchan,
-        );
-    }
-
-    let mut trans_freq_hz = all_source_frequencies_hz.to_vec();
-    let mut trans_width_hz = all_source_channel_widths_hz
-        .iter()
-        .map(|width_hz| width_hz.abs())
-        .collect::<Vec<_>>();
-    let mut start = start_channel;
-    let mut start_is_end = width_channels < 0;
-
-    if trans_freq_hz.first() > trans_freq_hz.last() {
-        trans_freq_hz.reverse();
-        trans_width_hz.reverse();
-        start = nchannels - 1 - start;
-        start_is_end = !start_is_end;
-    }
-
-    if start < 0 || start >= nchannels {
-        return Err(MsError::VersionError(format!(
-            "cube channel start {start_channel} is outside the SPW with {nchannels} channels"
-        )));
-    }
-
-    let requested_nchan = i32::try_from(nchan)
-        .map_err(|_| MsError::VersionError("cube channel count exceeds i32".to_string()))?;
-    let mut bandwidth_channels = requested_nchan;
-    let mut center_channel = start;
-    if start_is_end {
-        center_channel -= bandwidth_channels / 2;
-    } else {
-        center_channel += bandwidth_channels / 2;
-    }
-
-    if center_channel - bandwidth_channels / 2 < 0 {
-        bandwidth_channels = 2 * center_channel + 1;
-    }
-    if nchannels < center_channel + bandwidth_channels / 2 {
-        bandwidth_channels = 2 * (nchannels - center_channel);
-    }
-
-    let requested_width_channels = width_channels.abs();
-    let channel_width = if requested_width_channels < 1 {
-        1
-    } else if requested_width_channels > bandwidth_channels {
-        bandwidth_channels
-    } else {
-        requested_width_channels
-    };
-    bandwidth_channels = requested_nchan * channel_width;
-
-    let bandwidth_lower_end_channel = center_channel - bandwidth_channels / 2;
-    let bandwidth_upper_end_channel = bandwidth_lower_end_channel + bandwidth_channels - 1;
-
-    if channel_width == bandwidth_channels {
-        let low = usize::try_from(bandwidth_lower_end_channel)
-            .expect("validated lower single-channel bound");
-        let high = usize::try_from(bandwidth_upper_end_channel)
-            .expect("validated upper single-channel bound");
-        return Ok(vec![
-            0.5 * ((trans_freq_hz[low] - trans_width_hz[low] / 2.0)
-                + (trans_freq_hz[high] + trans_width_hz[high] / 2.0)),
-        ]);
-    }
-
-    let mut lower_bounds_hz = Vec::new();
-    let mut upper_bounds_hz = Vec::new();
-    let channel_ratio = bandwidth_channels / channel_width;
-    let start_channel_index = if channel_ratio % 2 != 0 {
-        center_channel - channel_width / 2
-    } else {
-        center_channel
-    };
-
-    let mut lower_indices_up = Vec::new();
-    let mut upper_indices_up = Vec::new();
-    let mut index = start_channel_index;
-    while index <= bandwidth_upper_end_channel {
-        lower_indices_up.push(index);
-        upper_indices_up.push((index + channel_width - 1).min(bandwidth_upper_end_channel));
-        index += channel_width;
-    }
-
-    let mut lower_indices_down = Vec::new();
-    let mut upper_indices_down = Vec::new();
-    let mut index = start_channel_index - 1;
-    while index >= bandwidth_lower_end_channel {
-        upper_indices_down.push(index);
-        lower_indices_down.push((index - channel_width + 1).max(bandwidth_lower_end_channel));
-        index -= channel_width;
-    }
-
-    for reverse_index in (0..lower_indices_down.len()).rev() {
-        let low = usize::try_from(lower_indices_down[reverse_index])
-            .expect("validated lower descending bound");
-        let high = usize::try_from(upper_indices_down[reverse_index])
-            .expect("validated upper descending bound");
-        lower_bounds_hz.push(trans_freq_hz[low] - trans_width_hz[low] / 2.0);
-        upper_bounds_hz.push(trans_freq_hz[high] + trans_width_hz[high] / 2.0);
-    }
-    for index in 0..lower_indices_up.len() {
-        let low =
-            usize::try_from(lower_indices_up[index]).expect("validated lower ascending bound");
-        let high =
-            usize::try_from(upper_indices_up[index]).expect("validated upper ascending bound");
-        lower_bounds_hz.push(trans_freq_hz[low] - trans_width_hz[low] / 2.0);
-        upper_bounds_hz.push(trans_freq_hz[high] + trans_width_hz[high] / 2.0);
-    }
-
-    Ok(lower_bounds_hz
-        .into_iter()
-        .zip(upper_bounds_hz)
-        .map(|(low_hz, high_hz)| 0.5 * (low_hz + high_hz))
-        .collect())
-}
-
 fn casa_regridding_input_widths(
     source_frequencies_hz: &[f64],
     source_channel_widths_hz: &[f64],
@@ -633,54 +488,6 @@ fn casa_transformed_channel_mode_output_centers(
         centers_hz.reverse();
     }
     Ok(centers_hz)
-}
-
-fn channel_mode_output_centers_simple(
-    all_source_frequencies_hz: &[f64],
-    all_source_channel_widths_hz: &[f64],
-    start_channel: i32,
-    width_channels: i32,
-    nchan: usize,
-) -> MsResult<Vec<f64>> {
-    let nchannels = i32::try_from(all_source_frequencies_hz.len()).map_err(|_| {
-        MsError::VersionError("spectral window channel count exceeds i32".to_string())
-    })?;
-    let mut centers = Vec::with_capacity(nchan);
-    for offset in 0..nchan {
-        let offset = i32::try_from(offset)
-            .map_err(|_| MsError::VersionError("cube channel count exceeds i32".to_string()))?;
-        let (low, high) = if width_channels > 0 {
-            let low = start_channel + offset * width_channels;
-            let high = low + width_channels;
-            (low, high)
-        } else {
-            let high = start_channel + 1 + offset * width_channels;
-            let low = high + width_channels;
-            (low, high)
-        };
-        if low < 0 || high < 0 || low >= nchannels || high > nchannels || low >= high {
-            return Err(MsError::VersionError(format!(
-                "cube channel axis bin [{low}, {high}) is outside the SPW with {nchannels} channels"
-            )));
-        }
-        let selected = usize::try_from(low).expect("validated low bound")
-            ..usize::try_from(high).expect("validated high bound");
-        let low_edge_hz = selected
-            .clone()
-            .map(|index| {
-                all_source_frequencies_hz[index] - all_source_channel_widths_hz[index].abs() / 2.0
-            })
-            .reduce(f64::min)
-            .expect("validated non-empty channel range");
-        let high_edge_hz = selected
-            .map(|index| {
-                all_source_frequencies_hz[index] + all_source_channel_widths_hz[index].abs() / 2.0
-            })
-            .reduce(f64::max)
-            .expect("validated non-empty channel range");
-        centers.push(0.5 * (low_edge_hz + high_edge_hz));
-    }
-    Ok(centers)
 }
 
 /// Resolve a simple contiguous source-channel selection.
@@ -970,9 +777,14 @@ impl CubeSpectralSetup {
         };
         let (output_channel_frequencies_hz, output_channel_widths_hz) =
             if matches!(axis_config.specmode, CubeSpecMode::Cubedata) {
-                let output_channel_frequencies_hz = channel_mode_output_centers(
+                // CASA `calcChanFreqs` skips the frame transform for cubedata
+                // and builds the bounds with the same `regridChanBounds` code.
+                let output_channel_frequencies_hz = casa_transformed_channel_mode_output_centers(
                     all_source_frequencies_hz,
-                    all_source_channel_widths_hz,
+                    &casa_regridding_input_widths(
+                        all_source_frequencies_hz,
+                        all_source_channel_widths_hz,
+                    )?,
                     start_channel,
                     width_channels,
                     nchan,
@@ -3190,19 +3002,36 @@ mod tests {
     }
 
     #[test]
-    fn channel_mode_output_centers_shift_for_multi_channel_width() {
+    fn casa_channel_mode_output_centers_shift_for_multi_channel_width() {
         let all: Vec<_> = (0..20).map(|index| 1.0e9 + index as f64 * 50.0e6).collect();
         let widths = vec![50.0e6; all.len()];
-        let centers = channel_mode_output_centers(&all, &widths, 0, 2, 3).unwrap();
+        let centers = casa_transformed_channel_mode_output_centers(&all, &widths, 0, 2, 3).unwrap();
         assert_eq!(centers, vec![1.025e9, 1.125e9, 1.225e9]);
     }
 
     #[test]
-    fn channel_mode_output_centers_support_negative_width() {
+    fn casa_channel_mode_output_centers_support_negative_multi_channel_width() {
         let all: Vec<_> = (0..20).map(|index| 1.0e9 + index as f64 * 50.0e6).collect();
         let widths = vec![50.0e6; all.len()];
-        let centers = channel_mode_output_centers(&all, &widths, 9, -2, 2).unwrap();
+        let centers =
+            casa_transformed_channel_mode_output_centers(&all, &widths, 9, -2, 2).unwrap();
         assert_eq!(centers, vec![1.425e9, 1.325e9]);
+    }
+
+    #[test]
+    fn cubedata_axis_lands_on_casa_frequencies_for_inexact_source_channels() {
+        // refim_point.ms stores channel 0 one ulp below 1 GHz. CASA's bound
+        // arithmetic gives the cubedata axis 1 GHz + 50 MHz·k exactly, so the
+        // last output channel coincides with the last source channel and
+        // every channel interpolates inside the source range.
+        let mut all: Vec<_> = (0..20).map(|index| 1.0e9 + index as f64 * 50.0e6).collect();
+        all[0] = 999_999_999.999_999_9;
+        let widths = vec![50.0e6; all.len()];
+        let centers =
+            casa_transformed_channel_mode_output_centers(&all, &widths, 0, 1, 20).unwrap();
+        assert_eq!(centers[0], 1.0e9);
+        assert_eq!(centers[1] - centers[0], 50.0e6);
+        assert_eq!(centers[19], all[19]);
     }
 
     #[test]
@@ -3546,12 +3375,14 @@ mod tests {
     }
 
     #[test]
-    fn channel_mode_output_centers_reject_zero_width_and_mismatched_arrays() {
+    fn casa_channel_mode_output_centers_reject_zero_width_and_mismatched_arrays() {
         let all = vec![1.0e9, 1.05e9, 1.10e9];
-        let zero_width = channel_mode_output_centers(&all, &[5.0e7; 3], 0, 0, 1).unwrap_err();
+        let zero_width =
+            casa_transformed_channel_mode_output_centers(&all, &[5.0e7; 3], 0, 0, 1).unwrap_err();
         assert!(zero_width.to_string().contains("must not be zero"));
 
-        let mismatched = channel_mode_output_centers(&all, &[5.0e7; 2], 0, 1, 1).unwrap_err();
+        let mismatched =
+            casa_transformed_channel_mode_output_centers(&all, &[5.0e7; 2], 0, 1, 1).unwrap_err();
         assert!(
             mismatched
                 .to_string()

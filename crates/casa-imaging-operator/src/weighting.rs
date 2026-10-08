@@ -377,6 +377,13 @@ impl WeightingGeneration {
         })
     }
 
+    /// Whether CASA weights each resampled output sample (the cube density
+    /// rule, `BriggsCubeWeightor`) rather than native channels
+    /// (`VisImagingWeight`).
+    pub(crate) fn weights_output_samples(&self) -> bool {
+        matches!(self, Self::Density { grid, .. } if grid.shape.rule == DensityCellRule::Cube)
+    }
+
     /// Imaging weight of one placement from its unpolarized input weight;
     /// `density_uv` picks the density cell. Pure; CASA's cell rules live in
     /// [`DensityGrid::lookup`].
