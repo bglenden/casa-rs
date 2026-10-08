@@ -11,6 +11,7 @@
 
 use num_complex::{Complex32, Complex64};
 
+use crate::accumulator::PlaneRange;
 use crate::backend::{GridBackend, PreparedModelGrids, Work};
 use crate::convolution::RowContext;
 use crate::error::OperatorError;
@@ -144,6 +145,20 @@ impl SpectralAxis {
         let pixel = ((frequency_hz - self.first_hz) / self.increment_hz + 0.5).floor();
         (pixel >= 0.0 && pixel < f64::from(self.channels)).then_some(pixel as u32)
     }
+
+    /// `FTMachine::matchChannel` under linear interpolation: a native
+    /// channel off the axis is still predicted (`chanMap = −2`) within half a
+    /// native width inside, or two widths outside, the world frequency of
+    /// pixel 0 or of pixel `channels` (one past the last centre, as CASA
+    /// takes it); `native_width_hz` is the row's first native spacing.
+    fn in_linear_halo(self, frequency_hz: f64, native_width_hz: f64) -> bool {
+        let first = self.first_hz;
+        let beyond = self.first_hz + f64::from(self.channels) * self.increment_hz;
+        let (low, high) = (first.min(beyond), first.max(beyond));
+        let width = native_width_hz.abs();
+        (frequency_hz < high + 2.0 * width && frequency_hz > high - 0.5 * width)
+            || (frequency_hz < low + 0.5 * width && frequency_hz > low - 2.0 * width)
+    }
 }
 
 /// CASA's fine frequency grid for linear interpolation: the output centres
@@ -261,8 +276,9 @@ impl PredictionScratch {
 /// predictions `values` (`[channel][pol]`, zero where the row was not
 /// degridded) on CASA's image-frequency grid, refined to `floor(width
 /// ratio)` repeated points per channel when output channels are wider than
-/// native ones, interpolated linearly to every mapped native channel; the
-/// end pair extrapolates (casacore `InterpolateArray1D` linear).
+/// native ones, interpolated linearly to every native channel that maps to
+/// the axis or lies in its linear halo (`chanMap` 0… or −2; −1 stays
+/// zero); the end pair extrapolates (casacore `InterpolateArray1D` linear).
 fn interpolate_from_grid(
     axis: SpectralAxis,
     row: &NativeRow<'_>,
@@ -285,8 +301,11 @@ fn interpolate_from_grid(
     };
     let points = axis.channels as usize * per_channel;
     let point = |index: usize| fine_start + index as f64 * fine_increment;
+    let native_width_hz = native[1] - native[0];
     for (channel, frequency_hz) in native.iter().enumerate() {
-        if axis.nearest_channel(*frequency_hz).is_none() {
+        if axis.nearest_channel(*frequency_hz).is_none()
+            && !axis.in_linear_halo(*frequency_hz, native_width_hz)
+        {
             continue;
         }
         let position = (frequency_hz - fine_start) / fine_increment;
@@ -464,6 +483,34 @@ impl SpectralResampler {
     #[must_use]
     pub const fn basis(&self) -> Basis {
         self.basis
+    }
+
+    /// Whether a residual pass forms its residual at native channels:
+    /// linear interpolation onto more than one output channel. CASA
+    /// subtracts the model's native-channel predictions from the data
+    /// (`SIMapperCollection::grid`, after `interpolateFrequencyFromgrid`) and
+    /// interpolates the difference onto the image grid, which is not the
+    /// model subtracted at each output sample. Direct and nearest sampling
+    /// predict each native channel at its own frequency, where the two agree,
+    /// so their residual is gridded in one sweep (`Work::ResidualGrid`).
+    #[must_use]
+    pub const fn forms_native_residuals(&self) -> bool {
+        matches!(self.sampling, Sampling::Linear(axis) if axis.channels > 1)
+    }
+
+    /// The model planes a residual pass over `planes` needs: one more on
+    /// each side, clipped to the axis, when residuals are formed at native
+    /// channels (a native channel's prediction interpolates its neighbouring
+    /// output channels); `planes` otherwise.
+    #[must_use]
+    pub fn model_planes(&self, planes: PlaneRange) -> PlaneRange {
+        match self.sampling {
+            Sampling::Linear(axis) if axis.channels > 1 => PlaneRange::new(
+                planes.start.saturating_sub(1),
+                (planes.end + 1).min(axis.channels),
+            ),
+            Sampling::Direct | Sampling::Nearest(_) | Sampling::Linear(_) => planes,
+        }
     }
 
     /// The output axis padded by `padding` density planes on each side.
@@ -742,16 +789,19 @@ impl SpectralResampler {
     /// `out` as `[channel][correlation]`, the way CASA predicts `MODEL_DATA`
     /// (`GridFT::get`, then `FTMachine::interpolateFrequencyFromgrid`).
     ///
-    /// A flagged row, a flagged correlation, a native channel outside the
-    /// output axis and a sample whose kernel leaves the grid predict zero.
+    /// A flagged row, a flagged correlation, a native channel off the output
+    /// axis and a sample whose kernel leaves the grid predict zero.
     /// A constant or Taylor basis, `nearest` mapping and the one-channel
     /// bypass degrid each native channel at its own frequency on its mapped
     /// plane. `linear` mapping degrids every output channel between the
     /// row's lowest and highest mapped channel at the channel centre, repeats
     /// each value `floor(width ratio)` times on CASA's fine grid when output
     /// channels are wider than native ones, and interpolates linearly to the
-    /// native frequencies (extrapolating from the end pair); unmapped output
-    /// channels contribute zeros to that grid.
+    /// native frequencies on the axis and in its halo (extrapolating from the
+    /// end pair); unmapped output channels contribute zeros to that grid.
+    /// Only the planes `model` holds are degridded; a caller predicting a
+    /// window of planes prepares the window's halo (see
+    /// [`Self::model_planes`]).
     #[allow(clippy::too_many_arguments)]
     pub fn predict_row(
         &self,
@@ -788,7 +838,11 @@ impl SpectralResampler {
             values,
         } = scratch;
         let buffer = buffer.as_mut().expect("reset installs the buffer");
+        let prepared = model.layout().planes();
         let mut place = |plane: u32, frequency_hz: f64, source: usize| {
+            if !prepared.contains(plane) {
+                return;
+            }
             if let Some(placement) =
                 prediction_placement(operator, self.basis, row, plane, frequency_hz)
             {

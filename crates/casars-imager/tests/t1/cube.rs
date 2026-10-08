@@ -51,8 +51,8 @@ fn assert_follows_the_spectrum(observation: &Observation, products: &Products, l
     let sumwt = products.get(".sumwt").channel_values();
     assert_eq!(image.channels(), CHANNELS);
     assert_eq!(sumwt.len(), CHANNELS);
-    for channel in 0..CHANNELS {
-        if sumwt[channel] == 0.0 {
+    for (channel, sumwt) in sumwt.iter().enumerate() {
+        if *sumwt == 0.0 {
             assert!(
                 !interior().contains(&channel),
                 "{label}: interior channel {channel} is blank"

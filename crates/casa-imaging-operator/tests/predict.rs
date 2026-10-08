@@ -3,8 +3,8 @@
 //! `FTMachine::interpolateFrequencyFromgrid`): direct mapping equals the
 //! degridded value at each native channel with CASA's flag rules; linear
 //! mapping reproduces a spectrum linear in frequency exactly, a flat
-//! spectrum across wide output channels, and predicts zero outside the
-//! output axis.
+//! spectrum across wide output channels, extrapolates native channels in
+//! CASA's `matchChannel` halo and predicts zero beyond it.
 
 mod common;
 
@@ -238,6 +238,45 @@ fn linear_prediction_reproduces_a_spectrum_linear_in_frequency() {
 }
 
 #[test]
+fn linear_prediction_extrapolates_natives_in_casa_halo_and_zeroes_the_rest() {
+    // Two 0.1 GHz output channels at 1.05 and 1.15 GHz on a native spacing
+    // of 0.05 GHz (the row's first two channels): CASA's fine grid holds
+    // each channel's value twice, at 1.025/1.075 and 1.125/1.175 GHz.
+    // `matchChannel` keeps an off-axis native (chanMap −2) within
+    // (ν(0) − 2Δ, ν(0) + Δ/2) = (0.95, 1.075) or (ν(2) − Δ/2, ν(2) + 2Δ) =
+    // (1.225, 1.35) GHz, ν(2) being the world frequency of pixel nchan.
+    let axis = SpectralAxis::new(1.05e9, 0.1e9, 2).expect("axis");
+    let resampler = SpectralResampler::channel_local(axis, SpectralKernel::Linear);
+    let operator = operator(GridPrecision::F64, resampler.basis(), &XX_YY, &STOKES_I);
+    let model = point_model(&operator, &[2.0, 5.0]);
+    let native = [0.94e9, 0.99e9, 1.06e9, 1.11e9, 1.21e9, 1.23e9, 1.36e9];
+    // Off axis below the halo; low halo (end-pair extrapolation of channel 0);
+    // channel 0; between the channels (0.7 of the way from 1.075 to 1.125);
+    // past the last channel but short of the halo; high halo; past it.
+    let expected = [0.0, 2.0, 2.0, 2.0 + 0.7 * 3.0, 0.0, 5.0, 0.0];
+    let predicted = predict(
+        &resampler,
+        &operator,
+        &model,
+        &native,
+        &[false; 14],
+        false,
+        0.0,
+    );
+    let unit = unit_point(&operator, &resampler);
+    for (channel, flux) in expected.iter().enumerate() {
+        let actual = predicted[channel * 2];
+        let actual = Complex64::new(f64::from(actual.re), f64::from(actual.im));
+        let expected = unit * *flux;
+        assert!(
+            (actual - expected).norm() <= 1.0e-5 * unit.norm() * 5.0,
+            "native {channel} at {} Hz: {actual} vs {expected}",
+            native[channel]
+        );
+    }
+}
+
+#[test]
 fn wide_output_channels_reproduce_a_flat_spectrum_and_unmapped_channels_predict_zero() {
     // Output channels three native channels wide: CASA's fine grid repeats
     // each output value three times.
@@ -245,9 +284,11 @@ fn wide_output_channels_reproduce_a_flat_spectrum_and_unmapped_channels_predict_
     let resampler = SpectralResampler::channel_local(axis, SpectralKernel::Linear);
     let operator = operator(GridPrecision::F64, resampler.basis(), &XX_YY, &STOKES_I);
     let model = point_model(&operator, &[2.0; 4]);
-    // Native channels from below the first output channel to above the last.
+    // Native channels from below the first output channel to above the
+    // last, off CASA's halo boundaries (see the halo law above): only
+    // 0.9982 GHz of those off the axis lies in the halo, (0.998, 1.0005).
     let native = (0..16)
-        .map(|channel| 0.994e9 + channel as f64 * 1.0e6)
+        .map(|channel| 0.9942e9 + channel as f64 * 1.0e6)
         .collect::<Vec<_>>();
     let predicted = predict(
         &resampler,
@@ -261,7 +302,8 @@ fn wide_output_channels_reproduce_a_flat_spectrum_and_unmapped_channels_predict_
     let unit = unit_point(&operator, &resampler);
     for (channel, frequency_hz) in native.iter().enumerate() {
         let actual = predicted[channel * 2];
-        if axis.nearest_channel(*frequency_hz).is_none() {
+        let in_halo = (0.998e9..1.0005e9).contains(frequency_hz);
+        if axis.nearest_channel(*frequency_hz).is_none() && !in_halo {
             assert_eq!(actual, Complex32::default(), "unmapped channel {channel}");
             continue;
         }

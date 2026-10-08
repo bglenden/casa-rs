@@ -402,6 +402,186 @@ fn residual_pass_of_the_predicted_model_vanishes() {
     assert!(peak < 1.0e-5 * largest, "residual peak {peak} of {largest}");
 }
 
+/// A linear cube whose channels are 1.5 native widths wide and start off the
+/// native grid, so output samples fall between native channels.
+fn offset_linear_cube() -> SpectralResampler {
+    SpectralResampler::channel_local(
+        SpectralAxis::new(FIRST_HZ + 1.3 * WIDTH_HZ, 1.5 * WIDTH_HZ, 3).expect("axis"),
+        SpectralKernel::Linear,
+    )
+}
+
+/// A sparse random model of `planes` cube planes.
+fn sparse_model(planes: usize, seed: u64) -> ModelImages {
+    let mut rng = Rng(seed);
+    ModelImages {
+        first_plane: 0,
+        planes: (0..planes)
+            .map(|_| ModelPlane {
+                images: vec![Array2::from_shape_fn((IMAGE, IMAGE), |_| {
+                    if rng.unit() < 0.02 {
+                        rng.signed() as f32
+                    } else {
+                        0.0
+                    }
+                })],
+            })
+            .collect(),
+    }
+}
+
+/// The prepared grids of a window of `model`'s planes.
+fn window_of(
+    operator: &MeasurementOperator,
+    model: &ModelImages,
+    planes: PlaneRange,
+) -> casa_imaging_operator::PreparedModelGrids {
+    let window = ModelImages {
+        first_plane: planes.start,
+        planes: model.planes[planes.start as usize..planes.end as usize].to_vec(),
+    };
+    operator
+        .prepare_model(&window, ModelPrescale::Unit)
+        .expect("model window")
+}
+
+fn native_row<'a>(row: &'a Row, frequencies: &'a [f64]) -> casa_imaging_operator::NativeRow<'a> {
+    casa_imaging_operator::NativeRow {
+        uvw_m: row.uvw_m,
+        phase_shift_m: row.phase_shift_m,
+        frequencies_hz: frequencies,
+        values: &row.values,
+        weights: &row.weights,
+        flags: &row.flags,
+        row_flag: false,
+        context: RowContext {
+            time_s: 0.0,
+            antennas: [0, 1],
+            parallactic_angle_rad: [0.0; 2],
+            field: 0,
+            pointing_offset_rad: [0.0; 2],
+        },
+    }
+}
+
+/// CASA forms a linear cube's residual at native channels
+/// (`interpolateFrequencyFromgrid`, `SIMapperCollection::grid`): data that
+/// are the model's native-channel prediction leave exactly nothing, even
+/// where output samples fall between native channels, in one resident pass
+/// and in waves whose model windows carry a one-plane halo.
+#[test]
+fn linear_cube_residual_of_the_predicted_model_vanishes_at_native_channels() {
+    let operator = operator(GridPrecision::F64, Basis::ChannelLocal { planes: 3 });
+    let resampler = offset_linear_cube();
+    assert!(resampler.forms_native_residuals());
+    let model = sparse_model(3, 23);
+    let full = window_of(&operator, &model, PlaneRange::new(0, 3));
+    let mut rows = Rows::random(300, 29, operator.geometry());
+    let frequencies = frequencies();
+    let mut backend = CpuBackend::new();
+    let mut scratch = casa_imaging_operator::PredictionScratch::default();
+    let mut largest = 0.0_f32;
+    for row in &mut rows.rows {
+        let mut predicted = vec![Complex32::default(); row.values.len()];
+        resampler
+            .predict_row(
+                &operator,
+                &mut backend,
+                &full,
+                &native_row(row, &frequencies),
+                &mut scratch,
+                &mut predicted,
+            )
+            .expect("predict");
+        largest = predicted.iter().fold(largest, |m, v| m.max(v.norm()));
+        row.values = predicted;
+    }
+    assert!(largest > 0.0);
+    let dirty = run(
+        &operator,
+        &resampler,
+        &mut rows,
+        Partition::Planes { owners: 1 },
+        Residency::All,
+        1,
+        None,
+        ModeSet::DATA,
+    );
+    assert!(
+        dirty
+            .planes
+            .iter()
+            .flat_map(|plane| &plane.data)
+            .any(|image| image.iter().any(|value| *value != 0.0)),
+        "the predicted data image something"
+    );
+    let prepare =
+        |planes: PlaneRange| -> Result<_, PassError> { Ok(window_of(&operator, &model, planes)) };
+    for (workers, residency) in [
+        (1, Residency::All),
+        (2, Residency::Waves { planes_per_wave: 1 }),
+        (3, Residency::Waves { planes_per_wave: 2 }),
+    ] {
+        let residual = run(
+            &operator,
+            &resampler,
+            &mut rows,
+            Partition::Planes { owners: workers },
+            residency,
+            workers,
+            Some(&prepare),
+            ModeSet::DATA,
+        );
+        for (index, plane) in residual.planes.iter().enumerate() {
+            for image in &plane.data {
+                assert!(
+                    image.iter().all(|value| *value == 0.0),
+                    "{residency:?}: plane {index} keeps a residual"
+                );
+            }
+        }
+    }
+}
+
+/// With a model, a linear cube's residual pass in waves equals one resident
+/// pass bit for bit: each wave's model window holds the neighbouring planes
+/// its native-channel predictions interpolate.
+#[test]
+fn linear_cube_residual_waves_equal_one_resident_pass() {
+    let operator = operator(GridPrecision::F64, Basis::ChannelLocal { planes: 3 });
+    let resampler = offset_linear_cube();
+    let model = sparse_model(3, 31);
+    let mut rows = Rows::random(300, 37, operator.geometry());
+    let prepare =
+        |planes: PlaneRange| -> Result<_, PassError> { Ok(window_of(&operator, &model, planes)) };
+    let reference = run(
+        &operator,
+        &resampler,
+        &mut rows,
+        Partition::Planes { owners: 1 },
+        Residency::All,
+        1,
+        Some(&prepare),
+        ModeSet::DATA,
+    );
+    for (workers, residency) in [
+        (2, Residency::Waves { planes_per_wave: 1 }),
+        (3, Residency::Waves { planes_per_wave: 2 }),
+    ] {
+        let images = run(
+            &operator,
+            &resampler,
+            &mut rows,
+            Partition::Planes { owners: workers },
+            residency,
+            workers,
+            Some(&prepare),
+            ModeSet::DATA,
+        );
+        assert_eq!(images, reference, "{workers} workers, {residency:?}");
+    }
+}
+
 /// One row restricted to one native channel, for the prediction probe.
 struct NativeRowProbe<'a> {
     row: &'a Row,

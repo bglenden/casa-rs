@@ -78,6 +78,15 @@ fn full_stokes_from_linear_feeds_uses_the_casacore_matrices() {
     for r in 0..4 {
         assert_eq!(routing.sumwt_source(r), 0);
     }
+    // CASA `ToStokesPSF` with several correlations and more than two Stokes
+    // parameters gives every plane the first parameter's PSF (Stokes I),
+    // never the Q, U or V combinations, whose unit-visibility sums vanish.
+    for r in 0..4 {
+        let psf = (0..4)
+            .map(|g| routing.to_requested_psf(r, g))
+            .collect::<Vec<_>>();
+        assert_eq!(psf, to(0), "PSF plane {r}");
+    }
 }
 
 #[test]

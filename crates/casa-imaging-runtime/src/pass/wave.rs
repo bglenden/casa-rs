@@ -24,7 +24,8 @@ struct Owner {
     images: Option<NormalImages>,
 }
 
-/// One row chunk's placements, routed by owner, and its prediction scratch.
+/// One row chunk's placements, routed by owner, its prediction scratch and
+/// its rows' native-channel residuals.
 struct Chunk {
     rows: Range<usize>,
     scratch: SampleBuffer,
@@ -32,6 +33,7 @@ struct Chunk {
     placed: u64,
     backend: CpuBackend,
     prediction: PredictionScratch,
+    residual: Vec<Complex32>,
 }
 
 pub(super) struct Wave<'w, 'p> {
@@ -82,6 +84,10 @@ impl<'w, 'p> Wave<'w, 'p> {
     /// Place every row of `block` and accumulate the placements; with a
     /// visibility sink, first hand it the block, with every selected
     /// sample's prediction from the wave's model when it asks for them.
+    ///
+    /// When the resampler forms residuals at native channels, each row's
+    /// samples are placed from `V − A·m` at its native channels and gridded
+    /// as data; otherwise the model is subtracted at each placed sample.
     pub(super) fn consume(
         &mut self,
         block: &NativeBlock,
@@ -100,15 +106,23 @@ impl<'w, 'p> Wave<'w, 'p> {
                 placed: 0,
                 backend: CpuBackend::new(),
                 prediction: PredictionScratch::default(),
+                residual: Vec::new(),
             });
         }
+        let native_residuals = self.model.is_some() && self.pass.resampler.forms_native_residuals();
+        let sink_predictions = visibilities.as_ref().is_some_and(|sink| sink.predictions);
+        if native_residuals || sink_predictions {
+            self.predict(block, team, count)?;
+        } else {
+            self.predictions.clear();
+        }
         if let Some(sink) = visibilities {
-            if sink.predictions {
-                self.predict(block, team, count)?;
+            let predictions: &[Complex32] = if sink.predictions {
+                &self.predictions
             } else {
-                self.predictions.clear();
-            }
-            (sink.write)(block, &self.predictions).map_err(PassError::VisibilityWrite)?;
+                &[]
+            };
+            (sink.write)(block, predictions).map_err(PassError::VisibilityWrite)?;
         }
         for (index, chunk) in self.chunks[..count].iter_mut().enumerate() {
             chunk.rows = index * rows / count..(index + 1) * rows / count;
@@ -116,17 +130,33 @@ impl<'w, 'p> Wave<'w, 'p> {
         let pass = self.pass;
         let router = &self.router;
         let planes = self.planes;
+        let predictions = &self.predictions;
+        let cells = block.channels() * block.correlations();
         team.for_each_mut(&mut self.chunks[..count], |_, chunk| {
             chunk.placed = 0;
             chunk.owned.iter_mut().for_each(SampleBuffer::clear);
             for row in chunk.rows.clone() {
                 chunk.scratch.clear();
-                pass.resampler.place(
-                    pass.operator,
-                    pass.weighting,
-                    &block.row(row),
-                    &mut chunk.scratch,
-                )?;
+                let native = block.row(row);
+                let native = if native_residuals {
+                    let model = &predictions[row * cells..(row + 1) * cells];
+                    chunk.residual.clear();
+                    chunk.residual.extend(
+                        native
+                            .values
+                            .iter()
+                            .zip(model)
+                            .map(|(value, model)| value - model),
+                    );
+                    casa_imaging_operator::NativeRow {
+                        values: &chunk.residual,
+                        ..native
+                    }
+                } else {
+                    native
+                };
+                pass.resampler
+                    .place(pass.operator, pass.weighting, &native, &mut chunk.scratch)?;
                 let placed = chunk.scratch.block();
                 for (index, placement) in placed.placements.iter().enumerate() {
                     if !planes.contains(placement.plane) {
@@ -145,7 +175,7 @@ impl<'w, 'p> Wave<'w, 'p> {
         })?;
         let chunks = &self.chunks[..count];
         self.samples += chunks.iter().map(|chunk| chunk.placed).sum::<u64>();
-        let model = self.model;
+        let model = self.model.filter(|_| !native_residuals);
         team.for_each_mut(&mut self.owners, |owner_index, owner| {
             let acc = owner
                 .acc

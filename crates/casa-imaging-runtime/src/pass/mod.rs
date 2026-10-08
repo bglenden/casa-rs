@@ -180,7 +180,10 @@ pub fn run_major_cycle(
     let mut summary = PassSummary::default();
     for planes in pass.residency.waves(pass.operator.basis().planes()) {
         source.begin(planes).map_err(PassError::Source)?;
-        let model = pass.model.map(|prepare| prepare(planes)).transpose()?;
+        let model = pass
+            .model
+            .map(|prepare| prepare(pass.resampler.model_planes(planes)))
+            .transpose()?;
         let mut wave = Wave::new(pass, planes, model.as_ref());
         summary.blocks += stream_blocks(source, cancel, |block| {
             wave.consume(block, team, visibilities.as_deref_mut())
