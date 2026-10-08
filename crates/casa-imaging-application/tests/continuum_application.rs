@@ -132,6 +132,9 @@ mod t53_spectral_joins;
 #[path = "continuum_application/domains_and_waves.rs"]
 mod domains_and_waves;
 
+#[path = "continuum_application/metal.rs"]
+mod metal;
+
 #[path = "continuum_application/t55_cube_pipeline.rs"]
 mod t55_cube_pipeline;
 

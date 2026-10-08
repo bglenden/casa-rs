@@ -223,22 +223,20 @@ fn mtmfs_via_cube_rejects_until_its_primary_beam_is_installed() {
 }
 
 #[test]
-fn metal_gridding_rejects_until_the_metal_backend_is_installed() {
-    let error = require_installed_implementation(
+fn metal_gridding_is_installed_on_macos_only() {
+    let outcome = require_installed_implementation(
         &ProblemFixture::standard().compile(),
-        [
-            TaskRequirement::MetalGridder,
-            TaskRequirement::MetalRowRunGroupedGridder,
-        ],
-    )
-    .expect_err("Metal gridding must reject before physical planning");
-    assert_exactly_unsupported(
-        &error,
-        [
-            UnsupportedRequirement::Task(TaskRequirement::MetalGridder),
-            UnsupportedRequirement::Task(TaskRequirement::MetalRowRunGroupedGridder),
-        ],
+        [TaskRequirement::MetalGridder],
     );
+    if cfg!(target_os = "macos") {
+        outcome.expect("the Metal backend is installed on macOS");
+    } else {
+        let error = outcome.expect_err("Metal gridding must reject before physical planning");
+        assert_exactly_unsupported(
+            &error,
+            [UnsupportedRequirement::Task(TaskRequirement::MetalGridder)],
+        );
+    }
 }
 
 #[test]

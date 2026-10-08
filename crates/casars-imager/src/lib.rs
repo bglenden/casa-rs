@@ -166,8 +166,6 @@ pub enum StandardMfsAccelerationPolicy {
     Cpu,
     /// Select fixed-tile multi-CPU.
     MultiCpu,
-    /// Select Metal acceleration.
-    Metal,
 }
 
 /// Explicit standard-MFS backend override.
@@ -180,10 +178,38 @@ pub enum StandardMfsBackend {
     SerialCpu,
     /// Fixed-tile CPU gridding.
     FixedTileCpu,
-    /// Metal gridding.
+}
+
+/// Where the major-cycle passes grid (`backend`).
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum ImagingBackend {
+    /// The CPU worker team.
+    #[default]
+    Cpu,
+    /// The Metal device (macOS); grids are `f32` for every spectral basis.
     Metal,
-    /// Grouped Metal row-run gridding.
-    MetalRowRunGrouped,
+}
+
+impl ImagingBackend {
+    /// The application's backend choice.
+    #[must_use]
+    pub const fn choice(self) -> casa_imaging_application::BackendChoice {
+        match self {
+            Self::Cpu => casa_imaging_application::BackendChoice::Cpu,
+            Self::Metal => casa_imaging_application::BackendChoice::Metal,
+        }
+    }
 }
 
 /// Parsed standalone-imager task configuration.
@@ -311,6 +337,8 @@ pub struct CliConfig {
     pub standard_mfs_acceleration: StandardMfsAccelerationPolicy,
     /// Explicit standard-MFS backend.
     pub standard_mfs_backend: Option<StandardMfsBackend>,
+    /// Where the major-cycle passes grid.
+    pub backend: ImagingBackend,
     /// Standard-MFS memory target.
     pub standard_mfs_memory_target_mb: Option<usize>,
     /// Shared imaging memory target.
@@ -573,13 +601,10 @@ impl CliConfig {
                     config.standard_mfs_backend = Some(match value(1)? {
                         "cpu" | "serial" | "serial-cpu" => StandardMfsBackend::SerialCpu,
                         "fixed-tile" | "fixed-tile-cpu" => StandardMfsBackend::FixedTileCpu,
-                        "metal" | "metal-gridder" => StandardMfsBackend::Metal,
-                        "metal-row-run-grouped" | "metal-row-run-grouped-gridder" => {
-                            StandardMfsBackend::MetalRowRunGrouped
-                        }
                         other => return Err(format!("unsupported standard-MFS backend {other:?}")),
                     });
                 }
+                "--backend" => config.backend = parse_backend(value(1)?)?,
                 other => return Err(format!("unknown casars-imager option {other:?}")),
             }
             index += consumed;
@@ -671,6 +696,7 @@ impl CliConfig {
             parallel: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Cpu,
             standard_mfs_backend: None,
+            backend: ImagingBackend::Cpu,
             standard_mfs_memory_target_mb: None,
             imaging_memory_target_mb: None,
         }
@@ -820,6 +846,7 @@ impl CliConfig {
         config.w_term_mode = parse_w_term(&text("wterm")?)?;
         set_gridder(&mut config, &text("gridder")?)?;
         config.standard_mfs_acceleration = parse_acceleration(&text("standard_mfs_acceleration")?)?;
+        config.backend = parse_backend(&text("backend")?)?;
         config.parallel = optional_bool(values, "parallel")?;
         validate_parallel_acceleration(config.parallel, config.standard_mfs_acceleration)?;
         config.uvrange = optional_text("uvrange")?;
@@ -1434,8 +1461,15 @@ fn parse_acceleration(value: &str) -> Result<StandardMfsAccelerationPolicy, Stri
         "auto" => Ok(StandardMfsAccelerationPolicy::Auto),
         "cpu" => Ok(StandardMfsAccelerationPolicy::Cpu),
         "multi-cpu" => Ok(StandardMfsAccelerationPolicy::MultiCpu),
-        "metal" => Ok(StandardMfsAccelerationPolicy::Metal),
         _ => Err(format!("unsupported acceleration {value:?}")),
+    }
+}
+
+fn parse_backend(value: &str) -> Result<ImagingBackend, String> {
+    match value {
+        "cpu" => Ok(ImagingBackend::Cpu),
+        "metal" => Ok(ImagingBackend::Metal),
+        _ => Err(format!("unsupported backend {value:?}")),
     }
 }
 

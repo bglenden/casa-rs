@@ -22,13 +22,11 @@ use crate::records::{
     KnownTable, KnownTables, MAX_POLS, MAX_TERMS, Params, SampleRecord, TableRecord, TapsKind,
     Targets, prepare,
 };
+use crate::{MAX_SUB, RING};
 
-/// Ring slots: the host prepares one while the device runs the others.
-const RING: usize = 3;
-/// Bounds of one sub-block, in samples. An `apply` is cut into at least
+/// The fewest samples in one sub-block: an `apply` is cut into at least
 /// [`RING`] sub-blocks once it holds `RING · MIN_SUB` samples.
 const MIN_SUB: usize = 512;
-const MAX_SUB: usize = 32_768;
 
 /// The Metal implementation of [`GridBackend`] for one kernel set.
 ///

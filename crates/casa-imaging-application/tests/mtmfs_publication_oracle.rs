@@ -129,6 +129,7 @@ fn t44_application_mtmfs_publishes_frozen_casa_product_contract() -> Result<(), 
                 ..Default::default()
             },
         ),
+        backend: casa_imaging_application::BackendChoice::Cpu,
     };
     let result = execute_continuum(request)?;
     let expected_names = PRODUCT_NAMES.map(str::to_string).to_vec();
@@ -287,6 +288,7 @@ fn representative_mtmfs_request(
             memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 1 << 30)]),
             ..ResourceOverride::default()
         }),
+        backend: casa_imaging_application::BackendChoice::Cpu,
     }
 }
 

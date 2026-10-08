@@ -54,11 +54,12 @@ impl Device {
             .ok_or(OperatorError::Device(DeviceFailure::Unavailable))
     }
 
-    /// `None` when there is no device or it lacks Metal 3 (atomic `float`
-    /// adds on device memory).
+    /// `None` when there is no device, it lacks Metal 3 (atomic `float` adds
+    /// on device memory), or it does not share memory with the host (the
+    /// accumulators are shared-storage buffers the host reads in place).
     fn open() -> Option<Self> {
         let device = MTLCreateSystemDefaultDevice()?;
-        if !device.supportsFamily(MTLGPUFamily::Metal3) {
+        if !device.supportsFamily(MTLGPUFamily::Metal3) || !device.hasUnifiedMemory() {
             return None;
         }
         let queue = device.newCommandQueue()?;

@@ -21,6 +21,13 @@ pub(crate) const MAX_TERMS: usize = 16;
 /// Grid or visibility polarizations of one sample (`MAX_POLS`).
 pub(crate) const MAX_POLS: usize = 4;
 
+// The host and kernel layouts must agree byte for byte.
+const _: () = {
+    assert!(size_of::<SampleRecord>() == crate::SAMPLE_BYTES);
+    assert!(size_of::<TableRecord>() == 16);
+    assert!(size_of::<Params>() == 128);
+};
+
 /// One located sample (`Sample` in the kernels).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

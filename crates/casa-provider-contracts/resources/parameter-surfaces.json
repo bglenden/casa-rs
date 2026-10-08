@@ -7936,7 +7936,7 @@
     {
       "kind": "task",
       "id": "imager",
-      "contract_version": 18,
+      "contract_version": 19,
       "display_name": "Imager",
       "category": "Imaging",
       "summary": "Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet",
@@ -11047,10 +11047,60 @@
           "reviewed_homonym": null
         },
         {
+          "name": "backend",
+          "concept": {
+            "id": "parameter.backend",
+            "semantic_revision": 1
+          },
+          "order": 102,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "cpu"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--backend"
+              ],
+              "false_flags": [],
+              "metavar": "BACKEND"
+            },
+            "provider": {
+              "field": "backend",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "backend",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Backend",
+              "group": "Stages",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
           "name": "standard_mfs_acceleration",
           "concept": {
             "id": "parameter.standard_mfs_acceleration",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 62,
           "default": {

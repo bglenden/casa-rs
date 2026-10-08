@@ -566,6 +566,7 @@ fn request(measurement_set: PathBuf, image_name: PathBuf) -> ContinuumImagingReq
             TaskRequirement::FixedTileCpu,
         ],
         resource_policy: casa_imaging_runtime::ResourcePolicy::Balanced,
+        backend: casa_imaging_application::BackendChoice::Cpu,
     }
 }
 

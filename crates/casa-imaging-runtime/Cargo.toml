@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 tracing.workspace = true
+casa-imaging-metal = { path = "../casa-imaging-metal" }
 casa-imaging-model = { path = "../casa-imaging-model" }
 casa-imaging-operator = { path = "../casa-imaging-operator" }
 casa-imaging-products = { path = "../casa-imaging-products" }
@@ -33,10 +34,3 @@ thiserror.workspace = true
 casa-test-support = { path = "../casa-test-support" }
 casa-types = { path = "../casa-types" }
 ndarray.workspace = true
-
-# The resource inventory probes for a unified-memory Metal device.
-[target.'cfg(all(target_os = "macos", not(coverage)))'.dependencies]
-objc2-metal = { version = "0.3.2", default-features = false, features = [
-    "MTLCommandQueue",
-    "MTLDevice",
-] }

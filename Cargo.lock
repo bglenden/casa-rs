@@ -704,6 +704,7 @@ dependencies = [
 name = "casa-imaging-runtime"
 version = "0.27.0"
 dependencies = [
+ "casa-imaging-metal",
  "casa-imaging-model",
  "casa-imaging-operator",
  "casa-imaging-products",
@@ -717,7 +718,6 @@ dependencies = [
  "libc",
  "ndarray",
  "num-complex",
- "objc2-metal",
  "rayon",
  "serde",
  "serde_json",

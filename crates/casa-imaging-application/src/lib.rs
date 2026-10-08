@@ -33,6 +33,7 @@ pub use aw_cache::{
 pub use casa_imaging_model::{
     HogbomIterationAccounting, ImagingRequestVersion, PolarizationCoordinate, ProductNormalization,
 };
+pub use casa_imaging_runtime::pass::BackendChoice;
 pub use casa_imaging_runtime::{ResourceOverride, ResourcePolicy};
 pub use casa_product_sink::{CasaImageDomainOutput, CasaImageProductSink};
 pub use continuum_request::{
@@ -96,6 +97,8 @@ pub struct ApplicationRuntime {
     pub confidence_parts_per_million: u32,
     /// Host-use policy bound at planning and execution.
     pub resource_policy: ResourcePolicy,
+    /// Where the major-cycle passes grid (`backend`).
+    pub backend: BackendChoice,
     /// Deployment-selected cost-model profile.
     pub cost_model: PlannerCostModelProfileId,
     /// Process resource authority used for admission and execution.
@@ -405,6 +408,7 @@ where
         authority: &runtime.authority,
         policy: &runtime.resource_policy,
         spill_directory: paged_state.directory(),
+        backend: runtime.backend,
     })?;
     publish_products(
         problem,

@@ -15,7 +15,7 @@
 //! Accumulators live in memory the device addresses
 //! ([`MetalBackend::accumulator`]); every dispatch completes before `apply`
 //! returns, so the host reads them like any other accumulator. Without a
-//! Metal 3 device, constructors return
+//! unified-memory Metal 3 device, constructors return
 //! [`DeviceFailure::Unavailable`](casa_imaging_operator::DeviceFailure).
 //!
 //! The design is `docs/imaging-architecture/imaging-foundation-plan-20261007.md`
@@ -35,7 +35,26 @@ pub use backend::MetalBackend;
 #[cfg(not(all(target_os = "macos", not(coverage))))]
 pub use unavailable::MetalBackend;
 
-/// Whether this host has a Metal device the backend can use.
+/// Ring slots of one backend: the host prepares one while the device runs
+/// the others.
+const RING: usize = 3;
+/// The most samples in one ring sub-block.
+const MAX_SUB: usize = 32_768;
+/// Device bytes per sample of a ring slot: the record, and per visibility
+/// polarization a value, a weight, an inverse norm and an output.
+const SAMPLE_BYTES: usize = 40;
+const POLARIZATION_BYTES: usize = 8 + 4 + 8 + 8;
+
+/// The most device memory one backend's ring holds for blocks of `npol`
+/// visibility polarizations; kernel tables add one copy of the taps of the
+/// cells the backend has met.
+#[must_use]
+pub const fn ring_bytes(npol: usize) -> u64 {
+    (RING * MAX_SUB * (SAMPLE_BYTES + npol * POLARIZATION_BYTES)) as u64
+}
+
+/// Whether this host has a Metal device the backend can use: Metal 3 with
+/// memory shared with the host.
 #[must_use]
 pub fn available() -> bool {
     #[cfg(all(target_os = "macos", not(coverage)))]

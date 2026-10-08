@@ -4626,38 +4626,8 @@ fn detect_performance_cpu_cores() -> Option<u64> {
     None
 }
 
-#[cfg(target_os = "macos")]
 fn detect_unified_metal_device() -> bool {
-    let (process_access, has_unified_memory) = detect_process_metal_access();
-    metal_inventory_available(process_access, has_unified_memory)
-}
-
-#[cfg(any(target_os = "macos", test))]
-fn metal_inventory_available(process_access: bool, has_unified_memory: bool) -> bool {
-    process_access && has_unified_memory
-}
-
-#[cfg(all(target_os = "macos", not(coverage)))]
-fn detect_process_metal_access() -> (bool, bool) {
-    use objc2_metal::{MTLCreateSystemDefaultDevice, MTLDevice};
-
-    let Some(device) = MTLCreateSystemDefaultDevice() else {
-        return (false, false);
-    };
-    (
-        device.newCommandQueue().is_some(),
-        device.hasUnifiedMemory(),
-    )
-}
-
-#[cfg(all(target_os = "macos", coverage))]
-fn detect_process_metal_access() -> (bool, bool) {
-    (false, false)
-}
-
-#[cfg(not(target_os = "macos"))]
-fn detect_unified_metal_device() -> bool {
-    false
+    casa_imaging_metal::available()
 }
 
 fn detect_open_file_limit() -> Result<u64, ResourceError> {

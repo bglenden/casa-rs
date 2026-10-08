@@ -3201,7 +3201,7 @@ final class WorkbenchStoreTests: XCTestCase {
             "--weighting", "briggsbwtaper",
             "--perchanweightdensity",
             "--gridder", "wproject",
-            "--standard-mfs-acceleration", "metal",
+            "--backend", "metal",
             "--write-pb",
             "--pbcor"
         ]
