@@ -76,6 +76,10 @@ impl ConvolutionFunctionSet for DenseFromRows {
         }
     }
 
+    fn max_half_support(&self) -> [u16; 2] {
+        [self.support / 2; 2]
+    }
+
     fn weight_taps(&self, _key: CfKey) -> Option<TapLayout<'_>> {
         Some(self.taps(CfKey::default()))
     }
@@ -142,6 +146,10 @@ impl ConvolutionFunctionSet for SeparableRows {
             support: self.support,
             oversampling: self.oversampling,
         }
+    }
+
+    fn max_half_support(&self) -> [u16; 2] {
+        [self.support / 2; 2]
     }
 
     fn weight_taps(&self, _key: CfKey) -> Option<TapLayout<'_>> {

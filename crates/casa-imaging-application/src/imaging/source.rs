@@ -6,7 +6,7 @@ use casa_imaging_model::{
 };
 use casa_imaging_operator::{PlaneRange, RowContext};
 use casa_imaging_runtime::pass::{
-    BoundedSource, NativeBlock, NativeRowHeader, RowAddress, SourceError,
+    BoundedSource, DomainProjection, NativeBlock, NativeRowHeader, RowAddress, SourceError,
 };
 use casa_ms::{
     BoundSelectedObservation, SelectedObservationBlock, SelectedObservationBlockConsumer,
@@ -46,31 +46,34 @@ struct Stream<'a> {
     windowed: bool,
 }
 
-/// Native rows of the selected observation, projected onto one image domain.
+/// Native rows of the selected observation, projected onto every image
+/// domain.
 ///
 /// The first traversal reads every selected channel; it proves the selected
-/// row sequence, after which a cube wave may restrict a traversal to the
+/// row sequence, after which a restricted cube wave may read only the
 /// channels whose output-frame frequencies reach its planes (casa-ms keeps
 /// the straddling pair at each edge, so linear interpolation keeps both
-/// partners). Rows CASA excludes from gridding, flagged rows and
-/// autocorrelations (`GridFT::put`/`get` with `usezero = false`), arrive with
-/// their row flag set. A compiled continuum transform is applied to each row
-/// as it is read.
+/// partners). A compiled continuum transform fits each whole row, so its
+/// traversals are never restricted. Rows CASA excludes from imaging and
+/// flagged rows arrive with their row flag set; autocorrelations arrive
+/// unflagged, since CASA weighs them in the density grids and only
+/// `GridFT` drops them.
 pub(crate) struct MeasurementSetSource<'a> {
     problem: &'a CompiledProblem,
-    domain: u32,
+    domains: usize,
     planes: u32,
     bounds: Option<PlaneBounds>,
     proven: bool,
     traversal: Traversal<'a>,
+    projections: Vec<DomainProjection>,
     values: Vec<Complex32>,
     weights: Vec<f32>,
     flags: Vec<bool>,
 }
 
 impl<'a> MeasurementSetSource<'a> {
-    /// A source over `selected` delivering rows projected on domain 0.
-    /// `bounds` enables windowed traversals for a basis of `planes` planes.
+    /// A source over `selected` delivering rows projected on every domain.
+    /// `bounds` enables restricted traversals for a basis of `planes` planes.
     pub(crate) fn new(
         problem: &'a CompiledProblem,
         selected: BoundSelectedObservation,
@@ -79,20 +82,16 @@ impl<'a> MeasurementSetSource<'a> {
     ) -> Self {
         Self {
             problem,
-            domain: 0,
+            domains: problem.geometry().domains().len(),
             planes,
             bounds,
             proven: false,
             traversal: Traversal::Idle(selected),
+            projections: Vec::new(),
             values: Vec::new(),
             weights: Vec::new(),
             flags: Vec::new(),
         }
-    }
-
-    /// Project the rows of later traversals on image domain `domain`.
-    pub(crate) fn set_domain(&mut self, domain: u32) {
-        self.domain = domain;
     }
 
     fn convert(
@@ -113,7 +112,7 @@ impl<'a> MeasurementSetSource<'a> {
             .iter()
             .map(|correlation| correlation.correlation_index())
             .collect::<Vec<_>>();
-        out.reset(&channel_indices, &correlation_indices);
+        out.reset(self.domains, &channel_indices, &correlation_indices);
         let channels = channel_indices.len();
         let correlations = correlation_indices.len();
         let reject_nonfinite = matches!(
@@ -122,25 +121,30 @@ impl<'a> MeasurementSetSource<'a> {
         );
         for row in 0..rows {
             let numeric = block.numeric_row(geometry, row)?;
-            let projection = numeric
-                .row
-                .domain_projections()
-                .get(self.domain)
-                .ok_or("a selected row lacks its image-domain projection")?
-                .model();
+            self.projections.clear();
+            for domain in 0..self.domains {
+                let projection = numeric
+                    .row
+                    .domain_projections()
+                    .get(domain as u32)
+                    .ok_or("a selected row lacks an image-domain projection")?
+                    .model();
+                self.projections.push(DomainProjection {
+                    uvw_m: projection.transformed_uvw_m(),
+                    phase_shift_m: projection.phase_shift_m(),
+                });
+            }
             let metadata = &numeric.row.metadata;
             let coordinates = &numeric.row.coordinates;
-            let uvw_m = projection.transformed_uvw_m();
-            let nonfinite_uvw = !uvw_m.iter().all(|value| value.is_finite());
+            let nonfinite_uvw = !self.projections.iter().all(|projection| {
+                projection.uvw_m.iter().all(|value| value.is_finite())
+                    && projection.phase_shift_m.is_finite()
+            });
             if nonfinite_uvw && reject_nonfinite {
                 return Err(NONFINITE_INPUT.into());
             }
             let header = NativeRowHeader {
-                uvw_m,
-                phase_shift_m: projection.phase_shift_m(),
-                row_flag: numeric.row.row_flag
-                    || metadata.antenna1 == metadata.antenna2
-                    || nonfinite_uvw,
+                row_flag: numeric.row.row_flag || nonfinite_uvw,
                 context: RowContext {
                     time_s: coordinates.time.mjd_days() * SECONDS_PER_DAY,
                     antennas: [metadata.antenna1 as u32, metadata.antenna2 as u32],
@@ -197,6 +201,7 @@ impl<'a> MeasurementSetSource<'a> {
             }
             out.push_row(
                 header,
+                &self.projections,
                 &geometry.frequencies_hz()[row * channels..(row + 1) * channels],
                 &self.values,
                 &self.weights,
@@ -208,16 +213,19 @@ impl<'a> MeasurementSetSource<'a> {
 }
 
 impl BoundedSource for MeasurementSetSource<'_> {
-    fn begin(&mut self, planes: PlaneRange) -> Result<(), SourceError> {
+    fn begin(&mut self, planes: PlaneRange, restrict: bool) -> Result<(), SourceError> {
         let selected = match std::mem::replace(&mut self.traversal, Traversal::Failed) {
             Traversal::Idle(selected) => selected,
             Traversal::Streaming(_) | Traversal::Failed => {
                 return Err("a traversal began before the previous one finished".into());
             }
         };
-        let window = (self.proven && planes != PlaneRange::new(0, self.planes))
-            .then(|| self.bounds.as_ref().map(|bounds| bounds(planes)))
-            .flatten();
+        let window = (restrict
+            && self.proven
+            && self.problem.visibility_transform().is_none()
+            && planes != PlaneRange::new(0, self.planes))
+        .then(|| self.bounds.as_ref().map(|bounds| bounds(planes)))
+        .flatten();
         let (source, consumer) = match window {
             Some(bounds) => selected.into_windowed_block_stream(self.problem, bounds)?,
             None => selected.into_block_stream(self.problem)?,

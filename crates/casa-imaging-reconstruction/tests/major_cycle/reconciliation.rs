@@ -594,6 +594,7 @@ fn incomplete_or_inconsistent_passes_cannot_become_a_major_cycle_owner() {
     let state = || {
         PassNormalState::initial(
             &problem,
+            WeightingGenerationId::next(),
             preparation.final_model_generation(),
             NormalStoragePlan::resident(1).expect("resident normal storage"),
         )
@@ -603,9 +604,29 @@ fn incomplete_or_inconsistent_passes_cannot_become_a_major_cycle_owner() {
 
     // Every image domain must be appended before the state completes.
     assert!(matches!(
-        state().finish(&problem, WeightingGenerationId::next(), 4, 1),
+        state().finish(4, 1),
         Err(SpectralOperatorError::IncompleteCoverage)
     ));
+
+    // A non-finite generated value or sumwt is rejected, and a rejected
+    // append leaves the state as it was.
+    let mut nonfinite = state();
+    let mut nan_residual = images();
+    nan_residual.residual[0] = f32::NAN;
+    assert!(matches!(
+        nonfinite.append(nan_residual),
+        Err(SpectralOperatorError::GeneratedNonfinite)
+    ));
+    let mut infinite_sumwt = images();
+    infinite_sumwt.sum_weights[0] = f64::INFINITY;
+    assert!(matches!(
+        nonfinite.append(infinite_sumwt),
+        Err(SpectralOperatorError::GeneratedNonfinite)
+    ));
+    nonfinite.append(images()).expect("finite images");
+    nonfinite
+        .finish(4, 1)
+        .expect("the state survives rejected appends");
 
     // An initial pass carries PSF moments, names a compiled domain and covers
     // the whole spectral axis with consistently sized planes.
@@ -652,9 +673,7 @@ fn incomplete_or_inconsistent_passes_cannot_become_a_major_cycle_owner() {
     // A pass that proves no traversal cannot become an owner.
     let mut untraversed = state();
     untraversed.append(images()).expect("complete images");
-    let untraversed = untraversed
-        .finish(&problem, WeightingGenerationId::next(), 0, 0)
-        .expect("assembled normal state");
+    let untraversed = untraversed.finish(0, 0).expect("assembled normal state");
     assert!(matches!(
         MajorCycleOwner::from_complete_data(untraversed, prepare()),
         Err(MajorCycleError::IncompleteCoverage)
@@ -691,9 +710,10 @@ fn incomplete_or_inconsistent_passes_cannot_become_a_major_cycle_owner() {
         Err(SpectralOperatorError::ProblemMismatch)
     ));
 
-    // A refresh keeps the previous PSF and sumwt, so it finishes only with
-    // the weighting generation they were formed with, and only for the
-    // previous state's own problem.
+    // A refresh keeps the previous PSF and sumwt, so it carries the
+    // weighting generation they were formed with, must place the samples the
+    // previous state placed, and refreshes only the previous state's own
+    // problem.
     let previous_state = || {
         let mut lifecycle = bind_lifecycle(&problem, attempt(18));
         let named = lifecycle.initial_empty().expect("previous generation");
@@ -704,24 +724,32 @@ fn incomplete_or_inconsistent_passes_cannot_become_a_major_cycle_owner() {
             .into_continuation()
             .0
     };
-    let previous = previous_state();
-    let previous_weighting = previous.weighting_generation();
-    let mut refresh = PassNormalState::refresh(
-        &problem,
-        previous,
-        preparation.final_model_generation(),
-        NormalStoragePlan::resident(1).expect("resident normal storage"),
-    )
-    .expect("refresh pass state");
-    let mut residual_only = images();
-    residual_only.psf = None;
-    residual_only.sum_weights.clear();
-    refresh.append(residual_only).expect("residual planes");
-    assert_ne!(previous_weighting, WeightingGenerationId::next());
+    let refreshed = || {
+        let previous = previous_state();
+        let weighting = previous.weighting_generation();
+        let samples = previous.sample_count();
+        let mut refresh = PassNormalState::refresh(
+            &problem,
+            previous,
+            preparation.final_model_generation(),
+            NormalStoragePlan::resident(1).expect("resident normal storage"),
+        )
+        .expect("refresh pass state");
+        let mut residual_only = images();
+        residual_only.psf = None;
+        residual_only.sum_weights.clear();
+        refresh.append(residual_only).expect("residual planes");
+        (refresh, weighting, samples)
+    };
+    let (refresh, _, samples) = refreshed();
     assert!(matches!(
-        refresh.finish(&problem, WeightingGenerationId::next(), 4, 1),
+        refresh.finish(samples + 1, 1),
         Err(SpectralOperatorError::ReusableNormalStateMismatch)
     ));
+    let (refresh, weighting, samples) = refreshed();
+    let complete = refresh.finish(samples, 2).expect("a complete refresh");
+    assert_eq!(complete.completion().weighting_generation(), weighting);
+    assert_eq!(complete.completion().problem_id(), problem.problem_id());
     let other_problem = t19_compatible_problem(16);
     assert_ne!(other_problem.problem_id(), problem.problem_id());
     assert!(matches!(

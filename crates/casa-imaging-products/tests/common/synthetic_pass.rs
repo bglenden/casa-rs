@@ -232,6 +232,7 @@ impl Scene {
     ) -> MajorCycleCompletion {
         let mut state = PassNormalState::initial(
             problem,
+            WeightingGenerationId::next(),
             preparation.final_model_generation(),
             self.storage(),
         )
@@ -242,7 +243,7 @@ impl Scene {
                 .expect("append synthetic initial pass images");
         }
         let normal = state
-            .finish(problem, WeightingGenerationId::next(), SAMPLES, BLOCKS)
+            .finish(SAMPLES, BLOCKS)
             .expect("complete synthetic initial pass");
         MajorCycleOwner::from_complete_data(normal, preparation)
             .expect("major-cycle owner of the synthetic pass")
@@ -261,7 +262,6 @@ impl Scene {
         preparation: MajorCyclePreparation,
         masks: Option<&ReconstructionMaskSet>,
     ) -> MajorCycleCompletion {
-        let weighting = previous.weighting_generation();
         let mut state = PassNormalState::refresh(
             problem,
             previous,
@@ -275,7 +275,7 @@ impl Scene {
                 .expect("append synthetic residual pass images");
         }
         let normal = state
-            .finish(problem, weighting, SAMPLES, BLOCKS)
+            .finish(SAMPLES, BLOCKS)
             .expect("complete synthetic residual pass");
         let mut owner = MajorCycleOwner::from_complete_data(normal, preparation)
             .expect("major-cycle owner of the synthetic refresh");

@@ -276,6 +276,63 @@ fn linear_prediction_extrapolates_natives_in_casa_halo_and_zeroes_the_rest() {
     }
 }
 
+/// CASA degrids the output channels `FTMachine::getInterpolateArrays` leaves
+/// unflagged: with `chanMap` −1 replaced by its maximum, from its minimum to
+/// its maximum, from channel 0 when a native lies in the halo (−2) or the
+/// row maps to one output channel, every channel when every native lies in
+/// the halo, and none when nothing maps (`GridFT::get`). An output channel
+/// outside that range predicts zero.
+#[test]
+fn linear_prediction_degrids_the_casa_channel_range() {
+    // Ten 1 MHz output channels centred on 1003 … 1012 MHz.
+    let axis = SpectralAxis::new(1.003e9, 1.0e6, 10).expect("axis");
+    let resampler = SpectralResampler::channel_local(axis, SpectralKernel::Linear);
+    let operator = operator(GridPrecision::F64, resampler.basis(), &XX_YY, &STOKES_I);
+    let model = point_model(&operator, &[1.0; 10]);
+    let on_axis = predict(
+        &resampler,
+        &operator,
+        &model,
+        &[1.0043e9, 1.0053e9],
+        &[false; 4],
+        false,
+        0.0,
+    )[0];
+    let unit = Complex64::new(f64::from(on_axis.re), f64::from(on_axis.im));
+    assert!(unit.norm() > 0.5, "a unit point predicts about one: {unit}");
+    for (natives, expected) in [
+        // chanMap [−2, 7, −2]: channels 0 … 7; 1000 MHz extrapolates from
+        // channels 0 and 1, 1020 MHz from 8 and 9, which are not degridded.
+        (&[1.000e9, 1.010e9, 1.020e9][..], &[1.0, 1.0, 0.0][..]),
+        // Both natives map to channel 4: channels 0 … 4, so 1006.55 MHz
+        // interpolates channel 3 (CASA's fine grid is five points wide).
+        (&[1.00655e9, 1.00675e9], &[1.0, 1.0]),
+        // Every native in the low halo: every channel.
+        (&[0.9995e9, 1.0015e9], &[1.0, 1.0]),
+        // chanMap [−2, −1]: nothing maps, nothing is degridded.
+        (&[1.030e9, 1.040e9], &[0.0, 0.0]),
+    ] {
+        let predicted = predict(
+            &resampler,
+            &operator,
+            &model,
+            natives,
+            &vec![false; natives.len() * 2],
+            false,
+            0.0,
+        );
+        for (channel, flux) in expected.iter().enumerate() {
+            let actual = predicted[channel * 2];
+            let actual = Complex64::new(f64::from(actual.re), f64::from(actual.im));
+            assert!(
+                (actual - unit * *flux).norm() <= 1.0e-5 * unit.norm(),
+                "natives {natives:?}, native {channel}: {actual} vs {}",
+                unit * *flux
+            );
+        }
+    }
+}
+
 #[test]
 fn wide_output_channels_reproduce_a_flat_spectrum_and_unmapped_channels_predict_zero() {
     // Output channels three native channels wide: CASA's fine grid repeats

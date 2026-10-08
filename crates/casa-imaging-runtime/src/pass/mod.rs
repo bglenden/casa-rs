@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The major-cycle pass (plan section 5.4): one traversal of the selected
 //! visibilities that accumulates the dirty or residual image terms, and the
-//! PSF on the initial pass, for every capability.
+//! PSF on the initial pass, of every image domain, for every capability.
 //!
-//! A pass reads blocks of native rows from a [`BoundedSource`] through a
-//! two-slot stream, places each row with the operator's spectral resampler
-//! and imaging weights, routes the placements to the owners of a
-//! [`Partition`] and accumulates them with the CPU backend: the residual
-//! `V − A·m` when a model is present, `V` otherwise. Each wave of planes
-//! ([`Residency`]) ends with the per-plane transforms, single-threaded per
-//! worker, and hands its [`NormalImages`] to the caller before the next wave
-//! starts.
+//! A pass reads blocks of native rows, projected on every image domain, from
+//! a [`BoundedSource`] through a two-slot stream, places each row with each
+//! domain's spectral resampler and the imaging weights, routes the
+//! placements to the owners of the domain's [`Partition`] and accumulates
+//! them with the CPU backend: the residual `V − Σ_d A_d·m_d` of every
+//! domain's model when a model is present (CASA `SIMapperCollection::degrid`
+//! sums every mapper's prediction before `grid` forms the residual), `V`
+//! otherwise. Each wave of planes ([`Residency`]) ends with the per-plane
+//! transforms, single-threaded per worker, and hands each domain's
+//! [`NormalImages`] to the caller before the next wave starts.
 
 mod block;
 mod partition;
@@ -26,8 +28,8 @@ use casa_imaging_operator::{
     PlaneRange, PreparedModelGrids, SampleBuffer, SpectralResampler, WeightingGeneration,
 };
 
-pub use block::{NativeBlock, NativeRowHeader, RowAddress};
-pub use partition::{Partition, Region, Residency};
+pub use block::{DomainProjection, NativeBlock, NativeRowHeader, RowAddress};
+pub use partition::{Partition, Region, Residency, WaveDemand};
 pub use team::{WORKER_STACK_BYTES, WorkerTeam};
 
 use stream::stream_blocks;
@@ -36,9 +38,10 @@ use wave::Wave;
 /// A failure reported by a [`BoundedSource`] or a pass callback.
 pub type SourceError = Box<dyn std::error::Error + Send + Sync>;
 
-/// Prepares the model grids of a plane range for prediction.
+/// Prepares the model grids of image domain `domain` over a plane range for
+/// prediction.
 pub type ModelPreparation<'a> =
-    dyn Fn(PlaneRange) -> Result<PreparedModelGrids, PassError> + Sync + 'a;
+    dyn Fn(usize, PlaneRange) -> Result<PreparedModelGrids, PassError> + Sync + 'a;
 
 /// Receives one block and its model visibilities.
 pub type VisibilityWrite<'a> =
@@ -61,6 +64,21 @@ pub enum PassError {
     /// A worker team was asked for no workers.
     #[error("a worker team needs at least one worker")]
     Workers,
+    /// A pass was given no image domain.
+    #[error("a pass needs at least one image domain")]
+    NoDomains,
+    /// The image domains of a pass do not share one plane axis.
+    #[error("the image domains of a pass must have the same planes")]
+    PlaneAxes,
+    /// A row's native channels lie further apart than the spacing that
+    /// sized the waves' model halo.
+    #[error("native channels {observed_hz} Hz apart exceed the planned spacing {bound_hz} Hz")]
+    NativeSpacing {
+        /// The widest spacing in the row.
+        observed_hz: f64,
+        /// The pass's `native_spacing_hz`.
+        bound_hz: f64,
+    },
     /// The measurement operator rejected a row, model or accumulator.
     #[error("measurement operator: {0}")]
     Operator(#[from] OperatorError),
@@ -123,80 +141,164 @@ impl Cancel {
 
 /// A re-traversable source of native rows.
 ///
-/// Each wave of a pass begins one traversal; the source may restrict it to
-/// the native channels that feed the wave's planes. Rows are delivered in a
-/// fixed order, so repeated traversals see the same samples.
+/// Each wave of a pass begins one traversal. Rows are delivered in a fixed
+/// order, so repeated traversals see the same samples.
 pub trait BoundedSource: Send {
-    /// Start a traversal covering every native channel that feeds `planes`.
-    fn begin(&mut self, planes: PlaneRange) -> Result<(), SourceError>;
+    /// Start a traversal for a wave over `planes`. With `restrict`, the
+    /// source may deliver only the native channels whose samples reach
+    /// `planes`, with both interpolation partners of each; without it, it
+    /// delivers every selected channel of each row.
+    fn begin(&mut self, planes: PlaneRange, restrict: bool) -> Result<(), SourceError>;
 
     /// Fill `block` with the next rows of the traversal; `Ok(false)` once
     /// the traversal is exhausted.
     fn fill(&mut self, block: &mut NativeBlock) -> Result<bool, SourceError>;
 }
 
-/// One major-cycle pass over the selected visibilities.
-pub struct MajorCyclePass<'a> {
+/// One image domain of a pass: its operator, the resampler that places rows
+/// on its planes, and the division of its accumulation among workers.
+/// Every domain of a pass shares one plane axis.
+pub struct PassDomain<'a> {
     /// The measurement operator.
     pub operator: &'a MeasurementOperator,
     /// Places native rows on the operator's planes.
     pub resampler: &'a SpectralResampler,
+    /// Division of the accumulation among workers.
+    pub partition: Partition,
+}
+
+/// One major-cycle pass over the selected visibilities.
+pub struct MajorCyclePass<'a> {
+    /// The image domains; rows arrive projected on each, in this order.
+    pub domains: &'a [PassDomain<'a>],
     /// The run's imaging weights.
     pub weighting: &'a WeightingGeneration,
     /// Modes accumulated: data and PSF on the initial pass, data later.
     pub modes: ModeSet,
-    /// Model grids of a wave's planes; `None` grids the data themselves
+    /// Model grids of a domain's planes; `None` grids the data themselves
     /// (an initial pass without a start model).
     pub model: Option<&'a ModelPreparation<'a>>,
-    /// Division of the accumulation among workers.
-    pub partition: Partition,
     /// Planes held at once.
     pub residency: Residency,
+    /// The widest spacing between adjacent selected native channels; with
+    /// a model it sizes each wave's model halo
+    /// ([`SpectralResampler::model_planes`]).
+    pub native_spacing_hz: f64,
+}
+
+impl MajorCyclePass<'_> {
+    /// Whether the pass forms its residual at native channels: with a model,
+    /// when several domains' predictions must be summed before subtracting,
+    /// or when the resampler interpolates onto the output channels
+    /// ([`SpectralResampler::forms_native_residuals`]).
+    fn native_residuals(&self) -> bool {
+        self.model.is_some()
+            && (self.domains.len() > 1
+                || self
+                    .domains
+                    .iter()
+                    .any(|domain| domain.resampler.forms_native_residuals()))
+    }
+
+    /// Whether a wave must read whole rows: a native-channel prediction under
+    /// linear interpolation depends on the whole row's channel map
+    /// ([`SpectralResampler::predict_row`]), not only the channels that
+    /// reach the wave.
+    fn whole_rows(&self) -> bool {
+        self.model.is_some()
+            && self
+                .domains
+                .iter()
+                .any(|domain| domain.resampler.forms_native_residuals())
+    }
+
+    /// What one wave of this pass holds, for [`Residency::plan`].
+    #[must_use]
+    pub fn demand(&self, workers: usize) -> WaveDemand<'_> {
+        WaveDemand {
+            domains: self.domains,
+            modes: self.modes,
+            with_model: self.model.is_some(),
+            native_spacing_hz: self.native_spacing_hz,
+            workers,
+        }
+    }
 }
 
 /// What a pass traversed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PassSummary {
-    /// Placed samples accumulated, over every wave.
+    /// Samples placed on the first image domain, over every wave: the same
+    /// count for every pass over the same selection and weights.
     pub samples: u64,
     /// Source blocks consumed, over every wave.
     pub blocks: u64,
 }
 
-/// Run `pass`, handing each wave's normal images to `images` in plane order
-/// and, on a final pass that writes visibilities, every block to
-/// `visibilities`.
+/// Run `pass`, handing each wave's normal images of each domain to
+/// `images` (domain, images) in plane order and, on a final pass that
+/// writes visibilities, every block to `visibilities`.
 pub fn run_major_cycle(
     pass: &MajorCyclePass<'_>,
     source: &mut dyn BoundedSource,
     team: &WorkerTeam,
     cancel: &Cancel,
-    images: &mut dyn FnMut(NormalImages) -> Result<(), PassError>,
+    images: &mut dyn FnMut(usize, NormalImages) -> Result<(), PassError>,
     mut visibilities: Option<&mut VisibilitySink<'_>>,
 ) -> Result<PassSummary, PassError> {
     if visibilities.is_some() && pass.residency != Residency::All {
         return Err(PassError::VisibilityWriteWaves);
     }
+    let Some(main) = pass.domains.first() else {
+        return Err(PassError::NoDomains);
+    };
+    let total = main.operator.basis().planes();
+    if pass
+        .domains
+        .iter()
+        .any(|domain| domain.operator.basis().planes() != total)
+    {
+        return Err(PassError::PlaneAxes);
+    }
+    let restrict = !pass.whole_rows();
+    let native_residuals = pass.native_residuals();
     let mut summary = PassSummary::default();
-    for planes in pass.residency.waves(pass.operator.basis().planes()) {
-        source.begin(planes).map_err(PassError::Source)?;
-        let model = pass
+    for planes in pass.residency.waves(total) {
+        source.begin(planes, restrict).map_err(PassError::Source)?;
+        let models = pass
             .model
-            .map(|prepare| prepare(pass.resampler.model_planes(planes)))
+            .map(|prepare| {
+                pass.domains
+                    .iter()
+                    .enumerate()
+                    .map(|(index, domain)| {
+                        prepare(
+                            index,
+                            domain
+                                .resampler
+                                .model_planes(planes, pass.native_spacing_hz),
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
             .transpose()?;
-        let mut wave = Wave::new(pass, planes, model.as_ref());
+        let mut wave = Wave::new(pass, planes, models.as_deref(), native_residuals)
+            .checking_spacing(!restrict && pass.residency != Residency::All);
         summary.blocks += stream_blocks(source, cancel, |block| {
             wave.consume(block, team, visibilities.as_deref_mut())
         })?;
         summary.samples += wave.samples();
-        images(wave.finish(team)?)?;
+        for (domain, domain_images) in wave.finish(team)?.into_iter().enumerate() {
+            images(domain, domain_images)?;
+        }
     }
     Ok(summary)
 }
 
-/// Accumulate the weight-density grid of `shape` over one traversal: each
-/// row is placed with [`SpectralResampler::place_density`] on row chunks and
-/// the chunks are added in row order.
+/// Accumulate the weight-density grid of `shape` over one traversal of the
+/// first image domain's projection: each row is placed with
+/// [`SpectralResampler::place_density`] on row chunks and the chunks are
+/// added in row order.
 pub fn run_density_pass(
     operator: &MeasurementOperator,
     resampler: &SpectralResampler,
@@ -206,7 +308,7 @@ pub fn run_density_pass(
     cancel: &Cancel,
 ) -> Result<DensityGrid, PassError> {
     source
-        .begin(PlaneRange::new(0, operator.basis().planes()))
+        .begin(PlaneRange::new(0, operator.basis().planes()), false)
         .map_err(PassError::Source)?;
     let mut grid = DensityGrid::new(shape);
     let mut chunks = (0..team.workers() * 4)
@@ -221,7 +323,7 @@ pub fn run_density_pass(
         team.for_each_mut(&mut chunks[..count], |_, (range, buffer)| {
             buffer.clear();
             for row in range.clone() {
-                resampler.place_density(operator, &block.row(row), &shape, buffer)?;
+                resampler.place_density(operator, &block.row(0, row), &shape, buffer)?;
             }
             Ok::<_, PassError>(())
         })?;

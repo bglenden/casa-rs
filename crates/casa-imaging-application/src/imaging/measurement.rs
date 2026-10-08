@@ -173,6 +173,40 @@ fn resampler(problem: &CompiledProblem, basis: Basis) -> Result<SpectralResample
     ))
 }
 
+/// Relative allowance for the Doppler factor between the stored frame of the
+/// spectral-window catalog and the output frame rows are delivered in
+/// (3000 km/s); the pass checks every row against the widened bound.
+const FRAME_MARGIN: f64 = 0.01;
+
+/// The widest spacing between adjacent selected native channels of any
+/// selected spectral window, from the storage owner's `CHAN_FREQ` catalog,
+/// widened by [`FRAME_MARGIN`]. A window without a catalog makes it
+/// infinite, so every wave holds the whole model.
+pub(crate) fn native_spacing_hz(problem: &CompiledProblem) -> f64 {
+    let mut widest = 0.0_f64;
+    for window in problem
+        .selected_observation()
+        .read_set()
+        .sources()
+        .iter()
+        .flat_map(|source| source.selection().spectral_windows())
+    {
+        let Some(catalog) = window.coordinate_catalog() else {
+            return f64::INFINITY;
+        };
+        for pair in window.channel_indices().windows(2) {
+            let (Some(first), Some(second)) = (
+                catalog.channel_frequency_hz(pair[0] as usize),
+                catalog.channel_frequency_hz(pair[1] as usize),
+            ) else {
+                return f64::INFINITY;
+            };
+            widest = widest.max((second - first).abs());
+        }
+    }
+    widest * (1.0 + FRAME_MARGIN)
+}
+
 /// Shape of the weight-density grid of `domain`: one global plane on CASA's
 /// `VisImagingWeight` cells, or one plane per output channel, plus the
 /// compiled padding planes on each side, on `BriggsCubeWeightor` cells.

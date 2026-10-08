@@ -322,6 +322,43 @@ fn interpolate_from_grid(
     }
 }
 
+/// The output channels CASA degrids for one row under linear mapping
+/// (`FTMachine::getInterpolateArrays`, after `GridFT::get` returns early
+/// when no native maps): each native's `chanMap` is its channel, −2 in the
+/// linear halo or −1; −1 is replaced by the maximum, and the channels from
+/// the minimum to the maximum are degridded, from channel 0 when the
+/// minimum is the halo's −2 or equals the maximum. When every native lies
+/// in the halo the maximum is −2 and CASA's unsigned loop flags nothing, so
+/// every channel is degridded. `None` when nothing maps.
+fn degridded_channels(axis: SpectralAxis, native: &[f64]) -> Option<std::ops::RangeInclusive<u32>> {
+    let native_width_hz = native[1] - native[0];
+    let map = |frequency_hz: f64| match axis.nearest_channel(frequency_hz) {
+        Some(channel) => i64::from(channel),
+        None if axis.in_linear_halo(frequency_hz, native_width_hz) => -2,
+        None => -1,
+    };
+    let maximum = native.iter().map(|frequency_hz| map(*frequency_hz)).max()?;
+    if maximum == -1 {
+        return None;
+    }
+    if maximum == -2 {
+        return Some(0..=axis.channels - 1);
+    }
+    let minimum = native
+        .iter()
+        .map(|frequency_hz| match map(*frequency_hz) {
+            -1 => maximum,
+            channel => channel,
+        })
+        .min()?;
+    let first = if minimum == maximum {
+        0
+    } else {
+        minimum.max(0)
+    };
+    Some(first as u32..=maximum as u32)
+}
+
 /// CASA's flag of a sample: the row flag, then any selected correlation of
 /// its channel; for an interpolated pair, of the left channel at its end, of
 /// the right channel at its end and of either between (casacore
@@ -341,6 +378,13 @@ fn sample_flagged(row: &NativeRow<'_>, npol: usize, source: Source) -> bool {
             }
             Source::Pair { left, .. } => flagged(left) || flagged(left + 1),
         }
+}
+
+/// Whether `row` correlates an antenna with itself, which CASA's imaging
+/// `GridFT` neither grids nor degrids (`GridFT::put`/`get` flag the row
+/// when `usezero` is false, as tclean builds it).
+fn is_autocorrelation(row: &NativeRow<'_>) -> bool {
+    row.context.antennas[0] == row.context.antennas[1]
 }
 
 /// CASA's unpolarized input weight `(w_first + w_last)/2` of a native channel.
@@ -498,19 +542,44 @@ impl SpectralResampler {
         matches!(self.sampling, Sampling::Linear(axis) if axis.channels > 1)
     }
 
-    /// The model planes a residual pass over `planes` needs: one more on
-    /// each side, clipped to the axis, when residuals are formed at native
-    /// channels (a native channel's prediction interpolates its neighbouring
-    /// output channels); `planes` otherwise.
+    /// Output planes on each side of a wave whose model a residual pass over
+    /// the wave needs, for native channels at most `native_spacing_hz` apart.
+    ///
+    /// When residuals are formed at native channels, a sample on plane `p`
+    /// lies within half an output width `Δ` of `p`'s centre; the natives it
+    /// interpolates lie within the native spacing `s` of it; each of their
+    /// predictions interpolates output-channel values on CASA's fine grid
+    /// within one output width of the native
+    /// (`interpolateFrequencyFromgrid`). So every model plane a wave's
+    /// samples reach lies within `⌈1.5 + s/|Δ|⌉` planes of the wave. Direct
+    /// and nearest sampling predict a native on its own plane: no halo.
     #[must_use]
-    pub fn model_planes(&self, planes: PlaneRange) -> PlaneRange {
+    pub fn model_halo(&self, native_spacing_hz: f64) -> u32 {
         match self.sampling {
-            Sampling::Linear(axis) if axis.channels > 1 => PlaneRange::new(
-                planes.start.saturating_sub(1),
-                (planes.end + 1).min(axis.channels),
-            ),
-            Sampling::Direct | Sampling::Nearest(_) | Sampling::Linear(_) => planes,
+            Sampling::Linear(axis) if axis.channels > 1 => {
+                let planes = (1.5 + native_spacing_hz.abs() / axis.increment_hz.abs()).ceil();
+                if planes.is_finite() && planes < f64::from(axis.channels) {
+                    planes as u32
+                } else {
+                    axis.channels
+                }
+            }
+            Sampling::Direct | Sampling::Nearest(_) | Sampling::Linear(_) => 0,
         }
+    }
+
+    /// The model planes a residual pass over `planes` needs: `planes`
+    /// widened by [`Self::model_halo`] on each side, clipped to the axis.
+    #[must_use]
+    pub fn model_planes(&self, planes: PlaneRange, native_spacing_hz: f64) -> PlaneRange {
+        let halo = self.model_halo(native_spacing_hz);
+        PlaneRange::new(
+            planes.start.saturating_sub(halo),
+            planes
+                .end
+                .saturating_add(halo)
+                .min(self.basis.planes().max(planes.end)),
+        )
     }
 
     /// The output axis padded by `padding` density planes on each side.
@@ -541,7 +610,10 @@ impl SpectralResampler {
     ///
     /// Each sample's value is `W · V · e^{iφ}` and its weight `W` for every
     /// polarization; samples whose kernel support leaves the padded grid or
-    /// whose imaging weight is zero are dropped.
+    /// whose imaging weight is zero are dropped. An autocorrelation places
+    /// nothing: CASA's imaging `GridFT` flags rows whose antennas agree
+    /// (`GridFT::put`, `usezero = false`), while the weight densities
+    /// ([`Self::place_density`]) still count them.
     pub fn place(
         &self,
         operator: &MeasurementOperator,
@@ -550,6 +622,9 @@ impl SpectralResampler {
         out: &mut SampleBuffer,
     ) -> Result<(), OperatorError> {
         let npol = self.validate(operator, row, out)?;
+        if is_autocorrelation(row) {
+            return Ok(());
+        }
         let cf = operator.cf();
         let geometry = operator.geometry();
         let density_axis = weighting
@@ -793,8 +868,8 @@ impl SpectralResampler {
     /// axis and a sample whose kernel leaves the grid predict zero.
     /// A constant or Taylor basis, `nearest` mapping and the one-channel
     /// bypass degrid each native channel at its own frequency on its mapped
-    /// plane. `linear` mapping degrids every output channel between the
-    /// row's lowest and highest mapped channel at the channel centre, repeats
+    /// plane. `linear` mapping degrids the output channels CASA degrids for
+    /// the row (see `degridded_channels`) at the channel centre, repeats
     /// each value `floor(width ratio)` times on CASA's fine grid when output
     /// channels are wider than native ones, and interpolates linearly to the
     /// native frequencies on the axis and in its halo (extrapolating from the
@@ -820,7 +895,7 @@ impl SpectralResampler {
             });
         }
         out.fill(Complex32::default());
-        if row.row_flag {
+        if row.row_flag || is_autocorrelation(row) {
             return Ok(());
         }
         let native = row.frequencies_hz;
@@ -865,13 +940,10 @@ impl SpectralResampler {
                 }
             }
             Some(axis) => {
-                let mapped = native
-                    .iter()
-                    .filter_map(|frequency_hz| axis.nearest_channel(*frequency_hz));
-                let (Some(lowest), Some(highest)) = (mapped.clone().min(), mapped.max()) else {
+                let Some(channels) = degridded_channels(axis, native) else {
                     return Ok(());
                 };
-                for channel in lowest..=highest {
+                for channel in channels {
                     place(channel, axis.centre_hz(channel), channel as usize);
                 }
             }
@@ -910,9 +982,19 @@ impl SpectralResampler {
         Ok(())
     }
 
+    /// The value of a sample: its channel's, or the linear interpolation of
+    /// a pair, which takes the single end at an end point as casacore
+    /// `InterpolateArray1D` does, so the other channel's value (unchecked
+    /// there by [`sample_flagged`]) cannot reach the sample.
     fn value(&self, row: &NativeRow<'_>, npol: usize, source: Source, pol: usize) -> Complex32 {
         match source {
             Source::Channel(channel) => row.values[channel * npol + pol],
+            Source::Pair { left, right_factor } if right_factor <= f64::EPSILON => {
+                row.values[left * npol + pol]
+            }
+            Source::Pair { left, right_factor } if right_factor >= 1.0 - f64::EPSILON => {
+                row.values[(left + 1) * npol + pol]
+            }
             Source::Pair { left, right_factor } => {
                 let left_value = row.values[left * npol + pol];
                 let right_value = row.values[(left + 1) * npol + pol];

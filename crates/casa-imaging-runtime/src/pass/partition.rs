@@ -3,11 +3,12 @@
 
 use std::ops::Range;
 
-use casa_imaging_operator::{
-    GridGeometry, MeasurementOperator, ModeSet, Placement, PlaneRange, Tile,
-};
+use casa_imaging_operator::{MeasurementOperator, ModeSet, Placement, PlaneRange, Tile};
 
-/// How one pass divides its grid accumulation among owners (one per worker).
+use super::{PassDomain, PassError};
+
+/// How one pass divides an image domain's grid accumulation among owners
+/// (one per worker).
 #[derive(Clone, Debug, PartialEq)]
 pub enum Partition {
     /// Each owner accumulates a disjoint contiguous range of each wave's
@@ -18,9 +19,15 @@ pub enum Partition {
         owners: usize,
     },
     /// Each owner accumulates the samples whose anchor row lies in its
-    /// region, on a tile of the region plus the kernel halo; tiles are added
-    /// in region order before the transform.
-    Regions(Vec<Region>),
+    /// region, on a tile of the region plus `halo` rows; tiles are added in
+    /// region order before the transform.
+    Regions {
+        /// The owners' regions, top to bottom.
+        regions: Vec<Region>,
+        /// Rows each tile extends past its region: the kernel set's largest
+        /// half support along `y`.
+        halo: usize,
+    },
 }
 
 /// One owner of a [`Partition::Regions`] pass.
@@ -33,15 +40,18 @@ pub struct Region {
 }
 
 impl Partition {
-    /// `owners` horizontal strips of near-equal height, each with `halo`
-    /// rows on both sides; `halo` is the largest kernel half support of the
-    /// kernel set, so every routed sample's support lies in its tile.
+    /// `owners` horizontal strips of `operator`'s grid of near-equal height,
+    /// each with the kernel set's largest half support
+    /// ([`casa_imaging_operator::ConvolutionFunctionSet::max_half_support`])
+    /// as a halo on both sides, so every routed sample's support lies in its
+    /// tile.
     #[must_use]
-    pub fn regions(geometry: &GridGeometry, owners: usize, halo: usize) -> Self {
-        let [nx, ny] = geometry.grid_shape();
+    pub fn regions(operator: &MeasurementOperator, owners: usize) -> Self {
+        let [nx, ny] = operator.geometry().grid_shape();
+        let halo = usize::from(operator.cf().max_half_support()[1]);
         let owners = owners.clamp(1, ny);
-        Self::Regions(
-            (0..owners)
+        Self::Regions {
+            regions: (0..owners)
                 .map(|owner| {
                     let rows = owner * ny / owners..(owner + 1) * ny / owners;
                     let first = rows.start.saturating_sub(halo);
@@ -55,7 +65,8 @@ impl Partition {
                     }
                 })
                 .collect(),
-        )
+            halo,
+        }
     }
 
     /// Number of owners.
@@ -63,7 +74,7 @@ impl Partition {
     pub fn owners(&self) -> usize {
         match self {
             Self::Planes { owners } => *owners,
-            Self::Regions(regions) => regions.len(),
+            Self::Regions { regions, .. } => regions.len(),
         }
     }
 }
@@ -74,60 +85,110 @@ pub enum Residency {
     /// Every plane in one traversal.
     All,
     /// Consecutive waves of at most `planes_per_wave` planes, one source
-    /// traversal each, restricted to the native channels feeding the wave.
+    /// traversal each.
     Waves {
         /// Planes per wave; positive.
         planes_per_wave: u32,
     },
 }
 
-impl Residency {
-    /// The fewest waves whose planes fit `budget` bytes with `workers`
-    /// workers: per plane, its accumulator holding `modes`, its prepared
-    /// model grids when `with_model`, and its images twice (the operator's and
-    /// the normal state's copy); per worker, one transform plane and one image
-    /// per grid polarization.
-    pub fn plan(
-        operator: &MeasurementOperator,
-        modes: ModeSet,
-        with_model: bool,
-        workers: usize,
-        budget: u64,
-    ) -> Result<Self, super::PassError> {
-        let precision = operator.precision();
+/// What one wave of a pass holds in memory, for [`Residency::plan`].
+#[derive(Clone, Copy)]
+pub struct WaveDemand<'a> {
+    /// The pass's image domains; they share one plane axis.
+    pub domains: &'a [PassDomain<'a>],
+    /// Modes accumulated.
+    pub modes: ModeSet,
+    /// Whether the pass subtracts a model.
+    pub with_model: bool,
+    /// The widest spacing between adjacent selected native channels, which
+    /// sizes a wave's model halo
+    /// ([`casa_imaging_operator::SpectralResampler::model_halo`]).
+    pub native_spacing_hz: f64,
+    /// Workers transforming planes at once.
+    pub workers: usize,
+}
+
+impl WaveDemand<'_> {
+    /// Planes on each image domain's axis.
+    #[must_use]
+    pub fn planes(&self) -> u32 {
+        self.domains
+            .first()
+            .map_or(0, |domain| domain.operator.basis().planes())
+    }
+
+    /// Bytes a wave of `planes` planes holds. Per image domain and plane:
+    /// its accumulator holding `modes` and its images twice (the operator's
+    /// and the normal state's copy); with a model, the prepared grids of the
+    /// wave's planes and of its model halo on each side. Per worker: one
+    /// transform plane and one image per grid polarization of the largest
+    /// domain.
+    #[must_use]
+    pub fn bytes(&self, planes: u32) -> u64 {
+        let total = self.planes();
         let one = PlaneRange::single(0);
-        let mut per_plane = operator
-            .accumulator_layout(one, None, modes)
-            .bytes(precision) as u64;
-        if with_model {
-            per_plane += operator
-                .accumulator_layout(one, None, ModeSet::DATA)
+        let mut bytes = 0_u64;
+        let mut per_worker = 0_u64;
+        for domain in self.domains {
+            let operator = domain.operator;
+            let precision = operator.precision();
+            let mut per_plane = operator
+                .accumulator_layout(one, None, self.modes)
                 .bytes(precision) as u64;
+            let [width, height] = operator.geometry().image().shape;
+            let image_cells = (width * height) as u64;
+            let basis = operator.basis();
+            let pols = operator.polarization().requested().len() as u64;
+            let images =
+                (basis.data_terms() + if self.modes.psf { basis.psf_terms() } else { 0 }) as u64;
+            per_plane += 2 * images * pols * image_cells * 4;
+            bytes += per_plane * u64::from(planes);
+            if self.with_model {
+                let model_planes = planes
+                    .saturating_add(2 * domain.resampler.model_halo(self.native_spacing_hz))
+                    .min(total);
+                bytes += operator
+                    .accumulator_layout(one, None, ModeSet::DATA)
+                    .bytes(precision) as u64
+                    * u64::from(model_planes);
+            }
+            let grid_cells = operator.geometry().cells() as u64;
+            let gpols = operator.polarization().grid_pols() as u64;
+            per_worker = per_worker.max(grid_cells * 16 + gpols * image_cells * 16);
         }
-        let [width, height] = operator.geometry().image().shape;
-        let image_cells = (width * height) as u64;
-        let basis = operator.basis();
-        let pols = operator.polarization().requested().len() as u64;
-        let images = (basis.data_terms() + if modes.psf { basis.psf_terms() } else { 0 }) as u64;
-        per_plane += 2 * images * pols * image_cells * 4;
-        let grid_cells = operator.geometry().cells() as u64;
-        let gpols = operator.polarization().grid_pols() as u64;
-        let fixed = workers as u64 * (grid_cells * 16 + gpols * image_cells * 16);
-        let planes = basis.planes();
-        let available = budget.saturating_sub(fixed);
-        if per_plane > available {
-            return Err(super::PassError::Memory {
-                required: per_plane + fixed,
+        bytes + self.workers as u64 * per_worker
+    }
+}
+
+impl Residency {
+    /// The fewest waves whose [`WaveDemand::bytes`] fit `budget`: every
+    /// plane when they fit, otherwise the largest wave that does.
+    pub fn plan(demand: &WaveDemand<'_>, budget: u64) -> Result<Self, PassError> {
+        let planes = demand.planes();
+        let one = demand.bytes(1);
+        if one > budget {
+            return Err(PassError::Memory {
+                required: one,
                 available: budget,
             });
         }
-        let fit = (available / per_plane).min(u64::from(planes)) as u32;
-        Ok(if fit >= planes {
-            Self::All
-        } else {
-            Self::Waves {
-                planes_per_wave: fit,
+        if demand.bytes(planes) <= budget {
+            return Ok(Self::All);
+        }
+        // `bytes` grows with the wave: the largest fitting wave lies in
+        // `[fits, too_many)`.
+        let (mut fits, mut too_many) = (1, planes);
+        while too_many - fits > 1 {
+            let middle = fits + (too_many - fits) / 2;
+            if demand.bytes(middle) <= budget {
+                fits = middle;
+            } else {
+                too_many = middle;
             }
+        }
+        Ok(Self::Waves {
+            planes_per_wave: fits,
         })
     }
 
@@ -152,8 +213,8 @@ impl Residency {
 pub(super) enum Router {
     /// `starts[k]` is owner `k`'s first plane; owner ranges are contiguous.
     Planes { starts: Vec<u32> },
-    /// `owner_of_row[y]` owns anchor row `y`.
-    Regions { owner_of_row: Vec<u16> },
+    /// `owner_of_row[y]` owns anchor row `y`; tiles extend `halo` rows.
+    Regions { owner_of_row: Vec<u16>, halo: usize },
 }
 
 impl Router {
@@ -168,13 +229,16 @@ impl Router {
                         .collect(),
                 }
             }
-            Partition::Regions(regions) => {
+            Partition::Regions { regions, halo } => {
                 let rows = regions.last().map_or(0, |region| region.rows.end);
                 let mut owner_of_row = vec![0; rows];
                 for (owner, region) in regions.iter().enumerate() {
                     owner_of_row[region.rows.clone()].fill(owner as u16);
                 }
-                Self::Regions { owner_of_row }
+                Self::Regions {
+                    owner_of_row,
+                    halo: *halo,
+                }
             }
         }
     }
@@ -183,7 +247,7 @@ impl Router {
     pub(super) fn owners(&self) -> usize {
         match self {
             Self::Planes { starts } => starts.len(),
-            Self::Regions { owner_of_row } => {
+            Self::Regions { owner_of_row, .. } => {
                 owner_of_row.last().map_or(1, |owner| *owner as usize + 1)
             }
         }
@@ -201,7 +265,7 @@ impl Router {
                 let end = starts.get(owner + 1).copied().unwrap_or(wave.end);
                 (PlaneRange::new(starts[owner], end), None)
             }
-            (Self::Regions { .. }, Partition::Regions(regions)) => {
+            (Self::Regions { .. }, Partition::Regions { regions, .. }) => {
                 (wave, Some(regions[owner].tile))
             }
             (Self::Regions { .. }, Partition::Planes { .. }) => {
@@ -216,11 +280,16 @@ impl Router {
             Self::Planes { starts } => {
                 starts.partition_point(|start| *start <= placement.plane) - 1
             }
-            Self::Regions { owner_of_row } => {
-                let oversampling = operator.cf().taps(placement.cf).oversampling();
-                let anchor = operator
-                    .geometry()
-                    .locate(placement.u, placement.v, oversampling);
+            Self::Regions { owner_of_row, halo } => {
+                let taps = operator.cf().taps(placement.cf);
+                debug_assert!(
+                    usize::from(taps.half_support()[1]) <= *halo,
+                    "a kernel cell's support exceeds the regions' halo"
+                );
+                let anchor =
+                    operator
+                        .geometry()
+                        .locate(placement.u, placement.v, taps.oversampling());
                 usize::from(owner_of_row[anchor.y as usize])
             }
         }
@@ -230,10 +299,14 @@ impl Router {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use casa_imaging_operator::{GridPadding, ImageExtent};
+    use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
+    use casa_imaging_operator::{
+        Basis, GridGeometry, GridPadding, GridPrecision, ImageExtent, PolarizationRouting,
+        Spheroidal,
+    };
 
     #[test]
-    fn regions_cover_the_grid_once_with_clipped_halos() {
+    fn regions_cover_the_grid_once_with_the_kernel_halo() {
         let geometry = GridGeometry::new(
             ImageExtent {
                 shape: [64, 64],
@@ -243,19 +316,33 @@ mod tests {
             GridPadding::CasaComposite,
         )
         .expect("geometry");
-        let Partition::Regions(regions) = Partition::regions(&geometry, 3, 3) else {
+        let polarization = PolarizationRouting::compile(
+            &[CorrelationType::LinearXx, CorrelationType::LinearYy],
+            &[PolarizationCoordinate::StokesI],
+        )
+        .expect("routing");
+        let cf = Spheroidal::new(&geometry, &polarization);
+        let operator = MeasurementOperator::new(
+            geometry,
+            Basis::Constant,
+            polarization,
+            Box::new(cf),
+            GridPrecision::F64,
+        );
+        let Partition::Regions { regions, halo } = Partition::regions(&operator, 3) else {
             panic!("regions");
         };
-        let ny = geometry.grid_shape()[1];
+        assert_eq!(halo, 3, "the spheroidal kernel's half support");
+        let ny = operator.geometry().grid_shape()[1];
         assert_eq!(regions.first().unwrap().rows.start, 0);
         assert_eq!(regions.last().unwrap().rows.end, ny);
         for pair in regions.windows(2) {
             assert_eq!(pair[0].rows.end, pair[1].rows.start);
         }
         for region in &regions {
-            assert!(region.tile.origin[1] + 3 <= region.rows.start.max(3));
+            assert!(region.tile.origin[1] + halo <= region.rows.start.max(halo));
             assert!(region.tile.origin[1] + region.tile.shape[1] <= ny);
-            assert!(region.tile.origin[1] + region.tile.shape[1] >= region.rows.end.min(ny - 3));
+            assert!(region.tile.origin[1] + region.tile.shape[1] >= region.rows.end.min(ny - halo));
         }
     }
 

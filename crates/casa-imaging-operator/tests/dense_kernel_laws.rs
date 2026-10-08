@@ -98,6 +98,10 @@ impl ConvolutionFunctionSet for ComplexDense {
         }
     }
 
+    fn max_half_support(&self) -> [u16; 2] {
+        [self.support / 2; 2]
+    }
+
     fn weight_taps(&self, _key: CfKey) -> Option<TapLayout<'_>> {
         None
     }

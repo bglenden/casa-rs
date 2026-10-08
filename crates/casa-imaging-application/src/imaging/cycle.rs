@@ -11,9 +11,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use casa_imaging_model::{CompiledProblem, ModelInputCommitment, SpectralWcs, WeightingScheme};
-use casa_imaging_operator::{
-    BandwidthTaper, Basis, ModeSet, PlaneRange, SPHEROIDAL_SUPPORT, WeightingGeneration,
-};
+use casa_imaging_operator::{BandwidthTaper, Basis, ModeSet, PlaneRange, WeightingGeneration};
 use casa_imaging_products::VisibilityProductCompletion;
 use casa_imaging_reconstruction::runtime_adapter::{
     NormalStoragePlan, ReconstructionPlaneWorkspace,
@@ -25,8 +23,8 @@ use casa_imaging_reconstruction::{
     WeightingGenerationId,
 };
 use casa_imaging_runtime::pass::{
-    Cancel, MajorCyclePass, ModelPreparation, Partition, PassError, PassSummary, Residency,
-    VisibilitySink, WorkerTeam, run_density_pass, run_major_cycle,
+    Cancel, MajorCyclePass, ModelPreparation, Partition, PassDomain, PassError, PassSummary,
+    Residency, VisibilitySink, WaveDemand, WorkerTeam, run_density_pass, run_major_cycle,
 };
 use casa_imaging_runtime::{
     CubeState, MinorCycleOutcome, ResourceAuthority, ResourcePolicy, run_minor_cycle,
@@ -35,7 +33,9 @@ use casa_ms::ResolvedSelectedObservationAccess;
 
 use super::ImagingError;
 use super::images::{pass_images, prepare_model};
-use super::measurement::{DomainOperator, density_shape, domain_operator, selected_correlations};
+use super::measurement::{
+    DomainOperator, density_shape, domain_operator, native_spacing_hz, selected_correlations,
+};
 use super::source::{MeasurementSetSource, PlaneBounds};
 use super::visibility_write::{VisibilityWriteTarget, VisibilityWriter};
 use crate::NativeMinorCycleOutcome;
@@ -75,6 +75,7 @@ struct Run<'a> {
     cancel: Cancel,
     cube: Option<CubeState>,
     budget: u64,
+    native_spacing_hz: f64,
     attempts: u64,
     visibility_write: Option<VisibilityWriteTarget>,
 }
@@ -215,7 +216,7 @@ impl<'a> Run<'a> {
         let cube = matches!(main.basis(), Basis::ChannelLocal { .. })
             .then(|| cube_state(problem, inputs.spill_directory, workers, memory))
             .transpose()?;
-        Ok(Self {
+        let run = Self {
             problem,
             domains,
             source,
@@ -225,9 +226,25 @@ impl<'a> Run<'a> {
             cancel,
             cube,
             budget: memory.saturating_sub(memory / 4),
+            native_spacing_hz: native_spacing_hz(problem),
             attempts: 0,
             visibility_write: inputs.visibility_write,
-        })
+        };
+        if run.visibility_write.is_some() {
+            // The pass that writes is the initial one without cleaning and a
+            // residual refresh otherwise; it must hold every plane, and is
+            // refused now rather than after the cycles that precede it.
+            let cleaning = problem.reconstruction().controls().max_minor_iterations() > 0;
+            let (modes, with_model) = if cleaning {
+                (ModeSet::DATA, true)
+            } else {
+                (ModeSet::DATA_PSF, start_model(problem))
+            };
+            if run.residency(modes, with_model)? != Residency::All {
+                return Err(ImagingError::Pass(PassError::VisibilityWriteWaves));
+            }
+        }
+        Ok(run)
     }
 
     /// The initial major cycle: data and PSF, from the start model when the
@@ -246,12 +263,14 @@ impl<'a> Run<'a> {
             lifecycle.initial_empty()?
         };
         let preparation = MajorCyclePreparation::prepare(&lifecycle, named, None)?;
+        let residency = self.residency(ModeSet::DATA_PSF, start_model)?;
         let state = PassNormalState::initial(
             self.problem,
+            self.weighting_id,
             preparation.final_model_generation(),
-            self.normal_storage(ModeSet::DATA_PSF, start_model)?,
+            self.normal_storage(residency)?,
         )?;
-        self.reconcile(lifecycle, state, preparation, None, last, start_model)
+        self.reconcile(lifecycle, state, preparation, None, last, residency)
     }
 
     /// The major cycle after a minor cycle: the residual of the updated model.
@@ -277,16 +296,19 @@ impl<'a> Run<'a> {
             .map(|terms| lifecycle.compile_delta(&named, terms))
             .transpose()?;
         let preparation = MajorCyclePreparation::prepare(&lifecycle, named, delta)?;
+        let residency = self.residency(ModeSet::DATA, true)?;
         let state = PassNormalState::refresh(
             self.problem,
             normal_state,
             preparation.final_model_generation(),
-            self.normal_storage(ModeSet::DATA, true)?,
+            self.normal_storage(residency)?,
         )?;
-        self.reconcile(lifecycle, state, preparation, Some(&masks), last, true)
+        self.reconcile(lifecycle, state, preparation, Some(&masks), last, residency)
     }
 
     /// Run one pass into `state` and reconcile it with the prepared model.
+    /// The initial pass grids the start model's residual only when there is
+    /// a start model; every refresh grids the residual.
     fn reconcile(
         &mut self,
         mut lifecycle: ModelLifecycle,
@@ -294,7 +316,7 @@ impl<'a> Run<'a> {
         preparation: MajorCyclePreparation,
         masks: Option<&ReconstructionMaskSet>,
         last: bool,
-        with_model: bool,
+        residency: Residency,
     ) -> Result<Major, ImagingError> {
         let initial = masks.is_none();
         let modes = if initial {
@@ -302,6 +324,7 @@ impl<'a> Run<'a> {
         } else {
             ModeSet::DATA
         };
+        let with_model = !initial || start_model(self.problem);
         let model = with_model.then(|| preparation.final_model());
         let transform = self.problem.visibility_transform();
         let mut writer = self
@@ -312,7 +335,14 @@ impl<'a> Run<'a> {
             .transpose()
             .map_err(|error| ImagingError::Pass(PassError::VisibilityWrite(error)))?;
         let started = Instant::now();
-        let summary = self.pass(modes, model, &mut state, initial, writer.as_mut())?;
+        let summary = self.pass(
+            modes,
+            model,
+            residency,
+            &mut state,
+            initial,
+            writer.as_mut(),
+        )?;
         let pass_seconds = started.elapsed().as_secs_f64();
         let final_model = preparation.final_model_generation();
         let visibility = writer
@@ -327,12 +357,7 @@ impl<'a> Run<'a> {
                     samples,
                 )
             });
-        let normal = state.finish(
-            self.problem,
-            self.weighting_id,
-            summary.samples,
-            summary.blocks,
-        )?;
+        let normal = state.finish(summary.samples, summary.blocks)?;
         let mut owner = MajorCycleOwner::from_complete_data(normal, preparation)?;
         if let Some(masks) = masks {
             owner = owner.bind_reconstruction_masks(masks)?;
@@ -367,57 +392,34 @@ impl<'a> Run<'a> {
         })
     }
 
-    fn normal_storage(
-        &self,
-        modes: ModeSet,
-        with_model: bool,
-    ) -> Result<NormalStoragePlan, ImagingError> {
+    /// Normal storage whose paged window holds the planes of one wave of
+    /// `residency`.
+    fn normal_storage(&self, residency: Residency) -> Result<NormalStoragePlan, ImagingError> {
         let planes = self.domains[0].operator.basis().planes() as usize;
         Ok(match &self.cube {
-            Some(cube) => {
-                let window = match self.residency(0, modes, with_model, false)? {
-                    Residency::All => planes,
-                    Residency::Waves { planes_per_wave } => planes_per_wave as usize,
-                };
-                cube.normal_storage(window)?
-            }
+            Some(cube) => cube.normal_storage(match residency {
+                Residency::All => planes,
+                Residency::Waves { planes_per_wave } => planes_per_wave as usize,
+            })?,
             None => NormalStoragePlan::resident(planes)?,
         })
     }
 
-    /// Waves that fit the budget; a pass writing the model column holds
-    /// every plane, since a native sample's prediction can use any of them.
-    fn residency(
-        &self,
-        domain: usize,
-        modes: ModeSet,
-        with_model: bool,
-        writing: bool,
-    ) -> Result<Residency, ImagingError> {
-        if writing {
-            return Ok(Residency::All);
-        }
+    /// The waves of a pass accumulating `modes`, with a model when
+    /// `with_model`, that fit the budget: planned once per major cycle for
+    /// both the pass and its normal storage.
+    fn residency(&self, modes: ModeSet, with_model: bool) -> Result<Residency, ImagingError> {
+        let domains = pass_domains(&self.domains, self.team.workers());
         Ok(Residency::plan(
-            &self.domains[domain].operator,
-            modes,
-            with_model,
-            self.team.workers(),
+            &WaveDemand {
+                domains: &domains,
+                modes,
+                with_model,
+                native_spacing_hz: self.native_spacing_hz,
+                workers: self.team.workers(),
+            },
             self.budget,
         )?)
-    }
-
-    fn partition(&self, domain: usize) -> Partition {
-        let operator = &self.domains[domain].operator;
-        match operator.basis() {
-            Basis::ChannelLocal { .. } => Partition::Planes {
-                owners: self.team.workers(),
-            },
-            Basis::Constant | Basis::Taylor { .. } => Partition::regions(
-                operator.geometry(),
-                self.team.workers(),
-                usize::from(SPHEROIDAL_SUPPORT / 2),
-            ),
-        }
     }
 
     /// One pass over every image domain, appending its images to `state`.
@@ -425,55 +427,73 @@ impl<'a> Run<'a> {
         &mut self,
         modes: ModeSet,
         model: Option<&ModelGeneration>,
+        residency: Residency,
         state: &mut PassNormalState,
         initial: bool,
         mut writer: Option<&mut VisibilityWriter<'_>>,
     ) -> Result<PassSummary, ImagingError> {
-        let mut total = PassSummary::default();
-        for index in 0..self.domains.len() {
-            self.source.set_domain(index as u32);
-            let domain = &self.domains[index];
-            let prepare = |planes: PlaneRange| {
-                let generation = model.expect("the closure is installed only with a model");
-                prepare_model(&domain.operator, generation, index, planes)
-                    .map_err(|error| PassError::Model(Box::new(error)))
-            };
-            let pass = MajorCyclePass {
-                operator: &domain.operator,
-                resampler: &domain.resampler,
-                weighting: &self.weighting,
-                modes,
-                model: model.map(|_| &prepare as &ModelPreparation<'_>),
-                partition: self.partition(index),
-                residency: self.residency(index, modes, model.is_some(), writer.is_some())?,
-            };
-            let predictions = writer.as_deref().map(VisibilityWriter::needs_predictions);
-            let mut write = |block: &_, predictions: &[_]| match writer.as_deref_mut() {
-                Some(writer) => writer.write(block, predictions),
-                None => Ok(()),
-            };
-            let mut sink = predictions.map(|predictions| VisibilitySink {
-                predictions,
-                write: &mut write,
-            });
-            let summary = run_major_cycle(
-                &pass,
-                &mut self.source,
-                &self.team,
-                &self.cancel,
-                &mut |images| {
-                    state
-                        .append(pass_images(index, &images, initial))
-                        .map_err(|error| PassError::Images(Box::new(error)))
-                },
-                sink.as_mut(),
-            )?;
-            if index == 0 {
-                total = summary;
-            }
-        }
-        Ok(total)
+        let domains = pass_domains(&self.domains, self.team.workers());
+        let prepare = |domain: usize, planes: PlaneRange| {
+            let generation = model.expect("the closure is installed only with a model");
+            prepare_model(&self.domains[domain].operator, generation, domain, planes)
+                .map_err(|error| PassError::Model(Box::new(error)))
+        };
+        let pass = MajorCyclePass {
+            domains: &domains,
+            weighting: &self.weighting,
+            modes,
+            model: model.map(|_| &prepare as &ModelPreparation<'_>),
+            residency,
+            native_spacing_hz: self.native_spacing_hz,
+        };
+        let predictions = writer.as_deref().map(VisibilityWriter::needs_predictions);
+        let mut write = |block: &_, predictions: &[_]| match writer.as_deref_mut() {
+            Some(writer) => writer.write(block, predictions),
+            None => Ok(()),
+        };
+        let mut sink = predictions.map(|predictions| VisibilitySink {
+            predictions,
+            write: &mut write,
+        });
+        Ok(run_major_cycle(
+            &pass,
+            &mut self.source,
+            &self.team,
+            &self.cancel,
+            &mut |domain, images| {
+                state
+                    .append(pass_images(domain, &images, initial))
+                    .map_err(|error| PassError::Images(Box::new(error)))
+            },
+            sink.as_mut(),
+        )?)
     }
+}
+
+/// Every image domain's operator, resampler and partition: planes split
+/// among `workers` for a channel-local basis, grid strips otherwise.
+fn pass_domains(domains: &[DomainOperator], workers: usize) -> Vec<PassDomain<'_>> {
+    domains
+        .iter()
+        .map(|domain| PassDomain {
+            operator: &domain.operator,
+            resampler: &domain.resampler,
+            partition: match domain.operator.basis() {
+                Basis::ChannelLocal { .. } => Partition::Planes { owners: workers },
+                Basis::Constant | Basis::Taylor { .. } => {
+                    Partition::regions(&domain.operator, workers)
+                }
+            },
+        })
+        .collect()
+}
+
+/// Whether `problem` starts from a model (CASA `startmodel`).
+fn start_model(problem: &CompiledProblem) -> bool {
+    !matches!(
+        problem.model_lifecycle().input(),
+        ModelInputCommitment::Empty
+    )
 }
 
 /// The next cycle's mask plans: automask evolves from the masks just used.

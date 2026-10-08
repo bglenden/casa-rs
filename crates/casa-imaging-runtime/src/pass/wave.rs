@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! One wave of a major-cycle pass: placement on row chunks, accumulation by
-//! owner, and the per-plane transforms.
+//! One wave of a major-cycle pass: prediction and placement on row chunks,
+//! accumulation by owner for each image domain, and the per-plane
+//! transforms.
 
 use std::ops::Range;
 
 use casa_imaging_operator::{
-    CpuBackend, GridAccumulator, GridBackend, Mode, NormalImages, PlaneRange, PredictionScratch,
-    PreparedModelGrids, SampleBuffer, Work,
+    CpuBackend, GridAccumulator, GridBackend, Mode, NativeRow, NormalImages, PlaneRange,
+    PredictionScratch, PreparedModelGrids, SampleBuffer, Work,
 };
 use num_complex::Complex32;
 
@@ -24,6 +25,13 @@ struct Owner {
     images: Option<NormalImages>,
 }
 
+/// One image domain's share of a wave.
+struct Domain<'w> {
+    router: Router,
+    owners: Vec<Owner>,
+    model: Option<&'w PreparedModelGrids>,
+}
+
 /// One row chunk's placements, routed by owner, its prediction scratch and
 /// its rows' native-channel residuals.
 struct Chunk {
@@ -33,85 +41,129 @@ struct Chunk {
     placed: u64,
     backend: CpuBackend,
     prediction: PredictionScratch,
+    predicted: Vec<Complex32>,
     residual: Vec<Complex32>,
 }
 
 pub(super) struct Wave<'w, 'p> {
     pass: &'w MajorCyclePass<'p>,
     planes: PlaneRange,
-    router: Router,
-    model: Option<&'w PreparedModelGrids>,
-    owners: Vec<Owner>,
+    domains: Vec<Domain<'w>>,
+    native_residuals: bool,
+    check_spacing: bool,
     chunks: Vec<Chunk>,
     predictions: Vec<Complex32>,
     samples: u64,
 }
 
 impl<'w, 'p> Wave<'w, 'p> {
+    /// A wave over `planes` with each domain's prepared `models`, forming
+    /// residuals at native channels when `native_residuals`.
     pub(super) fn new(
         pass: &'w MajorCyclePass<'p>,
         planes: PlaneRange,
-        model: Option<&'w PreparedModelGrids>,
+        models: Option<&'w [PreparedModelGrids]>,
+        native_residuals: bool,
     ) -> Self {
-        let router = Router::new(&pass.partition, planes);
-        let owners = (0..router.owners())
-            .map(|owner| {
-                let (range, tile) = router.target(&pass.partition, planes, owner);
-                Owner {
-                    acc: Some(pass.operator.accumulator(range, tile, pass.modes)),
-                    backend: CpuBackend::new(),
-                    images: None,
+        let domains = pass
+            .domains
+            .iter()
+            .enumerate()
+            .map(|(index, domain)| {
+                let router = Router::new(&domain.partition, planes);
+                let owners = (0..router.owners())
+                    .map(|owner| {
+                        let (range, tile) = router.target(&domain.partition, planes, owner);
+                        Owner {
+                            acc: Some(domain.operator.accumulator(range, tile, pass.modes)),
+                            backend: CpuBackend::new(),
+                            images: None,
+                        }
+                    })
+                    .collect();
+                Domain {
+                    router,
+                    owners,
+                    model: models.map(|models| &models[index]),
                 }
             })
             .collect();
         Self {
             pass,
             planes,
-            router,
-            model,
-            owners,
+            domains,
+            native_residuals,
+            check_spacing: false,
             chunks: Vec::new(),
             predictions: Vec::new(),
             samples: 0,
         }
     }
 
-    /// Samples placed so far.
+    /// Check every row's native spacing against the pass's
+    /// `native_spacing_hz`, which sized this wave's model halo.
+    pub(super) fn checking_spacing(mut self, check: bool) -> Self {
+        self.check_spacing = check;
+        self
+    }
+
+    /// Samples placed on the first domain so far.
     pub(super) const fn samples(&self) -> u64 {
         self.samples
     }
 
-    /// Place every row of `block` and accumulate the placements; with a
-    /// visibility sink, first hand it the block, with every selected
-    /// sample's prediction from the wave's model when it asks for them.
+    /// Place every row of `block` on every domain and accumulate the
+    /// placements; with a visibility sink, first hand it the block, with
+    /// every selected sample's prediction when it asks for them.
     ///
-    /// When the resampler forms residuals at native channels, each row's
-    /// samples are placed from `V − A·m` at its native channels and gridded
-    /// as data; otherwise the model is subtracted at each placed sample.
+    /// When the wave forms residuals at native channels, each row's samples
+    /// are placed from `V − Σ_d A_d·m_d` at its native channels and gridded
+    /// as data; otherwise the domain's model is subtracted at each placed
+    /// sample.
     pub(super) fn consume(
         &mut self,
         block: &NativeBlock,
         team: &WorkerTeam,
         visibilities: Option<&mut VisibilitySink<'_>>,
     ) -> Result<(), PassError> {
-        let npol = self.pass.operator.polarization().correlations().len();
-        let owners = self.owners.len();
+        let npol = block.correlations();
         let rows = block.len();
+        if self.check_spacing {
+            let bound_hz = self.pass.native_spacing_hz;
+            for row in 0..rows {
+                let observed_hz = block
+                    .row(0, row)
+                    .frequencies_hz
+                    .windows(2)
+                    .fold(0.0_f64, |widest, pair| {
+                        widest.max((pair[1] - pair[0]).abs())
+                    });
+                if observed_hz > bound_hz {
+                    return Err(PassError::NativeSpacing {
+                        observed_hz,
+                        bound_hz,
+                    });
+                }
+            }
+        }
         let count = (team.workers() * CHUNKS_PER_WORKER).clamp(1, rows.max(1));
         if self.chunks.len() < count {
             self.chunks.resize_with(count, || Chunk {
                 rows: 0..0,
                 scratch: SampleBuffer::new(npol),
-                owned: (0..owners).map(|_| SampleBuffer::new(npol)).collect(),
+                owned: Vec::new(),
                 placed: 0,
                 backend: CpuBackend::new(),
                 prediction: PredictionScratch::default(),
+                predicted: Vec::new(),
                 residual: Vec::new(),
             });
         }
-        let native_residuals = self.model.is_some() && self.pass.resampler.forms_native_residuals();
+        for (index, chunk) in self.chunks[..count].iter_mut().enumerate() {
+            chunk.rows = index * rows / count..(index + 1) * rows / count;
+        }
         let sink_predictions = visibilities.as_ref().is_some_and(|sink| sink.predictions);
-        if native_residuals || sink_predictions {
+        if self.native_residuals || sink_predictions {
             self.predict(block, team, count)?;
         } else {
             self.predictions.clear();
@@ -124,20 +176,44 @@ impl<'w, 'p> Wave<'w, 'p> {
             };
             (sink.write)(block, predictions).map_err(PassError::VisibilityWrite)?;
         }
-        for (index, chunk) in self.chunks[..count].iter_mut().enumerate() {
-            chunk.rows = index * rows / count..(index + 1) * rows / count;
+        for index in 0..self.domains.len() {
+            let placed = self.place(block, team, count, index)?;
+            if index == 0 {
+                self.samples += placed;
+            }
         }
+        Ok(())
+    }
+
+    /// Place the rows of `block` on domain `index` and accumulate them;
+    /// returns the samples placed.
+    fn place(
+        &mut self,
+        block: &NativeBlock,
+        team: &WorkerTeam,
+        count: usize,
+        index: usize,
+    ) -> Result<u64, PassError> {
         let pass = self.pass;
-        let router = &self.router;
+        let target = &pass.domains[index];
+        let domain = &mut self.domains[index];
+        let owners = domain.owners.len();
+        let router = &domain.router;
         let planes = self.planes;
         let predictions = &self.predictions;
+        let native_residuals = self.native_residuals;
         let cells = block.channels() * block.correlations();
         team.for_each_mut(&mut self.chunks[..count], |_, chunk| {
             chunk.placed = 0;
-            chunk.owned.iter_mut().for_each(SampleBuffer::clear);
+            chunk
+                .owned
+                .resize_with(owners, || SampleBuffer::new(block.correlations()));
+            chunk.owned[..owners]
+                .iter_mut()
+                .for_each(SampleBuffer::clear);
             for row in chunk.rows.clone() {
                 chunk.scratch.clear();
-                let native = block.row(row);
+                let native = block.row(index, row);
                 let native = if native_residuals {
                     let model = &predictions[row * cells..(row + 1) * cells];
                     chunk.residual.clear();
@@ -148,25 +224,29 @@ impl<'w, 'p> Wave<'w, 'p> {
                             .zip(model)
                             .map(|(value, model)| value - model),
                     );
-                    casa_imaging_operator::NativeRow {
+                    NativeRow {
                         values: &chunk.residual,
                         ..native
                     }
                 } else {
                     native
                 };
-                pass.resampler
-                    .place(pass.operator, pass.weighting, &native, &mut chunk.scratch)?;
+                target.resampler.place(
+                    target.operator,
+                    pass.weighting,
+                    &native,
+                    &mut chunk.scratch,
+                )?;
                 let placed = chunk.scratch.block();
-                for (index, placement) in placed.placements.iter().enumerate() {
+                for (sample, placement) in placed.placements.iter().enumerate() {
                     if !planes.contains(placement.plane) {
                         continue;
                     }
-                    let owner = router.owner(pass.operator, placement);
+                    let owner = router.owner(target.operator, placement);
                     chunk.owned[owner].push(
                         *placement,
-                        placed.values_of(index),
-                        placed.weights_of(index),
+                        placed.values_of(sample),
+                        placed.weights_of(sample),
                     );
                     chunk.placed += 1;
                 }
@@ -174,9 +254,8 @@ impl<'w, 'p> Wave<'w, 'p> {
             Ok::<_, PassError>(())
         })?;
         let chunks = &self.chunks[..count];
-        self.samples += chunks.iter().map(|chunk| chunk.placed).sum::<u64>();
-        let model = self.model.filter(|_| !native_residuals);
-        team.for_each_mut(&mut self.owners, |owner_index, owner| {
+        let model = domain.model.filter(|_| !native_residuals);
+        team.for_each_mut(&mut domain.owners, |owner_index, owner| {
             let acc = owner
                 .acc
                 .as_mut()
@@ -186,14 +265,23 @@ impl<'w, 'p> Wave<'w, 'p> {
                 if block.is_empty() {
                     continue;
                 }
-                accumulate(pass, &mut owner.backend, &block, model, acc)?;
+                accumulate(
+                    pass,
+                    target.operator,
+                    &mut owner.backend,
+                    &block,
+                    model,
+                    acc,
+                )?;
             }
             Ok::<_, PassError>(())
-        })
+        })?;
+        Ok(chunks.iter().map(|chunk| chunk.placed).sum())
     }
 
-    /// Model visibilities of every selected sample of `block`, `[row]
-    /// [channel][correlation]`, into `self.predictions`; zero without a model.
+    /// Model visibilities of every selected sample of `block`, summed over
+    /// every domain's model (`SIMapperCollection::degrid`), `[row][channel]
+    /// [correlation]`, into `self.predictions`; zero without a model.
     fn predict(
         &mut self,
         block: &NativeBlock,
@@ -204,58 +292,79 @@ impl<'w, 'p> Wave<'w, 'p> {
         let rows = block.len();
         self.predictions.clear();
         self.predictions.resize(rows * cells, Complex32::default());
-        let Some(model) = self.model else {
+        if self.domains.iter().all(|domain| domain.model.is_none()) {
             return Ok(());
-        };
+        }
         let pass = self.pass;
+        let domains = &self.domains;
         let mut pieces = Vec::with_capacity(count);
         let mut remaining = self.predictions.as_mut_slice();
-        for (index, chunk) in self.chunks[..count].iter_mut().enumerate() {
-            let rows = index * rows / count..(index + 1) * rows / count;
-            let (head, tail) = remaining.split_at_mut(rows.len() * cells);
+        for chunk in &mut self.chunks[..count] {
+            let (head, tail) = remaining.split_at_mut(chunk.rows.len() * cells);
             remaining = tail;
-            pieces.push((rows, chunk, head));
+            pieces.push((chunk, head));
         }
-        team.for_each_mut(&mut pieces, |_, (rows, chunk, out)| {
-            for (local, row) in rows.clone().enumerate() {
-                pass.resampler.predict_row(
-                    pass.operator,
-                    &mut chunk.backend,
-                    model,
-                    &block.row(row),
-                    &mut chunk.prediction,
-                    &mut out[local * cells..(local + 1) * cells],
-                )?;
+        team.for_each_mut(&mut pieces, |_, (chunk, out)| {
+            chunk.predicted.resize(cells, Complex32::default());
+            for (local, row) in chunk.rows.clone().enumerate() {
+                let out = &mut out[local * cells..(local + 1) * cells];
+                for (index, (target, domain)) in pass.domains.iter().zip(domains).enumerate() {
+                    let Some(model) = domain.model else {
+                        continue;
+                    };
+                    target.resampler.predict_row(
+                        target.operator,
+                        &mut chunk.backend,
+                        model,
+                        &block.row(index, row),
+                        &mut chunk.prediction,
+                        &mut chunk.predicted,
+                    )?;
+                    for (sum, value) in out.iter_mut().zip(&chunk.predicted) {
+                        *sum += value;
+                    }
+                }
             }
             Ok::<_, PassError>(())
         })
     }
 
-    /// Transform the accumulated grids into this wave's normal images.
-    pub(super) fn finish(mut self, team: &WorkerTeam) -> Result<NormalImages, PassError> {
-        let operator = self.pass.operator;
-        match &self.pass.partition {
-            Partition::Planes { .. } => {
-                team.for_each_mut(&mut self.owners, |_, owner| {
-                    let acc = owner.acc.take().expect("each owner finishes once");
-                    owner.images = Some(operator.finish(acc)?);
-                    Ok::<_, PassError>(())
-                })?;
-                Ok(concatenate(
-                    self.owners
-                        .into_iter()
-                        .map(|owner| owner.images.expect("every owner finished")),
-                ))
-            }
-            Partition::Regions(_) => {
-                let mut merged = operator.accumulator(self.planes, None, self.pass.modes);
-                for owner in &self.owners {
-                    merged.merge_from(owner.acc.as_ref().expect("owners hold their tiles"))?;
+    /// Transform the accumulated grids into this wave's normal images, one
+    /// per domain.
+    pub(super) fn finish(self, team: &WorkerTeam) -> Result<Vec<NormalImages>, PassError> {
+        let pass = self.pass;
+        let planes = self.planes;
+        self.domains
+            .into_iter()
+            .zip(pass.domains)
+            .map(|(mut domain, target)| {
+                let operator = target.operator;
+                match &target.partition {
+                    Partition::Planes { .. } => {
+                        team.for_each_mut(&mut domain.owners, |_, owner| {
+                            let acc = owner.acc.take().expect("each owner finishes once");
+                            owner.images = Some(operator.finish(acc)?);
+                            Ok::<_, PassError>(())
+                        })?;
+                        Ok(concatenate(
+                            domain
+                                .owners
+                                .into_iter()
+                                .map(|owner| owner.images.expect("every owner finished")),
+                        ))
+                    }
+                    Partition::Regions { .. } => {
+                        let mut merged = operator.accumulator(planes, None, pass.modes);
+                        for owner in &domain.owners {
+                            merged
+                                .merge_from(owner.acc.as_ref().expect("owners hold their tiles"))?;
+                        }
+                        drop(domain.owners);
+                        Ok(operator.finish(merged)?)
+                    }
                 }
-                drop(self.owners);
-                Ok(operator.finish(merged)?)
-            }
-        }
+            })
+            .collect()
     }
 }
 
@@ -263,12 +372,13 @@ impl<'w, 'p> Wave<'w, 'p> {
 /// model the data terms receive the residual `V − A·m`.
 fn accumulate(
     pass: &MajorCyclePass<'_>,
+    operator: &casa_imaging_operator::MeasurementOperator,
     backend: &mut CpuBackend,
     block: &casa_imaging_operator::SampleBlock<'_>,
     model: Option<&PreparedModelGrids>,
     acc: &mut GridAccumulator,
 ) -> Result<(), PassError> {
-    let cf = pass.operator.cf();
+    let cf = operator.cf();
     if pass.modes.data {
         let work = match model {
             Some(model) => Work::ResidualGrid {

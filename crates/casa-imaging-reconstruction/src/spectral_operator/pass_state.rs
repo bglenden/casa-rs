@@ -11,7 +11,10 @@
 use std::ops::Range;
 use std::sync::Mutex;
 
-use casa_imaging_model::{CompiledProblem, ReconstructionBasis, SpectralWcs};
+use casa_imaging_model::{
+    CompiledGeometryId, CompiledProblem, CompiledProblemId, NumericsContractId,
+    ReconstructionBasis, SpectralWcs, WeightingCommitmentId,
+};
 use num_complex::Complex64;
 
 use super::normal_storage::{
@@ -63,9 +66,21 @@ enum DomainState {
     },
 }
 
+/// The problem, numerics and weighting a normal state is formed for; a
+/// finished state carries them as its completion.
+#[derive(Clone, Copy, Debug)]
+struct Formed {
+    problem: CompiledProblemId,
+    geometry: CompiledGeometryId,
+    numerics: NumericsContractId,
+    weighting_commitment: WeightingCommitmentId,
+    weighting_generation: WeightingGenerationId,
+}
+
 /// A normal state being assembled domain by domain and, for a
 /// channel-local basis, channel range by channel range in order.
 pub struct PassNormalState {
+    formed: Formed,
     basis: SpectralBasisPlan,
     total_channels: usize,
     polarizations: usize,
@@ -74,22 +89,31 @@ pub struct PassNormalState {
     domains: Vec<DomainState>,
     roles: Vec<casa_imaging_model::ImageDomainRole>,
     shapes: Vec<[usize; 2]>,
-    /// Weighting generation the refreshed state was formed with; a refresh
-    /// must finish with the same one, since its PSF and `sumwt` carry over.
-    weighting: Option<WeightingGenerationId>,
+    /// The refreshed channel-local state, retired once the refresh finishes.
     previous: Option<FinalNormalState>,
+    /// Samples the refreshed state placed; a refresh must place as many.
+    refreshed_samples: Option<u64>,
 }
 
 impl PassNormalState {
-    /// An empty state for the initial pass of `problem`, whose images were
-    /// formed with model generation `model`.
+    /// An empty state for the initial pass of `problem` with imaging
+    /// weights `weighting`, whose images were formed with model generation
+    /// `model`.
     pub fn initial(
         problem: &CompiledProblem,
+        weighting: WeightingGenerationId,
         model: ModelGenerationId,
         storage: NormalStoragePlan,
     ) -> Result<Self, SpectralOperatorError> {
         let domains = problem.geometry().domains();
         Ok(Self {
+            formed: Formed {
+                problem: problem.problem_id(),
+                geometry: problem.geometry().geometry_id(),
+                numerics: problem.numerics_id(),
+                weighting_commitment: problem.weighting().commitment_id(),
+                weighting_generation: weighting,
+            },
             basis: basis_plan(problem)?,
             total_channels: problem.geometry().spectral().output_channels(),
             polarizations: problem.reconstruction().polarization().coordinates().len(),
@@ -101,17 +125,19 @@ impl PassNormalState {
                 .iter()
                 .map(|domain| domain.shape().pixels())
                 .collect(),
-            weighting: None,
             previous: None,
+            refreshed_samples: None,
         })
     }
 
     /// A residual refresh of `previous`, formed with model generation
-    /// `model`: the PSF, `sumwt` and validity carry over; every residual
-    /// plane must be appended again.
+    /// `model` and `previous`'s imaging weights: the PSF, `sumwt` and
+    /// validity carry over; every residual plane must be appended again,
+    /// and [`Self::finish`] requires the refresh to have placed the samples
+    /// `previous` placed.
     ///
-    /// `previous` must be a state of the same problem; [`Self::finish`]
-    /// then requires the weighting generation it was formed with.
+    /// `previous` must be a state of the same problem and weighting
+    /// commitment.
     pub fn refresh(
         problem: &CompiledProblem,
         previous: FinalNormalState,
@@ -123,8 +149,8 @@ impl PassNormalState {
         {
             return Err(SpectralOperatorError::ReusableNormalStateMismatch);
         }
-        let mut state = Self::initial(problem, model, storage)?;
-        state.weighting = Some(previous.weighting_generation());
+        let mut state = Self::initial(problem, previous.weighting_generation(), model, storage)?;
+        state.refreshed_samples = Some(previous.sample_count());
         match previous.primitives() {
             NormalStatePrimitives::ChannelLocal(domains) => {
                 for (target, domain) in state.domains.iter_mut().zip(domains.iter()) {
@@ -149,6 +175,12 @@ impl PassNormalState {
     }
 
     /// Add one pass's images of one domain.
+    ///
+    /// A non-finite image value or `sumwt` is a generated non-finite value,
+    /// rejected under every [`casa_imaging_model::FiniteValuePolicy`]: the
+    /// policies differ only on non-finite inputs, which the source flags or
+    /// rejects before gridding. Nothing is changed when an append fails
+    /// validation.
     pub fn append(&mut self, images: PassImages) -> Result<(), SpectralOperatorError> {
         let index = images.domain;
         if self.shapes.get(index) != Some(&images.shape)
@@ -156,89 +188,71 @@ impl PassNormalState {
         {
             return Err(SpectralOperatorError::ProblemMismatch);
         }
-        let state = std::mem::replace(&mut self.domains[index], DomainState::Empty);
-        self.domains[index] = match (state, self.basis) {
-            (DomainState::Empty, SpectralBasisPlan::ChannelLocal) => {
-                let primitives = self.channel_primitives(images)?;
-                DomainState::Channels {
+        if !all_finite(&images) {
+            return Err(SpectralOperatorError::GeneratedNonfinite);
+        }
+        let model = self.model;
+        if let DomainState::Channels {
+            domain,
+            refresh: true,
+        } = &mut self.domains[index]
+        {
+            if images.psf.is_some() {
+                return Err(SpectralOperatorError::ProblemMismatch);
+            }
+            return domain.append_residual_planes(
+                images.channels.clone(),
+                images.shape,
+                model,
+                &images.residual,
+            );
+        }
+        if let DomainState::Coupled(domain) = &mut self.domains[index] {
+            let primitives = &mut domain.primitives;
+            if images.psf.is_some() || images.residual.len() != primitives.dirty.len() {
+                return Err(SpectralOperatorError::ProblemMismatch);
+            }
+            primitives.dirty = widen(&images.residual);
+            primitives.residual_model = Some(model);
+            return Ok(());
+        }
+        if self.basis != SpectralBasisPlan::ChannelLocal {
+            self.domains[index] = DomainState::Coupled(self.coupled_primitives(images)?);
+            return Ok(());
+        }
+        let primitives = self.channel_primitives(images)?;
+        match &mut self.domains[index] {
+            DomainState::Channels { domain, .. } => domain.append(primitives),
+            slot => {
+                *slot = DomainState::Channels {
                     domain: StoredChannelNormalDomain::begin(primitives, &self.storage)?,
                     refresh: false,
-                }
+                };
+                Ok(())
             }
-            (DomainState::Empty, _) => DomainState::Coupled(self.coupled_primitives(images)?),
-            (
-                DomainState::Channels {
-                    mut domain,
-                    refresh: false,
-                },
-                _,
-            ) => {
-                domain.append(self.channel_primitives(images)?)?;
-                DomainState::Channels {
-                    domain,
-                    refresh: false,
-                }
-            }
-            (
-                DomainState::Channels {
-                    mut domain,
-                    refresh: true,
-                },
-                _,
-            ) => {
-                if images.psf.is_some() {
-                    return Err(SpectralOperatorError::ProblemMismatch);
-                }
-                domain.append_residual_planes(
-                    images.channels.clone(),
-                    images.shape,
-                    self.model,
-                    &images.residual,
-                )?;
-                DomainState::Channels {
-                    domain,
-                    refresh: true,
-                }
-            }
-            (DomainState::Coupled(mut domain), _) => {
-                let primitives = &mut domain.primitives;
-                if images.psf.is_some()
-                    || images.shape != primitives.shape
-                    || images.residual.len() != primitives.dirty.len()
-                {
-                    return Err(SpectralOperatorError::ProblemMismatch);
-                }
-                primitives.dirty = widen(&images.residual);
-                primitives.residual_model = Some(self.model);
-                DomainState::Coupled(domain)
-            }
-        };
-        Ok(())
+        }
     }
 
-    /// The completed state, tagged with the weighting generation and the
-    /// traversal counts it came from.
+    /// The completed state, tagged with the problem and weighting it was
+    /// formed for and the traversal counts it came from. A refresh must have
+    /// placed the samples the refreshed state placed.
     pub fn finish(
         self,
-        problem: &CompiledProblem,
-        weighting: WeightingGenerationId,
         samples: u64,
         blocks: u64,
     ) -> Result<CompleteDataNormalState, SpectralOperatorError> {
-        if self.weighting.is_some_and(|previous| previous != weighting) {
+        if self
+            .refreshed_samples
+            .is_some_and(|previous| previous != samples)
+        {
             return Err(SpectralOperatorError::ReusableNormalStateMismatch);
         }
         let catalog = match self.basis {
             SpectralBasisPlan::ChannelLocal => SpectralPrimitiveCatalog::UnnormalizedChannelSlabV1,
-            SpectralBasisPlan::Polynomial(plan)
-            | SpectralBasisPlan::TaylorViaChannelMajor(plan)
-                if plan.coefficient_term_count() > 1 =>
-            {
+            SpectralBasisPlan::Polynomial(plan) if plan.coefficient_term_count() > 1 => {
                 SpectralPrimitiveCatalog::UnnormalizedTaylorBlockV1
             }
-            SpectralBasisPlan::Polynomial(_) | SpectralBasisPlan::TaylorViaChannelMajor(_) => {
-                SpectralPrimitiveCatalog::UnnormalizedPlaneV1
-            }
+            SpectralBasisPlan::Polynomial(_) => SpectralPrimitiveCatalog::UnnormalizedPlaneV1,
         };
         let primitives = if self.basis == SpectralBasisPlan::ChannelLocal {
             NormalStatePrimitives::ChannelLocal(
@@ -272,11 +286,11 @@ impl PassNormalState {
         Ok(CompleteDataNormalState {
             primitives,
             completion: CompleteDataOwnerCompletion {
-                problem: problem.problem_id(),
-                geometry: problem.geometry().geometry_id(),
-                numerics: problem.numerics_id(),
-                weighting_commitment: problem.weighting().commitment_id(),
-                weighting_generation: weighting,
+                problem: self.formed.problem,
+                geometry: self.formed.geometry,
+                numerics: self.formed.numerics,
+                weighting_commitment: self.formed.weighting_commitment,
+                weighting_generation: self.formed.weighting_generation,
                 replay: WeightingReplayId::next(),
                 primitives: catalog,
                 sample_count: samples,
@@ -410,6 +424,16 @@ impl PassNormalState {
     }
 }
 
+/// Whether every image value and `sumwt` of `images` is finite.
+fn all_finite(images: &PassImages) -> bool {
+    images.residual.iter().all(|value| value.is_finite())
+        && images
+            .psf
+            .as_ref()
+            .is_none_or(|psf| psf.iter().all(|value| value.is_finite()))
+        && images.sum_weights.iter().all(|weight| weight.is_finite())
+}
+
 /// CASA marks a plane whose accumulated weight is zero as blank; nothing
 /// downstream distinguishes a blank plane from one no sample reached.
 fn validity(sum_weight: f64) -> SpectralChannelValidity {
@@ -428,7 +452,9 @@ fn widen(values: &[f32]) -> Box<[Complex64]> {
 }
 
 /// The coefficient basis of `problem`; a Taylor basis expands about the
-/// image's reference frequency.
+/// image's reference frequency. Taylor terms via channel cubes (CASA `mvc`)
+/// keep `Σ W² xᵗ` as their published weights, which no pass forms until the
+/// primary-beam operators are installed (IF-3), so they are unsupported.
 fn basis_plan(problem: &CompiledProblem) -> Result<SpectralBasisPlan, SpectralOperatorError> {
     let reference_hz = || match problem.geometry().spectral().wcs() {
         SpectralWcs::Linear {
@@ -446,10 +472,8 @@ fn basis_plan(problem: &CompiledProblem) -> Result<SpectralBasisPlan, SpectralOp
         ReconstructionBasis::Taylor { terms } => SpectralBasisPlan::Polynomial(
             BlockNormalPlan::taylor(reference_hz()?, terms).map_err(invalid)?,
         ),
-        ReconstructionBasis::TaylorViaChannelMajor { terms, .. } => {
-            SpectralBasisPlan::TaylorViaChannelMajor(
-                BlockNormalPlan::taylor(reference_hz()?, terms).map_err(invalid)?,
-            )
+        ReconstructionBasis::TaylorViaChannelMajor { .. } => {
+            return Err(SpectralOperatorError::UnsupportedProblem);
         }
     })
 }

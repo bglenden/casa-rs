@@ -196,6 +196,11 @@ pub trait ConvolutionFunctionSet: Send + Sync {
     /// Imaging taps of a cell.
     fn taps(&self, key: CfKey) -> TapLayout<'_>;
 
+    /// The largest [`TapLayout::half_support`] of any cell `key` can
+    /// return, `[x, y]`: the halo a tile needs so that every sample anchored
+    /// inside it keeps its whole support in the tile.
+    fn max_half_support(&self) -> [u16; 2];
+
     /// `FT[PB²]` taps for the weight (sensitivity) image, placed at the uv
     /// origin; `None` for sets without a weight image.
     fn weight_taps(&self, key: CfKey) -> Option<TapLayout<'_>>;

@@ -477,6 +477,53 @@ fn cube_briggs_weights_come_from_the_nearest_native_channel_on_the_padded_axis()
     );
 }
 
+/// On identical output and native grids every output sample lies on a
+/// native channel, where casacore `InterpolateArray1D` takes that channel
+/// alone: a flagged non-finite neighbour must not reach it.
+#[test]
+fn an_end_point_sample_takes_its_own_channel_value() {
+    let operator = operator(
+        GridPrecision::F64,
+        Basis::ChannelLocal { planes: 3 },
+        &XX_YY,
+        &STOKES_I,
+    );
+    let resampler = SpectralResampler::channel_local(axis(1.0, 0.1, 3), SpectralKernel::Linear);
+    let frequencies = [1.0e9, 1.1e9, 1.2e9];
+    let mut values = vec![Complex32::new(2.0, -1.0); 6];
+    values[2] = Complex32::new(f32::NAN, 0.0);
+    values[3] = Complex32::new(f32::NAN, 0.0);
+    let flags = [false, false, true, true, false, false];
+    let row = NativeRow {
+        uvw_m: [10.0, 10.0, 0.0],
+        phase_shift_m: 0.0,
+        frequencies_hz: &frequencies,
+        values: &values,
+        weights: &[1.0; 6],
+        flags: &flags,
+        row_flag: false,
+        context: context(),
+    };
+    let mut out = SampleBuffer::new(2);
+    resampler
+        .place(&operator, &natural(), &row, &mut out)
+        .expect("place");
+    let block = out.block();
+    let planes = block
+        .placements
+        .iter()
+        .map(|placement| placement.plane)
+        .collect::<Vec<_>>();
+    assert_eq!(planes, [0, 2], "the flagged channel's plane is empty");
+    for index in 0..block.placements.len() {
+        assert_eq!(
+            block.values_of(index),
+            [Complex32::new(2.0, -1.0); 2],
+            "sample {index}"
+        );
+    }
+}
+
 #[test]
 fn a_one_channel_row_bypasses_linear_interpolation() {
     // CASA `interpolateFrequencyTogrid`: with one native channel the row

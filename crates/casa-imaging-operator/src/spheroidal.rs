@@ -53,6 +53,10 @@ impl ConvolutionFunctionSet for Spheroidal {
         }
     }
 
+    fn max_half_support(&self) -> [u16; 2] {
+        [SPHEROIDAL_SUPPORT / 2; 2]
+    }
+
     fn weight_taps(&self, _key: CfKey) -> Option<TapLayout<'_>> {
         None
     }

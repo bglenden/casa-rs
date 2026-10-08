@@ -28,40 +28,33 @@ use crate::{
 enum SpectralBasisPlan {
     ChannelLocal,
     Polynomial(BlockNormalPlan),
-    TaylorViaChannelMajor(BlockNormalPlan),
 }
 
 impl SpectralBasisPlan {
     const fn coefficient_terms(self, slab: SpectralSlabPlan) -> usize {
         match self {
             Self::ChannelLocal => slab.core_depth(),
-            Self::Polynomial(plan) | Self::TaylorViaChannelMajor(plan) => {
-                plan.coefficient_term_count()
-            }
+            Self::Polynomial(plan) => plan.coefficient_term_count(),
         }
     }
 
     const fn normal_moments(self, slab: SpectralSlabPlan) -> usize {
         match self {
             Self::ChannelLocal => slab.core_depth(),
-            Self::Polynomial(plan) | Self::TaylorViaChannelMajor(plan) => {
-                plan.normal_moment_count()
-            }
+            Self::Polynomial(plan) => plan.normal_moment_count(),
         }
     }
 
     const fn polynomial(self) -> Option<BlockNormalPlan> {
         match self {
             Self::ChannelLocal => None,
-            Self::Polynomial(plan) | Self::TaylorViaChannelMajor(plan) => Some(plan),
+            Self::Polynomial(plan) => Some(plan),
         }
     }
 
     fn normal_moment_index(self, row: usize, column: usize) -> Option<usize> {
         match self {
-            Self::Polynomial(plan) | Self::TaylorViaChannelMajor(plan) => {
-                plan.normal_moment_index(row, column)
-            }
+            Self::Polynomial(plan) => plan.normal_moment_index(row, column),
             Self::ChannelLocal => None,
         }
     }
@@ -212,8 +205,7 @@ impl SpectralOperatorPrimitives {
     #[must_use]
     pub const fn reference_frequency_hz(&self) -> Option<f64> {
         match self.basis {
-            SpectralBasisPlan::Polynomial(plan)
-            | SpectralBasisPlan::TaylorViaChannelMajor(plan) => Some(plan.reference_frequency_hz()),
+            SpectralBasisPlan::Polynomial(plan) => Some(plan.reference_frequency_hz()),
             SpectralBasisPlan::ChannelLocal => None,
         }
     }

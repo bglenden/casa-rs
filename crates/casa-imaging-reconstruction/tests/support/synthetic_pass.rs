@@ -242,14 +242,18 @@ impl Scene {
         storage: NormalStoragePlan,
         weighting: WeightingGenerationId,
     ) -> CompleteDataNormalState {
-        let mut state =
-            PassNormalState::initial(problem, preparation.final_model_generation(), storage)
-                .expect("initial synthetic pass state");
+        let mut state = PassNormalState::initial(
+            problem,
+            weighting,
+            preparation.final_model_generation(),
+            storage,
+        )
+        .expect("initial synthetic pass state");
         state
             .append(self.pass_images(preparation.final_model(), true))
             .expect("append synthetic initial pass images");
         state
-            .finish(problem, weighting, SAMPLES, BLOCKS)
+            .finish(SAMPLES, BLOCKS)
             .expect("complete synthetic initial pass")
     }
 
@@ -261,7 +265,6 @@ impl Scene {
         previous: FinalNormalState,
         preparation: &MajorCyclePreparation,
     ) -> CompleteDataNormalState {
-        let weighting = previous.weighting_generation();
         let mut state = PassNormalState::refresh(
             problem,
             previous,
@@ -273,7 +276,7 @@ impl Scene {
             .append(self.pass_images(preparation.final_model(), false))
             .expect("append synthetic residual pass images");
         state
-            .finish(problem, weighting, SAMPLES, BLOCKS)
+            .finish(SAMPLES, BLOCKS)
             .expect("complete synthetic residual pass")
     }
 

@@ -163,6 +163,7 @@ fn sealed_products_round(
     .expect("fixture normal window");
     let mut state = casa_imaging_reconstruction::PassNormalState::initial(
         problem,
+        casa_imaging_reconstruction::WeightingGenerationId::next(),
         preparation.final_model_generation(),
         storage,
     )
@@ -176,14 +177,7 @@ fn sealed_products_round(
             ))
             .expect("append synthetic pass images");
     }
-    let normal = state
-        .finish(
-            problem,
-            casa_imaging_reconstruction::WeightingGenerationId::next(),
-            1,
-            1,
-        )
-        .expect("complete synthetic pass");
+    let normal = state.finish(1, 1).expect("complete synthetic pass");
     MajorCycleOwner::from_complete_data(normal, preparation)
         .expect("major-cycle owner")
         .reconcile(&mut lifecycle)

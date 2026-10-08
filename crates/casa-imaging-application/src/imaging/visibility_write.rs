@@ -121,7 +121,7 @@ impl<'a> VisibilityWriter<'a> {
                 )?;
             }
             if self.corrected_data {
-                let values = block.row(row).values;
+                let values = block.row(0, row).values;
                 self.write_row(
                     MsColumnKind::CorrectedData,
                     block,
