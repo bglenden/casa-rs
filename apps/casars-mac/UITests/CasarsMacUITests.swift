@@ -77,7 +77,7 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(try textValue(try require("task.imagerReadiness.capability")).contains("Unsupported request"))
         XCTAssertTrue(try textValue(try require("task.imagerReadiness.plan")).contains("Pending launch"))
         XCTAssertTrue(try textValue(try require("task.imagerReadiness.cache")).contains("none"))
-        XCTAssertTrue(try textValue(try require("task.imagerReadiness.provider")).contains("casa_imager_task v10"))
+        XCTAssertTrue(try textValue(try require("task.imagerReadiness.provider")).contains("casa_imager_task v11"))
         XCTAssertTrue(try require("task.imagerReadiness.unsupported.task.memory_target").exists)
         XCTAssertFalse(try require("task.run").isEnabled)
     }
