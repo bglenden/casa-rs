@@ -87,7 +87,9 @@ pub fn run_minor_cycle(
 }
 
 /// The statistics prepass and the plane solves, `workers` planes at a time
-/// so at most that many planes are loaded; FFTW threads only for one plane.
+/// so at most that many planes are loaded. Every plane's FFTs run on one
+/// thread (plan section 5.9): FFTW's own threads beside the worker team made
+/// a single 4096² Clark plane eight times slower.
 fn solve_planes(
     mut work: ReconstructionPlaneWork<'_>,
     team: &WorkerTeam,
@@ -108,17 +110,6 @@ fn solve_planes(
         }
     }
     let planes = work.plane_count();
-    if planes == 1 {
-        let threads = if work.workspace().parallel_fft() {
-            workers
-        } else {
-            1
-        };
-        let input = work.prepare_plane(0)?;
-        let partial = work.execute_plane(&input, threads)?;
-        work.commit_plane(partial)?;
-        return work.finish();
-    }
     for start in (0..planes).step_by(workers) {
         let mut slots = (start..(start + workers).min(planes))
             .map(|ordinal| work.prepare_plane(ordinal).map(|input| (input, None)))

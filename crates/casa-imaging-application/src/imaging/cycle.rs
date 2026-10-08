@@ -8,6 +8,7 @@
 //! final pass also writes the model column when the run asks for it.
 
 use std::path::Path;
+use std::time::Instant;
 
 use casa_imaging_model::{CompiledProblem, ModelInputCommitment, SpectralWcs, WeightingScheme};
 use casa_imaging_operator::{
@@ -118,6 +119,7 @@ pub(crate) fn run(inputs: ImagingInputs<'_>) -> Result<ImagingOutcome, ImagingEr
         let remaining = (cycle > 1).then(|| controls.max_minor_iterations() - totals.0);
         let program = minor_program(problem, image_response, remaining)?
             .with_clark_workspace_reuse(clark_reuse);
+        let started = Instant::now();
         let outcome = run_minor_cycle(
             major.completion,
             &major.lifecycle,
@@ -138,14 +140,15 @@ pub(crate) fn run(inputs: ImagingInputs<'_>) -> Result<ImagingOutcome, ImagingEr
         );
         let record = minor_cycle_record(cycle, &outcome, entering, totals);
         tracing::info!(
-            cycle,
-            iterations = record.iterations,
-            total_iterations = totals.0,
-            initial_peak = record.initial_peak_flux,
-            final_peak = record.final_peak_flux,
-            threshold = record.effective_threshold,
-            stop = ?record.stop_reason,
-            "imaging minor cycle"
+            "imaging minor cycle {cycle}: {} iterations ({} total), peak {:.6} -> {:.6} Jy, \
+             threshold {:.6} Jy, stop {:?}, {:.2} s",
+            record.iterations,
+            totals.0,
+            record.initial_peak_flux,
+            record.final_peak_flux,
+            record.effective_threshold,
+            record.stop_reason,
+            started.elapsed().as_secs_f64(),
         );
         minor_cycles.push(record);
         let continue_cleaning = cycle < maximum_cycles
@@ -203,7 +206,12 @@ impl<'a> Run<'a> {
             main.basis().planes(),
             plane_bounds(problem),
         );
+        let started = Instant::now();
         let weighting = weighting(problem, &domains[0], &mut source, &team, &cancel)?;
+        tracing::info!(
+            "imaging weights: {workers} workers, {:.2} s",
+            started.elapsed().as_secs_f64()
+        );
         let cube = matches!(main.basis(), Basis::ChannelLocal { .. })
             .then(|| cube_state(problem, inputs.spill_directory, workers, memory))
             .transpose()?;
@@ -302,7 +310,9 @@ impl<'a> Run<'a> {
             .map(ModelColumnWriter::begin)
             .transpose()
             .map_err(|error| ImagingError::Pass(PassError::ModelColumn(error)))?;
+        let started = Instant::now();
         let summary = self.pass(modes, model, &mut state, initial, writer.as_mut())?;
+        let pass_seconds = started.elapsed().as_secs_f64();
         let final_model = preparation.final_model_generation();
         let visibility = writer
             .map(|writer| writer.complete(final_model))
@@ -327,6 +337,11 @@ impl<'a> Run<'a> {
             owner = owner.bind_reconstruction_masks(masks)?;
         }
         let completion = owner.reconcile(&mut lifecycle)?;
+        tracing::info!(
+            "imaging major cycle: {} samples, pass {pass_seconds:.2} s, total {:.2} s",
+            summary.samples,
+            started.elapsed().as_secs_f64(),
+        );
         Ok(Major {
             lifecycle,
             completion,
