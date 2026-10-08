@@ -30,6 +30,11 @@ fn full_field_application() {
         .unwrap();
     assert!(cell_arcsec.is_finite() && cell_arcsec > 0.0);
     let spectral_window = std::env::var("CASA_RS_MFS_SPW").unwrap_or_else(|_| "0~31".into());
+    let backend = match std::env::var("CASA_RS_MFS_BACKEND").as_deref() {
+        Ok("metal") => casa_imaging_application::BackendChoice::Metal,
+        Ok("cpu") | Err(_) => casa_imaging_application::BackendChoice::Cpu,
+        Ok(other) => panic!("CASA_RS_MFS_BACKEND must be cpu or metal, not {other}"),
+    };
     assert!([1, 4].contains(&workers));
     assert!((1..=4).contains(&terms));
     fs::create_dir(&root).expect("fresh durable output");
@@ -60,6 +65,7 @@ fn full_field_application() {
     imaging.primary_beam_limit = -0.2;
     imaging.normalization = casa_imaging_model::ProductNormalization::FlatNoise;
     imaging.write_primary_beam = true;
+    imaging.backend = backend;
     if workers == 1 {
         imaging.task_requirements.push(TaskRequirement::SerialCpu);
     }
@@ -93,7 +99,7 @@ fn full_field_application() {
     );
     let summary = serde_json::json!({
         "seconds": seconds, "workers": workers, "terms": terms,
-        "residual_backend": "cpu",
+        "backend": format!("{backend:?}").to_lowercase(),
         "pass_workers": output.workers,
         "worker_count_scope": "workers is the request; pass_workers is the worker team the major-cycle passes ran on",
         "native_memory_bytes": 16_u64 << 30, "image_size": 4096, "cell_arcsec": cell_arcsec,

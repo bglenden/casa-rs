@@ -4798,8 +4798,9 @@ pub enum ExecutionError {
     },
     /// No pending work can make progress and no work or fence can unblock it.
     Deadlock,
-    /// The plan schedules Metal work; the Metal backend is unavailable
-    /// until IF-4 (#653). Refused before any resource is admitted.
+    /// The plan schedules Metal work. Metal runs inside the major-cycle
+    /// pass's owners (`pass::BackendChoice::Metal`), never as an execution
+    /// node; refused before any resource is admitted.
     MetalUnavailable,
 }
 
@@ -4828,9 +4829,8 @@ impl fmt::Display for ExecutionError {
                 requested.as_str()
             ),
             Self::Deadlock => formatter.write_str("execution plan cannot make progress"),
-            Self::MetalUnavailable => {
-                formatter.write_str("Metal work needs the Metal backend, which is not installed")
-            }
+            Self::MetalUnavailable => formatter
+                .write_str("Metal work runs in the major-cycle pass, not as an execution node"),
         }
     }
 }
