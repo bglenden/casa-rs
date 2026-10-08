@@ -196,14 +196,19 @@
 <a href=#196 id=196 data-nosnippet>196</a>    <span class="doccomment">/// Imaging taps of a cell.
 <a href=#197 id=197 data-nosnippet>197</a>    </span><span class="kw">fn </span>taps(<span class="kw-2">&amp;</span><span class="self">self</span>, key: CfKey) -&gt; TapLayout&lt;<span class="lifetime">'_</span>&gt;;
 <a href=#198 id=198 data-nosnippet>198</a>
-<a href=#199 id=199 data-nosnippet>199</a>    <span class="doccomment">/// `FT[PB²]` taps for the weight (sensitivity) image, placed at the uv
-<a href=#200 id=200 data-nosnippet>200</a>    /// origin; `None` for sets without a weight image.
-<a href=#201 id=201 data-nosnippet>201</a>    </span><span class="kw">fn </span>weight_taps(<span class="kw-2">&amp;</span><span class="self">self</span>, key: CfKey) -&gt; <span class="prelude-ty">Option</span>&lt;TapLayout&lt;<span class="lifetime">'_</span>&gt;&gt;;
-<a href=#202 id=202 data-nosnippet>202</a>
-<a href=#203 id=203 data-nosnippet>203</a>    <span class="doccomment">/// Mueller plane routing for every cell of the set.
-<a href=#204 id=204 data-nosnippet>204</a>    </span><span class="kw">fn </span>mueller(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>MuellerRouting;
-<a href=#205 id=205 data-nosnippet>205</a>
-<a href=#206 id=206 data-nosnippet>206</a>    <span class="doccomment">/// The paired image-domain correction.
-<a href=#207 id=207 data-nosnippet>207</a>    </span><span class="kw">fn </span>image_correction(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>ImageCorrection;
-<a href=#208 id=208 data-nosnippet>208</a>}
+<a href=#199 id=199 data-nosnippet>199</a>    <span class="doccomment">/// The largest [`TapLayout::half_support`] of any cell `key` can
+<a href=#200 id=200 data-nosnippet>200</a>    /// return, `[x, y]`: the halo a tile needs so that every sample anchored
+<a href=#201 id=201 data-nosnippet>201</a>    /// inside it keeps its whole support in the tile.
+<a href=#202 id=202 data-nosnippet>202</a>    </span><span class="kw">fn </span>max_half_support(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; [u16; <span class="number">2</span>];
+<a href=#203 id=203 data-nosnippet>203</a>
+<a href=#204 id=204 data-nosnippet>204</a>    <span class="doccomment">/// `FT[PB²]` taps for the weight (sensitivity) image, placed at the uv
+<a href=#205 id=205 data-nosnippet>205</a>    /// origin; `None` for sets without a weight image.
+<a href=#206 id=206 data-nosnippet>206</a>    </span><span class="kw">fn </span>weight_taps(<span class="kw-2">&amp;</span><span class="self">self</span>, key: CfKey) -&gt; <span class="prelude-ty">Option</span>&lt;TapLayout&lt;<span class="lifetime">'_</span>&gt;&gt;;
+<a href=#207 id=207 data-nosnippet>207</a>
+<a href=#208 id=208 data-nosnippet>208</a>    <span class="doccomment">/// Mueller plane routing for every cell of the set.
+<a href=#209 id=209 data-nosnippet>209</a>    </span><span class="kw">fn </span>mueller(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>MuellerRouting;
+<a href=#210 id=210 data-nosnippet>210</a>
+<a href=#211 id=211 data-nosnippet>211</a>    <span class="doccomment">/// The paired image-domain correction.
+<a href=#212 id=212 data-nosnippet>212</a>    </span><span class="kw">fn </span>image_correction(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>ImageCorrection;
+<a href=#213 id=213 data-nosnippet>213</a>}
 </code></pre></div></section></main></body></html>

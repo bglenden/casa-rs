@@ -134,7 +134,7 @@ field, UV-distance, and STATE/intent predicates.</p>
 ) -&gt; <a class="type" href="../error/type.MsResult.html" title="type casa_ms::error::MsResult">MsResult</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.99.0/std/primitive.unit.html">()</a>&gt;</h4></section></summary><div class="docblock"><p>Visit selected MAIN rows in canonical physical order with bounded residency.</p>
 <p>Predicate evaluation and row reporting share one terminally fallible
 traversal. The storage owner never materializes a second selected-row list.</p>
-</div></details></div></details><details class="toggle implementors-toggle" open><summary><section id="impl-MeasurementSet-3" class="impl"><a class="src rightside" href="../../src/casa_ms/selected_observation/spectral_evaluation.rs.html#382-779">Source</a><a href="#impl-MeasurementSet-3" class="anchor">§</a><h3 class="code-header">impl <a class="struct" href="struct.MeasurementSet.html" title="struct casa_ms::ms::MeasurementSet">MeasurementSet</a></h3></section></summary><div class="impl-items"><details class="toggle method-toggle" open><summary><section id="method.selected_observation_cube_density_padding" class="method"><a class="src rightside" href="../../src/casa_ms/selected_observation/spectral_evaluation.rs.html#391-534">Source</a><h4 class="code-header">pub fn <a href="#method.selected_observation_cube_density_padding" class="fn">selected_observation_cube_density_padding</a>(
+</div></details></div></details><details class="toggle implementors-toggle" open><summary><section id="impl-MeasurementSet-3" class="impl"><a class="src rightside" href="../../src/casa_ms/selected_observation/spectral_evaluation.rs.html#382-787">Source</a><a href="#impl-MeasurementSet-3" class="anchor">§</a><h3 class="code-header">impl <a class="struct" href="struct.MeasurementSet.html" title="struct casa_ms::ms::MeasurementSet">MeasurementSet</a></h3></section></summary><div class="impl-items"><details class="toggle method-toggle" open><summary><section id="method.selected_observation_cube_density_padding" class="method"><a class="src rightside" href="../../src/casa_ms/selected_observation/spectral_evaluation.rs.html#396-542">Source</a><h4 class="code-header">pub fn <a href="#method.selected_observation_cube_density_padding" class="fn">selected_observation_cube_density_padding</a>(
     &amp;self,
     row_selection: &amp;<a class="struct" href="../struct.SelectedObservationRowSelection.html" title="struct casa_ms::SelectedObservationRowSelection">SelectedObservationRowSelection</a>,
     window: <a class="struct" href="../struct.SelectedObservationSpectralWindow.html" title="struct casa_ms::SelectedObservationSpectralWindow">SelectedObservationSpectralWindow</a>&lt;'_&gt;,
@@ -144,13 +144,18 @@ traversal. The storage owner never materializes a second selected-row list.</p>
     output_channels: <a class="primitive" href="https://doc.rust-lang.org/1.99.0/std/primitive.usize.html">usize</a>,
     geometry_engine: &amp;<a class="struct" href="../derived/engine/struct.MsCalEngine.html" title="struct casa_ms::derived::engine::MsCalEngine">MsCalEngine</a>,
     io: <a class="struct" href="../selection/struct.MsSelectionIoBudget.html" title="struct casa_ms::selection::MsSelectionIoBudget">MsSelectionIoBudget</a>,
-) -&gt; <a class="type" href="../error/type.MsResult.html" title="type casa_ms::error::MsResult">MsResult</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.99.0/std/primitive.usize.html">usize</a>&gt;</h4></section></summary><div class="docblock"><p>Derive CASA’s nominal Briggs-cube density padding for one native SPW.</p>
+) -&gt; <a class="type" href="../error/type.MsResult.html" title="type casa_ms::error::MsResult">MsResult</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.99.0/std/primitive.usize.html">usize</a>&gt;</h4></section></summary><div class="docblock"><p>Derive CASA’s nominal Briggs-cube density padding for one native SPW
+(<code>BriggsCubeWeightor::estimateSwingChanPad</code>, per side: half its
+<code>swingpad</code>).</p>
 <p>Each field’s requested image-centre interval is converted back to native
 frequency over the selected row epochs, then matched against the complete
-native SPW with CASA’s strict channel-edge overlap. The returned padding
-is per side; explicit selected-channel interpolation support does not
-redefine this nominal density domain. No visibility payload is read.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.selected_observation_spectral_envelope_reducer" class="method"><a class="src rightside" href="../../src/casa_ms/selected_observation/spectral_evaluation.rs.html#538-554">Source</a><h4 class="code-header">pub fn <a href="#method.selected_observation_spectral_envelope_reducer" class="fn">selected_observation_spectral_envelope_reducer</a>&lt;'a, 'w&gt;(
+native SPW with CASA’s strict channel-edge overlap. The padding is the
+swing of the matched native range in image channels, rounded up, plus
+<code>max(min(4, nchan/10), 1)</code>, so it is at least one plane even when the
+source and image frames agree. Explicit selected-channel interpolation
+support does not redefine this nominal density domain. No visibility
+payload is read.</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="method.selected_observation_spectral_envelope_reducer" class="method"><a class="src rightside" href="../../src/casa_ms/selected_observation/spectral_evaluation.rs.html#546-562">Source</a><h4 class="code-header">pub fn <a href="#method.selected_observation_spectral_envelope_reducer" class="fn">selected_observation_spectral_envelope_reducer</a>&lt;'a, 'w&gt;(
     &amp;'a self,
     row_selection: &amp;'a <a class="struct" href="../struct.SelectedObservationRowSelection.html" title="struct casa_ms::SelectedObservationRowSelection">SelectedObservationRowSelection</a>,
     spectral_windows: impl <a class="trait" href="https://doc.rust-lang.org/1.99.0/core/iter/traits/collect/trait.IntoIterator.html" title="trait core::iter::traits::collect::IntoIterator">IntoIterator</a>&lt;Item = <a class="struct" href="../struct.SelectedObservationSpectralWindow.html" title="struct casa_ms::SelectedObservationSpectralWindow">SelectedObservationSpectralWindow</a>&lt;'w&gt;&gt;,
@@ -158,7 +163,7 @@ redefine this nominal density domain. No visibility payload is read.</p>
     geometry_engine: &amp;'a <a class="struct" href="../derived/engine/struct.MsCalEngine.html" title="struct casa_ms::derived::engine::MsCalEngine">MsCalEngine</a>,
     available_bytes: <a class="primitive" href="https://doc.rust-lang.org/1.99.0/std/primitive.usize.html">usize</a>,
 ) -&gt; <a class="type" href="../error/type.MsResult.html" title="type casa_ms::error::MsResult">MsResult</a>&lt;<a class="struct" href="../struct.SelectedObservationSpectralEnvelopeReducer.html" title="struct casa_ms::SelectedObservationSpectralEnvelopeReducer">SelectedObservationSpectralEnvelopeReducer</a>&lt;'a&gt;&gt;</h4></section></summary><div class="docblock"><p>Plan a bounded spectral-envelope observer for the canonical selected-row traversal.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.selected_observation_spectral_range" class="method"><a class="src rightside" href="../../src/casa_ms/selected_observation/spectral_evaluation.rs.html#566-778">Source</a><h4 class="code-header">pub fn <a href="#method.selected_observation_spectral_range" class="fn">selected_observation_spectral_range</a>(
+</div></details><details class="toggle method-toggle" open><summary><section id="method.selected_observation_spectral_range" class="method"><a class="src rightside" href="../../src/casa_ms/selected_observation/spectral_evaluation.rs.html#574-786">Source</a><h4 class="code-header">pub fn <a href="#method.selected_observation_spectral_range" class="fn">selected_observation_spectral_range</a>(
     &amp;self,
     row_selection: &amp;<a class="struct" href="../struct.SelectedObservationRowSelection.html" title="struct casa_ms::SelectedObservationRowSelection">SelectedObservationRowSelection</a>,
     spectral_selection: &amp;[SpectralWindowSelection],

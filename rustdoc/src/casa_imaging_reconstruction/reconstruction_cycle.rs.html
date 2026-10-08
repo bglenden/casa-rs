@@ -79,7 +79,7 @@
 <a href=#79 id=79 data-nosnippet>79</a>
 <a href=#80 id=80 data-nosnippet>80</a>    <span class="doccomment">/// Return minor-cycle evidence for a valid channel.
 <a href=#81 id=81 data-nosnippet>81</a>    ///
-<a href=#82 id=82 data-nosnippet>82</a>    /// Blank and unmapped channels are represented explicitly and never
+<a href=#82 id=82 data-nosnippet>82</a>    /// Unmapped channels are represented explicitly and never
 <a href=#83 id=83 data-nosnippet>83</a>    /// manufacture a solver stop or model update.
 <a href=#84 id=84 data-nosnippet>84</a>    </span><span class="attr">#[must_use]
 <a href=#85 id=85 data-nosnippet>85</a>    </span><span class="kw">pub const fn </span>minor_cycle(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>MinorCycleEvidence&gt; {
@@ -787,7 +787,7 @@
 <a href=#787 id=787 data-nosnippet>787</a>        }
 <a href=#788 id=788 data-nosnippet>788</a>        workspace
 <a href=#789 id=789 data-nosnippet>789</a>    }
-<a href=#790 id=790 data-nosnippet>790</a>    <span class="doccomment">/// Number of canonical plane slots, including explicit blank/unmapped slots.
+<a href=#790 id=790 data-nosnippet>790</a>    <span class="doccomment">/// Number of canonical plane slots, including explicit unmapped slots.
 <a href=#791 id=791 data-nosnippet>791</a>    </span><span class="attr">#[must_use]
 <a href=#792 id=792 data-nosnippet>792</a>    </span><span class="kw">pub const fn </span>plane_count(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
 <a href=#793 id=793 data-nosnippet>793</a>        <span class="self">self</span>.plane_count
@@ -1201,81 +1201,80 @@
 <a href=#1201 id=1201 data-nosnippet>1201</a>        encoder.usize(channel.polarization);
 <a href=#1202 id=1202 data-nosnippet>1202</a>        encoder.u8(<span class="kw">match </span>channel.validity {
 <a href=#1203 id=1203 data-nosnippet>1203</a>            SpectralChannelValidity::Valid =&gt; <span class="number">0</span>,
-<a href=#1204 id=1204 data-nosnippet>1204</a>            SpectralChannelValidity::Blank =&gt; <span class="number">1</span>,
-<a href=#1205 id=1205 data-nosnippet>1205</a>            SpectralChannelValidity::Unmapped =&gt; <span class="number">2</span>,
-<a href=#1206 id=1206 data-nosnippet>1206</a>        });
-<a href=#1207 id=1207 data-nosnippet>1207</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(evidence) = <span class="kw-2">&amp;</span>channel.minor_cycle {
-<a href=#1208 id=1208 data-nosnippet>1208</a>            encoder.u8(<span class="number">1</span>);
-<a href=#1209 id=1209 data-nosnippet>1209</a>            encoder.identity(evidence.evidence_id().as_bytes());
-<a href=#1210 id=1210 data-nosnippet>1210</a>        } <span class="kw">else </span>{
-<a href=#1211 id=1211 data-nosnippet>1211</a>            encoder.u8(<span class="number">0</span>);
-<a href=#1212 id=1212 data-nosnippet>1212</a>        }
-<a href=#1213 id=1213 data-nosnippet>1213</a>    }
-<a href=#1214 id=1214 data-nosnippet>1214</a>    ReconstructionCycleEvidenceId(LogicalIdentity::from_sha256(encoder.finish()))
-<a href=#1215 id=1215 data-nosnippet>1215</a>}
-<a href=#1216 id=1216 data-nosnippet>1216</a>
-<a href=#1217 id=1217 data-nosnippet>1217</a><span class="attr">#[cfg(test)]
-<a href=#1218 id=1218 data-nosnippet>1218</a></span><span class="kw">mod </span>tests {
-<a href=#1219 id=1219 data-nosnippet>1219</a>    <span class="kw">use </span>casa_imaging_model::ReconstructionControls;
-<a href=#1220 id=1220 data-nosnippet>1220</a>
-<a href=#1221 id=1221 data-nosnippet>1221</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#1222 id=1222 data-nosnippet>1222</a>
-<a href=#1223 id=1223 data-nosnippet>1223</a>    <span class="attr">#[derive(Debug, PartialEq)]
-<a href=#1224 id=1224 data-nosnippet>1224</a>    </span><span class="kw">struct </span>SyntheticPolarizationResult {
-<a href=#1225 id=1225 data-nosnippet>1225</a>        delta_polarization: usize,
-<a href=#1226 id=1226 data-nosnippet>1226</a>        evidence_polarization: usize,
-<a href=#1227 id=1227 data-nosnippet>1227</a>        cycle_threshold: <span class="prelude-ty">Option</span>&lt;f64&gt;,
-<a href=#1228 id=1228 data-nosnippet>1228</a>    }
-<a href=#1229 id=1229 data-nosnippet>1229</a>
-<a href=#1230 id=1230 data-nosnippet>1230</a>    <span class="attr">#[test]
-<a href=#1231 id=1231 data-nosnippet>1231</a>    </span><span class="kw">fn </span>two_domain_two_polarization_schedule_shares_threshold_and_keeps_both_results() {
-<a href=#1232 id=1232 data-nosnippet>1232</a>        <span class="kw">let </span>program = MinorCycleProgram::from_compiled(
-<a href=#1233 id=1233 data-nosnippet>1233</a>            ReconstructionControls::new(<span class="number">20</span>, <span class="number">0.1</span>, <span class="number">0.0</span>)
-<a href=#1234 id=1234 data-nosnippet>1234</a>                .with_cycle_limits(<span class="number">20</span>, <span class="prelude-val">None</span>)
-<a href=#1235 id=1235 data-nosnippet>1235</a>                .with_cycle_threshold(<span class="number">0.5</span>, <span class="number">0.1</span>, <span class="number">0.8</span>),
-<a href=#1236 id=1236 data-nosnippet>1236</a>        )
-<a href=#1237 id=1237 data-nosnippet>1237</a>        .expect(<span class="string">"valid Högbom controls"</span>);
-<a href=#1238 id=1238 data-nosnippet>1238</a>        <span class="comment">// Canonical (polarization, domain) statistics. Polarization one owns
-<a href=#1239 id=1239 data-nosnippet>1239</a>        // the global peak while its second domain does not own the maximum
-<a href=#1240 id=1240 data-nosnippet>1240</a>        // sidelobe, so a per-polarization derivation would yield a different
-<a href=#1241 id=1241 data-nosnippet>1241</a>        // threshold from the required all-plane value.
-<a href=#1242 id=1242 data-nosnippet>1242</a>        </span><span class="kw">let </span>threshold = shared_cycle_threshold_from_statistics(
-<a href=#1243 id=1243 data-nosnippet>1243</a>            <span class="kw-2">&amp;</span>program,
-<a href=#1244 id=1244 data-nosnippet>1244</a>            [(<span class="number">2.0</span>, <span class="number">0.1</span>), (<span class="number">4.0</span>, <span class="number">0.2</span>), (<span class="number">8.0</span>, <span class="number">0.5</span>), (<span class="number">6.0</span>, <span class="number">0.3</span>)],
-<a href=#1245 id=1245 data-nosnippet>1245</a>        );
-<a href=#1246 id=1246 data-nosnippet>1246</a>        <span class="macro">assert_eq!</span>(threshold, <span class="prelude-val">Some</span>(<span class="number">2.0</span>));
-<a href=#1247 id=1247 data-nosnippet>1247</a>
-<a href=#1248 id=1248 data-nosnippet>1248</a>        <span class="kw">let </span>results = run_admitted_image_domain_polarizations(
-<a href=#1249 id=1249 data-nosnippet>1249</a>            <span class="kw-2">&amp;</span>[
+<a href=#1204 id=1204 data-nosnippet>1204</a>            SpectralChannelValidity::Unmapped =&gt; <span class="number">2</span>,
+<a href=#1205 id=1205 data-nosnippet>1205</a>        });
+<a href=#1206 id=1206 data-nosnippet>1206</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(evidence) = <span class="kw-2">&amp;</span>channel.minor_cycle {
+<a href=#1207 id=1207 data-nosnippet>1207</a>            encoder.u8(<span class="number">1</span>);
+<a href=#1208 id=1208 data-nosnippet>1208</a>            encoder.identity(evidence.evidence_id().as_bytes());
+<a href=#1209 id=1209 data-nosnippet>1209</a>        } <span class="kw">else </span>{
+<a href=#1210 id=1210 data-nosnippet>1210</a>            encoder.u8(<span class="number">0</span>);
+<a href=#1211 id=1211 data-nosnippet>1211</a>        }
+<a href=#1212 id=1212 data-nosnippet>1212</a>    }
+<a href=#1213 id=1213 data-nosnippet>1213</a>    ReconstructionCycleEvidenceId(LogicalIdentity::from_sha256(encoder.finish()))
+<a href=#1214 id=1214 data-nosnippet>1214</a>}
+<a href=#1215 id=1215 data-nosnippet>1215</a>
+<a href=#1216 id=1216 data-nosnippet>1216</a><span class="attr">#[cfg(test)]
+<a href=#1217 id=1217 data-nosnippet>1217</a></span><span class="kw">mod </span>tests {
+<a href=#1218 id=1218 data-nosnippet>1218</a>    <span class="kw">use </span>casa_imaging_model::ReconstructionControls;
+<a href=#1219 id=1219 data-nosnippet>1219</a>
+<a href=#1220 id=1220 data-nosnippet>1220</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#1221 id=1221 data-nosnippet>1221</a>
+<a href=#1222 id=1222 data-nosnippet>1222</a>    <span class="attr">#[derive(Debug, PartialEq)]
+<a href=#1223 id=1223 data-nosnippet>1223</a>    </span><span class="kw">struct </span>SyntheticPolarizationResult {
+<a href=#1224 id=1224 data-nosnippet>1224</a>        delta_polarization: usize,
+<a href=#1225 id=1225 data-nosnippet>1225</a>        evidence_polarization: usize,
+<a href=#1226 id=1226 data-nosnippet>1226</a>        cycle_threshold: <span class="prelude-ty">Option</span>&lt;f64&gt;,
+<a href=#1227 id=1227 data-nosnippet>1227</a>    }
+<a href=#1228 id=1228 data-nosnippet>1228</a>
+<a href=#1229 id=1229 data-nosnippet>1229</a>    <span class="attr">#[test]
+<a href=#1230 id=1230 data-nosnippet>1230</a>    </span><span class="kw">fn </span>two_domain_two_polarization_schedule_shares_threshold_and_keeps_both_results() {
+<a href=#1231 id=1231 data-nosnippet>1231</a>        <span class="kw">let </span>program = MinorCycleProgram::from_compiled(
+<a href=#1232 id=1232 data-nosnippet>1232</a>            ReconstructionControls::new(<span class="number">20</span>, <span class="number">0.1</span>, <span class="number">0.0</span>)
+<a href=#1233 id=1233 data-nosnippet>1233</a>                .with_cycle_limits(<span class="number">20</span>, <span class="prelude-val">None</span>)
+<a href=#1234 id=1234 data-nosnippet>1234</a>                .with_cycle_threshold(<span class="number">0.5</span>, <span class="number">0.1</span>, <span class="number">0.8</span>),
+<a href=#1235 id=1235 data-nosnippet>1235</a>        )
+<a href=#1236 id=1236 data-nosnippet>1236</a>        .expect(<span class="string">"valid Högbom controls"</span>);
+<a href=#1237 id=1237 data-nosnippet>1237</a>        <span class="comment">// Canonical (polarization, domain) statistics. Polarization one owns
+<a href=#1238 id=1238 data-nosnippet>1238</a>        // the global peak while its second domain does not own the maximum
+<a href=#1239 id=1239 data-nosnippet>1239</a>        // sidelobe, so a per-polarization derivation would yield a different
+<a href=#1240 id=1240 data-nosnippet>1240</a>        // threshold from the required all-plane value.
+<a href=#1241 id=1241 data-nosnippet>1241</a>        </span><span class="kw">let </span>threshold = shared_cycle_threshold_from_statistics(
+<a href=#1242 id=1242 data-nosnippet>1242</a>            <span class="kw-2">&amp;</span>program,
+<a href=#1243 id=1243 data-nosnippet>1243</a>            [(<span class="number">2.0</span>, <span class="number">0.1</span>), (<span class="number">4.0</span>, <span class="number">0.2</span>), (<span class="number">8.0</span>, <span class="number">0.5</span>), (<span class="number">6.0</span>, <span class="number">0.3</span>)],
+<a href=#1244 id=1244 data-nosnippet>1244</a>        );
+<a href=#1245 id=1245 data-nosnippet>1245</a>        <span class="macro">assert_eq!</span>(threshold, <span class="prelude-val">Some</span>(<span class="number">2.0</span>));
+<a href=#1246 id=1246 data-nosnippet>1246</a>
+<a href=#1247 id=1247 data-nosnippet>1247</a>        <span class="kw">let </span>results = run_admitted_image_domain_polarizations(
+<a href=#1248 id=1248 data-nosnippet>1248</a>            <span class="kw-2">&amp;</span>[
+<a href=#1249 id=1249 data-nosnippet>1249</a>                SpectralChannelValidity::Valid,
 <a href=#1250 id=1250 data-nosnippet>1250</a>                SpectralChannelValidity::Valid,
-<a href=#1251 id=1251 data-nosnippet>1251</a>                SpectralChannelValidity::Valid,
-<a href=#1252 id=1252 data-nosnippet>1252</a>            ],
-<a href=#1253 id=1253 data-nosnippet>1253</a>            threshold,
-<a href=#1254 id=1254 data-nosnippet>1254</a>            |polarization, cycle_threshold| {
-<a href=#1255 id=1255 data-nosnippet>1255</a>                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, std::convert::Infallible&gt;(SyntheticPolarizationResult {
-<a href=#1256 id=1256 data-nosnippet>1256</a>                    delta_polarization: polarization,
-<a href=#1257 id=1257 data-nosnippet>1257</a>                    evidence_polarization: polarization,
-<a href=#1258 id=1258 data-nosnippet>1258</a>                    cycle_threshold,
-<a href=#1259 id=1259 data-nosnippet>1259</a>                })
-<a href=#1260 id=1260 data-nosnippet>1260</a>            },
-<a href=#1261 id=1261 data-nosnippet>1261</a>        )
-<a href=#1262 id=1262 data-nosnippet>1262</a>        .expect(<span class="string">"synthetic independent polarization execution"</span>);
-<a href=#1263 id=1263 data-nosnippet>1263</a>
-<a href=#1264 id=1264 data-nosnippet>1264</a>        <span class="macro">assert_eq!</span>(
-<a href=#1265 id=1265 data-nosnippet>1265</a>            results,
-<a href=#1266 id=1266 data-nosnippet>1266</a>            <span class="macro">vec!</span>[
-<a href=#1267 id=1267 data-nosnippet>1267</a>                <span class="prelude-val">Some</span>(SyntheticPolarizationResult {
-<a href=#1268 id=1268 data-nosnippet>1268</a>                    delta_polarization: <span class="number">0</span>,
-<a href=#1269 id=1269 data-nosnippet>1269</a>                    evidence_polarization: <span class="number">0</span>,
-<a href=#1270 id=1270 data-nosnippet>1270</a>                    cycle_threshold: <span class="prelude-val">Some</span>(<span class="number">2.0</span>),
-<a href=#1271 id=1271 data-nosnippet>1271</a>                }),
-<a href=#1272 id=1272 data-nosnippet>1272</a>                <span class="prelude-val">Some</span>(SyntheticPolarizationResult {
-<a href=#1273 id=1273 data-nosnippet>1273</a>                    delta_polarization: <span class="number">1</span>,
-<a href=#1274 id=1274 data-nosnippet>1274</a>                    evidence_polarization: <span class="number">1</span>,
-<a href=#1275 id=1275 data-nosnippet>1275</a>                    cycle_threshold: <span class="prelude-val">Some</span>(<span class="number">2.0</span>),
-<a href=#1276 id=1276 data-nosnippet>1276</a>                }),
-<a href=#1277 id=1277 data-nosnippet>1277</a>            ]
-<a href=#1278 id=1278 data-nosnippet>1278</a>        );
-<a href=#1279 id=1279 data-nosnippet>1279</a>    }
-<a href=#1280 id=1280 data-nosnippet>1280</a>}
+<a href=#1251 id=1251 data-nosnippet>1251</a>            ],
+<a href=#1252 id=1252 data-nosnippet>1252</a>            threshold,
+<a href=#1253 id=1253 data-nosnippet>1253</a>            |polarization, cycle_threshold| {
+<a href=#1254 id=1254 data-nosnippet>1254</a>                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, std::convert::Infallible&gt;(SyntheticPolarizationResult {
+<a href=#1255 id=1255 data-nosnippet>1255</a>                    delta_polarization: polarization,
+<a href=#1256 id=1256 data-nosnippet>1256</a>                    evidence_polarization: polarization,
+<a href=#1257 id=1257 data-nosnippet>1257</a>                    cycle_threshold,
+<a href=#1258 id=1258 data-nosnippet>1258</a>                })
+<a href=#1259 id=1259 data-nosnippet>1259</a>            },
+<a href=#1260 id=1260 data-nosnippet>1260</a>        )
+<a href=#1261 id=1261 data-nosnippet>1261</a>        .expect(<span class="string">"synthetic independent polarization execution"</span>);
+<a href=#1262 id=1262 data-nosnippet>1262</a>
+<a href=#1263 id=1263 data-nosnippet>1263</a>        <span class="macro">assert_eq!</span>(
+<a href=#1264 id=1264 data-nosnippet>1264</a>            results,
+<a href=#1265 id=1265 data-nosnippet>1265</a>            <span class="macro">vec!</span>[
+<a href=#1266 id=1266 data-nosnippet>1266</a>                <span class="prelude-val">Some</span>(SyntheticPolarizationResult {
+<a href=#1267 id=1267 data-nosnippet>1267</a>                    delta_polarization: <span class="number">0</span>,
+<a href=#1268 id=1268 data-nosnippet>1268</a>                    evidence_polarization: <span class="number">0</span>,
+<a href=#1269 id=1269 data-nosnippet>1269</a>                    cycle_threshold: <span class="prelude-val">Some</span>(<span class="number">2.0</span>),
+<a href=#1270 id=1270 data-nosnippet>1270</a>                }),
+<a href=#1271 id=1271 data-nosnippet>1271</a>                <span class="prelude-val">Some</span>(SyntheticPolarizationResult {
+<a href=#1272 id=1272 data-nosnippet>1272</a>                    delta_polarization: <span class="number">1</span>,
+<a href=#1273 id=1273 data-nosnippet>1273</a>                    evidence_polarization: <span class="number">1</span>,
+<a href=#1274 id=1274 data-nosnippet>1274</a>                    cycle_threshold: <span class="prelude-val">Some</span>(<span class="number">2.0</span>),
+<a href=#1275 id=1275 data-nosnippet>1275</a>                }),
+<a href=#1276 id=1276 data-nosnippet>1276</a>            ]
+<a href=#1277 id=1277 data-nosnippet>1277</a>        );
+<a href=#1278 id=1278 data-nosnippet>1278</a>    }
+<a href=#1279 id=1279 data-nosnippet>1279</a>}
 </code></pre></div></section></main></body></html>
