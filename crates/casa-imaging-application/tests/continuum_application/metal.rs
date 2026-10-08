@@ -38,6 +38,7 @@ fn peak(values: &[f32]) -> f64 {
 /// with the model the device predicts, not with what cleaning leaves.
 fn assert_products_close(metal: &Path, cpu: &Path, suffixes: &[&str], label: &str) {
     let image_peak = peak(&values(cpu, ".image").1);
+    assert!(image_peak > 0.0, "{label}: the restored image is empty");
     for suffix in suffixes {
         let (metal_shape, metal_values) = values(metal, suffix);
         let (cpu_shape, cpu_values) = values(cpu, suffix);

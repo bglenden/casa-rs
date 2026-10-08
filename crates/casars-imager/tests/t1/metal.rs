@@ -46,6 +46,7 @@ fn assert_products_agree(metal: &Products, cpu: &Products, label: &str) {
             .fold(0.0_f64, |peak, value| peak.max(f64::from(*value).abs()))
     };
     let image_peak = peak(&cpu.get(".image").image.get().expect("read image"));
+    assert!(image_peak > 0.0, "{label}: the restored image is empty");
     for suffix in cpu.suffixes() {
         let metal = metal.get(&suffix).image.get().expect("read Metal product");
         let cpu = cpu.get(&suffix).image.get().expect("read CPU product");

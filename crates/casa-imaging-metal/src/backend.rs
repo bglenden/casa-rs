@@ -557,97 +557,125 @@ impl GridBackend for MetalBackend<'_> {
             return Ok(());
         }
         match work {
-            Work::Grid { mode, acc } => {
-                let kind = TapsKind::of(mode);
-                self.learn(block, kind)?;
-                let (layout, storage, sumwt) = acc.backend_parts();
-                let terms = layout
-                    .term_range(mode)
-                    .unwrap_or_else(|| panic!("accumulator holds no {mode:?} terms"));
-                let targets = Targets {
-                    kind,
-                    adjoint: Some((layout, terms)),
-                    model: None,
-                };
-                let params = self.params(block, &targets, mode != Mode::Data);
-                let grid = grid_buffer(storage);
-                self.run(
-                    Kernel::Spread,
-                    block,
-                    &targets,
-                    Some(sumwt),
-                    Some(grid),
-                    None,
-                    Readback::None,
-                    params,
-                )
-            }
-            Work::Predict { model, out } => {
-                assert_eq!(
-                    out.len(),
-                    block.len() * block.npol,
-                    "prediction output length"
-                );
-                self.learn(block, TapsKind::Imaging)?;
-                let buffer = self.model_copy(model)?;
-                let targets = Targets {
-                    kind: TapsKind::Imaging,
-                    adjoint: None,
-                    model: Some(model.layout()),
-                };
-                let params = self.params(block, &targets, false);
-                self.run(
-                    Kernel::Predict,
-                    block,
-                    &targets,
-                    None,
-                    None,
-                    Some(buffer),
-                    Readback::Prediction(out),
-                    params,
-                )
-            }
+            Work::Grid { mode, acc } => self.grid(block, mode, acc),
+            Work::Predict { model, out } => self.predict(block, model, out),
             Work::ResidualGrid {
                 model,
                 acc,
                 residual_out,
-            } => {
-                self.learn(block, TapsKind::Imaging)?;
-                let buffer = self.model_copy(model)?;
-                let (layout, storage, sumwt) = acc.backend_parts();
-                let terms = layout
-                    .term_range(Mode::Data)
-                    .expect("residual gridding needs the data terms");
-                let targets = Targets {
-                    kind: TapsKind::Imaging,
-                    adjoint: Some((layout, terms)),
-                    model: Some(model.layout()),
-                };
-                let mut params = self.params(block, &targets, false);
-                let readback = match residual_out {
-                    Some(out) => {
-                        assert_eq!(
-                            out.len(),
-                            block.len() * block.npol,
-                            "residual output length"
-                        );
-                        params.write_residual = 1;
-                        Readback::Residual(out)
-                    }
-                    None => Readback::None,
-                };
-                let grid = grid_buffer(storage);
-                self.run(
-                    Kernel::Residual,
-                    block,
-                    &targets,
-                    Some(sumwt),
-                    Some(grid),
-                    Some(buffer),
-                    readback,
-                    params,
-                )
-            }
+            } => self.residual(block, model, acc, residual_out),
         }
+    }
+}
+
+impl MetalBackend<'_> {
+    /// [`Work::Grid`]: spread values (data) or weights (PSF, weight image).
+    fn grid(
+        &mut self,
+        block: &SampleBlock<'_>,
+        mode: Mode,
+        acc: &mut GridAccumulator,
+    ) -> Result<(), OperatorError> {
+        let kind = TapsKind::of(mode);
+        self.learn(block, kind)?;
+        let (layout, storage, sumwt) = acc.backend_parts();
+        let terms = layout
+            .term_range(mode)
+            .unwrap_or_else(|| panic!("accumulator holds no {mode:?} terms"));
+        let targets = Targets {
+            kind,
+            adjoint: Some((layout, terms)),
+            model: None,
+        };
+        let params = self.params(block, &targets, mode != Mode::Data);
+        let grid = grid_buffer(storage);
+        self.run(
+            Kernel::Spread,
+            block,
+            &targets,
+            Some(sumwt),
+            Some(grid),
+            None,
+            Readback::None,
+            params,
+        )
+    }
+
+    /// [`Work::Predict`]: gather and normalise, phasor applied on read-back.
+    fn predict(
+        &mut self,
+        block: &SampleBlock<'_>,
+        model: &PreparedModelGrids,
+        out: &mut [Complex32],
+    ) -> Result<(), OperatorError> {
+        assert_eq!(
+            out.len(),
+            block.len() * block.npol,
+            "prediction output length"
+        );
+        self.learn(block, TapsKind::Imaging)?;
+        let buffer = self.model_copy(model)?;
+        let targets = Targets {
+            kind: TapsKind::Imaging,
+            adjoint: None,
+            model: Some(model.layout()),
+        };
+        let params = self.params(block, &targets, false);
+        self.run(
+            Kernel::Predict,
+            block,
+            &targets,
+            None,
+            None,
+            Some(buffer),
+            Readback::Prediction(out),
+            params,
+        )
+    }
+
+    /// [`Work::ResidualGrid`]: predict, subtract and spread the residual in
+    /// one dispatch, handing the residual samples back when asked.
+    fn residual(
+        &mut self,
+        block: &SampleBlock<'_>,
+        model: &PreparedModelGrids,
+        acc: &mut GridAccumulator,
+        residual_out: Option<&mut [Complex32]>,
+    ) -> Result<(), OperatorError> {
+        self.learn(block, TapsKind::Imaging)?;
+        let buffer = self.model_copy(model)?;
+        let (layout, storage, sumwt) = acc.backend_parts();
+        let terms = layout
+            .term_range(Mode::Data)
+            .expect("residual gridding needs the data terms");
+        let targets = Targets {
+            kind: TapsKind::Imaging,
+            adjoint: Some((layout, terms)),
+            model: Some(model.layout()),
+        };
+        let mut params = self.params(block, &targets, false);
+        let readback = match residual_out {
+            Some(out) => {
+                assert_eq!(
+                    out.len(),
+                    block.len() * block.npol,
+                    "residual output length"
+                );
+                params.write_residual = 1;
+                Readback::Residual(out)
+            }
+            None => Readback::None,
+        };
+        let grid = grid_buffer(storage);
+        self.run(
+            Kernel::Residual,
+            block,
+            &targets,
+            Some(sumwt),
+            Some(grid),
+            Some(buffer),
+            readback,
+            params,
+        )
     }
 }
