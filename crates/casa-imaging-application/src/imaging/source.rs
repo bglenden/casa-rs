@@ -12,6 +12,8 @@ use casa_ms::{
 };
 use num_complex::Complex32;
 
+use super::continuum::subtract_continuum;
+
 /// Seconds per day, for row times in MJD days.
 const SECONDS_PER_DAY: f64 = 86_400.0;
 
@@ -39,7 +41,8 @@ enum Traversal<'a> {
 /// the straddling pair at each edge, so linear interpolation keeps both
 /// partners). Rows CASA excludes from gridding, flagged rows and
 /// autocorrelations (`GridFT::put`/`get` with `usezero = false`), arrive with
-/// their row flag set.
+/// their row flag set. A compiled continuum transform is applied to each row
+/// as it is read.
 pub(crate) struct MeasurementSetSource<'a> {
     problem: &'a CompiledProblem,
     domain: u32,
@@ -150,6 +153,17 @@ impl<'a> MeasurementSetSource<'a> {
                 }
             }
             debug_assert_eq!(self.values.len(), channels * correlations);
+            if let Some(rule) = self.problem.visibility_transform().and_then(|transform| {
+                transform.rule(metadata.field_id, numeric.row.spectral_window_id)
+            }) {
+                subtract_continuum(
+                    rule,
+                    &numeric,
+                    &mut self.values,
+                    &self.weights,
+                    &mut self.flags,
+                )?;
+            }
             out.push_row(
                 header,
                 &geometry.frequencies_hz()[row * channels..(row + 1) * channels],

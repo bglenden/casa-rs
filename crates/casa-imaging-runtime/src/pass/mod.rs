@@ -40,10 +40,17 @@ pub type SourceError = Box<dyn std::error::Error + Send + Sync>;
 pub type ModelPreparation<'a> =
     dyn Fn(PlaneRange) -> Result<PreparedModelGrids, PassError> + Sync + 'a;
 
-/// Receives each block with the model visibility of every selected sample,
-/// `[row][channel][correlation]`, in source order.
-pub type ModelColumnSink<'a> =
-    dyn FnMut(&NativeBlock, &[num_complex::Complex32]) -> Result<(), SourceError> + 'a;
+/// Writes visibilities back to the source during a final pass: each block
+/// in source order, with the model visibility of every selected sample,
+/// `[row][channel][correlation]`, when `predictions` asks for it and an
+/// empty slice otherwise.
+pub struct VisibilitySink<'a> {
+    /// Whether `write` needs the model visibilities.
+    pub predictions: bool,
+    /// Receives each block.
+    pub write:
+        &'a mut dyn FnMut(&NativeBlock, &[num_complex::Complex32]) -> Result<(), SourceError>,
+}
 
 /// A failure of a major-cycle or density pass.
 #[derive(Debug, thiserror::Error)]
@@ -63,13 +70,14 @@ pub enum PassError {
     /// The consumer of a wave's images failed.
     #[error("wave images: {0}")]
     Images(#[source] SourceError),
-    /// The model-column writer failed.
-    #[error("model column: {0}")]
-    ModelColumn(#[source] SourceError),
-    /// A model-column pass must hold every plane at once, because a native
-    /// sample's prediction can draw on any output channel.
-    #[error("writing the model column needs every plane resident")]
-    ModelColumnWaves,
+    /// The visibility writer failed.
+    #[error("visibility write: {0}")]
+    VisibilityWrite(#[source] SourceError),
+    /// A writing pass must hold every plane at once: a native sample's
+    /// prediction can draw on any output channel, and each row is written
+    /// once.
+    #[error("writing visibilities needs every plane resident")]
+    VisibilityWriteWaves,
     /// Not even one plane of the pass fits the memory budget.
     #[error("one plane needs {required} bytes but the pass may use {available}")]
     Memory {
@@ -153,18 +161,18 @@ pub struct PassSummary {
 }
 
 /// Run `pass`, handing each wave's normal images to `images` in plane order
-/// and, on a final pass that writes the model column, every block's model
-/// visibilities to `model_column`.
+/// and, on a final pass that writes visibilities, every block to
+/// `visibilities`.
 pub fn run_major_cycle(
     pass: &MajorCyclePass<'_>,
     source: &mut dyn BoundedSource,
     team: &WorkerTeam,
     cancel: &Cancel,
     images: &mut dyn FnMut(NormalImages) -> Result<(), PassError>,
-    mut model_column: Option<&mut ModelColumnSink<'_>>,
+    mut visibilities: Option<&mut VisibilitySink<'_>>,
 ) -> Result<PassSummary, PassError> {
-    if model_column.is_some() && pass.residency != Residency::All {
-        return Err(PassError::ModelColumnWaves);
+    if visibilities.is_some() && pass.residency != Residency::All {
+        return Err(PassError::VisibilityWriteWaves);
     }
     let mut summary = PassSummary::default();
     for planes in pass.residency.waves(pass.operator.basis().planes()) {
@@ -172,7 +180,7 @@ pub fn run_major_cycle(
         let model = pass.model.map(|prepare| prepare(planes)).transpose()?;
         let mut wave = Wave::new(pass, planes, model.as_ref());
         summary.blocks += stream_blocks(source, cancel, |block| {
-            wave.consume(block, team, model_column.as_deref_mut())
+            wave.consume(block, team, visibilities.as_deref_mut())
         })?;
         summary.samples += wave.samples();
         images(wave.finish(team)?)?;

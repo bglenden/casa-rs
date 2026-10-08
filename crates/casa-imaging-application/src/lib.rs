@@ -383,15 +383,9 @@ where
     S: SerialProductPublicationSink + Send + 'static,
     S::Error: Send + Sync,
 {
-    let pass_route_handles = !input.write_corrected_data
-        && problem.visibility_transform().is_none()
-        && !matches!(
-            problem.reconstruction().basis(),
-            casa_imaging_model::ReconstructionBasis::TaylorViaChannelMajor { .. }
-        )
-        && problem.geometry().domains().iter().all(|domain| {
-            domain.facets().len() == 1 && domain.psf_phase_centre() == domain.model_phase_centre()
-        });
+    let pass_route_handles = problem.geometry().domains().iter().all(|domain| {
+        domain.facets().len() == 1 && domain.psf_phase_centre() == domain.model_phase_centre()
+    });
     if std::env::var_os("CASA_RS_IF2_OLD_ROUTE").is_none() && pass_route_handles {
         return run_pass_route(problem, input);
     }
@@ -422,13 +416,14 @@ where
         return Err(boxed("A-projection preparation has no pass route"));
     }
     publication.controls.validate_for_problem(problem)?;
-    let model_column = input
-        .write_model_column
+    let visibility_write = (input.write_model_column || input.write_corrected_data)
         .then(|| {
-            Ok::<_, ApplicationError>(imaging::ModelColumnTarget {
+            Ok::<_, ApplicationError>(imaging::VisibilityWriteTarget {
                 path: PathBuf::from(input.observation.locator()),
                 expected: input.initial_access.source_state().clone(),
                 selection: visibility_write_selection(problem, input.observation.selection())?,
+                model_data: input.write_model_column,
+                corrected_data: input.write_corrected_data,
             })
         })
         .transpose()?;
@@ -444,7 +439,7 @@ where
         access,
         masks: input.masks,
         image_response: input.minor_cycle_image_response,
-        model_column,
+        visibility_write,
         authority: &runtime.authority,
         policy: &runtime.resource_policy,
         spill_directory: spill.directory(),

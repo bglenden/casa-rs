@@ -26,7 +26,7 @@ use casa_imaging_reconstruction::{
 };
 use casa_imaging_runtime::pass::{
     Cancel, MajorCyclePass, ModelPreparation, Partition, PassError, PassSummary, Residency,
-    WorkerTeam, run_density_pass, run_major_cycle,
+    VisibilitySink, WorkerTeam, run_density_pass, run_major_cycle,
 };
 use casa_imaging_runtime::{
     CubeState, MinorCycleOutcome, ResourceAuthority, ResourcePolicy, run_minor_cycle,
@@ -36,8 +36,8 @@ use casa_ms::ResolvedSelectedObservationAccess;
 use super::ImagingError;
 use super::images::{pass_images, prepare_model};
 use super::measurement::{DomainOperator, density_shape, domain_operator, selected_correlations};
-use super::model_column::{ModelColumnTarget, ModelColumnWriter};
 use super::source::{MeasurementSetSource, PlaneBounds};
+use super::visibility_write::{VisibilityWriteTarget, VisibilityWriter};
 use crate::NativeMinorCycleOutcome;
 
 /// What one native imaging run needs besides the compiled problem.
@@ -46,7 +46,7 @@ pub(crate) struct ImagingInputs<'a> {
     pub(crate) access: ResolvedSelectedObservationAccess,
     pub(crate) masks: ImageDomainReconstructionMaskPlans,
     pub(crate) image_response: Option<MinorCycleImageResponse>,
-    pub(crate) model_column: Option<ModelColumnTarget>,
+    pub(crate) visibility_write: Option<VisibilityWriteTarget>,
     pub(crate) authority: &'a ResourceAuthority,
     pub(crate) policy: &'a ResourcePolicy,
     pub(crate) spill_directory: &'a Path,
@@ -76,7 +76,7 @@ struct Run<'a> {
     cube: Option<CubeState>,
     budget: u64,
     attempts: u64,
-    model_column: Option<ModelColumnTarget>,
+    visibility_write: Option<VisibilityWriteTarget>,
 }
 
 /// One reconciled major cycle and the lifecycle that owns its model.
@@ -186,9 +186,9 @@ impl<'a> Run<'a> {
             .iter()
             .map(|domain| domain_operator(problem, domain, &correlations))
             .collect::<Result<Vec<_>, _>>()?;
-        if inputs.model_column.is_some() && domains.len() > 1 {
+        if inputs.visibility_write.is_some() && domains.len() > 1 {
             return Err(ImagingError::Unsupported {
-                reason: "the model column is written for one image domain",
+                reason: "visibilities are written back for one image domain",
             });
         }
         let (workers, memory) = inputs.authority.phase_budget(inputs.policy)?;
@@ -226,12 +226,12 @@ impl<'a> Run<'a> {
             cube,
             budget: memory.saturating_sub(memory / 4),
             attempts: 0,
-            model_column: inputs.model_column,
+            visibility_write: inputs.visibility_write,
         })
     }
 
     /// The initial major cycle: data and PSF, from the start model when the
-    /// problem has one; it writes the model column when it is also final.
+    /// problem has one; it writes visibilities when it is also final.
     fn initial(&mut self, last: bool) -> Result<Major, ImagingError> {
         let mut lifecycle = ModelLifecycle::bind(
             ExecutableModelProblem::from_compiled(self.problem.clone())?,
@@ -303,13 +303,14 @@ impl<'a> Run<'a> {
             ModeSet::DATA
         };
         let model = with_model.then(|| preparation.final_model());
+        let transform = self.problem.visibility_transform();
         let mut writer = self
-            .model_column
+            .visibility_write
             .as_ref()
             .filter(|_| last)
-            .map(ModelColumnWriter::begin)
+            .map(|target| VisibilityWriter::begin(target, transform))
             .transpose()
-            .map_err(|error| ImagingError::Pass(PassError::ModelColumn(error)))?;
+            .map_err(|error| ImagingError::Pass(PassError::VisibilityWrite(error)))?;
         let started = Instant::now();
         let summary = self.pass(modes, model, &mut state, initial, writer.as_mut())?;
         let pass_seconds = started.elapsed().as_secs_f64();
@@ -317,7 +318,7 @@ impl<'a> Run<'a> {
         let visibility = writer
             .map(|writer| writer.complete(final_model))
             .transpose()
-            .map_err(|error| ImagingError::Pass(PassError::ModelColumn(error)))?
+            .map_err(|error| ImagingError::Pass(PassError::VisibilityWrite(error)))?
             .map(|samples| {
                 VisibilityProductCompletion::new(
                     self.problem.problem_id(),
@@ -391,9 +392,9 @@ impl<'a> Run<'a> {
         domain: usize,
         modes: ModeSet,
         with_model: bool,
-        model_column: bool,
+        writing: bool,
     ) -> Result<Residency, ImagingError> {
-        if model_column {
+        if writing {
             return Ok(Residency::All);
         }
         Ok(Residency::plan(
@@ -426,7 +427,7 @@ impl<'a> Run<'a> {
         model: Option<&ModelGeneration>,
         state: &mut PassNormalState,
         initial: bool,
-        mut writer: Option<&mut ModelColumnWriter>,
+        mut writer: Option<&mut VisibilityWriter<'_>>,
     ) -> Result<PassSummary, ImagingError> {
         let mut total = PassSummary::default();
         for index in 0..self.domains.len() {
@@ -446,11 +447,15 @@ impl<'a> Run<'a> {
                 partition: self.partition(index),
                 residency: self.residency(index, modes, model.is_some(), writer.is_some())?,
             };
-            let writing = writer.is_some();
+            let predictions = writer.as_deref().map(VisibilityWriter::needs_predictions);
             let mut write = |block: &_, predictions: &[_]| match writer.as_deref_mut() {
                 Some(writer) => writer.write(block, predictions),
                 None => Ok(()),
             };
+            let mut sink = predictions.map(|predictions| VisibilitySink {
+                predictions,
+                write: &mut write,
+            });
             let summary = run_major_cycle(
                 &pass,
                 &mut self.source,
@@ -461,8 +466,7 @@ impl<'a> Run<'a> {
                         .append(pass_images(index, &images, initial))
                         .map_err(|error| PassError::Images(Box::new(error)))
                 },
-                writing
-                    .then_some(&mut write as &mut casa_imaging_runtime::pass::ModelColumnSink<'_>),
+                sink.as_mut(),
             )?;
             if index == 0 {
                 total = summary;

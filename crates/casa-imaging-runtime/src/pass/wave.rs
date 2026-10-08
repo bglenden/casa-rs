@@ -11,7 +11,7 @@ use casa_imaging_operator::{
 use num_complex::Complex32;
 
 use super::partition::Router;
-use super::{MajorCyclePass, ModelColumnSink, NativeBlock, Partition, PassError, WorkerTeam};
+use super::{MajorCyclePass, NativeBlock, Partition, PassError, VisibilitySink, WorkerTeam};
 
 /// Row chunks per worker in the placement stage; enough to balance rows
 /// whose channel counts differ after flagging and the support test.
@@ -80,13 +80,13 @@ impl<'w, 'p> Wave<'w, 'p> {
     }
 
     /// Place every row of `block` and accumulate the placements; with a
-    /// model-column sink, also predict every selected sample of the block
-    /// from the wave's model and hand the predictions to it.
+    /// visibility sink, first hand it the block, with every selected
+    /// sample's prediction from the wave's model when it asks for them.
     pub(super) fn consume(
         &mut self,
         block: &NativeBlock,
         team: &WorkerTeam,
-        model_column: Option<&mut ModelColumnSink<'_>>,
+        visibilities: Option<&mut VisibilitySink<'_>>,
     ) -> Result<(), PassError> {
         let npol = self.pass.operator.polarization().correlations().len();
         let owners = self.owners.len();
@@ -102,9 +102,13 @@ impl<'w, 'p> Wave<'w, 'p> {
                 prediction: PredictionScratch::default(),
             });
         }
-        if let Some(sink) = model_column {
-            self.predict(block, team, count)?;
-            sink(block, &self.predictions).map_err(PassError::ModelColumn)?;
+        if let Some(sink) = visibilities {
+            if sink.predictions {
+                self.predict(block, team, count)?;
+            } else {
+                self.predictions.clear();
+            }
+            (sink.write)(block, &self.predictions).map_err(PassError::VisibilityWrite)?;
         }
         for (index, chunk) in self.chunks[..count].iter_mut().enumerate() {
             chunk.rows = index * rows / count..(index + 1) * rows / count;

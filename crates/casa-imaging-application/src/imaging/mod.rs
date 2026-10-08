@@ -3,14 +3,15 @@
 //! from the compiled problem, the MeasurementSet as a bounded source, and
 //! the loop of major and minor cycles (plan section 5.4).
 
+mod continuum;
 mod cycle;
 mod images;
 mod measurement;
-mod model_column;
 mod source;
+mod visibility_write;
 
 pub(crate) use cycle::{ImagingInputs, run};
-pub(crate) use model_column::ModelColumnTarget;
+pub(crate) use visibility_write::VisibilityWriteTarget;
 
 use casa_imaging_operator::OperatorError;
 use casa_imaging_reconstruction::{
