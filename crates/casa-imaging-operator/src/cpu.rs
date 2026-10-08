@@ -8,7 +8,7 @@ use num_complex::{Complex, Complex32, Complex64};
 
 use crate::accumulator::{AccumulatorLayout, GridAccumulator, GridPrecision, GridScalar, Mode};
 use crate::backend::{GridBackend, PreparedModelGrids, Work};
-use crate::convolution::{ConvolutionFunctionSet, TapLayout};
+use crate::convolution::{CellHold, ConvolutionFunctionSet, KernelNormalisation, TapLayout};
 use crate::error::OperatorError;
 use crate::geometry::CellLocation;
 use crate::sample::{Placement, SampleBlock};
@@ -18,15 +18,17 @@ use crate::sample::{Placement, SampleBlock};
 /// Grids are addressed through the shared accumulator layout; each sample
 /// is located once with [`GridGeometry::locate`](crate::GridGeometry::locate)
 /// and spread or gathered through the Mueller table its `w` sign selects.
-/// A prediction sums the numerator and the kernel norm over every routed
-/// Mueller plane and divides once, as CASA's `AWVisResampler` does; a zero
-/// norm predicts zero.
+/// Under [`KernelNormalisation::KernelSum`] a prediction sums the numerator
+/// and the kernel norm over every routed Mueller plane and divides once, as
+/// CASA's `AWVisResampler` does, and a zero norm predicts zero; the other
+/// rules predict the gathered sum.
 #[derive(Debug, Default)]
 pub struct CpuBackend {
     powers: Vec<f64>,
     prediction: Vec<Complex64>,
     norms: Vec<Complex64>,
     residual: Vec<Complex32>,
+    hold: CellHold,
 }
 
 impl CpuBackend {
@@ -47,30 +49,35 @@ impl CpuBackend {
         let terms = layout
             .term_range(mode)
             .unwrap_or_else(|| panic!("accumulator holds no {mode:?} terms"));
+        let rule = cf.normalisation();
+        let Self {
+            powers, hold, ..
+        } = self;
         for (index, placement) in block.placements.iter().enumerate() {
             let taps = match mode {
                 Mode::Weight => cf
-                    .weight_taps(placement.cf)
+                    .weight_taps(placement.cf, hold)
                     .ok_or(OperatorError::WeightKernelUnavailable { key: placement.cf })?,
-                Mode::Data | Mode::Psf => cf.taps(placement.cf),
+                Mode::Data | Mode::Psf => cf.taps(placement.cf, hold),
             };
             let (u, v) = match mode {
                 Mode::Weight => (0.0, 0.0),
                 Mode::Data | Mode::Psf => (placement.u, placement.v),
             };
             let location = layout.geometry().locate(u, v, taps.oversampling());
-            spectral_powers(&mut self.powers, placement.spectral, terms.len());
+            spectral_powers(powers, placement.spectral, terms.len());
             spread_sample(
                 layout,
                 cells,
                 sumwt,
                 cf,
+                rule,
                 placement,
                 &taps,
                 location,
                 mode,
                 &terms,
-                &self.powers,
+                powers,
                 block.values_of(index),
                 block.weights_of(index),
             );
@@ -108,6 +115,7 @@ impl CpuBackend {
         if let Some(out) = residual_out.as_deref() {
             assert_eq!(out.len(), block.len() * npol, "residual output length");
         }
+        let rule = cf.normalisation();
         let (layout, cells, sumwt) = acc.parts_mut::<T>();
         let terms = layout
             .term_range(Mode::Data)
@@ -133,23 +141,30 @@ impl CpuBackend {
                     };
                 }
             }
-            let taps = cf.taps(placement.cf);
+            let Self {
+                powers,
+                residual,
+                hold,
+                ..
+            } = self;
+            let taps = cf.taps(placement.cf, hold);
             let location = layout
                 .geometry()
                 .locate(placement.u, placement.v, taps.oversampling());
-            spectral_powers(&mut self.powers, placement.spectral, terms.len());
+            spectral_powers(powers, placement.spectral, terms.len());
             spread_sample(
                 layout,
                 cells,
                 sumwt,
                 cf,
+                rule,
                 placement,
                 &taps,
                 location,
                 Mode::Data,
                 &terms,
-                &self.powers,
-                &self.residual,
+                powers,
+                residual,
                 weights,
             );
         }
@@ -157,8 +172,8 @@ impl CpuBackend {
 
     /// Fill `self.prediction` with the raw prediction `P` per visibility
     /// polarization (no phase-centre phasor) for one placement:
-    /// `Σ_t s^t Σ_{gpol,m} Σ conj(tap'_m) · model[t][gpol]` divided once by
-    /// `Σ_{gpol,m} norm_m`.
+    /// `Σ_t s^t Σ_{gpol,m} Σ conj(tap'_m) · model[t][gpol]`, divided once by
+    /// `Σ_{gpol,m} norm_m` under [`KernelNormalisation::KernelSum`].
     fn predict_sample<T: GridScalar>(
         &mut self,
         cf: &dyn ConvolutionFunctionSet,
@@ -171,25 +186,35 @@ impl CpuBackend {
         let terms = layout
             .term_range(Mode::Data)
             .expect("model grids hold the data terms");
-        let taps = cf.taps(placement.cf);
+        let Self {
+            powers,
+            prediction,
+            norms,
+            hold,
+            ..
+        } = self;
+        let taps = cf.taps(placement.cf, hold);
         let location = layout
             .geometry()
             .locate(placement.u, placement.v, taps.oversampling());
         let w_positive = placement.w > 0.0;
         let table = cf.mueller().table(w_positive, true);
         let plane = layout.planes().local(placement.plane);
-        spectral_powers(&mut self.powers, placement.spectral, terms.len());
-        self.prediction.clear();
-        self.prediction.resize(npol, Complex64::default());
-        self.norms.clear();
-        self.norms.resize(npol, Complex64::default());
+        let divide = cf.normalisation() == KernelNormalisation::KernelSum;
+        spectral_powers(powers, placement.spectral, terms.len());
+        prediction.clear();
+        prediction.resize(npol, Complex64::default());
+        norms.clear();
+        norms.resize(npol, Complex64::default());
         for (gpol, row) in table.iter().enumerate() {
             for (vpol, mueller_plane) in row.iter().enumerate() {
                 let Some(mueller) = *mueller_plane else {
                     continue;
                 };
-                self.norms[vpol] += kernel::norm(&taps, location, mueller, !w_positive);
-                for (power, term) in self.powers.iter().zip(terms.clone()) {
+                if divide {
+                    norms[vpol] += kernel::norm(&taps, location, mueller, !w_positive);
+                }
+                for (power, term) in powers.iter().zip(terms.clone()) {
                     let offset = layout.block_offset(plane, gpol, term);
                     let grid = &cells[offset..offset + layout.block_cells()];
                     let sum = kernel::gather::<T>(
@@ -201,16 +226,18 @@ impl CpuBackend {
                         !w_positive,
                         placement.gradient,
                     );
-                    self.prediction[vpol] += sum * *power;
+                    prediction[vpol] += sum * *power;
                 }
             }
         }
-        for (prediction, norm) in self.prediction.iter_mut().zip(&self.norms) {
-            *prediction = if *norm == Complex64::default() {
-                Complex64::default()
-            } else {
-                *prediction / norm
-            };
+        if divide {
+            for (prediction, norm) in prediction.iter_mut().zip(norms.iter()) {
+                *prediction = if *norm == Complex64::default() {
+                    Complex64::default()
+                } else {
+                    *prediction / norm
+                };
+            }
         }
     }
 }
@@ -227,7 +254,7 @@ impl GridBackend for CpuBackend {
             cf.mueller().visibility_pols(),
             "block polarizations must match the kernel set routing"
         );
-        match work {
+        let result = match work {
             Work::Grid { mode, acc } => match acc.precision() {
                 GridPrecision::F32 => self.grid::<f32>(block, cf, mode, acc),
                 GridPrecision::F64 => self.grid::<f64>(block, cf, mode, acc),
@@ -259,18 +286,22 @@ impl GridBackend for CpuBackend {
                 }
                 Ok(())
             }
-        }
+        };
+        self.hold.clear();
+        result
     }
 }
 
 /// Spread one placement's values through every routed (grid pol,
-/// visibility pol) pair and term, accumulating `sumwt += W · s^t · |norm|`.
+/// visibility pol) pair and term, accumulating `sumwt` by the set's rule:
+/// `W · s^t` times 1, `Re N` or `|N|`.
 #[allow(clippy::too_many_arguments)]
 fn spread_sample<T: GridScalar>(
     layout: &AccumulatorLayout,
     cells: &mut [Complex<T>],
     sumwt: &mut [f64],
     cf: &dyn ConvolutionFunctionSet,
+    rule: KernelNormalisation,
     placement: &Placement,
     taps: &TapLayout<'_>,
     location: CellLocation,
@@ -297,7 +328,15 @@ fn spread_sample<T: GridScalar>(
                 Mode::Data => values[vpol],
                 Mode::Psf | Mode::Weight => Complex32::new(weight, 0.0),
             };
-            let norm = kernel::norm(taps, location, mueller, !w_positive).norm();
+            let norm = match rule {
+                KernelNormalisation::UnitSum => 1.0,
+                KernelNormalisation::RealSum => {
+                    kernel::norm(taps, location, mueller, !w_positive).re
+                }
+                KernelNormalisation::KernelSum => {
+                    kernel::norm(taps, location, mueller, !w_positive).norm()
+                }
+            };
             for (power, term) in powers.iter().zip(terms.clone()) {
                 let value = Complex::new(
                     T::from_f64(f64::from(base.re) * power),

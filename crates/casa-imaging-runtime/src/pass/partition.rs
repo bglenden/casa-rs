@@ -3,7 +3,9 @@
 
 use std::ops::Range;
 
-use casa_imaging_operator::{MeasurementOperator, ModeSet, Placement, PlaneRange, Tile};
+use casa_imaging_operator::{
+    CellHold, MeasurementOperator, ModeSet, Placement, PlaneRange, Tile,
+};
 
 use super::{PassDomain, PassError};
 
@@ -281,7 +283,8 @@ impl Router {
                 starts.partition_point(|start| *start <= placement.plane) - 1
             }
             Self::Regions { owner_of_row, halo } => {
-                let taps = operator.cf().taps(placement.cf);
+                let mut hold = CellHold::new();
+                let taps = operator.cf().taps(placement.cf, &mut hold);
                 debug_assert!(
                     usize::from(taps.half_support()[1]) <= *halo,
                     "a kernel cell's support exceeds the regions' halo"

@@ -10,7 +10,7 @@ use crate::accumulator::{
     PlaneRange, Tile,
 };
 use crate::backend::PreparedModelGrids;
-use crate::convolution::ConvolutionFunctionSet;
+use crate::convolution::{CellHold, ConvolutionFunctionSet};
 use crate::error::OperatorError;
 use crate::fft::PlaneFft;
 use crate::geometry::GridGeometry;
@@ -267,7 +267,8 @@ impl MeasurementOperator {
     /// adjoint once each sample's data are divided by the conjugate norm.
     #[must_use]
     pub fn prediction_norm(&self, placement: &Placement, vpol: usize) -> Complex64 {
-        let taps = self.cf.taps(placement.cf);
+        let mut hold = CellHold::new();
+        let taps = self.cf.taps(placement.cf, &mut hold);
         let location = self
             .geometry
             .locate(placement.u, placement.v, taps.oversampling());

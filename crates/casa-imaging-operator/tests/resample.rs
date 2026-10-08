@@ -23,9 +23,9 @@ fn context() -> RowContext {
     RowContext {
         time_s: 0.0,
         antennas: [0, 1],
+        antenna_types: [0, 0],
         parallactic_angle_rad: [0.0, 0.0],
         field: 0,
-        pointing_offset_rad: [0.0, 0.0],
     }
 }
 
@@ -55,6 +55,7 @@ fn planes_of(
     let row = NativeRow {
         uvw_m: [10.0, 10.0, 0.0],
         phase_shift_m: 0.0,
+        pointing_offset_rad: [0.0; 2],
         frequencies_hz: &frequencies,
         values: &values,
         weights: &weights,
@@ -104,6 +105,7 @@ fn direct_sampling_places_every_unflagged_channel_on_plane_zero() {
     let row = NativeRow {
         uvw_m: [300.0, -150.0, 20.0],
         phase_shift_m: 0.25,
+        pointing_offset_rad: [0.0; 2],
         frequencies_hz: &frequencies,
         values: &values,
         weights: &weights,
@@ -168,6 +170,7 @@ fn samples_whose_support_leaves_the_grid_are_dropped() {
         let row = NativeRow {
             uvw_m: [u, 0.0, 0.0],
             phase_shift_m: 0.0,
+            pointing_offset_rad: [0.0; 2],
             frequencies_hz: &frequencies,
             values: &values,
             weights: &weights,
@@ -198,6 +201,7 @@ fn taylor_basis_sets_the_spectral_variable() {
     let row = NativeRow {
         uvw_m: [10.0, 10.0, 0.0],
         phase_shift_m: 0.0,
+        pointing_offset_rad: [0.0; 2],
         frequencies_hz: &frequencies,
         values: &values,
         weights: &weights,
@@ -247,6 +251,7 @@ fn linear_mapping_interpolates_values_and_channel_weights_and_ors_flags() {
     let row = NativeRow {
         uvw_m: [10.0, 0.0, 0.0],
         phase_shift_m: 0.0,
+        pointing_offset_rad: [0.0; 2],
         frequencies_hz: &frequencies,
         values: &values,
         weights: &weights,
@@ -393,6 +398,7 @@ fn cube_briggs_weights_come_from_the_nearest_native_channel_on_the_padded_axis()
         NativeRow {
             uvw_m: [10.0, 0.0, 0.0],
             phase_shift_m: 0.0,
+            pointing_offset_rad: [0.0; 2],
             frequencies_hz,
             values,
             weights,
@@ -499,6 +505,7 @@ fn an_end_point_sample_takes_its_own_channel_value() {
     let row = NativeRow {
         uvw_m: [10.0, 10.0, 0.0],
         phase_shift_m: 0.0,
+        pointing_offset_rad: [0.0; 2],
         frequencies_hz: &frequencies,
         values: &values,
         weights: &[1.0; 6],
@@ -578,6 +585,7 @@ fn density_pass_carries_the_unpolarized_weight_without_a_support_test() {
     let row = NativeRow {
         uvw_m: [far, 0.0, 0.0],
         phase_shift_m: 0.0,
+        pointing_offset_rad: [0.0; 2],
         frequencies_hz: &frequencies,
         values: &values,
         weights: &weights,
@@ -621,6 +629,7 @@ fn cube_density_samples_interpolate_native_weights_linearly() {
     let row = NativeRow {
         uvw_m: [10.0, 10.0, 0.0],
         phase_shift_m: 0.0,
+        pointing_offset_rad: [0.0; 2],
         frequencies_hz: &frequencies,
         values: &[Complex32::new(1.0, 0.0); 4],
         weights: &[2.0, 2.0, 6.0, 6.0],
@@ -659,6 +668,7 @@ fn autocorrelations_reach_the_density_but_not_the_grid() {
     let row = NativeRow {
         uvw_m: [0.0; 3],
         phase_shift_m: 0.0,
+        pointing_offset_rad: [0.0; 2],
         frequencies_hz: &frequencies,
         values: &[Complex32::new(1.0, 0.0); 2],
         weights: &[1.0, 1.0],
@@ -729,6 +739,7 @@ fn standard_density_cells_use_casa_single_precision_coordinates() {
     let row = NativeRow {
         uvw_m,
         phase_shift_m: 0.0,
+        pointing_offset_rad: [0.0; 2],
         frequencies_hz: &frequencies,
         values: &values,
         weights: &weights,

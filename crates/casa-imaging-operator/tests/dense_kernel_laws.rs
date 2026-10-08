@@ -9,9 +9,10 @@ mod common;
 
 use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 use casa_imaging_operator::{
-    Basis, CfKey, ConvolutionFunctionSet, CpuBackend, GridBackend, GridPrecision, ImageCorrection,
-    MeasurementOperator, Mode, ModeSet, ModelImages, ModelPlane, ModelPrescale, MuellerRouting,
-    PlaneRange, PolarizationRouting, RowContext, SampleBuffer, Spheroidal, TapLayout, Work,
+    Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend, GridBackend, GridPrecision,
+    ImageCorrection, KernelNormalisation, MeasurementOperator, Mode, ModeSet, ModelImages,
+    ModelPlane, ModelPrescale, MuellerRouting, PlaneRange, PolarizationRouting, RowContext,
+    SampleBuffer, Spheroidal, TapLayout, Work,
 };
 use common::{IMAGE, Rng, geometry, placements, samples};
 use ndarray::Array2;
@@ -89,7 +90,7 @@ impl ConvolutionFunctionSet for ComplexDense {
         CfKey::default()
     }
 
-    fn taps(&self, _key: CfKey) -> TapLayout<'_> {
+    fn taps<'s>(&'s self, _key: CfKey, _hold: &'s mut CellHold) -> TapLayout<'s> {
         TapLayout::Dense {
             data: &self.data,
             support: [self.support, self.support],
@@ -102,7 +103,7 @@ impl ConvolutionFunctionSet for ComplexDense {
         [self.support / 2; 2]
     }
 
-    fn weight_taps(&self, _key: CfKey) -> Option<TapLayout<'_>> {
+    fn weight_taps<'s>(&'s self, _key: CfKey, _hold: &'s mut CellHold) -> Option<TapLayout<'s>> {
         None
     }
 
@@ -112,6 +113,15 @@ impl ConvolutionFunctionSet for ComplexDense {
 
     fn image_correction(&self) -> &ImageCorrection {
         &self.correction
+    }
+
+    /// The AW rule: these laws test the division by the kernel norm.
+    fn normalisation(&self) -> KernelNormalisation {
+        KernelNormalisation::KernelSum
+    }
+
+    fn pointing_ramp(&self) -> bool {
+        true
     }
 }
 

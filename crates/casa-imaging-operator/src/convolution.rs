@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Convolution-function sets: tap layouts, Mueller routing and the paired
-//! image-domain correction.
+//! Convolution-function sets: tap layouts, Mueller routing, the paired
+//! image-domain correction and the per-set normalisation rule.
+
+use std::sync::Arc;
 
 use num_complex::Complex32;
 
@@ -71,6 +73,88 @@ impl TapLayout<'_> {
     }
 }
 
+/// Dense taps of one cell in the [`TapLayout::Dense`] order, owned so a
+/// bounded cache can hand them out while it evicts others.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DenseCell {
+    /// `(oversampling + 1)² × mueller_planes × sy × sx` tap values.
+    pub data: Box<[Complex32]>,
+    /// Taps per axis `[sx, sy]` (odd).
+    pub support: [u16; 2],
+    /// Fine offsets per cell (even).
+    pub oversampling: u16,
+    /// Mueller planes per tile.
+    pub mueller_planes: u8,
+}
+
+impl DenseCell {
+    /// The cell as a tap layout.
+    #[must_use]
+    pub fn layout(&self) -> TapLayout<'_> {
+        TapLayout::Dense {
+            data: &self.data,
+            support: self.support,
+            oversampling: self.oversampling,
+            mueller_planes: self.mueller_planes,
+        }
+    }
+
+    /// Bytes of the tap values.
+    #[must_use]
+    pub fn bytes(&self) -> usize {
+        std::mem::size_of_val(self.data.as_ref())
+    }
+}
+
+/// A caller-owned slot that keeps one cell of a bounded cache alive while
+/// the taps borrowed from it are in use.
+///
+/// Resident sets ignore it and lend their own storage. A set whose cells
+/// come and go ([`AwCatalog`](crate::AwCatalog)) parks the cell here, so
+/// the cache may drop its own reference without invalidating the borrow,
+/// and a worker holds at most one cell per slot beyond the cache's bound.
+#[derive(Clone, Debug, Default)]
+pub struct CellHold(Option<Arc<DenseCell>>);
+
+impl CellHold {
+    /// An empty slot.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self(None)
+    }
+
+    /// Park `cell` and lend its taps.
+    pub fn lend(&mut self, cell: Arc<DenseCell>) -> TapLayout<'_> {
+        self.0.insert(cell).layout()
+    }
+
+    /// Release the parked cell.
+    pub fn clear(&mut self) {
+        self.0 = None;
+    }
+}
+
+/// How a set's kernels are normalised: what a prediction divides by and
+/// what `sumwt` accumulates, with `N` the sum of the w-conjugated taps a
+/// visibility polarization uses at its fine offset, without the pointing
+/// ramp (plan section 5.3; R1 on #650). CASA's machines differ, so the
+/// rule is a property of the set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum KernelNormalisation {
+    /// Unit-sum taps: predictions are the gathered sums and `sumwt += W`
+    /// (CASA `GridFT`, `MosaicFT`: `fgridft.f`, `fmosaic.f` add the weight
+    /// without a kernel sum).
+    UnitSum,
+    /// Predictions are the gathered sums and `sumwt += W · Re N` (CASA
+    /// `WProjectFT`: `wprojgrid.f` accumulates `norm += real(cwt)` and adds
+    /// `weight · norm`; `dwgrid` does not divide).
+    RealSum,
+    /// A prediction divides once by `N` summed over its routed Mueller
+    /// planes and `sumwt += W · |N|` (CASA `AWVisResampler::DataToGrid`,
+    /// `GridToData` and `faccumulateFromGrid.f`).
+    KernelSum,
+}
+
 /// Which kernel Mueller plane serves each (grid polarization, visibility
 /// polarization) pair.
 ///
@@ -138,12 +222,15 @@ pub struct RowContext {
     pub time_s: f64,
     /// Antenna pair.
     pub antennas: [u32; 2],
-    /// Parallactic angle of each antenna in radians.
+    /// Antenna type of each antenna: an index into the kernel set's
+    /// antenna classes (CASA `HetArrayConvFunc` dish classes, AW baseline
+    /// types); 0 for a homogeneous array.
+    pub antenna_types: [u8; 2],
+    /// CASA's visibility polarization operator angle of each antenna in
+    /// radians: the negative of the physical parallactic angle.
     pub parallactic_angle_rad: [f64; 2],
     /// Field (pointing) identifier.
     pub field: u32,
-    /// Pointing offset from the image phase centre in radians `[Δl, Δm]`.
-    pub pointing_offset_rad: [f64; 2],
 }
 
 /// Paired image-domain gridding correction: one real vector per grid axis,
@@ -193,8 +280,9 @@ pub trait ConvolutionFunctionSet: Send + Sync {
     /// live here.
     fn key(&self, row: &RowContext, freq_hz: f64, w_lambda: f64) -> CfKey;
 
-    /// Imaging taps of a cell.
-    fn taps(&self, key: CfKey) -> TapLayout<'_>;
+    /// Imaging taps of a cell. A set that pages cells parks the cell in
+    /// `hold` and lends from it; resident sets lend their own storage.
+    fn taps<'s>(&'s self, key: CfKey, hold: &'s mut CellHold) -> TapLayout<'s>;
 
     /// The largest [`TapLayout::half_support`] of any cell `key` can
     /// return, `[x, y]`: the halo a tile needs so that every sample anchored
@@ -203,11 +291,19 @@ pub trait ConvolutionFunctionSet: Send + Sync {
 
     /// `FT[PB²]` taps for the weight (sensitivity) image, placed at the uv
     /// origin; `None` for sets without a weight image.
-    fn weight_taps(&self, key: CfKey) -> Option<TapLayout<'_>>;
+    fn weight_taps<'s>(&'s self, key: CfKey, hold: &'s mut CellHold) -> Option<TapLayout<'s>>;
 
     /// Mueller plane routing for every cell of the set.
     fn mueller(&self) -> &MuellerRouting;
 
     /// The paired image-domain correction.
     fn image_correction(&self) -> &ImageCorrection;
+
+    /// The normalisation rule of the set's kernels.
+    fn normalisation(&self) -> KernelNormalisation;
+
+    /// Whether placements carry the pointing phase gradient
+    /// (`Placement::gradient`): the kernels encode a pointing offset from
+    /// the image centre as `e^{i(k·g)}` over the taps (mosaic, AW).
+    fn pointing_ramp(&self) -> bool;
 }

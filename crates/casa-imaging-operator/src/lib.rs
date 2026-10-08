@@ -34,6 +34,7 @@ mod accumulator;
 mod backend;
 mod convolution;
 mod cpu;
+mod dense;
 mod error;
 mod fft;
 mod geometry;
@@ -43,6 +44,7 @@ mod resample;
 mod sample;
 mod spheroidal;
 mod weighting;
+mod wplanes;
 
 pub use accumulator::{
     AccumulatorLayout, GridAccumulator, GridPrecision, GridScalar, GridStorage, Mode, ModeSet,
@@ -50,7 +52,8 @@ pub use accumulator::{
 };
 pub use backend::{GridBackend, PreparedModelGrids, Work};
 pub use convolution::{
-    ConvolutionFunctionSet, ImageCorrection, MuellerRouting, RowContext, TapLayout,
+    CellHold, ConvolutionFunctionSet, DenseCell, ImageCorrection, KernelNormalisation,
+    MuellerRouting, RowContext, TapLayout,
 };
 pub use cpu::CpuBackend;
 pub use error::OperatorError;
@@ -66,3 +69,4 @@ pub use weighting::{
     BandwidthTaper, DensityCellRule, DensityGrid, DensityGridShape, DensityUv, RobustFactors,
     Taper, WeightingGeneration, build_density_grid,
 };
+pub use wplanes::{WPlaneCount, WPlanes};

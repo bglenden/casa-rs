@@ -132,6 +132,7 @@ impl<'a> MeasurementSetSource<'a> {
                 self.projections.push(DomainProjection {
                     uvw_m: projection.transformed_uvw_m(),
                     phase_shift_m: projection.phase_shift_m(),
+                    pointing_offset_rad: [0.0; 2],
                 });
             }
             let metadata = &numeric.row.metadata;
@@ -148,9 +149,9 @@ impl<'a> MeasurementSetSource<'a> {
                 context: RowContext {
                     time_s: coordinates.time.mjd_days() * SECONDS_PER_DAY,
                     antennas: [metadata.antenna1 as u32, metadata.antenna2 as u32],
+                    antenna_types: [0, 0],
                     parallactic_angle_rad: coordinates.parallactic_angles_rad.unwrap_or([0.0; 2]),
                     field: metadata.field_id as u32,
-                    pointing_offset_rad: [0.0; 2],
                 },
                 address: RowAddress {
                     physical_row: numeric.row.physical_row,

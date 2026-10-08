@@ -3,7 +3,8 @@
 //! support 3, oversampling 100, `grdsf` correction).
 
 use crate::convolution::{
-    ConvolutionFunctionSet, ImageCorrection, MuellerRouting, RowContext, TapLayout,
+    CellHold, ConvolutionFunctionSet, ImageCorrection, KernelNormalisation, MuellerRouting,
+    RowContext, TapLayout,
 };
 use crate::geometry::GridGeometry;
 use crate::polarization::PolarizationRouting;
@@ -45,7 +46,7 @@ impl ConvolutionFunctionSet for Spheroidal {
         CfKey::default()
     }
 
-    fn taps(&self, _key: CfKey) -> TapLayout<'_> {
+    fn taps<'s>(&'s self, _key: CfKey, _hold: &'s mut CellHold) -> TapLayout<'s> {
         TapLayout::SeparableReal {
             rows: &self.rows,
             support: SPHEROIDAL_SUPPORT,
@@ -57,7 +58,7 @@ impl ConvolutionFunctionSet for Spheroidal {
         [SPHEROIDAL_SUPPORT / 2; 2]
     }
 
-    fn weight_taps(&self, _key: CfKey) -> Option<TapLayout<'_>> {
+    fn weight_taps<'s>(&'s self, _key: CfKey, _hold: &'s mut CellHold) -> Option<TapLayout<'s>> {
         None
     }
 
@@ -67,6 +68,15 @@ impl ConvolutionFunctionSet for Spheroidal {
 
     fn image_correction(&self) -> &ImageCorrection {
         &self.correction
+    }
+
+    /// CASA `GridFT` (`fgridft.f`): `sumwt += weight`, no division.
+    fn normalisation(&self) -> KernelNormalisation {
+        KernelNormalisation::UnitSum
+    }
+
+    fn pointing_ramp(&self) -> bool {
+        false
     }
 }
 

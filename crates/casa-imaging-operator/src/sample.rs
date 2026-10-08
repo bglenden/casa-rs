@@ -39,8 +39,11 @@ pub struct Placement {
     /// Baseline `w` in wavelengths; a non-positive `w` selects the conjugate
     /// kernel and Mueller table.
     pub w: f64,
-    /// Phase-centre shift argument in radians. The block's values already
-    /// carry `e^{iφ}`; prediction applies `e^{−iφ}`.
+    /// Phase-centre shift argument in radians, plus the pointing ramp's
+    /// constant at the sample's fine offset for a set with a ramp
+    /// ([`GridGeometry::fractional_ramp_phase`](crate::GridGeometry::fractional_ramp_phase)).
+    /// The block's values already carry `e^{iφ}`; prediction applies
+    /// `e^{−iφ}`.
     pub phase: f64,
     /// Target grid plane: the output channel for a channel-local basis,
     /// 0 for a constant or Taylor basis.
