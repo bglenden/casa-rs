@@ -39,8 +39,8 @@ use casa_imaging_model::{
     SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
     TaylorSupportReference, TaylorValidityPolicy, TimeScale, UncorrectedImageMaskPolicy,
     UvwCoordinateLaw, VisibilityColumn as OwnerVisibilityColumn, VisibilityInnerProduct,
-    WProjectionContract, WeightColumn as OwnerWeightColumn, WeightDensityScope, WeightingContract,
-    WeightingScheme,
+    WProjectionContract, WStatistics, WeightColumn as OwnerWeightColumn, WeightDensityScope,
+    WeightingContract, WeightingScheme,
 };
 use casa_imaging_reconstruction::{MinorCycleImageResponse, ReconstructionMaskPlan};
 use casa_imaging_runtime::{
@@ -414,6 +414,9 @@ pub struct ContinuumImagingRequest {
     pub write_primary_beam: bool,
     /// Publish primary-beam-corrected restored Taylor images.
     pub pbcor: bool,
+    /// Point each mosaic field's beam at the POINTING-table direction
+    /// (tclean `usepointing=True`) rather than the field centre.
+    pub mosaic_use_pointing: bool,
     /// Explicit W-projection plane count; `None` derives it from the selected W envelope.
     pub w_projection_planes: Option<usize>,
     /// Complete AW-projection cache and term contract; mutually exclusive with W-projection.
@@ -1125,6 +1128,9 @@ fn prepare(
     let mut first_aw_row = None;
     let mut selected_time_bounds_mjd_seconds = [f64::INFINITY, f64::NEG_INFINITY];
     let mut maximum_selected_abs_w_m = 0.0_f64;
+    let mut minimum_selected_abs_w_m = f64::INFINITY;
+    let mut selected_w_sum_squares_m2 = 0.0_f64;
+    let mut selected_w_rows = 0_u64;
     let main_table = ms.main_table();
     let mut weight_spectrum_complete = main_table.column_accessor("WEIGHT_SPECTRUM").is_ok();
     let mut weight_spectrum_error = None;
@@ -1165,6 +1171,9 @@ fn prepare(
                 selected_time_bounds_mjd_seconds[1].max(row.time_mjd_seconds());
             let [_, _, w_m] = row.uvw_m();
             maximum_selected_abs_w_m = maximum_selected_abs_w_m.max(w_m.abs());
+            minimum_selected_abs_w_m = minimum_selected_abs_w_m.min(w_m.abs());
+            selected_w_sum_squares_m2 += w_m * w_m;
+            selected_w_rows += 1;
             if selected_rows_error.is_none() {
                 selected_rows_error = selected_rows
                     .push(SelectedMainRow::new(
@@ -1549,6 +1558,7 @@ fn prepare(
     let mosaic = request
         .task_requirements
         .contains(&TaskRequirement::MosaicGridder);
+    let mosaic_use_pointing = mosaic && request.mosaic_use_pointing;
     let aw_use_pointing = request
         .aw_projection
         .as_ref()
@@ -1581,7 +1591,7 @@ fn prepare(
         CentreLaws::new(
             phase_centre_law,
             DelayCentreLaw::PhaseTrackingCentre,
-            continuum_pointing_centre_law(mosaic, aw_use_pointing),
+            continuum_pointing_centre_law(mosaic_use_pointing, aw_use_pointing),
         ),
         if mosaic || request.aw_projection.is_some() {
             UvwCoordinateLaw::MosaicPhaseTrackingCentre
@@ -1625,23 +1635,32 @@ fn prepare(
         })
         .and_then(|profile| {
             let runtime = runtime(&request, &profile)?;
-            let aw_preparation = request
+            let aw_catalog = request
                 .aw_projection
                 .as_ref()
                 .map(|controls| {
-                    let output_directory = request
-                        .image_name
-                        .parent()
-                        .unwrap_or_else(|| Path::new("."))
-                        .canonicalize()?;
-                    let (source, private_root) = match &controls.source {
-                        ContinuumAwCfSource::CasaImport(path) => (
-                            crate::ApplicationAwSource::CasaImport(path.clone()),
-                            output_directory.join(".casa-rs-aw-prepared"),
-                        ),
-                        ContinuumAwCfSource::NativeEvla(native) => (
-                            crate::ApplicationAwSource::NativeEvla {
-                                input: Box::new(native_aw::resolve(
+                    let root = match &controls.source {
+                        ContinuumAwCfSource::CasaImport(path) => path.clone(),
+                        ContinuumAwCfSource::NativeEvla(native) => {
+                            // `AwCatalog::generate_native` writes CASA-format
+                            // cells into the native cache directory, which the
+                            // same loader then serves (plan section 5.6).
+                            let present = native.root.is_dir()
+                                && std::fs::read_dir(&native.root)?.next().is_some();
+                            let generate = match native.policy {
+                                NativeAwCachePolicy::ReuseOnly => {
+                                    if !present {
+                                        return Err(boxed(
+                                            "native AW cache reuse requires an existing catalog",
+                                        ));
+                                    }
+                                    false
+                                }
+                                NativeAwCachePolicy::GenerateMissing => !present,
+                                NativeAwCachePolicy::Regenerate => true,
+                            };
+                            if generate {
+                                let input = native_aw::resolve(
                                     &request,
                                     native,
                                     &ms,
@@ -1651,19 +1670,24 @@ fn prepare(
                                         boxed("native AW has no unflagged cross-correlation row")
                                     })?,
                                     &frame_engine,
-                                )?),
-                                policy: native.policy,
-                                cache_bytes: native.cache_bytes,
-                            },
-                            native.root.clone(),
-                        ),
+                                )?;
+                                input.validate()?;
+                                casa_imaging_operator::AwCatalog::generate_native(
+                                    &native.root,
+                                    &input,
+                                )?;
+                            }
+                            native.root.clone()
+                        }
                     };
-                    Ok::<_, crate::ApplicationError>(crate::ApplicationAwPreparation {
-                        source,
-                        private_root,
-                        storage_domain: profile.storage_domain(),
+                    Ok::<_, crate::ApplicationError>(crate::AwCatalogDeployment {
+                        root,
+                        indexing: casa_imaging_operator::AwIndexing {
+                            conjugate_beams: controls.conjugate_beams,
+                            image_reference_hz: prepared_spectral.reference_frequency_hz,
+                            pa_tolerance_deg: controls.rotate_pa_step_deg,
+                        },
                         resident_bytes: controls.resident_bytes,
-                        conjugate_beams: controls.conjugate_beams,
                     })
                 })
                 .transpose()?;
@@ -1673,7 +1697,7 @@ fn prepare(
                     controls: product_controls,
                     sink: product_sink,
                 },
-                aw_preparation,
+                aw_catalog,
             })
         });
     let digest = request_digest(&request, b"selection");
@@ -1714,8 +1738,24 @@ fn prepare(
                         .ok_or_else(|| boxed("W-projection plane count must be positive"))
                 })
                 .transpose()?;
-            WProjectionContract::new(maximum_abs_w_lambda, planes)
-                .map_err(|error| Box::new(error) as crate::ApplicationError)
+            let contract = WProjectionContract::new(maximum_abs_w_lambda, planes)
+                .map_err(|error| Box::new(error) as crate::ApplicationError)?;
+            if selected_w_rows == 0 {
+                return Ok::<_, crate::ApplicationError>(contract);
+            }
+            // CASA `wStat` of the selection for `wprojplanes = -1`: the
+            // smallest |w| at the lowest frequency, the rms at the highest.
+            let minimum_frequency_hz = spectral_windows
+                .iter()
+                .flat_map(|window| window.frequencies_hz.iter().copied())
+                .fold(f64::INFINITY, f64::min);
+            let rms_w_m = (selected_w_sum_squares_m2 / selected_w_rows as f64).sqrt();
+            let statistics = WStatistics::new(
+                minimum_selected_abs_w_m * minimum_frequency_hz / 299_792_458.0,
+                rms_w_m * maximum_frequency_hz / 299_792_458.0,
+            )
+            .map_err(|error| Box::new(error) as crate::ApplicationError)?;
+            Ok(contract.with_statistics(statistics))
         })
         .transpose()?;
     let aw_projection = request
@@ -1937,7 +1977,13 @@ fn effective_aw_pointing_offset_sigdev_arcsec(
     })
 }
 
-fn continuum_pointing_centre_law(mosaic: bool, aw_use_pointing: bool) -> PointingCentreLaw {
+/// Where each row points: the POINTING table under tclean `usepointing`
+/// (AW samples it at the visibility time, mosaic interpolates it), else the
+/// field's phase-tracking centre (`usepointing=False`, the tclean default).
+fn continuum_pointing_centre_law(
+    mosaic_use_pointing: bool,
+    aw_use_pointing: bool,
+) -> PointingCentreLaw {
     if aw_use_pointing {
         PointingCentreLaw::Observation(ObservationPointingLaw::new(
             PointingDirectionColumn::Direction,
@@ -1947,7 +1993,7 @@ fn continuum_pointing_centre_law(mosaic: bool, aw_use_pointing: bool) -> Pointin
             PointingExtrapolation::HoldNearest,
             MissingPointingPolicy::UsePhaseTrackingCentre,
         ))
-    } else if mosaic {
+    } else if mosaic_use_pointing {
         PointingCentreLaw::Observation(ObservationPointingLaw::new(
             PointingDirectionColumn::Direction,
             PointingDirectionSemantic::AntennaBoresight,
@@ -3398,9 +3444,13 @@ mod tests {
     }
 
     #[test]
-    fn mosaic_only_retains_interpolated_pointing_law() {
+    fn mosaic_points_at_the_field_centre_unless_usepointing() {
+        assert!(matches!(
+            continuum_pointing_centre_law(false, false),
+            PointingCentreLaw::PhaseTrackingCentre
+        ));
         let PointingCentreLaw::Observation(law) = continuum_pointing_centre_law(true, false) else {
-            panic!("mosaic imaging must compile an observation pointing law");
+            panic!("mosaic usepointing must compile an observation pointing law");
         };
 
         assert_eq!(

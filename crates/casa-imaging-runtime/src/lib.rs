@@ -14,10 +14,6 @@ pub mod pass;
 pub use cube_state::CubeState;
 mod minor;
 pub use minor::{MinorCycleOutcome, MinorCycleRunError, run_minor_cycle};
-// Nothing reads prepared artifacts until the AW catalog replaces the store
-// (plan section 6 row 5).
-#[expect(dead_code, reason = "IF-3 (#652) deletes the prepared-artifact store")]
-mod prepared_artifact;
 pub mod product_publication;
 mod publication_layout;
 mod receipt;
@@ -54,24 +50,6 @@ pub use observation_transaction::{
     ObservationTransactionPublicationScope, ObservationTransactionWork,
 };
 pub use paged_state_directory::{PagedStateDirectory, PagedStateDirectoryError};
-pub use prepared_artifact::{
-    PreparedArtifact, PreparedArtifactBudget, PreparedArtifactCatalogEntryOutcome,
-    PreparedArtifactCatalogPlanFragment, PreparedArtifactCatalogReuseOutcome,
-    PreparedArtifactConsumer, PreparedArtifactDescriptor, PreparedArtifactError,
-    PreparedArtifactExecutionBinding, PreparedArtifactGenerator, PreparedArtifactImportSegment,
-    PreparedArtifactImportSource, PreparedArtifactImporter, PreparedArtifactKind,
-    PreparedArtifactLoadSource, PreparedArtifactNativeCatalogOutcome,
-    PreparedArtifactNativeEntryOutcome, PreparedArtifactNativeGenerator,
-    PreparedArtifactNativeLayout, PreparedArtifactNativeOperation,
-    PreparedArtifactNativePlanFragment, PreparedArtifactNativePlaneLayout,
-    PreparedArtifactNativeRequest, PreparedArtifactOperation, PreparedArtifactOrder,
-    PreparedArtifactPlanError, PreparedArtifactPlanFragment, PreparedArtifactPlaneDescriptor,
-    PreparedArtifactPrecision, PreparedArtifactReader, PreparedArtifactReaderFactory,
-    PreparedArtifactReaderPlan, PreparedArtifactReaderResidency, PreparedArtifactRegistration,
-    PreparedArtifactRejection, PreparedArtifactReservation, PreparedArtifactResidencyMeasurements,
-    PreparedArtifactReuseOutcome, PreparedArtifactSegmentDescriptor, PreparedArtifactSourceSegment,
-    PreparedArtifactStore, PreparedArtifactUvAffine,
-};
 pub use product_publication::{
     ProductPublicationEntry, ProductPublicationError, ProductPublicationPlan,
 };

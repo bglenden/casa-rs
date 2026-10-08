@@ -144,12 +144,6 @@ fn compiled_problem_with_reference_data(
     )
 }
 
-pub(crate) fn compiled_problem_with_reconstruction_controls(
-    controls: ReconstructionControls,
-) -> casa_imaging_model::CompiledProblem {
-    compiled_problem_with_reference_data_and_controls(Vec::new(), controls)
-}
-
 fn compiled_problem_with_reference_data_and_controls(
     reference_data: Vec<(
         casa_imaging_model::ReferenceDataKind,
@@ -1325,7 +1319,7 @@ fn malformed_store_owned_rejection_is_rejected_without_partial_receipt_mutation(
         None,
         Some(crate::ArtifactIdentity::from_sha256([214; 32])),
         Some(
-            crate::prepared_artifact::PreparedArtifactRejection::Missing.evidence_identity(ledger),
+            crate::execution_bindings::PreparedArtifactRejection::Missing.evidence_identity(ledger),
         ),
     ];
 

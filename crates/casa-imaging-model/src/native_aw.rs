@@ -7,8 +7,6 @@ use std::sync::Arc;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::{CompiledGeometryId, PreparedArtifactScientificIdentity};
-
 /// Invalid or unsupported native EVLA generation inputs.
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
 pub enum NativeAwRequestError {
@@ -179,23 +177,6 @@ impl EvlaAwCellRequest {
         }
         Ok(())
     }
-
-    pub(crate) fn hash(&self, digest: &mut Sha256) {
-        for value in [self.size, self.mueller, self.oversampling] {
-            digest.update((value as u64).to_le_bytes());
-        }
-        for value in [
-            self.sky_increment_rad[0],
-            self.sky_increment_rad[1],
-            self.frequency_hz,
-            self.conjugate_frequency_hz,
-            self.w_wavelengths,
-            self.parallactic_angle_rad,
-        ] {
-            digest.update(value.to_bits().to_le_bytes());
-        }
-        digest.update([u8::from(self.prolate_spheroidal), u8::from(self.aperture)]);
-    }
 }
 
 /// One selected SPW's explicit native beam-frequency sampling.
@@ -262,27 +243,14 @@ pub struct NativeAwRequestInput {
     pub maximum_cells: usize,
 }
 
-/// Complete immutable request for an exactly covered native EVLA CF catalog.
-///
-/// Every cell identity commits to the full physical request and the versioned
-/// generator, support and normalization contract. The requested metadata bound
-/// is a resource policy, not science. Realized crops are outputs and are bound
-/// separately by the prepared-store owner.
-#[derive(Clone, Debug)]
-pub struct NativeAwRequest {
-    input: Arc<NativeAwRequestInput>,
-    geometry: CompiledGeometryId,
-    identity: [u8; 32],
-    cell_count: usize,
-}
-
-impl NativeAwRequest {
-    /// Validate and freeze the entire catalog request before any generation.
-    pub fn new(
-        geometry: CompiledGeometryId,
-        input: NativeAwRequestInput,
-    ) -> Result<Self, NativeAwRequestError> {
-        let NativeAwRequestInput {
+impl NativeAwRequestInput {
+    /// Validate the catalog axes and terms (`NativeAwRequest::new`'s
+    /// rules): sorted finite w values from zero, a positive w increment,
+    /// sorted parallactic angles, parallel-hand Mueller elements, ascending
+    /// distinct frequency groups in the EVLA bands, a single reference group
+    /// without wideband selection, and a bounded non-empty cell count.
+    pub fn validate(&self) -> Result<(), NativeAwRequestError> {
+        let Self {
             frequencies,
             w_values,
             pa_values,
@@ -290,25 +258,25 @@ impl NativeAwRequest {
             grid,
             terms,
             ..
-        } = &input;
-        let cell_count = frequencies
+        } = self;
+        frequencies
             .len()
             .checked_mul(w_values.len())
             .and_then(|n| n.checked_mul(pa_values.len()))
             .and_then(|n| n.checked_mul(mueller_elements.len()))
-            .filter(|n| *n > 0 && *n <= input.maximum_cells)
+            .filter(|n| *n > 0 && *n <= self.maximum_cells)
             .ok_or(NativeAwRequestError::InvalidCatalog)?;
         let strictly_sorted = |values: &[f64]| {
             values.iter().all(|v| v.is_finite()) && values.windows(2).all(|pair| pair[0] < pair[1])
         };
-        if input.antenna_diameter_m != 25.0
+        if self.antenna_diameter_m != 25.0
             || !strictly_sorted(w_values)
             || w_values[0] < 0.0
-            || !input.w_increment.is_finite()
-            || input.w_increment <= 0.0
+            || !self.w_increment.is_finite()
+            || self.w_increment <= 0.0
             || !strictly_sorted(pa_values)
-            || !input.reference_frequency_hz.is_finite()
-            || input.reference_frequency_hz <= 0.0
+            || !self.reference_frequency_hz.is_finite()
+            || self.reference_frequency_hz <= 0.0
             || mueller_elements.iter().any(|m| !matches!(m, 0 | 15))
             || mueller_elements.windows(2).any(|p| p[0] >= p[1])
             || frequencies
@@ -331,7 +299,7 @@ impl NativeAwRequest {
             || (!terms.w_term && w_values.as_slice() != [0.0])
             || (!terms.wideband
                 && (frequencies.len() != 1
-                    || frequencies[0].cf_frequency_hz != input.reference_frequency_hz))
+                    || frequencies[0].cf_frequency_hz != self.reference_frequency_hz))
         {
             return Err(NativeAwRequestError::InvalidCatalog);
         }
@@ -347,142 +315,6 @@ impl NativeAwRequest {
             prolate_spheroidal: terms.prolate_spheroidal,
             aperture: terms.aperture,
         }
-        .validate()?;
-        let mut digest = Sha256::new();
-        digest.update(b"casa-rs/native-EVLA-AW/request/v1\0");
-        // This version fixes receiver selection, squint, three-subpixel
-        // integration, float arithmetic, support search, cropping and area.
-        digest.update(b"EVLA-BeamCalc-61020062/3subpixel/F64-geometry-C32-field/centered-forward-FFT/TM2-support-1e-3-even-buffer2/complex-sampled-area-v1\0");
-        digest.update(geometry.as_bytes());
-        digest.update(input.surface.content_identity());
-        digest.update(input.antenna_diameter_m.to_bits().to_le_bytes());
-        digest.update((grid.size as u64).to_le_bytes());
-        hash_values(&mut digest, &grid.sky_increment_rad);
-        digest.update((grid.oversampling as u64).to_le_bytes());
-        digest.update(input.w_increment.to_bits().to_le_bytes());
-        digest.update(input.reference_frequency_hz.to_bits().to_le_bytes());
-        digest.update([
-            u8::from(terms.aperture),
-            u8::from(terms.w_term),
-            u8::from(terms.prolate_spheroidal),
-            u8::from(terms.wideband),
-            u8::from(terms.conjugate_beams),
-        ]);
-        digest.update((frequencies.len() as u64).to_le_bytes());
-        for group in frequencies {
-            digest.update(group.spectral_window.to_le_bytes());
-            digest.update(group.cf_frequency_hz.to_bits().to_le_bytes());
-            hash_values(&mut digest, &group.channel_frequencies_hz);
-        }
-        hash_values(&mut digest, w_values);
-        hash_values(&mut digest, pa_values);
-        digest.update((mueller_elements.len() as u64).to_le_bytes());
-        for mueller in mueller_elements {
-            digest.update((*mueller as u64).to_le_bytes());
-        }
-        Ok(Self {
-            input: Arc::new(input),
-            geometry,
-            identity: digest.finalize().into(),
-            cell_count,
-        })
-    }
-
-    /// Read the frozen validated physical inputs.
-    #[must_use]
-    pub fn input(&self) -> &NativeAwRequestInput {
-        &self.input
-    }
-
-    /// Compiled geometry whose conventions are committed by every cell.
-    #[must_use]
-    pub const fn geometry(&self) -> CompiledGeometryId {
-        self.geometry
-    }
-
-    /// Exact expected pair count; a prefix never constitutes a usable catalog.
-    #[must_use]
-    pub const fn cell_count(&self) -> usize {
-        self.cell_count
-    }
-
-    /// Retained scientific input allocations, shared by clones of this request.
-    #[must_use]
-    pub fn resident_bytes(&self) -> usize {
-        let i = &self.input;
-        size_of::<NativeAwRequestInput>()
-            + i.surface.resident_bytes()
-            + (i.w_values.capacity() + i.pa_values.capacity()) * size_of::<f64>()
-            + i.mueller_elements.capacity() * size_of::<usize>()
-            + i.frequencies.capacity() * size_of::<NativeAwFrequencyGroup>()
-            + i.frequencies
-                .iter()
-                .map(|g| g.channel_frequencies_hz.capacity() * size_of::<f64>())
-                .sum::<usize>()
-    }
-
-    /// One reusable numerical cell workspace, independent of catalog size.
-    /// Shared scientific input residency is reported separately.
-    pub fn generation_workspace_bytes(&self) -> Result<usize, NativeAwRequestError> {
-        self.cell(0)
-            .expect("validated nonempty catalog")
-            .0
-            .generation_workspace_bytes()
-    }
-
-    /// Resolve an expected cell in deterministic frequency/W/PA/Mueller order.
-    #[must_use]
-    pub fn cell(
-        &self,
-        index: usize,
-    ) -> Option<(EvlaAwCellRequest, PreparedArtifactScientificIdentity)> {
-        if index >= self.cell_count {
-            return None;
-        }
-        let i = &self.input;
-        let mueller = i.mueller_elements[index % i.mueller_elements.len()];
-        let rest = index / i.mueller_elements.len();
-        let pa = i.pa_values[rest % i.pa_values.len()];
-        let rest = rest / i.pa_values.len();
-        let w = i.w_values[rest % i.w_values.len()];
-        let frequency = i.frequencies[rest / i.w_values.len()].cf_frequency_hz;
-        let target = (2.0 * i.reference_frequency_hz * i.reference_frequency_hz
-            - frequency * frequency)
-            .sqrt();
-        let mut conjugate_frequency = frequency;
-        if i.terms.conjugate_beams {
-            // CASA nearestValue retains the first frequency for a non-real
-            // conjugate or exact tie; otherwise the smallest distance wins.
-            conjugate_frequency = i.frequencies[0].cf_frequency_hz;
-            let mut distance = (conjugate_frequency - target).abs();
-            for group in i.frequencies.iter().skip(1) {
-                let next = (group.cf_frequency_hz - target).abs();
-                if next < distance {
-                    distance = next;
-                    conjugate_frequency = group.cf_frequency_hz;
-                }
-            }
-        }
-        let cell = EvlaAwCellRequest {
-            size: i.grid.size,
-            sky_increment_rad: i.grid.sky_increment_rad,
-            frequency_hz: frequency,
-            conjugate_frequency_hz: conjugate_frequency,
-            w_wavelengths: w,
-            parallactic_angle_rad: pa,
-            mueller,
-            oversampling: i.grid.oversampling,
-            prolate_spheroidal: i.terms.prolate_spheroidal,
-            aperture: i.terms.aperture,
-        };
-        let identity = PreparedArtifactScientificIdentity::native_evla_cell(self.identity, &cell);
-        Some((cell, identity))
-    }
-}
-
-fn hash_values(digest: &mut Sha256, values: &[f64]) {
-    digest.update((values.len() as u64).to_le_bytes());
-    for value in values {
-        digest.update(value.to_bits().to_le_bytes());
+        .validate()
     }
 }

@@ -3,9 +3,7 @@
 
 use std::ops::Range;
 
-use casa_imaging_operator::{
-    CellHold, MeasurementOperator, ModeSet, Placement, PlaneRange, Tile,
-};
+use casa_imaging_operator::{CellHold, MeasurementOperator, ModeSet, Placement, PlaneRange, Tile};
 
 use super::{PassDomain, PassError};
 
@@ -251,6 +249,19 @@ impl Router {
             Self::Planes { starts } => starts.len(),
             Self::Regions { owner_of_row, .. } => {
                 owner_of_row.last().map_or(1, |owner| *owner as usize + 1)
+            }
+        }
+    }
+
+    /// The one owner that grids the weight image when the grid is split
+    /// into regions: the owner of the centre row, where `Mode::Weight`
+    /// places every sample's `FT[PB²]` taps. `None` when every owner holds
+    /// whole planes and grids its own samples' weights.
+    pub(super) fn weight_owner(&self) -> Option<usize> {
+        match self {
+            Self::Planes { .. } => None,
+            Self::Regions { owner_of_row, .. } => {
+                Some(usize::from(owner_of_row[owner_of_row.len() / 2]))
             }
         }
     }

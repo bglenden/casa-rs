@@ -624,6 +624,48 @@ pub enum AwProjectionContractError {
 pub struct WProjectionContract {
     maximum_abs_w_lambda_bits: u64,
     planes: Option<std::num::NonZeroUsize>,
+    statistics: Option<WStatistics>,
+}
+
+/// The selected observation's `|w|` statistics CASA's `WProjectFT` sizes an
+/// automatic plane count from (`wprojplanes = -1`): the smallest and the
+/// root-mean-square `|w|` in wavelengths at the selection's top frequency.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WStatistics {
+    minimum_abs_w_lambda_bits: u64,
+    rms_w_lambda_bits: u64,
+}
+
+impl WStatistics {
+    /// Statistics of a selection; both values must be finite and non-negative.
+    pub fn new(
+        minimum_abs_w_lambda: f64,
+        rms_w_lambda: f64,
+    ) -> Result<Self, WProjectionContractError> {
+        if !minimum_abs_w_lambda.is_finite()
+            || minimum_abs_w_lambda < 0.0
+            || !rms_w_lambda.is_finite()
+            || rms_w_lambda < 0.0
+        {
+            return Err(WProjectionContractError::InvalidStatistics);
+        }
+        Ok(Self {
+            minimum_abs_w_lambda_bits: minimum_abs_w_lambda.to_bits(),
+            rms_w_lambda_bits: rms_w_lambda.to_bits(),
+        })
+    }
+
+    /// The smallest `|w|` in wavelengths.
+    #[must_use]
+    pub fn minimum_abs_w_lambda(self) -> f64 {
+        f64::from_bits(self.minimum_abs_w_lambda_bits)
+    }
+
+    /// The root-mean-square `w` in wavelengths.
+    #[must_use]
+    pub fn rms_w_lambda(self) -> f64 {
+        f64::from_bits(self.rms_w_lambda_bits)
+    }
 }
 
 impl WProjectionContract {
@@ -638,7 +680,15 @@ impl WProjectionContract {
         Ok(Self {
             maximum_abs_w_lambda_bits: maximum_abs_w_lambda.to_bits(),
             planes,
+            statistics: None,
         })
+    }
+
+    /// Carry the selection's `|w|` statistics for an automatic plane count.
+    #[must_use]
+    pub const fn with_statistics(mut self, statistics: WStatistics) -> Self {
+        self.statistics = Some(statistics);
+        self
     }
 
     /// Return the selected-observation W envelope in wavelengths.
@@ -652,6 +702,12 @@ impl WProjectionContract {
     pub const fn planes(self) -> Option<std::num::NonZeroUsize> {
         self.planes
     }
+
+    /// Return the selection's `|w|` statistics, when the request carries them.
+    #[must_use]
+    pub const fn statistics(self) -> Option<WStatistics> {
+        self.statistics
+    }
 }
 
 /// Invalid W-projection science contract.
@@ -660,6 +716,9 @@ pub enum WProjectionContractError {
     /// The selected-observation W envelope must be finite and non-negative.
     #[error("maximum absolute W wavelength must be finite and non-negative")]
     InvalidMaximumAbsWLambda,
+    /// The `|w|` statistics must be finite and non-negative.
+    #[error("W statistics must be finite and non-negative")]
+    InvalidStatistics,
 }
 
 /// Logical measurement-equation terms independent of an implementation.
@@ -2030,68 +2089,6 @@ impl CompiledProblem {
     #[must_use]
     pub const fn problem_id(&self) -> CompiledProblemId {
         self.problem_id
-    }
-
-    /// Return the model-owned compatibility commitment for immutable preparation.
-    ///
-    /// Paired convolution functions retain observation, reference data, geometry,
-    /// numerics, visibility transforms, spectral/instrument response, basis,
-    /// polarization, and weighting semantics. Solver selection, stopping controls,
-    /// model lifecycle authorization, and product publication do not describe these
-    /// immutable cells and are excluded. The observation snapshot itself remains
-    /// exact, including any initial model generation committed by its owner.
-    /// Complete cell semantics and representation are committed separately by the
-    /// scientific owner and prepared-artifact store.
-    ///
-    /// Spectral maps and generic kernels remain scoped to the complete problem:
-    /// their current owner identities do not establish a narrower dependency set.
-    /// This value permits byte reuse, never execution under another problem.
-    #[must_use]
-    pub fn prepared_artifact_dependency_id(
-        &self,
-        kind: crate::PreparedArtifactScientificKind,
-    ) -> LogicalIdentity {
-        use crate::PreparedArtifactScientificKind;
-
-        let mut encoder = CanonicalEncoder::new();
-        encoder.bytes(b"casa-rs/prepared-artifact-dependencies");
-        encoder.u32(2);
-        encoder.u8(match kind {
-            PreparedArtifactScientificKind::ConvolutionFunction => 1,
-            PreparedArtifactScientificKind::SpectralMap => 2,
-            PreparedArtifactScientificKind::Kernel => 3,
-        });
-        match kind {
-            PreparedArtifactScientificKind::SpectralMap
-            | PreparedArtifactScientificKind::Kernel => {
-                encoder.digest(self.problem_id.as_bytes());
-            }
-            PreparedArtifactScientificKind::ConvolutionFunction => {
-                encoder.identity(self.inputs.observation().identity());
-                encoder.digest(self.geometry.geometry_id().as_bytes());
-                encoder.digest(self.numerics_id.as_bytes());
-                encoder.usize(self.inputs.reference_data().len());
-                for (kind, identity) in self.inputs.reference_data() {
-                    encoder.u8(reference_data_tag(*kind));
-                    encoder.identity(*identity);
-                }
-                match &self.visibility_transform {
-                    Some(transform) => {
-                        encoder.u8(1);
-                        encoder.digest(transform.contract_id().as_bytes());
-                    }
-                    None => encoder.u8(0),
-                }
-                encode_prepared_operator(&mut encoder, &self.science, &self.normal_equation);
-                encode_reconstruction_basis(&mut encoder, self.reconstruction.basis);
-                encoder.usize(self.reconstruction.polarization.coordinates.len());
-                for coordinate in &self.reconstruction.polarization.coordinates {
-                    encoder.u8(polarization_tag(*coordinate));
-                }
-                encode_prepared_weighting(&mut encoder, self.weighting());
-            }
-        }
-        LogicalIdentity::from_sha256(encoder.finish())
     }
 
     /// Return the compiler-owned identity beneath the explicit model/lifecycle layer.

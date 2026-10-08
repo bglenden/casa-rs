@@ -112,9 +112,63 @@ impl ArtifactIdentity {
     }
 }
 
-impl CacheIdentity {
-    pub(crate) const fn from_owner_digest(digest: [u8; 32]) -> Self {
-        Self(digest)
+/// Fail-closed reason that a plan-listed warm artifact was not reusable,
+/// recorded in receipt evidence as a derived identity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PreparedArtifactRejection {
+    /// No entry exists for the exact owner-derived identity.
+    Missing,
+    /// The entry was incomplete or had unknown inventory.
+    Incomplete,
+    /// The schema, manifest, identity, or layout was incompatible.
+    Incompatible,
+    /// Payload bytes or their integrity digests were corrupt.
+    Corrupt,
+    /// A floating-point payload contained NaN or infinity.
+    NonFinite,
+}
+
+impl PreparedArtifactRejection {
+    const EVIDENCE_DOMAIN: &[u8] = b"casa-rs/private-prepared-artifact/rejection\0";
+    const EVIDENCE_VERSION: u32 = 7;
+    const ALL: [Self; 5] = [
+        Self::Missing,
+        Self::Incomplete,
+        Self::Incompatible,
+        Self::Corrupt,
+        Self::NonFinite,
+    ];
+
+    /// The evidence identity recorded for this rejection of `planned`.
+    #[must_use]
+    pub(crate) fn evidence_identity(self, planned: ArtifactIdentity) -> ArtifactIdentity {
+        let mut hasher = Sha256::new();
+        hasher.update(Self::EVIDENCE_DOMAIN);
+        hasher.update(Self::EVIDENCE_VERSION.to_le_bytes());
+        hasher.update(planned.as_bytes());
+        hasher.update([self.tag()]);
+        ArtifactIdentity::from_owner_digest(hasher.finalize().into())
+    }
+
+    /// Recover a typed rejection from durable receipt evidence.
+    #[must_use]
+    pub fn from_evidence_identity(
+        planned: ArtifactIdentity,
+        evidence: ArtifactIdentity,
+    ) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|rejection| rejection.evidence_identity(planned) == evidence)
+    }
+
+    const fn tag(self) -> u8 {
+        match self {
+            Self::Missing => 0,
+            Self::Incomplete => 1,
+            Self::Incompatible => 2,
+            Self::Corrupt => 3,
+            Self::NonFinite => 4,
+        }
     }
 }
 
@@ -629,6 +683,7 @@ impl ArtifactMeasurement {
         })
     }
 
+    #[cfg(test)]
     pub(crate) const fn new_store_owned(
         planned: ArtifactIdentity,
         observed: Option<ArtifactIdentity>,
@@ -1744,10 +1799,6 @@ impl PhysicalWorkBinding {
         &self.implementation_contract
     }
 
-    pub(crate) fn product_publication_plan(&self) -> Option<crate::ProductPublicationPlan> {
-        self.product_publication.clone()
-    }
-
     pub(crate) fn with_fixed_worker_count(self, workers: u64) -> Result<Self, ExecutionError> {
         let thread_stack_bytes = if workers == 1 {
             0
@@ -2858,13 +2909,6 @@ pub struct CompiledWorkContext<'a> {
 }
 
 impl<'a> CompiledWorkContext<'a> {
-    pub(crate) fn prepared_artifact_dependency_id(
-        self,
-        kind: casa_imaging_model::PreparedArtifactScientificKind,
-    ) -> casa_imaging_model::LogicalIdentity {
-        self.problem.prepared_artifact_dependency_id(kind)
-    }
-
     /// Return the stable compiled-problem identity.
     #[must_use]
     pub const fn problem_id(self) -> CompiledProblemId {
@@ -2949,57 +2993,7 @@ pub struct WorkExecutionContext<'a> {
     completed_observation_reads: &'a BTreeMap<WorkNodeId, AttemptBoundObservationCompletion>,
 }
 
-#[cfg(test)]
-pub(crate) struct WorkExecutionTestBindings<'a> {
-    problem: &'a CompiledProblem,
-    implementation_registry: ImplementationRegistryId,
-    completed_observation_reads: &'a BTreeMap<WorkNodeId, AttemptBoundObservationCompletion>,
-}
-
-#[cfg(test)]
-impl<'a> WorkExecutionTestBindings<'a> {
-    pub(crate) const fn new(
-        problem: &'a CompiledProblem,
-        implementation_registry: ImplementationRegistryId,
-        completed_observation_reads: &'a BTreeMap<WorkNodeId, AttemptBoundObservationCompletion>,
-    ) -> Self {
-        Self {
-            problem,
-            implementation_registry,
-            completed_observation_reads,
-        }
-    }
-}
-
 impl<'a> WorkExecutionContext<'a> {
-    #[cfg(test)]
-    pub(crate) fn for_test(
-        attempt_id: ExecutionAttemptId,
-        bindings: WorkExecutionTestBindings<'a>,
-        scheduled: &'a crate::execution::WorkExecutionContext,
-        planned_artifacts: &'a [PlannedArtifact],
-        stage_prediction: &'a StagePrediction,
-        resource_alternative: &'a crate::DemandAlternative,
-    ) -> Self {
-        Self {
-            control: None,
-            attempt_id,
-            compiled: CompiledWorkContext {
-                problem: bindings.problem,
-            },
-            implementation_registry: bindings.implementation_registry,
-            scheduled,
-            planned_artifacts,
-            stage_prediction,
-            resource_alternative,
-            observation_consistency: None,
-            observation_reads: None,
-            publication: None,
-            publication_resources: None,
-            completed_observation_reads: bindings.completed_observation_reads,
-        }
-    }
-
     /// Return the execution attempt that dispatched this exact node call.
     #[must_use]
     pub const fn attempt_id(self) -> ExecutionAttemptId {
@@ -3080,13 +3074,6 @@ impl<'a> WorkExecutionContext<'a> {
         self.planned_artifacts
             .iter()
             .filter(move |artifact| artifact.node() == node)
-    }
-
-    pub(crate) fn plan_artifact(self, identity: ArtifactIdentity) -> Option<&'a PlannedArtifact> {
-        self.planned_artifacts
-            .binary_search_by_key(&identity, PlannedArtifact::identity)
-            .ok()
-            .map(|index| &self.planned_artifacts[index])
     }
 
     /// Return the canonical prediction for this exact node.
@@ -3474,19 +3461,6 @@ pub trait ImplementationRegistry {
         &self,
         _implementation: &WorkImplementationId,
     ) -> Option<ImplementationContractMetadata> {
-        None
-    }
-
-    /// Resolve the canonical provider/catalog registration for preparation
-    /// owned by one implementation in this exact registry snapshot.
-    ///
-    /// Registries that do not own prepared artifacts leave this absent. A
-    /// prepared descriptor can only mint its closed owner through this lookup;
-    /// caller-authored provider strings are not accepted by the descriptor.
-    fn prepared_artifact_registration(
-        &self,
-        _implementation: &WorkImplementationId,
-    ) -> Option<&crate::prepared_artifact::PreparedArtifactRegistration> {
         None
     }
 }
@@ -3877,10 +3851,7 @@ fn validate_artifact_measurements(
         }
         if disposition == ArtifactDisposition::RejectedStale
             && measurement.observed_identity().is_none_or(|observed| {
-                crate::prepared_artifact::PreparedArtifactRejection::from_evidence_identity(
-                    artifact, observed,
-                )
-                .is_none()
+                PreparedArtifactRejection::from_evidence_identity(artifact, observed).is_none()
             })
         {
             return Err(ExecutionEvidenceError::ArtifactDispositionMismatch {
@@ -5396,10 +5367,7 @@ mod artifact_measurement_tests {
         let invalid = [
             None,
             Some(ArtifactIdentity::from_sha256([3; 32])),
-            Some(
-                crate::prepared_artifact::PreparedArtifactRejection::Missing
-                    .evidence_identity(other_identity),
-            ),
+            Some(PreparedArtifactRejection::Missing.evidence_identity(other_identity)),
         ];
 
         for observed in invalid {
@@ -5432,10 +5400,7 @@ mod artifact_measurement_tests {
             Vec::new(),
             vec![ArtifactMeasurement::new_store_owned(
                 identity,
-                Some(
-                    crate::prepared_artifact::PreparedArtifactRejection::Missing
-                        .evidence_identity(identity),
-                ),
+                Some(PreparedArtifactRejection::Missing.evidence_identity(identity)),
                 ArtifactDisposition::RejectedStale,
                 0,
                 None,

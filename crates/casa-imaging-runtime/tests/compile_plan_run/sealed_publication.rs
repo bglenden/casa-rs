@@ -137,6 +137,7 @@ fn synthetic_pass_images(
         residual: planes(&moments[..terms]),
         psf: Some(planes(&moments)),
         sum_weights: moments,
+        weight: None,
     }
 }
 

@@ -38,6 +38,9 @@ struct Chunk {
     rows: Range<usize>,
     scratch: SampleBuffer,
     owned: Vec<SampleBuffer>,
+    /// Every placement of the chunk when the weight image has one owner
+    /// ([`Router::weight_owner`]): that owner grids `Mode::Weight` over it.
+    weight_owned: SampleBuffer,
     placed: u64,
     backend: CpuBackend,
     prediction: PredictionScratch,
@@ -152,6 +155,7 @@ impl<'w, 'p> Wave<'w, 'p> {
                 rows: 0..0,
                 scratch: SampleBuffer::new(npol),
                 owned: Vec::new(),
+                weight_owned: SampleBuffer::new(npol),
                 placed: 0,
                 backend: CpuBackend::new(),
                 prediction: PredictionScratch::default(),
@@ -203,6 +207,9 @@ impl<'w, 'p> Wave<'w, 'p> {
         let predictions = &self.predictions;
         let native_residuals = self.native_residuals;
         let cells = block.channels() * block.correlations();
+        // With region owners the weight image has one owner, which must see
+        // every placement; plane owners grid their own samples' weights.
+        let route_weight = pass.modes.weight && router.weight_owner().is_some();
         team.for_each_mut(&mut self.chunks[..count], |_, chunk| {
             chunk.placed = 0;
             chunk
@@ -211,6 +218,7 @@ impl<'w, 'p> Wave<'w, 'p> {
             chunk.owned[..owners]
                 .iter_mut()
                 .for_each(SampleBuffer::clear);
+            chunk.weight_owned.clear();
             for row in chunk.rows.clone() {
                 chunk.scratch.clear();
                 let native = block.row(index, row);
@@ -248,6 +256,13 @@ impl<'w, 'p> Wave<'w, 'p> {
                         placed.values_of(sample),
                         placed.weights_of(sample),
                     );
+                    if route_weight {
+                        chunk.weight_owned.push(
+                            *placement,
+                            placed.values_of(sample),
+                            placed.weights_of(sample),
+                        );
+                    }
                     chunk.placed += 1;
                 }
             }
@@ -255,6 +270,7 @@ impl<'w, 'p> Wave<'w, 'p> {
         })?;
         let chunks = &self.chunks[..count];
         let model = domain.model.filter(|_| !native_residuals);
+        let weight_owner = router.weight_owner();
         team.for_each_mut(&mut domain.owners, |owner_index, owner| {
             let acc = owner
                 .acc
@@ -272,7 +288,24 @@ impl<'w, 'p> Wave<'w, 'p> {
                     &block,
                     model,
                     acc,
+                    weight_owner.is_none(),
                 )?;
+            }
+            if pass.modes.weight && weight_owner == Some(owner_index) {
+                for chunk in chunks {
+                    let block = chunk.weight_owned.block();
+                    if block.is_empty() {
+                        continue;
+                    }
+                    owner.backend.apply(
+                        &block,
+                        target.operator.cf(),
+                        Work::Grid {
+                            mode: Mode::Weight,
+                            acc,
+                        },
+                    )?;
+                }
             }
             Ok::<_, PassError>(())
         })?;
@@ -377,6 +410,7 @@ fn accumulate(
     block: &casa_imaging_operator::SampleBlock<'_>,
     model: Option<&PreparedModelGrids>,
     acc: &mut GridAccumulator,
+    weight: bool,
 ) -> Result<(), PassError> {
     let cf = operator.cf();
     if pass.modes.data {
@@ -403,7 +437,7 @@ fn accumulate(
             },
         )?;
     }
-    if pass.modes.weight {
+    if pass.modes.weight && weight {
         backend.apply(
             block,
             cf,

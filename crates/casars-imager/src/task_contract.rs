@@ -2178,6 +2178,11 @@ pub struct ImagerRunTaskRequest {
     /// CASA-style `usepointing` toggle for POINTING-table direction corrections.
     #[serde(default)]
     pub use_pointing: bool,
+    /// CASA-style `gridder='mosaic'` request: image the selected fields
+    /// through their primary beams. Absent in older requests, where
+    /// `use_pointing` alone selected the mosaic gridder.
+    #[serde(default)]
+    pub mosaic_gridder: bool,
     /// Optional CASA-style Gaussian UV taper.
     #[serde(default)]
     pub uv_taper: Option<ImagerUvTaper>,
@@ -2351,6 +2356,7 @@ impl ImagerRunTaskRequest {
             weighting: config.weighting.into(),
             per_channel_weight_density: Some(config.per_channel_weight_density),
             use_pointing: config.use_pointing,
+            mosaic_gridder: config.mosaic_gridder,
             uv_taper: config.uv_taper.map(Into::into),
             restoring_beam_mode: config.restoring_beam_mode.into(),
             deconvolver: config.deconvolver.into(),
@@ -2507,6 +2513,7 @@ impl ImagerRunTaskRequest {
                 .per_channel_weight_density
                 .unwrap_or_else(|| default_request_per_channel_weight_density(self.spectral_mode)),
             use_pointing: self.use_pointing,
+            mosaic_gridder: self.mosaic_gridder,
             uv_taper: self.uv_taper.map(Into::into),
             restoring_beam_mode: self.restoring_beam_mode.into(),
             deconvolver,
@@ -3152,14 +3159,20 @@ mod tests {
             .find(|entry| entry.id == "task.aw_projection")
             .expect("AWProject capability");
         assert_eq!(awproject.kind, "task");
-        // AW projection is typed unavailable from IF-2 until IF-3 installs
-        // its convolution-function set in the major-cycle pass (#652).
-        assert!(!awproject.supported);
+        // IF-3 installed the AW catalog in the major-cycle pass (#652);
+        // Metal gridding stays typed unavailable until IF-4 (#653).
+        assert!(awproject.supported);
+        assert_eq!(awproject.unsupported_reason, None);
+        let metal = capabilities
+            .iter()
+            .find(|entry| entry.id == "task.metal_gridder")
+            .expect("Metal capability");
+        assert!(!metal.supported);
         assert_eq!(
-            awproject.unsupported_reason,
+            metal.unsupported_reason,
             Some(super::ImagerUnsupportedReason {
                 kind: "task".to_string(),
-                id: "task.aw_projection".to_string(),
+                id: "task.metal_gridder".to_string(),
             })
         );
         assert!(bundle.projections.cli.is_some());
@@ -3602,6 +3615,7 @@ mod tests {
             weighting: Default::default(),
             per_channel_weight_density: None,
             use_pointing: false,
+            mosaic_gridder: false,
             uv_taper: None,
             restoring_beam_mode: Default::default(),
             deconvolver: Default::default(),
@@ -3700,6 +3714,7 @@ mod tests {
             weighting: ImagerWeighting::Briggs { robust: 0.5 },
             per_channel_weight_density: Some(false),
             use_pointing: false,
+            mosaic_gridder: false,
             uv_taper: None,
             restoring_beam_mode: Default::default(),
             deconvolver: Default::default(),
@@ -3958,6 +3973,7 @@ mod tests {
             weighting: Default::default(),
             per_channel_weight_density: Some(false),
             use_pointing: false,
+            mosaic_gridder: false,
             uv_taper: None,
             restoring_beam_mode: Default::default(),
             deconvolver: Default::default(),
@@ -4100,6 +4116,7 @@ mod tests {
             weighting: Default::default(),
             per_channel_weight_density: Some(false),
             use_pointing: false,
+            mosaic_gridder: false,
             uv_taper: None,
             restoring_beam_mode: Default::default(),
             deconvolver: Default::default(),
@@ -4660,6 +4677,7 @@ mod tests {
             weighting: Default::default(),
             per_channel_weight_density: Some(false),
             use_pointing: false,
+            mosaic_gridder: false,
             uv_taper: None,
             restoring_beam_mode: Default::default(),
             deconvolver: ImagerDeconvolver::Hogbom,

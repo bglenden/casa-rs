@@ -243,8 +243,10 @@ pub struct CliConfig {
     pub weighting: WeightingMode,
     /// Per-channel density toggle.
     pub per_channel_weight_density: bool,
-    /// Pointing correction toggle.
+    /// Pointing correction toggle (tclean `usepointing`).
     pub use_pointing: bool,
+    /// Mosaic gridder request (tclean `gridder='mosaic'`).
+    pub mosaic_gridder: bool,
     /// Optional UV taper.
     pub uv_taper: Option<GaussianUvTaper>,
     /// Restoring beam policy.
@@ -638,6 +640,7 @@ impl CliConfig {
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
             use_pointing: false,
+            mosaic_gridder: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -1418,7 +1421,7 @@ fn parse_deconvolver(value: &str) -> Result<Deconvolver, String> {
 fn set_gridder(config: &mut CliConfig, value: &str) -> Result<(), String> {
     match value.to_ascii_lowercase().as_str() {
         "standard" => config.force_standard_gridder = true,
-        "mosaic" => config.use_pointing = true,
+        "mosaic" => config.mosaic_gridder = true,
         "wproject" => config.w_term_mode = WTermMode::WProject,
         "widefield" => {}
         "awproject" => {

@@ -8,15 +8,13 @@ pub(crate) mod normal_storage;
 mod pass_state;
 pub use pass_state::{PassImages, PassNormalState};
 
-use std::{fmt, mem::size_of, sync::Mutex};
+use std::{mem::size_of, sync::Mutex};
 
-use casa_fft::{Fft2, FftScalar};
 use casa_imaging_model::{
     CompiledGeometryId, CompiledProblemId, ImageDomainRole, LogicalIdentity, NumericsContractId,
     WeightingCommitmentId,
 };
-use ndarray::{ArrayBase, DataMut, Ix2};
-use num_complex::{Complex, Complex64};
+use num_complex::Complex64;
 use thiserror::Error;
 
 use crate::{
@@ -60,7 +58,6 @@ impl SpectralBasisPlan {
     }
 }
 
-pub(crate) const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 const NORMAL_STATE_CONTENT_DOMAIN: &[u8] = b"casa-rs-normal-state-content";
 // FFTW's native plan internals are opaque. Admission charges a full-grid
 // planning buffer and a full-grid native plan allowance; sampled aggregate RSS
@@ -541,130 +538,6 @@ impl std::ops::Deref for SpectralPrimitiveDomains {
 
     fn deref(&self) -> &Self::Target {
         &self.domains[0].primitives
-    }
-}
-
-#[doc(hidden)]
-pub struct PreparedFft<T: FftScalar = f64> {
-    fft: Fft2<T>,
-    column_major_fft: Option<Fft2<T>>,
-    threads: usize,
-}
-
-impl<T: FftScalar> PreparedFft<T> {
-    pub(crate) fn new(
-        shape: [usize; 2],
-        reserved_complex_values: usize,
-        threads: usize,
-    ) -> Result<Self, SpectralOperatorError> {
-        let required = fft_resident_complex_values_for_shape(shape)?;
-        if required > reserved_complex_values {
-            return Err(SpectralOperatorError::ResidencyOverflow);
-        }
-        Ok(Self {
-            fft: Fft2::with_threads(shape, threads)
-                .map_err(|_| SpectralOperatorError::ResidencyOverflow)?,
-            column_major_fft: None,
-            threads,
-        })
-    }
-
-    pub(crate) fn transform<S: DataMut<Elem = Complex<T>>>(
-        &mut self,
-        data: &mut ArrayBase<S, Ix2>,
-        inverse: bool,
-    ) {
-        shift_even(data);
-        self.transform_unshifted(data, inverse);
-        shift_even(data);
-    }
-
-    pub(crate) fn transform_unshifted<S: DataMut<Elem = Complex<T>>>(
-        &mut self,
-        data: &mut ArrayBase<S, Ix2>,
-        inverse: bool,
-    ) {
-        let shape = [data.shape()[0], data.shape()[1]];
-        assert_eq!(shape, self.fft.shape(), "FFTW plane shape mismatch");
-        let column_major = data.strides() == [1, shape[0] as isize];
-        let threads = self.threads;
-        let fft = if column_major && shape[0] != shape[1] {
-            self.column_major_fft.get_or_insert_with(|| {
-                Fft2::with_threads([shape[1], shape[0]], threads)
-                    .expect("valid column-major FFT shape and threads")
-            })
-        } else {
-            &mut self.fft
-        };
-        fft.transform(
-            data.as_slice_memory_order_mut()
-                .expect("FFTW plane must be contiguous"),
-            inverse,
-        )
-        .expect("FFTW plan and plane must match");
-    }
-}
-
-impl<T: FftScalar> fmt::Debug for PreparedFft<T> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("PreparedFft")
-    }
-}
-
-fn shift_even<T, S: DataMut<Elem = T>>(data: &mut ArrayBase<S, Ix2>) {
-    let [width, height] = [data.shape()[0], data.shape()[1]];
-    debug_assert_eq!(width % 2, 0);
-    debug_assert_eq!(height % 2, 0);
-    for x in 0..width / 2 {
-        for y in 0..height / 2 {
-            data.swap((x, y), (x + width / 2, y + height / 2));
-            data.swap((x + width / 2, y), (x, y + height / 2));
-        }
-    }
-}
-
-/// The prolate spheroidal function of CASA `grdsf` (Schwab's rational
-/// approximation, `synthesis/fortran/grdsf.f`) at `nu ∈ [0, 1]`.
-pub(crate) fn grdsf(nu: f64) -> f64 {
-    const P0: [f64; 5] = [
-        8.203_343e-2,
-        -3.644_705e-1,
-        6.278_660e-1,
-        -5.335_581e-1,
-        2.312_756e-1,
-    ];
-    const P1: [f64; 5] = [
-        4.028_559e-3,
-        -3.697_768e-2,
-        1.021_332e-1,
-        -1.201_436e-1,
-        6.412_774e-2,
-    ];
-    const Q0: [f64; 3] = [1.0, 8.212_018e-1, 2.078_043e-1];
-    const Q1: [f64; 3] = [1.0, 9.599_102e-1, 2.918_724e-1];
-    if !(0.0..=1.0).contains(&nu) {
-        return 0.0;
-    }
-    let (p, q, end) = if nu < 0.75 {
-        (&P0, &Q0, 0.75)
-    } else {
-        (&P1, &Q1, 1.0)
-    };
-    let delta = nu * nu - end * end;
-    let numerator = p
-        .iter()
-        .enumerate()
-        .map(|(order, value)| value * delta.powi(order as i32))
-        .sum::<f64>();
-    let denominator = q
-        .iter()
-        .enumerate()
-        .map(|(order, value)| value * delta.powi(order as i32))
-        .sum::<f64>();
-    if denominator == 0.0 {
-        0.0
-    } else {
-        numerator / denominator
     }
 }
 

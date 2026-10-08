@@ -917,48 +917,6 @@ impl PartialEq for WorkExecutionContext {
 impl Eq for WorkExecutionContext {}
 
 impl WorkExecutionContext {
-    #[cfg(test)]
-    pub(crate) fn for_test(
-        node: WorkNode,
-        knobs: ExecutionKnobs,
-        lease_epoch: u64,
-        cleanup: bool,
-        allocation_capabilities: Vec<WorkAllocationCapability>,
-    ) -> Self {
-        let resources = node
-            .claims
-            .iter()
-            .map(|claim| WorkResourceCapability {
-                resource: claim.resource.clone(),
-                amount: claim.amount,
-                lifetime: claim.lifetime.clone(),
-            })
-            .collect();
-        Self {
-            node,
-            knobs,
-            lease_epoch,
-            cleanup,
-            resources,
-            allocations: allocation_capabilities,
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn test_allocation_capability(
-        allocation: AllocationId,
-        physical_slot: PhysicalSlotId,
-        capacity_bytes: u64,
-        lifetime: ClaimLifetime,
-    ) -> WorkAllocationCapability {
-        WorkAllocationCapability {
-            allocation,
-            physical_slot,
-            capacity_bytes,
-            lifetime,
-        }
-    }
-
     /// Returns the exact planned work declaration.
     #[must_use]
     pub(crate) const fn node(&self) -> &WorkNode {

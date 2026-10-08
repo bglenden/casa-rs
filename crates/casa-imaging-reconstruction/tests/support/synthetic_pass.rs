@@ -216,6 +216,7 @@ impl Scene {
             residual,
             psf,
             sum_weights,
+            weight: None,
         }
     }
 

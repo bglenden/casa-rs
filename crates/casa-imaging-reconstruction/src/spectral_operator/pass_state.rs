@@ -51,6 +51,10 @@ pub struct PassImages {
     pub psf: Option<Vec<f32>>,
     /// `sumwt` per PSF-moment plane on an initial pass; empty otherwise.
     pub sum_weights: Vec<f64>,
+    /// The gridded sensitivity (weight) planes of an initial pass with a
+    /// kernel set that has weight taps (mosaic, AW), `[channel][pol]`;
+    /// `None` when the sensitivity is the scalar `sumwt`.
+    pub weight: Option<Vec<f32>>,
 }
 
 // `allow`, not `expect`: whether the variants differ enough to trip the
@@ -313,6 +317,10 @@ impl PassNormalState {
             residual,
             psf,
             sum_weights,
+            // A channel-local state keeps the per-plane `sumwt` as its
+            // sensitivity (`SensitivityValues::PerPlane`); the gridded weight
+            // planes of a cube are not stored yet (IF-3 deviation on #652).
+            weight: _,
         } = images;
         let planes = channels.len() * polarizations;
         let values = planes * checked_cells(shape)?;
@@ -366,6 +374,7 @@ impl PassNormalState {
             residual,
             psf,
             sum_weights,
+            weight,
         } = images;
         let slab = SpectralSlabPlan {
             total_channels: self.total_channels,
@@ -380,13 +389,24 @@ impl PassNormalState {
             || residual.len() != terms * polarizations * cells
             || psf.len() != moments * polarizations * cells
             || sum_weights.len() != moments * polarizations
+            || weight
+                .as_ref()
+                .is_some_and(|weight| weight.len() != polarizations * cells)
         {
             return Err(SpectralOperatorError::InvalidSlab);
         }
-        let sensitivity = sum_weights
-            .iter()
-            .flat_map(|weight| std::iter::repeat_n(*weight, cells))
-            .collect();
+        // The sensitivity per (moment, pol) plane: the gridded weight image
+        // of the pol for a set with weight taps (`MosaicFT`'s sky
+        // coverage, repeated over the moments), else the scalar `sumwt`.
+        let sensitivity = match &weight {
+            Some(weight) => (0..moments)
+                .flat_map(|_| weight.iter().map(|value| f64::from(*value)))
+                .collect(),
+            None => sum_weights
+                .iter()
+                .flat_map(|weight| std::iter::repeat_n(*weight, cells))
+                .collect(),
+        };
         let validity = sum_weights[..polarizations]
             .iter()
             .map(|weight| validity(*weight))
@@ -421,6 +441,10 @@ fn all_finite(images: &PassImages) -> bool {
             .as_ref()
             .is_none_or(|psf| psf.iter().all(|value| value.is_finite()))
         && images.sum_weights.iter().all(|weight| weight.is_finite())
+        && images
+            .weight
+            .as_ref()
+            .is_none_or(|weight| weight.iter().all(|value| value.is_finite()))
 }
 
 /// A plane whose accumulated weight is zero is unmapped whether or not
