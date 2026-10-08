@@ -167,17 +167,13 @@ def test_shared_cross_surface_profile_matches_canonical_expected_values(
         assert invocation.protocol_version == 11
         assert json.loads(invocation.stdin or "null") == expected["request"]
         unsupported = {reason.id for reason in invocation.unsupported_reasons}
-        # AW and W projection are typed unavailable from IF-2 until IF-3
-        # installs their convolution-function sets (#652).
-        assert unsupported == {
-            "task.aw_projection",
-            "task.w_projection_planes",
-            "task.memory_target",
-        }
+        # IF-3 installed the AW and W-projection sets (#652); only the
+        # unconsumed source-stream control remains.
+        assert unsupported == {"task.memory_target"}
 
 
-# Mosaic, W and AW projection are typed unavailable from IF-2 until IF-3
-# installs their convolution-function sets (#652); the requests still round-trip.
+# Mosaic, W and AW projection run on the major-cycle pass since IF-3 (#652);
+# the requests round-trip with no unsupported requirement.
 @pytest.mark.parametrize(
     ("name", "overrides", "expected_reasons"),
     [
@@ -194,7 +190,7 @@ def test_shared_cross_surface_profile_matches_canonical_expected_values(
         (
             "mosaic",
             {"gridder": "mosaic", "usepointing": True},
-            ["task.mosaic_gridder"],
+            [],
         ),
         (
             "native-aw",
@@ -210,7 +206,7 @@ def test_shared_cross_surface_profile_matches_canonical_expected_values(
                 "native_cf_maximum_cells": 1024,
                 "wprojplanes": 32,
             },
-            ["task.aw_projection", "task.w_projection_planes"],
+            [],
         ),
     ],
 )
