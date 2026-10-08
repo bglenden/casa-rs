@@ -130,14 +130,7 @@ impl WPlanes {
             } else {
                 0.0
             };
-            make_w_plane(
-                &mut screen,
-                conv_size,
-                inner,
-                screen_increment,
-                &taper,
-                w,
-            );
+            make_w_plane(&mut screen, conv_size, inner, screen_increment, &taper, w);
             fft.transform(&mut screen, false)?;
             let centre = conv_size / 2;
             if plane == 0 {
@@ -215,7 +208,11 @@ impl WPlanes {
         let sinc = |index: usize| {
             let x = std::f64::consts::PI * (index as f64 - (sinc_len / 2) as f64)
                 / (sinc_len as f64 * f64::from(sampling));
-            if index == sinc_len / 2 { 1.0 } else { x.sin() / x }
+            if index == sinc_len / 2 {
+                1.0
+            } else {
+                x.sin() / x
+            }
         };
         let grid_correction = |len: usize| {
             (0..len)
@@ -223,7 +220,11 @@ impl WPlanes {
                     let nu = ((index as f64 - (len / 2) as f64).abs() / (len / 2) as f64)
                         .clamp(0.0, 1.0);
                     let value = grdsf(nu) * sinc(index);
-                    if value.abs() > 1.0e-6 { 1.0 / value } else { 0.0 }
+                    if value.abs() > 1.0e-6 {
+                        1.0 / value
+                    } else {
+                        0.0
+                    }
                 })
                 .collect::<Vec<_>>()
         };
@@ -339,4 +340,3 @@ fn make_w_plane(
         }
     }
 }
-

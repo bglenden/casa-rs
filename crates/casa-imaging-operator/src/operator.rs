@@ -220,6 +220,11 @@ impl MeasurementOperator {
             ny,
             "correction y axis must span the grid"
         );
+        assert_eq!(
+            (correction.model_x().len(), correction.model_y().len()),
+            (nx, ny),
+            "model-side correction must span the grid"
+        );
         Self {
             geometry,
             basis,
@@ -424,7 +429,7 @@ impl MeasurementOperator {
                             if let Some(factor) = factor {
                                 value *= f64::from(factor[(y, x)]);
                             }
-                            value *= correction.at(ix + x, iy + y);
+                            value *= correction.model_at(ix + x, iy + y);
                             grid[(iy + y) * nx + ix + x] =
                                 Complex::new(T::from_f64(value.re), T::from_f64(value.im));
                         }

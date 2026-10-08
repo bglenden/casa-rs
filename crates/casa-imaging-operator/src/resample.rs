@@ -654,9 +654,15 @@ impl SpectralResampler {
             if sample_flagged(row, npol, source) {
                 return;
             }
-            let Some((placement, _)) =
-                locate_sample(cf, geometry, self.basis, row, plane, frequency_hz, &mut hold)
-            else {
+            let Some((placement, _)) = locate_sample(
+                cf,
+                geometry,
+                self.basis,
+                row,
+                plane,
+                frequency_hz,
+                &mut hold,
+            ) else {
                 return;
             };
             let weight = sample_weight(weighting, row, npol, source, &placement, density_axis);

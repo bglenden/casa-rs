@@ -50,9 +50,7 @@ impl CpuBackend {
             .term_range(mode)
             .unwrap_or_else(|| panic!("accumulator holds no {mode:?} terms"));
         let rule = cf.normalisation();
-        let Self {
-            powers, hold, ..
-        } = self;
+        let Self { powers, hold, .. } = self;
         for (index, placement) in block.placements.iter().enumerate() {
             let taps = match mode {
                 Mode::Weight => cf

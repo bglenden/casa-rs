@@ -236,41 +236,82 @@ pub struct RowContext {
     pub spectral_window: u32,
 }
 
-/// Paired image-domain gridding correction: one real vector per grid axis,
-/// applied as `x[gx] · y[gy]` on both sides of the operator (CASA divides
-/// the model and the dirty image by the same spheroidal response).
+/// Image-domain gridding correction: one real vector per grid axis on each
+/// side of the operator, applied as `x[gx] · y[gy]` to the image the
+/// adjoint forms ([`Self::at`]) and to the model the forward transform
+/// reads ([`Self::model_at`]).
+///
+/// CASA's `GridFT` and `WProjectFT` divide the model and the dirty image
+/// by the same response ([`Self::new`]); `MosaicFT` multiplies the model by
+/// its sinc (`prepGridForDegrid`) and divides the image by it (`getImage`),
+/// so the sides differ ([`Self::split`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImageCorrection {
     x: Box<[f64]>,
     y: Box<[f64]>,
+    model_x: Box<[f64]>,
+    model_y: Box<[f64]>,
 }
 
 impl ImageCorrection {
-    /// Correction vectors over the padded grid axes.
+    /// The same correction vectors on both sides, over the padded grid
+    /// axes.
     #[must_use]
     pub fn new(x: Vec<f64>, y: Vec<f64>) -> Self {
         Self {
+            model_x: x.clone().into_boxed_slice(),
+            model_y: y.clone().into_boxed_slice(),
             x: x.into_boxed_slice(),
             y: y.into_boxed_slice(),
         }
     }
 
-    /// Correction along the grid x axis.
+    /// Different vectors for the image side (`x`, `y`) and the model side
+    /// (`model_x`, `model_y`).
+    #[must_use]
+    pub fn split(x: Vec<f64>, y: Vec<f64>, model_x: Vec<f64>, model_y: Vec<f64>) -> Self {
+        Self {
+            x: x.into_boxed_slice(),
+            y: y.into_boxed_slice(),
+            model_x: model_x.into_boxed_slice(),
+            model_y: model_y.into_boxed_slice(),
+        }
+    }
+
+    /// Image-side correction along the grid x axis.
     #[must_use]
     pub fn x(&self) -> &[f64] {
         &self.x
     }
 
-    /// Correction along the grid y axis.
+    /// Image-side correction along the grid y axis.
     #[must_use]
     pub fn y(&self) -> &[f64] {
         &self.y
     }
 
-    /// Correction at grid cell `(gx, gy)`.
+    /// Model-side correction along the grid x axis.
+    #[must_use]
+    pub fn model_x(&self) -> &[f64] {
+        &self.model_x
+    }
+
+    /// Model-side correction along the grid y axis.
+    #[must_use]
+    pub fn model_y(&self) -> &[f64] {
+        &self.model_y
+    }
+
+    /// Image-side correction at grid cell `(gx, gy)`.
     #[must_use]
     pub fn at(&self, gx: usize, gy: usize) -> f64 {
         self.x[gx] * self.y[gy]
+    }
+
+    /// Model-side correction at grid cell `(gx, gy)`.
+    #[must_use]
+    pub fn model_at(&self, gx: usize, gy: usize) -> f64 {
+        self.model_x[gx] * self.model_y[gy]
     }
 }
 

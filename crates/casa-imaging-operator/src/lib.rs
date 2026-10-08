@@ -38,6 +38,7 @@ mod dense;
 mod error;
 mod fft;
 mod geometry;
+mod mosaic;
 mod operator;
 mod polarization;
 mod resample;
@@ -58,6 +59,7 @@ pub use convolution::{
 pub use cpu::CpuBackend;
 pub use error::OperatorError;
 pub use geometry::{CellLocation, GridGeometry, GridPadding, ImageExtent};
+pub use mosaic::{AiryDish, MOSAIC_OVERSAMPLING, MosaicPb, MosaicWindow, pair_plane};
 pub use operator::{
     Basis, MeasurementOperator, ModelImages, ModelPlane, ModelPrescale, NormalImages, NormalPlane,
 };

@@ -226,16 +226,15 @@ impl GridGeometry {
         }
         let half = f64::from(oversampling) / 2.0;
         let fraction = |offset: u16| (f64::from(offset) - half) / f64::from(oversampling);
-        fraction(location.ox) * f64::from(gradient[0]) + fraction(location.oy) * f64::from(gradient[1])
+        fraction(location.ox) * f64::from(gradient[0])
+            + fraction(location.oy) * f64::from(gradient[1])
     }
 }
 
 /// CASA's padded grid length: `floor(factor · n − 0.5)`, at least `n`, even,
 /// and composed only of the primes 2, 3 and 5.
 fn casa_composite_padded_len(image_len: usize, factor: f64) -> usize {
-    next_larger_even_composite(
-        ((factor * image_len as f64 - 0.5).floor() as usize).max(image_len),
-    )
+    next_larger_even_composite(((factor * image_len as f64 - 0.5).floor() as usize).max(image_len))
 }
 
 /// casacore `CompositeNumber::nextLargerEven`: the smallest even number

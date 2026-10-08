@@ -12,7 +12,6 @@ use crate::convolution::DenseCell;
 /// at fine offset `off` reads pixel `centre + k · sampling + off` along
 /// each axis (`fmosaic.f` `xind`, `AWVisResampler` `iloc`).
 #[derive(Clone, Copy)]
-#[allow(dead_code, reason = "the mosaic and AW sets build their cells from planes")]
 pub(crate) struct OversampledPlane<'a> {
     pub(crate) values: &'a [Complex32],
     pub(crate) side: usize,
@@ -40,7 +39,6 @@ impl OversampledPlane<'_> {
 /// Fine-offset row `o` reads offset `off = o − sampling/2`, the
 /// `nint((loc − pos) · sampling)` of CASA's `locuvw`, so the tiles are a
 /// permutation of the oversampled plane, not a resampling.
-#[allow(dead_code, reason = "the mosaic and AW sets build their cells from planes")]
 pub(crate) fn dense_cell(planes: &[OversampledPlane<'_>], half_support: [u16; 2]) -> DenseCell {
     let first = planes.first().expect("a dense cell has a Mueller plane");
     let sampling = first.sampling;

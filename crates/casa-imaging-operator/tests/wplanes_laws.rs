@@ -53,7 +53,10 @@ fn w_planes(planes: u32) -> WPlanes {
     WPlanes::new(&geometry, &polarization, WPlaneCount::Fixed(planes)).expect("planes")
 }
 
-fn operator_with(cf: Box<dyn ConvolutionFunctionSet>, precision: GridPrecision) -> MeasurementOperator {
+fn operator_with(
+    cf: Box<dyn ConvolutionFunctionSet>,
+    precision: GridPrecision,
+) -> MeasurementOperator {
     let polarization = PolarizationRouting::compile(&XX_YY, &STOKES_I).expect("routing");
     MeasurementOperator::new(geometry(), Basis::Constant, polarization, cf, precision)
 }
@@ -215,14 +218,19 @@ fn the_zero_w_plane_is_the_spheroidal_kernel() {
     );
     // The FFT of the truncated taper differs from the analytic prolate
     // function at the 1e-3 level of the peak tap.
-    assert!(worst < 1.0e-2 * peak, "worst tap difference {worst} of peak {peak}");
+    assert!(
+        worst < 1.0e-2 * peak,
+        "worst tap difference {worst} of peak {peak}"
+    );
 }
 
 #[test]
 fn a_real_sky_predicts_conjugate_visibilities_at_hermitian_baselines() {
     let mut rng = Rng::new(61);
     let operator = operator_with(Box::new(w_planes(16)), GridPrecision::F64);
-    let images = vec![Array2::from_shape_fn((IMAGE, IMAGE), |_| rng.signed() as f32)];
+    let images = vec![Array2::from_shape_fn((IMAGE, IMAGE), |_| {
+        rng.signed() as f32
+    })];
     let model = ModelImages {
         first_plane: 0,
         planes: vec![ModelPlane { images }],
@@ -264,7 +272,10 @@ fn a_real_sky_predicts_conjugate_visibilities_at_hermitian_baselines() {
         out
     };
     let (direct, mirror) = (predict(&forward), predict(&mirrored));
-    let scale = direct.iter().map(|value| f64::from(value.norm())).fold(0.0, f64::max);
+    let scale = direct
+        .iter()
+        .map(|value| f64::from(value.norm()))
+        .fold(0.0, f64::max);
     for (a, b) in direct.iter().zip(&mirror) {
         let difference = (Complex64::new(f64::from(a.re), f64::from(a.im))
             - Complex64::new(f64::from(b.re), -f64::from(b.im)))
@@ -284,7 +295,9 @@ fn w_planes_are_exactly_adjoint_without_a_norm_division() {
     let placed = keyed_placements(&operator, 150, max_w, &mut rng);
     let (values, weights) = samples(&placed, 2, &mut rng);
     let block = buffer(&placed, &values, &weights, 2);
-    let images = vec![Array2::from_shape_fn((IMAGE, IMAGE), |_| rng.signed() as f32)];
+    let images = vec![Array2::from_shape_fn((IMAGE, IMAGE), |_| {
+        rng.signed() as f32
+    })];
     let model = ModelImages {
         first_plane: 0,
         planes: vec![ModelPlane { images }],
@@ -360,9 +373,18 @@ fn supports_grow_with_w_and_the_largest_sets_the_halo() {
     let supports = (0..planes.planes())
         .map(|plane| planes.half_support(plane))
         .collect::<Vec<_>>();
-    assert!(supports.windows(2).all(|pair| pair[0] <= pair[1]), "{supports:?}");
-    assert!(supports[0] >= 3 && supports[0] <= 4, "plane 0 is the spheroidal: {supports:?}");
-    assert!(*supports.last().expect("planes") > supports[0], "{supports:?}");
+    assert!(
+        supports.windows(2).all(|pair| pair[0] <= pair[1]),
+        "{supports:?}"
+    );
+    assert!(
+        supports[0] >= 3 && supports[0] <= 4,
+        "plane 0 is the spheroidal: {supports:?}"
+    );
+    assert!(
+        *supports.last().expect("planes") > supports[0],
+        "{supports:?}"
+    );
     assert_eq!(
         planes.max_half_support(),
         [*supports.last().expect("planes"); 2]
