@@ -122,8 +122,10 @@ buffer are charged inside one
 measurement policy explicitly; there is no default that can silently discard
 completed I/O or mutation evidence.
 
-Native EVLA paired A/W cells use that same private store and downstream
-prepared-cell decoder/operator. `casa-imaging-model` owns the immutable,
+Native EVLA paired A/W cells use that same private store. From IF-2 until IF-3
+(#652) no imaging run consumes them: AW projection is typed unavailable, and
+the preparation below is kept, unused, for the convolution-function set IF-3
+installs in the major-cycle pass. `casa-imaging-model` owns the immutable,
 content-identified dish model and complete frequency/W/PA/Mueller/term request.
 `casa-imaging-reconstruction` owns aperture evaluation, shared float FFT,
 support selection and sampled-area normalization without filesystem or runtime
@@ -715,12 +717,10 @@ visibilities holds every plane, since a native sample's prediction can use any
 output channel.
 
 Imager task protocol v10 carries the local execution controls (`parallel` and
-the shared imaging memory target). Diagnostic progress events expose
-planned and measured memory, source bytes and read bandwidth, read/prepare
-overlap, producer/consumer blocking, live-block high water, worker/queue state,
-stage timings, and backend selection or fallback reasons. The task protocol is
-v10, the newline-delimited progress event schema is v1, and the embedded
-observability snapshot schema is v2. `parallel=false` runs the pass with one
+the shared imaging memory target). It defines a newline-delimited progress
+event schema (v1) with an embedded observability snapshot (v2), but the
+installed imager emits no progress events; the cycle loop logs worker counts
+and stage timings through `tracing`. `parallel=false` runs the pass with one
 worker. All production FFTs use FFTW; there is no FFT backend selector or
 fallback.
 
