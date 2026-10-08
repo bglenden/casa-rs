@@ -18,10 +18,18 @@ pub(crate) struct PlaneFft<T: FftScalar> {
 }
 
 impl<T: FftScalar> PlaneFft<T> {
-    /// Plan for a `[nx, ny]` grid with even extents.
-    pub(crate) fn new(shape: [usize; 2]) -> Result<Self, OperatorError> {
+    /// Plan for a `[nx, ny]` grid with even extents. `measured` selects
+    /// FFTW's measured planning, which costs seconds on a large grid and
+    /// pays off only when many planes share the plan; otherwise FFTW's
+    /// estimate is used.
+    pub(crate) fn new(shape: [usize; 2], measured: bool) -> Result<Self, OperatorError> {
+        let fft = Fft2::with_threads([shape[1], shape[0]], 1)?;
         Ok(Self {
-            fft: Fft2::with_threads([shape[1], shape[0]], 1)?,
+            fft: if measured {
+                fft
+            } else {
+                fft.with_estimated_plan()
+            },
             shape,
         })
     }
@@ -76,7 +84,7 @@ mod tests {
     #[test]
     fn a_centre_impulse_transforms_to_a_flat_plane() {
         let shape = [8, 6];
-        let mut fft = PlaneFft::<f64>::new(shape).expect("plan");
+        let mut fft = PlaneFft::<f64>::new(shape, true).expect("plan");
         let mut plane = vec![Complex64::default(); 48];
         plane[3 * 8 + 4] = Complex64::new(2.0, 0.0);
         fft.transform(&mut plane, true).expect("transform");

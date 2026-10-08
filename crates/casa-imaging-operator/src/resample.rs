@@ -16,9 +16,7 @@ use crate::convolution::RowContext;
 use crate::error::OperatorError;
 use crate::operator::{Basis, MeasurementOperator};
 use crate::sample::{Placement, SampleBuffer};
-use crate::weighting::WeightingGeneration;
-
-const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
+use crate::weighting::{DensityCellRule, DensityUv, SPEED_OF_LIGHT_M_PER_S, WeightingGeneration};
 
 /// One native MeasurementSet row: every selected channel and correlation.
 ///
@@ -404,7 +402,11 @@ impl SpectralResampler {
                 cf: key,
                 gradient: [0.0, 0.0],
             };
-            let weight = weighting.imaging_weight(&placement, input_weight);
+            let weight = weighting.imaging_weight(
+                &placement,
+                DensityUv::casa(row.uvw_m, frequency_hz),
+                input_weight,
+            );
             if weight <= 0.0 {
                 return;
             }
@@ -421,11 +423,15 @@ impl SpectralResampler {
     }
 
     /// Place one row's density-pass samples: one polarization carrying
-    /// CASA's unpolarized input weight, zero values, no support test.
+    /// CASA's unpolarized input weight, zero values, no support test. Under
+    /// the standard cell rule `u` and `v` are the [`DensityUv`] coordinates
+    /// CASA accumulates with; under the cube rule they are the double
+    /// coordinates CASA grids its weight density with.
     pub fn place_density(
         &self,
         operator: &MeasurementOperator,
         row: &NativeRow<'_>,
+        rule: DensityCellRule,
         out: &mut SampleBuffer,
     ) -> Result<(), OperatorError> {
         let npol = operator.polarization().correlations().len();
@@ -442,9 +448,16 @@ impl SpectralResampler {
             };
             let scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
             let w = row.uvw_m[2] * scale;
+            let (u, v) = match rule {
+                DensityCellRule::Standard => {
+                    let uv = DensityUv::casa(row.uvw_m, frequency_hz);
+                    (f64::from(uv.u), f64::from(uv.v))
+                }
+                DensityCellRule::Cube => (row.uvw_m[0] * scale, row.uvw_m[1] * scale),
+            };
             let placement = Placement {
-                u: row.uvw_m[0] * scale,
-                v: row.uvw_m[1] * scale,
+                u,
+                v,
                 w,
                 phase: 0.0,
                 plane,

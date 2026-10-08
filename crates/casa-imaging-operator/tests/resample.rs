@@ -7,8 +7,10 @@ mod common;
 
 use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 use casa_imaging_operator::{
-    Basis, GridPrecision, NativeRow, OperatorError, RowContext, SampleBuffer, SpectralAxis,
-    SpectralKernel, SpectralResampler, WeightingGeneration,
+    Basis, DensityCellRule, DensityGridShape, DensityUv, GridGeometry, GridPadding, GridPrecision,
+    ImageExtent, MeasurementOperator, NativeRow, OperatorError, PolarizationRouting, RowContext,
+    SampleBuffer, SpectralAxis, SpectralKernel, SpectralResampler, Spheroidal, WeightingGeneration,
+    build_density_grid,
 };
 use common::operator;
 use num_complex::Complex32;
@@ -63,7 +65,7 @@ fn planes_of(
     let mut out = SampleBuffer::new(if density { 1 } else { 2 });
     if density {
         resampler
-            .place_density(&operator, &row, &mut out)
+            .place_density(&operator, &row, DensityCellRule::Cube, &mut out)
             .expect("density");
     } else {
         resampler
@@ -339,13 +341,84 @@ fn density_pass_carries_the_unpolarized_weight_without_a_support_test() {
     };
     let mut out = SampleBuffer::new(1);
     resampler
-        .place_density(&operator, &row, &mut out)
+        .place_density(&operator, &row, DensityCellRule::Standard, &mut out)
         .expect("density");
     assert_eq!(out.len(), 1);
     assert_eq!(out.block().weights_of(0), &[4.0]);
     let mut wrong = SampleBuffer::new(2);
     assert!(matches!(
-        resampler.place_density(&operator, &row, &mut wrong),
+        resampler.place_density(&operator, &row, DensityCellRule::Standard, &mut wrong),
         Err(OperatorError::NativeRow { .. })
     ));
+}
+
+#[test]
+fn standard_density_cells_use_casa_single_precision_coordinates() {
+    // CASA forms `Float f = ν/c`, then `Float u = uvw·f`, before it picks a
+    // density cell (`VisImagingWeight`). On 4096 cells of 0.05″ this
+    // baseline then lands in cell 1760; single-precision rounding of the
+    // double u would put it in cell 1761.
+    let uvw_m = [-13_719.554, 0.0, 0.0];
+    let frequency_hz = 6_316_229_891.0;
+    let casa = DensityUv::casa(uvw_m, frequency_hz);
+    assert_eq!(casa.u, -289_052.843_75);
+    assert_eq!((uvw_m[0] * frequency_hz / C) as f32, -289_052.812_5);
+
+    let increment = 0.05_f64.to_radians() / 3600.0;
+    let geometry = GridGeometry::new(
+        ImageExtent {
+            shape: [64, 64],
+            increment_rad: [increment, increment],
+            reference_pixel: [32, 32],
+        },
+        GridPadding::CasaComposite,
+    )
+    .expect("geometry");
+    let polarization = PolarizationRouting::compile(&XX_YY, &STOKES_I).expect("routing");
+    let cf = Spheroidal::new(&geometry, &polarization);
+    let operator = MeasurementOperator::new(
+        geometry,
+        Basis::Constant,
+        polarization,
+        Box::new(cf),
+        GridPrecision::F64,
+    );
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("resampler");
+    let frequencies = [frequency_hz];
+    let values = [Complex32::new(1.0, 0.0); 2];
+    let weights = [1.0; 2];
+    let flags = [false; 2];
+    let row = NativeRow {
+        uvw_m,
+        phase_shift_m: 0.0,
+        frequencies_hz: &frequencies,
+        values: &values,
+        weights: &weights,
+        flags: &flags,
+        row_flag: false,
+        context: context(),
+    };
+    let shape = DensityGridShape {
+        width: 4096,
+        height: 4096,
+        planes: 1,
+        increment_rad: [increment, increment],
+        rule: DensityCellRule::Standard,
+    };
+    let mut density = SampleBuffer::new(1);
+    resampler
+        .place_density(&operator, &row, DensityCellRule::Standard, &mut density)
+        .expect("density");
+    let grid = build_density_grid(std::iter::once(density.block()), shape);
+    assert_eq!(grid.plane(0)[2048 * 4096 + 1760], 1.0);
+    assert_eq!(grid.plane(0)[2048 * 4096 + 1761], 0.0);
+
+    // The imaging weight looks the sample up in the cell it was added to.
+    let uniform = WeightingGeneration::density(grid, None, None, None).expect("uniform");
+    let mut placed = SampleBuffer::new(2);
+    resampler
+        .place(&operator, &uniform, &row, &mut placed)
+        .expect("place");
+    assert_eq!(placed.len(), 1);
+    assert_eq!(placed.block().weights_of(0), &[1.0, 1.0]);
 }

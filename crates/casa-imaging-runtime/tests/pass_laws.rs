@@ -471,7 +471,7 @@ fn streamed_density_grid_equals_the_one_shot_build() {
             },
         };
         resampler
-            .place_density(&operator, &header, &mut buffer)
+            .place_density(&operator, &header, shape.rule, &mut buffer)
             .expect("density");
     }
     let expected = build_density_grid(std::iter::once(buffer.block()), shape);

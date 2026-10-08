@@ -207,7 +207,7 @@ pub fn run_density_pass(
         team.for_each_mut(&mut chunks[..count], |_, (range, buffer)| {
             buffer.clear();
             for row in range.clone() {
-                resampler.place_density(operator, &block.row(row), buffer)?;
+                resampler.place_density(operator, &block.row(row), shape.rule, buffer)?;
             }
             Ok::<_, PassError>(())
         })?;
