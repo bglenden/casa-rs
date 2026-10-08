@@ -11,9 +11,9 @@ use casa_imaging_model::ModelSupport;
 pub use casa_imaging_model::model_support_identity;
 
 mod aw_generation;
-// IF-2 removed the slab operator that drove the AW, mosaic and primary-beam
-// gridding; IF-3 (#652) deletes those loops and builds `AwCatalog` and
-// `MosaicPb` on the CASA-pinned kernel and beam science kept here.
+// No operator drives the AW, mosaic and primary-beam gridding loops; they are
+// kept for the CASA-pinned kernel and beam science on which IF-3 (#652)
+// builds `AwCatalog` and `MosaicPb`.
 #[expect(dead_code, reason = "IF-3 (#652) replaces the AW gridding loops")]
 mod aw_projection;
 mod block_normal;
@@ -38,7 +38,6 @@ mod mosaic;
 mod primary_beam;
 mod psf_beam;
 mod reconstruction_cycle;
-mod science_trace;
 mod spectral_operator;
 mod weighting_identity;
 
@@ -72,12 +71,12 @@ pub mod runtime_adapter {
         ReconstructionPlaneInput, ReconstructionPlanePartial, ReconstructionPlaneStatistics,
         ReconstructionPlaneWork, ReconstructionPlaneWorkspace,
     };
+    pub use crate::spectral_operator::CompleteDataOwnerCompletion;
     pub use crate::spectral_operator::PreparedFft;
     pub use crate::spectral_operator::normal_storage::{
         CompleteDataNormalState, CompleteDataNormalWindow, NormalArrayStorage,
         NormalStorageFactory, NormalStoragePlan,
     };
-    pub use crate::spectral_operator::{CompleteDataOwnerCompletion, SpectralSlabPlan};
 }
 
 pub use continuum_transform::{
@@ -130,9 +129,6 @@ pub use reconstruction_cycle::{
     ChannelComponentDivergence, ChannelCycleEvidence, ChannelCyclePolicy, ReconstructionCycle,
     ReconstructionCycleError, ReconstructionCycleEvidence, ReconstructionCycleEvidenceId,
     ReconstructionCycleResult,
-};
-pub(crate) use science_trace::{
-    ScienceTraceDigest, imaging_science_trace_enabled, trace_real_values,
 };
 pub use spectral_operator::normal_storage::FinalNormalPlaneReader;
 pub use weighting_identity::{WeightingGenerationId, WeightingReplayId};

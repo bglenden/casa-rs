@@ -76,8 +76,6 @@ pub struct SpectralSlabPlan {
     total_channels: usize,
     core_start: usize,
     core_end: usize,
-    resident_start: usize,
-    resident_end: usize,
 }
 
 impl SpectralSlabPlan {
@@ -93,22 +91,10 @@ impl SpectralSlabPlan {
         self.core_start..self.core_end
     }
 
-    /// Return the half-open model-channel range resident for paired prediction.
-    #[must_use]
-    pub const fn resident_range(self) -> std::ops::Range<usize> {
-        self.resident_start..self.resident_end
-    }
-
     /// Return the number of output channels owned by this slab.
     #[must_use]
     pub const fn core_depth(self) -> usize {
         self.core_end - self.core_start
-    }
-
-    /// Return the number of model planes resident including sampler halo.
-    #[must_use]
-    pub const fn resident_depth(self) -> usize {
-        self.resident_end - self.resident_start
     }
 }
 
@@ -127,7 +113,6 @@ pub(crate) fn fft_resident_complex_values_for_shape(
 #[derive(Debug)]
 pub struct CubeRealFields {
     pub(crate) dirty: Box<[f32]>,
-    pub(crate) invariant_dirty: Option<Box<[f32]>>,
     pub(crate) psf: Box<[f32]>,
 }
 
@@ -135,11 +120,6 @@ impl CubeRealFields {
     /// Model-dependent residual or initial dirty plane values.
     pub fn dirty(&self) -> &[f32] {
         &self.dirty
-    }
-
-    /// Initial dirty values retained across model-dependent refreshes.
-    pub fn invariant_dirty(&self) -> Option<&[f32]> {
-        self.invariant_dirty.as_deref()
     }
 
     /// Unnormalized point-spread-function values.
@@ -157,16 +137,12 @@ pub struct SpectralOperatorPrimitives {
     polarizations: usize,
     dirty: Box<[Complex64]>,
     pub(crate) cube_real: Option<CubeRealFields>,
-    invariant_dirty: Option<Box<[Complex64]>>,
     psf: Box<[Complex64]>,
     pub(crate) clark_workspace: Mutex<Option<crate::minor_cycle::ClarkRefreshWorkspace>>,
     sensitivity: Box<[f64]>,
-    primary_beam_weighted_sum: Option<Box<[f64]>>,
     sum_weights: Box<[f64]>,
     published_sum_weights: Box<[f64]>,
     validity: Box<[SpectralChannelValidity]>,
-    major_cycle_residual: Option<Box<[Complex64]>>,
-    major_cycle_residual_promoted: bool,
     residual_model: Option<ModelGenerationId>,
 }
 
@@ -255,13 +231,6 @@ impl SpectralOperatorPrimitives {
         }
     }
 
-    /// Return `sum(W B)` in polarization-major image-plane order when a
-    /// compiled scalar primary-beam response participated in the operator.
-    #[must_use]
-    pub fn primary_beam_weighted_sum(&self) -> Option<&[f64]> {
-        self.primary_beam_weighted_sum.as_deref()
-    }
-
     /// Return normal-moment-major, polarization-minor exact sum weights.
     ///
     /// The length is `normal_moment_count() * polarization_count()`.
@@ -304,23 +273,6 @@ impl SpectralOperatorPrimitives {
         self.sum_weights[0]
     }
 
-    pub(crate) fn promote_major_cycle_residual(
-        mut self,
-        expected_model: ModelGenerationId,
-    ) -> Result<Self, SpectralOperatorError> {
-        if self.residual_model != Some(expected_model) {
-            return Err(SpectralOperatorError::ModelMismatch);
-        }
-        if !self.major_cycle_residual_promoted {
-            self.dirty = self
-                .major_cycle_residual
-                .take()
-                .ok_or(SpectralOperatorError::MissingMajorCycleResidual)?;
-            self.major_cycle_residual_promoted = true;
-        }
-        Ok(self)
-    }
-
     /// Explicitly fingerprint unnormalized values for tests and diagnostics.
     /// Ordinary Major-Cycle completion and handoff do not invoke this pass.
     #[must_use]
@@ -330,12 +282,9 @@ impl SpectralOperatorPrimitives {
             .polynomial()
             .filter(|plan| plan.coefficient_term_count() > 1);
         let published_sum_weights_differ = self.published_sum_weights != self.sum_weights;
-        let primary_beam = self.primary_beam_weighted_sum.is_some();
         let mut encoder = crate::Encoder::new(
             NORMAL_STATE_CONTENT_DOMAIN,
-            if primary_beam {
-                5
-            } else if published_sum_weights_differ {
+            if published_sum_weights_differ {
                 4
             } else if taylor.is_some() {
                 2
@@ -364,11 +313,6 @@ impl SpectralOperatorPrimitives {
         for value in self.sensitivity().iter() {
             encoder.u64(canonical_f64_bits(value));
         }
-        if let Some(values) = &self.primary_beam_weighted_sum {
-            for value in values {
-                encoder.u64(canonical_f64_bits(*value));
-            }
-        }
         for value in &self.sum_weights {
             encoder.u64(canonical_f64_bits(*value));
         }
@@ -380,7 +324,6 @@ impl SpectralOperatorPrimitives {
         for validity in &self.validity {
             encoder.u8(match validity {
                 SpectralChannelValidity::Valid => 0,
-                SpectralChannelValidity::Blank => 1,
                 SpectralChannelValidity::Unmapped => 2,
             });
         }
@@ -393,9 +336,8 @@ impl SpectralOperatorPrimitives {
 pub enum SpectralChannelValidity {
     /// At least one mapped sample contributed positive finite weight.
     Valid,
-    /// Samples mapped to the channel but all carried zero effective weight.
-    Blank,
-    /// No selected sample mapped to the output channel.
+    /// No sample contributed positive weight to the output channel, whether
+    /// none mapped to it or all that did carried zero effective weight.
     Unmapped,
 }
 
@@ -532,25 +474,12 @@ impl SpectralPrimitiveDomains {
                     + p.cube_real.as_ref().map_or(0, |real| {
                         std::mem::size_of_val(real.dirty.as_ref())
                             + std::mem::size_of_val(real.psf.as_ref())
-                            + real
-                                .invariant_dirty
-                                .as_deref()
-                                .map_or(0, std::mem::size_of_val)
                     })
-                    + p.invariant_dirty
-                        .as_deref()
-                        .map_or(0, std::mem::size_of_val)
                     + std::mem::size_of_val(p.psf.as_ref())
                     + std::mem::size_of_val(p.sensitivity.as_ref())
-                    + p.primary_beam_weighted_sum
-                        .as_deref()
-                        .map_or(0, std::mem::size_of_val)
                     + std::mem::size_of_val(p.sum_weights())
                     + std::mem::size_of_val(p.published_sum_weights())
                     + std::mem::size_of_val(p.channel_validity())
-                    + p.major_cycle_residual
-                        .as_deref()
-                        .map_or(0, std::mem::size_of_val)
                     + match &domain.domain_role {
                         ImageDomainRole::Main => 0,
                         ImageDomainRole::Outlier(name) => name.capacity(),
@@ -589,30 +518,6 @@ impl SpectralPrimitiveDomains {
         self.domains.get(ordinal)
     }
 
-    pub(crate) fn into_iter(self) -> impl Iterator<Item = SpectralDomainPrimitives> {
-        self.domains.into_vec().into_iter()
-    }
-
-    pub(crate) fn promote_major_cycle_residual(
-        self,
-        expected_model: ModelGenerationId,
-    ) -> Result<Self, SpectralOperatorError> {
-        let domains = self
-            .into_iter()
-            .map(|domain| {
-                domain
-                    .primitives
-                    .promote_major_cycle_residual(expected_model)
-                    .map(|primitives| SpectralDomainPrimitives {
-                        primitives,
-                        ..domain
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?
-            .into_boxed_slice();
-        Self::new(domains)
-    }
-
     pub(crate) fn normal_state_content_identity(&self) -> LogicalIdentity {
         let mut encoder = crate::Encoder::new(NORMAL_STATE_CONTENT_DOMAIN, 4);
         encoder.usize(self.domains.len());
@@ -643,7 +548,6 @@ impl std::ops::Deref for SpectralPrimitiveDomains {
 pub struct PreparedFft<T: FftScalar = f64> {
     fft: Fft2<T>,
     column_major_fft: Option<Fft2<T>>,
-    estimated: bool,
     threads: usize,
 }
 
@@ -661,7 +565,6 @@ impl<T: FftScalar> PreparedFft<T> {
             fft: Fft2::with_threads(shape, threads)
                 .map_err(|_| SpectralOperatorError::ResidencyOverflow)?,
             column_major_fft: None,
-            estimated: false,
             threads,
         })
     }
@@ -684,16 +587,11 @@ impl<T: FftScalar> PreparedFft<T> {
         let shape = [data.shape()[0], data.shape()[1]];
         assert_eq!(shape, self.fft.shape(), "FFTW plane shape mismatch");
         let column_major = data.strides() == [1, shape[0] as isize];
-        let estimated = self.estimated;
         let threads = self.threads;
         let fft = if column_major && shape[0] != shape[1] {
             self.column_major_fft.get_or_insert_with(|| {
-                let mut fft = Fft2::with_threads([shape[1], shape[0]], threads)
-                    .expect("valid column-major FFT shape and threads");
-                if estimated {
-                    fft = fft.with_estimated_plan();
-                }
-                fft
+                Fft2::with_threads([shape[1], shape[0]], threads)
+                    .expect("valid column-major FFT shape and threads")
             })
         } else {
             &mut self.fft
@@ -788,14 +686,6 @@ pub enum SpectralOperatorError {
     /// An authoritative model window could not be loaded.
     #[error(transparent)]
     ModelAccess(#[from] crate::ModelLifecycleError),
-    /// An opt-in diagnostic requested an invalid or unbounded source-group capture.
-    #[error(
-        "invalid CASA_RS_TRACE_AW_GROUP: expected bounded start:end:ddid:spw:channels:4:accepted_hands"
-    )]
-    DiagnosticConfiguration,
-    /// The prepared paired AW operator rejected its cache or row-local input.
-    #[error("AW projection failed: {0}")]
-    AwProjection(#[from] crate::AwOperatorError),
     /// Runtime supplied science or weighting state for another compiled problem.
     #[error("spectral operator science and weighting state do not match the compiled problem")]
     ProblemMismatch,
@@ -823,15 +713,9 @@ pub enum SpectralOperatorError {
     /// A pass's images do not cover the state's channels exactly once.
     #[error("spectral operator pass coverage does not match the normal state")]
     IncompleteCoverage,
-    /// A prediction model does not match the planned image shape.
-    #[error("spectral operator model does not match the planned image shape")]
-    ModelShape,
     /// A different model was named after residual replay was prepared.
     #[error("spectral operator residual belongs to another final model generation")]
     ModelMismatch,
-    /// T20 attempted to finalize output that never accumulated an exact residual.
-    #[error("spectral operator output lacks an exhaustive paired-operator residual")]
-    MissingMajorCycleResidual,
     /// A later major pass did not carry the exact prior invariant normal state.
     #[error("spectral operator reusable normal state does not match the residual refresh")]
     ReusableNormalStateMismatch,

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Channel-local (T38/T55) reconstruction cycles over cube normal states:
+//! Channel-local reconstruction cycles over cube normal states:
 //! output-channel order, per-channel iteration limits, zero-weight planes,
 //! prepared-plane coverage, and the casacore Högbom oracle.
 

@@ -54,7 +54,7 @@ impl WeightingReplayId {
     ///
     /// When the process has minted `u64::MAX` traversals.
     #[must_use]
-    pub fn next() -> Self {
+    pub(crate) fn next() -> Self {
         Self(next_owner(&NEXT_REPLAY_OWNER))
     }
 
@@ -69,7 +69,9 @@ impl fmt::Display for WeightingReplayId {
     }
 }
 
+/// `next_owner` stops before `u64::MAX`, so fixture identities never alias a
+/// live owner.
 #[cfg(test)]
 pub(crate) fn native_normal_fixture_weighting_ids() -> (WeightingGenerationId, WeightingReplayId) {
-    (WeightingGenerationId(1), WeightingReplayId(1))
+    (WeightingGenerationId(u64::MAX), WeightingReplayId(u64::MAX))
 }

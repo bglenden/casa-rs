@@ -79,7 +79,7 @@ impl ChannelCycleEvidence {
 
     /// Return minor-cycle evidence for a valid channel.
     ///
-    /// Blank and unmapped channels are represented explicitly and never
+    /// Unmapped channels are represented explicitly and never
     /// manufacture a solver stop or model update.
     #[must_use]
     pub const fn minor_cycle(&self) -> Option<&MinorCycleEvidence> {
@@ -787,7 +787,7 @@ impl<'a> ReconstructionPlaneWork<'a> {
         }
         workspace
     }
-    /// Number of canonical plane slots, including explicit blank/unmapped slots.
+    /// Number of canonical plane slots, including explicit unmapped slots.
     #[must_use]
     pub const fn plane_count(&self) -> usize {
         self.plane_count
@@ -1201,7 +1201,6 @@ fn reconstruction_cycle_evidence_id(
         encoder.usize(channel.polarization);
         encoder.u8(match channel.validity {
             SpectralChannelValidity::Valid => 0,
-            SpectralChannelValidity::Blank => 1,
             SpectralChannelValidity::Unmapped => 2,
         });
         if let Some(evidence) = &channel.minor_cycle {

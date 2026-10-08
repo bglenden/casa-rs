@@ -705,8 +705,11 @@ pub(super) fn string(value: &str) -> Value {
 
 // `aw_projection` and `write_aw_sized_test_cell` serve only the AW-cache unit
 // tests, which `include!` this file from `src/aw_cache/ownership_transfer_probe.rs`;
-// the application tests no longer request AW projection (IF-3, #652).
-#[allow(dead_code)]
+// the application tests request no AW projection until IF-3 (#652).
+#[allow(
+    dead_code,
+    reason = "used by the AW-cache unit tests that include this file, not by every includer"
+)]
 pub(super) fn aw_projection(casa_cache: PathBuf, use_pointing: bool) -> ContinuumAwProjection {
     ContinuumAwProjection {
         source: casa_imaging_application::ContinuumAwCfSource::CasaImport(casa_cache),
@@ -726,7 +729,11 @@ pub(super) fn aw_projection(casa_cache: PathBuf, use_pointing: bool) -> Continuu
     }
 }
 
-#[allow(dead_code, clippy::too_many_arguments)]
+#[allow(
+    dead_code,
+    clippy::too_many_arguments,
+    reason = "used by the AW-cache unit tests that include this file, not by every includer"
+)]
 pub(super) fn write_aw_sized_test_cell(
     root: &Path,
     name: &str,

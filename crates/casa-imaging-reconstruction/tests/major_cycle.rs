@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! T20 Major-Cycle reconciliation join over complete-data normal states and
-//! the T28 model lifecycle, driven entirely through owner seams. Normal
-//! states come from synthetic passes over a known sky
-//! (`support/synthetic_pass.rs`), assembled through `PassNormalState` exactly
-//! as the runtime's major-cycle pass assembles them.
+//! Major-Cycle reconciliation of complete-data normal states with the model
+//! lifecycle, driven entirely through owner seams. Normal states come from
+//! synthetic passes over a known sky (`support/synthetic_pass.rs`), assembled
+//! through `PassNormalState` exactly as the runtime's major-cycle pass
+//! assembles them.
 //!
 //! This root holds the shared problems and sky; the tests live in
 //! `major_cycle/channel_cycles.rs` (channel-local reconstruction cycles) and
@@ -36,10 +36,10 @@ use casa_imaging_model::{
     WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
-    ChannelCyclePolicy, ExecutableModelProblem, FinalModelCompletionId, FinalModelContinuation,
-    FinalNormalState, MajorCycleError, MajorCycleOwner, MajorCyclePreparation, MinorCycleProgram,
-    ModelDelta, ModelLifecycle, ModelLifecycleError, PassNormalState, ReconstructionCycle,
-    ReconstructionMask, SpectralChannelValidity, SpectralOperatorError, WeightingGenerationId,
+    ChannelCyclePolicy, ExecutableModelProblem, FinalModelContinuation, FinalNormalState,
+    MajorCycleError, MajorCycleOwner, MajorCyclePreparation, MinorCycleProgram, ModelDelta,
+    ModelLifecycle, ModelLifecycleError, PassNormalState, ReconstructionCycle, ReconstructionMask,
+    SpectralChannelValidity, SpectralOperatorError, WeightingGenerationId,
     runtime_adapter::NormalStoragePlan,
 };
 

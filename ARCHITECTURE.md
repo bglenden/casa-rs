@@ -694,14 +694,16 @@ weights, an initial pass that forms the dirty image and PSF, the minor cycle,
 residual passes, and a final pass that writes `MODEL_DATA` or `CORRECTED_DATA`
 when requested. Standard MFS, MT-MFS, channel-local cubes, dirty-only runs and
 outlier domains share this path; there is no per-mode driver. A pass reads
-native row blocks from the bounded source through a two-slot stream (one block
-filled by a producer thread while the caller consumes the other), places each
-row with the operator's spectral resampler and imaging weights, and accumulates
-`V − A·m` when a model is present and `V` otherwise. Linear cubes instead form
-CASA's residual at native channels (`SIMapperCollection::grid`): the model is
-predicted at each native channel and the difference is interpolated onto the
-image grid. Cancellation and failure stop the producer at the next block
-boundary.
+native row blocks, each row projected on every image domain, from the bounded
+source through a two-slot stream (one block filled by a producer thread while
+the caller consumes the other), places each row on every domain with that
+domain's spectral resampler and the imaging weights, and accumulates `V − A·m`
+when a model is present and `V` otherwise. With several domains, or a linear
+cube, the pass forms CASA's residual at native channels
+(`SIMapperCollection::degrid` then `grid`): every domain's model is predicted
+at each native channel, the predictions are summed, and the difference is
+gridded into every domain. Cancellation and failure stop the producer at the
+next block boundary.
 
 Accumulation is split among the workers of one `WorkerTeam`.
 `Partition::Planes` gives each worker a disjoint range of channel-local planes,
@@ -710,11 +712,15 @@ so nothing is merged and the result is bitwise independent of the worker count;
 kernel halo and adds the tiles in region order, so a run is deterministic for
 a given worker count and agrees with one worker to rounding. Per-plane FFTs run single-threaded
 on each worker. `Residency::plan` holds every plane when the run's memory
-budget allows; otherwise the pass runs consecutive waves of planes, each a
-traversal restricted to the native channels feeding that wave, with model and
-normal state paged through one disk-backed cube state. A pass that writes
-visibilities holds every plane, since a native sample's prediction can use any
-output channel.
+budget allows; otherwise the pass runs consecutive waves of planes, one
+traversal each, with model and normal state paged through one disk-backed cube
+state that keeps every domain at its own size. A wave's model includes a halo
+of planes sized from the native channel spacing, since a native channel's
+prediction interpolates output channels around it. A wave reads only the
+native channels that feed it unless a prediction or a continuum fit needs the
+whole row. The residency is planned once per major cycle for the pass and its
+paged normal state; a run that writes visibilities must hold every plane in
+its final pass and is refused at the start otherwise.
 
 Imager task protocol v10 carries the local execution controls (`parallel` and
 the shared imaging memory target). It defines a newline-delimited progress

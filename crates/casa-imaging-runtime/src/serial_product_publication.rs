@@ -581,22 +581,19 @@ fn publication_fft_stack_bytes(
     // Single- and double-precision FFTW pools can both survive imaging into
     // publication. Bound both by the admitted CPU budget, not by window lanes.
     native_fft_stack_bytes(workers, thread_stack_bytes)
-        .map_err(SerialProductPublicationPlanError::NativeFftStacks)?
-        .checked_mul(2)
+        .and_then(|bytes| bytes.checked_mul(2))
         .ok_or(SerialProductPublicationPlanError::Overflow)
 }
 
 /// FFTW's pthread pool can survive between phases, so its default stack
 /// bound is reserved as process-lifetime external-library overhead.
 /// `thread_stack_bytes` is the host's default native thread stack from
-/// `ResourceTopology::native_thread_stack_bytes`.
-fn native_fft_stack_bytes(threads: usize, thread_stack_bytes: u64) -> std::io::Result<u64> {
+/// `ResourceTopology::native_thread_stack_bytes`; `None` on overflow.
+fn native_fft_stack_bytes(threads: usize, thread_stack_bytes: u64) -> Option<u64> {
     if threads <= 1 {
-        return Ok(0);
+        return Some(0);
     }
-    ((threads - 1) as u64)
-        .checked_mul(thread_stack_bytes)
-        .ok_or_else(|| std::io::Error::other("native FFT stack overflow"))
+    ((threads - 1) as u64).checked_mul(thread_stack_bytes)
 }
 
 #[cfg(test)]
@@ -627,8 +624,6 @@ pub enum SerialProductPublicationPlanError {
     Physical(PhysicalWorkBindingError),
     /// Invalid output layout.
     Layout(PublicationLayoutError),
-    /// The platform's native FFTW worker-stack bound could not be queried.
-    NativeFftStacks(std::io::Error),
 }
 impl fmt::Display for SerialProductPublicationPlanError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

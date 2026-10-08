@@ -333,27 +333,20 @@ impl PassNormalState {
                     total_channels: self.total_channels,
                     core_start: channels.start,
                     core_end: channels.end,
-                    resident_start: channels.start,
-                    resident_end: channels.end,
                 },
                 basis: SpectralBasisPlan::ChannelLocal,
                 polarizations,
                 dirty: Box::new([]),
                 cube_real: Some(CubeRealFields {
                     dirty: residual.into_boxed_slice(),
-                    invariant_dirty: None,
                     psf: psf.into_boxed_slice(),
                 }),
-                invariant_dirty: None,
                 psf: Box::new([]),
                 clark_workspace: Mutex::new(None),
                 sensitivity: Box::new([]),
-                primary_beam_weighted_sum: None,
                 published_sum_weights: sum_weights.clone().into_boxed_slice(),
                 sum_weights: sum_weights.into_boxed_slice(),
                 validity,
-                major_cycle_residual: None,
-                major_cycle_residual_promoted: true,
                 residual_model: Some(self.model),
             },
         ))
@@ -376,8 +369,6 @@ impl PassNormalState {
             total_channels: self.total_channels,
             core_start: 0,
             core_end: self.total_channels,
-            resident_start: 0,
-            resident_end: self.total_channels,
         };
         let cells = checked_cells(shape)?;
         let terms = self.basis.coefficient_terms(slab);
@@ -408,16 +399,12 @@ impl PassNormalState {
                 polarizations,
                 dirty: widen(&residual),
                 cube_real: None,
-                invariant_dirty: None,
                 psf: widen(&psf),
                 clark_workspace: Mutex::new(None),
                 sensitivity,
-                primary_beam_weighted_sum: None,
                 published_sum_weights: sum_weights.clone().into_boxed_slice(),
                 sum_weights: sum_weights.into_boxed_slice(),
                 validity,
-                major_cycle_residual: None,
-                major_cycle_residual_promoted: true,
                 residual_model: Some(self.model),
             },
         ))
@@ -434,8 +421,8 @@ fn all_finite(images: &PassImages) -> bool {
         && images.sum_weights.iter().all(|weight| weight.is_finite())
 }
 
-/// CASA marks a plane whose accumulated weight is zero as blank; nothing
-/// downstream distinguishes a blank plane from one no sample reached.
+/// A plane whose accumulated weight is zero is unmapped whether or not
+/// samples reached it: nothing downstream distinguishes the two cases.
 fn validity(sum_weight: f64) -> SpectralChannelValidity {
     if sum_weight > 0.0 {
         SpectralChannelValidity::Valid
@@ -463,14 +450,14 @@ fn basis_plan(problem: &CompiledProblem) -> Result<SpectralBasisPlan, SpectralOp
         } => Ok(*reference_frequency_hz),
         SpectralWcs::Tabular { .. } => Err(SpectralOperatorError::UnsupportedProblem),
     };
-    let invalid = |_| SpectralOperatorError::UnsupportedProblem;
     Ok(match problem.reconstruction().basis() {
         ReconstructionBasis::ChannelLocal { .. } => SpectralBasisPlan::ChannelLocal,
-        ReconstructionBasis::Constant => SpectralBasisPlan::Polynomial(
-            BlockNormalPlan::constant(reference_hz()?).map_err(invalid)?,
-        ),
+        ReconstructionBasis::Constant => {
+            SpectralBasisPlan::Polynomial(BlockNormalPlan::constant(reference_hz()?))
+        }
         ReconstructionBasis::Taylor { terms } => SpectralBasisPlan::Polynomial(
-            BlockNormalPlan::taylor(reference_hz()?, terms).map_err(invalid)?,
+            BlockNormalPlan::taylor(reference_hz()?, terms)
+                .ok_or(SpectralOperatorError::ResidencyOverflow)?,
         ),
         ReconstructionBasis::TaylorViaChannelMajor { .. } => {
             return Err(SpectralOperatorError::UnsupportedProblem);
@@ -497,8 +484,6 @@ impl SpectralOperatorPrimitives {
             total_channels,
             core_start: 0,
             core_end: total_channels,
-            resident_start: 0,
-            resident_end: total_channels,
         };
         let shape = problem.geometry().domains()[0].shape().pixels();
         let cells = shape[0] * shape[1];
@@ -515,16 +500,12 @@ impl SpectralOperatorPrimitives {
             polarizations: 1,
             dirty,
             cube_real: None,
-            invariant_dirty: None,
             psf,
             clark_workspace: Mutex::new(None),
             sensitivity: sensitivity.repeat(moments).into_boxed_slice(),
-            primary_beam_weighted_sum: None,
             sum_weights: vec![normal_weight; moments].into_boxed_slice(),
             published_sum_weights: vec![published_weight; moments].into_boxed_slice(),
             validity: vec![SpectralChannelValidity::Valid].into_boxed_slice(),
-            major_cycle_residual: None,
-            major_cycle_residual_promoted: true,
             residual_model: Some(residual_model),
         }
     }

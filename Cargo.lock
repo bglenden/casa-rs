@@ -703,7 +703,6 @@ dependencies = [
 name = "casa-imaging-runtime"
 version = "0.27.0"
 dependencies = [
- "bytemuck",
  "casa-imaging-model",
  "casa-imaging-operator",
  "casa-imaging-products",
@@ -717,8 +716,6 @@ dependencies = [
  "libc",
  "ndarray",
  "num-complex",
- "objc2",
- "objc2-foundation",
  "objc2-metal",
  "rayon",
  "serde",

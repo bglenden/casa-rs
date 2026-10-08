@@ -77,32 +77,28 @@ fn domain(range: Range<usize>, published_differ: bool) -> SpectralDomainPrimitiv
                 total_channels: CHANNELS,
                 core_start: range.start,
                 core_end: range.end,
-                resident_start: range.start,
-                resident_end: range.end,
             },
             basis: SpectralBasisPlan::ChannelLocal,
             polarizations: POLARIZATIONS,
             dirty: complex(0.25),
             cube_real: None,
-            invariant_dirty: Some(complex(0.5)),
             psf: complex(-0.125),
             clark_workspace: std::sync::Mutex::new(None),
             sensitivity: values.clone().map(|i| i as f64 * 0.25).collect(),
-            primary_beam_weighted_sum: None,
             sum_weights: planes.clone().map(|i| (i + 1) as f64).collect(),
             published_sum_weights: planes
                 .clone()
                 .map(|i| (i + 1) as f64 + if published_differ { 0.5 } else { 0.0 })
                 .collect(),
             validity: planes
-                .map(|i| match i % 3 {
-                    0 => SpectralChannelValidity::Valid,
-                    1 => SpectralChannelValidity::Blank,
-                    _ => SpectralChannelValidity::Unmapped,
+                .map(|i| {
+                    if i % 2 == 0 {
+                        SpectralChannelValidity::Valid
+                    } else {
+                        SpectralChannelValidity::Unmapped
+                    }
                 })
                 .collect(),
-            major_cycle_residual: Some(complex(0.75)),
-            major_cycle_residual_promoted: false,
             residual_model: Some(model()),
         },
     )
@@ -178,109 +174,101 @@ impl NormalArrayStorage for ReadObservedStorage {
 
 #[test]
 fn selective_normal_plane_reads_only_requested_domain_channel_polarization_and_field() {
-    for promoted in [false, true] {
-        let plan = NormalStoragePlan::resident(CHANNELS).unwrap();
-        let reads = [
-            Arc::new(std::sync::Mutex::new(Vec::new())),
-            Arc::new(std::sync::Mutex::new(Vec::new())),
-        ];
-        let mut domains = Vec::new();
-        for (ordinal, log) in reads.iter().enumerate() {
-            let mut input = domain(0..CHANNELS, true);
-            input.domain_ordinal = ordinal;
-            if ordinal == 1 {
-                input.domain_role = ImageDomainRole::Outlier("second".into());
-                input.primitives.shape = [2, 3];
-                for value in &mut input.primitives.psf {
-                    value.re += 100.0;
-                }
+    let plan = NormalStoragePlan::resident(CHANNELS).unwrap();
+    let reads = [
+        Arc::new(std::sync::Mutex::new(Vec::new())),
+        Arc::new(std::sync::Mutex::new(Vec::new())),
+    ];
+    let mut domains = Vec::new();
+    for (ordinal, log) in reads.iter().enumerate() {
+        let mut input = domain(0..CHANNELS, true);
+        input.domain_ordinal = ordinal;
+        if ordinal == 1 {
+            input.domain_role = ImageDomainRole::Outlier("second".into());
+            input.primitives.shape = [2, 3];
+            for value in &mut input.primitives.psf {
+                value.re += 100.0;
             }
-            let mut stored = StoredChannelNormalDomain::begin(input, &plan).unwrap();
-            if promoted {
-                stored.promote_major_cycle_residual(model()).unwrap();
-            }
-            stored.storage = Box::new(ReadObservedStorage {
-                storage: stored.storage,
-                reads: log.clone(),
-            });
-            stored.invariants = Arc::new(Box::new(ReadObservedStorage {
-                storage: Arc::try_unwrap(stored.invariants).unwrap(),
-                reads: log.clone(),
-            }));
-            domains.push(stored);
         }
-        let fields = domains[1].fields.clone();
-        let primitives = NormalStatePrimitives::ChannelLocal(domains.into_boxed_slice());
-        let selected = primitives.read_plane(1, 3, 1).unwrap();
-        assert_eq!(selected.shape(), [2, 3]);
-        assert_eq!(selected.output_channel(), 3);
-        assert_eq!(selected.sum_weight(), 8.0);
-        assert_eq!(selected.published_sum_weight(), 8.5);
-        assert_eq!(selected.validity(), SpectralChannelValidity::Blank);
-        for invalid in [
-            (2, 3, 1),
-            (1, CHANNELS, 1),
-            (1, 3, POLARIZATIONS),
-            (1, usize::MAX, 0),
-        ] {
-            assert!(matches!(
-                primitives.read_plane(invalid.0, invalid.1, invalid.2),
-                Err(SpectralOperatorError::InvalidSlab)
-            ));
-        }
-        assert!(reads.iter().all(|log| log.lock().unwrap().is_empty()));
-
-        let offset = (3 * POLARIZATIONS + 1) * CELLS;
-        let psf = selected.read_psf().unwrap();
-        assert!(matches!(psf, Cow::Borrowed(_)));
-        assert_eq!(
-            *reads[1].lock().unwrap(),
-            vec![(
-                fields.psf.start - fields.epoch_scalars + 2 * offset,
-                2 * CELLS
-            )]
-        );
-        assert_eq!(psf[0].re, offset as f64 - 0.125 + 100.0);
-        assert!(reads[0].lock().unwrap().is_empty());
-        reads[1].lock().unwrap().clear();
-
-        let residual = selected.read_residual().unwrap();
-        assert!(matches!(residual, Cow::Borrowed(_)));
-        assert_eq!(
-            *reads[1].lock().unwrap(),
-            vec![(fields.dirty.start + 2 * offset, 2 * CELLS)]
-        );
-        assert_eq!(
-            residual[0].re,
-            offset as f64 + if promoted { 0.75 } else { 0.25 }
-        );
-        reads[1].lock().unwrap().clear();
-        let sensitivity = selected.read_sensitivity().unwrap();
-        assert!(matches!(sensitivity, Cow::Borrowed(_)));
-        assert_eq!(
-            *reads[1].lock().unwrap(),
-            vec![(
-                fields.sensitivity.start - fields.epoch_scalars + offset,
-                CELLS
-            )]
-        );
-        assert!(reads[0].lock().unwrap().is_empty());
-
-        let full = primitives.read_window(3..4).unwrap();
-        let expected = full.get(1).unwrap().primitives();
-        assert_eq!(
-            psf.as_ref(),
-            &expected.psf().complex().unwrap()[CELLS..2 * CELLS]
-        );
-        assert_eq!(
-            residual.as_ref(),
-            &expected.dirty().complex().unwrap()[CELLS..2 * CELLS]
-        );
-        assert_eq!(
-            sensitivity.as_ref(),
-            &expected.sensitivity().dense().unwrap()[CELLS..2 * CELLS]
-        );
+        let mut stored = StoredChannelNormalDomain::begin(input, &plan).unwrap();
+        stored.storage = Box::new(ReadObservedStorage {
+            storage: stored.storage,
+            reads: log.clone(),
+        });
+        stored.invariants = Arc::new(Box::new(ReadObservedStorage {
+            storage: Arc::try_unwrap(stored.invariants).unwrap(),
+            reads: log.clone(),
+        }));
+        domains.push(stored);
     }
+    let fields = domains[1].fields.clone();
+    let primitives = NormalStatePrimitives::ChannelLocal(domains.into_boxed_slice());
+    let selected = primitives.read_plane(1, 3, 1).unwrap();
+    assert_eq!(selected.shape(), [2, 3]);
+    assert_eq!(selected.output_channel(), 3);
+    assert_eq!(selected.sum_weight(), 8.0);
+    assert_eq!(selected.published_sum_weight(), 8.5);
+    assert_eq!(selected.validity(), SpectralChannelValidity::Unmapped);
+    for invalid in [
+        (2, 3, 1),
+        (1, CHANNELS, 1),
+        (1, 3, POLARIZATIONS),
+        (1, usize::MAX, 0),
+    ] {
+        assert!(matches!(
+            primitives.read_plane(invalid.0, invalid.1, invalid.2),
+            Err(SpectralOperatorError::InvalidSlab)
+        ));
+    }
+    assert!(reads.iter().all(|log| log.lock().unwrap().is_empty()));
+
+    let offset = (3 * POLARIZATIONS + 1) * CELLS;
+    let psf = selected.read_psf().unwrap();
+    assert!(matches!(psf, Cow::Borrowed(_)));
+    assert_eq!(
+        *reads[1].lock().unwrap(),
+        vec![(
+            fields.psf.start - fields.epoch_scalars + 2 * offset,
+            2 * CELLS
+        )]
+    );
+    assert_eq!(psf[0].re, offset as f64 - 0.125 + 100.0);
+    assert!(reads[0].lock().unwrap().is_empty());
+    reads[1].lock().unwrap().clear();
+
+    let residual = selected.read_residual().unwrap();
+    assert!(matches!(residual, Cow::Borrowed(_)));
+    assert_eq!(
+        *reads[1].lock().unwrap(),
+        vec![(fields.dirty.start + 2 * offset, 2 * CELLS)]
+    );
+    assert_eq!(residual[0].re, offset as f64 + 0.25);
+    reads[1].lock().unwrap().clear();
+    let sensitivity = selected.read_sensitivity().unwrap();
+    assert!(matches!(sensitivity, Cow::Borrowed(_)));
+    assert_eq!(
+        *reads[1].lock().unwrap(),
+        vec![(
+            fields.sensitivity.start - fields.epoch_scalars + offset,
+            CELLS
+        )]
+    );
+    assert!(reads[0].lock().unwrap().is_empty());
+
+    let full = primitives.read_window(3..4).unwrap();
+    let expected = full.get(1).unwrap().primitives();
+    assert_eq!(
+        psf.as_ref(),
+        &expected.psf().complex().unwrap()[CELLS..2 * CELLS]
+    );
+    assert_eq!(
+        residual.as_ref(),
+        &expected.dirty().complex().unwrap()[CELLS..2 * CELLS]
+    );
+    assert_eq!(
+        sensitivity.as_ref(),
+        &expected.sensitivity().dense().unwrap()[CELLS..2 * CELLS]
+    );
 }
 
 #[test]
@@ -314,75 +302,63 @@ fn selective_normal_plane_requires_complete_admitted_backing() {
 
 #[test]
 fn selective_normal_plane_borrows_constant_polynomial_planes_exactly() {
-    for promoted in [false, true] {
-        let domains = (0..2)
-            .map(|ordinal| {
-                let mut input = domain(0..1, true);
-                input.domain_ordinal = ordinal;
-                input.primitives.slab.total_channels = 1;
-                input.primitives.basis = SpectralBasisPlan::Polynomial(
-                    super::super::BlockNormalPlan::constant(1.0e9).unwrap(),
-                );
-                if ordinal == 1 {
-                    input.domain_role = ImageDomainRole::Outlier("constant".into());
-                    input.primitives.shape = [2, 3];
-                    for value in &mut input.primitives.psf {
-                        value.re += 100.0;
-                    }
+    let domains = (0..2)
+        .map(|ordinal| {
+            let mut input = domain(0..1, true);
+            input.domain_ordinal = ordinal;
+            input.primitives.slab.total_channels = 1;
+            input.primitives.basis =
+                SpectralBasisPlan::Polynomial(super::super::BlockNormalPlan::constant(1.0e9));
+            if ordinal == 1 {
+                input.domain_role = ImageDomainRole::Outlier("constant".into());
+                input.primitives.shape = [2, 3];
+                for value in &mut input.primitives.psf {
+                    value.re += 100.0;
                 }
-                if promoted {
-                    input.primitives = input
-                        .primitives
-                        .promote_major_cycle_residual(model())
-                        .unwrap();
-                }
-                input
-            })
-            .collect();
-        let primitives =
-            NormalStatePrimitives::Coupled(SpectralPrimitiveDomains::new(domains).unwrap());
-        let selected = primitives.read_plane(1, 0, 1).unwrap();
-        assert_eq!(selected.shape(), [2, 3]);
-        assert_eq!(selected.output_channel(), 0);
-        assert_eq!(selected.sum_weight(), 2.0);
-        assert_eq!(selected.published_sum_weight(), 2.5);
-        assert_eq!(selected.validity(), SpectralChannelValidity::Blank);
-        let window = primitives.read_window(0..1).unwrap();
-        let expected = window.get(1).unwrap().primitives();
-        let residual = selected.read_residual().unwrap();
-        let psf = selected.read_psf().unwrap();
-        let sensitivity = selected.read_sensitivity().unwrap();
-        assert!(matches!(residual, Cow::Borrowed(_)));
-        assert!(matches!(psf, Cow::Borrowed(_)));
-        assert!(matches!(sensitivity, Cow::Borrowed(_)));
-        assert!(std::ptr::eq(
-            residual.as_ptr(),
-            expected.dirty().complex().unwrap()[CELLS..].as_ptr()
+            }
+            input
+        })
+        .collect();
+    let primitives =
+        NormalStatePrimitives::Coupled(SpectralPrimitiveDomains::new(domains).unwrap());
+    let selected = primitives.read_plane(1, 0, 1).unwrap();
+    assert_eq!(selected.shape(), [2, 3]);
+    assert_eq!(selected.output_channel(), 0);
+    assert_eq!(selected.sum_weight(), 2.0);
+    assert_eq!(selected.published_sum_weight(), 2.5);
+    assert_eq!(selected.validity(), SpectralChannelValidity::Unmapped);
+    let window = primitives.read_window(0..1).unwrap();
+    let expected = window.get(1).unwrap().primitives();
+    let residual = selected.read_residual().unwrap();
+    let psf = selected.read_psf().unwrap();
+    let sensitivity = selected.read_sensitivity().unwrap();
+    assert!(matches!(residual, Cow::Borrowed(_)));
+    assert!(matches!(psf, Cow::Borrowed(_)));
+    assert!(matches!(sensitivity, Cow::Borrowed(_)));
+    assert!(std::ptr::eq(
+        residual.as_ptr(),
+        expected.dirty().complex().unwrap()[CELLS..].as_ptr()
+    ));
+    assert_eq!(
+        residual.as_ref(),
+        &expected.dirty().complex().unwrap()[CELLS..]
+    );
+    assert_eq!(psf.as_ref(), &expected.psf().complex().unwrap()[CELLS..]);
+    assert_eq!(
+        sensitivity.as_ref(),
+        &expected.sensitivity().dense().unwrap()[CELLS..]
+    );
+    assert_eq!(residual[0].re, CELLS as f64 + 0.25);
+    for invalid in [
+        (2, 0, 1),
+        (1, 1, 1),
+        (1, 0, POLARIZATIONS),
+        (1, usize::MAX, 0),
+    ] {
+        assert!(matches!(
+            primitives.read_plane(invalid.0, invalid.1, invalid.2),
+            Err(SpectralOperatorError::InvalidSlab)
         ));
-        assert_eq!(
-            residual.as_ref(),
-            &expected.dirty().complex().unwrap()[CELLS..]
-        );
-        assert_eq!(psf.as_ref(), &expected.psf().complex().unwrap()[CELLS..]);
-        assert_eq!(
-            sensitivity.as_ref(),
-            &expected.sensitivity().dense().unwrap()[CELLS..]
-        );
-        assert_eq!(
-            residual[0].re,
-            CELLS as f64 + if promoted { 0.75 } else { 0.25 }
-        );
-        for invalid in [
-            (2, 0, 1),
-            (1, 1, 1),
-            (1, 0, POLARIZATIONS),
-            (1, usize::MAX, 0),
-        ] {
-            assert!(matches!(
-                primitives.read_plane(invalid.0, invalid.1, invalid.2),
-                Err(SpectralOperatorError::InvalidSlab)
-            ));
-        }
     }
 }
 
@@ -497,18 +473,10 @@ impl NormalArrayStorage for EpochObservedStorage {
     }
 }
 
-fn streaming_domain() -> SpectralDomainPrimitives {
-    let mut input = domain(0..CHANNELS, true);
-    input.primitives.invariant_dirty = None;
-    input.primitives.major_cycle_residual = None;
-    input.primitives.major_cycle_residual_promoted = true;
-    input
-}
-
 #[test]
 fn residual_epochs_share_only_invariants_without_old_array_access_or_owner_chain() {
     let plan = NormalStoragePlan::resident(CHANNELS).unwrap();
-    let mut old = StoredChannelNormalDomain::begin(streaming_domain(), &plan).unwrap();
+    let mut old = StoredChannelNormalDomain::begin(domain(0..CHANNELS, true), &plan).unwrap();
     assert_eq!(old.storage.len(), CHANNELS * POLARIZATIONS * CELLS * 2);
     assert_eq!(old.invariants.len(), CHANNELS * POLARIZATIONS * CELLS * 3);
     let expected = old.read_window(0..CHANNELS).unwrap();
@@ -563,7 +531,7 @@ fn residual_epochs_share_only_invariants_without_old_array_access_or_owner_chain
 #[test]
 fn owned_residual_wave_writes_in_admitted_windows_without_partition_copies() {
     let old_plan = NormalStoragePlan::resident(CHANNELS).unwrap();
-    let old = StoredChannelNormalDomain::begin(streaming_domain(), &old_plan).unwrap();
+    let old = StoredChannelNormalDomain::begin(domain(0..CHANNELS, true), &old_plan).unwrap();
     let maximum_access = Arc::new(AtomicUsize::new(0));
     let allowed = 2 * CELLS * POLARIZATIONS;
     let plan = NormalStoragePlan::new(
@@ -614,7 +582,7 @@ fn failed_residual_refresh_leaves_previous_epoch_readable() {
         }
     }
     let plan = NormalStoragePlan::resident(CHANNELS).unwrap();
-    let old = StoredChannelNormalDomain::begin(streaming_domain(), &plan).unwrap();
+    let old = StoredChannelNormalDomain::begin(domain(0..CHANNELS, true), &plan).unwrap();
     let expected = old.content_identity().unwrap();
     let mut next = old.refresh(model(), &plan).unwrap();
     let leading = vec![3.0; (CHANNELS - 1) * POLARIZATIONS * CELLS];
@@ -642,11 +610,11 @@ fn failed_residual_refresh_leaves_previous_epoch_readable() {
 }
 
 #[test]
-fn t55_normal_storage_preserves_field_order_bits_and_promoted_identity_across_windows() {
+fn normal_storage_preserves_field_order_bits_and_identity_across_windows() {
     for published_differ in [false, true] {
-        let expected = domain(0..CHANNELS, published_differ).primitives;
-        let expected_identity = expected.normal_state_content_identity();
-        let expected_final = expected.promote_major_cycle_residual(model()).unwrap();
+        let expected_identity = domain(0..CHANNELS, published_differ)
+            .primitives
+            .normal_state_content_identity();
         for width in [1, 2, 3, CHANNELS] {
             let maximum_access = Arc::new(AtomicUsize::new(0));
             let allowed = 2 * CELLS * POLARIZATIONS * width;
@@ -679,23 +647,15 @@ fn t55_normal_storage_preserves_field_order_bits_and_promoted_identity_across_wi
                     .unwrap();
             }
             assert_eq!(stored.content_identity().unwrap(), expected_identity);
-            stored.promote_major_cycle_residual(model()).unwrap();
-            assert_eq!(
-                stored.content_identity().unwrap(),
-                expected_final.normal_state_content_identity()
-            );
             for start in (0..CHANNELS).step_by(width) {
                 let end = (start + width).min(CHANNELS);
                 let window = stored.read_window(start..end).unwrap().primitives;
-                let expected = domain(start..end, published_differ)
-                    .primitives
-                    .promote_major_cycle_residual(model())
-                    .unwrap();
+                let expected = domain(start..end, published_differ).primitives;
                 assert_eq!(
                     window.normal_state_content_identity(),
                     expected.normal_state_content_identity()
                 );
-                assert_eq!(window.invariant_dirty, expected.invariant_dirty);
+                assert_eq!(window.psf, expected.psf);
                 assert_eq!(window.dirty, expected.dirty);
                 assert_eq!(window.dirty[0].im.to_bits(), expected.dirty[0].im.to_bits());
             }

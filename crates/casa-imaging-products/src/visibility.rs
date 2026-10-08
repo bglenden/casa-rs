@@ -5,8 +5,12 @@
 use casa_imaging_model::CompiledProblemId;
 use casa_imaging_reconstruction::{ModelGenerationId, WeightingGenerationId};
 
-/// Completed visibility write: its association and sample count; no content
-/// certificate.
+/// Completed visibility write: its association and the number of cells
+/// (row, channel, correlation) written; no content certificate.
+///
+/// Nothing checks that the written addresses are canonical or distinct: the
+/// writing pass holds every plane in one traversal of the selection, which
+/// visits each selected row once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VisibilityProductCompletion {
     problem: CompiledProblemId,
@@ -49,7 +53,7 @@ impl VisibilityProductCompletion {
     pub const fn weighting_generation(self) -> WeightingGenerationId {
         self.weighting_generation
     }
-    /// Return the written sample count.
+    /// Return the number of cells written.
     #[must_use]
     pub const fn sample_count(self) -> u64 {
         self.sample_count

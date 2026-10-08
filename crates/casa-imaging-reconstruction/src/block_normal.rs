@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 //! Reconstruction-owned polynomial basis and block-normal algebra.
-
-use std::{error::Error, fmt};
+//!
+//! The compiled problem has already checked the reference frequency (finite
+//! and positive) and the Taylor term count (at least two).
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct BlockNormalPlan {
@@ -12,36 +13,21 @@ pub(crate) struct BlockNormalPlan {
 }
 
 impl BlockNormalPlan {
-    pub(crate) fn constant(reference_frequency_hz: f64) -> Result<Self, BlockNormalError> {
-        Self::compile(reference_frequency_hz, 1)
+    pub(crate) const fn constant(reference_frequency_hz: f64) -> Self {
+        Self {
+            reference_frequency_hz,
+            coefficient_terms: 1,
+            normal_moments: 1,
+        }
     }
 
-    pub(crate) fn taylor(
-        reference_frequency_hz: f64,
-        coefficient_terms: usize,
-    ) -> Result<Self, BlockNormalError> {
-        if coefficient_terms < 2 {
-            return Err(BlockNormalError::TaylorTermCount);
-        }
-        Self::compile(reference_frequency_hz, coefficient_terms)
-    }
-
-    pub(crate) fn compile(
-        reference_frequency_hz: f64,
-        coefficient_terms: usize,
-    ) -> Result<Self, BlockNormalError> {
-        if !reference_frequency_hz.is_finite() || reference_frequency_hz <= 0.0 {
-            return Err(BlockNormalError::InvalidReferenceFrequency);
-        }
-        let normal_moments = coefficient_terms
-            .checked_mul(2)
-            .and_then(|terms| terms.checked_sub(1))
-            .ok_or(BlockNormalError::SizeOverflow)?;
-        i32::try_from(normal_moments - 1).map_err(|_| BlockNormalError::SizeOverflow)?;
-        Ok(Self {
+    /// The Taylor basis of `coefficient_terms` terms, whose block normal has
+    /// `2T-1` moments; `None` when that count overflows.
+    pub(crate) fn taylor(reference_frequency_hz: f64, coefficient_terms: usize) -> Option<Self> {
+        Some(Self {
             reference_frequency_hz,
             coefficient_terms,
-            normal_moments,
+            normal_moments: coefficient_terms.checked_mul(2)?.checked_sub(1)?,
         })
     }
 
@@ -68,36 +54,13 @@ impl BlockNormalPlan {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BlockNormalError {
-    InvalidReferenceFrequency,
-    TaylorTermCount,
-    SizeOverflow,
-}
-
-impl fmt::Display for BlockNormalError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidReferenceFrequency => {
-                formatter.write_str("reference frequency must be finite and positive")
-            }
-            Self::TaylorTermCount => {
-                formatter.write_str("Taylor block-normal algebra requires at least two terms")
-            }
-            Self::SizeOverflow => formatter.write_str("block-normal cardinality overflowed"),
-        }
-    }
-}
-
-impl Error for BlockNormalError {}
-
 #[cfg(test)]
 mod tests {
-    use super::{BlockNormalError, BlockNormalPlan};
+    use super::BlockNormalPlan;
 
     #[test]
-    fn t42_constant_and_taylor_plans_count_terms_and_moments() {
-        let constant = BlockNormalPlan::constant(100.0).expect("constant plan");
+    fn constant_and_taylor_plans_count_terms_and_moments() {
+        let constant = BlockNormalPlan::constant(100.0);
         assert_eq!(constant.reference_frequency_hz(), 100.0);
         assert_eq!(constant.coefficient_term_count(), 1);
         assert_eq!(constant.normal_moment_count(), 1);
@@ -108,7 +71,7 @@ mod tests {
     }
 
     #[test]
-    fn t42_block_normal_is_hankel() {
+    fn block_normal_is_hankel() {
         let plan = BlockNormalPlan::taylor(100.0, 3).expect("Taylor plan");
         for row in 0..plan.coefficient_term_count() {
             for column in 0..plan.coefficient_term_count() {
@@ -120,18 +83,7 @@ mod tests {
     }
 
     #[test]
-    fn t42_invalid_inputs_and_cardinality_overflow_fail_closed() {
-        assert_eq!(
-            BlockNormalPlan::constant(0.0),
-            Err(BlockNormalError::InvalidReferenceFrequency)
-        );
-        assert_eq!(
-            BlockNormalPlan::taylor(100.0, 1),
-            Err(BlockNormalError::TaylorTermCount)
-        );
-        assert_eq!(
-            BlockNormalPlan::taylor(100.0, usize::MAX),
-            Err(BlockNormalError::SizeOverflow)
-        );
+    fn taylor_moment_count_overflow_fails_closed() {
+        assert_eq!(BlockNormalPlan::taylor(100.0, usize::MAX), None);
     }
 }

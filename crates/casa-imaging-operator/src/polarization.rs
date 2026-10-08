@@ -222,11 +222,17 @@ impl PolarizationRouting {
         self.to_requested[requested * self.grid.len() + gpol]
     }
 
-    /// Coefficient of grid plane `gpol` in the PSF (and weight) image of
-    /// requested plane `requested` (CASA `StokesImageUtil::ToStokesPSF`):
-    /// with one or two requested Stokes parameters every plane takes the
-    /// parallel-hand sum, or the cross-hand sum for U and V on linear feeds
-    /// and Q and U on circular feeds; otherwise the data conversion.
+    /// Coefficient of grid plane `gpol` in the PSF image of requested plane
+    /// `requested` (CASA `StokesImageUtil::ToStokesPSF`): with one or two
+    /// requested Stokes parameters every plane takes the parallel-hand sum,
+    /// or the cross-hand sum for U and V on linear feeds and Q and U on
+    /// circular feeds; with three or four, every plane takes the first
+    /// parameter's conversion; a single-correlation grid, a Stokes grid or a
+    /// request with a non-Stokes coordinate takes the data conversion.
+    ///
+    /// The operator forms its weight image with these coefficients too,
+    /// whereas CASA applies `ToStokesPSF` to the PSF only; no kernel set
+    /// with a weight image is installed before the AW and mosaic operators.
     #[must_use]
     pub fn to_requested_psf(&self, requested: usize, gpol: usize) -> Complex64 {
         self.to_requested_psf[requested * self.grid.len() + gpol]

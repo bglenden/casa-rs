@@ -13,8 +13,8 @@ mod casa_product_sink;
 mod continuum_domains;
 mod continuum_request;
 mod imaging;
-// IF-2 removed the AW major-cycle phases that consumed prepared artifacts;
-// IF-3 (#652) replaces this preparation with `AwCatalog` (plan section 6 row 5).
+// No major-cycle phase consumes prepared AW artifacts until the AW catalog
+// replaces this preparation (plan section 6 row 5).
 #[expect(
     dead_code,
     reason = "IF-3 (#652) replaces AW preparation with AwCatalog"

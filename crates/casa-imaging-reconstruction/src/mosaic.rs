@@ -53,12 +53,6 @@ pub(crate) struct SpectralOperatorGeometry {
     pub(crate) direction: casa_imaging_model::DirectionCoordinateSpec,
 }
 
-pub(crate) fn fft_planning_words_for_shape(
-    _shape: [usize; 2],
-) -> Result<usize, SpectralOperatorError> {
-    Ok(0)
-}
-
 pub(crate) const MOSAIC_OVERSAMPLING: usize = 10;
 
 const BTREE_NODE_ENTRY_CAPACITY: usize = 11;
@@ -192,11 +186,9 @@ pub(crate) fn residency_projection(
         .checked_mul(conv_size)
         .and_then(|values| values.checked_mul(size_of::<Complex64>()))
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    // The FFT allowance already charges FFTW's full-grid planning buffer.
     let fft_bytes = fft_resident_complex_values_for_shape([conv_size, conv_size])?
         .checked_mul(size_of::<Complex64>())
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    let fft_planning_bytes = fft_planning_words_for_shape([conv_size, conv_size])?
-        .checked_mul(size_of::<usize>())
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     let temp_bytes = temp_side
         .checked_mul(temp_side)
@@ -221,7 +213,6 @@ pub(crate) fn residency_projection(
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     let screen_build_workspace = screen_bytes
         .checked_add(fft_bytes)
-        .and_then(|bytes| bytes.checked_add(fft_planning_bytes))
         .and_then(|bytes| bytes.checked_add(double_temp_bytes))
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     let resample_workspace = double_temp_bytes
@@ -1413,10 +1404,7 @@ mod tests {
         let fft_bytes = fft_resident_complex_values_for_shape([conv_size, conv_size])
             .expect("FFT residency")
             * size_of::<Complex64>();
-        let planning_bytes = fft_planning_words_for_shape([conv_size, conv_size])
-            .expect("FFT planning residency")
-            * size_of::<usize>();
-        let charged_screen_peak = screen_bytes + fft_bytes + planning_bytes + 2 * temp_bytes;
+        let charged_screen_peak = screen_bytes + fft_bytes + 2 * temp_bytes;
         assert!(
             residency.workspace_bytes >= charged_screen_peak,
             "the workspace must charge the retained science crop and the support FFT output crop"

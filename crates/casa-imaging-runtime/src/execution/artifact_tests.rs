@@ -138,7 +138,6 @@ fn t55_artifact_export_preserves_memory_until_the_final_owning_alias() {
         panic!("producer must dispatch");
     };
     let owner = work.node().id.clone();
-    let epoch = work.lease_epoch();
     assert!(can_admit(&authority, 224));
     assert!(!can_admit(&authority, 225));
     scheduler
@@ -161,7 +160,6 @@ fn t55_artifact_export_preserves_memory_until_the_final_owning_alias() {
         .take_artifact_permit(&owner)
         .expect("successful scientific sealing")
         .expect("exported metadata");
-    assert_eq!(artifact.lease_epoch(), epoch);
     assert!(
         scheduler.take_artifact_permit(&owner).is_err(),
         "one-shot export"

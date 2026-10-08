@@ -500,13 +500,6 @@ impl FinalNormalStateWindow<'_> {
         self.primitives.sensitivity()
     }
 
-    /// Return the completed scalar primary-beam `sum(W B)` statistic, when
-    /// the compiled measurement equation includes that response.
-    #[must_use]
-    pub fn primary_beam_weighted_sum(&self) -> Option<&[f64]> {
-        self.primitives.primary_beam_weighted_sum()
-    }
-
     /// Borrow one reconstruction-coefficient residual term.
     #[must_use]
     pub fn coefficient_term(
@@ -642,12 +635,6 @@ impl<'a> FinalNormalDomainState<'a> {
     #[must_use]
     pub fn sensitivity(self) -> crate::SensitivityValues<'a> {
         self.domain.primitives().sensitivity()
-    }
-
-    /// Return the completed scalar primary-beam `sum(W B)` statistic.
-    #[must_use]
-    pub fn primary_beam_weighted_sum(self) -> Option<&'a [f64]> {
-        self.domain.primitives().primary_beam_weighted_sum()
     }
 
     /// Return this chart's normal-moment-major, polarization-minor weights.
@@ -858,7 +845,7 @@ impl<'a> FinalNormalStatePlane<'a> {
         self.shape
     }
 
-    /// Return mapped, blank, or unmapped channel validity.
+    /// Return weighted or unmapped channel validity.
     #[must_use]
     pub const fn validity(&self) -> crate::SpectralChannelValidity {
         self.validity
@@ -1021,8 +1008,8 @@ impl MajorCycleOwner {
             primitives,
             completion,
         } = result;
-        let primitives = primitives
-            .promote_major_cycle_residual(preparation.final_model_generation())
+        primitives
+            .require_residual_model(preparation.final_model_generation())
             .map_err(MajorCycleError::Residual)?;
         Ok(Self {
             problem: completion.problem_id(),

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! T20 reconciliation of complete-data normal states with the model
+//! Reconciliation of complete-data normal states with the model
 //! lifecycle: owned storage hand-off, completion records and lineage,
 //! model-dependent residual content, residual refreshes, and the passes that
 //! must never become a Major-Cycle owner.
@@ -76,19 +76,6 @@ fn normal_reconciliation_transfers_owned_storage_without_reading_arrays() {
     assert!(
         reads.load(Ordering::Relaxed) > 0,
         "an explicitly requested diagnostic still reads and fingerprints arrays"
-    );
-}
-
-#[test]
-fn schema_versions_record_the_t20_completion_records() {
-    assert_eq!(FinalModelCompletionId::SCHEMA_VERSION, 2);
-    assert_eq!(
-        casa_imaging_reconstruction::FinalNormalStateCompletionId::SCHEMA_VERSION,
-        4
-    );
-    assert_eq!(
-        casa_imaging_reconstruction::MajorCycleCompletionId::SCHEMA_VERSION,
-        2
     );
 }
 

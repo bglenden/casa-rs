@@ -1308,6 +1308,41 @@ fn t51_source_memory_quote_obeys_policy_pressure_and_active_headroom_without_a_l
     assert_eq!(quote(&capped), 300);
 }
 
+/// An imaging phase's budget is the policy's worker capacity, at least one
+/// worker, and the policy's host-memory quote: an explicit worker count is
+/// taken as given, the shared policies leave room for other work, and the
+/// memory is what the source quote leaves.
+#[test]
+fn phase_budget_follows_the_policy_workers_and_memory() {
+    let domain = CapacityDomainId::new("unified-memory");
+    let authority = ResourceAuthority::with_inventory(inventory_with_views(vec![MemoryView {
+        id: CapacityViewId::new("host-memory"),
+        domain: domain.clone(),
+        kind: MemoryViewKind::Host,
+    }]))
+    .expect("valid policy inventory");
+    let budget = |policy: ResourcePolicy| authority.phase_budget(&policy).expect("budget");
+    let explicit = |workers, memory| {
+        ResourcePolicy::Explicit(ResourceOverride {
+            workers: Some(workers),
+            memory_bytes: BTreeMap::from([(domain.clone(), memory)]),
+            ..ResourceOverride::default()
+        })
+    };
+    assert_eq!(budget(explicit(1, 300)), (1, 300));
+    assert_eq!(budget(explicit(2, 600)), (2, 600));
+    let (exclusive_workers, exclusive_memory) = budget(ResourcePolicy::Exclusive);
+    let (balanced_workers, balanced_memory) = budget(ResourcePolicy::Balanced);
+    let (interactive_workers, interactive_memory) = budget(ResourcePolicy::Interactive);
+    assert_eq!(exclusive_workers, 4, "every logical thread");
+    assert!(1 <= interactive_workers && interactive_workers <= balanced_workers);
+    assert!(balanced_workers <= exclusive_workers);
+    assert_eq!(
+        (interactive_memory, balanced_memory, exclusive_memory),
+        (500, 750, 1_000)
+    );
+}
+
 #[test]
 fn concurrent_admission_is_atomic_at_the_process_policy_ceiling() {
     use std::sync::{Arc, Barrier};

@@ -9417,18 +9417,7 @@ fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
     start_run_with_default_imager_launcher(&mut app);
     assert!(app.wait_for_idle_for_test(Duration::from_secs(120)));
     let stderr = app.stderr_for_test();
-    let diagnostic_prefixes = [
-        "planning_memory ",
-        "imaging_operator_residency_summary ",
-        "imaging_operator_memory_demand ",
-        "imaging_operator_fixed_demand ",
-        "imaging_spectral_window_selection ",
-        "imaging_spectral_fft_budget ",
-        "imaging_bounded_stream_progress ",
-        "imaging_source_read_ahead_summary ",
-        "imaging_science_stage_timing ",
-        "imaging_product_pixels ",
-    ];
+    let diagnostic_prefixes = ["planning_memory ", "imaging_product_pixels "];
     assert!(
         stderr.trim().is_empty()
             || stderr.lines().all(|line| diagnostic_prefixes

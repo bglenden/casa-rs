@@ -24,7 +24,7 @@ mod receipt;
 mod resource_authority;
 mod serial_product_publication;
 mod source_access;
-pub use source_access::{bootstrap_source_budget, finalize_source_access};
+pub use source_access::{SourceAccessError, bootstrap_source_budget, finalize_source_access};
 
 pub use execution_bindings::{
     ArtifactDisposition, ArtifactIdentity, ArtifactMeasurement, ArtifactMeasurementError,

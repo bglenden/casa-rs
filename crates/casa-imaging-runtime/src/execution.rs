@@ -270,21 +270,11 @@ impl ClaimLifetime {
 /// plan's admitted lease. Dropping it releases the retained capacity.
 #[derive(Debug)]
 pub struct RetainedArtifactPermit {
-    lease_epoch: u64,
     // Held for their drop, which releases the retained capacity.
     _permits: Box<[ResourcePermit]>,
-    _immutable_allocations: Box<[[u8; 32]]>,
     // This must drop after the permits: a dead weak token proves that every
     // resource consumption owned by this artifact has already been released.
     _liveness: Arc<()>,
-}
-
-impl RetainedArtifactPermit {
-    /// Return the lease epoch that admitted the artifact resources.
-    #[must_use]
-    pub const fn lease_epoch(&self) -> u64 {
-        self.lease_epoch
-    }
 }
 
 #[derive(Debug)]
@@ -1189,6 +1179,13 @@ impl<'plan> ExecutionScheduler<'plan> {
             }
         }
         validate_topology(dag, authority.topology())?;
+        if dag
+            .nodes()
+            .values()
+            .any(|node| node.metal_demand_id().is_some())
+        {
+            return Err(ExecutionError::MetalUnavailable);
+        }
         let lease = authority.acquire(
             resource_policy.clone(),
             DemandAlternatives {
@@ -1202,15 +1199,6 @@ impl<'plan> ExecutionScheduler<'plan> {
             ));
         }
         validate_lease_claims(dag, &lease)?;
-        if dag
-            .nodes()
-            .values()
-            .any(|node| node.metal_demand_id().is_some())
-        {
-            return Err(ExecutionError::invalid_plan(
-                "Metal work nodes run on the Metal backend, which is unavailable until IF-4 (#653)",
-            ));
-        }
         let initially_inactive = dag
             .adaptations
             .values()
@@ -1580,7 +1568,6 @@ impl<'plan> ExecutionScheduler<'plan> {
             ));
         }
         let mut permits = self.artifact_permits.remove(node_id).unwrap_or_default();
-        let mut immutable_allocations = Vec::with_capacity(allocations.len());
         for allocation in allocations {
             let active = self
                 .active_allocations
@@ -1591,16 +1578,11 @@ impl<'plan> ExecutionScheduler<'plan> {
                     "immutable artifact export lost its dedicated physical slot",
                 ));
             }
-            immutable_allocations.push(immutable_allocation_identity(node_id, allocation));
             permits.push(active.permit);
         }
-        let lease_epoch = self.lease_epoch().ok_or_else(|| {
+        let lease = self.lease.as_ref().ok_or_else(|| {
             ExecutionError::invalid_state("artifact permit lost its Resource Authority lease")
         })?;
-        let lease = self
-            .lease
-            .as_ref()
-            .expect("artifact lease epoch was checked");
         let permits = permits
             .into_iter()
             .map(|permit| lease.prepare_artifact_retention(permit))
@@ -1614,9 +1596,7 @@ impl<'plan> ExecutionScheduler<'plan> {
                 .collect(),
         });
         Ok(Some(RetainedArtifactPermit {
-            lease_epoch,
             _permits: permits.into_boxed_slice(),
-            _immutable_allocations: immutable_allocations.into_boxed_slice(),
             _liveness: liveness,
         }))
     }
@@ -2658,17 +2638,6 @@ fn canonical_physical_work_id(plan: &ExecutionDag) -> PhysicalWorkId {
         });
     }
     PhysicalWorkId::from_sha256(encoder.finish())
-}
-
-fn immutable_allocation_identity(
-    owner_node: &WorkNodeId,
-    allocation: &LogicalAllocation,
-) -> [u8; 32] {
-    let mut encoder = CanonicalEncoder::new();
-    encoder.bytes(b"casa-rs-immutable-artifact-allocation-v1");
-    encoder.string(owner_node.as_str());
-    encode_allocation(&mut encoder, allocation);
-    encoder.finish()
 }
 
 fn encode_allocation(encoder: &mut CanonicalEncoder, allocation: &LogicalAllocation) {
@@ -4829,6 +4798,9 @@ pub enum ExecutionError {
     },
     /// No pending work can make progress and no work or fence can unblock it.
     Deadlock,
+    /// The plan schedules Metal work; the Metal backend is unavailable
+    /// until IF-4 (#653). Refused before any resource is admitted.
+    MetalUnavailable,
 }
 
 impl ExecutionError {
@@ -4856,6 +4828,9 @@ impl fmt::Display for ExecutionError {
                 requested.as_str()
             ),
             Self::Deadlock => formatter.write_str("execution plan cannot make progress"),
+            Self::MetalUnavailable => {
+                formatter.write_str("Metal work needs the Metal backend, which is not installed")
+            }
         }
     }
 }

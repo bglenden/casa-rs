@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The bounded content budget of the selected observation's source.
 
-use std::io;
-
 use casa_imaging_model::CompiledProblem;
-use casa_ms::{ResolvedSelectedObservationAccess, SelectedObservationContentBudget};
+use casa_ms::{
+    BoundSelectedObservationError, ResolvedSelectedObservationAccess,
+    SelectedObservationContentBudget, SelectedObservationContentPlanError,
+};
 
 use crate::{ResourceAuthority, ResourceError, ResourcePolicy};
 
@@ -13,6 +14,23 @@ use crate::{ResourceAuthority, ResourceError, ResourcePolicy};
 #[must_use]
 pub const fn bootstrap_source_budget() -> SelectedObservationContentBudget {
     SelectedObservationContentBudget::new(64 << 20, 2, 4)
+}
+
+/// Why a source's execution envelope could not be finalized.
+#[derive(Debug, thiserror::Error)]
+pub enum SourceAccessError {
+    /// The storage owner could not quote or bind the source's requirements.
+    #[error("selected-observation access: {0}")]
+    Access(#[from] BoundSelectedObservationError),
+    /// The requirement curve could not be evaluated or planned.
+    #[error("selected-observation content plan: {0}")]
+    ContentPlan(#[from] SelectedObservationContentPlanError),
+    /// The policy's memory cannot hold the source's minimum envelope.
+    #[error(transparent)]
+    Resource(#[from] ResourceError),
+    /// The preferred envelope does not fit the address space.
+    #[error("the selected-observation envelope overflows")]
+    Overflow,
 }
 
 /// Finalize an unopened source's bounded execution envelope.
@@ -26,43 +44,36 @@ pub fn finalize_source_access(
     access: ResolvedSelectedObservationAccess,
     authority: &ResourceAuthority,
     policy: &ResourcePolicy,
-) -> io::Result<ResolvedSelectedObservationAccess> {
-    let requirements = access
-        .content_requirements(problem)
-        .map_err(io::Error::other)?;
+) -> Result<ResolvedSelectedObservationAccess, SourceAccessError> {
+    let requirements = access.content_requirements(problem)?;
     let maximum_live_blocks = access
         .source_binding()
         .content_budget()
         .maximum_live_blocks();
-    let minimum = requirements
-        .minimum_bytes(maximum_live_blocks)
-        .map_err(io::Error::other)?;
-    let available = authority
-        .remaining_selected_source_memory_bytes(policy)
-        .map_err(io::Error::other)?;
-    let required = u64::try_from(minimum).map_err(io::Error::other)?;
+    let minimum = requirements.minimum_bytes(maximum_live_blocks)?;
+    let available = authority.remaining_selected_source_memory_bytes(policy)?;
+    let required = u64::try_from(minimum).map_err(|_| SourceAccessError::Overflow)?;
     if required > available {
-        return Err(io::Error::other(ResourceError::Infeasible {
+        return Err(ResourceError::Infeasible {
             resource: "selected-observation host memory".to_string(),
             required,
             available,
-        }));
+        }
+        .into());
     }
     let preferred = minimum
         .checked_add(bootstrap_source_budget().available_bytes())
-        .ok_or_else(|| io::Error::other("selected-observation preferred envelope overflowed"))?;
+        .ok_or(SourceAccessError::Overflow)?;
     let budget = SelectedObservationContentBudget::new(
         preferred.min(usize::try_from(available).unwrap_or(usize::MAX)),
         maximum_live_blocks,
         requirements.maximum_pointing_polynomial_terms(),
     );
-    let planned = requirements.plan(budget).map_err(io::Error::other)?;
+    let planned = requirements.plan(budget)?;
     let budget = SelectedObservationContentBudget::new(
         planned.maximum_resident_bytes(),
         maximum_live_blocks,
         requirements.maximum_pointing_polynomial_terms(),
     );
-    access
-        .with_content_budget(problem, &requirements, budget)
-        .map_err(io::Error::other)
+    Ok(access.with_content_budget(problem, &requirements, budget)?)
 }
