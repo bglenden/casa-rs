@@ -152,6 +152,7 @@ impl<'a> MeasurementSetSource<'a> {
                     antenna_types: [0, 0],
                     parallactic_angle_rad: coordinates.parallactic_angles_rad.unwrap_or([0.0; 2]),
                     field: metadata.field_id as u32,
+                    spectral_window: numeric.row.spectral_window_id,
                 },
                 address: RowAddress {
                     physical_row: numeric.row.physical_row,

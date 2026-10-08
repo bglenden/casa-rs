@@ -29,6 +29,7 @@ fn context() -> RowContext {
         antenna_types: [0, 0],
         parallactic_angle_rad: [0.0, 0.0],
         field: 0,
+        spectral_window: 0,
     }
 }
 

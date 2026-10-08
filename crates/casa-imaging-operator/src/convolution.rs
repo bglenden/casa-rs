@@ -231,6 +231,9 @@ pub struct RowContext {
     pub parallactic_angle_rad: [f64; 2],
     /// Field (pointing) identifier.
     pub field: u32,
+    /// Spectral window of the row's data description; kernel sets with
+    /// per-window frequency cells key on it.
+    pub spectral_window: u32,
 }
 
 /// Paired image-domain gridding correction: one real vector per grid axis,
