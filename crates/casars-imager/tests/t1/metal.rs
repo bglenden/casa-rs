@@ -27,8 +27,14 @@ fn on_metal(mut controls: Value) -> Value {
     controls
 }
 
-/// `true` (saying so) when the route refused Metal for want of a device.
+/// `true` (saying so) when the route refused Metal: off macOS, where
+/// availability rejects it (pinned in the application's availability tests),
+/// or for want of a device.
 fn no_device(outcome: &Result<(casars_imager::RunSummary, Products), String>) -> bool {
+    if !cfg!(target_os = "macos") {
+        eprintln!("skipped: Metal is macOS only");
+        return true;
+    }
     let refused = outcome
         .as_ref()
         .is_err_and(|error| error.contains(NO_METAL_DEVICE));

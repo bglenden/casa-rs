@@ -65,6 +65,11 @@ fn both(
     label: &str,
     imaging: impl Fn(PathBuf, BackendChoice) -> ContinuumImagingRequest,
 ) -> Option<(PathBuf, PathBuf, Option<u32>)> {
+    if !cfg!(target_os = "macos") {
+        // Availability refuses Metal off macOS (pinned in tests/availability.rs).
+        eprintln!("skipped: Metal is macOS only");
+        return None;
+    }
     let metal = root.join(format!("{label}-metal"));
     let result = match execute_continuum(imaging(metal.clone(), BackendChoice::Metal)) {
         Ok(result) => result,
