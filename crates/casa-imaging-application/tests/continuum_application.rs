@@ -822,6 +822,60 @@ fn application_uses_weight_when_selected_weight_spectrum_cells_are_undefined() {
     assert_dirty_products(&image_name, &result.product_names);
 }
 
+/// The compiled `FiniteValuePolicy::FlagInputRejectGenerated`: a non-finite
+/// visibility is a flagged sample, so the image equals the image of the
+/// same data with that sample flagged instead.
+#[test]
+fn nonfinite_visibilities_image_as_flagged_samples() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    const ROW: usize = 3;
+    let mut images = Vec::new();
+    for nonfinite in [true, false] {
+        let root = tempfile::tempdir().expect("test root");
+        let path = multi_row_measurement_set(root.path());
+        let mut ms = MeasurementSet::open(&path).expect("open fixture");
+        if nonfinite {
+            let mut data = ms
+                .data_column_mut(VisibilityDataColumn::Data)
+                .expect("DATA column");
+            let ArrayValue::Complex32(cell) = data.get(ROW).expect("DATA cell").clone() else {
+                panic!("DATA is complex");
+            };
+            data.put(
+                ROW,
+                ArrayValue::Complex32(cell.mapv(|_| Complex32::new(f32::NAN, 0.0))),
+            )
+            .expect("write NaN");
+        } else {
+            let flags = ms.flag_column();
+            let ArrayValue::Bool(cell) = flags.get(ROW).expect("FLAG cell").clone() else {
+                panic!("FLAG is boolean");
+            };
+            ms.main_table_mut()
+                .row_accessor_mut()
+                .set_cell(
+                    ROW,
+                    "FLAG",
+                    Value::Array(ArrayValue::Bool(cell.mapv(|_| true))),
+                )
+                .expect("flag the row's samples");
+        }
+        ms.save().expect("save fixture");
+        drop(ms);
+        let image_name = root.path().join("finite");
+        let result =
+            execute_continuum(request(path, image_name.clone(), ContinuumAlgorithm::Dirty))
+                .unwrap_or_else(|error| panic!("nonfinite={nonfinite}: {error}"));
+        assert_dirty_products(&image_name, &result.product_names);
+        images.push([".residual", ".psf", ".sumwt"].map(|suffix| {
+            product_plane_with_size(&image_name, suffix, if suffix == ".sumwt" { 1 } else { 16 })
+        }));
+    }
+    assert!(images[0][0].iter().all(|value| value.is_finite()));
+    assert_eq!(images[0], images[1]);
+}
+
 #[test]
 fn t31_application_executes_recentered_domains_through_one_scientific_route() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
@@ -929,6 +983,90 @@ fn t31_application_executes_recentered_domains_through_one_scientific_route() {
             _ => unreachable!(),
         }
     }
+}
+
+/// Image domains are independent measurements of one observation: a dirty
+/// cube's main domain is the same with or without a recentred outlier cube,
+/// and the outlier carries the same spectral axis.
+#[test]
+fn outlier_cube_domains_image_independently_of_the_main_cube() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
+    let cube = |image_name: &Path, outlier_file: Option<PathBuf>| {
+        let mut imaging = request(
+            measurement_set.clone(),
+            image_name.to_path_buf(),
+            ContinuumAlgorithm::Dirty,
+        );
+        imaging.image_size = 32;
+        imaging.field_ids = Some(vec![0, 1]);
+        imaging.outlier_file = outlier_file;
+        imaging.spectral_window = Some("0:0~31".to_string());
+        imaging.channel_count = Some(32);
+        imaging.spectral_mode = SpectralImagingMode::Cube {
+            axis: CubeAxisConfig {
+                outframe: FrequencyRef::TOPO,
+                ..CubeAxisConfig::default()
+            },
+            output_channels: Some(32),
+        };
+        imaging.task_requirements = vec![TaskRequirement::SpectralCube];
+        execute_continuum(imaging).expect("dirty cube execution")
+    };
+    let alone = root.path().join("cube-alone");
+    cube(&alone, None);
+    let main = root.path().join("cube-main");
+    let outlier = root.path().join("cube-outlier");
+    let outlier_file = root.path().join("cube.outlier");
+    std::fs::write(
+        &outlier_file,
+        format!(
+            "imagename={}\nimsize=[32,32]\ncell=[1arcsec,1arcsec]\nphasecenter=J2000 1.001rad 0.499rad\n",
+            outlier.display()
+        ),
+    )
+    .expect("write recentred outlier cube");
+    let result = cube(&main, Some(outlier_file));
+    assert_eq!(
+        result
+            .outcome
+            .output
+            .scientific
+            .normal_state()
+            .domain_count(),
+        2
+    );
+    let read = |base: &Path, suffix: &str| {
+        let image = PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", base.display())))
+            .expect("open cube product");
+        let shape = image.shape().to_vec();
+        (
+            shape.clone(),
+            image.get_slice(&[0, 0, 0, 0], &shape).expect("read"),
+        )
+    };
+    for suffix in DIRTY_PRODUCT_SUFFIXES {
+        assert_eq!(read(&main, suffix), read(&alone, suffix), "main {suffix}");
+        let (shape, values) = read(&outlier, suffix);
+        let expected: &[usize] = if suffix == ".sumwt" {
+            &[1, 1, 1, 32]
+        } else {
+            &[32, 32, 1, 32]
+        };
+        assert_eq!(shape, expected, "outlier {suffix}");
+        assert!(
+            values.iter().all(|value| value.is_finite()),
+            "outlier {suffix}"
+        );
+    }
+    // Natural weights do not depend on the phase centre: the outlier
+    // grids every sample of every channel the main cube does.
+    let (_, outlier_sumwt) = read(&outlier, ".sumwt");
+    let (_, main_sumwt) = read(&main, ".sumwt");
+    assert!(main_sumwt.iter().all(|value| *value > 0.0));
+    assert_eq!(outlier_sumwt, main_sumwt);
 }
 
 #[test]

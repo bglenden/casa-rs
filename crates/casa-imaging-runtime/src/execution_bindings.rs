@@ -10,9 +10,9 @@ use std::{
 use casa_imaging_model::{
     CompiledGeometry, CompiledGeometryId, CompiledProblem, CompiledProblemId, NumericsContract,
     NumericsContractId, ObservationProvenanceId, ObservationReadSet, ObservationSnapshotId,
-    ObservationTransactionContract, ObservationWriteSet, ProblemInputIdentities, ProductGraphId,
-    ProductRequirements, ReconstructionContract, ReferenceDataKind, RequiredCapability,
-    ScientificContract, SelectedObservationCommitmentId, WeightingOperatorContract,
+    ObservationTransactionContract, ProblemInputIdentities, ProductGraphId, ProductRequirements,
+    ReconstructionContract, ReferenceDataKind, RequiredCapability, ScientificContract,
+    SelectedObservationCommitmentId, WeightingOperatorContract,
 };
 use casa_imaging_reconstruction::ExecutableModelProblem;
 use sha2::{Digest, Sha256};
@@ -2944,7 +2944,6 @@ pub struct WorkExecutionContext<'a> {
     resource_alternative: &'a crate::DemandAlternative,
     observation_consistency: Option<&'a ObservationTransactionContract>,
     observation_reads: Option<&'a ObservationReadSet>,
-    visibility_writes: Option<&'a ObservationWriteSet>,
     publication: Option<&'a ObservationTransactionContract>,
     publication_resources: Option<PublicationResources<'a>>,
     completed_observation_reads: &'a BTreeMap<WorkNodeId, AttemptBoundObservationCompletion>,
@@ -2995,7 +2994,6 @@ impl<'a> WorkExecutionContext<'a> {
             resource_alternative,
             observation_consistency: None,
             observation_reads: None,
-            visibility_writes: None,
             publication: None,
             publication_resources: None,
             completed_observation_reads: bindings.completed_observation_reads,
@@ -3127,12 +3125,6 @@ impl<'a> WorkExecutionContext<'a> {
         } else {
             None
         }
-    }
-
-    /// Return exact selected-visibility writes only for the bound private writeback node.
-    #[must_use]
-    pub const fn visibility_writes(self) -> Option<&'a ObservationWriteSet> {
-        self.visibility_writes
     }
 
     /// Return the complete transaction only for the sole atomic Publication node.
@@ -3933,7 +3925,6 @@ fn work_execution_context<'a>(
     let transaction_work = plan.observation_transaction.work();
     let common = |observation_consistency,
                   observation_reads,
-                  visibility_writes,
                   publication,
                   publication_resources| WorkExecutionContext {
         control: None,
@@ -3946,40 +3937,23 @@ fn work_execution_context<'a>(
         resource_alternative: plan.execution_dag.resource_alternative(),
         observation_consistency,
         observation_reads,
-        visibility_writes,
         publication,
         publication_resources,
         completed_observation_reads,
     };
-    if work.node().kind == WorkKind::ObservationReadWriteback {
+    if work.node().kind == WorkKind::ObservationRead {
         common(
             None,
             Some(problem.observation_transaction().read_set()),
-            Some(problem.observation_transaction().write_set()),
-            None,
-            None,
-        )
-    } else if work.node().kind == WorkKind::ObservationRead {
-        common(
-            None,
-            Some(problem.observation_transaction().read_set()),
-            None,
             None,
             None,
         )
     } else if transaction_work.commit() == &work.node().id {
-        common(
-            None,
-            None,
-            None,
-            Some(problem.observation_transaction()),
-            None,
-        )
+        common(None, None, Some(problem.observation_transaction()), None)
     } else {
         common(
             (transaction_work.initial_consistency_check() == Some(&work.node().id))
                 .then_some(problem.observation_transaction()),
-            None,
             None,
             None,
             None,
@@ -5210,13 +5184,6 @@ fn encode_observation_transaction(
         encoder.string(check.as_str());
     }
     encode_dependencies(encoder, work.observation_reads());
-    match work.final_model_preparation() {
-        Some(node) => {
-            encoder.u8(1);
-            encoder.string(node.as_str());
-        }
-        None => encoder.u8(0),
-    }
     match work.post_replay_reconciliation() {
         Some(node) => {
             encoder.u8(1);
@@ -5225,13 +5192,6 @@ fn encode_observation_transaction(
         None => encoder.u8(0),
     }
     encode_dependencies(encoder, work.product_staging());
-    match work.visibility_writeback() {
-        Some(node) => {
-            encoder.u8(1);
-            encoder.string(node.as_str());
-        }
-        None => encoder.u8(0),
-    }
     encoder.string(work.commit().as_str());
 }
 

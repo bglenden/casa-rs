@@ -96,16 +96,13 @@ pub enum WorkKind {
     Io,
     /// Read the exact compiled MeasurementSet source set under its named locks.
     ObservationRead,
-    /// Read the exact compiled MeasurementSet source set while writing bounded
-    /// selected column cells in place under the same transaction.
-    ObservationReadWriteback,
     /// Serialize a prepared or scientific artifact.
     Serialization,
     /// Complete a private staged storage writeback without publishing it.
     Writeback,
     /// Revalidate and atomically publish the conventional-product members of
-    /// one transaction. `MODEL_DATA` is written in place by the terminal
-    /// [`Self::ObservationReadWriteback`] replay and is not a publication member.
+    /// one transaction. `MODEL_DATA` and `CORRECTED_DATA` are written in place
+    /// by the final major-cycle pass and are not publication members.
     Publication,
     /// Explicitly unmap, evict, destroy, or otherwise release externally
     /// retained storage before its physical slot becomes reusable.
@@ -118,7 +115,7 @@ impl WorkKind {
     /// Return whether this work owns a selected-observation read completion.
     #[must_use]
     pub const fn reads_observation(self) -> bool {
-        matches!(self, Self::ObservationRead | Self::ObservationReadWriteback)
+        matches!(self, Self::ObservationRead)
     }
 
     const fn is_execution_only_adaptation_work(self) -> bool {
@@ -139,7 +136,6 @@ impl WorkKind {
                 | Self::Transfer
                 | Self::Io
                 | Self::ObservationRead
-                | Self::ObservationReadWriteback
                 | Self::Serialization
                 | Self::Writeback
                 | Self::Publication
@@ -3058,7 +3054,6 @@ fn encode_work_kind(encoder: &mut CanonicalEncoder, kind: WorkKind) {
         WorkKind::Synchronization => 14,
         WorkKind::Release => 15,
         WorkKind::ObservationRead => 16,
-        WorkKind::ObservationReadWriteback => 17,
     });
 }
 
@@ -3594,7 +3589,7 @@ fn validate_kind(node: &WorkNode) -> Result<(), ExecutionError> {
         }
         WorkKind::Spill | WorkKind::Prefetch => require_io_domain(node),
         WorkKind::Io => require_io_domain(node),
-        WorkKind::ObservationRead | WorkKind::ObservationReadWriteback => {
+        WorkKind::ObservationRead => {
             require_io_domain(node)?;
             require_claim(
                 node,
@@ -3646,7 +3641,6 @@ pub(crate) fn io_buffer_kind_supports_work_kind(
                 WorkKind::Prefetch
                     | WorkKind::Cache
                     | WorkKind::ObservationRead
-                    | WorkKind::ObservationReadWriteback
                     | WorkKind::Release
             )
         }
@@ -3676,10 +3670,7 @@ pub(crate) fn io_buffer_kind_supports_work_kind(
             work_kind == WorkKind::Io
         }
         crate::IoBufferKind::Writeback => {
-            matches!(
-                work_kind,
-                WorkKind::Writeback | WorkKind::ObservationReadWriteback | WorkKind::Cache
-            )
+            matches!(work_kind, WorkKind::Writeback | WorkKind::Cache)
         }
         crate::IoBufferKind::Publication => work_kind == WorkKind::Publication,
         crate::IoBufferKind::MappedPageCache => {
