@@ -46,7 +46,6 @@ use casa_imaging_model::{
     VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
     compile, compile_observation,
 };
-use casa_imaging_reconstruction::compile_spectral_stencil;
 use casa_tables::{ColumnSchema, LockMode, LockOptions, LockType, Table, TableOptions};
 use casa_types::measures::{
     EopValues, MeasuresProvider, MeasuresProviderState,
@@ -1114,7 +1113,7 @@ fn measures_provider_growth_during_traversal_prevents_owner_completion() {
 }
 
 #[test]
-fn real_ms_cube_traversal_compiles_source_backed_casa_cubic_stencils() {
+fn real_ms_cube_traversal_reports_source_backed_cubic_evaluations() {
     let directory = tempfile::tempdir().expect("temporary cube-contribution fixture");
     let path = directory.path().join("cube-contributions.ms");
     generate_fixture(&path);
@@ -1138,20 +1137,11 @@ fn real_ms_cube_traversal_compiles_source_backed_casa_cubic_stencils() {
     )
     .expect("bind real MeasurementSet cube traversal");
     let mut values = Vec::new();
-    let mut stencils = Vec::new();
 
     let completion = observation
         .traverse(&problem, |reported| {
             let sample = reported.selected();
             let evaluation = reported.spectral_evaluation();
-            stencils.push(
-                compile_spectral_stencil(&problem, sample, evaluation)
-                    .expect("compile reconstruction-owned cubic stencil")
-                    .contributions()
-                    .iter()
-                    .map(|term| (term.output_channel(), term.factor()))
-                    .collect::<Vec<_>>(),
-            );
             values.push((
                 sample.address().channel_index,
                 evaluation.native(),
@@ -1176,22 +1166,10 @@ fn real_ms_cube_traversal_compiles_source_backed_casa_cubic_stencils() {
     assert_eq!(values[2].1.boundaries_hz(), [1.4015e9, 1.4025e9]);
     assert_eq!(values[2].2, values[2].1);
     assert_eq!(values[3], values[2]);
-    // Casacore InterpolateArray1D uses four-point polynomial interpolation
-    // (Neville's algorithm). At the first half-channel this is the exact
-    // CASA/casacore coefficient oracle, including its signed outer term.
-    assert_eq!(
-        stencils[0],
-        vec![(0, 0.3125), (1, 0.9375), (2, -0.3125), (3, 0.0625)]
-    );
 }
 
-#[cfg(feature = "cpp-interop-tests")]
 #[test]
-fn t35_source_backed_identity_and_nonidentity_tracers_match_casacore() {
-    use casa_test_support::spectral_interop::{
-        SpectralInterpolationEdge, SpectralInterpolationMethod, SpectralInterpolationOracle,
-    };
-
+fn t35_source_backed_identity_and_nonidentity_traversals_report_native_evaluations() {
     let directory = tempfile::tempdir().expect("temporary T35 source-backed fixture");
     let path = directory.path().join("t35-spectral-tracer.ms");
     generate_fixture(&path);
@@ -1231,11 +1209,10 @@ fn t35_source_backed_identity_and_nonidentity_tracers_match_casacore() {
         let mut receipts = Vec::new();
         observation
             .traverse(problem, |reported| {
-                let sample = *reported.selected();
-                let evaluation = reported.spectral_evaluation();
-                let stencil = compile_spectral_stencil(problem, &sample, evaluation)
-                    .expect("compile paired spectral stencil");
-                receipts.push((sample, evaluation, stencil));
+                receipts.push((
+                    reported.selected().to_owned(),
+                    reported.spectral_evaluation(),
+                ));
                 Ok::<_, Infallible>(())
             })
             .expect("traverse the common T35 MeasurementSet");
@@ -1244,31 +1221,14 @@ fn t35_source_backed_identity_and_nonidentity_tracers_match_casacore() {
 
     let identity_receipts = trace(&identity);
     assert_eq!(identity_receipts.len(), 8);
-    for (sample, evaluation, stencil) in &identity_receipts {
-        let expected_channel = if sample.address.channel_index == 0 {
-            0
-        } else {
-            1
-        };
-        assert_eq!(
-            stencil
-                .contributions()
-                .iter()
-                .map(|term| (term.output_channel(), term.factor()))
-                .collect::<Vec<_>>(),
-            vec![(expected_channel, 1.0)]
-        );
+    for (sample, evaluation) in &identity_receipts {
         assert_eq!(evaluation.native(), evaluation.output_frame());
         assert_eq!(evaluation.effective_weight(), sample.input_weight as f64);
         assert_eq!(evaluation.is_valid(), !sample.parallel_hand_group_flag);
-        assert_eq!(
-            stencil.covariance(),
-            casa_imaging_model::SpectralCovariance::PropagateIndependentSourceNoise
-        );
     }
 
     let nonidentity_receipts = trace(&nonidentity);
-    let (sample, evaluation, stencil) = &nonidentity_receipts[0];
+    let (sample, evaluation) = &nonidentity_receipts[0];
     assert_eq!(
         sample.address.frequency_centre_hz.to_bits(),
         1.4e9_f64.to_bits()
@@ -1283,44 +1243,6 @@ fn t35_source_backed_identity_and_nonidentity_tracers_match_casacore() {
     );
     assert_eq!(evaluation.effective_weight(), 1.0);
     assert!(evaluation.is_valid());
-
-    let casa = SpectralInterpolationOracle::coefficients(
-        &output_centres,
-        evaluation.output_frame().centre_hz(),
-        SpectralInterpolationMethod::Cubic,
-        SpectralInterpolationEdge::FlagOutside,
-    )
-    .expect("CASA/casacore cubic spectral oracle");
-    assert!(casa.valid);
-    let rust =
-        stencil
-            .contributions()
-            .iter()
-            .fold(vec![0.0; output_centres.len()], |mut dense, term| {
-                dense[term.output_channel() as usize] = term.factor();
-                dense
-            });
-    for (rust, casa) in rust.iter().zip(&casa.coefficients) {
-        assert!(
-            (rust - casa).abs() <= 2.0 * f64::EPSILON,
-            "CASA/casacore and Rust cubic coefficients diverged: rust={rust} casa={casa}"
-        );
-    }
-
-    let model = [2.0, -1.0, 0.5, 4.0];
-    let source_visibility = -3.25;
-    let prediction = stencil
-        .contributions()
-        .iter()
-        .map(|term| term.factor() * model[term.output_channel() as usize])
-        .sum::<f64>();
-    let lhs = prediction * source_visibility;
-    let rhs = stencil
-        .contributions()
-        .iter()
-        .map(|term| model[term.output_channel() as usize] * term.factor() * source_visibility)
-        .sum::<f64>();
-    assert!((lhs - rhs).abs() <= f64::EPSILON * lhs.abs().max(1.0));
 }
 
 #[test]
@@ -1643,7 +1565,7 @@ fn real_ms_cube_traversal_uses_the_native_field_frame_for_output_conversion() {
 }
 
 #[test]
-fn real_ms_cubedata_traversal_compiles_source_backed_casa_cubic_stencils() {
+fn real_ms_cubedata_traversal_reports_source_backed_native_evaluations() {
     let directory = tempfile::tempdir().expect("temporary cubedata-contribution fixture");
     let path = directory.path().join("cubedata-contributions.ms");
     generate_fixture(&path);
@@ -1667,20 +1589,11 @@ fn real_ms_cubedata_traversal_compiles_source_backed_casa_cubic_stencils() {
     )
     .expect("bind real MeasurementSet cubedata traversal");
     let mut values = Vec::new();
-    let mut stencils = Vec::new();
 
     observation
         .traverse(&problem, |reported| {
             let sample = reported.selected();
             let evaluation = reported.spectral_evaluation();
-            stencils.push(
-                compile_spectral_stencil(&problem, sample, evaluation)
-                    .expect("compile reconstruction-owned cubic stencil")
-                    .contributions()
-                    .iter()
-                    .map(|term| (term.output_channel(), term.factor()))
-                    .collect::<Vec<_>>(),
-            );
             values.push((
                 sample.address().channel_index,
                 evaluation.native(),
@@ -1702,10 +1615,6 @@ fn real_ms_cubedata_traversal_compiles_source_backed_casa_cubic_stencils() {
     assert_eq!(values[2].3, 1.0);
     assert!(values[2].4);
     assert_eq!(values[3], values[2]);
-    assert_eq!(
-        stencils[0],
-        vec![(0, 0.3125), (1, 0.9375), (2, -0.3125), (3, 0.0625)]
-    );
 }
 
 #[test]

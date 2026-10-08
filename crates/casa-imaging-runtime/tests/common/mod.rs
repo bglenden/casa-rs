@@ -75,22 +75,6 @@ pub fn problem_inputs_with_source_count(
     )
 }
 
-#[allow(dead_code)]
-pub fn problem_inputs_with_channels(
-    observation: u8,
-    reference_data: Vec<(ReferenceDataKind, LogicalIdentity)>,
-    model: ModelStateIdentity,
-    channel_count: usize,
-) -> ProblemInputIdentities {
-    problem_inputs_with_source_count_and_channels(
-        observation,
-        reference_data,
-        model,
-        1,
-        channel_count,
-    )
-}
-
 fn problem_inputs_with_source_count_and_channels(
     observation: u8,
     reference_data: Vec<(ReferenceDataKind, LogicalIdentity)>,

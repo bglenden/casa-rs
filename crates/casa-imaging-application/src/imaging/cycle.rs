@@ -529,7 +529,7 @@ fn weighting(
             )
         }
     };
-    let shape = density_shape(problem, &problem.geometry().domains()[0]);
+    let shape = density_shape(problem, &problem.geometry().domains()[0])?;
     let grid = run_density_pass(&main.operator, &main.resampler, shape, source, team, cancel)?;
     Ok(WeightingGeneration::density(
         grid, robust, bandwidth, taper,

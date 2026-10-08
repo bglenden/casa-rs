@@ -1,54 +1,39 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 //! T44 acceptance contract for Taylor-family product construction.
+//!
+//! Products are generated from major-cycle completions assembled from
+//! explicit synthetic pass planes (`common::synthetic_pass`), not gridded.
 
 mod common;
+use common::observation::{attempt, identity, source};
+use common::synthetic_pass::{Scene, two_cycle_round};
 use common::{GeneratedMember, GeneratedProducts, MemoryProductOutput, full_window};
 
 use casa_imaging_model::{
-    AntennaSelection, AxisOrder, CentreLaws, ColumnGeneration, ConsistencyToken,
-    CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
-    DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
-    DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame,
-    GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    ImagingRequest, InstrumentResponse, IntentSelection, LogicalIdentity,
-    MeasurementEquationContract, MeasurementSetIdentity, MetadataGeneration, MetadataTableKind,
-    ModelBounds, ModelColumnState, ModelColumnWrite, ModelExecutionAttemptId, ModelInnerProduct,
-    ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity, MsColumnKind,
-    NumericPrecision, NumericalStage, NumericsContract, ObservationSelection,
-    ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance,
-    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PolarizationContract,
-    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInputIdentities,
-    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
-    ProductRequirements, ProductRole, ProductSchema, ProductSupportComparison, ProductTerm,
-    ProductUnit, ProductValidityPolicies, ProductValidityRule, Projection, ReconstructionAlgorithm,
-    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
-    ReferenceDataKind, RestFrequency, RestoringBeamPolicy, RowSelection, ScientificContract,
-    SelectedColumns, SelectedImageDomainProjections, SelectedMainRow, SelectedObservationSample,
-    SelectedPhaseCentreProjection, SelectedPredictionTarget, SelectedRows, SelectedSampleAddress,
-    SelectedSampleCoordinates, SelectedSampleMetadata, SelectedSpectralContribution,
-    SelectedSpectralContributions, SelectedVisibilitySample, SkyDirection, SourceGenerations,
-    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
-    TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection,
-    UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope,
-    WeightingContract, WeightingScheme, compile, compile_observation,
+    AxisOrder, CentreLaws, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
+    DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame,
+    GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest,
+    InstrumentResponse, MeasurementEquationContract, ModelBounds, ModelCell, ModelColumnWrite,
+    ModelDeltaTerm, ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements,
+    ModelStateIdentity, ModelValue, NumericPrecision, NumericalStage, NumericsContract,
+    ObservationSnapshotInput, ObservationTransactionRequirements, PhaseCentreLaw,
+    PointingCentreLaw, PolarizationContract, PolarizationCoordinate, ProblemInputIdentities,
+    ProblemSpecification, ProductKind, ProductNormalization, ProductRequirements, ProductRole,
+    ProductSchema, ProductTerm, ProductUnit, ProductValidityPolicies, ProductValidityRule,
+    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
+    ReconstructionControls, ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy,
+    ScientificContract, SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
+    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, StageErrorBudget, UvwCoordinateLaw,
+    VisibilityInnerProduct, WeightDensityScope, WeightingContract, WeightingScheme, compile,
+    compile_observation,
 };
 use casa_imaging_products::{
     AnalyticPrimaryBeamModel, ContinuumProductControls, ContinuumProductInputs,
     PlannedContinuumGeneration, ProductsError, fft_convolve, gaussian_beam_image,
     produce_continuum_members,
 };
-use casa_imaging_reconstruction::{
-    ExecutableModelProblem, MajorCycleCompletion, MajorCycleOwner, MajorCyclePreparation,
-    ModelLifecycle, SpectralOperatorSpecification, WeightingAlgorithmState, WeightingError,
-    WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk, WeightingReplaySummary,
-    begin_weighting_generation, plan_weighting,
-    runtime_adapter::{
-        CompleteDataOwnerResult, SpectralOperatorPass, prepare_spectral_operator,
-        spectral_operator_workload,
-    },
-};
+use casa_imaging_reconstruction::MajorCycleCompletion;
 
 const SHAPE: [usize; 2] = [8, 8];
 const TERMS: usize = 2;
@@ -76,123 +61,12 @@ const PB_PRODUCTS: [ProductKind; 9] = [
     ProductKind::Beam,
 ];
 
-fn identity(seed: u8, scope: u8) -> LogicalIdentity {
-    let mut bytes = [seed; 32];
-    bytes[0] = scope;
-    LogicalIdentity::from_sha256(bytes)
-}
-
-fn attempt(seed: u8) -> ModelExecutionAttemptId {
-    ModelExecutionAttemptId::new(identity(seed, 0))
-}
-
-fn source(seed: u8) -> ObservationSourceInput {
-    let columns = [
-        MsColumnKind::Data,
-        MsColumnKind::Flag,
-        MsColumnKind::FlagRow,
-        MsColumnKind::Weight,
-        MsColumnKind::Uvw,
-        MsColumnKind::Time,
-        MsColumnKind::TimeCentroid,
-        MsColumnKind::Interval,
-        MsColumnKind::Exposure,
-        MsColumnKind::FieldId,
-        MsColumnKind::DataDescriptionId,
-        MsColumnKind::Antenna1,
-        MsColumnKind::Antenna2,
-        MsColumnKind::Feed1,
-        MsColumnKind::Feed2,
-        MsColumnKind::ScanNumber,
-        MsColumnKind::StateId,
-        MsColumnKind::ObservationId,
-        MsColumnKind::ArrayId,
-    ]
-    .into_iter()
-    .enumerate()
-    .map(|(index, kind)| ColumnGeneration::new(kind, identity(seed, 20 + index as u8)))
-    .collect();
-    let metadata = [
-        MetadataTableKind::Antenna,
-        MetadataTableKind::DataDescription,
-        MetadataTableKind::Feed,
-        MetadataTableKind::Field,
-        MetadataTableKind::Observation,
-        MetadataTableKind::Pointing,
-        MetadataTableKind::Polarization,
-        MetadataTableKind::SpectralWindow,
-        MetadataTableKind::State,
-    ]
-    .into_iter()
-    .enumerate()
-    .map(|(index, kind)| MetadataGeneration::new(kind, identity(seed, 60 + index as u8)))
-    .collect();
-    ObservationSourceInput::new(
-        MeasurementSetIdentity::new(identity(seed, 1)),
-        ObservationSourceProvenance::new(format!("fixture://t44/{seed}"), identity(seed, 2)),
-        ObservationSelection::new(
-            SelectedRows::from_ordered_main_rows(
-                3,
-                [SelectedMainRow::new(0, 0), SelectedMainRow::new(2, 1)],
-            )
-            .expect("selected rows"),
-            RowSelection::new(
-                IdSelection::All,
-                TimeSelection::All,
-                UvSelection::All,
-                AntennaSelection::All,
-                IdSelection::All,
-                IdSelection::All,
-                IntentSelection::All,
-                IdSelection::All,
-            ),
-            vec![
-                DataDescriptionSelection::new(0, 0, 0),
-                DataDescriptionSelection::new(1, 1, 0),
-            ],
-            vec![
-                SpectralWindowSelection::new(0, vec![0]),
-                SpectralWindowSelection::new(1, vec![1]),
-            ],
-            vec![CorrelationSelection::new(
-                0,
-                vec![CorrelationProduct::new(0, CorrelationType::StokesI)],
-            )],
-        ),
-        SourceGenerations::new(
-            ConsistencyToken::new(identity(seed, 3)),
-            SelectedColumns::new(
-                VisibilityColumn::Data,
-                FlagPolicy::FlagOrFlagRow,
-                WeightColumn::Weight,
-                columns,
-            ),
-            metadata,
-            ModelColumnState::Absent,
-        ),
-    )
-}
-
 fn validity() -> ProductValidityPolicies {
     validity_with_taylor_fraction(0.1)
 }
 
 fn validity_with_taylor_fraction(taylor_fraction: f32) -> ProductValidityPolicies {
-    ProductValidityPolicies::new(
-        PrimaryBeamValidityPolicy::new(
-            0.2,
-            ProductSupportComparison::StrictlyGreater,
-            ProductBlankingPolicy::Zero,
-        )
-        .expect("PB validity"),
-        TaylorValidityPolicy::new(
-            TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
-            taylor_fraction,
-            ProductSupportComparison::StrictlyGreater,
-            ProductBlankingPolicy::Zero,
-        )
-        .expect("Taylor validity"),
-    )
+    common::observation::validity(taylor_fraction)
 }
 
 fn taylor_problem(
@@ -256,7 +130,7 @@ fn taylor_problem_with_fraction(
         vec![(ReferenceDataKind::Instrument, identity(seed, 90))]
     };
     let snapshot = compile_observation(ObservationSnapshotInput::new(
-        vec![source(seed)],
+        vec![source(seed, "t44")],
         references,
         ModelStateIdentity::Empty,
     ))
@@ -314,136 +188,15 @@ fn taylor_problem_with_fraction(
     .expect("compile Taylor problem")
 }
 
-fn samples(problem: &casa_imaging_model::CompiledProblem) -> Vec<SelectedObservationSample> {
-    let source = &problem.selected_observation().read_set().sources()[0];
-    [0_u64, 2]
-        .into_iter()
-        .enumerate()
-        .map(|(row_index, physical_row)| {
-            let frequency = if row_index == 0 { 1.05e9 } else { 1.15e9 };
-            SelectedObservationSample {
-                address: SelectedSampleAddress {
-                    measurement_set: source.measurement_set(),
-                    physical_row,
-                    data_description_id: row_index as i32,
-                    spectral_window_id: row_index as u32,
-                    channel_index: row_index as u32,
-                    frequency_centre_hz: frequency,
-                    frequency_lower_hz: frequency - 5.0e6,
-                    frequency_upper_hz: frequency + 5.0e6,
-                    channel_width_hz: 1.0e7,
-                    frequency_frame: FrequencyFrame::Topocentric,
-                    polarization_id: 0,
-                    correlation_index: 0,
-                    correlation_type: CorrelationType::StokesI,
-                },
-                visibility: SelectedVisibilitySample::Complex32([1.0, row_index as f32]),
-                prediction_target: SelectedPredictionTarget::NotRequested,
-                channel_flag: false,
-                parallel_hand_group_flag: false,
-                row_flag: false,
-                input_weight: 1.0 + row_index as f32,
-                coordinates: SelectedSampleCoordinates {
-                    raw_uvw_m: [1.0 + row_index as f64, 0.0, 0.0],
-                    density_uvw_m: [1.0 + row_index as f64, 0.0, 0.0],
-                    transformed_uvw_m: [1.0 + row_index as f64, 0.0, 0.0],
-                    phase_shift_m: 0.0,
-                    uvw_law: UvwCoordinateLaw::PhaseTrackingCentre,
-                    time: Epoch::new(59_000.0 + physical_row as f64, TimeScale::Utc),
-                    time_centroid: Epoch::new(59_000.0 + physical_row as f64, TimeScale::Utc),
-                    interval_seconds: 1.0,
-                    exposure_seconds: 1.0,
-                    parallactic_angles_rad: Some([0.0, 0.0]),
-                    phase_direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
-                    delay_direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
-                    pointing_directions: casa_imaging_model::SelectedPointingDirections {
-                        antenna1: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
-                        antenna2: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
-                    },
-                },
-                domain_projections: SelectedImageDomainProjections::one_domain_with_shared_psf(
-                    SelectedPhaseCentreProjection::new([1.0 + row_index as f64, 0.0, 0.0], 0.0)
-                        .expect("finite one-domain projection"),
-                ),
-                metadata: SelectedSampleMetadata {
-                    field_id: 0,
-                    antenna1: 0,
-                    antenna2: 1,
-                    antenna_responses: None,
-                    feed1: 0,
-                    feed2: 0,
-                    scan_number: 1,
-                    state_id: 0,
-                    observation_id: 0,
-                    array_id: 0,
-                },
-            }
-        })
-        .collect()
-}
+/// The pixel of the Taylor fixture's source and model: the image centre,
+/// where the PSF moments peak.
+const CENTRE: [usize; 2] = [SHAPE[0] / 2, SHAPE[1] / 2];
 
-fn contributions_for(sample: &SelectedObservationSample) -> SelectedSpectralContributions {
-    SelectedSpectralContributions::new([
-        SelectedSpectralContribution::new(0, 1.0, sample.address.frequency_centre_hz),
-        None,
-    ])
-    .expect("continuum contribution")
-}
-
-fn weighting_generation(
-    problem: &casa_imaging_model::CompiledProblem,
-    plan: &WeightingPlan,
-    samples: &[SelectedObservationSample],
-) -> Result<WeightingAlgorithmState, WeightingError> {
-    let mut density = begin_weighting_generation(problem, plan)?;
-    for sample in samples {
-        density.consume(
-            problem,
-            sample,
-            sample.address.frequency_centre_hz,
-            contributions_for(sample),
-        )?;
-    }
-    let mut sum_weight = density.finish(problem)?;
-    for sample in samples {
-        sum_weight.consume(
-            problem,
-            sample,
-            sample.address.frequency_centre_hz,
-            contributions_for(sample),
-        )?;
-    }
-    sum_weight.finish()
-}
-
-fn replay(
-    generation: &WeightingAlgorithmState,
-    problem: &casa_imaging_model::CompiledProblem,
-    plan: &WeightingPlan,
-    samples: &[SelectedObservationSample],
-) -> (Vec<WeightingReplayChunk>, WeightingReplaySummary) {
-    let mut blocks = Vec::new();
-    let mut replay = generation
-        .begin_replay(problem, plan)
-        .expect("begin replay");
-    for sample in samples {
-        if let Some(block) = replay
-            .consume(
-                problem,
-                sample,
-                sample.address.frequency_centre_hz,
-                contributions_for(sample),
-            )
-            .expect("weight sample")
-        {
-            blocks.push(block);
-        }
-    }
-    let (last, summary) = replay.finish().expect("finish replay");
-    if let Some(block) = last {
-        blocks.push(block);
-    }
-    (blocks, summary)
+/// A point source of unit Taylor-zero amplitude and spectral index −0.5 at
+/// the image centre, imaged through the moments of the two spectral samples
+/// (principal `sumwt = 3`).
+fn taylor_scene(problem: &casa_imaging_model::CompiledProblem) -> Scene {
+    Scene::new(problem).with_point(0, CENTRE, &[1.0, -0.5])
 }
 
 fn run_round(problem: &casa_imaging_model::CompiledProblem, seed: u8) -> MajorCycleCompletion {
@@ -462,100 +215,27 @@ fn run_round_with_model(
     run_round_with_terms(problem, seed, &terms)
 }
 
+/// The initial major cycle and, when `model_terms` names any
+/// `(coefficient, value)` at the centre, a residual refresh after them.
 fn run_round_with_terms(
     problem: &casa_imaging_model::CompiledProblem,
     seed: u8,
     model_terms: &[(usize, f64)],
 ) -> MajorCycleCompletion {
-    let plan = plan_weighting(
+    two_cycle_round(
         problem,
-        WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
-    )
-    .expect("weighting plan");
-    let samples = samples(problem);
-    let generation = weighting_generation(problem, &plan, &samples).expect("weighting generation");
-    let (blocks, summary) = replay(&generation, problem, &plan, &samples);
-    let run = |lifecycle: &mut ModelLifecycle,
-               preparation: MajorCyclePreparation,
-               prior: Option<casa_imaging_reconstruction::FinalNormalState>| {
-        let specification =
-            SpectralOperatorSpecification::new(problem).expect("spectral specification");
-        let workload = spectral_operator_workload(
-            &specification,
-            plan.limits().max_block_samples(),
-            if prior.is_some() {
-                SpectralOperatorPass::ResidualRefresh
-            } else {
-                SpectralOperatorPass::InitialMajor
-            },
-        )
-        .expect("operator workload");
-        let prepared =
-            prepare_spectral_operator(specification, workload, 1).expect("prepare operator");
-        let mut state = prepared
-            .begin(problem, &generation)
-            .expect("begin complete-data owner");
-        state
-            .bind_major_cycle_model(preparation.final_model(), prior)
-            .expect("bind final model");
-        for block in &blocks {
-            state.consume_block(block).expect("consume block");
-        }
-        let evidence: CompleteDataOwnerResult =
-            state.complete(&summary).expect("complete normal state");
-        let owner = MajorCycleOwner::from_complete_data(
-            {
-                let storage =
-                    casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
-                        evidence.primitives().slab().total_channels(),
-                    )
-                    .expect("fixture normal window");
-                evidence.seal(&storage).expect("seal fixture normal state")
-            },
-            preparation,
-        )
-        .expect("major-cycle owner");
-        owner.reconcile(lifecycle).expect("major-cycle join")
-    };
-    let mut lifecycle = ModelLifecycle::bind(
-        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem"),
+        &taylor_scene(problem),
         attempt(seed),
-        7,
-        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
-            .expect("positive model window"),
-    )
-    .expect("model lifecycle");
-    let empty = lifecycle.initial_empty().expect("empty model");
-    let preparation =
-        MajorCyclePreparation::prepare(&lifecycle, empty, None).expect("initial preparation");
-    let initial = run(&mut lifecycle, preparation, None);
-    if model_terms.is_empty() {
-        return initial;
-    }
-    let (normal, continuation) = initial.into_continuation();
-    let (mut lifecycle, named) = ModelLifecycle::continue_from(
-        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem"),
-        attempt(seed),
-        8,
-        continuation,
-        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
-            .expect("positive model window"),
-    )
-    .expect("continued lifecycle");
-    let delta = lifecycle
-        .compile_delta(
-            &named,
-            model_terms.iter().map(|(coefficient, value)| {
-                casa_imaging_model::ModelDeltaTerm::new(
-                    casa_imaging_model::ModelCell::new(0, *coefficient, 0, [4, 4]),
-                    casa_imaging_model::ModelValue::new(*value).expect("model value"),
+        model_terms
+            .iter()
+            .map(|(coefficient, value)| {
+                ModelDeltaTerm::new(
+                    ModelCell::new(0, *coefficient, 0, CENTRE),
+                    ModelValue::new(*value).expect("model value"),
                 )
-            }),
-        )
-        .expect("model delta");
-    let preparation =
-        MajorCyclePreparation::prepare(&lifecycle, named, Some(delta)).expect("final preparation");
-    run(&mut lifecycle, preparation, Some(normal))
+            })
+            .collect(),
+    )
 }
 
 fn generate(

@@ -380,13 +380,18 @@ impl<'a> SelectedObservationSpectralEnvelopeReducer<'a> {
 }
 
 impl MeasurementSet {
-    /// Derive CASA's nominal Briggs-cube density padding for one native SPW.
+    /// Derive CASA's nominal Briggs-cube density padding for one native SPW
+    /// (`BriggsCubeWeightor::estimateSwingChanPad`, per side: half its
+    /// `swingpad`).
     ///
     /// Each field's requested image-centre interval is converted back to native
     /// frequency over the selected row epochs, then matched against the complete
-    /// native SPW with CASA's strict channel-edge overlap. The returned padding
-    /// is per side; explicit selected-channel interpolation support does not
-    /// redefine this nominal density domain. No visibility payload is read.
+    /// native SPW with CASA's strict channel-edge overlap. The padding is the
+    /// swing of the matched native range in image channels, rounded up, plus
+    /// `max(min(4, nchan/10), 1)`, so it is at least one plane even when the
+    /// source and image frames agree. Explicit selected-channel interpolation
+    /// support does not redefine this nominal density domain. No visibility
+    /// payload is read.
     #[allow(clippy::too_many_arguments)]
     pub fn selected_observation_cube_density_padding(
         &self,
@@ -417,8 +422,11 @@ impl MeasurementSet {
                 "cube density padding requires one valid native SPW".into(),
             ));
         }
+        // CASA adds `max(min(4, nchan/10), 1)` planes beyond the swing, so a
+        // frame-free or swing-free axis still pads by that much.
+        let extra_padding = (output_channels / 10).clamp(1, 4);
         if window.source_frequency_reference == output_frequency_reference {
-            return Ok(0);
+            return Ok(extra_padding);
         }
         let increment = (output_centres[1] - output_centres[0]).abs()
             / output_channels.saturating_sub(1).max(1) as f64;
@@ -518,7 +526,7 @@ impl MeasurementSet {
             }
         }
         if !lower_centres[0].is_finite() {
-            return Ok(0);
+            return Ok(extra_padding);
         }
         // One SPW has one full-native origin, so CASA's first-channel shift is zero.
         let swing = (lower_centres[1] - lower_centres[0]).max(upper_centres[1] - upper_centres[0]);
@@ -529,7 +537,7 @@ impl MeasurementSet {
             ));
         }
         (swing_channels as usize)
-            .checked_add((output_channels / 10).clamp(1, 4))
+            .checked_add(extra_padding)
             .ok_or_else(|| MsError::InvalidInput("cube density padding overflows usize".into()))
     }
 

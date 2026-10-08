@@ -5,9 +5,7 @@
 //! fresh durable product directory, and the sampled aggregate 16-GiB RSS guard.
 
 use super::*;
-use casa_imaging_runtime::{
-    CapacityDomainId, ClaimLifetime, LeaseResource, ResourceOverride, ResourcePolicy,
-};
+use casa_imaging_runtime::{CapacityDomainId, ResourceOverride, ResourcePolicy};
 use std::{collections::BTreeMap, fs};
 
 #[test]
@@ -141,11 +139,6 @@ fn run_c_array(block: bool) {
     imaging.mask = ContinuumMask::Image(mask);
     imaging.write_primary_beam = true;
     imaging.task_requirements = vec![TaskRequirement::PerChannelWeightDensity];
-    if std::env::var_os("CASA_RS_C_ARRAY_METAL").is_some() {
-        imaging
-            .task_requirements
-            .push(TaskRequirement::MetalGridder);
-    }
     if !block {
         imaging.task_requirements.push(TaskRequirement::SerialCpu);
     }
@@ -177,60 +170,15 @@ fn run_c_array(block: bool) {
         );
     }
     let output = &result.outcome.output;
-    assert_eq!(output.initial_receipt.status(), ReceiptStatus::Completed);
     assert_eq!(
         output.publication_receipt.status(),
         ReceiptStatus::Completed
     );
     if dirty_only {
-        assert!(output.final_major_receipt.is_none());
-    } else {
-        assert_eq!(
-            output.final_major_receipt.as_ref().unwrap().status(),
-            ReceiptStatus::Completed
-        );
+        assert_eq!(output.major_cycle_count, 1);
     }
-    let memory = &output
-        .initial_receipt
-        .selected_alternative_projection()
-        .demand
-        .memory;
-    let native_cube = memory
-        .iter()
-        .any(|item| item.allocation_id.starts_with("bulk-workspace-"));
-    assert!(
-        native_cube,
-        "this diagnostic must execute the direct bulk-source path"
-    );
-    let route = "direct-bulk-source-cube";
-    super::t55_cube_pipeline::assert_cube_execution_route(&result, true);
-    let worker_evidence = std::iter::once(("initial-major", &output.initial_receipt))
-        .chain(
-            output
-                .final_major_receipt
-                .as_ref()
-                .map(|receipt| ("final-major", receipt)),
-        )
-        .map(|(phase, receipt)| {
-            assert_eq!(receipt.initial_execution_knobs().workers, workers);
-            let peaks = receipt
-                .plan_node_identities()
-                .into_iter()
-                .map(|node| {
-                    let peak = receipt.actual_resource_peak(
-                        &node,
-                        &LeaseResource::Workers,
-                        &ClaimLifetime::Work,
-                    );
-                    (node.as_str().to_owned(), peak)
-                })
-                .collect::<BTreeMap<_, _>>();
-            (
-                phase,
-                serde_json::json!({"admitted_workers": workers, "worker_peaks": peaks}),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
+    let route = "major-cycle-pass";
+    assert_eq!(output.workers as u64, workers);
     let mut products = vec![".image", ".model", ".residual", ".psf", ".pb", ".sumwt"];
     if !dirty_only {
         products.push(".mask");
@@ -276,7 +224,7 @@ fn run_c_array(block: bool) {
         "full_input_replay_diagnostic": full_input,
         "output_channels": output_channels, "display_plane": 0,
         "weighting": "natural", "deconvolver": "clark", "interpolation": "linear",
-        "worker_evidence": worker_evidence,
+        "pass_workers": output.workers,
         "native_memory_bytes": memory_bytes, "image_size": image_size, "cell_arcsec": 0.06,
         "iterations": result.actual_minor_iterations, "reported_iterations": result.minor_iterations,
         "dirty_only": dirty_only,

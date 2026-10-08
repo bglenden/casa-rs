@@ -40,6 +40,10 @@ pub type SourceError = Box<dyn std::error::Error + Send + Sync>;
 pub type ModelPreparation<'a> =
     dyn Fn(PlaneRange) -> Result<PreparedModelGrids, PassError> + Sync + 'a;
 
+/// Receives one block and its model visibilities.
+pub type VisibilityWrite<'a> =
+    dyn FnMut(&NativeBlock, &[num_complex::Complex32]) -> Result<(), SourceError> + 'a;
+
 /// Writes visibilities back to the source during a final pass: each block
 /// in source order, with the model visibility of every selected sample,
 /// `[row][channel][correlation]`, when `predictions` asks for it and an
@@ -48,8 +52,7 @@ pub struct VisibilitySink<'a> {
     /// Whether `write` needs the model visibilities.
     pub predictions: bool,
     /// Receives each block.
-    pub write:
-        &'a mut dyn FnMut(&NativeBlock, &[num_complex::Complex32]) -> Result<(), SourceError>,
+    pub write: &'a mut VisibilityWrite<'a>,
 }
 
 /// A failure of a major-cycle or density pass.
@@ -215,7 +218,7 @@ pub fn run_density_pass(
         team.for_each_mut(&mut chunks[..count], |_, (range, buffer)| {
             buffer.clear();
             for row in range.clone() {
-                resampler.place_density(operator, &block.row(row), shape.rule, buffer)?;
+                resampler.place_density(operator, &block.row(row), &shape, buffer)?;
             }
             Ok::<_, PassError>(())
         })?;

@@ -12,11 +12,52 @@ use num_complex::{Complex32, Complex64};
 use crate::{
     SpectralOperatorError,
     primary_beam::PreparedPrimaryBeamPower,
-    spectral_operator::{
-        MosaicProjectorKey, PreparedFft, SpectralOperatorGeometry, fft_planning_words_for_shape,
-        fft_resident_complex_values_for_shape,
-    },
+    spectral_operator::{PreparedFft, fft_resident_complex_values_for_shape},
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct MosaicProjectorKey {
+    frequency_bits: u64,
+    support_frequency_bits: u64,
+    antenna1: casa_imaging_model::AntennaResponseClass,
+    antenna2: casa_imaging_model::AntennaResponseClass,
+    family_envelope: casa_imaging_model::AntennaResponseClass,
+}
+
+pub(crate) fn mosaic_response_key(
+    frequency_hz: f64,
+    support_frequency_hz: f64,
+    responses: SelectedAntennaResponses,
+) -> MosaicProjectorKey {
+    let (antenna1, antenna2) = if responses.antenna1 <= responses.antenna2 {
+        (responses.antenna1, responses.antenna2)
+    } else {
+        (responses.antenna2, responses.antenna1)
+    };
+    MosaicProjectorKey {
+        frequency_bits: frequency_hz.to_bits(),
+        support_frequency_bits: support_frequency_hz.to_bits(),
+        antenna1,
+        antenna2,
+        family_envelope: responses.family_envelope,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct SpectralOperatorGeometry {
+    pub(crate) image_shape: [usize; 2],
+    pub(crate) grid_shape: [usize; 2],
+    pub(crate) image_blc: [usize; 2],
+    pub(crate) reference_pixel: [f64; 2],
+    pub(crate) increment_rad: [f64; 2],
+    pub(crate) direction: casa_imaging_model::DirectionCoordinateSpec,
+}
+
+pub(crate) fn fft_planning_words_for_shape(
+    _shape: [usize; 2],
+) -> Result<usize, SpectralOperatorError> {
+    Ok(0)
+}
 
 pub(crate) const MOSAIC_OVERSAMPLING: usize = 10;
 
@@ -1161,7 +1202,7 @@ mod tests {
     }
 
     fn response_key() -> MosaicProjectorKey {
-        crate::spectral_operator::mosaic_response_key(230.0e9, 230.0e9, aca_pair())
+        mosaic_response_key(230.0e9, 230.0e9, aca_pair())
     }
 
     fn projector_inputs() -> (SpectralOperatorGeometry, PreparedPrimaryBeamPower) {

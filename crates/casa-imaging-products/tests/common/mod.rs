@@ -5,10 +5,15 @@
 //! The production API deliberately exposes no product readback. These
 //! fixtures collect the owned windows into ordinary test memory so scientific
 //! assertions can inspect the exact generated values without adding a backing
-//! or digest capability to the library.
+//! or digest capability to the library. The submodules build the compiled
+//! problems and the major-cycle completions products are generated from.
 
 // The continuum and Taylor integration binaries exercise different fixture members.
 #![allow(dead_code)]
+
+pub mod continuum;
+pub mod observation;
+pub mod synthetic_pass;
 
 use std::sync::{Arc, Mutex};
 

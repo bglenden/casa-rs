@@ -35,79 +35,6 @@ pub(super) fn vla_aw_measurement_set(root: &Path) -> PathBuf {
     )
 }
 
-pub(super) fn native_evla_measurement_set(root: &Path) -> PathBuf {
-    let mut options = MeasurementSetFixtureOptions::new(true, false, 2, 2, 2, 8, false)
-        .with_vla_observation_metadata();
-    options.native_evla_cf = true;
-    measurement_set_fixture(root, "native-evla-input.ms", options)
-}
-
-pub(super) fn two_pointing_vla_aw_measurement_set(root: &Path) -> PathBuf {
-    let path = measurement_set_fixture(
-        root,
-        "two-pointing-vla-aw-input.ms",
-        MeasurementSetFixtureOptions::new(true, false, 1, 1, 2, 2, false)
-            .with_vla_observation_metadata()
-            .with_two_fields(),
-    );
-    add_two_field_pointings(&path);
-    path
-}
-
-pub(super) fn two_pointing_alma_spectral_measurement_set(root: &Path) -> PathBuf {
-    let path = measurement_set_fixture(
-        root,
-        "two-pointing-alma-spectral-input.ms",
-        MeasurementSetFixtureOptions::new(false, false, 32, 1, 2, 8, false)
-            .with_alma_observation_metadata()
-            .with_two_fields(),
-    );
-    add_two_field_pointings(&path);
-    path
-}
-
-fn add_two_field_pointings(path: &Path) {
-    let mut measurement_set = MeasurementSet::open(path).expect("open two-pointing fixture");
-    for row in 0..measurement_set.row_count() {
-        let field = row % 2;
-        let sign = if field == 0 { 1.0 } else { -1.0 };
-        let field_direction = [1.0 + field as f64 * 1.0e-4, 0.5];
-        let time = 59_000.0 * 86_400.0 + row as f64 * 10.0;
-        for antenna in 0..2 {
-            let antenna_delta = if antenna == 0 { -2.0e-6 } else { 2.0e-6 };
-            let direction = Value::Array(ArrayValue::Float64(
-                ArrayD::from_shape_vec(
-                    vec![2, 1],
-                    vec![
-                        field_direction[0] + sign * 3.0e-5 + antenna_delta,
-                        field_direction[1] + sign * 2.0e-5 + antenna_delta,
-                    ],
-                )
-                .expect("POINTING direction shape"),
-            ));
-            measurement_set
-                .subtable_mut(SubtableId::Pointing)
-                .expect("POINTING")
-                .add_row(required_row(
-                    schema::pointing::REQUIRED_COLUMNS,
-                    &[
-                        ("ANTENNA_ID", int(antenna)),
-                        ("DIRECTION", direction.clone()),
-                        ("INTERVAL", float(10.0)),
-                        ("NAME", string(&format!("FIELD_{field}_ANTENNA_{antenna}"))),
-                        ("NUM_POLY", int(0)),
-                        ("TARGET", direction),
-                        ("TIME", float(time)),
-                        ("TIME_ORIGIN", float(time)),
-                        ("TRACKING", boolean(true)),
-                    ],
-                ))
-                .expect("add POINTING row");
-        }
-    }
-    measurement_set.save().expect("save two-pointing fixture");
-}
-
 pub(super) fn four_spw_vla_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,
@@ -122,6 +49,15 @@ pub(super) fn full_stokes_measurement_set(root: &Path) -> PathBuf {
         root,
         "full-stokes-input.ms",
         MeasurementSetFixtureOptions::new(true, false, 2, 1, 27, 702, false),
+    )
+}
+
+pub(super) fn full_polarization_linear_measurement_set(root: &Path) -> PathBuf {
+    measurement_set_fixture(
+        root,
+        "full-polarization-linear-input.ms",
+        MeasurementSetFixtureOptions::new(true, false, 2, 1, 27, 702, false)
+            .with_linear_correlations(),
     )
 }
 
@@ -186,15 +122,6 @@ pub(super) fn undefined_weight_spectrum_measurement_set(root: &Path) -> PathBuf 
     )
 }
 
-pub(super) fn four_spw_aca_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(
-        root,
-        "four-spw-input.ms",
-        MeasurementSetFixtureOptions::new(false, false, 8, 4, 4, 24, false)
-            .with_aca_observation_metadata(),
-    )
-}
-
 pub(super) fn alma_primary_beam_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,
@@ -255,12 +182,6 @@ impl MeasurementSetFixtureOptions {
 
     const fn with_parallel_hand_weights(mut self, weights: [f32; 2]) -> Self {
         self.parallel_hand_weights = Some(weights);
-        self
-    }
-
-    const fn with_aca_observation_metadata(mut self) -> Self {
-        self.telescope_name = Some("ALMA");
-        self.dish_diameter_m = 7.0;
         self
     }
 
@@ -683,21 +604,24 @@ pub(super) fn add_main_row(measurement_set: &mut MeasurementSet, overrides: &[(&
         .iter()
         .chain(schema::main_table::OPTIONAL_COLUMNS.iter())
         .collect::<Vec<_>>();
+    // A WEIGHT_SPECTRUM cell no override sets stays undefined, as in a
+    // MeasurementSet whose spectral weights were never written; a default
+    // would be a defined all-zero spectrum.
     let fields = schema
         .columns()
         .iter()
-        .map(|column| {
-            overrides
+        .filter_map(|column| {
+            if let Some((_, value)) = overrides.iter().find(|(name, _)| *name == column.name()) {
+                return Some(RecordField::new(column.name(), value.clone()));
+            }
+            if column.name() == "WEIGHT_SPECTRUM" {
+                return None;
+            }
+            let definition = definitions
                 .iter()
-                .find(|(name, _)| *name == column.name())
-                .map(|(_, value)| RecordField::new(column.name(), value.clone()))
-                .unwrap_or_else(|| {
-                    let definition = definitions
-                        .iter()
-                        .find(|definition| definition.name == column.name())
-                        .expect("standard MAIN column");
-                    RecordField::new(column.name(), default_value(definition))
-                })
+                .find(|definition| definition.name == column.name())
+                .expect("standard MAIN column");
+            Some(RecordField::new(column.name(), default_value(definition)))
         })
         .collect();
     measurement_set
@@ -779,33 +703,10 @@ pub(super) fn string(value: &str) -> Value {
     Value::Scalar(ScalarValue::String(value.to_string()))
 }
 
-pub(super) fn write_aw_test_cache(root: &Path) {
-    std::fs::create_dir(root).expect("create AW cache root");
-    for (frequency_suffix, frequency_hz) in [("40ghz", 40.0e9), ("48ghz", 48.0e9)] {
-        for (polarization_suffix, mueller) in [("rr", 0), ("ll", 15)] {
-            let suffix = format!("{polarization_suffix}_{frequency_suffix}");
-            write_aw_test_cell(
-                root,
-                &format!("CFS_{suffix}.im"),
-                false,
-                [-2.0, 2.0],
-                mueller,
-                frequency_hz,
-                Complex32::new(3.0, -1.0),
-            );
-            write_aw_test_cell(
-                root,
-                &format!("WTCFS_{suffix}.im"),
-                true,
-                [-1.0, 1.0],
-                mueller,
-                frequency_hz,
-                Complex32::new(7.0, 2.0),
-            );
-        }
-    }
-}
-
+// `aw_projection` and `write_aw_sized_test_cell` serve only the AW-cache unit
+// tests, which `include!` this file from `src/aw_cache/ownership_transfer_probe.rs`;
+// the application tests no longer request AW projection (IF-3, #652).
+#[allow(dead_code)]
 pub(super) fn aw_projection(casa_cache: PathBuf, use_pointing: bool) -> ContinuumAwProjection {
     ContinuumAwProjection {
         source: casa_imaging_application::ContinuumAwCfSource::CasaImport(casa_cache),
@@ -825,28 +726,7 @@ pub(super) fn aw_projection(casa_cache: PathBuf, use_pointing: bool) -> Continuu
     }
 }
 
-pub(super) fn write_aw_test_cell(
-    root: &Path,
-    name: &str,
-    weight: bool,
-    increment: [f64; 2],
-    mueller: i32,
-    frequency_hz: f64,
-    value: Complex32,
-) {
-    write_aw_sized_test_cell(
-        root,
-        name,
-        weight,
-        increment,
-        mueller,
-        frequency_hz,
-        value,
-        if weight { 32 } else { 16 },
-    );
-}
-
-#[allow(clippy::too_many_arguments)]
+#[allow(dead_code, clippy::too_many_arguments)]
 pub(super) fn write_aw_sized_test_cell(
     root: &Path,
     name: &str,

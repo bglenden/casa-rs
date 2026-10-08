@@ -2,7 +2,7 @@
 
 //! Shared T1 fixture: an analytic sky observed by a synthetic VLA-A track,
 //! imaged through `casars-imager`'s production request route, and read back
-//! from the persisted CASA products for analytic checks.
+//! from the persisted CASA products and MeasurementSet for analytic checks.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -11,11 +11,13 @@ use std::sync::Once;
 use casa_coordinates::{CoordinateModel, ProjectionType, StokesType};
 use casa_images::{GaussianBeam, PagedImage};
 use casa_ms::{
-    SyntheticAnalyticComponent, SyntheticAnalyticSpectrum, SyntheticCorruptionConfig,
-    SyntheticNoiseCorruption, SyntheticNoiseMode, SyntheticObservationRequest, SyntheticSkyModel,
-    SyntheticSpectralSetup, generate_synthetic_observation_ms,
-    initialize_measurement_set_owner_manifest, tutorial_vla_a_antennas,
+    MeasurementSet, SyntheticAnalyticComponent, SyntheticAnalyticSpectrum,
+    SyntheticCorruptionConfig, SyntheticNoiseCorruption, SyntheticNoiseMode,
+    SyntheticObservationRequest, SyntheticSkyModel, SyntheticSpectralSetup, VisibilityDataColumn,
+    generate_synthetic_observation_ms, initialize_measurement_set_owner_manifest,
+    tutorial_vla_a_antennas,
 };
+use casa_types::{ArrayValue, Complex32};
 use casars_imager::{ImagerRunTaskRequest, RunSummary, run_from_request};
 use ndarray::{Array2, Axis};
 use serde_json::{Value, json};
@@ -27,8 +29,11 @@ pub const IMAGE_SIZE: usize = 256;
 pub const CELL_ARCSEC: f64 = 0.012;
 /// Per-component (real and imaginary) visibility noise injected by the simulator.
 pub const VISIBILITY_NOISE_JY: f32 = 0.65;
+/// Native channels of the default MFS band.
+pub const MFS_CHANNELS: usize = 4;
+/// Frequency at which component fluxes are stated.
+pub const REFERENCE_FREQUENCY_HZ: f64 = 45.0e9;
 
-const CHANNEL_COUNT: usize = 4;
 const START_FREQUENCY_HZ: f64 = 44.0e9;
 const CHANNEL_WIDTH_HZ: f64 = 128.0e6;
 const DURATION_SECONDS: f64 = 3_600.0;
@@ -41,13 +46,20 @@ const STOKES_I_CORRELATIONS: usize = 2;
 pub struct Component {
     /// Pixel offset `[x, y]` from the image reference pixel; `+x` is west.
     pub offset_px: [i32; 2],
-    /// Flux density in Jy, flat across the band.
+    /// Flux density in Jy at [`REFERENCE_FREQUENCY_HZ`].
     pub flux_jy: f64,
     /// Circular FWHM in pixels; `None` for a point source.
     pub fwhm_px: Option<f64>,
+    /// Spectral index `α` of `S(ν) = S₀ (ν/ν₀)^α`.
+    pub spectral_index: f64,
 }
 
 impl Component {
+    /// Flux density in Jy at `frequency_hz`.
+    pub fn flux_at(self, frequency_hz: f64) -> f64 {
+        self.flux_jy * (frequency_hz / REFERENCE_FREQUENCY_HZ).powf(self.spectral_index)
+    }
+
     /// Direction cosines `[l, m]`: `l` grows east, opposite to image `x`.
     fn direction_cosines(self) -> [f64; 2] {
         let cell_rad = CELL_ARCSEC.to_radians() / 3_600.0;
@@ -61,8 +73,8 @@ impl Component {
         let [l_rad, m_rad] = self.direction_cosines();
         let spectrum = SyntheticAnalyticSpectrum {
             flux_jy: self.flux_jy,
-            spectral_index: 0.0,
-            reference_frequency_hz: None,
+            spectral_index: self.spectral_index,
+            reference_frequency_hz: Some(REFERENCE_FREQUENCY_HZ),
             line_peak_jy: 0.0,
             line_center_fraction: 0.5,
             line_sigma_fraction: 0.1,
@@ -100,12 +112,19 @@ pub struct Observation {
     measurement_set: PathBuf,
     phase_center_rad: [f64; 2],
     channel_frequencies_hz: Vec<f64>,
-    unflagged_row_channels: usize,
+    unflagged_rows: usize,
 }
 
 impl Observation {
-    /// Observe `components` with the VLA-A layout in one Q-band window.
+    /// Observe `components` with the VLA-A layout in one Q-band window of
+    /// [`MFS_CHANNELS`] channels.
     pub fn synthesise(components: &[(&str, Component)]) -> Self {
+        Self::synthesise_band(MFS_CHANNELS, components)
+    }
+
+    /// Observe `components` in one Q-band window of `channels` 128 MHz
+    /// channels from 44 GHz.
+    pub fn synthesise_band(channels: usize, components: &[(&str, Component)]) -> Self {
         let root = tempfile::tempdir().expect("T1 fixture directory");
         let measurement_set = root.path().join("t1.ms");
         let mut request = SyntheticObservationRequest::vla_ppdisk(
@@ -120,7 +139,7 @@ impl Observation {
             name: "t1-qband".to_string(),
             start_frequency_hz: START_FREQUENCY_HZ,
             channel_width_hz: CHANNEL_WIDTH_HZ,
-            channel_count: CHANNEL_COUNT,
+            channel_count: channels,
         }];
         request.model = Some(SyntheticSkyModel::AnalyticComponents {
             path: None,
@@ -148,27 +167,41 @@ impl Observation {
         Self {
             phase_center_rad: request.phase_center_rad,
             channel_frequencies_hz: request.spectral_windows[0].channel_frequencies_hz(),
-            unflagged_row_channels: (report.main_row_count - report.flagged_row_count)
-                * report.channel_count,
+            unflagged_rows: report.main_row_count - report.flagged_row_count,
             measurement_set,
             root,
         }
     }
 
+    /// Native channel centres in Hz.
+    pub fn channel_frequencies_hz(&self) -> &[f64] {
+        &self.channel_frequencies_hz
+    }
+
     /// Unflagged row-channel samples.
     pub fn row_channel_samples(&self) -> usize {
-        self.unflagged_row_channels
+        self.unflagged_rows * self.channel_frequencies_hz.len()
     }
 
     /// Unflagged parallel-hand samples that enter Stokes I.
     pub fn stokes_i_samples(&self) -> usize {
-        STOKES_I_CORRELATIONS * self.unflagged_row_channels
+        STOKES_I_CORRELATIONS * self.row_channel_samples()
+    }
+
+    /// Unflagged parallel-hand samples of one native channel.
+    pub fn stokes_i_samples_per_channel(&self) -> usize {
+        STOKES_I_CORRELATIONS * self.unflagged_rows
     }
 
     /// Natural-weighting Stokes I image noise for unit-weight visibilities:
     /// `sigma / sqrt(N)` over the Stokes I samples.
     pub fn image_noise_jy(&self) -> f64 {
         f64::from(VISIBILITY_NOISE_JY) / (self.stokes_i_samples() as f64).sqrt()
+    }
+
+    /// Natural-weighting image noise of one native channel.
+    pub fn channel_noise_jy(&self) -> f64 {
+        f64::from(VISIBILITY_NOISE_JY) / (self.stokes_i_samples_per_channel() as f64).sqrt()
     }
 
     /// Run the production route with `controls` merged over the T1 geometry
@@ -193,8 +226,62 @@ impl Observation {
         (summary, products)
     }
 
-    /// Image-plane checks that depend on the observation geometry.
+    /// `(DATA, MODEL_DATA)` of every unflagged parallel-hand sample.
+    pub fn data_and_model(&self) -> Vec<(Complex32, Complex32)> {
+        let ms = MeasurementSet::open(&self.measurement_set).expect("reopen T1 MS");
+        let data = ms
+            .data_column(VisibilityDataColumn::Data)
+            .expect("DATA column");
+        let model = ms
+            .data_column(VisibilityDataColumn::ModelData)
+            .expect("MODEL_DATA column");
+        let flags = ms.flag_column();
+        let mut samples = Vec::new();
+        for row in 0..ms.row_count() {
+            let (
+                ArrayValue::Complex32(data),
+                ArrayValue::Complex32(model),
+                ArrayValue::Bool(flags),
+            ) = (
+                data.get(row).expect("DATA row"),
+                model.get(row).expect("MODEL_DATA row"),
+                flags.get(row).expect("FLAG row"),
+            )
+            else {
+                panic!("row {row}: DATA and MODEL_DATA are complex, FLAG boolean");
+            };
+            samples.extend(
+                data.iter()
+                    .zip(model.iter())
+                    .zip(flags.iter())
+                    .filter(|(_, flagged)| !**flagged)
+                    .map(|((data, model), _)| (*data, *model)),
+            );
+        }
+        samples
+    }
+
+    /// Image-plane checks that depend on the observation geometry; an MFS
+    /// image's spectral reference sits at the band centre.
     pub fn assert_image_wcs(&self, image: &Product) {
+        self.assert_direction_and_stokes(image);
+        let CoordinateModel::Spectral(_) = image.image.coordinates().coordinate(2) else {
+            panic!(".image coordinate 2 is not a spectral coordinate");
+        };
+        let band_centre_hz = 0.5
+            * (self.channel_frequencies_hz[0]
+                + self.channel_frequencies_hz[self.channel_frequencies_hz.len() - 1]);
+        let frequency_hz = image.channel_frequency_hz(0);
+        assert!(
+            (frequency_hz - band_centre_hz).abs() < 1.0,
+            "MFS reference frequency {frequency_hz} Hz, band centre {band_centre_hz} Hz"
+        );
+        assert_eq!(image.pixels.dim(), (IMAGE_SIZE, IMAGE_SIZE));
+    }
+
+    /// Direction and Stokes axes: SIN projection at the phase centre with
+    /// the requested cell and a Stokes I axis.
+    pub fn assert_direction_and_stokes(&self, image: &Product) {
         let coordinates = image.image.coordinates();
         let CoordinateModel::Direction(direction) = coordinates.coordinate(0) else {
             panic!(".image coordinate 0 is not a direction coordinate");
@@ -229,18 +316,6 @@ impl Observation {
             panic!(".image coordinate 1 is not a Stokes coordinate");
         };
         assert_eq!(stokes.stokes(), [StokesType::I]);
-        let CoordinateModel::Spectral(_) = coordinates.coordinate(2) else {
-            panic!(".image coordinate 2 is not a spectral coordinate");
-        };
-        let band_centre_hz = 0.5
-            * (self.channel_frequencies_hz[0]
-                + self.channel_frequencies_hz[self.channel_frequencies_hz.len() - 1]);
-        let frequency_hz = coordinates.coordinate(2).reference_value()[0];
-        assert!(
-            (frequency_hz - band_centre_hz).abs() < 1.0,
-            "MFS reference frequency {frequency_hz} Hz, band centre {band_centre_hz} Hz"
-        );
-        assert_eq!(image.pixels.dim(), (IMAGE_SIZE, IMAGE_SIZE));
     }
 }
 
@@ -280,6 +355,40 @@ impl Product {
         Self { image, pixels }
     }
 
+    /// Spectral channels on the image's frequency axis.
+    pub fn channels(&self) -> usize {
+        self.image.shape()[3]
+    }
+
+    /// The `[x, y]` plane of `channel` (Stokes I).
+    pub fn plane(&self, channel: usize) -> Array2<f32> {
+        self.image
+            .get_slice(&[0, 0, 0, channel], &[IMAGE_SIZE, IMAGE_SIZE, 1, 1])
+            .expect("read product plane")
+            .index_axis_move(Axis(3), 0)
+            .index_axis_move(Axis(2), 0)
+            .into_dimensionality()
+            .expect("two-dimensional plane")
+    }
+
+    /// The value of a single-pixel-per-channel product (`.sumwt`) per channel.
+    pub fn channel_values(&self) -> Vec<f32> {
+        let values = self.image.get().expect("read product");
+        values.iter().copied().collect()
+    }
+
+    /// World frequency of `channel` in Hz.
+    pub fn channel_frequency_hz(&self, channel: usize) -> f64 {
+        let spectral = self.image.coordinates().coordinate(2);
+        spectral.reference_value()[0]
+            + (channel as f64 - spectral.reference_pixel()[0]) * spectral.increment()[0]
+    }
+
+    /// Signed channel width in Hz.
+    pub fn channel_width_hz(&self) -> f64 {
+        self.image.coordinates().coordinate(2).increment()[0]
+    }
+
     /// The restoring beam recorded in the product's image info.
     pub fn restoring_beam(&self) -> GaussianBeam {
         self.image
@@ -291,40 +400,34 @@ impl Product {
     }
 }
 
-/// The products every deconvolving run writes, after opening every product
-/// the run reported (conventional CASA suffixes).
+/// Every product a run reported, keyed by its CASA suffix.
 pub struct Products {
-    pub suffixes: BTreeSet<String>,
-    pub image: Product,
-    pub residual: Product,
-    pub psf: Product,
-    pub model: Product,
-    pub sumwt: Product,
+    opened: BTreeMap<String, Product>,
 }
 
 impl Products {
     fn read(image_name: &Path, reported: &[String]) -> Self {
-        let mut opened = reported
-            .iter()
-            .map(|suffix| {
-                let path = PathBuf::from(format!("{}{suffix}", image_name.display()));
-                (suffix.clone(), Product::open(&path))
-            })
-            .collect::<BTreeMap<_, _>>();
-        let suffixes = opened.keys().cloned().collect();
-        let mut take = |suffix: &str| {
-            opened
-                .remove(suffix)
-                .unwrap_or_else(|| panic!("run did not report {suffix}"))
-        };
         Self {
-            image: take(".image"),
-            residual: take(".residual"),
-            psf: take(".psf"),
-            model: take(".model"),
-            sumwt: take(".sumwt"),
-            suffixes,
+            opened: reported
+                .iter()
+                .map(|suffix| {
+                    let path = PathBuf::from(format!("{}{suffix}", image_name.display()));
+                    (suffix.clone(), Product::open(&path))
+                })
+                .collect(),
         }
+    }
+
+    /// The reported suffixes.
+    pub fn suffixes(&self) -> BTreeSet<String> {
+        self.opened.keys().cloned().collect()
+    }
+
+    /// The product with `suffix`.
+    pub fn get(&self, suffix: &str) -> &Product {
+        self.opened
+            .get(suffix)
+            .unwrap_or_else(|| panic!("run did not report {suffix}"))
     }
 }
 

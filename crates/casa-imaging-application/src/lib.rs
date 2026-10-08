@@ -13,11 +13,13 @@ mod casa_product_sink;
 mod continuum_domains;
 mod continuum_request;
 mod imaging;
-mod major_cycle;
+// IF-2 removed the AW major-cycle phases that consumed prepared artifacts;
+// IF-3 (#652) replaces this preparation with `AwCatalog` (plan section 6 row 5).
+#[expect(
+    dead_code,
+    reason = "IF-3 (#652) replaces AW preparation with AwCatalog"
+)]
 mod prepared_aw_phase;
-mod streaming_cube;
-
-use major_cycle::{MajorCyclePhase, PhaseContext};
 
 pub use availability::{
     ImagingCapabilityCatalogEntry, ImagingCapabilityRequirement, ImplementationUnavailable,
@@ -54,27 +56,23 @@ use casa_imaging_products::{
 };
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, ImageDomainReconstructionMaskPlans, MajorCycleCompletion,
-    MinorCycleImageResponse, MinorCycleProgram, MinorCycleStopReason, ReconstructionMaskSet,
-    WeightingExecutionLimits,
+    MinorCycleImageResponse, MinorCycleStopReason, ReconstructionMaskSet,
 };
 use casa_imaging_runtime::{
     AttemptBoundObservationCompletion, BuildIdentity, ExecutionAttemptId, ExecutionProvenance,
-    ExecutionReceipt, ExecutionReceiptStore, ExecutionStatus, FenceKind, FinalVisibilityReplay,
-    FrozenWeightingReservation, ImplementationContractMetadata, ImplementationRegistry,
-    ImplementationRegistryId, ManagedSpillStorage, ObservationReadCompletionContext,
-    PlannerCostModelProfileId, PlanningBindings, PreparedArtifactRegistration, ResourceAuthority,
-    RunBindings, RunController, RunDirective, SelectedObservationSourceResources,
+    ExecutionReceipt, ExecutionReceiptStore, ExecutionStatus, FenceKind,
+    ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId,
+    ManagedSpillStorage, ObservationReadCompletionContext, PlannerCostModelProfileId,
+    PlanningBindings, ResourceAuthority, RunBindings, RunController, RunDirective,
     SerialProductPublicationExecutor, SerialProductPublicationPlan, SerialProductPublicationPolicy,
-    SerialProductPublicationRegistry, SerialProductPublicationSink, SpectralCycleExecutionPolicy,
-    SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan, SpectralCyclePlanParts,
-    SpectralCyclePlanningLimits, SpectralCycleRegistry, StorageIoResourceBinding,
-    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkMeasurements, plan, run,
+    SerialProductPublicationRegistry, SerialProductPublicationSink, StorageIoResourceBinding,
+    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkMeasurements,
+    finalize_source_access, plan, run,
 };
 use casa_ms::{
     ResolvedSelectedObservationAccess, SelectedObservationResolutionRequest,
-    SelectedVisibilityWriteTargets, resolve_selected_observation,
+    resolve_selected_observation,
 };
-use sha2::{Digest, Sha256};
 
 /// Boxed application failure accepted by the native application composition.
 pub type ApplicationError = Box<dyn Error + Send + Sync>;
@@ -82,21 +80,18 @@ pub type ApplicationError = Box<dyn Error + Send + Sync>;
 /// Exact runtime identities and non-scientific limits for one native whole run.
 #[derive(Clone)]
 pub struct ApplicationRuntime {
-    /// Immutable registry identity used by all phases.
+    /// Immutable registry identity used by product publication.
     pub registry: ImplementationRegistryId,
     /// CPU implementation identity.
     pub implementation: WorkImplementationId,
-    /// Frozen weighting execution limits.
-    pub weighting_limits: WeightingExecutionLimits,
     /// Conservative elapsed estimate for each physical stage.
     pub stage_nanos: u64,
-    /// Hard memory bound for the scheduler-owned minor-cycle view.
-    pub minor_cycle_bytes: u64,
     /// Exact profiled storage resources shared by selected-observation reads,
     /// receipt commits, and product publication.
     pub storage_io: StorageIoResourceBinding,
-    /// Writable run-local directory capability for the private normal-operator spill.
-    pub gridded_normal_storage: ManagedSpillStorage,
+    /// Writable run-local directory the major-cycle pass pages cube state into
+    /// when the state does not fit in memory.
+    pub paged_state_storage: ManagedSpillStorage,
     /// Fixed-point confidence in parts per million.
     pub confidence_parts_per_million: u32,
     /// Host-use policy bound at planning and execution.
@@ -105,12 +100,12 @@ pub struct ApplicationRuntime {
     pub cost_model: PlannerCostModelProfileId,
     /// Process resource authority used for admission and execution.
     pub authority: ResourceAuthority,
-    /// Durable bounded receipt store shared by all phases.
+    /// Durable bounded receipt store for product publication.
     pub receipts: ExecutionReceiptStore,
     /// Executable build identity recorded in every receipt.
     pub build: BuildIdentity,
-    /// Distinct attempt identities for initial, final-major, and publication phases.
-    pub attempts: [ExecutionAttemptId; 3],
+    /// Attempt identity of the product-publication run.
+    pub publication_attempt: ExecutionAttemptId,
 }
 
 /// Exact native request template resolved at the sole application boundary.
@@ -177,15 +172,9 @@ pub struct ApplicationPublication<S> {
     pub sink: S,
 }
 
-/// Typed native result retained with every ordinary execution receipt.
+/// Typed native result of one whole run.
 pub struct NativeApplicationOutcome {
-    /// Ordered warm-probe, optional cold-import, and consume receipts for AW preparation.
-    pub aw_preparation_receipts: Vec<ExecutionReceipt>,
-    /// Initial-major receipt (also the final scientific pass for dirty imaging).
-    pub initial_receipt: Option<ExecutionReceipt>,
-    /// Mandatory post-minor final-major receipt for Högbom imaging.
-    pub final_major_receipt: Option<ExecutionReceipt>,
-    /// Ordered solve evidence captured before each affine major-cycle handoff.
+    /// Ordered solve evidence captured before each major-cycle pass.
     pub minor_cycles: Vec<NativeMinorCycleOutcome>,
     /// Number of executed major passes, including the initial pass.
     pub major_cycle_count: usize,
@@ -193,12 +182,12 @@ pub struct NativeApplicationOutcome {
     pub total_minor_iterations: usize,
     /// Total number of components actually applied across all minor cycles.
     pub total_actual_minor_iterations: usize,
+    /// Size of the worker team the major-cycle passes ran on.
+    pub workers: usize,
     /// Final per-visibility product identities and provenance, when requested.
     pub visibility_products: Option<VisibilityProductCompletion>,
     /// Atomic product-publication receipt.
     pub publication_receipt: ExecutionReceipt,
-    /// Terminal-pass receipt containing the bounded selected-visibility write, when requested.
-    pub visibility_write_receipt: Option<ExecutionReceipt>,
     /// Final authoritative complete-data and model state.
     pub scientific: MajorCycleCompletion,
     /// Planned product generation used before member production.
@@ -338,18 +327,9 @@ where
         request.model_lifecycle,
     );
     let problem = compile(imaging).map_err(ApplicationDispatchError::Compile)?;
-    let metal_cube = request
-        .task_requirements
-        .contains(&TaskRequirement::MetalGridder);
-    if metal_cube && (request.write_model_column || request.write_corrected_data) {
-        return Err(ApplicationDispatchError::Native(boxed(
-            "Metal cube does not implement visibility-column writes",
-        )));
-    }
     validate_installed_implementation(&problem, request.task_requirements)
         .map_err(ApplicationDispatchError::Unavailable)?;
     let input = NativeInput {
-        metal_cube,
         observation: request.observation,
         initial_access: access,
         write_model_column: request.write_model_column,
@@ -365,7 +345,6 @@ where
 }
 
 struct NativeInput<S> {
-    metal_cube: bool,
     observation: SelectedObservationResolutionRequest,
     initial_access: ResolvedSelectedObservationAccess,
     write_model_column: bool,
@@ -375,31 +354,9 @@ struct NativeInput<S> {
     native: Result<ApplicationNative<S>, ApplicationError>,
 }
 
+/// Run the major-cycle passes, the minor cycles between them and any
+/// visibility write, then publish the products.
 fn run_native<S>(
-    problem: &CompiledProblem,
-    input: NativeInput<S>,
-) -> Result<NativeApplicationOutcome, ApplicationError>
-where
-    S: SerialProductPublicationSink + Send + 'static,
-    S::Error: Send + Sync,
-{
-    let pass_route_handles = problem.geometry().domains().iter().all(|domain| {
-        domain.facets().len() == 1 && domain.psf_phase_centre() == domain.model_phase_centre()
-    });
-    if std::env::var_os("CASA_RS_IF2_OLD_ROUTE").is_none() && pass_route_handles {
-        return run_pass_route(problem, input);
-    }
-    if !input.write_model_column
-        && !input.write_corrected_data
-        && casa_imaging_runtime::CubePhase::supports(problem)?
-    {
-        run_native_phases::<casa_imaging_runtime::CubePhase, S>(problem, input)
-    } else {
-        run_native_phases::<SpectralCycleExecutor, S>(problem, input)
-    }
-}
-
-fn run_pass_route<S>(
     problem: &CompiledProblem,
     input: NativeInput<S>,
 ) -> Result<NativeApplicationOutcome, ApplicationError>
@@ -413,7 +370,9 @@ where
         aw_preparation,
     } = input.native?;
     if aw_preparation.is_some() {
-        return Err(boxed("A-projection preparation has no pass route"));
+        return Err(boxed(
+            "A-projection convolution-function preparation is not implemented by the major-cycle pass",
+        ));
     }
     publication.controls.validate_for_problem(problem)?;
     let visibility_write = (input.write_model_column || input.write_corrected_data)
@@ -427,13 +386,13 @@ where
             })
         })
         .transpose()?;
-    let access = SelectedObservationSourceResources::finalize_access(
+    let access = finalize_source_access(
         problem,
         input.initial_access,
         &runtime.authority,
         &runtime.resource_policy,
     )?;
-    let spill = runtime.gridded_normal_storage.clone();
+    let paged_state = runtime.paged_state_storage.clone();
     let outcome = imaging::run(imaging::ImagingInputs {
         problem,
         access,
@@ -442,7 +401,7 @@ where
         visibility_write,
         authority: &runtime.authority,
         policy: &runtime.resource_policy,
-        spill_directory: spill.directory(),
+        spill_directory: paged_state.directory(),
     })?;
     publish_products(
         problem,
@@ -451,457 +410,12 @@ where
         runtime,
         publication,
         PriorPhaseOutcome {
-            aw_preparation_receipts: Vec::new(),
-            initial_receipt: None,
-            final_major_receipt: None,
             minor_cycles: outcome.minor_cycles,
             major_cycle_count: outcome.major_cycle_count,
             total_minor_iterations: outcome.total_minor_iterations,
             total_actual_minor_iterations: outcome.total_actual_minor_iterations,
             visibility_products: outcome.visibility_products,
-            visibility_replay: None,
-            visibility_output_receipt: None,
             workers: outcome.workers,
-        },
-    )
-}
-
-fn run_native_phases<P, S>(
-    problem: &CompiledProblem,
-    mut input: NativeInput<S>,
-) -> Result<NativeApplicationOutcome, ApplicationError>
-where
-    P: MajorCyclePhase,
-    P::Error: Send + Sync,
-    S: SerialProductPublicationSink + Send + 'static,
-    S::Error: Send + Sync,
-{
-    let ApplicationNative {
-        runtime,
-        publication,
-        aw_preparation,
-    } = input.native?;
-    publication.controls.validate_for_problem(problem)?;
-    let initial_access = SelectedObservationSourceResources::finalize_access(
-        problem,
-        input.initial_access,
-        &runtime.authority,
-        &runtime.resource_policy,
-    )?;
-    input.observation = input
-        .observation
-        .with_content_budget(initial_access.source_binding().content_budget());
-    let minor_cycle_requested = problem.reconstruction().controls().max_minor_iterations() > 0;
-    let clark_workspace = casa_imaging_runtime::ClarkWorkspaceReservation::acquire(
-        problem,
-        &runtime.authority,
-        runtime.resource_policy.clone(),
-    )?;
-    let clark_reuse_bytes = clark_workspace.as_ref().map_or(0, |owner| owner.bytes());
-    let prepared_aw = aw_preparation
-        .map(|deployment| prepared_aw_phase::prepare_aw_projection(problem, deployment, &runtime))
-        .transpose()?;
-    let initial_aw = prepared_aw
-        .as_ref()
-        .map(prepared_aw_phase::PreparedAwPhase::bind_plan)
-        .transpose()?;
-    let residency = initial_access.certify_residency(problem)?;
-    let write_targets =
-        SelectedVisibilityWriteTargets::new(input.write_model_column, input.write_corrected_data);
-    let visibility_write_requested = write_targets.model_data() || write_targets.corrected_data();
-    let initial_write = !minor_cycle_requested && visibility_write_requested;
-    let planning_registry =
-        PlanningRegistry::new(runtime.registry, runtime.implementation.clone(), problem);
-    let mut policy = execution_policy(&runtime, residency.clone(), initial_aw.as_ref())
-        .with_metal_cube(input.metal_cube);
-    if initial_write {
-        policy = policy
-            .with_visibility_write(initial_access.selected_visibility_storage_plan(write_targets)?);
-    }
-    let minor = minor_cycle_requested
-        .then(|| {
-            streaming_cube::minor_program(problem, input.minor_cycle_image_response, None).map(
-                |program| {
-                    (
-                        input.masks.clone(),
-                        program.with_clark_workspace_reuse(clark_reuse_bytes),
-                    )
-                },
-            )
-        })
-        .transpose()?;
-    let (initial_plan, executor, initial_terminal_replay) = P::initial(
-        PhaseContext {
-            problem,
-            runtime: &runtime,
-            registry: &planning_registry,
-            policy,
-            minor,
-        },
-        initial_access,
-        initial_aw,
-        initial_write,
-        write_targets,
-        &input.observation,
-    )?;
-    let registry = SpectralCycleRegistry::new(
-        runtime.registry,
-        runtime.implementation.clone(),
-        problem,
-        executor,
-    );
-    run_phase(
-        problem,
-        &initial_plan,
-        &registry,
-        &runtime,
-        runtime.attempts[0],
-    )?;
-    let initial_receipt = runtime.receipts.open(runtime.attempts[0])?;
-
-    let (
-        scientific,
-        final_reconstruction_mask,
-        final_major_receipt,
-        minor_cycles,
-        major_cycle_count,
-        total_minor_iterations,
-        total_actual_minor_iterations,
-        visibility_products,
-        visibility_replay,
-        visibility_output_receipt,
-    ) = match minor_cycle_requested {
-        false => {
-            let result = registry
-                .implementation()
-                .take_completion()
-                .ok_or_else(|| boxed("no-minor execution omitted final major-cycle evidence"))?;
-            let visibility_products = initial_terminal_replay
-                .as_ref()
-                .map(FinalVisibilityReplay::completion)
-                .transpose()?;
-            (
-                result.into_completion(),
-                None,
-                None,
-                Vec::new(),
-                1,
-                0,
-                0,
-                visibility_products,
-                initial_terminal_replay,
-                None,
-            )
-        }
-        true => {
-            let mut replay = registry.implementation().take_replay()?;
-            let mut minor = registry
-                .implementation()
-                .take_reconstruction_cycle_completion()
-                .ok_or_else(|| boxed("reconstruction cycle omitted scientific evidence"))?;
-            let controls = problem.reconstruction().controls();
-            // CASA's `nmajor=-1` leaves the major-cycle count unbounded, but
-            // every productive cycle consumes at least one of the total
-            // minor-iteration budget. That budget is therefore the finite
-            // execution ceiling when no explicit major-cycle limit exists.
-            let maximum_cycles = controls
-                .maximum_major_cycles()
-                .unwrap_or(controls.max_minor_iterations());
-            let mut cycle = 1_usize;
-            let mut total_iterations = 0_usize;
-            let mut total_actual_iterations = 0_usize;
-            let mut mask_plans = input.masks.clone();
-            let mut minor_outcomes = Vec::new();
-            loop {
-                let applied_masks = minor.masks().clone();
-                let iterations_entering = total_iterations;
-                let actual_iterations_entering = total_actual_iterations;
-                total_iterations = total_iterations
-                    .checked_add(minor.evidence().controller_iterations())
-                    .ok_or_else(|| boxed("minor-cycle iteration count overflowed"))?;
-                total_actual_iterations = total_actual_iterations
-                    .checked_add(minor.evidence().iterations())
-                    .ok_or_else(|| boxed("actual minor-cycle iteration count overflowed"))?;
-                let minor_outcome = NativeMinorCycleOutcome {
-                    cycle,
-                    iterations_entering,
-                    iterations: minor.evidence().controller_iterations(),
-                    total_iterations,
-                    actual_iterations_entering,
-                    actual_iterations: minor.evidence().iterations(),
-                    total_actual_iterations,
-                    total_flux: minor.evidence().total_flux(),
-                    initial_peak_flux: minor.evidence().initial_peak_flux(),
-                    final_peak_flux: minor.evidence().final_peak_flux(),
-                    noise_rms: minor.evidence().noise_rms(),
-                    effective_threshold: minor.evidence().effective_threshold(),
-                    global_threshold: minor.evidence().global_threshold(),
-                    cycle_threshold: minor.evidence().cycle_threshold(),
-                    stop_reason: minor.evidence().stop_reason().into(),
-                    clark_refreshes: minor.evidence().clark_refreshes(),
-                    associated_replay_ordinal: cycle,
-                    recorded_components: minor.evidence().recorded_components().copied().collect(),
-                    mask_support: minor.mask().support().to_vec(),
-                    mask_generation: minor.mask().generation_id(),
-                    mask_model_generation: minor.mask().model_generation(),
-                    mask_normal_state: minor.mask().normal_state_completion(),
-                    auto_mask: minor.auto_mask_evidence(),
-                };
-                eprintln!(
-                    "imaging_minor_cycle_summary cycle={} associated_replay_ordinal={} controller_iterations_entering={} controller_iterations={} controller_iterations_total={} actual_iterations_entering={} actual_iterations={} actual_iterations_total={} initial_peak_flux={} final_peak_flux={} model_update_abs_flux={} global_threshold={} effective_threshold={} cycle_threshold={} stop_reason={:?} clark_refreshes={}",
-                    minor_outcome.cycle,
-                    minor_outcome.associated_replay_ordinal,
-                    minor_outcome.iterations_entering,
-                    minor_outcome.iterations,
-                    minor_outcome.total_iterations,
-                    minor_outcome.actual_iterations_entering,
-                    minor_outcome.actual_iterations,
-                    minor_outcome.total_actual_iterations,
-                    minor_outcome.initial_peak_flux,
-                    minor_outcome.final_peak_flux,
-                    minor_outcome.total_flux,
-                    minor_outcome.global_threshold,
-                    minor_outcome.effective_threshold,
-                    minor_outcome
-                        .cycle_threshold
-                        .map_or_else(|| "none".to_owned(), |value| value.to_string()),
-                    minor_outcome.stop_reason,
-                    minor_outcome.clark_refreshes,
-                );
-                let continue_cleaning = cycle < maximum_cycles
-                    && total_iterations < controls.max_minor_iterations()
-                    && minor.evidence().requests_reconciliation();
-                let next_masks = match &applied_masks {
-                    ReconstructionMaskSet::Domains(masks) => mask_plans.next_cycle(
-                        masks,
-                        cycle,
-                        minor.evidence().cycle_threshold_is_global(),
-                        &(0..masks.len())
-                            .map(|ordinal| {
-                                minor
-                                    .domain_auto_mask_evidence(ordinal)
-                                    .is_some_and(|evidence| evidence.channel_stopped)
-                            })
-                            .collect::<Vec<_>>(),
-                    )?,
-                    ReconstructionMaskSet::Shared(_) => {
-                        return Err(boxed(
-                            "native application received a non-domain reconstruction mask",
-                        ));
-                    }
-                };
-                minor_outcomes.push(minor_outcome);
-                let terminal_refresh_started = (!continue_cleaning
-                    && std::env::var_os("CASA_RS_TRACE_MAJOR_CYCLE_ENVELOPES").is_some())
-                .then(std::time::Instant::now);
-                let final_input = minor.into_final_major_input();
-                let final_aw = prepared_aw
-                    .as_ref()
-                    .map(prepared_aw_phase::PreparedAwPhase::bind_plan)
-                    .transpose()?;
-                let final_policy = execution_policy(&runtime, residency.clone(), final_aw.as_ref())
-                    .with_metal_cube(input.metal_cube);
-                let ordinal =
-                    u32::try_from(cycle).map_err(|_| boxed("major-cycle ordinal exceeds u32"))?;
-                let minor_program = continue_cleaning
-                    .then(|| {
-                        streaming_cube::minor_program(
-                            problem,
-                            input.minor_cycle_image_response,
-                            Some(
-                                controls
-                                    .max_minor_iterations()
-                                    .saturating_sub(total_iterations),
-                            ),
-                        )
-                        .map(|program| {
-                            (
-                                next_masks.clone(),
-                                program.with_clark_workspace_reuse(clark_reuse_bytes),
-                            )
-                        })
-                    })
-                    .transpose()?;
-                let (final_plan, executor) = P::refresh(
-                    PhaseContext {
-                        problem,
-                        runtime: &runtime,
-                        registry: &planning_registry,
-                        policy: final_policy,
-                        minor: minor_program,
-                    },
-                    final_input,
-                    ordinal,
-                    replay,
-                    final_aw,
-                    &input.observation,
-                )?;
-                let registry = SpectralCycleRegistry::new(
-                    runtime.registry,
-                    runtime.implementation.clone(),
-                    problem,
-                    executor,
-                );
-                let attempt = major_cycle_attempt(runtime.attempts[1], ordinal);
-                run_phase(problem, &final_plan, &registry, &runtime, attempt)?;
-                let receipt = runtime.receipts.open(attempt)?;
-                replay = registry.implementation().take_replay()?;
-                if continue_cleaning {
-                    minor = registry
-                        .implementation()
-                        .take_reconstruction_cycle_completion()
-                        .ok_or_else(|| boxed("continuing major omitted cycle evidence"))?;
-                    mask_plans = next_masks;
-                    cycle += 1;
-                    continue;
-                }
-                let completion = registry
-                    .implementation()
-                    .take_completion()
-                    .ok_or_else(|| boxed("final-major execution omitted scientific evidence"))?
-                    .into_completion();
-                if let Some(started) = terminal_refresh_started {
-                    eprintln!(
-                        "imaging_terminal_refresh_envelope ordinal={ordinal} model_generation={} elapsed_nanos={} includes=handoff,planning,phase_run,reconciliation,receipt_recovery excludes=minor_cycle,product_normalization,restoration,publication",
-                        completion.final_model().generation_id(),
-                        started.elapsed().as_nanos(),
-                    );
-                }
-                if !visibility_write_requested {
-                    break (
-                        completion,
-                        Some(applied_masks),
-                        Some(receipt),
-                        minor_outcomes,
-                        cycle + 1,
-                        total_iterations,
-                        total_actual_iterations,
-                        None,
-                        None,
-                        None,
-                    );
-                }
-                {
-                    let output_frozen_weighting = P::visibility_weighting(replay)?;
-                    let resolved = resolve_selected_observation(input.observation.clone())?;
-                    let (_, access) = resolved.into_parts();
-                    let output_residency = access.certify_residency(problem)?;
-                    let source_state = access.source_state().clone();
-                    let output_aw = prepared_aw
-                        .as_ref()
-                        .map(prepared_aw_phase::PreparedAwPhase::bind_plan)
-                        .transpose()?;
-                    let output_policy =
-                        execution_policy(&runtime, output_residency, output_aw.as_ref())
-                            .with_visibility_write(
-                                access.selected_visibility_storage_plan(write_targets)?,
-                            );
-                    let output_planned = SpectralCyclePlan::selected_output(
-                        problem,
-                        &planning_registry,
-                        output_policy,
-                        ordinal,
-                    )?;
-                    let output_plan = plan(
-                        problem,
-                        PlanningBindings::new(
-                            runtime.registry,
-                            runtime.resource_policy.clone(),
-                            runtime.cost_model,
-                        ),
-                        &runtime.authority,
-                        &planning_registry,
-                        &runtime.receipts,
-                        |_, _| {
-                            Ok::<_, std::convert::Infallible>(output_planned.physical_candidates())
-                        },
-                    )?;
-                    let SpectralCyclePlanParts {
-                        weighting: output_weighting,
-                        complete_data: output_complete,
-                        source_resources: output_resources,
-                        pass: output_pass,
-                        ..
-                    } = output_planned.into_parts(&output_plan)?;
-                    let (visibility_replay, sink) = FinalVisibilityReplay::with_visibility_write(
-                        std::path::PathBuf::from(input.observation.locator()),
-                        source_state,
-                        visibility_write_selection(problem, input.observation.selection())?,
-                        write_targets,
-                    )?;
-                    let mut output_executor = SpectralCycleExecutor::new_selected_output(
-                        runtime.implementation.clone(),
-                        problem.clone(),
-                        output_weighting,
-                        output_resources,
-                        output_pass,
-                        output_complete,
-                        access.into_deferred(),
-                        completion,
-                        output_frozen_weighting,
-                    )
-                    .with_final_visibility_sink(sink);
-                    if let Some(binding) = output_aw {
-                        output_executor =
-                            output_executor.with_prepared_artifact_reader(binding.execution)?;
-                    }
-                    let output_registry = SpectralCycleRegistry::new(
-                        runtime.registry,
-                        runtime.implementation.clone(),
-                        problem,
-                        output_executor,
-                    );
-                    let output_attempt = selected_output_attempt(attempt);
-                    run_phase(
-                        problem,
-                        &output_plan,
-                        &output_registry,
-                        &runtime,
-                        output_attempt,
-                    )?;
-                    let output_receipt = runtime.receipts.open(output_attempt)?;
-                    let completion = output_registry
-                        .implementation()
-                        .take_selected_output_completion()
-                        .ok_or_else(|| {
-                            boxed("selected-output traversal omitted scientific state")
-                        })?;
-                    break (
-                        completion,
-                        Some(applied_masks),
-                        Some(receipt),
-                        minor_outcomes,
-                        cycle + 1,
-                        total_iterations,
-                        total_actual_iterations,
-                        Some(visibility_replay.completion()?),
-                        Some(visibility_replay),
-                        Some(output_receipt),
-                    );
-                }
-            }
-        }
-    };
-
-    publish_products(
-        problem,
-        scientific,
-        final_reconstruction_mask,
-        runtime,
-        publication,
-        PriorPhaseOutcome {
-            aw_preparation_receipts: prepared_aw
-                .map_or_else(Vec::new, |prepared| prepared.receipts),
-            workers: usize::try_from(initial_receipt.initial_execution_knobs().workers)?,
-            initial_receipt: Some(initial_receipt),
-            final_major_receipt,
-            minor_cycles,
-            major_cycle_count,
-            total_minor_iterations,
-            total_actual_minor_iterations,
-            visibility_products,
-            visibility_replay,
-            visibility_output_receipt,
         },
     )
 }
@@ -951,44 +465,12 @@ fn visibility_write_selection(
 }
 
 struct PriorPhaseOutcome {
-    aw_preparation_receipts: Vec<ExecutionReceipt>,
     workers: usize,
-    initial_receipt: Option<ExecutionReceipt>,
-    final_major_receipt: Option<ExecutionReceipt>,
     minor_cycles: Vec<NativeMinorCycleOutcome>,
     major_cycle_count: usize,
     total_minor_iterations: usize,
     total_actual_minor_iterations: usize,
     visibility_products: Option<VisibilityProductCompletion>,
-    visibility_replay: Option<FinalVisibilityReplay>,
-    visibility_output_receipt: Option<ExecutionReceipt>,
-}
-
-fn execution_policy(
-    runtime: &ApplicationRuntime,
-    residency: casa_ms::SelectedObservationResidencyCertificate,
-    aw: Option<&prepared_aw_phase::PreparedAwPlanBinding>,
-) -> SpectralCycleExecutionPolicy {
-    let policy = SpectralCycleExecutionPolicy::new(
-        runtime.implementation.clone(),
-        runtime.weighting_limits,
-        residency,
-        runtime.storage_io.clone(),
-        SpectralCyclePlanningLimits::new(
-            runtime.stage_nanos,
-            runtime.minor_cycle_bytes,
-            runtime.confidence_parts_per_million,
-        ),
-        runtime.authority.clone(),
-        runtime.resource_policy.clone(),
-    )
-    .with_gridded_normal_storage(runtime.gridded_normal_storage.clone());
-    match aw {
-        Some(binding) => policy
-            .with_aw_projection(binding.projection.clone())
-            .with_prepared_artifact_reader(binding.execution.plan().clone()),
-        None => policy,
-    }
 }
 
 enum ApplicationRunController {
@@ -1016,55 +498,6 @@ fn application_controller(runtime: &ApplicationRuntime) -> ApplicationRunControl
     } else {
         ApplicationRunController::Continue
     }
-}
-
-fn run_phase<I: WorkImplementation>(
-    problem: &CompiledProblem,
-    execution_plan: &casa_imaging_runtime::ExecutionPlan,
-    registry: &SpectralCycleRegistry<I>,
-    runtime: &ApplicationRuntime,
-    attempt: ExecutionAttemptId,
-) -> Result<(), ApplicationError>
-where
-    I::Error: Send + Sync,
-{
-    let executable = ExecutableModelProblem::from_compiled(problem.clone())?;
-    let current = RunBindings::new(
-        problem.inputs().clone(),
-        &runtime.resource_policy,
-        runtime.cost_model,
-    );
-    let mut controller = application_controller(runtime);
-    run(
-        &executable,
-        execution_plan,
-        &current,
-        registry,
-        &runtime.authority,
-        &mut controller,
-        runtime
-            .receipts
-            .bind(ExecutionProvenance::new(attempt, runtime.build)),
-    )?;
-    Ok(())
-}
-
-fn major_cycle_attempt(base: ExecutionAttemptId, ordinal: u32) -> ExecutionAttemptId {
-    if ordinal == 1 {
-        return base;
-    }
-    let mut hash = Sha256::new();
-    hash.update(b"casa-rs:imaging:major-cycle-attempt:v1");
-    hash.update(base.as_bytes());
-    hash.update(ordinal.to_le_bytes());
-    ExecutionAttemptId::from_sha256(hash.finalize().into())
-}
-
-fn selected_output_attempt(science: ExecutionAttemptId) -> ExecutionAttemptId {
-    let mut hash = Sha256::new();
-    hash.update(b"casa-rs:imaging:selected-output-attempt:v1");
-    hash.update(science.as_bytes());
-    ExecutionAttemptId::from_sha256(hash.finalize().into())
 }
 
 fn publish_products<S>(
@@ -1106,18 +539,6 @@ where
         .sink
         .residency(&planned_products, &generation_demand)?;
 
-    let visibility_write_receipt = prior
-        .visibility_replay
-        .as_ref()
-        .is_some_and(FinalVisibilityReplay::has_visibility_write)
-        .then(|| {
-            prior
-                .visibility_output_receipt
-                .clone()
-                .or_else(|| prior.final_major_receipt.clone())
-                .or_else(|| prior.initial_receipt.clone())
-        })
-        .flatten();
     let planning_registry =
         PlanningRegistry::new(runtime.registry, runtime.implementation.clone(), problem);
     let publication_plan = SerialProductPublicationPlan::new(
@@ -1178,27 +599,25 @@ where
         &registry,
         &runtime.authority,
         &mut controller,
-        runtime
-            .receipts
-            .bind(ExecutionProvenance::new(runtime.attempts[2], runtime.build)),
+        runtime.receipts.bind(ExecutionProvenance::new(
+            runtime.publication_attempt,
+            runtime.build,
+        )),
     )?;
-    let publication_receipt = runtime.receipts.open(runtime.attempts[2])?;
+    let publication_receipt = runtime.receipts.open(runtime.publication_attempt)?;
     let completion = registry
         .implementation()
         .take_completion()
         .ok_or_else(|| boxed("publication execution omitted its product completion"))?;
     let (planned_products, scientific, products) = completion.into_parts();
     Ok(NativeApplicationOutcome {
-        aw_preparation_receipts: prior.aw_preparation_receipts,
-        initial_receipt: prior.initial_receipt,
-        final_major_receipt: prior.final_major_receipt,
         minor_cycles: prior.minor_cycles,
         major_cycle_count: prior.major_cycle_count,
         total_minor_iterations: prior.total_minor_iterations,
         total_actual_minor_iterations: prior.total_actual_minor_iterations,
+        workers: prior.workers,
         visibility_products: prior.visibility_products,
         publication_receipt,
-        visibility_write_receipt,
         scientific,
         planned_products,
         products,
@@ -1210,7 +629,6 @@ struct PlanningRegistry {
     implementation_id: WorkImplementationId,
     metadata: ImplementationContractMetadata,
     implementation: PlanningImplementation,
-    prepared_artifact: PreparedArtifactRegistration,
 }
 
 impl PlanningRegistry {
@@ -1222,7 +640,6 @@ impl PlanningRegistry {
         Self {
             id,
             implementation: PlanningImplementation(implementation_id.clone()),
-            prepared_artifact: prepared_aw_registration(implementation_id.clone()),
             implementation_id,
             metadata: ImplementationContractMetadata::new(
                 problem.problem_id(),
@@ -1250,23 +667,6 @@ impl ImplementationRegistry for PlanningRegistry {
     ) -> Option<ImplementationContractMetadata> {
         (id == &self.implementation_id).then(|| self.metadata.clone())
     }
-
-    fn prepared_artifact_registration(
-        &self,
-        implementation: &WorkImplementationId,
-    ) -> Option<&PreparedArtifactRegistration> {
-        (implementation == &self.implementation_id).then_some(&self.prepared_artifact)
-    }
-}
-
-fn prepared_aw_registration(implementation: WorkImplementationId) -> PreparedArtifactRegistration {
-    PreparedArtifactRegistration::new(
-        "casa-rs-imaging-v1",
-        "native-awproject",
-        env!("CARGO_PKG_VERSION"),
-        implementation,
-    )
-    .expect("static AW preparation registration is valid")
 }
 
 struct PlanningImplementation(WorkImplementationId);

@@ -37,9 +37,7 @@ pub use storage::{
     ProductOutput, ProductStoragePlan, ProductWindow, ProductWindowExecutor, ProductWindowLayout,
     ProductWriter,
 };
-pub use visibility::{
-    VisibilityProductCompletion, VisibilityProductError, VisibilityProductProgress,
-};
+pub use visibility::VisibilityProductCompletion;
 
 #[cfg(test)]
 mod tests {

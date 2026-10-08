@@ -133,8 +133,7 @@ pub(super) fn prepare(
         &deployment.storage_domain,
         casa_imaging_runtime::PreparedArtifactBudget::new(cache_bytes, entries, 8 << 20)?,
     )?);
-    let owner =
-        crate::PlanningRegistry::new(runtime.registry, runtime.implementation.clone(), problem);
+    let owner = super::AwArtifactOwner::new(runtime, problem);
     let native = PreparedArtifactNativeRequest::new(
         &store,
         &owner,
@@ -310,7 +309,7 @@ fn run_native(
                 },
             ),
         ]),
-        prepared_artifact: crate::prepared_aw_registration(runtime.implementation.clone()),
+        prepared_artifact: super::prepared_aw_registration(runtime.implementation.clone()),
     };
     let CatalogOperation::Native { request, operation } = &registry.catalog().input else {
         unreachable!("native operation constructed above")

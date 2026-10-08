@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The selected MeasurementSet as a [`BoundedSource`] of native row blocks.
 
-use casa_imaging_model::{CompiledProblem, SelectedNumericVisibility, SelectedNumericWeights};
+use casa_imaging_model::{
+    CompiledProblem, FiniteValuePolicy, SelectedNumericVisibility, SelectedNumericWeights,
+};
 use casa_imaging_operator::{PlaneRange, RowContext};
 use casa_imaging_runtime::pass::{
     BoundedSource, NativeBlock, NativeRowHeader, RowAddress, SourceError,
@@ -17,20 +19,31 @@ use super::continuum::subtract_continuum;
 /// Seconds per day, for row times in MJD days.
 const SECONDS_PER_DAY: f64 = 86_400.0;
 
+/// Under [`FiniteValuePolicy::RejectAll`] a non-finite visibility, weight or
+/// uvw fails the run, flagged or not; under
+/// [`FiniteValuePolicy::FlagInputRejectGenerated`] it is flagged.
+const NONFINITE_INPUT: &str = "a selected visibility, weight or uvw is not finite";
+
 /// Output-frame frequency bounds of a plane range, for windowed traversals
 /// of a cube: the low edge of the first plane to the high edge of the last.
 pub(crate) type PlaneBounds = Box<dyn Fn(PlaneRange) -> [f64; 2] + Send + Sync>;
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "one state per source, idle once per pass; the per-block stream is boxed"
+)]
 enum Traversal<'a> {
     Idle(BoundSelectedObservation),
-    Streaming {
-        source: SelectedObservationBlockSource<'a>,
-        consumer: SelectedObservationBlockConsumer<'a>,
-        block: SelectedObservationBlock,
-        geometry: SelectedObservationNumericGeometry,
-        windowed: bool,
-    },
+    Streaming(Box<Stream<'a>>),
     Failed,
+}
+
+struct Stream<'a> {
+    source: SelectedObservationBlockSource<'a>,
+    consumer: SelectedObservationBlockConsumer<'a>,
+    block: SelectedObservationBlock,
+    geometry: SelectedObservationNumericGeometry,
+    windowed: bool,
 }
 
 /// Native rows of the selected observation, projected onto one image domain.
@@ -103,6 +116,10 @@ impl<'a> MeasurementSetSource<'a> {
         out.reset(&channel_indices, &correlation_indices);
         let channels = channel_indices.len();
         let correlations = correlation_indices.len();
+        let reject_nonfinite = matches!(
+            self.problem.numerics().finite_values(),
+            FiniteValuePolicy::RejectAll
+        );
         for row in 0..rows {
             let numeric = block.numeric_row(geometry, row)?;
             let projection = numeric
@@ -113,10 +130,17 @@ impl<'a> MeasurementSetSource<'a> {
                 .model();
             let metadata = &numeric.row.metadata;
             let coordinates = &numeric.row.coordinates;
+            let uvw_m = projection.transformed_uvw_m();
+            let nonfinite_uvw = !uvw_m.iter().all(|value| value.is_finite());
+            if nonfinite_uvw && reject_nonfinite {
+                return Err(NONFINITE_INPUT.into());
+            }
             let header = NativeRowHeader {
-                uvw_m: projection.transformed_uvw_m(),
+                uvw_m,
                 phase_shift_m: projection.phase_shift_m(),
-                row_flag: numeric.row.row_flag || metadata.antenna1 == metadata.antenna2,
+                row_flag: numeric.row.row_flag
+                    || metadata.antenna1 == metadata.antenna2
+                    || nonfinite_uvw,
                 context: RowContext {
                     time_s: coordinates.time.mjd_days() * SECONDS_PER_DAY,
                     antennas: [metadata.antenna1 as u32, metadata.antenna2 as u32],
@@ -137,19 +161,26 @@ impl<'a> MeasurementSetSource<'a> {
                 let stored = (channel.channel_index - numeric.first_stored_channel) as usize;
                 for correlation in numeric.correlations {
                     let index = stored * stride + correlation.correlation_index() as usize;
-                    self.values.push(match numeric.visibility {
+                    let value = match numeric.visibility {
                         SelectedNumericVisibility::Complex32(values) => values[index],
                         SelectedNumericVisibility::Float32(values) => {
                             Complex32::new(values[index], 0.0)
                         }
-                    });
-                    self.weights.push(match numeric.weights {
+                    };
+                    let weight = match numeric.weights {
                         SelectedNumericWeights::PerRow(values) => {
                             values[correlation.correlation_index() as usize]
                         }
                         SelectedNumericWeights::PerChannel(values) => values[index],
-                    });
-                    self.flags.push(numeric.flags[index]);
+                    };
+                    let nonfinite =
+                        !(value.re.is_finite() && value.im.is_finite() && weight.is_finite());
+                    if nonfinite && reject_nonfinite {
+                        return Err(NONFINITE_INPUT.into());
+                    }
+                    self.values.push(value);
+                    self.weights.push(weight);
+                    self.flags.push(numeric.flags[index] || nonfinite);
                 }
             }
             debug_assert_eq!(self.values.len(), channels * correlations);
@@ -180,7 +211,7 @@ impl BoundedSource for MeasurementSetSource<'_> {
     fn begin(&mut self, planes: PlaneRange) -> Result<(), SourceError> {
         let selected = match std::mem::replace(&mut self.traversal, Traversal::Failed) {
             Traversal::Idle(selected) => selected,
-            Traversal::Streaming { .. } | Traversal::Failed => {
+            Traversal::Streaming(_) | Traversal::Failed => {
                 return Err("a traversal began before the previous one finished".into());
             }
         };
@@ -204,29 +235,37 @@ impl BoundedSource for MeasurementSetSource<'_> {
             .unwrap_or(0);
         let geometry =
             SelectedObservationNumericGeometry::new(source.maximum_rows_per_block(), channels)?;
-        self.traversal = Traversal::Streaming {
+        self.traversal = Traversal::Streaming(Box::new(Stream {
             source,
             consumer,
             block,
             geometry,
             windowed: window.is_some(),
-        };
+        }));
         Ok(())
     }
 
     fn fill(&mut self, out: &mut NativeBlock) -> Result<bool, SourceError> {
         loop {
-            let Traversal::Streaming {
-                mut source,
-                mut consumer,
-                mut block,
-                mut geometry,
-                windowed,
-            } = std::mem::replace(&mut self.traversal, Traversal::Failed)
+            let Traversal::Streaming(mut stream) =
+                std::mem::replace(&mut self.traversal, Traversal::Failed)
             else {
                 return Err("no traversal is in progress".into());
             };
-            if source.fill_next(&mut block)?.is_none() {
+            let Stream {
+                source,
+                consumer,
+                block,
+                geometry,
+                ..
+            } = &mut *stream;
+            if source.fill_next(block)?.is_none() {
+                let Stream {
+                    source,
+                    consumer,
+                    windowed,
+                    ..
+                } = *stream;
                 let terminal = source.complete()?;
                 let selected = if windowed {
                     consumer.complete_window(terminal)?.0
@@ -237,30 +276,18 @@ impl BoundedSource for MeasurementSetSource<'_> {
                 self.traversal = Traversal::Idle(selected);
                 return Ok(false);
             }
-            block.project_numeric_geometry(self.problem, &mut geometry)?;
+            block.project_numeric_geometry(self.problem, geometry)?;
             if geometry.row_count() == 0 {
-                self.traversal = Traversal::Streaming {
-                    source,
-                    consumer,
-                    block,
-                    geometry,
-                    windowed,
-                };
+                self.traversal = Traversal::Streaming(stream);
                 continue;
             }
             let mut converted = Ok(());
-            consumer.consume_numeric(&block, &geometry, || {
-                converted = self.convert(&block, &geometry, out);
+            consumer.consume_numeric(block, geometry, || {
+                converted = self.convert(block, geometry, out);
                 Ok::<_, std::convert::Infallible>(())
             })?;
             converted?;
-            self.traversal = Traversal::Streaming {
-                source,
-                consumer,
-                block,
-                geometry,
-                windowed,
-            };
+            self.traversal = Traversal::Streaming(stream);
             return Ok(true);
         }
     }

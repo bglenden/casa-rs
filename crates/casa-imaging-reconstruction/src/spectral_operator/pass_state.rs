@@ -50,6 +50,10 @@ pub struct PassImages {
     pub sum_weights: Vec<f64>,
 }
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "one state per image domain, replaced in place; boxing saves nothing"
+)]
 enum DomainState {
     Empty,
     Coupled(SpectralDomainPrimitives),
@@ -64,10 +68,15 @@ enum DomainState {
 pub struct PassNormalState {
     basis: SpectralBasisPlan,
     total_channels: usize,
+    polarizations: usize,
     model: ModelGenerationId,
     storage: NormalStoragePlan,
     domains: Vec<DomainState>,
     roles: Vec<casa_imaging_model::ImageDomainRole>,
+    shapes: Vec<[usize; 2]>,
+    /// Weighting generation the refreshed state was formed with; a refresh
+    /// must finish with the same one, since its PSF and `sumwt` carry over.
+    weighting: Option<WeightingGenerationId>,
     previous: Option<FinalNormalState>,
 }
 
@@ -79,19 +88,20 @@ impl PassNormalState {
         model: ModelGenerationId,
         storage: NormalStoragePlan,
     ) -> Result<Self, SpectralOperatorError> {
-        let roles = problem
-            .geometry()
-            .domains()
-            .iter()
-            .map(|domain| domain.role().clone())
-            .collect::<Vec<_>>();
+        let domains = problem.geometry().domains();
         Ok(Self {
             basis: basis_plan(problem)?,
             total_channels: problem.geometry().spectral().output_channels(),
+            polarizations: problem.reconstruction().polarization().coordinates().len(),
             model,
             storage,
-            domains: roles.iter().map(|_| DomainState::Empty).collect(),
-            roles,
+            domains: domains.iter().map(|_| DomainState::Empty).collect(),
+            roles: domains.iter().map(|domain| domain.role().clone()).collect(),
+            shapes: domains
+                .iter()
+                .map(|domain| domain.shape().pixels())
+                .collect(),
+            weighting: None,
             previous: None,
         })
     }
@@ -99,13 +109,22 @@ impl PassNormalState {
     /// A residual refresh of `previous`, formed with model generation
     /// `model`: the PSF, `sumwt` and validity carry over; every residual
     /// plane must be appended again.
+    ///
+    /// `previous` must be a state of the same problem; [`Self::finish`]
+    /// then requires the weighting generation it was formed with.
     pub fn refresh(
         problem: &CompiledProblem,
         previous: FinalNormalState,
         model: ModelGenerationId,
         storage: NormalStoragePlan,
     ) -> Result<Self, SpectralOperatorError> {
+        if previous.problem_id() != problem.problem_id()
+            || previous.weighting_commitment_id() != problem.weighting().commitment_id()
+        {
+            return Err(SpectralOperatorError::ReusableNormalStateMismatch);
+        }
         let mut state = Self::initial(problem, model, storage)?;
+        state.weighting = Some(previous.weighting_generation());
         match previous.primitives() {
             NormalStatePrimitives::ChannelLocal(domains) => {
                 for (target, domain) in state.domains.iter_mut().zip(domains.iter()) {
@@ -132,12 +151,12 @@ impl PassNormalState {
     /// Add one pass's images of one domain.
     pub fn append(&mut self, images: PassImages) -> Result<(), SpectralOperatorError> {
         let index = images.domain;
-        let state = std::mem::replace(
-            self.domains
-                .get_mut(index)
-                .ok_or(SpectralOperatorError::ProblemMismatch)?,
-            DomainState::Empty,
-        );
+        if self.shapes.get(index) != Some(&images.shape)
+            || images.polarizations != self.polarizations
+        {
+            return Err(SpectralOperatorError::ProblemMismatch);
+        }
+        let state = std::mem::replace(&mut self.domains[index], DomainState::Empty);
         self.domains[index] = match (state, self.basis) {
             (DomainState::Empty, SpectralBasisPlan::ChannelLocal) => {
                 let primitives = self.channel_primitives(images)?;
@@ -206,6 +225,9 @@ impl PassNormalState {
         samples: u64,
         blocks: u64,
     ) -> Result<CompleteDataNormalState, SpectralOperatorError> {
+        if self.weighting.is_some_and(|previous| previous != weighting) {
+            return Err(SpectralOperatorError::ReusableNormalStateMismatch);
+        }
         let catalog = match self.basis {
             SpectralBasisPlan::ChannelLocal => SpectralPrimitiveCatalog::UnnormalizedChannelSlabV1,
             SpectralBasisPlan::Polynomial(plan)
@@ -319,8 +341,6 @@ impl PassNormalState {
                 major_cycle_residual: None,
                 major_cycle_residual_promoted: true,
                 residual_model: Some(self.model),
-                #[cfg(test)]
-                measurements: super::SpectralOperatorMeasurements::default(),
             },
         ))
     }
@@ -385,8 +405,6 @@ impl PassNormalState {
                 major_cycle_residual: None,
                 major_cycle_residual_promoted: true,
                 residual_model: Some(self.model),
-                #[cfg(test)]
-                measurements: super::SpectralOperatorMeasurements::default(),
             },
         ))
     }
@@ -434,4 +452,56 @@ fn basis_plan(problem: &CompiledProblem) -> Result<SpectralBasisPlan, SpectralOp
             )
         }
     })
+}
+
+#[cfg(test)]
+impl SpectralOperatorPrimitives {
+    /// Coupled one-domain Stokes-I primitives over externally captured
+    /// planes, for lib tests whose sensitivity or published weights no pass
+    /// forms. `response` is `(sensitivity plane, normal weight, published
+    /// weight)`; without it both weights and the sensitivity are one.
+    pub(crate) fn native_taylor_fixture(
+        problem: &CompiledProblem,
+        residual_model: ModelGenerationId,
+        dirty: Box<[Complex64]>,
+        psf: Box<[Complex64]>,
+        response: Option<(Vec<f64>, f64, f64)>,
+    ) -> Self {
+        let basis = basis_plan(problem).expect("fixture coefficient basis");
+        let total_channels = problem.geometry().spectral().output_channels();
+        let slab = SpectralSlabPlan {
+            total_channels,
+            core_start: 0,
+            core_end: total_channels,
+            resident_start: 0,
+            resident_end: total_channels,
+        };
+        let shape = problem.geometry().domains()[0].shape().pixels();
+        let cells = shape[0] * shape[1];
+        let moments = basis.normal_moments(slab);
+        assert_eq!(dirty.len(), basis.coefficient_terms(slab) * cells);
+        assert_eq!(psf.len(), moments * cells);
+        let (sensitivity, normal_weight, published_weight) =
+            response.unwrap_or_else(|| (vec![1.0; cells], 1.0, 1.0));
+        assert_eq!(sensitivity.len(), cells);
+        Self {
+            shape,
+            slab,
+            basis,
+            polarizations: 1,
+            dirty,
+            cube_real: None,
+            invariant_dirty: None,
+            psf,
+            clark_workspace: Mutex::new(None),
+            sensitivity: sensitivity.repeat(moments).into_boxed_slice(),
+            primary_beam_weighted_sum: None,
+            sum_weights: vec![normal_weight; moments].into_boxed_slice(),
+            published_sum_weights: vec![published_weight; moments].into_boxed_slice(),
+            validity: vec![SpectralChannelValidity::Valid].into_boxed_slice(),
+            major_cycle_residual: None,
+            major_cycle_residual_promoted: true,
+            residual_model: Some(residual_model),
+        }
+    }
 }

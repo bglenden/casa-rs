@@ -402,7 +402,8 @@ fn build_problem(
             |_| Ok(()),
         )
         .expect("synthetic fixture lineage");
-    let (weighting_generation, replay) = crate::weighting::native_normal_fixture_weighting_ids();
+    let (weighting_generation, replay) =
+        crate::weighting_identity::native_normal_fixture_weighting_ids();
     let primitives = SpectralPrimitiveDomains::new(
         vec![SpectralDomainPrimitives::new(
             0,

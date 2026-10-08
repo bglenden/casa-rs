@@ -3,7 +3,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
-use std::rc::Rc;
 use std::sync::{Arc, Weak};
 
 use crate::execution_bindings::CanonicalEncoder;
@@ -276,187 +275,19 @@ impl ClaimLifetime {
 #[derive(Debug)]
 pub struct RetainedArtifactPermit {
     lease_epoch: u64,
-    permits: Box<[ResourcePermit]>,
-    immutable_allocations: Box<[[u8; 32]]>,
+    // Held for their drop, which releases the retained capacity.
+    _permits: Box<[ResourcePermit]>,
+    _immutable_allocations: Box<[[u8; 32]]>,
     // This must drop after the permits: a dead weak token proves that every
     // resource consumption owned by this artifact has already been released.
     _liveness: Arc<()>,
 }
 
 impl RetainedArtifactPermit {
-    /// Move whole dedicated memory permits to their independent artifact owners.
-    /// The export liveness remains shared until every partition has been dropped.
-    pub(crate) fn partition_immutable_allocations(
-        self,
-        owner_node: &WorkNodeId,
-        allocations: &[&LogicalAllocation],
-    ) -> Result<Vec<Self>, ResourceError> {
-        let identities = allocations
-            .iter()
-            .map(|allocation| immutable_allocation_identity(owner_node, allocation))
-            .collect::<Vec<_>>();
-        if self.permits.len() != allocations.len()
-            || self.immutable_allocations.len() != allocations.len()
-            || identities.iter().collect::<BTreeSet<_>>().len() != identities.len()
-            || identities
-                .iter()
-                .any(|identity| !self.immutable_allocations.contains(identity))
-            || allocations.iter().any(|allocation| {
-                self.permits
-                    .iter()
-                    .filter(|permit| {
-                        permit.resource()
-                            == &LeaseResource::Memory {
-                                allocation_id: allocation.id.as_str().to_owned(),
-                            }
-                            && permit.amount() == allocation.bytes
-                    })
-                    .count()
-                    != 1
-            })
-        {
-            return Err(ResourceError::Invalid(
-                "artifact memory partition differs from its exact exported allocations".into(),
-            ));
-        }
-        let mut permits = self.permits.into_vec();
-        Ok(allocations
-            .iter()
-            .zip(identities)
-            .map(|(allocation, identity)| {
-                let index = permits
-                    .iter()
-                    .position(|permit| {
-                        permit.resource()
-                            == &LeaseResource::Memory {
-                                allocation_id: allocation.id.as_str().to_owned(),
-                            }
-                    })
-                    .expect("partition resources were checked before transfer");
-                Self {
-                    lease_epoch: self.lease_epoch,
-                    permits: vec![permits.swap_remove(index)].into_boxed_slice(),
-                    immutable_allocations: vec![identity].into_boxed_slice(),
-                    _liveness: self._liveness.clone(),
-                }
-            })
-            .collect())
-    }
-
-    /// Check all named non-memory resources in a capacity reservation.
-    pub(crate) fn covers_exact_resources(&self, expected: &[(LeaseResource, u64)]) -> bool {
-        self.immutable_allocations.is_empty()
-            && self.permits.len() == expected.len()
-            && expected.iter().all(|(resource, amount)| {
-                self.permits
-                    .iter()
-                    .filter(|permit| permit.resource() == resource && permit.amount() == *amount)
-                    .count()
-                    == 1
-            })
-    }
-
     /// Return the lease epoch that admitted the artifact resources.
     #[must_use]
     pub const fn lease_epoch(&self) -> u64 {
         self.lease_epoch
-    }
-
-    /// Narrow this capability to the sealed artifact's exact storage bytes.
-    pub(crate) fn narrow_temporary_storage(mut self, amount: u64) -> Result<Self, ResourceError> {
-        let mut storage = self.permits.iter_mut().filter(|permit| {
-            matches!(
-                permit.resource(),
-                LeaseResource::Storage {
-                    use_kind: StorageUseKind::Temporary,
-                    ..
-                }
-            )
-        });
-        let Some(permit) = storage.next() else {
-            return Err(ResourceError::Invalid(
-                "artifact retention requires exactly one temporary-storage permit".to_string(),
-            ));
-        };
-        if storage.next().is_some() {
-            return Err(ResourceError::Invalid(
-                "artifact retention requires exactly one temporary-storage permit".to_string(),
-            ));
-        }
-        permit.narrow_temporary_storage_to(amount)?;
-        Ok(self)
-    }
-
-    /// Narrow the single retained cache permit after its owner has physically
-    /// reclaimed the returned portion. The export remains owned by this run.
-    pub(crate) fn narrow_memory_to(&mut self, amount: u64) -> Result<(), ResourceError> {
-        let [permit] = &mut *self.permits else {
-            return Err(ResourceError::Invalid(
-                "cache retention requires one memory permit".to_string(),
-            ));
-        };
-        permit.narrow_memory_to(amount)
-    }
-
-    /// Return whether this permit contains exactly one matching resource claim.
-    pub(crate) fn covers_exact_temporary_storage(&self, amount: u64) -> bool {
-        let mut storage = self.permits.iter().filter(|permit| {
-            matches!(
-                permit.resource(),
-                LeaseResource::Storage {
-                    use_kind: StorageUseKind::Temporary,
-                    ..
-                }
-            )
-        });
-        storage
-            .next()
-            .is_some_and(|permit| permit.amount() == amount)
-            && storage.next().is_none()
-    }
-
-    /// Check one dedicated immutable allocation's exact producer, physical and
-    /// logical identity, layout, byte capacity, and terminal ownership contract.
-    pub(crate) fn covers_exact_immutable_allocation(
-        &self,
-        owner_node: &WorkNodeId,
-        allocation: &LogicalAllocation,
-    ) -> bool {
-        self.immutable_allocations.as_ref()
-            == [immutable_allocation_identity(owner_node, allocation)]
-    }
-
-    /// Heap retained by a capability with these exact named permits and export
-    /// proofs. The capability itself is inline in its artifact owner.
-    pub(crate) fn heap_bytes_for_resources(
-        resources: &[LeaseResource],
-        exported_allocation_count: usize,
-        memory_domain: &str,
-        storage_domain: &str,
-    ) -> Option<u64> {
-        let permit_bytes = resources.iter().try_fold(0_usize, |bytes, resource| {
-            let identity_bytes = match resource {
-                LeaseResource::Memory { allocation_id } => allocation_id.len(),
-                LeaseResource::Storage {
-                    demand_id,
-                    use_kind: StorageUseKind::Temporary,
-                } => demand_id.len(),
-                LeaseResource::FileDescriptors => 0,
-                _ => return None,
-            };
-            bytes
-                .checked_add(size_of::<ResourcePermit>())?
-                .checked_add(identity_bytes.checked_mul(2)?)?
-                .checked_add(ResourcePermit::artifact_retention_heap_bytes(
-                    resource,
-                    memory_domain,
-                    storage_domain,
-                )?)
-        })?;
-        let bytes = permit_bytes
-            .checked_add(exported_allocation_count.checked_mul(size_of::<[u8; 32]>())?)?
-            .checked_add(2 * size_of::<usize>())?;
-        u64::try_from(bytes).ok()
     }
 }
 
@@ -1084,7 +915,6 @@ pub(crate) struct WorkExecutionContext {
     cleanup: bool,
     resources: Vec<WorkResourceCapability>,
     allocations: Vec<WorkAllocationCapability>,
-    metal_execution: Option<Rc<crate::metal_runtime::MetalExecutionState>>,
 }
 
 impl PartialEq for WorkExecutionContext {
@@ -1095,7 +925,6 @@ impl PartialEq for WorkExecutionContext {
             && self.cleanup == other.cleanup
             && self.resources == other.resources
             && self.allocations == other.allocations
-            && self.metal_execution.is_some() == other.metal_execution.is_some()
     }
 }
 
@@ -1126,7 +955,6 @@ impl WorkExecutionContext {
             cleanup,
             resources,
             allocations: allocation_capabilities,
-            metal_execution: None,
         }
     }
 
@@ -1181,10 +1009,6 @@ impl WorkExecutionContext {
         &self.allocations
     }
 
-    pub(crate) fn metal_execution(&self) -> Option<&crate::metal_runtime::MetalExecutionState> {
-        self.metal_execution.as_deref()
-    }
-
     pub(crate) fn for_fence(&self, kind: FenceKind) -> Self {
         Self {
             node: self.node.clone(),
@@ -1212,7 +1036,6 @@ impl WorkExecutionContext {
                     lifetime: capability.lifetime.clone(),
                 })
                 .collect(),
-            metal_execution: self.metal_execution.clone(),
         }
     }
 }
@@ -1313,7 +1136,6 @@ struct ActiveAllocation {
 pub(crate) struct ExecutionScheduler<'plan> {
     dag: &'plan ExecutionDag,
     lease: Option<ResourceLease>,
-    metal_execution: Option<Rc<crate::metal_runtime::MetalExecutionState>>,
     states: BTreeMap<WorkNodeId, NodeState>,
     running: BTreeMap<WorkNodeId, ActiveWork>,
     outstanding_fences: BTreeMap<FenceId, ResourceFence>,
@@ -1384,22 +1206,15 @@ impl<'plan> ExecutionScheduler<'plan> {
             ));
         }
         validate_lease_claims(dag, &lease)?;
-        let metal_execution = if dag
+        if dag
             .nodes()
             .values()
             .any(|node| node.metal_demand_id().is_some())
         {
-            Some(Rc::new(
-                crate::metal_runtime::MetalExecutionState::bind(
-                    dag,
-                    authority.topology(),
-                    lease.epoch(),
-                )
-                .map_err(|error| ExecutionError::invalid_plan(error.to_string()))?,
-            ))
-        } else {
-            None
-        };
+            return Err(ExecutionError::invalid_plan(
+                "Metal work nodes run on the Metal backend, which is unavailable until IF-4 (#653)",
+            ));
+        }
         let initially_inactive = dag
             .adaptations
             .values()
@@ -1430,7 +1245,6 @@ impl<'plan> ExecutionScheduler<'plan> {
         Ok(Self {
             dag,
             lease: Some(lease),
-            metal_execution,
             states,
             running: BTreeMap::new(),
             outstanding_fences: BTreeMap::new(),
@@ -1805,8 +1619,8 @@ impl<'plan> ExecutionScheduler<'plan> {
         });
         Ok(Some(RetainedArtifactPermit {
             lease_epoch,
-            permits: permits.into_boxed_slice(),
-            immutable_allocations: immutable_allocations.into_boxed_slice(),
+            _permits: permits.into_boxed_slice(),
+            _immutable_allocations: immutable_allocations.into_boxed_slice(),
             _liveness: liveness,
         }))
     }
@@ -2238,7 +2052,6 @@ impl<'plan> ExecutionScheduler<'plan> {
             cleanup,
             resources,
             allocations: allocation_capabilities,
-            metal_execution: self.metal_execution.clone(),
         }))
     }
 
@@ -2351,11 +2164,6 @@ impl<'plan> ExecutionScheduler<'plan> {
     }
 
     fn release_allocation(&mut self, allocation: &AllocationId) -> Result<(), ExecutionError> {
-        if let Some(metal) = &self.metal_execution {
-            metal
-                .release_allocation(allocation)
-                .map_err(|error| ExecutionError::invalid_state(error.to_string()))?;
-        }
         let active = self.active_allocations.remove(allocation).ok_or_else(|| {
             ExecutionError::invalid_state(format!(
                 "logical allocation {} is not active",
@@ -2486,12 +2294,6 @@ impl<'plan> ExecutionScheduler<'plan> {
                 "quarantined terminal scheduler still owns unclassified resources",
             ));
         }
-        if let Some(metal_execution) = &self.metal_execution {
-            metal_execution
-                .close()
-                .map_err(|error| ExecutionError::invalid_state(error.to_string()))?;
-        }
-        self.metal_execution = None;
         let lease = self
             .lease
             .take()
@@ -2585,12 +2387,6 @@ impl<'plan> ExecutionScheduler<'plan> {
                 "terminal scheduler still owns work, fences, permits, or allocations",
             ));
         }
-        if let Some(metal_execution) = &self.metal_execution {
-            metal_execution
-                .close()
-                .map_err(|error| ExecutionError::invalid_state(error.to_string()))?;
-        }
-        self.metal_execution = None;
         let lease = self
             .lease
             .take()

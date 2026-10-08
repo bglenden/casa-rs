@@ -444,10 +444,12 @@ fn streamed_density_grid_equals_the_one_shot_build() {
     let operator = operator(GridPrecision::F64, Basis::ChannelLocal { planes: 3 });
     let resampler = cube();
     let mut rows = Rows::random(250, 23, operator.geometry());
+    // Two padding planes on each side of the three output channels.
     let shape = DensityGridShape {
         width: IMAGE,
         height: IMAGE,
-        planes: 3,
+        planes: 7,
+        padding: 2,
         increment_rad: INCREMENT_RAD,
         rule: DensityCellRule::Cube,
     };
@@ -471,7 +473,7 @@ fn streamed_density_grid_equals_the_one_shot_build() {
             },
         };
         resampler
-            .place_density(&operator, &header, shape.rule, &mut buffer)
+            .place_density(&operator, &header, &shape, &mut buffer)
             .expect("density");
     }
     let expected = build_density_grid(std::iter::once(buffer.block()), shape);

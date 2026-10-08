@@ -130,18 +130,6 @@ impl ObservationTransactionWork {
         }
     }
 
-    /// Bind the plan node that prepares the immutable final-model candidate.
-    pub(crate) fn with_final_model_preparation(mut self, node: WorkNodeId) -> Self {
-        self.final_model_preparation = Some(node);
-        self
-    }
-
-    /// Bind the sole terminal replay that writes selected visibility cells.
-    pub(crate) fn with_visibility_writeback(mut self, node: WorkNodeId) -> Self {
-        self.visibility_writeback = Some(node);
-        self
-    }
-
     /// Return whether this transaction reconciles only or publishes products.
     #[must_use]
     pub const fn publication_scope(&self) -> ObservationTransactionPublicationScope {
@@ -1358,9 +1346,9 @@ mod tests {
         })
         .expect("canonical transaction test DAG");
         let mut work =
-            ObservationTransactionWork::new_product_publication(initial, reconciliation, commit)
-                .with_final_model_preparation(preparation)
-                .with_visibility_writeback(model);
+            ObservationTransactionWork::new_product_publication(initial, reconciliation, commit);
+        work.final_model_preparation = Some(preparation);
+        work.visibility_writeback = Some(model);
         work.product_staging = BTreeSet::from([product_completion]);
         (dag.nodes().clone(), work)
     }

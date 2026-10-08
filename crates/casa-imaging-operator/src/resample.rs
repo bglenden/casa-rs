@@ -16,7 +16,9 @@ use crate::convolution::RowContext;
 use crate::error::OperatorError;
 use crate::operator::{Basis, MeasurementOperator};
 use crate::sample::{Placement, SampleBuffer};
-use crate::weighting::{DensityCellRule, DensityUv, SPEED_OF_LIGHT_M_PER_S, WeightingGeneration};
+use crate::weighting::{
+    DensityCellRule, DensityGridShape, DensityUv, SPEED_OF_LIGHT_M_PER_S, WeightingGeneration,
+};
 
 /// One native MeasurementSet row: every selected channel and correlation.
 ///
@@ -117,6 +119,22 @@ impl SpectralAxis {
 
     fn last_hz(self) -> f64 {
         self.centre_hz(self.channels - 1)
+    }
+
+    /// The axis extended by `planes_per_side` channels of the same width at
+    /// each end; the new first centre must stay positive.
+    pub fn padded(self, planes_per_side: u32) -> Result<Self, OperatorError> {
+        let channels = planes_per_side
+            .checked_mul(2)
+            .and_then(|padding| padding.checked_add(self.channels))
+            .ok_or(OperatorError::SpectralAxis {
+                reason: "the padded axis has too many channels",
+            })?;
+        Self::new(
+            self.first_hz - f64::from(planes_per_side) * self.increment_hz,
+            self.increment_hz,
+            channels,
+        )
     }
 
     /// `FTMachine::matchChannel`: the channel whose rounded spectral pixel
@@ -314,19 +332,23 @@ fn unpolarized_weight(row: &NativeRow<'_>, npol: usize, channel: usize) -> f32 {
 
 /// The imaging weight of an unflagged sample at `placement`.
 ///
-/// CASA's cube Briggs weightor (`BriggsCubeWeightor`, the cube density
-/// rule) weights each output sample from the nearest native input weight.
-/// Every other generation weights native channels at their own frequencies
-/// (`VisImagingWeight`), and `FTMachine::interpolateFrequencyTogrid`
-/// interpolates those weights linearly to an output frequency between two
-/// native channels, taking one end's weight at that end.
+/// CASA weights native channels at their own frequencies: `u`, `v`, the
+/// density cell, the taper and the bandwidth-taper distance all use the
+/// channel's frequency. `FTMachine::interpolateFrequencyTogrid` then carries
+/// those weights to an output sample between two native channels: linearly
+/// (taking one end's weight at that end) for `VisImagingWeight`, and from
+/// the nearer channel for the cube Briggs weightor
+/// (`BriggsCubeWeightor::getWeightUniform`), whose density plane for a
+/// native channel is its rounded spectral pixel on the padded density axis
+/// `density_axis` (`FTMachine::matchChannel`); a channel off that axis
+/// weighs nothing.
 fn sample_weight(
     weighting: &WeightingGeneration,
     row: &NativeRow<'_>,
     npol: usize,
     source: Source,
     placement: &Placement,
-    frequency_hz: f64,
+    density_axis: Option<SpectralAxis>,
 ) -> f32 {
     let channel_weight = |channel: usize| {
         let input = unpolarized_weight(row, npol, channel);
@@ -334,16 +356,27 @@ fn sample_weight(
             return 0.0;
         }
         let frequency_hz = row.frequencies_hz[channel];
+        let plane = match density_axis {
+            Some(axis) => match axis.nearest_channel(frequency_hz) {
+                Some(plane) => plane,
+                None => return 0.0,
+            },
+            None => placement.plane,
+        };
         let scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
         let native = Placement {
             u: row.uvw_m[0] * scale,
             v: row.uvw_m[1] * scale,
+            plane,
             ..*placement
         };
         weighting.imaging_weight(&native, DensityUv::casa(row.uvw_m, frequency_hz), input)
     };
     match source {
-        Source::Pair { left, right_factor } if !weighting.weights_output_samples() => {
+        Source::Pair { left, right_factor } if density_axis.is_some() => {
+            channel_weight(if right_factor > 0.5 { left + 1 } else { left })
+        }
+        Source::Pair { left, right_factor } => {
             if right_factor <= f64::EPSILON {
                 channel_weight(left)
             } else if right_factor >= 1.0 - f64::EPSILON {
@@ -352,14 +385,6 @@ fn sample_weight(
                 let (low, high) = (channel_weight(left), channel_weight(left + 1));
                 low + (high - low) * right_factor as f32
             }
-        }
-        Source::Pair { left, right_factor } => {
-            let nearest = if right_factor > 0.5 { left + 1 } else { left };
-            let input = unpolarized_weight(row, npol, nearest);
-            if !input.is_finite() {
-                return 0.0;
-            }
-            weighting.imaging_weight(placement, DensityUv::casa(row.uvw_m, frequency_hz), input)
         }
         Source::Channel(channel) => channel_weight(channel),
     }
@@ -441,6 +466,30 @@ impl SpectralResampler {
         self.basis
     }
 
+    /// The output axis padded by `padding` density planes on each side.
+    fn density_axis(&self, padding: u32) -> Result<SpectralAxis, OperatorError> {
+        match self.sampling {
+            Sampling::Nearest(axis) | Sampling::Linear(axis) => axis.padded(padding),
+            Sampling::Direct => Err(OperatorError::SpectralAxis {
+                reason: "a per-channel density generation needs a channel-local resampler",
+            }),
+        }
+    }
+
+    /// This resampler over the padded density axis.
+    fn over_density_axis(&self, padding: u32) -> Result<Self, OperatorError> {
+        let axis = self.density_axis(padding)?;
+        Ok(Self {
+            sampling: match self.sampling {
+                Sampling::Linear(_) => Sampling::Linear(axis),
+                Sampling::Direct | Sampling::Nearest(_) => Sampling::Nearest(axis),
+            },
+            basis: Basis::ChannelLocal {
+                planes: axis.channels,
+            },
+        })
+    }
+
     /// Place one row's unflagged samples with imaging weights into `out`.
     ///
     /// Each sample's value is `W · V · e^{iφ}` and its weight `W` for every
@@ -456,6 +505,10 @@ impl SpectralResampler {
         let npol = self.validate(operator, row, out)?;
         let cf = operator.cf();
         let geometry = operator.geometry();
+        let density_axis = weighting
+            .cube_padding()
+            .map(|padding| self.density_axis(padding))
+            .transpose()?;
         let mut values = vec![Complex32::default(); npol];
         let mut weights = vec![0.0_f32; npol];
         self.for_each_sample(row, |plane, frequency_hz, source| {
@@ -482,7 +535,7 @@ impl SpectralResampler {
                 cf: key,
                 gradient: [0.0, 0.0],
             };
-            let weight = sample_weight(weighting, row, npol, source, &placement, frequency_hz);
+            let weight = sample_weight(weighting, row, npol, source, &placement, density_axis);
             if weight <= 0.0 {
                 return;
             }
@@ -498,20 +551,23 @@ impl SpectralResampler {
         Ok(())
     }
 
-    /// Place one row's density-pass samples: one polarization carrying
-    /// CASA's unpolarized input weight, zero values, no support test. Under
-    /// the standard cell rule every unflagged native channel is a sample at
-    /// its own frequency whose `u` and `v` are the [`DensityUv`] coordinates
-    /// (`VisImagingWeight` accumulates native channels); under the cube
-    /// rule the samples are the resampled output samples at the double
-    /// coordinates CASA grids its weight density with.
+    /// Place one row's density-pass samples for a grid of `shape`: one
+    /// polarization carrying CASA's unpolarized input weight, zero values,
+    /// no support test. Under the standard cell rule every unflagged native
+    /// channel is a sample at its own frequency whose `u` and `v` are the
+    /// [`DensityUv`] coordinates (`VisImagingWeight` accumulates native
+    /// channels); under the cube rule the samples are the resampled samples
+    /// of the output axis padded by `shape.padding` planes on each side, at
+    /// the double coordinates CASA grids its weight density with
+    /// (`BriggsCubeWeightor::init` grids the PSF onto its padded template).
     pub fn place_density(
         &self,
         operator: &MeasurementOperator,
         row: &NativeRow<'_>,
-        rule: DensityCellRule,
+        shape: &DensityGridShape,
         out: &mut SampleBuffer,
     ) -> Result<(), OperatorError> {
+        let rule = shape.rule;
         let npol = operator.polarization().correlations().len();
         self.validate_row(operator, row, npol)?;
         if out.npol() != 1 {
@@ -551,7 +607,9 @@ impl SpectralResampler {
                     visit(0, *frequency_hz, Source::Channel(channel));
                 }
             }
-            DensityCellRule::Cube => self.for_each_sample(row, visit),
+            DensityCellRule::Cube => self
+                .over_density_axis(shape.padding)?
+                .for_each_sample(row, visit),
         }
         Ok(())
     }

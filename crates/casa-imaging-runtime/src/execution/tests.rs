@@ -1831,8 +1831,8 @@ fn planning_selects_the_largest_feasible_exact_worker_variant() {
         [WorkImplementationId::new("cpu-reference")],
     );
     let maximum_workers = 4;
-    let stack_bytes = u64::try_from(crate::bounded_stream::BOUNDED_WORKER_STACK_BYTES)
-        .expect("worker stack bytes fit u64");
+    let stack_bytes =
+        u64::try_from(crate::pass::WORKER_STACK_BYTES).expect("worker stack bytes fit u64");
     let maximum_stack_bytes = maximum_workers * stack_bytes;
     let mut work = cpu_node("work", BTreeSet::new());
     work.claims[0].amount = maximum_workers;
@@ -2343,7 +2343,6 @@ fn fence_context_exposes_only_capabilities_live_for_that_fence() {
                 lifetime: ClaimLifetime::through_fence(FenceKind::Io),
             },
         ],
-        metal_execution: None,
     };
 
     let fence = context.for_fence(FenceKind::Io);
@@ -2386,7 +2385,6 @@ fn unified_physical_slot_reuse_waits_for_every_declared_fence() {
     let writeback_id = WorkNodeId::new("c-writeback");
     let publication_id = WorkNodeId::new("d-publication");
     let reuse_id = WorkNodeId::new("e-reuse");
-    let device_fence = FenceId::new(compute_id.clone(), FenceKind::Device);
     let io_fence = FenceId::new(io_id.clone(), FenceKind::Io);
     let writeback_io_fence = FenceId::new(writeback_id.clone(), FenceKind::Io);
     let writeback_fence = FenceId::new(writeback_id.clone(), FenceKind::Writeback);
@@ -2395,32 +2393,19 @@ fn unified_physical_slot_reuse_waits_for_every_declared_fence() {
     let compute = WorkNode {
         id: compute_id.clone(),
         kind: WorkKind::Compute,
-        domain: WorkDomain::Metal {
-            demand_id: "metal".to_string(),
-        },
+        domain: WorkDomain::Cpu,
         implementation: WorkImplementationId::new("cpu-reference"),
         dependencies: BTreeSet::new(),
-        claims: vec![
-            ResourceClaim {
-                resource: crate::LeaseResource::Accelerator {
-                    demand_id: "metal".to_string(),
-                },
-                amount: 1,
-                lifetime: ClaimLifetime::through_fence(FenceKind::Device),
-            },
-            ResourceClaim {
-                resource: crate::LeaseResource::AcceleratorCommandQueue {
-                    demand_id: "metal".to_string(),
-                },
-                amount: 1,
-                lifetime: ClaimLifetime::through_fence(FenceKind::Device),
-            },
-        ],
+        claims: vec![ResourceClaim {
+            resource: crate::LeaseResource::Workers,
+            amount: 1,
+            lifetime: ClaimLifetime::Work,
+        }],
         allocations: vec![AllocationUse {
             allocation: AllocationId::new("first-grid"),
-            lifetime: ClaimLifetime::through_fence(FenceKind::Device),
+            lifetime: ClaimLifetime::Work,
         }],
-        fences: BTreeSet::from([FenceKind::Device]),
+        fences: BTreeSet::new(),
         quiescence_after: BTreeSet::new(),
     };
     let io_claims = |lifetime: ClaimLifetime| {
@@ -2446,7 +2431,7 @@ fn unified_physical_slot_reuse_waits_for_every_declared_fence() {
         kind: WorkKind::Io,
         domain: WorkDomain::Io,
         implementation: WorkImplementationId::new("cpu-reference"),
-        dependencies: BTreeSet::from([WorkDependency::Fence(device_fence.clone())]),
+        dependencies: BTreeSet::from([WorkDependency::Work(compute_id.clone())]),
         claims: io_claims(ClaimLifetime::through_fence(FenceKind::Io)),
         allocations: vec![AllocationUse {
             allocation: AllocationId::new("first-grid"),
@@ -2517,18 +2502,6 @@ fn unified_physical_slot_reuse_waits_for_every_declared_fence() {
         preferred_bytes: 100,
         views: views.into_iter().collect(),
     }];
-    specification.resource_alternative.demand.accelerators = vec![AcceleratorDemand {
-        demand_id: "metal".to_string(),
-        accelerator: AcceleratorId::new("metal-0"),
-        slots: CountDemand::new(1, 1),
-        command_queue_slots: CountDemand::new(1, 1),
-    }];
-    specification.resource_alternative.demand.overhead = RuntimeOverheadDemand {
-        driver_bytes: 1,
-        jit_bytes: 1,
-        command_buffer_bytes: 1,
-        ..RuntimeOverheadDemand::zero()
-    };
     specification.resource_alternative.demand.rates = vec![RateDemand {
         demand_id: "output-rate".to_string(),
         resource: RateResourceId::new("io-rate"),
@@ -2540,7 +2513,7 @@ fn unified_physical_slot_reuse_waits_for_every_declared_fence() {
         slots: CountDemand::new(1, 1),
     }];
     let first_release = BTreeSet::from([
-        WorkDependency::Fence(device_fence.clone()),
+        WorkDependency::Work(compute_id.clone()),
         WorkDependency::Fence(io_fence.clone()),
         WorkDependency::Fence(writeback_io_fence.clone()),
         WorkDependency::Fence(writeback_fence.clone()),
@@ -2589,7 +2562,7 @@ fn unified_physical_slot_reuse_waits_for_every_declared_fence() {
     .expect("admitted reuse plan");
 
     for (node_id, fences) in [
-        (compute_id, vec![device_fence]),
+        (compute_id, Vec::new()),
         (io_id, vec![io_fence]),
         (writeback_id, vec![writeback_io_fence, writeback_fence]),
         (

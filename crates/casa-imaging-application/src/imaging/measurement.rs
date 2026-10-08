@@ -174,27 +174,39 @@ fn resampler(problem: &CompiledProblem, basis: Basis) -> Result<SpectralResample
 }
 
 /// Shape of the weight-density grid of `domain`: one global plane on CASA's
-/// `VisImagingWeight` cells, or one plane per output channel on
-/// `BriggsCubeWeightor` cells.
+/// `VisImagingWeight` cells, or one plane per output channel, plus the
+/// compiled padding planes on each side, on `BriggsCubeWeightor` cells.
 pub(crate) fn density_shape(
     problem: &CompiledProblem,
     domain: &CompiledImageDomain,
-) -> DensityGridShape {
+) -> Result<DensityGridShape, ImagingError> {
     let [width, height] = domain.shape().pixels();
-    let (planes, rule) = match problem.weighting().density_scope() {
-        WeightDensityScope::PerOutputChannel => (
-            problem.geometry().spectral().output_channels(),
-            DensityCellRule::Cube,
-        ),
+    let (planes, padding, rule) = match problem.weighting().density_scope() {
+        WeightDensityScope::PerOutputChannel => {
+            let padding = problem.weighting().casa_cube_density_padding().unwrap_or(0);
+            let planes = padding
+                .checked_mul(2)
+                .and_then(|padding| {
+                    padding.checked_add(problem.geometry().spectral().output_channels())
+                })
+                .ok_or(ImagingError::Unsupported {
+                    reason: "the padded density axis overflows",
+                })?;
+            let padding = u32::try_from(padding).map_err(|_| ImagingError::Unsupported {
+                reason: "the padded density axis overflows",
+            })?;
+            (planes, padding, DensityCellRule::Cube)
+        }
         WeightDensityScope::NotApplicable | WeightDensityScope::GlobalSelection => {
-            (1, DensityCellRule::Standard)
+            (1, 0, DensityCellRule::Standard)
         }
     };
-    DensityGridShape {
+    Ok(DensityGridShape {
         width,
         height,
         planes,
+        padding,
         increment_rad: domain.direction().increment_rad(),
         rule,
-    }
+    })
 }

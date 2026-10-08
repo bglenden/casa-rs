@@ -410,11 +410,12 @@ fn to_coefficient(
     }
 }
 
-/// `StokesImageUtil::ToStokesPSF`: with one or two requested Stokes
-/// parameters on physical feeds, both PSF planes come from one Stokes row
+/// `StokesImageUtil::ToStokesPSF` on physical feeds: with one or two
+/// requested Stokes parameters, every PSF plane comes from one Stokes row
 /// of the data conversion (CASA applies the cross-hand rule to both planes
-/// whenever either requested parameter is a cross-hand one); with three or
-/// four, the data conversion applies plane by plane.
+/// whenever either requested parameter is a cross-hand one); with more, every
+/// plane is the first requested parameter's PSF (`sv(outMap(0))`), since the
+/// grid holds more than one correlation.
 fn psf_coefficient(
     feed: FeedBasis,
     requested_all: &[PolarizationCoordinate],
@@ -424,12 +425,14 @@ fn psf_coefficient(
     use PolarizationCoordinate::{StokesI, StokesQ, StokesU, StokesV};
     if feed == FeedBasis::Stokes
         || plane == GridPolarization::StokesI
-        || requested_all.len() > 2
         || !requested_all
             .iter()
             .all(|coordinate| is_stokes(*coordinate))
     {
         return to_coefficient(feed, requested, plane);
+    }
+    if requested_all.len() > 2 {
+        return to_coefficient(feed, requested_all[0], plane);
     }
     let cross_hand = |coordinate: &PolarizationCoordinate| match feed {
         FeedBasis::Linear => matches!(coordinate, StokesU | StokesV),

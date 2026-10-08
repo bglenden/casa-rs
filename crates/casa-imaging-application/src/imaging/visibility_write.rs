@@ -29,10 +29,14 @@ pub(crate) struct VisibilityWriteTarget {
 }
 
 /// An open in-place write of every selected sample.
+///
+/// Under a continuum transform only the channels that reach the line output
+/// are written, to either column; fit-only channels keep their contents.
 pub(crate) struct VisibilityWriter<'a> {
     writer: SelectedVisibilityWrite,
     model_data: bool,
-    corrected_data: Option<&'a SequentialContinuumTransform>,
+    corrected_data: bool,
+    transform: Option<&'a SequentialContinuumTransform>,
     windows: BTreeMap<u32, u32>,
     samples: u64,
 }
@@ -45,13 +49,9 @@ impl<'a> VisibilityWriter<'a> {
         target: &VisibilityWriteTarget,
         transform: Option<&'a SequentialContinuumTransform>,
     ) -> Result<Self, SourceError> {
-        let corrected_data = match (target.corrected_data, transform) {
-            (false, _) => None,
-            (true, Some(transform)) => Some(transform),
-            (true, None) => {
-                return Err("CORRECTED_DATA is written only by a continuum transform".into());
-            }
-        };
+        if target.corrected_data && transform.is_none() {
+            return Err("CORRECTED_DATA is written only by a continuum transform".into());
+        }
         Ok(Self {
             writer: SelectedVisibilityWrite::begin(
                 &target.path,
@@ -60,7 +60,8 @@ impl<'a> VisibilityWriter<'a> {
                 SelectedVisibilityWriteTargets::new(target.model_data, target.corrected_data),
             )?,
             model_data: target.model_data,
-            corrected_data,
+            corrected_data: target.corrected_data,
+            transform,
             windows: target
                 .selection
                 .data_descriptions()
@@ -81,9 +82,9 @@ impl<'a> VisibilityWriter<'a> {
         self.model_data
     }
 
-    /// Write one block: its predictions, `[row][channel][correlation]`, to
-    /// `MODEL_DATA`, and its transformed values on the channels that reach
-    /// the line output to `CORRECTED_DATA`.
+    /// Write one block on the channels that reach the line output: its
+    /// predictions, `[row][channel][correlation]`, to `MODEL_DATA`, and its
+    /// transformed values to `CORRECTED_DATA`.
     pub(crate) fn write(
         &mut self,
         block: &NativeBlock,
@@ -93,6 +94,22 @@ impl<'a> VisibilityWriter<'a> {
         for row in 0..block.len() {
             let header = block.header(row);
             let physical_row = header.address.physical_row;
+            let rule = match self.transform {
+                Some(transform) => {
+                    let window = u32::try_from(header.address.data_description)
+                        .ok()
+                        .and_then(|description| self.windows.get(&description))
+                        .ok_or("a written row's data description is not selected")?;
+                    transform.rule(header.context.field as i32, *window)
+                }
+                None => None,
+            };
+            let output = |channel: u32| {
+                rule.is_none_or(|rule| {
+                    rule.channel_use(channel)
+                        .is_some_and(|role| role.contributes_to_output())
+                })
+            };
             if self.model_data {
                 let predicted = &predictions[row * cells..(row + 1) * cells];
                 self.write_row(
@@ -100,27 +117,17 @@ impl<'a> VisibilityWriter<'a> {
                     block,
                     physical_row,
                     predicted,
-                    |_| true,
+                    output,
                 )?;
             }
-            if let Some(transform) = self.corrected_data {
-                let window = u32::try_from(header.address.data_description)
-                    .ok()
-                    .and_then(|description| self.windows.get(&description))
-                    .ok_or("a written row's data description is not selected")?;
-                let rule = transform.rule(header.context.field as i32, *window);
+            if self.corrected_data {
                 let values = block.row(row).values;
                 self.write_row(
                     MsColumnKind::CorrectedData,
                     block,
                     physical_row,
                     values,
-                    |channel| {
-                        rule.is_none_or(|rule| {
-                            rule.channel_use(channel)
-                                .is_some_and(|role| role.contributes_to_output())
-                        })
-                    },
+                    output,
                 )?;
             }
         }
@@ -159,7 +166,8 @@ impl<'a> VisibilityWriter<'a> {
         self.writer.complete(SelectedVisibilityWriteGenerations {
             model_data: self.model_data.then(|| final_model.identity()),
             corrected_data: self
-                .corrected_data
+                .transform
+                .filter(|_| self.corrected_data)
                 .map(|transform| LogicalIdentity::from_sha256(transform.contract_id().as_bytes())),
         })?;
         Ok(self.samples)

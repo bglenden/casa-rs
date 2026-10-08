@@ -59,9 +59,14 @@ pub struct DensityGridShape {
     pub width: usize,
     /// Cells along v (the image height).
     pub height: usize,
-    /// Density planes: 1 for a global generation, the output channel count
-    /// for a per-channel generation.
+    /// Density planes: 1 for a global generation; for a per-channel
+    /// generation the output channel count plus `padding` on each side.
     pub planes: usize,
+    /// Per-channel generation: density planes on each side of the output
+    /// axis (CASA `BriggsCubeWeightor::estimateSwingChanPad`), so native
+    /// channels just beyond the image still find their own plane. 0 for a
+    /// global generation.
+    pub padding: u32,
     /// Signed image increments `[Δx, Δy]` in radians.
     pub increment_rad: [f64; 2],
     /// Cell arithmetic.
@@ -377,16 +382,23 @@ impl WeightingGeneration {
         })
     }
 
-    /// Whether CASA weights each resampled output sample (the cube density
-    /// rule, `BriggsCubeWeightor`) rather than native channels
-    /// (`VisImagingWeight`).
-    pub(crate) fn weights_output_samples(&self) -> bool {
-        matches!(self, Self::Density { grid, .. } if grid.shape.rule == DensityCellRule::Cube)
+    /// The padding of a per-channel density generation (CASA
+    /// `BriggsCubeWeightor`), whose output samples take the nearest native
+    /// channel's weight; `None` when native weights are interpolated
+    /// linearly (`VisImagingWeight`).
+    pub(crate) fn cube_padding(&self) -> Option<u32> {
+        match self {
+            Self::Density { grid, .. } if grid.shape.rule == DensityCellRule::Cube => {
+                Some(grid.shape.padding)
+            }
+            Self::Natural { .. } | Self::Density { .. } => None,
+        }
     }
 
     /// Imaging weight of one placement from its unpolarized input weight;
-    /// `density_uv` picks the density cell. Pure; CASA's cell rules live in
-    /// [`DensityGrid::lookup`].
+    /// `density_uv` picks the density cell on the density plane
+    /// `placement.plane` (ignored by a global generation). Pure; CASA's
+    /// cell rules live in [`DensityGrid::lookup`].
     #[must_use]
     pub fn imaging_weight(
         &self,

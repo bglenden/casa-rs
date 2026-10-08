@@ -367,26 +367,16 @@ fn extract_fit_samples(
         .min(shape[1].saturating_sub(1));
     let first_pass = find_points_in_lobe(psf, shape, peak_index, nrow, cutoff * peak)?;
 
-    let mut blc_x = first_pass.blc.0.saturating_sub(REGION_PADDING);
-    let mut blc_y = first_pass.blc.1.saturating_sub(REGION_PADDING);
-    let mut trc_x = (first_pass.trc.0 + REGION_PADDING).min(shape[0] - 1);
-    let mut trc_y = (first_pass.trc.1 + REGION_PADDING).min(shape[1] - 1);
-
-    // Match CASA FindNpoints(): force the selected bounding box square before
-    // the expanded resampling window is derived from it.
-    let side = (trc_x - blc_x + 1).max(trc_y - blc_y + 1);
-    if trc_x - blc_x + 1 < side {
-        let deficit = side - (trc_x - blc_x + 1);
-        blc_x = blc_x.saturating_sub(deficit / 2);
-        trc_x = (blc_x + side - 1).min(shape[0] - 1);
-        blc_x = trc_x + 1 - side;
-    }
-    if trc_y - blc_y + 1 < side {
-        let deficit = side - (trc_y - blc_y + 1);
-        blc_y = blc_y.saturating_sub(deficit / 2);
-        trc_y = (blc_y + side - 1).min(shape[1] - 1);
-        blc_y = trc_y + 1 - side;
-    }
+    // CASA `FindNpoints` squares the lobe's bounding box by index: both
+    // axes take the smaller corner and the larger far corner. The caller
+    // then expands it by `expand_pixel` and clips each axis to the plane,
+    // so a non-square plane can leave a non-square window.
+    let low = first_pass.blc.0.min(first_pass.blc.1);
+    let high = first_pass.trc.0.max(first_pass.trc.1);
+    let blc_x = low.saturating_sub(REGION_PADDING);
+    let blc_y = blc_x;
+    let trc_x = (high + REGION_PADDING).min(shape[0] - 1);
+    let trc_y = (high + REGION_PADDING).min(shape[1] - 1);
 
     let nx = trc_x - blc_x + 1;
     let ny = trc_y - blc_y + 1;

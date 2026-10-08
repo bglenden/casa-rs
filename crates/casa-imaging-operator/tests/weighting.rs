@@ -15,6 +15,7 @@ fn shape(rule: DensityCellRule) -> DensityGridShape {
         width: 8,
         height: 8,
         planes: 1,
+        padding: 0,
         increment_rad: [-1.0e-3, 1.0e-3],
         rule,
     }

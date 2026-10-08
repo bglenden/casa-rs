@@ -4,8 +4,8 @@
 use std::{error::Error, fmt};
 
 use casa_imaging_model::{
-    CompiledProblem, ImageDomainRole, InstrumentModel, InstrumentResponse, PolarizationCoordinate,
-    ProductKind, ReconstructionBasis, RequiredCapability, UvwCoordinateLaw,
+    CompiledProblem, ImageDomainRole, InstrumentResponse, PolarizationCoordinate, ProductKind,
+    ReconstructionBasis, RequiredCapability, SpectralKernel,
 };
 
 /// A task-surface requirement not represented by [`CompiledProblem`].
@@ -118,18 +118,12 @@ pub enum UnsupportedRequirement {
     Capability(RequiredCapability),
     /// A task-only requirement has no installed implementation.
     Task(TaskRequirement),
-    /// Facet execution currently requires the constant spectral basis.
-    ConstantBasisForFacets,
     /// Non-Stokes-I or multi-polarization execution requires an independent-plane basis.
     IndependentBasisForPolarizationSelection,
     /// The implementation requires a scalar measurement equation.
     ScalarInstrumentResponse,
-    /// W projection is not installed for mosaic UVW geometry.
-    WProjectionWithMosaic,
-    /// Metal cube initial wave cannot size coarse output channels; use the CPU
-    /// backend. Each output channel must span at most one selected native
-    /// channel spacing, which must be known before planning.
-    MetalCubeCoarseOutputChannels,
+    /// The cube spectral kernel is neither nearest nor linear.
+    NearestOrLinearCubeInterpolation,
 }
 
 impl UnsupportedRequirement {
@@ -139,11 +133,9 @@ impl UnsupportedRequirement {
         match self {
             Self::Capability(_) => "capability",
             Self::Task(_) => "task",
-            Self::ConstantBasisForFacets
-            | Self::IndependentBasisForPolarizationSelection
+            Self::IndependentBasisForPolarizationSelection
             | Self::ScalarInstrumentResponse
-            | Self::WProjectionWithMosaic
-            | Self::MetalCubeCoarseOutputChannels => "constraint",
+            | Self::NearestOrLinearCubeInterpolation => "constraint",
         }
     }
 
@@ -155,14 +147,12 @@ impl UnsupportedRequirement {
                 format!("capability.{}", requirement.catalog_id())
             }
             Self::Task(requirement) => format!("task.{}", requirement.catalog_id()),
-            Self::ConstantBasisForFacets => "constraint.constant_basis_for_facets".to_string(),
             Self::IndependentBasisForPolarizationSelection => {
                 "constraint.independent_basis_for_polarization_selection".to_string()
             }
             Self::ScalarInstrumentResponse => "constraint.scalar_instrument_response".to_string(),
-            Self::WProjectionWithMosaic => "constraint.w_projection_with_mosaic".to_string(),
-            Self::MetalCubeCoarseOutputChannels => {
-                "constraint.metal_cube_coarse_output_channels".to_string()
+            Self::NearestOrLinearCubeInterpolation => {
+                "constraint.nearest_or_linear_cube_interpolation".to_string()
             }
         }
     }
@@ -284,78 +274,38 @@ pub fn validate_installed_implementation(
         .map(UnsupportedRequirement::Capability)
         .collect::<Vec<_>>();
 
-    let mut coarse_metal_cube = false;
     unsupported.extend(
         task_requirements
             .into_iter()
-            .filter(|requirement| {
-                if *requirement == TaskRequirement::MetalGridder {
-                    let cube = problem.geometry().spectral().output_channels() >= 2
-                        && casa_imaging_runtime::CubePhase::supports(problem).unwrap_or(false)
-                        && matches!(
-                            problem.reconstruction().basis(),
-                            ReconstructionBasis::ChannelLocal { .. }
-                        );
-                    let scalar = matches!(
-                        problem.reconstruction().basis(),
-                        ReconstructionBasis::Constant
-                    ) && casa_imaging_runtime::supports_metal_normal(problem);
-                    coarse_metal_cube = cube
-                        && metal_cube_output_to_native_width(problem)
-                            .is_none_or(|ratio| ratio > 1.0 + METAL_CUBE_WIDTH_TOLERANCE);
-                    return !supports_task(*requirement) || !(cube || scalar);
-                }
-                !supports_task(*requirement)
-            })
+            .filter(|requirement| !supports_task(*requirement))
             .map(UnsupportedRequirement::Task),
     );
-    if coarse_metal_cube {
-        unsupported.push(UnsupportedRequirement::MetalCubeCoarseOutputChannels);
-    }
 
     debug_assert_eq!(
         problem.geometry().domains()[0].role(),
         &ImageDomainRole::Main
     );
-    let is_faceted = problem
-        .geometry()
-        .domains()
-        .iter()
-        .any(|domain| domain.facets().len() != 1);
-    if is_faceted && problem.reconstruction().basis() != ReconstructionBasis::Constant {
-        unsupported.push(UnsupportedRequirement::ConstantBasisForFacets);
-    }
     if coupled_basis_requires_independent_polarization(
         problem.reconstruction().basis(),
         problem.reconstruction().polarization().coordinates(),
     ) {
         unsupported.push(UnsupportedRequirement::IndependentBasisForPolarizationSelection);
     }
-    let installed_response = instrument_response_is_installed(
-        problem
-            .science()
-            .measurement_equation()
-            .instrument_response(),
-        problem.science().instrument_model(),
-        problem.reconstruction().basis(),
-        matches!(
-            problem.geometry().centres().pointing(),
-            casa_imaging_model::PointingCentreLaw::Observation(_)
-        ),
-    );
-    if !installed_response {
+    let response = problem
+        .science()
+        .measurement_equation()
+        .instrument_response();
+    if response != InstrumentResponse::Scalar || problem.science().instrument_model().is_some() {
         unsupported.push(UnsupportedRequirement::ScalarInstrumentResponse);
     }
     if matches!(
-        problem.geometry().uvw(),
-        UvwCoordinateLaw::MosaicPhaseTrackingCentre
-    ) && problem
-        .science()
-        .measurement_equation()
-        .w_projection()
-        .is_some()
-    {
-        unsupported.push(UnsupportedRequirement::WProjectionWithMosaic);
+        problem.reconstruction().basis(),
+        ReconstructionBasis::ChannelLocal { .. }
+    ) && !matches!(
+        problem.science().spectral().sampling().kernel(),
+        SpectralKernel::Identity | SpectralKernel::Nearest | SpectralKernel::Linear
+    ) {
+        unsupported.push(UnsupportedRequirement::NearestOrLinearCubeInterpolation);
     }
     unsupported.sort_unstable();
     unsupported.dedup();
@@ -364,61 +314,6 @@ pub fn validate_installed_implementation(
     } else {
         Err(ImplementationUnavailable { unsupported })
     }
-}
-
-/// Output/native width ratio still treated as one native channel per output,
-/// so equal widths survive per-row frequency-frame conversion.
-const METAL_CUBE_WIDTH_TOLERANCE: f64 = 1.0e-3;
-
-/// The Metal cube sizes its first initial wave before observing rows, for one
-/// CASA fine sample per output channel and row. Compare the output increment
-/// with the first selected native pair, which seeds that row-local CASA grid.
-fn metal_cube_output_to_native_width(problem: &CompiledProblem) -> Option<f64> {
-    let spectral = problem.geometry().spectral();
-    let output_hz = spectral.channel_centre_hz(1)? - spectral.channel_centre_hz(0)?;
-    let [source] = problem.selected_observation().read_set().sources() else {
-        return None;
-    };
-    let [spectral_window] = source.selection().spectral_windows() else {
-        return None;
-    };
-    let &[first, second, ..] = spectral_window.channel_indices() else {
-        return None;
-    };
-    let catalog = spectral_window.coordinate_catalog()?;
-    let native_hz = catalog.channel_frequency_hz(second as usize)?
-        - catalog.channel_frequency_hz(first as usize)?;
-    Some((output_hz / native_hz).abs())
-}
-
-fn instrument_response_is_installed(
-    response: InstrumentResponse,
-    model: Option<InstrumentModel>,
-    basis: ReconstructionBasis,
-    observation_pointing: bool,
-) -> bool {
-    matches!(
-        (response, model, basis, observation_pointing),
-        (InstrumentResponse::Scalar, None, _, _)
-            | (
-                InstrumentResponse::PrimaryBeam,
-                Some(InstrumentModel::CasaAca7mInterferometricDirectPbV1),
-                ReconstructionBasis::TaylorViaChannelMajor { .. },
-                false,
-            )
-            | (
-                InstrumentResponse::PrimaryBeam,
-                Some(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1),
-                ReconstructionBasis::Constant | ReconstructionBasis::ChannelLocal { .. },
-                true,
-            )
-            | (
-                InstrumentResponse::PrimaryBeam,
-                Some(InstrumentModel::CasaEvlaWidebandAwV1),
-                _,
-                _,
-            )
-    )
 }
 
 fn coupled_basis_requires_independent_polarization(
@@ -431,20 +326,16 @@ fn coupled_basis_requires_independent_polarization(
     ) && coordinates != [PolarizationCoordinate::StokesI]
 }
 
+/// Task surfaces the major-cycle pass runs. W projection, A projection and
+/// mosaic (with `mvc`, which always carries a primary beam) wait for their
+/// convolution-function sets (IF-3, #652); Metal gridding waits for the
+/// Metal backend (IF-4, #653).
 const fn supports_task(requirement: TaskRequirement) -> bool {
-    if matches!(requirement, TaskRequirement::MetalGridder) {
-        return cfg!(all(target_os = "macos", not(coverage)));
-    }
     matches!(
         requirement,
         TaskRequirement::SpectralCube
             | TaskRequirement::SpectralCubedata
             | TaskRequirement::SpectralCubeSource
-            | TaskRequirement::SpectralMtmfsViaCube
-            | TaskRequirement::MosaicGridder
-            | TaskRequirement::WProjection
-            | TaskRequirement::AwProjection
-            | TaskRequirement::WProjectionPlanes
             | TaskRequirement::PolarizationSelection
             | TaskRequirement::Automasking
             | TaskRequirement::MaskProduct
@@ -455,6 +346,10 @@ const fn supports_task(requirement: TaskRequirement) -> bool {
     )
 }
 
+/// Scientific capabilities of the major-cycle pass. Faceted geometry has no
+/// pass implementation (owner decision pending on #651); the primary-beam
+/// response, W and A projection and the mosaic weight products wait for
+/// IF-3 (#652).
 const fn supports_capability(capability: RequiredCapability) -> bool {
     matches!(
         capability,
@@ -464,10 +359,7 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
             | RequiredCapability::CommonBeamSpectralCoupling
             | RequiredCapability::SequentialContinuumTransform
             | RequiredCapability::ConstantBasis
-            | RequiredCapability::FacetedGeometry
             | RequiredCapability::MultiDomainGeometry
-            | RequiredCapability::WProjection
-            | RequiredCapability::AwProjection
             | RequiredCapability::TaylorBasis
             | RequiredCapability::ChannelLocalBasis
             | RequiredCapability::DirtyReconstruction
@@ -479,7 +371,6 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
             | RequiredCapability::UniformWeighting
             | RequiredCapability::BriggsWeighting
             | RequiredCapability::BriggsBandwidthTaperWeighting
-            | RequiredCapability::PrimaryBeamResponse
             | RequiredCapability::UnitResponseNormalization
             | RequiredCapability::FlatNoiseNormalization
             | RequiredCapability::FlatSkyNormalization
@@ -490,14 +381,11 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
             | RequiredCapability::Product(ProductKind::SumWeights)
             | RequiredCapability::Product(ProductKind::Mask)
             | RequiredCapability::Product(ProductKind::Beam)
-            | RequiredCapability::Product(ProductKind::Weight)
-            | RequiredCapability::Product(ProductKind::Sensitivity)
             | RequiredCapability::Product(ProductKind::PrimaryBeam)
             | RequiredCapability::Product(ProductKind::PbCorrectedImage)
             | RequiredCapability::Product(ProductKind::TaylorTerms)
             | RequiredCapability::Product(ProductKind::SpectralIndex)
             | RequiredCapability::Product(ProductKind::SpectralIndexError)
-            | RequiredCapability::Product(ProductKind::PbCorrectedSpectralIndex)
     )
 }
 
@@ -510,57 +398,46 @@ mod tests {
     use super::*;
 
     #[test]
-    fn t47_mosaic_gridder_is_installed_at_the_application_boundary() {
-        assert!(supports_task(TaskRequirement::MosaicGridder));
-    }
-
-    #[test]
-    fn t47_per_channel_weight_density_is_installed_at_the_application_boundary() {
-        assert!(supports_task(TaskRequirement::PerChannelWeightDensity));
-    }
-
-    #[test]
-    fn t47_mosaic_products_are_installed_at_the_application_boundary() {
-        for product in [
-            ProductKind::Weight,
-            ProductKind::Sensitivity,
-            ProductKind::PbCorrectedSpectralIndex,
+    fn convolution_function_sets_and_metal_wait_for_their_tickets() {
+        for task in [
+            TaskRequirement::MosaicGridder,
+            TaskRequirement::WProjection,
+            TaskRequirement::WProjectionPlanes,
+            TaskRequirement::AwProjection,
+            TaskRequirement::SpectralMtmfsViaCube,
+            TaskRequirement::MetalGridder,
+            TaskRequirement::MetalRowRunGroupedGridder,
         ] {
-            assert!(supports_capability(RequiredCapability::Product(product)));
+            assert!(!supports_task(task), "{task:?}");
+        }
+        for capability in [
+            RequiredCapability::WProjection,
+            RequiredCapability::AwProjection,
+            RequiredCapability::PrimaryBeamResponse,
+            RequiredCapability::FacetedGeometry,
+            RequiredCapability::Product(ProductKind::Weight),
+            RequiredCapability::Product(ProductKind::Sensitivity),
+            RequiredCapability::Product(ProductKind::PbCorrectedSpectralIndex),
+        ] {
+            assert!(!supports_capability(capability), "{capability:?}");
         }
     }
 
     #[test]
-    fn t41_primary_beam_response_is_installed_at_the_application_boundary() {
-        assert!(supports_capability(RequiredCapability::PrimaryBeamResponse));
-    }
-
-    #[test]
-    fn direct_and_heterogeneous_primary_beams_have_disjoint_installed_routes() {
-        assert!(instrument_response_is_installed(
-            InstrumentResponse::PrimaryBeam,
-            Some(InstrumentModel::CasaAca7mInterferometricDirectPbV1),
-            ReconstructionBasis::TaylorViaChannelMajor {
-                terms: 2,
-                channels: 16,
-            },
-            false,
-        ));
-        assert!(!instrument_response_is_installed(
-            InstrumentResponse::PrimaryBeam,
-            Some(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1),
-            ReconstructionBasis::TaylorViaChannelMajor {
-                terms: 2,
-                channels: 16,
-            },
-            false,
-        ));
-        assert!(instrument_response_is_installed(
-            InstrumentResponse::PrimaryBeam,
-            Some(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1),
-            ReconstructionBasis::Constant,
-            true,
-        ));
+    fn the_pass_runs_cubes_masks_writes_and_publication_beams() {
+        for task in [
+            TaskRequirement::SpectralCube,
+            TaskRequirement::SpectralCubedata,
+            TaskRequirement::SpectralCubeSource,
+            TaskRequirement::PerChannelWeightDensity,
+            TaskRequirement::Automasking,
+            TaskRequirement::ModelColumnWrite,
+        ] {
+            assert!(supports_task(task), "{task:?}");
+        }
+        for product in [ProductKind::PrimaryBeam, ProductKind::PbCorrectedImage] {
+            assert!(supports_capability(RequiredCapability::Product(product)));
+        }
     }
 
     #[test]
@@ -635,23 +512,6 @@ mod tests {
     }
 
     #[test]
-    fn metal_catalog_matches_the_compiled_platform() {
-        let catalog = installed_imaging_capability_catalog();
-        let metal = catalog
-            .iter()
-            .find(|entry| {
-                entry.requirement()
-                    == ImagingCapabilityRequirement::Task(TaskRequirement::MetalGridder)
-            })
-            .unwrap();
-        assert_eq!(
-            metal.unsupported().is_none(),
-            cfg!(all(target_os = "macos", not(coverage)))
-        );
-        assert!(!supports_task(TaskRequirement::MetalRowRunGroupedGridder));
-    }
-
-    #[test]
     fn capability_catalog_is_complete_unique_and_exactly_typed() {
         let catalog = installed_imaging_capability_catalog();
         let ids = catalog
@@ -667,7 +527,7 @@ mod tests {
                         == ImagingCapabilityRequirement::Task(TaskRequirement::AwProjection)
                 })
                 .and_then(ImagingCapabilityCatalogEntry::unsupported),
-            None
+            Some(UnsupportedRequirement::Task(TaskRequirement::AwProjection))
         );
         assert!(
             catalog
@@ -678,7 +538,7 @@ mod tests {
                             ProductKind::Sensitivity,
                         ))
                 })
-                .is_some_and(|entry| entry.unsupported().is_none())
+                .is_some_and(|entry| entry.unsupported().is_some())
         );
         assert!(catalog.iter().any(|entry| {
             entry.requirement()
