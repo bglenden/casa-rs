@@ -191,8 +191,10 @@ impl Targets<'_> {
 /// transform, `inverse_norms` (`1/N` per visibility polarization, zero for
 /// a zero norm); add the adjoint's `W·s^t·|N|` to `sumwt`.
 ///
-/// Panics when a sample's support leaves the accumulator tile or its plane
-/// lies outside a target: the placement invariant the CPU backend asserts.
+/// Panics when a sample's support leaves the accumulator tile (the model's
+/// grid for a prediction) or its plane lies outside a target: the placement
+/// invariant the CPU backend asserts, checked here because the device
+/// trusts every record.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn prepare(
     cf: &dyn ConvolutionFunctionSet,
@@ -229,10 +231,11 @@ pub(crate) fn prepare(
                 layout.planes().local(placement.plane) as u32,
             ),
             None => (
-                [
-                    (location.x - i64::from(half[0])) as u32,
-                    (location.y - i64::from(half[1])) as u32,
-                ],
+                tile_origin(
+                    targets.model.expect("a prediction has model grids"),
+                    location,
+                    half,
+                ),
                 0,
             ),
         };
