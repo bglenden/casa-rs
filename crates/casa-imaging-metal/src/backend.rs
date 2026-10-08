@@ -51,6 +51,18 @@ pub struct MetalBackend<'cf> {
     dense: Arena,
     ring: Vec<Slot>,
     next: usize,
+    usage: Usage,
+}
+
+/// What a backend dispatched over its life, reported once when it drops:
+/// the host's preparation time and its waits for the device.
+#[derive(Default)]
+struct Usage {
+    applies: u64,
+    samples: u64,
+    sub_blocks: u64,
+    prepare: std::time::Duration,
+    wait: std::time::Duration,
 }
 
 /// A growing device array of kernel values.
@@ -130,6 +142,7 @@ impl<'cf> MetalBackend<'cf> {
             },
             ring,
             next: 0,
+            usage: Usage::default(),
         })
     }
 
@@ -288,6 +301,9 @@ impl<'cf> MetalBackend<'cf> {
     ) -> Result<(), OperatorError> {
         let samples = block.len();
         let sub = samples.div_ceil(RING).clamp(MIN_SUB, MAX_SUB);
+        self.usage.applies += 1;
+        self.usage.samples += samples as u64;
+        self.usage.sub_blocks += samples.div_ceil(sub) as u64;
         let mut outcome = Ok(());
         let mut start = 0;
         while start < samples {
@@ -298,16 +314,18 @@ impl<'cf> MetalBackend<'cf> {
             if outcome.is_err() {
                 break;
             }
-            outcome = self
-                .fill(
-                    slot,
-                    kernel,
-                    block,
-                    start..end,
-                    targets,
-                    sumwt.as_deref_mut(),
-                )
-                .and_then(|()| self.commit(slot, kernel, grid, model, params, start..end));
+            let started = std::time::Instant::now();
+            outcome = self.fill(
+                slot,
+                kernel,
+                block,
+                start..end,
+                targets,
+                sumwt.as_deref_mut(),
+            );
+            self.usage.prepare += started.elapsed();
+            outcome =
+                outcome.and_then(|()| self.commit(slot, kernel, grid, model, params, start..end));
             if outcome.is_err() {
                 break;
             }
@@ -458,7 +476,9 @@ impl<'cf> MetalBackend<'cf> {
         let Some(Command(command)) = slot.command.take() else {
             return Ok(());
         };
+        let started = std::time::Instant::now();
         command.waitUntilCompleted();
+        self.usage.wait += started.elapsed();
         if command.status() == MTLCommandBufferStatus::Error {
             let code = command.error().map_or(-1, |error| error.code() as i64);
             return Err(OperatorError::Device(DeviceFailure::CommandFailed { code }));
@@ -525,6 +545,27 @@ impl Arena {
         self.buffer.slice_mut::<T>(self.used + values.len())[offset..].copy_from_slice(values);
         self.used += values.len();
         Ok(u32::try_from(offset).expect("kernel arenas fit u32 indices"))
+    }
+}
+
+impl Drop for MetalBackend<'_> {
+    fn drop(&mut self) {
+        let Usage {
+            applies,
+            samples,
+            sub_blocks,
+            prepare,
+            wait,
+        } = self.usage;
+        if applies > 0 {
+            tracing::debug!(
+                "metal backend usage: applies={applies} samples={samples} \
+                 sub_blocks={sub_blocks} kernel_cells={} prepare_s={:.3} wait_s={:.3}",
+                self.tables.len(),
+                prepare.as_secs_f64(),
+                wait.as_secs_f64(),
+            );
+        }
     }
 }
 

@@ -28,19 +28,16 @@ struct Owner<'w> {
     images: Option<NormalImages>,
 }
 
-/// The backend an owner dispatches to.
+/// The backend an owner dispatches to. The CPU grids each placement chunk
+/// as it comes; a Metal owner first gathers its share of every chunk of a
+/// source block into `staging`, so each device dispatch is one block's
+/// worth of samples rather than one chunk's.
 enum OwnerBackend<'w> {
     Cpu(CpuBackend),
-    Metal(MetalBackend<'w>),
-}
-
-impl OwnerBackend<'_> {
-    fn get(&mut self) -> &mut dyn GridBackend {
-        match self {
-            Self::Cpu(backend) => backend,
-            Self::Metal(backend) => backend,
-        }
-    }
+    Metal {
+        backend: Box<MetalBackend<'w>>,
+        staging: SampleBuffer,
+    },
 }
 
 /// One image domain's share of a wave.
@@ -109,7 +106,12 @@ impl<'w, 'p> Wave<'w, 'p> {
                                     acc: Some(MetalBackend::accumulator(
                                         operator.accumulator_layout(range, tile, pass.modes),
                                     )?),
-                                    backend: OwnerBackend::Metal(MetalBackend::new(operator.cf())?),
+                                    backend: OwnerBackend::Metal {
+                                        backend: Box::new(MetalBackend::new(operator.cf())?),
+                                        staging: SampleBuffer::new(
+                                            operator.polarization().correlations().len(),
+                                        ),
+                                    },
                                     images: None,
                                 }
                             }
@@ -295,19 +297,33 @@ impl<'w, 'p> Wave<'w, 'p> {
                 .acc
                 .as_mut()
                 .expect("owners accumulate until finished");
-            for chunk in chunks {
-                let block = chunk.owned[owner_index].block();
-                if block.is_empty() {
-                    continue;
+            let operator = target.operator;
+            match &mut owner.backend {
+                OwnerBackend::Cpu(backend) => {
+                    for chunk in chunks {
+                        let block = chunk.owned[owner_index].block();
+                        if !block.is_empty() {
+                            accumulate(pass, operator, backend, &block, model, acc)?;
+                        }
+                    }
                 }
-                accumulate(
-                    pass,
-                    target.operator,
-                    owner.backend.get(),
-                    &block,
-                    model,
-                    acc,
-                )?;
+                OwnerBackend::Metal { backend, staging } => {
+                    staging.clear();
+                    for chunk in chunks {
+                        let block = chunk.owned[owner_index].block();
+                        for sample in 0..block.len() {
+                            staging.push(
+                                block.placements[sample],
+                                block.values_of(sample),
+                                block.weights_of(sample),
+                            );
+                        }
+                    }
+                    if !staging.is_empty() {
+                        let backend: &mut MetalBackend<'_> = backend;
+                        accumulate(pass, operator, backend, &staging.block(), model, acc)?;
+                    }
+                }
             }
             Ok::<_, PassError>(())
         })?;

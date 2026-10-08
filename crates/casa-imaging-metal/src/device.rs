@@ -54,12 +54,21 @@ impl Device {
             .ok_or(OperatorError::Device(DeviceFailure::Unavailable))
     }
 
-    /// `None` when there is no device, it lacks Metal 3 (atomic `float` adds
-    /// on device memory), or it does not share memory with the host (the
-    /// accumulators are shared-storage buffers the host reads in place).
+    /// Whether the system default device qualifies, without compiling the
+    /// kernels; probed once per process.
+    pub(crate) fn present() -> bool {
+        static PRESENT: OnceLock<bool> = OnceLock::new();
+        *PRESENT.get_or_init(|| {
+            objc2::rc::autoreleasepool(|_| {
+                MTLCreateSystemDefaultDevice().is_some_and(|device| qualifies(&device))
+            })
+        })
+    }
+
+    /// `None` when the device does not qualify ([`qualifies`]).
     fn open() -> Option<Self> {
         let device = MTLCreateSystemDefaultDevice()?;
-        if !device.supportsFamily(MTLGPUFamily::Metal3) || !device.hasUnifiedMemory() {
+        if !qualifies(&device) {
             return None;
         }
         let queue = device.newCommandQueue()?;
@@ -119,6 +128,13 @@ impl Device {
         unsafe { raw.contents().cast::<u8>().as_ptr().write_bytes(0, length) };
         Ok(Buffer { raw, bytes: length })
     }
+}
+
+/// Metal 3 (atomic `float` adds on device memory) and memory shared with
+/// the host (the accumulators are shared-storage buffers the host reads in
+/// place).
+fn qualifies(device: &ProtocolObject<dyn MTLDevice>) -> bool {
+    device.supportsFamily(MTLGPUFamily::Metal3) && device.hasUnifiedMemory()
 }
 
 /// A shared-storage Metal buffer.

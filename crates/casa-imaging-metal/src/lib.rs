@@ -59,7 +59,7 @@ pub const fn ring_bytes(npol: usize) -> u64 {
 pub fn available() -> bool {
     #[cfg(all(target_os = "macos", not(coverage)))]
     {
-        device::Device::shared().is_ok()
+        device::Device::present()
     }
     #[cfg(not(all(target_os = "macos", not(coverage))))]
     {
