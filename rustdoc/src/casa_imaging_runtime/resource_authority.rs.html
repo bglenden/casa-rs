@@ -4626,75 +4626,45 @@
 <a href=#4626 id=4626 data-nosnippet>4626</a>    <span class="prelude-val">None
 <a href=#4627 id=4627 data-nosnippet>4627</a></span>}
 <a href=#4628 id=4628 data-nosnippet>4628</a>
-<a href=#4629 id=4629 data-nosnippet>4629</a><span class="attr">#[cfg(target_os = <span class="string">"macos"</span>)]
-<a href=#4630 id=4630 data-nosnippet>4630</a></span><span class="kw">fn </span>detect_unified_metal_device() -&gt; bool {
-<a href=#4631 id=4631 data-nosnippet>4631</a>    <span class="kw">let </span>(process_access, has_unified_memory) = detect_process_metal_access();
-<a href=#4632 id=4632 data-nosnippet>4632</a>    metal_inventory_available(process_access, has_unified_memory)
-<a href=#4633 id=4633 data-nosnippet>4633</a>}
-<a href=#4634 id=4634 data-nosnippet>4634</a>
-<a href=#4635 id=4635 data-nosnippet>4635</a><span class="attr">#[cfg(any(target_os = <span class="string">"macos"</span>, test))]
-<a href=#4636 id=4636 data-nosnippet>4636</a></span><span class="kw">fn </span>metal_inventory_available(process_access: bool, has_unified_memory: bool) -&gt; bool {
-<a href=#4637 id=4637 data-nosnippet>4637</a>    process_access &amp;&amp; has_unified_memory
-<a href=#4638 id=4638 data-nosnippet>4638</a>}
-<a href=#4639 id=4639 data-nosnippet>4639</a>
-<a href=#4640 id=4640 data-nosnippet>4640</a><span class="attr">#[cfg(all(target_os = <span class="string">"macos"</span>, not(coverage)))]
-<a href=#4641 id=4641 data-nosnippet>4641</a></span><span class="kw">fn </span>detect_process_metal_access() -&gt; (bool, bool) {
-<a href=#4642 id=4642 data-nosnippet>4642</a>    <span class="kw">use </span>objc2_metal::{MTLCreateSystemDefaultDevice, MTLDevice};
-<a href=#4643 id=4643 data-nosnippet>4643</a>
-<a href=#4644 id=4644 data-nosnippet>4644</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(device) = MTLCreateSystemDefaultDevice() <span class="kw">else </span>{
-<a href=#4645 id=4645 data-nosnippet>4645</a>        <span class="kw">return </span>(<span class="bool-val">false</span>, <span class="bool-val">false</span>);
-<a href=#4646 id=4646 data-nosnippet>4646</a>    };
-<a href=#4647 id=4647 data-nosnippet>4647</a>    (
-<a href=#4648 id=4648 data-nosnippet>4648</a>        device.newCommandQueue().is_some(),
-<a href=#4649 id=4649 data-nosnippet>4649</a>        device.hasUnifiedMemory(),
-<a href=#4650 id=4650 data-nosnippet>4650</a>    )
-<a href=#4651 id=4651 data-nosnippet>4651</a>}
-<a href=#4652 id=4652 data-nosnippet>4652</a>
-<a href=#4653 id=4653 data-nosnippet>4653</a><span class="attr">#[cfg(all(target_os = <span class="string">"macos"</span>, coverage))]
-<a href=#4654 id=4654 data-nosnippet>4654</a></span><span class="kw">fn </span>detect_process_metal_access() -&gt; (bool, bool) {
-<a href=#4655 id=4655 data-nosnippet>4655</a>    (<span class="bool-val">false</span>, <span class="bool-val">false</span>)
-<a href=#4656 id=4656 data-nosnippet>4656</a>}
-<a href=#4657 id=4657 data-nosnippet>4657</a>
-<a href=#4658 id=4658 data-nosnippet>4658</a><span class="attr">#[cfg(not(target_os = <span class="string">"macos"</span>))]
-<a href=#4659 id=4659 data-nosnippet>4659</a></span><span class="kw">fn </span>detect_unified_metal_device() -&gt; bool {
-<a href=#4660 id=4660 data-nosnippet>4660</a>    <span class="bool-val">false
-<a href=#4661 id=4661 data-nosnippet>4661</a></span>}
-<a href=#4662 id=4662 data-nosnippet>4662</a>
-<a href=#4663 id=4663 data-nosnippet>4663</a><span class="kw">fn </span>detect_open_file_limit() -&gt; <span class="prelude-ty">Result</span>&lt;u64, ResourceError&gt; {
-<a href=#4664 id=4664 data-nosnippet>4664</a>    <span class="kw">let </span>output = Command::new(<span class="string">"getconf"</span>)
-<a href=#4665 id=4665 data-nosnippet>4665</a>        .arg(<span class="string">"OPEN_MAX"</span>)
-<a href=#4666 id=4666 data-nosnippet>4666</a>        .output()
-<a href=#4667 id=4667 data-nosnippet>4667</a>        .map_err(|error| ResourceError::Detection(error.to_string()))<span class="question-mark">?</span>;
-<a href=#4668 id=4668 data-nosnippet>4668</a>    <span class="kw">if </span>!output.status.success() {
-<a href=#4669 id=4669 data-nosnippet>4669</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ResourceError::Detection(
-<a href=#4670 id=4670 data-nosnippet>4670</a>            <span class="string">"getconf OPEN_MAX did not complete successfully"</span>.to_string(),
-<a href=#4671 id=4671 data-nosnippet>4671</a>        ));
-<a href=#4672 id=4672 data-nosnippet>4672</a>    }
-<a href=#4673 id=4673 data-nosnippet>4673</a>    String::from_utf8(output.stdout)
-<a href=#4674 id=4674 data-nosnippet>4674</a>        .map_err(|error| ResourceError::Detection(error.to_string()))<span class="question-mark">?
-<a href=#4675 id=4675 data-nosnippet>4675</a>        </span>.trim()
-<a href=#4676 id=4676 data-nosnippet>4676</a>        .parse::&lt;u64&gt;()
-<a href=#4677 id=4677 data-nosnippet>4677</a>        .map_err(|error| ResourceError::Detection(error.to_string()))
-<a href=#4678 id=4678 data-nosnippet>4678</a>}
-<a href=#4679 id=4679 data-nosnippet>4679</a>
-<a href=#4680 id=4680 data-nosnippet>4680</a><span class="attr">#[cfg(target_os = <span class="string">"macos"</span>)]
-<a href=#4681 id=4681 data-nosnippet>4681</a></span><span class="kw">fn </span>command_u64(program: <span class="kw-2">&amp;</span>str, arguments: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>str]) -&gt; <span class="prelude-ty">Result</span>&lt;u64, ResourceError&gt; {
-<a href=#4682 id=4682 data-nosnippet>4682</a>    <span class="kw">let </span>output = Command::new(program)
-<a href=#4683 id=4683 data-nosnippet>4683</a>        .args(arguments)
-<a href=#4684 id=4684 data-nosnippet>4684</a>        .output()
-<a href=#4685 id=4685 data-nosnippet>4685</a>        .map_err(|error| ResourceError::Detection(error.to_string()))<span class="question-mark">?</span>;
-<a href=#4686 id=4686 data-nosnippet>4686</a>    <span class="kw">if </span>!output.status.success() {
-<a href=#4687 id=4687 data-nosnippet>4687</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ResourceError::Detection(<span class="macro">format!</span>(
-<a href=#4688 id=4688 data-nosnippet>4688</a>            <span class="string">"{program} did not complete successfully"
-<a href=#4689 id=4689 data-nosnippet>4689</a>        </span>)));
-<a href=#4690 id=4690 data-nosnippet>4690</a>    }
-<a href=#4691 id=4691 data-nosnippet>4691</a>    String::from_utf8(output.stdout)
-<a href=#4692 id=4692 data-nosnippet>4692</a>        .map_err(|error| ResourceError::Detection(error.to_string()))<span class="question-mark">?
-<a href=#4693 id=4693 data-nosnippet>4693</a>        </span>.trim()
-<a href=#4694 id=4694 data-nosnippet>4694</a>        .parse::&lt;u64&gt;()
-<a href=#4695 id=4695 data-nosnippet>4695</a>        .map_err(|error| ResourceError::Detection(error.to_string()))
-<a href=#4696 id=4696 data-nosnippet>4696</a>}
-<a href=#4697 id=4697 data-nosnippet>4697</a>
-<a href=#4698 id=4698 data-nosnippet>4698</a><span class="attr">#[cfg(test)]
-<a href=#4699 id=4699 data-nosnippet>4699</a></span><span class="kw">mod </span>tests;
+<a href=#4629 id=4629 data-nosnippet>4629</a><span class="kw">fn </span>detect_unified_metal_device() -&gt; bool {
+<a href=#4630 id=4630 data-nosnippet>4630</a>    casa_imaging_metal::available()
+<a href=#4631 id=4631 data-nosnippet>4631</a>}
+<a href=#4632 id=4632 data-nosnippet>4632</a>
+<a href=#4633 id=4633 data-nosnippet>4633</a><span class="kw">fn </span>detect_open_file_limit() -&gt; <span class="prelude-ty">Result</span>&lt;u64, ResourceError&gt; {
+<a href=#4634 id=4634 data-nosnippet>4634</a>    <span class="kw">let </span>output = Command::new(<span class="string">"getconf"</span>)
+<a href=#4635 id=4635 data-nosnippet>4635</a>        .arg(<span class="string">"OPEN_MAX"</span>)
+<a href=#4636 id=4636 data-nosnippet>4636</a>        .output()
+<a href=#4637 id=4637 data-nosnippet>4637</a>        .map_err(|error| ResourceError::Detection(error.to_string()))<span class="question-mark">?</span>;
+<a href=#4638 id=4638 data-nosnippet>4638</a>    <span class="kw">if </span>!output.status.success() {
+<a href=#4639 id=4639 data-nosnippet>4639</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ResourceError::Detection(
+<a href=#4640 id=4640 data-nosnippet>4640</a>            <span class="string">"getconf OPEN_MAX did not complete successfully"</span>.to_string(),
+<a href=#4641 id=4641 data-nosnippet>4641</a>        ));
+<a href=#4642 id=4642 data-nosnippet>4642</a>    }
+<a href=#4643 id=4643 data-nosnippet>4643</a>    String::from_utf8(output.stdout)
+<a href=#4644 id=4644 data-nosnippet>4644</a>        .map_err(|error| ResourceError::Detection(error.to_string()))<span class="question-mark">?
+<a href=#4645 id=4645 data-nosnippet>4645</a>        </span>.trim()
+<a href=#4646 id=4646 data-nosnippet>4646</a>        .parse::&lt;u64&gt;()
+<a href=#4647 id=4647 data-nosnippet>4647</a>        .map_err(|error| ResourceError::Detection(error.to_string()))
+<a href=#4648 id=4648 data-nosnippet>4648</a>}
+<a href=#4649 id=4649 data-nosnippet>4649</a>
+<a href=#4650 id=4650 data-nosnippet>4650</a><span class="attr">#[cfg(target_os = <span class="string">"macos"</span>)]
+<a href=#4651 id=4651 data-nosnippet>4651</a></span><span class="kw">fn </span>command_u64(program: <span class="kw-2">&amp;</span>str, arguments: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>str]) -&gt; <span class="prelude-ty">Result</span>&lt;u64, ResourceError&gt; {
+<a href=#4652 id=4652 data-nosnippet>4652</a>    <span class="kw">let </span>output = Command::new(program)
+<a href=#4653 id=4653 data-nosnippet>4653</a>        .args(arguments)
+<a href=#4654 id=4654 data-nosnippet>4654</a>        .output()
+<a href=#4655 id=4655 data-nosnippet>4655</a>        .map_err(|error| ResourceError::Detection(error.to_string()))<span class="question-mark">?</span>;
+<a href=#4656 id=4656 data-nosnippet>4656</a>    <span class="kw">if </span>!output.status.success() {
+<a href=#4657 id=4657 data-nosnippet>4657</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ResourceError::Detection(<span class="macro">format!</span>(
+<a href=#4658 id=4658 data-nosnippet>4658</a>            <span class="string">"{program} did not complete successfully"
+<a href=#4659 id=4659 data-nosnippet>4659</a>        </span>)));
+<a href=#4660 id=4660 data-nosnippet>4660</a>    }
+<a href=#4661 id=4661 data-nosnippet>4661</a>    String::from_utf8(output.stdout)
+<a href=#4662 id=4662 data-nosnippet>4662</a>        .map_err(|error| ResourceError::Detection(error.to_string()))<span class="question-mark">?
+<a href=#4663 id=4663 data-nosnippet>4663</a>        </span>.trim()
+<a href=#4664 id=4664 data-nosnippet>4664</a>        .parse::&lt;u64&gt;()
+<a href=#4665 id=4665 data-nosnippet>4665</a>        .map_err(|error| ResourceError::Detection(error.to_string()))
+<a href=#4666 id=4666 data-nosnippet>4666</a>}
+<a href=#4667 id=4667 data-nosnippet>4667</a>
+<a href=#4668 id=4668 data-nosnippet>4668</a><span class="attr">#[cfg(test)]
+<a href=#4669 id=4669 data-nosnippet>4669</a></span><span class="kw">mod </span>tests;
 </code></pre></div></section></main></body></html>

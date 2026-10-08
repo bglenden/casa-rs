@@ -1065,124 +1065,125 @@
 <a href=#1065 id=1065 data-nosnippet>1065</a>                .expect(<span class="string">"bind test spill"</span>),
 <a href=#1066 id=1066 data-nosnippet>1066</a>            confidence_parts_per_million: <span class="number">900_000</span>,
 <a href=#1067 id=1067 data-nosnippet>1067</a>            resource_policy: ResourcePolicy::Exclusive,
-<a href=#1068 id=1068 data-nosnippet>1068</a>            cost_model: PlannerCostModelProfileId::from_sha256([<span class="number">2</span>; <span class="number">32</span>]),
-<a href=#1069 id=1069 data-nosnippet>1069</a>            authority,
-<a href=#1070 id=1070 data-nosnippet>1070</a>            receipts: ExecutionReceiptStore::new(
-<a href=#1071 id=1071 data-nosnippet>1071</a>                root.join(<span class="string">"receipts"</span>),
-<a href=#1072 id=1072 data-nosnippet>1072</a>                ReceiptRetention::new(<span class="number">32</span>, <span class="number">8 </span>&lt;&lt; <span class="number">20</span>).expect(<span class="string">"test receipt retention"</span>),
-<a href=#1073 id=1073 data-nosnippet>1073</a>            )
-<a href=#1074 id=1074 data-nosnippet>1074</a>            .expect(<span class="string">"test receipt store"</span>),
-<a href=#1075 id=1075 data-nosnippet>1075</a>            build: BuildIdentity::from_sha256([<span class="number">3</span>; <span class="number">32</span>]),
-<a href=#1076 id=1076 data-nosnippet>1076</a>            publication_attempt: ExecutionAttemptId::from_sha256([<span class="number">4</span>; <span class="number">32</span>]),
-<a href=#1077 id=1077 data-nosnippet>1077</a>        }
-<a href=#1078 id=1078 data-nosnippet>1078</a>    }
-<a href=#1079 id=1079 data-nosnippet>1079</a>
-<a href=#1080 id=1080 data-nosnippet>1080</a>    <span class="kw">fn </span>problem() -&gt; CompiledProblem {
-<a href=#1081 id=1081 data-nosnippet>1081</a>        problem_for(ReconstructionAlgorithm::Dirty, <span class="number">0</span>)
-<a href=#1082 id=1082 data-nosnippet>1082</a>    }
-<a href=#1083 id=1083 data-nosnippet>1083</a>
-<a href=#1084 id=1084 data-nosnippet>1084</a>    <span class="kw">fn </span>problem_for(algorithm: ReconstructionAlgorithm, iterations: usize) -&gt; CompiledProblem {
-<a href=#1085 id=1085 data-nosnippet>1085</a>        <span class="kw">let </span>direction = DirectionCoordinateSpec::new(
-<a href=#1086 id=1086 data-nosnippet>1086</a>            Projection::Sin,
-<a href=#1087 id=1087 data-nosnippet>1087</a>            SkyDirection::new(DirectionFrame::J2000, <span class="number">1.0</span>, -<span class="number">0.5</span>),
-<a href=#1088 id=1088 data-nosnippet>1088</a>            [<span class="number">31.0</span>, <span class="number">31.0</span>],
-<a href=#1089 id=1089 data-nosnippet>1089</a>            [-<span class="number">4.848_136_811_095_36e-6</span>, <span class="number">4.848_136_811_095_36e-6</span>],
-<a href=#1090 id=1090 data-nosnippet>1090</a>            [[<span class="number">1.0</span>, <span class="number">0.0</span>], [<span class="number">0.0</span>, <span class="number">1.0</span>]],
-<a href=#1091 id=1091 data-nosnippet>1091</a>            [<span class="number">180.0</span>, <span class="number">0.0</span>],
-<a href=#1092 id=1092 data-nosnippet>1092</a>        );
-<a href=#1093 id=1093 data-nosnippet>1093</a>        <span class="kw">let </span>geometry = GeometryInput::new(
-<a href=#1094 id=1094 data-nosnippet>1094</a>            <span class="macro">vec!</span>[ImageDomainSpec::new(
-<a href=#1095 id=1095 data-nosnippet>1095</a>                ImageDomainRole::Main,
-<a href=#1096 id=1096 data-nosnippet>1096</a>                ImageShape::new(<span class="number">64</span>, <span class="number">64</span>),
-<a href=#1097 id=1097 data-nosnippet>1097</a>                direction,
-<a href=#1098 id=1098 data-nosnippet>1098</a>                FacetLayout::Single,
-<a href=#1099 id=1099 data-nosnippet>1099</a>                AxisOrder::new([
-<a href=#1100 id=1100 data-nosnippet>1100</a>                    ImageAxis::DirectionLongitude,
-<a href=#1101 id=1101 data-nosnippet>1101</a>                    ImageAxis::DirectionLatitude,
-<a href=#1102 id=1102 data-nosnippet>1102</a>                    ImageAxis::Polarization,
-<a href=#1103 id=1103 data-nosnippet>1103</a>                    ImageAxis::Spectral,
-<a href=#1104 id=1104 data-nosnippet>1104</a>                ]),
-<a href=#1105 id=1105 data-nosnippet>1105</a>            )],
-<a href=#1106 id=1106 data-nosnippet>1106</a>            CentreLaws::new(
-<a href=#1107 id=1107 data-nosnippet>1107</a>                PhaseCentreLaw::Observation,
-<a href=#1108 id=1108 data-nosnippet>1108</a>                DelayCentreLaw::PhaseTrackingCentre,
-<a href=#1109 id=1109 data-nosnippet>1109</a>                PointingCentreLaw::PhaseTrackingCentre,
-<a href=#1110 id=1110 data-nosnippet>1110</a>            ),
-<a href=#1111 id=1111 data-nosnippet>1111</a>            UvwCoordinateLaw::PhaseTrackingCentre,
-<a href=#1112 id=1112 data-nosnippet>1112</a>            SpectralCoordinateSpec::new(
-<a href=#1113 id=1113 data-nosnippet>1113</a>                FrequencyFrame::Topocentric,
+<a href=#1068 id=1068 data-nosnippet>1068</a>            backend: <span class="kw">crate</span>::BackendChoice::Cpu,
+<a href=#1069 id=1069 data-nosnippet>1069</a>            cost_model: PlannerCostModelProfileId::from_sha256([<span class="number">2</span>; <span class="number">32</span>]),
+<a href=#1070 id=1070 data-nosnippet>1070</a>            authority,
+<a href=#1071 id=1071 data-nosnippet>1071</a>            receipts: ExecutionReceiptStore::new(
+<a href=#1072 id=1072 data-nosnippet>1072</a>                root.join(<span class="string">"receipts"</span>),
+<a href=#1073 id=1073 data-nosnippet>1073</a>                ReceiptRetention::new(<span class="number">32</span>, <span class="number">8 </span>&lt;&lt; <span class="number">20</span>).expect(<span class="string">"test receipt retention"</span>),
+<a href=#1074 id=1074 data-nosnippet>1074</a>            )
+<a href=#1075 id=1075 data-nosnippet>1075</a>            .expect(<span class="string">"test receipt store"</span>),
+<a href=#1076 id=1076 data-nosnippet>1076</a>            build: BuildIdentity::from_sha256([<span class="number">3</span>; <span class="number">32</span>]),
+<a href=#1077 id=1077 data-nosnippet>1077</a>            publication_attempt: ExecutionAttemptId::from_sha256([<span class="number">4</span>; <span class="number">32</span>]),
+<a href=#1078 id=1078 data-nosnippet>1078</a>        }
+<a href=#1079 id=1079 data-nosnippet>1079</a>    }
+<a href=#1080 id=1080 data-nosnippet>1080</a>
+<a href=#1081 id=1081 data-nosnippet>1081</a>    <span class="kw">fn </span>problem() -&gt; CompiledProblem {
+<a href=#1082 id=1082 data-nosnippet>1082</a>        problem_for(ReconstructionAlgorithm::Dirty, <span class="number">0</span>)
+<a href=#1083 id=1083 data-nosnippet>1083</a>    }
+<a href=#1084 id=1084 data-nosnippet>1084</a>
+<a href=#1085 id=1085 data-nosnippet>1085</a>    <span class="kw">fn </span>problem_for(algorithm: ReconstructionAlgorithm, iterations: usize) -&gt; CompiledProblem {
+<a href=#1086 id=1086 data-nosnippet>1086</a>        <span class="kw">let </span>direction = DirectionCoordinateSpec::new(
+<a href=#1087 id=1087 data-nosnippet>1087</a>            Projection::Sin,
+<a href=#1088 id=1088 data-nosnippet>1088</a>            SkyDirection::new(DirectionFrame::J2000, <span class="number">1.0</span>, -<span class="number">0.5</span>),
+<a href=#1089 id=1089 data-nosnippet>1089</a>            [<span class="number">31.0</span>, <span class="number">31.0</span>],
+<a href=#1090 id=1090 data-nosnippet>1090</a>            [-<span class="number">4.848_136_811_095_36e-6</span>, <span class="number">4.848_136_811_095_36e-6</span>],
+<a href=#1091 id=1091 data-nosnippet>1091</a>            [[<span class="number">1.0</span>, <span class="number">0.0</span>], [<span class="number">0.0</span>, <span class="number">1.0</span>]],
+<a href=#1092 id=1092 data-nosnippet>1092</a>            [<span class="number">180.0</span>, <span class="number">0.0</span>],
+<a href=#1093 id=1093 data-nosnippet>1093</a>        );
+<a href=#1094 id=1094 data-nosnippet>1094</a>        <span class="kw">let </span>geometry = GeometryInput::new(
+<a href=#1095 id=1095 data-nosnippet>1095</a>            <span class="macro">vec!</span>[ImageDomainSpec::new(
+<a href=#1096 id=1096 data-nosnippet>1096</a>                ImageDomainRole::Main,
+<a href=#1097 id=1097 data-nosnippet>1097</a>                ImageShape::new(<span class="number">64</span>, <span class="number">64</span>),
+<a href=#1098 id=1098 data-nosnippet>1098</a>                direction,
+<a href=#1099 id=1099 data-nosnippet>1099</a>                FacetLayout::Single,
+<a href=#1100 id=1100 data-nosnippet>1100</a>                AxisOrder::new([
+<a href=#1101 id=1101 data-nosnippet>1101</a>                    ImageAxis::DirectionLongitude,
+<a href=#1102 id=1102 data-nosnippet>1102</a>                    ImageAxis::DirectionLatitude,
+<a href=#1103 id=1103 data-nosnippet>1103</a>                    ImageAxis::Polarization,
+<a href=#1104 id=1104 data-nosnippet>1104</a>                    ImageAxis::Spectral,
+<a href=#1105 id=1105 data-nosnippet>1105</a>                ]),
+<a href=#1106 id=1106 data-nosnippet>1106</a>            )],
+<a href=#1107 id=1107 data-nosnippet>1107</a>            CentreLaws::new(
+<a href=#1108 id=1108 data-nosnippet>1108</a>                PhaseCentreLaw::Observation,
+<a href=#1109 id=1109 data-nosnippet>1109</a>                DelayCentreLaw::PhaseTrackingCentre,
+<a href=#1110 id=1110 data-nosnippet>1110</a>                PointingCentreLaw::PhaseTrackingCentre,
+<a href=#1111 id=1111 data-nosnippet>1111</a>            ),
+<a href=#1112 id=1112 data-nosnippet>1112</a>            UvwCoordinateLaw::PhaseTrackingCentre,
+<a href=#1113 id=1113 data-nosnippet>1113</a>            SpectralCoordinateSpec::new(
 <a href=#1114 id=1114 data-nosnippet>1114</a>                FrequencyFrame::Topocentric,
-<a href=#1115 id=1115 data-nosnippet>1115</a>                SpectralFrameAnchor::NotApplicable,
-<a href=#1116 id=1116 data-nosnippet>1116</a>                SpectralWcs::Linear {
-<a href=#1117 id=1117 data-nosnippet>1117</a>                    channels: <span class="number">1</span>,
-<a href=#1118 id=1118 data-nosnippet>1118</a>                    reference_pixel: <span class="number">0.0</span>,
-<a href=#1119 id=1119 data-nosnippet>1119</a>                    reference_frequency_hz: <span class="number">1.4e9</span>,
-<a href=#1120 id=1120 data-nosnippet>1120</a>                    increment_hz: <span class="number">1.0e6</span>,
-<a href=#1121 id=1121 data-nosnippet>1121</a>                },
-<a href=#1122 id=1122 data-nosnippet>1122</a>                RestFrequency::NotApplicable,
-<a href=#1123 id=1123 data-nosnippet>1123</a>                DopplerConvention::NotApplicable,
-<a href=#1124 id=1124 data-nosnippet>1124</a>            ),
-<a href=#1125 id=1125 data-nosnippet>1125</a>        );
-<a href=#1126 id=1126 data-nosnippet>1126</a>        <span class="kw">let </span>specification = ProblemSpecification::new(
-<a href=#1127 id=1127 data-nosnippet>1127</a>            ScientificContract::new(
-<a href=#1128 id=1128 data-nosnippet>1128</a>                SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
-<a href=#1129 id=1129 data-nosnippet>1129</a>                MeasurementEquationContract::new(
-<a href=#1130 id=1130 data-nosnippet>1130</a>                    InstrumentResponse::Scalar,
-<a href=#1131 id=1131 data-nosnippet>1131</a>                    DeclaredInnerProducts::new(
-<a href=#1132 id=1132 data-nosnippet>1132</a>                        ModelInnerProduct::HermitianEuclidean,
-<a href=#1133 id=1133 data-nosnippet>1133</a>                        VisibilityInnerProduct::HermitianEuclidean,
-<a href=#1134 id=1134 data-nosnippet>1134</a>                    ),
-<a href=#1135 id=1135 data-nosnippet>1135</a>                ),
-<a href=#1136 id=1136 data-nosnippet>1136</a>            ),
-<a href=#1137 id=1137 data-nosnippet>1137</a>            ReconstructionContract::new(
-<a href=#1138 id=1138 data-nosnippet>1138</a>                ReconstructionBasis::Constant,
-<a href=#1139 id=1139 data-nosnippet>1139</a>                algorithm,
-<a href=#1140 id=1140 data-nosnippet>1140</a>                ReconstructionControls::new(iterations, <span class="number">1.0</span>, <span class="number">0.0</span>),
-<a href=#1141 id=1141 data-nosnippet>1141</a>                PolarizationContract::new(<span class="macro">vec!</span>[PolarizationCoordinate::StokesI]),
-<a href=#1142 id=1142 data-nosnippet>1142</a>            ),
-<a href=#1143 id=1143 data-nosnippet>1143</a>            WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
-<a href=#1144 id=1144 data-nosnippet>1144</a>            ProductRequirements::new(
-<a href=#1145 id=1145 data-nosnippet>1145</a>                <span class="macro">vec!</span>[ProductKind::Psf],
-<a href=#1146 id=1146 data-nosnippet>1146</a>                ProductNormalization::UnitResponse,
-<a href=#1147 id=1147 data-nosnippet>1147</a>                RestoringBeamPolicy::None,
-<a href=#1148 id=1148 data-nosnippet>1148</a>                product_validity(),
-<a href=#1149 id=1149 data-nosnippet>1149</a>            ),
-<a href=#1150 id=1150 data-nosnippet>1150</a>            ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
-<a href=#1151 id=1151 data-nosnippet>1151</a>            NumericsContract::new(
-<a href=#1152 id=1152 data-nosnippet>1152</a>                <span class="macro">vec!</span>[NumericPrecision::F64],
-<a href=#1153 id=1153 data-nosnippet>1153</a>                ReductionPolicy::DeterministicPairwise,
-<a href=#1154 id=1154 data-nosnippet>1154</a>                FiniteValuePolicy::FlagInputRejectGenerated,
-<a href=#1155 id=1155 data-nosnippet>1155</a>                NumericalStage::ALL
-<a href=#1156 id=1156 data-nosnippet>1156</a>                    .into_iter()
-<a href=#1157 id=1157 data-nosnippet>1157</a>                    .map(|stage| (stage, StageErrorBudget::new(<span class="number">1.0e-12</span>, <span class="number">1.0e-3</span>)))
-<a href=#1158 id=1158 data-nosnippet>1158</a>                    .collect(),
-<a href=#1159 id=1159 data-nosnippet>1159</a>            ),
-<a href=#1160 id=1160 data-nosnippet>1160</a>        );
-<a href=#1161 id=1161 data-nosnippet>1161</a>        compile(ImagingRequest::new(
-<a href=#1162 id=1162 data-nosnippet>1162</a>            specification,
-<a href=#1163 id=1163 data-nosnippet>1163</a>            geometry,
-<a href=#1164 id=1164 data-nosnippet>1164</a>            common::problem_inputs(Vec::new()),
-<a href=#1165 id=1165 data-nosnippet>1165</a>            common::model_lifecycle(),
-<a href=#1166 id=1166 data-nosnippet>1166</a>        ))
-<a href=#1167 id=1167 data-nosnippet>1167</a>        .expect(<span class="string">"compile AW preparation test problem"</span>)
-<a href=#1168 id=1168 data-nosnippet>1168</a>    }
-<a href=#1169 id=1169 data-nosnippet>1169</a>
-<a href=#1170 id=1170 data-nosnippet>1170</a>    <span class="kw">fn </span>product_validity() -&gt; casa_imaging_model::ProductValidityPolicies {
-<a href=#1171 id=1171 data-nosnippet>1171</a>        casa_imaging_model::ProductValidityPolicies::new(
-<a href=#1172 id=1172 data-nosnippet>1172</a>            casa_imaging_model::PrimaryBeamValidityPolicy::new(
-<a href=#1173 id=1173 data-nosnippet>1173</a>                <span class="number">0.2</span>,
-<a href=#1174 id=1174 data-nosnippet>1174</a>                casa_imaging_model::ProductSupportComparison::StrictlyGreater,
-<a href=#1175 id=1175 data-nosnippet>1175</a>                casa_imaging_model::ProductBlankingPolicy::Zero,
-<a href=#1176 id=1176 data-nosnippet>1176</a>            )
-<a href=#1177 id=1177 data-nosnippet>1177</a>            .expect(<span class="string">"valid primary-beam policy"</span>),
-<a href=#1178 id=1178 data-nosnippet>1178</a>            casa_imaging_model::TaylorValidityPolicy::new(
-<a href=#1179 id=1179 data-nosnippet>1179</a>                casa_imaging_model::TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
-<a href=#1180 id=1180 data-nosnippet>1180</a>                <span class="number">0.1</span>,
-<a href=#1181 id=1181 data-nosnippet>1181</a>                casa_imaging_model::ProductSupportComparison::StrictlyGreater,
-<a href=#1182 id=1182 data-nosnippet>1182</a>                casa_imaging_model::ProductBlankingPolicy::Zero,
-<a href=#1183 id=1183 data-nosnippet>1183</a>            )
-<a href=#1184 id=1184 data-nosnippet>1184</a>            .expect(<span class="string">"valid Taylor policy"</span>),
-<a href=#1185 id=1185 data-nosnippet>1185</a>        )
-<a href=#1186 id=1186 data-nosnippet>1186</a>    }
-<a href=#1187 id=1187 data-nosnippet>1187</a>}
+<a href=#1115 id=1115 data-nosnippet>1115</a>                FrequencyFrame::Topocentric,
+<a href=#1116 id=1116 data-nosnippet>1116</a>                SpectralFrameAnchor::NotApplicable,
+<a href=#1117 id=1117 data-nosnippet>1117</a>                SpectralWcs::Linear {
+<a href=#1118 id=1118 data-nosnippet>1118</a>                    channels: <span class="number">1</span>,
+<a href=#1119 id=1119 data-nosnippet>1119</a>                    reference_pixel: <span class="number">0.0</span>,
+<a href=#1120 id=1120 data-nosnippet>1120</a>                    reference_frequency_hz: <span class="number">1.4e9</span>,
+<a href=#1121 id=1121 data-nosnippet>1121</a>                    increment_hz: <span class="number">1.0e6</span>,
+<a href=#1122 id=1122 data-nosnippet>1122</a>                },
+<a href=#1123 id=1123 data-nosnippet>1123</a>                RestFrequency::NotApplicable,
+<a href=#1124 id=1124 data-nosnippet>1124</a>                DopplerConvention::NotApplicable,
+<a href=#1125 id=1125 data-nosnippet>1125</a>            ),
+<a href=#1126 id=1126 data-nosnippet>1126</a>        );
+<a href=#1127 id=1127 data-nosnippet>1127</a>        <span class="kw">let </span>specification = ProblemSpecification::new(
+<a href=#1128 id=1128 data-nosnippet>1128</a>            ScientificContract::new(
+<a href=#1129 id=1129 data-nosnippet>1129</a>                SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
+<a href=#1130 id=1130 data-nosnippet>1130</a>                MeasurementEquationContract::new(
+<a href=#1131 id=1131 data-nosnippet>1131</a>                    InstrumentResponse::Scalar,
+<a href=#1132 id=1132 data-nosnippet>1132</a>                    DeclaredInnerProducts::new(
+<a href=#1133 id=1133 data-nosnippet>1133</a>                        ModelInnerProduct::HermitianEuclidean,
+<a href=#1134 id=1134 data-nosnippet>1134</a>                        VisibilityInnerProduct::HermitianEuclidean,
+<a href=#1135 id=1135 data-nosnippet>1135</a>                    ),
+<a href=#1136 id=1136 data-nosnippet>1136</a>                ),
+<a href=#1137 id=1137 data-nosnippet>1137</a>            ),
+<a href=#1138 id=1138 data-nosnippet>1138</a>            ReconstructionContract::new(
+<a href=#1139 id=1139 data-nosnippet>1139</a>                ReconstructionBasis::Constant,
+<a href=#1140 id=1140 data-nosnippet>1140</a>                algorithm,
+<a href=#1141 id=1141 data-nosnippet>1141</a>                ReconstructionControls::new(iterations, <span class="number">1.0</span>, <span class="number">0.0</span>),
+<a href=#1142 id=1142 data-nosnippet>1142</a>                PolarizationContract::new(<span class="macro">vec!</span>[PolarizationCoordinate::StokesI]),
+<a href=#1143 id=1143 data-nosnippet>1143</a>            ),
+<a href=#1144 id=1144 data-nosnippet>1144</a>            WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+<a href=#1145 id=1145 data-nosnippet>1145</a>            ProductRequirements::new(
+<a href=#1146 id=1146 data-nosnippet>1146</a>                <span class="macro">vec!</span>[ProductKind::Psf],
+<a href=#1147 id=1147 data-nosnippet>1147</a>                ProductNormalization::UnitResponse,
+<a href=#1148 id=1148 data-nosnippet>1148</a>                RestoringBeamPolicy::None,
+<a href=#1149 id=1149 data-nosnippet>1149</a>                product_validity(),
+<a href=#1150 id=1150 data-nosnippet>1150</a>            ),
+<a href=#1151 id=1151 data-nosnippet>1151</a>            ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
+<a href=#1152 id=1152 data-nosnippet>1152</a>            NumericsContract::new(
+<a href=#1153 id=1153 data-nosnippet>1153</a>                <span class="macro">vec!</span>[NumericPrecision::F64],
+<a href=#1154 id=1154 data-nosnippet>1154</a>                ReductionPolicy::DeterministicPairwise,
+<a href=#1155 id=1155 data-nosnippet>1155</a>                FiniteValuePolicy::FlagInputRejectGenerated,
+<a href=#1156 id=1156 data-nosnippet>1156</a>                NumericalStage::ALL
+<a href=#1157 id=1157 data-nosnippet>1157</a>                    .into_iter()
+<a href=#1158 id=1158 data-nosnippet>1158</a>                    .map(|stage| (stage, StageErrorBudget::new(<span class="number">1.0e-12</span>, <span class="number">1.0e-3</span>)))
+<a href=#1159 id=1159 data-nosnippet>1159</a>                    .collect(),
+<a href=#1160 id=1160 data-nosnippet>1160</a>            ),
+<a href=#1161 id=1161 data-nosnippet>1161</a>        );
+<a href=#1162 id=1162 data-nosnippet>1162</a>        compile(ImagingRequest::new(
+<a href=#1163 id=1163 data-nosnippet>1163</a>            specification,
+<a href=#1164 id=1164 data-nosnippet>1164</a>            geometry,
+<a href=#1165 id=1165 data-nosnippet>1165</a>            common::problem_inputs(Vec::new()),
+<a href=#1166 id=1166 data-nosnippet>1166</a>            common::model_lifecycle(),
+<a href=#1167 id=1167 data-nosnippet>1167</a>        ))
+<a href=#1168 id=1168 data-nosnippet>1168</a>        .expect(<span class="string">"compile AW preparation test problem"</span>)
+<a href=#1169 id=1169 data-nosnippet>1169</a>    }
+<a href=#1170 id=1170 data-nosnippet>1170</a>
+<a href=#1171 id=1171 data-nosnippet>1171</a>    <span class="kw">fn </span>product_validity() -&gt; casa_imaging_model::ProductValidityPolicies {
+<a href=#1172 id=1172 data-nosnippet>1172</a>        casa_imaging_model::ProductValidityPolicies::new(
+<a href=#1173 id=1173 data-nosnippet>1173</a>            casa_imaging_model::PrimaryBeamValidityPolicy::new(
+<a href=#1174 id=1174 data-nosnippet>1174</a>                <span class="number">0.2</span>,
+<a href=#1175 id=1175 data-nosnippet>1175</a>                casa_imaging_model::ProductSupportComparison::StrictlyGreater,
+<a href=#1176 id=1176 data-nosnippet>1176</a>                casa_imaging_model::ProductBlankingPolicy::Zero,
+<a href=#1177 id=1177 data-nosnippet>1177</a>            )
+<a href=#1178 id=1178 data-nosnippet>1178</a>            .expect(<span class="string">"valid primary-beam policy"</span>),
+<a href=#1179 id=1179 data-nosnippet>1179</a>            casa_imaging_model::TaylorValidityPolicy::new(
+<a href=#1180 id=1180 data-nosnippet>1180</a>                casa_imaging_model::TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
+<a href=#1181 id=1181 data-nosnippet>1181</a>                <span class="number">0.1</span>,
+<a href=#1182 id=1182 data-nosnippet>1182</a>                casa_imaging_model::ProductSupportComparison::StrictlyGreater,
+<a href=#1183 id=1183 data-nosnippet>1183</a>                casa_imaging_model::ProductBlankingPolicy::Zero,
+<a href=#1184 id=1184 data-nosnippet>1184</a>            )
+<a href=#1185 id=1185 data-nosnippet>1185</a>            .expect(<span class="string">"valid Taylor policy"</span>),
+<a href=#1186 id=1186 data-nosnippet>1186</a>        )
+<a href=#1187 id=1187 data-nosnippet>1187</a>    }
+<a href=#1188 id=1188 data-nosnippet>1188</a>}
 </code></pre></div></section></main></body></html>

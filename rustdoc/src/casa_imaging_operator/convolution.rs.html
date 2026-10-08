@@ -2,213 +2,224 @@
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! Convolution-function sets: tap layouts, Mueller routing and the paired
 <a href=#3 id=3 data-nosnippet>3</a>//! image-domain correction.
 <a href=#4 id=4 data-nosnippet>4</a>
-<a href=#5 id=5 data-nosnippet>5</a></span><span class="kw">use </span>num_complex::Complex32;
+<a href=#5 id=5 data-nosnippet>5</a></span><span class="kw">use </span>num_complex::{Complex32, Complex64};
 <a href=#6 id=6 data-nosnippet>6</a>
-<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span><span class="kw">crate</span>::sample::CfKey;
-<a href=#8 id=8 data-nosnippet>8</a>
-<a href=#9 id=9 data-nosnippet>9</a><span class="doccomment">/// Taps of one convolution-function cell in the layout the kernels read.
-<a href=#10 id=10 data-nosnippet>10</a>///
-<a href=#11 id=11 data-nosnippet>11</a>/// Fine-offset rows are indexed by [`CellLocation`](crate::CellLocation)'s
-<a href=#12 id=12 data-nosnippet>12</a>/// `ox`/`oy`, which run over `0..=oversampling`, so every layout holds
-<a href=#13 id=13 data-nosnippet>13</a>/// `oversampling + 1` rows per axis and `oversampling` must be even.
-<a href=#14 id=14 data-nosnippet>14</a></span><span class="attr">#[derive(Clone, Copy, Debug)]
-<a href=#15 id=15 data-nosnippet>15</a></span><span class="kw">pub enum </span>TapLayout&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#16 id=16 data-nosnippet>16</a>    <span class="doccomment">/// Separable real kernel (standard spheroidal). `rows[o * support + i]`
-<a href=#17 id=17 data-nosnippet>17</a>    /// is tap `i`, at grid offset `i − support/2` from the anchor, for fine
-<a href=#18 id=18 data-nosnippet>18</a>    /// offset row `o`; one fractional offset is one contiguous row
-<a href=#19 id=19 data-nosnippet>19</a>    /// (oversampling-major, Obit `ConvFunc`).
-<a href=#20 id=20 data-nosnippet>20</a>    </span>SeparableReal {
-<a href=#21 id=21 data-nosnippet>21</a>        <span class="doccomment">/// `(oversampling + 1) × support` tap values.
-<a href=#22 id=22 data-nosnippet>22</a>        </span>rows: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[f32],
-<a href=#23 id=23 data-nosnippet>23</a>        <span class="doccomment">/// Taps per axis (odd).
-<a href=#24 id=24 data-nosnippet>24</a>        </span>support: u16,
-<a href=#25 id=25 data-nosnippet>25</a>        <span class="doccomment">/// Fine offsets per cell (even).
-<a href=#26 id=26 data-nosnippet>26</a>        </span>oversampling: u16,
-<a href=#27 id=27 data-nosnippet>27</a>    },
-<a href=#28 id=28 data-nosnippet>28</a>    <span class="doccomment">/// Dense complex kernel (W, AW, mosaic) ordered
-<a href=#29 id=29 data-nosnippet>29</a>    /// `[oy][ox][mueller][iy][ix]`, x fastest, with one contiguous
-<a href=#30 id=30 data-nosnippet>30</a>    /// `mueller × sy × sx` tile per fractional offset. Tap `(ix, iy)` sits
-<a href=#31 id=31 data-nosnippet>31</a>    /// at grid offset `(ix − sx/2, iy − sy/2)` from the anchor.
-<a href=#32 id=32 data-nosnippet>32</a>    </span>Dense {
-<a href=#33 id=33 data-nosnippet>33</a>        <span class="doccomment">/// `(oversampling + 1)² × mueller_planes × sy × sx` tap values.
-<a href=#34 id=34 data-nosnippet>34</a>        </span>data: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[Complex32],
-<a href=#35 id=35 data-nosnippet>35</a>        <span class="doccomment">/// Taps per axis `[sx, sy]` (odd).
-<a href=#36 id=36 data-nosnippet>36</a>        </span>support: [u16; <span class="number">2</span>],
-<a href=#37 id=37 data-nosnippet>37</a>        <span class="doccomment">/// Fine offsets per cell (even).
-<a href=#38 id=38 data-nosnippet>38</a>        </span>oversampling: u16,
-<a href=#39 id=39 data-nosnippet>39</a>        <span class="doccomment">/// Mueller planes per tile; 1 for a scalar kernel.
-<a href=#40 id=40 data-nosnippet>40</a>        </span>mueller_planes: u8,
-<a href=#41 id=41 data-nosnippet>41</a>    },
-<a href=#42 id=42 data-nosnippet>42</a>}
-<a href=#43 id=43 data-nosnippet>43</a>
-<a href=#44 id=44 data-nosnippet>44</a><span class="kw">impl </span>TapLayout&lt;<span class="lifetime">'_</span>&gt; {
-<a href=#45 id=45 data-nosnippet>45</a>    <span class="doccomment">/// Taps on each side of the anchor, `[x, y]`.
-<a href=#46 id=46 data-nosnippet>46</a>    </span><span class="attr">#[must_use]
-<a href=#47 id=47 data-nosnippet>47</a>    </span><span class="kw">pub fn </span>half_support(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; [u16; <span class="number">2</span>] {
-<a href=#48 id=48 data-nosnippet>48</a>        <span class="kw">match </span><span class="self">self </span>{
-<a href=#49 id=49 data-nosnippet>49</a>            <span class="self">Self</span>::SeparableReal { support, .. } =&gt; [support / <span class="number">2</span>, support / <span class="number">2</span>],
-<a href=#50 id=50 data-nosnippet>50</a>            <span class="self">Self</span>::Dense { support, .. } =&gt; [support[<span class="number">0</span>] / <span class="number">2</span>, support[<span class="number">1</span>] / <span class="number">2</span>],
-<a href=#51 id=51 data-nosnippet>51</a>        }
-<a href=#52 id=52 data-nosnippet>52</a>    }
-<a href=#53 id=53 data-nosnippet>53</a>
-<a href=#54 id=54 data-nosnippet>54</a>    <span class="doccomment">/// Fine offsets per cell.
-<a href=#55 id=55 data-nosnippet>55</a>    </span><span class="attr">#[must_use]
-<a href=#56 id=56 data-nosnippet>56</a>    </span><span class="kw">pub fn </span>oversampling(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u16 {
-<a href=#57 id=57 data-nosnippet>57</a>        <span class="kw">match </span><span class="self">self </span>{
-<a href=#58 id=58 data-nosnippet>58</a>            <span class="self">Self</span>::SeparableReal { oversampling, .. } | <span class="self">Self</span>::Dense { oversampling, .. } =&gt; {
-<a href=#59 id=59 data-nosnippet>59</a>                <span class="kw-2">*</span>oversampling
-<a href=#60 id=60 data-nosnippet>60</a>            }
-<a href=#61 id=61 data-nosnippet>61</a>        }
-<a href=#62 id=62 data-nosnippet>62</a>    }
-<a href=#63 id=63 data-nosnippet>63</a>
-<a href=#64 id=64 data-nosnippet>64</a>    <span class="doccomment">/// Mueller planes per cell.
-<a href=#65 id=65 data-nosnippet>65</a>    </span><span class="attr">#[must_use]
-<a href=#66 id=66 data-nosnippet>66</a>    </span><span class="kw">pub fn </span>mueller_planes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u8 {
-<a href=#67 id=67 data-nosnippet>67</a>        <span class="kw">match </span><span class="self">self </span>{
-<a href=#68 id=68 data-nosnippet>68</a>            <span class="self">Self</span>::SeparableReal { .. } =&gt; <span class="number">1</span>,
-<a href=#69 id=69 data-nosnippet>69</a>            <span class="self">Self</span>::Dense { mueller_planes, .. } =&gt; <span class="kw-2">*</span>mueller_planes,
-<a href=#70 id=70 data-nosnippet>70</a>        }
-<a href=#71 id=71 data-nosnippet>71</a>    }
-<a href=#72 id=72 data-nosnippet>72</a>}
+<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span><span class="kw">crate</span>::geometry::CellLocation;
+<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span><span class="kw">crate</span>::sample::CfKey;
+<a href=#9 id=9 data-nosnippet>9</a>
+<a href=#10 id=10 data-nosnippet>10</a><span class="doccomment">/// Taps of one convolution-function cell in the layout the kernels read.
+<a href=#11 id=11 data-nosnippet>11</a>///
+<a href=#12 id=12 data-nosnippet>12</a>/// Fine-offset rows are indexed by [`CellLocation`](crate::CellLocation)'s
+<a href=#13 id=13 data-nosnippet>13</a>/// `ox`/`oy`, which run over `0..=oversampling`, so every layout holds
+<a href=#14 id=14 data-nosnippet>14</a>/// `oversampling + 1` rows per axis and `oversampling` must be even.
+<a href=#15 id=15 data-nosnippet>15</a></span><span class="attr">#[derive(Clone, Copy, Debug)]
+<a href=#16 id=16 data-nosnippet>16</a></span><span class="kw">pub enum </span>TapLayout&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#17 id=17 data-nosnippet>17</a>    <span class="doccomment">/// Separable real kernel (standard spheroidal). `rows[o * support + i]`
+<a href=#18 id=18 data-nosnippet>18</a>    /// is tap `i`, at grid offset `i − support/2` from the anchor, for fine
+<a href=#19 id=19 data-nosnippet>19</a>    /// offset row `o`; one fractional offset is one contiguous row
+<a href=#20 id=20 data-nosnippet>20</a>    /// (oversampling-major, Obit `ConvFunc`).
+<a href=#21 id=21 data-nosnippet>21</a>    </span>SeparableReal {
+<a href=#22 id=22 data-nosnippet>22</a>        <span class="doccomment">/// `(oversampling + 1) × support` tap values.
+<a href=#23 id=23 data-nosnippet>23</a>        </span>rows: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[f32],
+<a href=#24 id=24 data-nosnippet>24</a>        <span class="doccomment">/// Taps per axis (odd).
+<a href=#25 id=25 data-nosnippet>25</a>        </span>support: u16,
+<a href=#26 id=26 data-nosnippet>26</a>        <span class="doccomment">/// Fine offsets per cell (even).
+<a href=#27 id=27 data-nosnippet>27</a>        </span>oversampling: u16,
+<a href=#28 id=28 data-nosnippet>28</a>    },
+<a href=#29 id=29 data-nosnippet>29</a>    <span class="doccomment">/// Dense complex kernel (W, AW, mosaic) ordered
+<a href=#30 id=30 data-nosnippet>30</a>    /// `[oy][ox][mueller][iy][ix]`, x fastest, with one contiguous
+<a href=#31 id=31 data-nosnippet>31</a>    /// `mueller × sy × sx` tile per fractional offset. Tap `(ix, iy)` sits
+<a href=#32 id=32 data-nosnippet>32</a>    /// at grid offset `(ix − sx/2, iy − sy/2)` from the anchor.
+<a href=#33 id=33 data-nosnippet>33</a>    </span>Dense {
+<a href=#34 id=34 data-nosnippet>34</a>        <span class="doccomment">/// `(oversampling + 1)² × mueller_planes × sy × sx` tap values.
+<a href=#35 id=35 data-nosnippet>35</a>        </span>data: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[Complex32],
+<a href=#36 id=36 data-nosnippet>36</a>        <span class="doccomment">/// Taps per axis `[sx, sy]` (odd).
+<a href=#37 id=37 data-nosnippet>37</a>        </span>support: [u16; <span class="number">2</span>],
+<a href=#38 id=38 data-nosnippet>38</a>        <span class="doccomment">/// Fine offsets per cell (even).
+<a href=#39 id=39 data-nosnippet>39</a>        </span>oversampling: u16,
+<a href=#40 id=40 data-nosnippet>40</a>        <span class="doccomment">/// Mueller planes per tile; 1 for a scalar kernel.
+<a href=#41 id=41 data-nosnippet>41</a>        </span>mueller_planes: u8,
+<a href=#42 id=42 data-nosnippet>42</a>    },
+<a href=#43 id=43 data-nosnippet>43</a>}
+<a href=#44 id=44 data-nosnippet>44</a>
+<a href=#45 id=45 data-nosnippet>45</a><span class="kw">impl </span>TapLayout&lt;<span class="lifetime">'_</span>&gt; {
+<a href=#46 id=46 data-nosnippet>46</a>    <span class="doccomment">/// Taps on each side of the anchor, `[x, y]`.
+<a href=#47 id=47 data-nosnippet>47</a>    </span><span class="attr">#[must_use]
+<a href=#48 id=48 data-nosnippet>48</a>    </span><span class="kw">pub fn </span>half_support(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; [u16; <span class="number">2</span>] {
+<a href=#49 id=49 data-nosnippet>49</a>        <span class="kw">match </span><span class="self">self </span>{
+<a href=#50 id=50 data-nosnippet>50</a>            <span class="self">Self</span>::SeparableReal { support, .. } =&gt; [support / <span class="number">2</span>, support / <span class="number">2</span>],
+<a href=#51 id=51 data-nosnippet>51</a>            <span class="self">Self</span>::Dense { support, .. } =&gt; [support[<span class="number">0</span>] / <span class="number">2</span>, support[<span class="number">1</span>] / <span class="number">2</span>],
+<a href=#52 id=52 data-nosnippet>52</a>        }
+<a href=#53 id=53 data-nosnippet>53</a>    }
+<a href=#54 id=54 data-nosnippet>54</a>
+<a href=#55 id=55 data-nosnippet>55</a>    <span class="doccomment">/// Fine offsets per cell.
+<a href=#56 id=56 data-nosnippet>56</a>    </span><span class="attr">#[must_use]
+<a href=#57 id=57 data-nosnippet>57</a>    </span><span class="kw">pub fn </span>oversampling(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u16 {
+<a href=#58 id=58 data-nosnippet>58</a>        <span class="kw">match </span><span class="self">self </span>{
+<a href=#59 id=59 data-nosnippet>59</a>            <span class="self">Self</span>::SeparableReal { oversampling, .. } | <span class="self">Self</span>::Dense { oversampling, .. } =&gt; {
+<a href=#60 id=60 data-nosnippet>60</a>                <span class="kw-2">*</span>oversampling
+<a href=#61 id=61 data-nosnippet>61</a>            }
+<a href=#62 id=62 data-nosnippet>62</a>        }
+<a href=#63 id=63 data-nosnippet>63</a>    }
+<a href=#64 id=64 data-nosnippet>64</a>
+<a href=#65 id=65 data-nosnippet>65</a>    <span class="doccomment">/// Mueller planes per cell.
+<a href=#66 id=66 data-nosnippet>66</a>    </span><span class="attr">#[must_use]
+<a href=#67 id=67 data-nosnippet>67</a>    </span><span class="kw">pub fn </span>mueller_planes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u8 {
+<a href=#68 id=68 data-nosnippet>68</a>        <span class="kw">match </span><span class="self">self </span>{
+<a href=#69 id=69 data-nosnippet>69</a>            <span class="self">Self</span>::SeparableReal { .. } =&gt; <span class="number">1</span>,
+<a href=#70 id=70 data-nosnippet>70</a>            <span class="self">Self</span>::Dense { mueller_planes, .. } =&gt; <span class="kw-2">*</span>mueller_planes,
+<a href=#71 id=71 data-nosnippet>71</a>        }
+<a href=#72 id=72 data-nosnippet>72</a>    }
 <a href=#73 id=73 data-nosnippet>73</a>
-<a href=#74 id=74 data-nosnippet>74</a><span class="doccomment">/// Which kernel Mueller plane serves each (grid polarization, visibility
-<a href=#75 id=75 data-nosnippet>75</a>/// polarization) pair.
-<a href=#76 id=76 data-nosnippet>76</a>///
-<a href=#77 id=77 data-nosnippet>77</a>/// `direct` is the adjoint table for `w &gt; 0`; `conjugate` its partner for
-<a href=#78 id=78 data-nosnippet>78</a>/// `w ≤ 0`. The kernel swaps the tables on the sign of `w` and on the
-<a href=#79 id=79 data-nosnippet>79</a>/// direction of the transform and conjugates the taps (HPG
-<a href=#80 id=80 data-nosnippet>80</a>/// `mueller_indexes` / `conjugate_mueller_indexes`). `None` skips a pair.
-<a href=#81 id=81 data-nosnippet>81</a>/// Both tables are `[grid pol][visibility pol]`.
-<a href=#82 id=82 data-nosnippet>82</a></span><span class="attr">#[derive(Clone, Debug, PartialEq, Eq)]
-<a href=#83 id=83 data-nosnippet>83</a></span><span class="kw">pub struct </span>MuellerRouting {
-<a href=#84 id=84 data-nosnippet>84</a>    <span class="doccomment">/// Adjoint table for `w &gt; 0`.
-<a href=#85 id=85 data-nosnippet>85</a>    </span><span class="kw">pub </span>direct: Vec&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;u8&gt;&gt;&gt;,
-<a href=#86 id=86 data-nosnippet>86</a>    <span class="doccomment">/// Adjoint table for `w ≤ 0`.
-<a href=#87 id=87 data-nosnippet>87</a>    </span><span class="kw">pub </span>conjugate: Vec&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;u8&gt;&gt;&gt;,
-<a href=#88 id=88 data-nosnippet>88</a>}
-<a href=#89 id=89 data-nosnippet>89</a>
-<a href=#90 id=90 data-nosnippet>90</a><span class="kw">impl </span>MuellerRouting {
-<a href=#91 id=91 data-nosnippet>91</a>    <span class="doccomment">/// Scalar routing: Mueller plane 0 for every pair `pol_map` joins
-<a href=#92 id=92 data-nosnippet>92</a>    /// (visibility polarization `p` feeds grid polarization `pol_map[p]`),
-<a href=#93 id=93 data-nosnippet>93</a>    /// with identical direct and conjugate tables.
-<a href=#94 id=94 data-nosnippet>94</a>    </span><span class="attr">#[must_use]
-<a href=#95 id=95 data-nosnippet>95</a>    </span><span class="kw">pub fn </span>scalar(pol_map: <span class="kw-2">&amp;</span>[<span class="prelude-ty">Option</span>&lt;u8&gt;], grid_pols: usize) -&gt; <span class="self">Self </span>{
-<a href=#96 id=96 data-nosnippet>96</a>        <span class="kw">let </span>direct = (<span class="number">0</span>..grid_pols)
-<a href=#97 id=97 data-nosnippet>97</a>            .map(|gpol| {
-<a href=#98 id=98 data-nosnippet>98</a>                pol_map
-<a href=#99 id=99 data-nosnippet>99</a>                    .iter()
-<a href=#100 id=100 data-nosnippet>100</a>                    .map(|target| (<span class="kw-2">*</span>target == <span class="prelude-val">Some</span>(gpol <span class="kw">as </span>u8)).then_some(<span class="number">0</span>))
-<a href=#101 id=101 data-nosnippet>101</a>                    .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
-<a href=#102 id=102 data-nosnippet>102</a>            })
-<a href=#103 id=103 data-nosnippet>103</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#104 id=104 data-nosnippet>104</a>        <span class="self">Self </span>{
-<a href=#105 id=105 data-nosnippet>105</a>            conjugate: direct.clone(),
-<a href=#106 id=106 data-nosnippet>106</a>            direct,
-<a href=#107 id=107 data-nosnippet>107</a>        }
-<a href=#108 id=108 data-nosnippet>108</a>    }
-<a href=#109 id=109 data-nosnippet>109</a>
-<a href=#110 id=110 data-nosnippet>110</a>    <span class="doccomment">/// Number of grid polarizations.
-<a href=#111 id=111 data-nosnippet>111</a>    </span><span class="attr">#[must_use]
-<a href=#112 id=112 data-nosnippet>112</a>    </span><span class="kw">pub fn </span>grid_pols(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#113 id=113 data-nosnippet>113</a>        <span class="self">self</span>.direct.len()
-<a href=#114 id=114 data-nosnippet>114</a>    }
-<a href=#115 id=115 data-nosnippet>115</a>
-<a href=#116 id=116 data-nosnippet>116</a>    <span class="doccomment">/// Number of visibility polarizations.
-<a href=#117 id=117 data-nosnippet>117</a>    </span><span class="attr">#[must_use]
-<a href=#118 id=118 data-nosnippet>118</a>    </span><span class="kw">pub fn </span>visibility_pols(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#119 id=119 data-nosnippet>119</a>        <span class="self">self</span>.direct.first().map_or(<span class="number">0</span>, Vec::len)
-<a href=#120 id=120 data-nosnippet>120</a>    }
-<a href=#121 id=121 data-nosnippet>121</a>
-<a href=#122 id=122 data-nosnippet>122</a>    <span class="doccomment">/// The table for one transform: the adjoint uses `direct` for `w &gt; 0`,
-<a href=#123 id=123 data-nosnippet>123</a>    /// the forward transform swaps them.
-<a href=#124 id=124 data-nosnippet>124</a>    </span><span class="attr">#[must_use]
-<a href=#125 id=125 data-nosnippet>125</a>    </span><span class="kw">pub fn </span>table(<span class="kw-2">&amp;</span><span class="self">self</span>, w_positive: bool, forward: bool) -&gt; <span class="kw-2">&amp;</span>[Vec&lt;<span class="prelude-ty">Option</span>&lt;u8&gt;&gt;] {
-<a href=#126 id=126 data-nosnippet>126</a>        <span class="kw">if </span>w_positive != forward {
-<a href=#127 id=127 data-nosnippet>127</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.direct
-<a href=#128 id=128 data-nosnippet>128</a>        } <span class="kw">else </span>{
-<a href=#129 id=129 data-nosnippet>129</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.conjugate
-<a href=#130 id=130 data-nosnippet>130</a>        }
+<a href=#74 id=74 data-nosnippet>74</a>    <span class="doccomment">/// The kernel norm `Σ (conjugate ? conj(t) : t)` of Mueller plane
+<a href=#75 id=75 data-nosnippet>75</a>    /// `mueller` at the fine offsets of `location`, summed in `f64` without
+<a href=#76 id=76 data-nosnippet>76</a>    /// the pointing ramp: the forward normalisation every backend divides
+<a href=#77 id=77 data-nosnippet>77</a>    /// by and whose magnitude `sumwt` accumulates (CASA
+<a href=#78 id=78 data-nosnippet>78</a>    /// `AWVisResampler::faccumulateFromGrid`).
+<a href=#79 id=79 data-nosnippet>79</a>    </span><span class="attr">#[must_use]
+<a href=#80 id=80 data-nosnippet>80</a>    </span><span class="kw">pub fn </span>norm(<span class="kw-2">&amp;</span><span class="self">self</span>, location: CellLocation, mueller: u8, conjugate: bool) -&gt; Complex64 {
+<a href=#81 id=81 data-nosnippet>81</a>        <span class="kw">crate</span>::cpu::kernel::norm(<span class="self">self</span>, location, mueller, conjugate)
+<a href=#82 id=82 data-nosnippet>82</a>    }
+<a href=#83 id=83 data-nosnippet>83</a>}
+<a href=#84 id=84 data-nosnippet>84</a>
+<a href=#85 id=85 data-nosnippet>85</a><span class="doccomment">/// Which kernel Mueller plane serves each (grid polarization, visibility
+<a href=#86 id=86 data-nosnippet>86</a>/// polarization) pair.
+<a href=#87 id=87 data-nosnippet>87</a>///
+<a href=#88 id=88 data-nosnippet>88</a>/// `direct` is the adjoint table for `w &gt; 0`; `conjugate` its partner for
+<a href=#89 id=89 data-nosnippet>89</a>/// `w ≤ 0`. The kernel swaps the tables on the sign of `w` and on the
+<a href=#90 id=90 data-nosnippet>90</a>/// direction of the transform and conjugates the taps (HPG
+<a href=#91 id=91 data-nosnippet>91</a>/// `mueller_indexes` / `conjugate_mueller_indexes`). `None` skips a pair.
+<a href=#92 id=92 data-nosnippet>92</a>/// Both tables are `[grid pol][visibility pol]`.
+<a href=#93 id=93 data-nosnippet>93</a></span><span class="attr">#[derive(Clone, Debug, PartialEq, Eq)]
+<a href=#94 id=94 data-nosnippet>94</a></span><span class="kw">pub struct </span>MuellerRouting {
+<a href=#95 id=95 data-nosnippet>95</a>    <span class="doccomment">/// Adjoint table for `w &gt; 0`.
+<a href=#96 id=96 data-nosnippet>96</a>    </span><span class="kw">pub </span>direct: Vec&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;u8&gt;&gt;&gt;,
+<a href=#97 id=97 data-nosnippet>97</a>    <span class="doccomment">/// Adjoint table for `w ≤ 0`.
+<a href=#98 id=98 data-nosnippet>98</a>    </span><span class="kw">pub </span>conjugate: Vec&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;u8&gt;&gt;&gt;,
+<a href=#99 id=99 data-nosnippet>99</a>}
+<a href=#100 id=100 data-nosnippet>100</a>
+<a href=#101 id=101 data-nosnippet>101</a><span class="kw">impl </span>MuellerRouting {
+<a href=#102 id=102 data-nosnippet>102</a>    <span class="doccomment">/// Scalar routing: Mueller plane 0 for every pair `pol_map` joins
+<a href=#103 id=103 data-nosnippet>103</a>    /// (visibility polarization `p` feeds grid polarization `pol_map[p]`),
+<a href=#104 id=104 data-nosnippet>104</a>    /// with identical direct and conjugate tables.
+<a href=#105 id=105 data-nosnippet>105</a>    </span><span class="attr">#[must_use]
+<a href=#106 id=106 data-nosnippet>106</a>    </span><span class="kw">pub fn </span>scalar(pol_map: <span class="kw-2">&amp;</span>[<span class="prelude-ty">Option</span>&lt;u8&gt;], grid_pols: usize) -&gt; <span class="self">Self </span>{
+<a href=#107 id=107 data-nosnippet>107</a>        <span class="kw">let </span>direct = (<span class="number">0</span>..grid_pols)
+<a href=#108 id=108 data-nosnippet>108</a>            .map(|gpol| {
+<a href=#109 id=109 data-nosnippet>109</a>                pol_map
+<a href=#110 id=110 data-nosnippet>110</a>                    .iter()
+<a href=#111 id=111 data-nosnippet>111</a>                    .map(|target| (<span class="kw-2">*</span>target == <span class="prelude-val">Some</span>(gpol <span class="kw">as </span>u8)).then_some(<span class="number">0</span>))
+<a href=#112 id=112 data-nosnippet>112</a>                    .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+<a href=#113 id=113 data-nosnippet>113</a>            })
+<a href=#114 id=114 data-nosnippet>114</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#115 id=115 data-nosnippet>115</a>        <span class="self">Self </span>{
+<a href=#116 id=116 data-nosnippet>116</a>            conjugate: direct.clone(),
+<a href=#117 id=117 data-nosnippet>117</a>            direct,
+<a href=#118 id=118 data-nosnippet>118</a>        }
+<a href=#119 id=119 data-nosnippet>119</a>    }
+<a href=#120 id=120 data-nosnippet>120</a>
+<a href=#121 id=121 data-nosnippet>121</a>    <span class="doccomment">/// Number of grid polarizations.
+<a href=#122 id=122 data-nosnippet>122</a>    </span><span class="attr">#[must_use]
+<a href=#123 id=123 data-nosnippet>123</a>    </span><span class="kw">pub fn </span>grid_pols(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#124 id=124 data-nosnippet>124</a>        <span class="self">self</span>.direct.len()
+<a href=#125 id=125 data-nosnippet>125</a>    }
+<a href=#126 id=126 data-nosnippet>126</a>
+<a href=#127 id=127 data-nosnippet>127</a>    <span class="doccomment">/// Number of visibility polarizations.
+<a href=#128 id=128 data-nosnippet>128</a>    </span><span class="attr">#[must_use]
+<a href=#129 id=129 data-nosnippet>129</a>    </span><span class="kw">pub fn </span>visibility_pols(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#130 id=130 data-nosnippet>130</a>        <span class="self">self</span>.direct.first().map_or(<span class="number">0</span>, Vec::len)
 <a href=#131 id=131 data-nosnippet>131</a>    }
-<a href=#132 id=132 data-nosnippet>132</a>}
-<a href=#133 id=133 data-nosnippet>133</a>
-<a href=#134 id=134 data-nosnippet>134</a><span class="doccomment">/// Per-row context a kernel set keys its cells on.
-<a href=#135 id=135 data-nosnippet>135</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq)]
-<a href=#136 id=136 data-nosnippet>136</a></span><span class="kw">pub struct </span>RowContext {
-<a href=#137 id=137 data-nosnippet>137</a>    <span class="doccomment">/// Row time in seconds (MeasurementSet `TIME`).
-<a href=#138 id=138 data-nosnippet>138</a>    </span><span class="kw">pub </span>time_s: f64,
-<a href=#139 id=139 data-nosnippet>139</a>    <span class="doccomment">/// Antenna pair.
-<a href=#140 id=140 data-nosnippet>140</a>    </span><span class="kw">pub </span>antennas: [u32; <span class="number">2</span>],
-<a href=#141 id=141 data-nosnippet>141</a>    <span class="doccomment">/// Parallactic angle of each antenna in radians.
-<a href=#142 id=142 data-nosnippet>142</a>    </span><span class="kw">pub </span>parallactic_angle_rad: [f64; <span class="number">2</span>],
-<a href=#143 id=143 data-nosnippet>143</a>    <span class="doccomment">/// Field (pointing) identifier.
-<a href=#144 id=144 data-nosnippet>144</a>    </span><span class="kw">pub </span>field: u32,
-<a href=#145 id=145 data-nosnippet>145</a>    <span class="doccomment">/// Pointing offset from the image phase centre in radians `[Δl, Δm]`.
-<a href=#146 id=146 data-nosnippet>146</a>    </span><span class="kw">pub </span>pointing_offset_rad: [f64; <span class="number">2</span>],
-<a href=#147 id=147 data-nosnippet>147</a>}
-<a href=#148 id=148 data-nosnippet>148</a>
-<a href=#149 id=149 data-nosnippet>149</a><span class="doccomment">/// Paired image-domain gridding correction: one real vector per grid axis,
-<a href=#150 id=150 data-nosnippet>150</a>/// applied as `x[gx] · y[gy]` on both sides of the operator (CASA divides
-<a href=#151 id=151 data-nosnippet>151</a>/// the model and the dirty image by the same spheroidal response).
-<a href=#152 id=152 data-nosnippet>152</a></span><span class="attr">#[derive(Clone, Debug, PartialEq)]
-<a href=#153 id=153 data-nosnippet>153</a></span><span class="kw">pub struct </span>ImageCorrection {
-<a href=#154 id=154 data-nosnippet>154</a>    x: Box&lt;[f64]&gt;,
-<a href=#155 id=155 data-nosnippet>155</a>    y: Box&lt;[f64]&gt;,
-<a href=#156 id=156 data-nosnippet>156</a>}
-<a href=#157 id=157 data-nosnippet>157</a>
-<a href=#158 id=158 data-nosnippet>158</a><span class="kw">impl </span>ImageCorrection {
-<a href=#159 id=159 data-nosnippet>159</a>    <span class="doccomment">/// Correction vectors over the padded grid axes.
-<a href=#160 id=160 data-nosnippet>160</a>    </span><span class="attr">#[must_use]
-<a href=#161 id=161 data-nosnippet>161</a>    </span><span class="kw">pub fn </span>new(x: Vec&lt;f64&gt;, y: Vec&lt;f64&gt;) -&gt; <span class="self">Self </span>{
-<a href=#162 id=162 data-nosnippet>162</a>        <span class="self">Self </span>{
-<a href=#163 id=163 data-nosnippet>163</a>            x: x.into_boxed_slice(),
-<a href=#164 id=164 data-nosnippet>164</a>            y: y.into_boxed_slice(),
-<a href=#165 id=165 data-nosnippet>165</a>        }
-<a href=#166 id=166 data-nosnippet>166</a>    }
-<a href=#167 id=167 data-nosnippet>167</a>
-<a href=#168 id=168 data-nosnippet>168</a>    <span class="doccomment">/// Correction along the grid x axis.
-<a href=#169 id=169 data-nosnippet>169</a>    </span><span class="attr">#[must_use]
-<a href=#170 id=170 data-nosnippet>170</a>    </span><span class="kw">pub fn </span>x(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[f64] {
-<a href=#171 id=171 data-nosnippet>171</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.x
-<a href=#172 id=172 data-nosnippet>172</a>    }
-<a href=#173 id=173 data-nosnippet>173</a>
-<a href=#174 id=174 data-nosnippet>174</a>    <span class="doccomment">/// Correction along the grid y axis.
-<a href=#175 id=175 data-nosnippet>175</a>    </span><span class="attr">#[must_use]
-<a href=#176 id=176 data-nosnippet>176</a>    </span><span class="kw">pub fn </span>y(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[f64] {
-<a href=#177 id=177 data-nosnippet>177</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.y
-<a href=#178 id=178 data-nosnippet>178</a>    }
-<a href=#179 id=179 data-nosnippet>179</a>
-<a href=#180 id=180 data-nosnippet>180</a>    <span class="doccomment">/// Correction at grid cell `(gx, gy)`.
-<a href=#181 id=181 data-nosnippet>181</a>    </span><span class="attr">#[must_use]
-<a href=#182 id=182 data-nosnippet>182</a>    </span><span class="kw">pub fn </span>at(<span class="kw-2">&amp;</span><span class="self">self</span>, gx: usize, gy: usize) -&gt; f64 {
-<a href=#183 id=183 data-nosnippet>183</a>        <span class="self">self</span>.x[gx] * <span class="self">self</span>.y[gy]
-<a href=#184 id=184 data-nosnippet>184</a>    }
-<a href=#185 id=185 data-nosnippet>185</a>}
-<a href=#186 id=186 data-nosnippet>186</a>
-<a href=#187 id=187 data-nosnippet>187</a><span class="doccomment">/// A kernel set: pure cell selection plus the taps, routing and correction
-<a href=#188 id=188 data-nosnippet>188</a>/// the kernels read. Implementations: the standard spheroidal set, W-planes,
-<a href=#189 id=189 data-nosnippet>189</a>/// the AW catalog and the mosaic primary beam.
-<a href=#190 id=190 data-nosnippet>190</a></span><span class="kw">pub trait </span>ConvolutionFunctionSet: Send + Sync {
-<a href=#191 id=191 data-nosnippet>191</a>    <span class="doccomment">/// Cell for one row at `freq_hz` and `w_lambda`. Pure; CASA-pinned
-<a href=#192 id=192 data-nosnippet>192</a>    /// rounding rules for w-planes, frequency and parallactic-angle cells
-<a href=#193 id=193 data-nosnippet>193</a>    /// live here.
-<a href=#194 id=194 data-nosnippet>194</a>    </span><span class="kw">fn </span>key(<span class="kw-2">&amp;</span><span class="self">self</span>, row: <span class="kw-2">&amp;</span>RowContext, freq_hz: f64, w_lambda: f64) -&gt; CfKey;
-<a href=#195 id=195 data-nosnippet>195</a>
-<a href=#196 id=196 data-nosnippet>196</a>    <span class="doccomment">/// Imaging taps of a cell.
-<a href=#197 id=197 data-nosnippet>197</a>    </span><span class="kw">fn </span>taps(<span class="kw-2">&amp;</span><span class="self">self</span>, key: CfKey) -&gt; TapLayout&lt;<span class="lifetime">'_</span>&gt;;
-<a href=#198 id=198 data-nosnippet>198</a>
-<a href=#199 id=199 data-nosnippet>199</a>    <span class="doccomment">/// The largest [`TapLayout::half_support`] of any cell `key` can
-<a href=#200 id=200 data-nosnippet>200</a>    /// return, `[x, y]`: the halo a tile needs so that every sample anchored
-<a href=#201 id=201 data-nosnippet>201</a>    /// inside it keeps its whole support in the tile.
-<a href=#202 id=202 data-nosnippet>202</a>    </span><span class="kw">fn </span>max_half_support(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; [u16; <span class="number">2</span>];
-<a href=#203 id=203 data-nosnippet>203</a>
-<a href=#204 id=204 data-nosnippet>204</a>    <span class="doccomment">/// `FT[PB²]` taps for the weight (sensitivity) image, placed at the uv
-<a href=#205 id=205 data-nosnippet>205</a>    /// origin; `None` for sets without a weight image.
-<a href=#206 id=206 data-nosnippet>206</a>    </span><span class="kw">fn </span>weight_taps(<span class="kw-2">&amp;</span><span class="self">self</span>, key: CfKey) -&gt; <span class="prelude-ty">Option</span>&lt;TapLayout&lt;<span class="lifetime">'_</span>&gt;&gt;;
-<a href=#207 id=207 data-nosnippet>207</a>
-<a href=#208 id=208 data-nosnippet>208</a>    <span class="doccomment">/// Mueller plane routing for every cell of the set.
-<a href=#209 id=209 data-nosnippet>209</a>    </span><span class="kw">fn </span>mueller(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>MuellerRouting;
-<a href=#210 id=210 data-nosnippet>210</a>
-<a href=#211 id=211 data-nosnippet>211</a>    <span class="doccomment">/// The paired image-domain correction.
-<a href=#212 id=212 data-nosnippet>212</a>    </span><span class="kw">fn </span>image_correction(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>ImageCorrection;
-<a href=#213 id=213 data-nosnippet>213</a>}
+<a href=#132 id=132 data-nosnippet>132</a>
+<a href=#133 id=133 data-nosnippet>133</a>    <span class="doccomment">/// The table for one transform: the adjoint uses `direct` for `w &gt; 0`,
+<a href=#134 id=134 data-nosnippet>134</a>    /// the forward transform swaps them.
+<a href=#135 id=135 data-nosnippet>135</a>    </span><span class="attr">#[must_use]
+<a href=#136 id=136 data-nosnippet>136</a>    </span><span class="kw">pub fn </span>table(<span class="kw-2">&amp;</span><span class="self">self</span>, w_positive: bool, forward: bool) -&gt; <span class="kw-2">&amp;</span>[Vec&lt;<span class="prelude-ty">Option</span>&lt;u8&gt;&gt;] {
+<a href=#137 id=137 data-nosnippet>137</a>        <span class="kw">if </span>w_positive != forward {
+<a href=#138 id=138 data-nosnippet>138</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.direct
+<a href=#139 id=139 data-nosnippet>139</a>        } <span class="kw">else </span>{
+<a href=#140 id=140 data-nosnippet>140</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.conjugate
+<a href=#141 id=141 data-nosnippet>141</a>        }
+<a href=#142 id=142 data-nosnippet>142</a>    }
+<a href=#143 id=143 data-nosnippet>143</a>}
+<a href=#144 id=144 data-nosnippet>144</a>
+<a href=#145 id=145 data-nosnippet>145</a><span class="doccomment">/// Per-row context a kernel set keys its cells on.
+<a href=#146 id=146 data-nosnippet>146</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq)]
+<a href=#147 id=147 data-nosnippet>147</a></span><span class="kw">pub struct </span>RowContext {
+<a href=#148 id=148 data-nosnippet>148</a>    <span class="doccomment">/// Row time in seconds (MeasurementSet `TIME`).
+<a href=#149 id=149 data-nosnippet>149</a>    </span><span class="kw">pub </span>time_s: f64,
+<a href=#150 id=150 data-nosnippet>150</a>    <span class="doccomment">/// Antenna pair.
+<a href=#151 id=151 data-nosnippet>151</a>    </span><span class="kw">pub </span>antennas: [u32; <span class="number">2</span>],
+<a href=#152 id=152 data-nosnippet>152</a>    <span class="doccomment">/// Parallactic angle of each antenna in radians.
+<a href=#153 id=153 data-nosnippet>153</a>    </span><span class="kw">pub </span>parallactic_angle_rad: [f64; <span class="number">2</span>],
+<a href=#154 id=154 data-nosnippet>154</a>    <span class="doccomment">/// Field (pointing) identifier.
+<a href=#155 id=155 data-nosnippet>155</a>    </span><span class="kw">pub </span>field: u32,
+<a href=#156 id=156 data-nosnippet>156</a>    <span class="doccomment">/// Pointing offset from the image phase centre in radians `[Δl, Δm]`.
+<a href=#157 id=157 data-nosnippet>157</a>    </span><span class="kw">pub </span>pointing_offset_rad: [f64; <span class="number">2</span>],
+<a href=#158 id=158 data-nosnippet>158</a>}
+<a href=#159 id=159 data-nosnippet>159</a>
+<a href=#160 id=160 data-nosnippet>160</a><span class="doccomment">/// Paired image-domain gridding correction: one real vector per grid axis,
+<a href=#161 id=161 data-nosnippet>161</a>/// applied as `x[gx] · y[gy]` on both sides of the operator (CASA divides
+<a href=#162 id=162 data-nosnippet>162</a>/// the model and the dirty image by the same spheroidal response).
+<a href=#163 id=163 data-nosnippet>163</a></span><span class="attr">#[derive(Clone, Debug, PartialEq)]
+<a href=#164 id=164 data-nosnippet>164</a></span><span class="kw">pub struct </span>ImageCorrection {
+<a href=#165 id=165 data-nosnippet>165</a>    x: Box&lt;[f64]&gt;,
+<a href=#166 id=166 data-nosnippet>166</a>    y: Box&lt;[f64]&gt;,
+<a href=#167 id=167 data-nosnippet>167</a>}
+<a href=#168 id=168 data-nosnippet>168</a>
+<a href=#169 id=169 data-nosnippet>169</a><span class="kw">impl </span>ImageCorrection {
+<a href=#170 id=170 data-nosnippet>170</a>    <span class="doccomment">/// Correction vectors over the padded grid axes.
+<a href=#171 id=171 data-nosnippet>171</a>    </span><span class="attr">#[must_use]
+<a href=#172 id=172 data-nosnippet>172</a>    </span><span class="kw">pub fn </span>new(x: Vec&lt;f64&gt;, y: Vec&lt;f64&gt;) -&gt; <span class="self">Self </span>{
+<a href=#173 id=173 data-nosnippet>173</a>        <span class="self">Self </span>{
+<a href=#174 id=174 data-nosnippet>174</a>            x: x.into_boxed_slice(),
+<a href=#175 id=175 data-nosnippet>175</a>            y: y.into_boxed_slice(),
+<a href=#176 id=176 data-nosnippet>176</a>        }
+<a href=#177 id=177 data-nosnippet>177</a>    }
+<a href=#178 id=178 data-nosnippet>178</a>
+<a href=#179 id=179 data-nosnippet>179</a>    <span class="doccomment">/// Correction along the grid x axis.
+<a href=#180 id=180 data-nosnippet>180</a>    </span><span class="attr">#[must_use]
+<a href=#181 id=181 data-nosnippet>181</a>    </span><span class="kw">pub fn </span>x(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[f64] {
+<a href=#182 id=182 data-nosnippet>182</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.x
+<a href=#183 id=183 data-nosnippet>183</a>    }
+<a href=#184 id=184 data-nosnippet>184</a>
+<a href=#185 id=185 data-nosnippet>185</a>    <span class="doccomment">/// Correction along the grid y axis.
+<a href=#186 id=186 data-nosnippet>186</a>    </span><span class="attr">#[must_use]
+<a href=#187 id=187 data-nosnippet>187</a>    </span><span class="kw">pub fn </span>y(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[f64] {
+<a href=#188 id=188 data-nosnippet>188</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.y
+<a href=#189 id=189 data-nosnippet>189</a>    }
+<a href=#190 id=190 data-nosnippet>190</a>
+<a href=#191 id=191 data-nosnippet>191</a>    <span class="doccomment">/// Correction at grid cell `(gx, gy)`.
+<a href=#192 id=192 data-nosnippet>192</a>    </span><span class="attr">#[must_use]
+<a href=#193 id=193 data-nosnippet>193</a>    </span><span class="kw">pub fn </span>at(<span class="kw-2">&amp;</span><span class="self">self</span>, gx: usize, gy: usize) -&gt; f64 {
+<a href=#194 id=194 data-nosnippet>194</a>        <span class="self">self</span>.x[gx] * <span class="self">self</span>.y[gy]
+<a href=#195 id=195 data-nosnippet>195</a>    }
+<a href=#196 id=196 data-nosnippet>196</a>}
+<a href=#197 id=197 data-nosnippet>197</a>
+<a href=#198 id=198 data-nosnippet>198</a><span class="doccomment">/// A kernel set: pure cell selection plus the taps, routing and correction
+<a href=#199 id=199 data-nosnippet>199</a>/// the kernels read. Implementations: the standard spheroidal set, W-planes,
+<a href=#200 id=200 data-nosnippet>200</a>/// the AW catalog and the mosaic primary beam.
+<a href=#201 id=201 data-nosnippet>201</a></span><span class="kw">pub trait </span>ConvolutionFunctionSet: Send + Sync {
+<a href=#202 id=202 data-nosnippet>202</a>    <span class="doccomment">/// Cell for one row at `freq_hz` and `w_lambda`. Pure; CASA-pinned
+<a href=#203 id=203 data-nosnippet>203</a>    /// rounding rules for w-planes, frequency and parallactic-angle cells
+<a href=#204 id=204 data-nosnippet>204</a>    /// live here.
+<a href=#205 id=205 data-nosnippet>205</a>    </span><span class="kw">fn </span>key(<span class="kw-2">&amp;</span><span class="self">self</span>, row: <span class="kw-2">&amp;</span>RowContext, freq_hz: f64, w_lambda: f64) -&gt; CfKey;
+<a href=#206 id=206 data-nosnippet>206</a>
+<a href=#207 id=207 data-nosnippet>207</a>    <span class="doccomment">/// Imaging taps of a cell.
+<a href=#208 id=208 data-nosnippet>208</a>    </span><span class="kw">fn </span>taps(<span class="kw-2">&amp;</span><span class="self">self</span>, key: CfKey) -&gt; TapLayout&lt;<span class="lifetime">'_</span>&gt;;
+<a href=#209 id=209 data-nosnippet>209</a>
+<a href=#210 id=210 data-nosnippet>210</a>    <span class="doccomment">/// The largest [`TapLayout::half_support`] of any cell `key` can
+<a href=#211 id=211 data-nosnippet>211</a>    /// return, `[x, y]`: the halo a tile needs so that every sample anchored
+<a href=#212 id=212 data-nosnippet>212</a>    /// inside it keeps its whole support in the tile.
+<a href=#213 id=213 data-nosnippet>213</a>    </span><span class="kw">fn </span>max_half_support(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; [u16; <span class="number">2</span>];
+<a href=#214 id=214 data-nosnippet>214</a>
+<a href=#215 id=215 data-nosnippet>215</a>    <span class="doccomment">/// `FT[PB²]` taps for the weight (sensitivity) image, placed at the uv
+<a href=#216 id=216 data-nosnippet>216</a>    /// origin; `None` for sets without a weight image.
+<a href=#217 id=217 data-nosnippet>217</a>    </span><span class="kw">fn </span>weight_taps(<span class="kw-2">&amp;</span><span class="self">self</span>, key: CfKey) -&gt; <span class="prelude-ty">Option</span>&lt;TapLayout&lt;<span class="lifetime">'_</span>&gt;&gt;;
+<a href=#218 id=218 data-nosnippet>218</a>
+<a href=#219 id=219 data-nosnippet>219</a>    <span class="doccomment">/// Mueller plane routing for every cell of the set.
+<a href=#220 id=220 data-nosnippet>220</a>    </span><span class="kw">fn </span>mueller(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>MuellerRouting;
+<a href=#221 id=221 data-nosnippet>221</a>
+<a href=#222 id=222 data-nosnippet>222</a>    <span class="doccomment">/// The paired image-domain correction.
+<a href=#223 id=223 data-nosnippet>223</a>    </span><span class="kw">fn </span>image_correction(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>ImageCorrection;
+<a href=#224 id=224 data-nosnippet>224</a>}
 </code></pre></div></section></main></body></html>
