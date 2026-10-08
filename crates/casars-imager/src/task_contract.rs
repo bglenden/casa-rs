@@ -3152,8 +3152,16 @@ mod tests {
             .find(|entry| entry.id == "task.aw_projection")
             .expect("AWProject capability");
         assert_eq!(awproject.kind, "task");
-        assert!(awproject.supported);
-        assert_eq!(awproject.unsupported_reason, None);
+        // AW projection is typed unavailable from IF-2 until IF-3 installs
+        // its convolution-function set in the major-cycle pass (#652).
+        assert!(!awproject.supported);
+        assert_eq!(
+            awproject.unsupported_reason,
+            Some(super::ImagerUnsupportedReason {
+                kind: "task".to_string(),
+                id: "task.aw_projection".to_string(),
+            })
+        );
         assert!(bundle.projections.cli.is_some());
         assert_eq!(bundle.parameter_surfaces.len(), 1);
         assert_eq!(bundle.parameter_surfaces[0].surface.id(), "imager");
