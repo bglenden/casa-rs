@@ -122,7 +122,8 @@ pub enum UnsupportedRequirement {
     IndependentBasisForPolarizationSelection,
     /// The implementation requires a scalar measurement equation.
     ScalarInstrumentResponse,
-    /// The cube spectral kernel is neither nearest nor linear.
+    /// The cube spectral kernel is neither nearest nor linear; cubic waits
+    /// for #42, after IF-4.
     NearestOrLinearCubeInterpolation,
 }
 
@@ -347,7 +348,7 @@ const fn supports_task(requirement: TaskRequirement) -> bool {
 }
 
 /// Scientific capabilities of the major-cycle pass. Faceted geometry has no
-/// pass implementation (owner decision pending on #651); the primary-beam
+/// pass implementation until #664, after IF-4; the primary-beam
 /// response, W and A projection and the mosaic weight products wait for
 /// IF-3 (#652).
 const fn supports_capability(capability: RequiredCapability) -> bool {
