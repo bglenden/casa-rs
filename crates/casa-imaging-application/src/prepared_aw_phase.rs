@@ -721,7 +721,7 @@ mod tests {
         WeightingScheme, compile,
     };
     use casa_imaging_runtime::{
-        BuildIdentity, ExecutionReceiptStore, ManagedSpillStorage, PlannerCostModelProfileId,
+        BuildIdentity, ExecutionReceiptStore, PagedStateDirectory, PlannerCostModelProfileId,
         ProductionStorageProfile, ReceiptRetention, ResourceAuthority, ResourcePolicy,
     };
     use tempfile::TempDir;
@@ -1061,7 +1061,7 @@ mod tests {
             implementation: WorkImplementationId::new("aw-preparation-test"),
             stage_nanos: 1_000,
             storage_io: storage_io.clone(),
-            paged_state_storage: ManagedSpillStorage::bind(&authority, storage_io, &spill)
+            paged_state_storage: PagedStateDirectory::bind(&authority, &storage_io, &spill)
                 .expect("bind test spill"),
             confidence_parts_per_million: 900_000,
             resource_policy: ResourcePolicy::Exclusive,

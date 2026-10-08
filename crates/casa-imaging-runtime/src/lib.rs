@@ -5,21 +5,17 @@
 mod cube_state;
 mod execution;
 mod execution_bindings;
-#[allow(
-    dead_code,
-    reason = "review-1 foundation is connected to cube callers in milestone B"
-)]
 mod managed_cube_blocks;
 mod managed_model;
 mod managed_normal;
-mod managed_spill;
 mod observation_transaction;
+mod paged_state_directory;
 pub mod pass;
 pub use cube_state::CubeState;
 mod minor;
 pub use minor::{MinorCycleOutcome, MinorCycleRunError, run_minor_cycle};
-// IF-2 removed the AW replay that read prepared artifacts; IF-3 (#652)
-// replaces the store with `AwCatalog` (plan section 6 row 5).
+// Nothing reads prepared artifacts until the AW catalog replaces the store
+// (plan section 6 row 5).
 #[expect(dead_code, reason = "IF-3 (#652) deletes the prepared-artifact store")]
 mod prepared_artifact;
 pub mod product_publication;
@@ -44,7 +40,6 @@ pub use execution_bindings::{
     WorkMeasurements, plan, run,
 };
 
-pub use casa_imaging_reconstruction::{MajorCyclePreparation, SpectralPrimitiveCatalog};
 pub use execution::{
     AdaptationId, AdaptationTransition, AllocationAccess, AllocationDisposition, AllocationId,
     AllocationLayout, AllocationLifetime, AllocationPurpose, AllocationUse, ClaimLifetime,
@@ -54,11 +49,11 @@ pub use execution::{
     WorkAllocationCapability, WorkDependency, WorkDomain, WorkImplementationId, WorkKind, WorkNode,
     WorkNodeId, WorkResourceCapability,
 };
-pub use managed_spill::ManagedSpillStorage;
 pub use observation_transaction::{
     BoundObservationTransaction, ObservationTransactionPlanError,
     ObservationTransactionPublicationScope, ObservationTransactionWork,
 };
+pub use paged_state_directory::{PagedStateDirectory, PagedStateDirectoryError};
 pub use prepared_artifact::{
     PreparedArtifact, PreparedArtifactBudget, PreparedArtifactCatalogEntryOutcome,
     PreparedArtifactCatalogPlanFragment, PreparedArtifactCatalogReuseOutcome,

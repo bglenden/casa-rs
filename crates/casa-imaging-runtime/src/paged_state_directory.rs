@@ -9,53 +9,50 @@ use thiserror::Error;
 
 use crate::resource_authority::{ResourceAuthority, StorageIoResourceBinding};
 
-/// Authority-validated writable location for one run's private paged state.
-///
-/// The directory lies inside the root of the storage domain its resources
-/// name, on the same device, so the domain's capacity and rates govern it.
+/// The writable directory one run pages its cube state into, validated to
+/// lie inside the root of the storage domain its resources name, on the same
+/// device. [`crate::CubeState::new`] checks the directory has room for the
+/// whole paged state; nothing is reserved against the domain's capacity.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ManagedSpillStorage {
-    resources: StorageIoResourceBinding,
+pub struct PagedStateDirectory {
     directory: PathBuf,
 }
 
-impl ManagedSpillStorage {
+impl PagedStateDirectory {
     /// Bind one writable directory to the calibrated storage domain that owns it.
     pub fn bind(
         authority: &ResourceAuthority,
-        resources: StorageIoResourceBinding,
+        resources: &StorageIoResourceBinding,
         directory: impl AsRef<Path>,
-    ) -> io::Result<Self> {
-        let directory = validate_storage_directory(authority, &resources, directory.as_ref())
-            .map_err(io::Error::other)?;
+    ) -> Result<Self, PagedStateDirectoryError> {
         Ok(Self {
-            resources,
-            directory,
+            directory: validate_storage_directory(authority, resources, directory.as_ref())?,
         })
     }
 
-    /// Return the path-free storage resources used by physical planning.
-    #[must_use]
-    pub const fn resources(&self) -> &StorageIoResourceBinding {
-        &self.resources
-    }
-
-    /// Directory already certified against the Resource Authority's storage domain.
+    /// The validated directory.
     #[must_use]
     pub fn directory(&self) -> &Path {
         &self.directory
     }
 }
 
+/// Why a directory could not be bound for paged state.
 #[derive(Debug, Error)]
-enum StorageBindingError {
+pub enum PagedStateDirectoryError {
+    /// The resources do not name one of the authority's storage domains.
     #[error("the storage binding does not match its authority domain")]
     Mismatch,
+    /// The directory is not an absolute directory under the domain's root on
+    /// its device.
     #[error("the storage directory is not an absolute directory on its domain's device")]
     InvalidRoot,
+    /// The directory or the domain root could not be resolved or inspected.
     #[error("{operation} failed: {source}")]
     Io {
+        /// What was being done.
         operation: &'static str,
+        /// The underlying failure.
         #[source]
         source: io::Error,
     },
@@ -65,28 +62,28 @@ fn validate_storage_directory(
     authority: &ResourceAuthority,
     storage: &StorageIoResourceBinding,
     directory: &Path,
-) -> Result<PathBuf, StorageBindingError> {
+) -> Result<PathBuf, PagedStateDirectoryError> {
     let domain = authority
         .topology()
         .storage_domains
         .iter()
         .find(|domain| &domain.id == storage.domain())
-        .ok_or(StorageBindingError::Mismatch)?;
+        .ok_or(PagedStateDirectoryError::Mismatch)?;
     if &domain.read_rate != storage.read_rate()
         || &domain.write_rate != storage.write_rate()
         || &domain.queue != storage.queue()
     {
-        return Err(StorageBindingError::Mismatch);
+        return Err(PagedStateDirectoryError::Mismatch);
     }
     let canonical = |path: &Path, operation| {
         path.canonicalize()
-            .map_err(|source| StorageBindingError::Io { operation, source })
+            .map_err(|source| PagedStateDirectoryError::Io { operation, source })
     };
     let root = canonical(&domain.root, "resolve the storage-domain root")?;
     let directory = canonical(directory, "resolve the storage directory")?;
     let metadata = |path: &Path, operation| {
         path.metadata()
-            .map_err(|source| StorageBindingError::Io { operation, source })
+            .map_err(|source| PagedStateDirectoryError::Io { operation, source })
     };
     let root_metadata = metadata(&root, "inspect the storage-domain root")?;
     let directory_metadata = metadata(&directory, "inspect the storage directory")?;
@@ -97,7 +94,7 @@ fn validate_storage_directory(
         || !directory.starts_with(&root)
         || directory_metadata.dev() != root_metadata.dev()
     {
-        return Err(StorageBindingError::InvalidRoot);
+        return Err(PagedStateDirectoryError::InvalidRoot);
     }
     Ok(directory)
 }
@@ -182,18 +179,23 @@ mod tests {
         let nested = root.path().join("run");
         std::fs::create_dir(&nested).expect("run directory");
         let (authority, resources) = authority(root.path());
-        let storage =
-            ManagedSpillStorage::bind(&authority, resources.clone(), &nested).expect("binding");
+        let storage = PagedStateDirectory::bind(&authority, &resources, &nested).expect("binding");
         assert_eq!(storage.directory(), nested.canonicalize().unwrap());
 
         let outside = tempfile::tempdir().expect("outside root");
-        assert!(ManagedSpillStorage::bind(&authority, resources.clone(), outside.path()).is_err());
+        assert!(matches!(
+            PagedStateDirectory::bind(&authority, &resources, outside.path()),
+            Err(PagedStateDirectoryError::InvalidRoot)
+        ));
         let foreign_queue = StorageIoResourceBinding::new(
             resources.domain().clone(),
             resources.read_rate().clone(),
             resources.write_rate().clone(),
             QueueResourceId::new("foreign-queue"),
         );
-        assert!(ManagedSpillStorage::bind(&authority, foreign_queue, root.path()).is_err());
+        assert!(matches!(
+            PagedStateDirectory::bind(&authority, &foreign_queue, root.path()),
+            Err(PagedStateDirectoryError::Mismatch)
+        ));
     }
 }

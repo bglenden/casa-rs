@@ -62,6 +62,7 @@ pub(crate) struct ImagingOutcome {
     pub(crate) total_actual_minor_iterations: usize,
     pub(crate) visibility_products: Option<VisibilityProductCompletion>,
     pub(crate) workers: usize,
+    pub(crate) planes_per_wave: Option<u32>,
 }
 
 /// Fixed parts of one run shared by every pass.
@@ -78,6 +79,8 @@ struct Run<'a> {
     native_spacing_hz: f64,
     attempts: u64,
     visibility_write: Option<VisibilityWriteTarget>,
+    /// Planes per wave of the most finely waved pass so far.
+    planes_per_wave: Option<u32>,
 }
 
 /// One reconciled major cycle and the lifecycle that owns its model.
@@ -106,6 +109,7 @@ pub(crate) fn run(inputs: ImagingInputs<'_>) -> Result<ImagingOutcome, ImagingEr
             total_actual_minor_iterations: 0,
             visibility_products: major.visibility,
             workers: run.team.workers(),
+            planes_per_wave: run.planes_per_wave,
         });
     }
     // CASA's `nmajor = -1` leaves the major-cycle count open, but every
@@ -171,6 +175,7 @@ pub(crate) fn run(inputs: ImagingInputs<'_>) -> Result<ImagingOutcome, ImagingEr
             total_actual_minor_iterations: totals.1,
             visibility_products: major.visibility,
             workers: run.team.workers(),
+            planes_per_wave: run.planes_per_wave,
         });
     }
     unreachable!("the cycle counter is unbounded")
@@ -229,6 +234,7 @@ impl<'a> Run<'a> {
             native_spacing_hz: native_spacing_hz(problem),
             attempts: 0,
             visibility_write: inputs.visibility_write,
+            planes_per_wave: None,
         };
         if run.visibility_write.is_some() {
             // The pass that writes is the initial one without cleaning and a
@@ -334,6 +340,12 @@ impl<'a> Run<'a> {
             .map(|target| VisibilityWriter::begin(target, transform))
             .transpose()
             .map_err(|error| ImagingError::Pass(PassError::VisibilityWrite(error)))?;
+        if let Residency::Waves { planes_per_wave } = residency {
+            self.planes_per_wave = Some(
+                self.planes_per_wave
+                    .map_or(planes_per_wave, |planes| planes.min(planes_per_wave)),
+            );
+        }
         let started = Instant::now();
         let summary = self.pass(
             modes,
@@ -594,11 +606,15 @@ fn cube_state(
     memory: u64,
 ) -> Result<CubeState, ImagingError> {
     let target = problem.model_lifecycle().target();
-    let [width, height] = target.domains()[0].pixels();
-    let planes = target.sample_count() / (width * height);
-    let (minimum, full) = CubeState::cache_limits(directory, [width, height], planes, workers)?;
+    let domains = target
+        .domains()
+        .iter()
+        .map(|domain| domain.pixels())
+        .collect::<Vec<_>>();
+    let planes = target.coefficients() * target.polarizations();
+    let (minimum, full) = CubeState::cache_limits(directory, &domains, planes, workers)?;
     let cache = full.min(minimum.max(usize::try_from(memory / 4).unwrap_or(usize::MAX)));
-    Ok(CubeState::new(directory, [width, height], planes, cache)?)
+    Ok(CubeState::new(directory, &domains, planes, cache)?)
 }
 
 fn minor_program(

@@ -45,7 +45,7 @@ use casa_imaging_model::{
 use casa_imaging_reconstruction::{MinorCycleImageResponse, ReconstructionMaskPlan};
 use casa_imaging_runtime::{
     BuildIdentity, ExecutionAttemptId, ExecutionReceiptStore, ImplementationRegistryId,
-    ManagedSpillStorage, PlannerCostModelProfileId, ProductionStorageProfile, ReceiptRetention,
+    PagedStateDirectory, PlannerCostModelProfileId, ProductionStorageProfile, ReceiptRetention,
     ResourceAuthority, ResourceOverride, ResourcePolicy, WorkImplementationId,
 };
 use casa_ms::{
@@ -3216,7 +3216,7 @@ fn runtime(
     let authority = ResourceAuthority::production_with_storage_profile(profile)?.clone();
     let storage_io = profile.io_resources();
     let paged_state_storage =
-        ManagedSpillStorage::bind(&authority, storage_io.clone(), &output_directory)?;
+        PagedStateDirectory::bind(&authority, &storage_io, &output_directory)?;
     Ok(ApplicationRuntime {
         registry: ImplementationRegistryId::from_sha256(hash(b"spectral-cycle-registry")),
         implementation: WorkImplementationId::new("spectral-cycle-cpu-v1"),

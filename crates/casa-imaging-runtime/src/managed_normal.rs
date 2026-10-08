@@ -10,36 +10,43 @@ use num_complex::Complex64;
 
 use crate::managed_cube_blocks::{CubeResidency, ManagedPlaneArray};
 
+/// Paged normal planes for every image domain of a run, each of its own
+/// `[height, width]`.
 pub(crate) struct ManagedNormalFactory {
     residency: Arc<CubeResidency>,
     retention: Arc<dyn fmt::Debug + Send + Sync>,
     parent: Box<Path>,
-    axes: [usize; 2],
+    domains: Vec<[usize; 2]>,
 }
 
 impl fmt::Debug for ManagedNormalFactory {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ManagedNormalFactory")
-            .field("axes", &self.axes)
+            .field("domains", &self.domains)
             .finish_non_exhaustive()
     }
 }
 
 impl ManagedNormalFactory {
+    /// Storage for planes of each `[height, width]` in `domains`.
     pub(crate) fn new(
         residency: Arc<CubeResidency>,
         retention: Arc<dyn fmt::Debug + Send + Sync>,
         parent: &Path,
-        axes: [usize; 2],
+        domains: &[[usize; 2]],
     ) -> io::Result<Self> {
-        if axes.contains(&0) || axes[0].checked_mul(axes[1]).is_none() {
+        if domains.is_empty()
+            || domains
+                .iter()
+                .any(|axes| axes.contains(&0) || axes[0].checked_mul(axes[1]).is_none())
+        {
             return Err(io::Error::other("managed normal shape is invalid"));
         }
         Ok(Self {
             residency,
             retention,
             parent: parent.into(),
-            axes,
+            domains: domains.to_vec(),
         })
     }
 }
@@ -49,12 +56,18 @@ impl NormalStorageFactory for ManagedNormalFactory {
         true
     }
 
+    /// Storage for slot `slot`: `2 · domain` holds a domain's epoch arrays,
+    /// `2 · domain + 1` its invariants.
     fn create(
         &self,
-        _domain: usize,
+        slot: usize,
         scalars: usize,
     ) -> Result<Box<dyn NormalArrayStorage>, SpectralOperatorError> {
-        let cells = self.axes[0] * self.axes[1];
+        let axes = *self
+            .domains
+            .get(slot / 2)
+            .ok_or_else(|| storage_error("normal storage has no such image domain"))?;
+        let cells = axes[0] * axes[1];
         let complex = scalars / 2;
         if scalars == 0 || !scalars.is_multiple_of(2) || !complex.is_multiple_of(cells) {
             return Err(storage_error(
@@ -64,8 +77,8 @@ impl NormalStorageFactory for ManagedNormalFactory {
         let array = ManagedPlaneArray::create(
             self.residency.clone(),
             &self.parent,
-            self.axes[0],
-            self.axes[1],
+            axes[0],
+            axes[1],
             complex / cells,
             None::<f32>,
         )
@@ -324,7 +337,7 @@ mod tests {
                 manager.clone(),
                 retention.clone(),
                 directory.path(),
-                [2, 3],
+                &[[2, 3]],
             )
             .unwrap();
             let mut normal = factory.create(0, 12).unwrap();
@@ -350,7 +363,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let manager = CubeResidency::new(1 << 20).unwrap();
         let factory =
-            ManagedNormalFactory::new(manager.clone(), Arc::new(()), directory.path(), [2, 3])
+            ManagedNormalFactory::new(manager.clone(), Arc::new(()), directory.path(), &[[2, 3]])
                 .unwrap();
         let mut normal = factory.create(0, 24).unwrap();
         normal

@@ -62,7 +62,7 @@ use casa_imaging_runtime::{
     AttemptBoundObservationCompletion, BuildIdentity, ExecutionAttemptId, ExecutionProvenance,
     ExecutionReceipt, ExecutionReceiptStore, ExecutionStatus, FenceKind,
     ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId,
-    ManagedSpillStorage, ObservationReadCompletionContext, PlannerCostModelProfileId,
+    ObservationReadCompletionContext, PagedStateDirectory, PlannerCostModelProfileId,
     PlanningBindings, ResourceAuthority, RunBindings, RunController, RunDirective,
     SerialProductPublicationExecutor, SerialProductPublicationPlan, SerialProductPublicationPolicy,
     SerialProductPublicationRegistry, SerialProductPublicationSink, StorageIoResourceBinding,
@@ -91,7 +91,7 @@ pub struct ApplicationRuntime {
     pub storage_io: StorageIoResourceBinding,
     /// Writable run-local directory the major-cycle pass pages cube state into
     /// when the state does not fit in memory.
-    pub paged_state_storage: ManagedSpillStorage,
+    pub paged_state_storage: PagedStateDirectory,
     /// Fixed-point confidence in parts per million.
     pub confidence_parts_per_million: u32,
     /// Host-use policy bound at planning and execution.
@@ -184,6 +184,9 @@ pub struct NativeApplicationOutcome {
     pub total_actual_minor_iterations: usize,
     /// Size of the worker team the major-cycle passes ran on.
     pub workers: usize,
+    /// Planes per wave of the most finely waved major-cycle pass; `None`
+    /// when every pass held every plane at once.
+    pub planes_per_wave: Option<u32>,
     /// Final per-visibility product identities and provenance, when requested.
     pub visibility_products: Option<VisibilityProductCompletion>,
     /// Atomic product-publication receipt.
@@ -416,6 +419,7 @@ where
             total_actual_minor_iterations: outcome.total_actual_minor_iterations,
             visibility_products: outcome.visibility_products,
             workers: outcome.workers,
+            planes_per_wave: outcome.planes_per_wave,
         },
     )
 }
@@ -466,6 +470,7 @@ fn visibility_write_selection(
 
 struct PriorPhaseOutcome {
     workers: usize,
+    planes_per_wave: Option<u32>,
     minor_cycles: Vec<NativeMinorCycleOutcome>,
     major_cycle_count: usize,
     total_minor_iterations: usize,
@@ -616,6 +621,7 @@ where
         total_minor_iterations: prior.total_minor_iterations,
         total_actual_minor_iterations: prior.total_actual_minor_iterations,
         workers: prior.workers,
+        planes_per_wave: prior.planes_per_wave,
         visibility_products: prior.visibility_products,
         publication_receipt,
         scientific,
