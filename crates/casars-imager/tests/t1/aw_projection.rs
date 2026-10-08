@@ -181,14 +181,26 @@ fn aw_projection_generates_its_catalog_and_recovers_the_sky() {
     let (off_axis_peak, off_axis_at, off_axis_offset) =
         local_peak(&pbcor.pixels, off_axis_pixel, 6);
     let off_axis_flat_noise = f64::from(image.pixels[off_axis_pixel]);
-    let model_centre = box_sum(&products.get(".model").pixels, centre_pixel, 2);
+    let model = products.get(".model");
+    let model_centre = box_sum(&model.pixels, centre_pixel, 2);
+    let model_centre_wide = [6, 12].map(|half| box_sum(&model.pixels, centre_pixel, half));
+    let model_off_axis = box_sum(&model.pixels, off_axis_pixel, 2);
+    let residual = products.get(".residual");
+    let residual_centre = f64::from(residual.pixels[centre_pixel]);
+    let residual_off_axis = f64::from(residual.pixels[off_axis_pixel]);
+    // The PSF at the other point's offset from the pointing: the dirty
+    // beam's sidelobe there under the weight cell's PB² taper.
+    let psf_at_offset = f64::from(products.get(".psf").pixels[off_axis_pixel]);
     eprintln!(
         "T1 AW: samples {}, thermal {noise_jy:.3e} Jy; simulator-attenuated off-axis flux \
          {attenuated_off_axis_jy:.5} Jy; products {:?}; pb peak {pb_peak:.5} at \
          {pb_at:?}, off axis {pb_off_axis:.5}; pbcor centre {centre_peak:.5} Jy at {centre_at:?} \
          offset {centre_offset:.3?}, off axis {off_axis_peak:.5} Jy at {off_axis_at:?} offset \
          {off_axis_offset:.3?}; flat-noise off axis {off_axis_flat_noise:.5} Jy; model centre \
-         {model_centre:.5} Jy; {} minor iterations, {} major cycles, stop {:?}",
+         {model_centre:.5} Jy (13 and 25 px boxes {model_centre_wide:.5?}), off axis \
+         {model_off_axis:.5} Jy; residual centre \
+         {residual_centre:.5} Jy, off axis {residual_off_axis:.5} Jy; psf at the other point's \
+         offset {psf_at_offset:.5}; {} minor iterations, {} major cycles, stop {:?}",
         observation.row_channel_samples(),
         products.suffixes(),
         summary.actual_minor_iterations,
@@ -226,21 +238,33 @@ fn aw_projection_generates_its_catalog_and_recovers_the_sky() {
         "pb {pb_off_axis} at the off-axis point"
     );
     // Each point comes back at its pixel within a tenth of a cell. At the
-    // pointing both beams are one, so the PB-corrected flux holds to the
-    // thermal noise plus the other point's uncleaned sidelobes; off axis it
-    // holds to the two beam models' disagreement.
+    // pointing both beams are one. The PB-corrected flux there holds to
+    // the thermal noise, the other point's uncleaned sidelobes, and CLEAN's
+    // redistribution under CASA's PSF rule: `AWProjectFT::findConvFunction`
+    // grids the PSF with the weight cell (`cfwts2_p`), whose transform
+    // carries the PB² taper, while the flat-noise residual's response to a
+    // point is the untapered dirty beam. With this snapshot's elongated
+    // beam (a 0.13 tail eight cells along the major axis) the mismatch
+    // moves about 2 % of the model off the centre cell before the true
+    // residual falls under the threshold; the imaging-cell PSF, which
+    // CASA does not use, gives 0.9997 Jy here. Off axis the flux holds to
+    // the two beam models' disagreement.
     assert_eq!(centre_at, centre_pixel);
     assert_eq!(off_axis_at, off_axis_pixel);
     assert!(centre_offset.iter().all(|offset| offset.abs() < 0.1));
     assert!(off_axis_offset.iter().all(|offset| offset.abs() < 0.1));
     assert!(
-        (f64::from(centre_peak) - CENTRE.flux_jy).abs() < 0.02 * CENTRE.flux_jy,
+        (f64::from(centre_peak) - CENTRE.flux_jy).abs() < 0.03 * CENTRE.flux_jy,
         "centre PB-corrected peak {centre_peak} Jy, injected {} Jy",
         CENTRE.flux_jy
     );
     assert!(
-        (model_centre - CENTRE.flux_jy).abs() < 0.02 * CENTRE.flux_jy,
-        "centre model {model_centre} Jy"
+        (model_centre_wide[0] - CENTRE.flux_jy).abs() < 0.04 * CENTRE.flux_jy,
+        "centre model {model_centre_wide:?} Jy in the 13 and 25 px boxes"
+    );
+    assert!(
+        residual_centre.abs() < 2.0 * f64::from(THRESHOLD_JY),
+        "centre residual {residual_centre} Jy"
     );
     // Off axis the flat-noise image holds the attenuated flux the standard
     // gridder measures (the catalog's beam applied once by the adjoint and

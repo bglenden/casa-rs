@@ -1652,38 +1652,56 @@ fn prepare(
                         ContinuumAwCfSource::NativeEvla(native) => {
                             // `AwCatalog::generate_native` writes CASA-format
                             // cells into the native cache directory, which the
-                            // same loader then serves (plan section 5.6).
-                            let present = native.root.is_dir()
-                                && std::fs::read_dir(&native.root)?.next().is_some();
-                            let generate = match native.policy {
-                                NativeAwCachePolicy::ReuseOnly => {
-                                    if !present {
-                                        return Err(boxed(
-                                            "native AW cache reuse requires an existing catalog",
-                                        ));
-                                    }
-                                    false
-                                }
-                                NativeAwCachePolicy::GenerateMissing => !present,
-                                NativeAwCachePolicy::Regenerate => true,
-                            };
-                            if generate {
-                                let input = native_aw::resolve(
-                                    &request,
-                                    native,
-                                    &ms,
-                                    &spectral_windows,
-                                    &prepared_spectral,
-                                    first_aw_row.ok_or_else(|| {
-                                        boxed("native AW has no unflagged cross-correlation row")
-                                    })?,
-                                    &frame_engine,
-                                )?;
-                                input.validate()?;
-                                casa_imaging_operator::AwCatalog::generate_native(
+                            // same loader then serves (plan section 5.6). The
+                            // request is resolved under every policy, so the
+                            // members it names are compared with the directory:
+                            // reuse needs every member, generation fills the
+                            // missing ones, regeneration clears the earlier
+                            // request's members first; the loader then checks
+                            // each cell's sky increment against the image.
+                            let input = native_aw::resolve(
+                                &request,
+                                native,
+                                &ms,
+                                &spectral_windows,
+                                &prepared_spectral,
+                                first_aw_row.ok_or_else(|| {
+                                    boxed("native AW has no unflagged cross-correlation row")
+                                })?,
+                                &frame_engine,
+                            )?;
+                            input.validate()?;
+                            let (present, expected) =
+                                casa_imaging_operator::AwCatalog::native_cells_present(
                                     &native.root,
                                     &input,
-                                )?;
+                                );
+                            match native.policy {
+                                NativeAwCachePolicy::ReuseOnly => {
+                                    if present != expected {
+                                        return Err(boxed(format!(
+                                            "native AW cache reuse found {present} of the {expected} \
+                                             cells the request names"
+                                        )));
+                                    }
+                                }
+                                NativeAwCachePolicy::GenerateMissing => {
+                                    if present != expected {
+                                        casa_imaging_operator::AwCatalog::generate_native(
+                                            &native.root,
+                                            &input,
+                                            true,
+                                        )?;
+                                    }
+                                }
+                                NativeAwCachePolicy::Regenerate => {
+                                    casa_imaging_operator::AwCatalog::clear_native(&native.root)?;
+                                    casa_imaging_operator::AwCatalog::generate_native(
+                                        &native.root,
+                                        &input,
+                                        false,
+                                    )?;
+                                }
                             }
                             native.root.clone()
                         }
@@ -1693,7 +1711,6 @@ fn prepare(
                         indexing: casa_imaging_operator::AwIndexing {
                             conjugate_beams: controls.conjugate_beams,
                             image_reference_hz: prepared_spectral.reference_frequency_hz,
-                            pa_tolerance_deg: controls.rotate_pa_step_deg,
                         },
                         resident_bytes: controls.resident_bytes,
                     })
@@ -1925,20 +1942,21 @@ fn prepare(
             ModelInputCommitment::Empty,
         ),
         masks,
-        minor_cycle_image_response: (request.aw_projection.is_some()
-            && matches!(request.algorithm, ContinuumAlgorithm::Mtmfs { .. }))
-        .then(|| {
-            MinorCycleImageResponse::new(
-                request.normalization,
-                PrimaryBeamValidityPolicy::new(
-                    request.primary_beam_limit.abs(),
-                    ProductSupportComparison::StrictlyGreater,
-                    ProductBlankingPolicy::Zero,
-                )?,
-            )
-            .map_err(|error| Box::new(error) as crate::ApplicationError)
-        })
-        .transpose()?,
+        // A direction-dependent sensitivity (A-projection, mosaic) binds
+        // the solvers' residual units for every algorithm.
+        minor_cycle_image_response: (request.aw_projection.is_some() || mosaic)
+            .then(|| {
+                MinorCycleImageResponse::new(
+                    request.normalization,
+                    PrimaryBeamValidityPolicy::new(
+                        request.primary_beam_limit.abs(),
+                        ProductSupportComparison::StrictlyGreater,
+                        ProductBlankingPolicy::Zero,
+                    )?,
+                )
+                .map_err(|error| Box::new(error) as crate::ApplicationError)
+            })
+            .transpose()?,
         observation: SelectedObservationResolutionRequest::new(
             request.measurement_set.display().to_string(),
             LogicalIdentity::from_sha256(digest),

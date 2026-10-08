@@ -56,7 +56,8 @@ impl CpuBackend {
                 Mode::Weight => cf
                     .weight_taps(placement.cf, hold)
                     .ok_or(OperatorError::WeightKernelUnavailable { key: placement.cf })?,
-                Mode::Data | Mode::Psf => cf.taps(placement.cf, hold),
+                Mode::Psf => cf.psf_taps(placement.cf, hold),
+                Mode::Data => cf.taps(placement.cf, hold),
             };
             let (u, v) = match mode {
                 Mode::Weight => (0.0, 0.0),
@@ -191,7 +192,7 @@ impl CpuBackend {
             hold,
             ..
         } = self;
-        let taps = cf.taps(placement.cf, hold);
+        let taps = cf.prediction_taps(placement.cf, hold);
         let location = layout
             .geometry()
             .locate(placement.u, placement.v, taps.oversampling());

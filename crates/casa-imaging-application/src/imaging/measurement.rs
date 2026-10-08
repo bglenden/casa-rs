@@ -2,10 +2,9 @@
 //! The measurement operator, spectral resampler and weighting rule of one
 //! compiled problem: plan section 5.3 projected from `CompiledProblem`.
 
-use casa_imaging_model::InstrumentModel;
 use casa_imaging_model::{
-    CompiledImageDomain, CompiledProblem, CorrelationType, ReconstructionBasis, SpectralKernel,
-    SpectralWcs, WeightDensityScope,
+    AntennaResponseClass, CompiledImageDomain, CompiledProblem, CorrelationType, InstrumentModel,
+    ReconstructionBasis, SpectralKernel, SpectralWcs, WeightDensityScope,
 };
 use casa_imaging_operator::{
     AiryDish, AwCatalog, Basis, ConvolutionFunctionSet, DensityCellRule, DensityGridShape,
@@ -136,16 +135,20 @@ fn kernel_set_kind(problem: &CompiledProblem) -> KernelSetKind {
 /// The operator of `domain` with the kernel set the problem names: the
 /// standard spheroidal set, W-projection planes sized by the W contract,
 /// the mosaic primary beams of the selected windows, or the AW catalog of
-/// `aw_catalog`, in the precision `backend` grids at. Mosaic and AW grid
-/// without padding (CASA `MosaicFT`, `AWProjectFT`); the others on CASA's
-/// composite-padded grid. The Metal backend grids the standard set until
-/// its W, mosaic and AW rows land at gate R2 (#653).
+/// `aw_catalog`, in the precision `backend` grids at. The mosaic set takes
+/// one dish per selected aperture class in `dish_classes`
+/// (`HetArrayConvFunc::findAntennaSizes`), the order the rows' antenna
+/// types index. Mosaic and AW grid without padding (CASA `MosaicFT`,
+/// `AWProjectFT`); the others on CASA's composite-padded grid. The Metal
+/// backend grids the standard set until its W, mosaic and AW rows land at
+/// gate R2 (#653).
 pub(crate) fn domain_operator(
     problem: &CompiledProblem,
     domain: &CompiledImageDomain,
     correlations: &[CorrelationType],
     backend: BackendChoice,
     aw_catalog: Option<&AwCatalogDeployment>,
+    dish_classes: &[AntennaResponseClass],
 ) -> Result<DomainOperator, ImagingError> {
     let kind = kernel_set_kind(problem);
     if backend == BackendChoice::Metal && kind != KernelSetKind::Standard {
@@ -163,6 +166,16 @@ pub(crate) fn domain_operator(
         problem.reconstruction().polarization().coordinates(),
     )?;
     let basis = basis(problem)?;
+    if matches!(basis, Basis::ChannelLocal { .. })
+        && matches!(kind, KernelSetKind::Mosaic | KernelSetKind::Aw)
+    {
+        // The channel-local normal state keeps a scalar sumwt per plane;
+        // the dense sensitivity these sets grid has no plane to live in
+        // until the cube tickets.
+        return Err(ImagingError::Unsupported {
+            reason: "cube mosaic and A-projection imaging wait for the cube tickets' per-plane sensitivity",
+        });
+    }
     let resampler = resampler(problem, basis)?;
     let cf: Box<dyn ConvolutionFunctionSet> = match kind {
         KernelSetKind::Standard => Box::new(Spheroidal::new(&geometry, &polarization)),
@@ -188,10 +201,23 @@ pub(crate) fn domain_operator(
             Box::new(WPlanes::new(&geometry, &polarization, count)?)
         }
         KernelSetKind::Mosaic => {
-            let dishes = [
-                AiryDish::casa_alma(12.0, &geometry),
-                AiryDish::casa_alma(7.0, &geometry),
-            ];
+            if dish_classes.is_empty() {
+                return Err(ImagingError::Unsupported {
+                    reason: "the mosaic set needs ALMA or ACA dishes in the selection",
+                });
+            }
+            let dishes = dish_classes
+                .iter()
+                .map(|class| {
+                    AiryDish::casa_alma(
+                        match class {
+                            AntennaResponseClass::CasaAlma12m => 12.0,
+                            AntennaResponseClass::CasaAca7m => 7.0,
+                        },
+                        &geometry,
+                    )
+                })
+                .collect::<Vec<_>>();
             Box::new(MosaicPb::new(
                 &geometry,
                 &polarization,

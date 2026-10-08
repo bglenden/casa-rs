@@ -159,6 +159,14 @@ impl BoundObservationSource {
         self.geometry_engine.as_ref()
     }
 
+    /// The CASA aperture classes of this source's antennas (`None` for a
+    /// dish outside the ALMA and ACA classes), in ANTENNA row order.
+    pub(crate) fn antenna_response_classes(
+        &self,
+    ) -> &[Option<casa_imaging_model::AntennaResponseClass>] {
+        self.geometry_engine.antenna_response_classes()
+    }
+
     pub(super) const fn rows_per_block(&self) -> usize {
         self.content_plan.rows_per_block()
     }

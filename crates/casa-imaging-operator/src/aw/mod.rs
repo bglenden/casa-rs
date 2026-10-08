@@ -103,10 +103,6 @@ pub struct AwIndexing {
     pub conjugate_beams: bool,
     /// The image reference frequency `f₀` in Hz.
     pub image_reference_hz: f64,
-    /// Parallactic-angle tolerance in degrees (`CFCache::initCache2`'s
-    /// `dPA`): a row whose angle lies further than this from every cell's
-    /// angle still uses the nearest cell, which CASA would rotate instead.
-    pub pa_tolerance_deg: f64,
 }
 
 /// Header of one cell image, read at open (`CFCache::getCFParams`).
@@ -123,6 +119,9 @@ struct CellHeader {
     mueller: u32,
     /// `WValue`.
     w_value: f64,
+    /// The working field a native cell was generated on, in radians
+    /// (`CasaRsSkyIncrement · CasaRsWorkingSize`); absent in CASA's caches.
+    working_field_rad: Option<f64>,
     /// `WIncr`.
     w_increment: f64,
     /// `ParallacticAngle` in degrees.
@@ -143,12 +142,18 @@ struct CellFiles {
 #[derive(Clone, Debug)]
 struct Group {
     cells: Vec<CellFiles>,
+    /// The largest declared half support over the group's imaging and
+    /// weight cells: every dense cell of the group is padded to it, so one
+    /// support serves gridding, the PSF and the weight image.
+    half_support: [u16; 2],
 }
 
 /// The loaded taps of one group.
 struct Loaded {
     imaging: Arc<DenseCell>,
     weight: Arc<DenseCell>,
+    /// The cache clock at the group's last use; eviction takes the oldest.
+    last_use: u64,
 }
 
 impl Loaded {
@@ -162,7 +167,8 @@ impl Loaded {
 /// [`CellHold`] after eviction.
 struct Lru {
     loaded: HashMap<usize, Loaded>,
-    order: Vec<usize>,
+    /// Use counter stamped on every fetch.
+    clock: u64,
     bytes: usize,
     bound: usize,
 }
@@ -175,7 +181,17 @@ struct Lru {
 /// the conjugate baseline (`AWProjectFT::makeConjPolMap`). Prediction
 /// divides once by the kernel sum and `sumwt += W·|N|`
 /// ([`KernelNormalisation::KernelSum`]); the pointing ramp applies to
-/// every row ([`ConvolutionFunctionSet::pointing_ramp`]).
+/// every row ([`ConvolutionFunctionSet::pointing_ramp`]). A row whose
+/// parallactic angle lies between cells takes the nearest cell; CASA would
+/// rotate it (`AWConvFunc::rotateCF`, `rotatepastep`), which the frozen
+/// 360° steps of the EVLA cache make the same choice.
+///
+/// # Panics
+///
+/// [`ConvolutionFunctionSet::taps`] and [`ConvolutionFunctionSet::weight_taps`]
+/// are infallible: a cell image that was validated at open but cannot be
+/// read when a row first needs it is a catalog broken under the run, and
+/// the catalog panics with the cell's path rather than gridding without it.
 pub struct AwCatalog {
     root: PathBuf,
     indexing: AwIndexing,
@@ -245,6 +261,25 @@ impl AwCatalog {
         }
         if imaging.is_empty() {
             return Err(cache_error(&root, "no CFS_ cell images"));
+        }
+        // A native cell's working field is the image field times the
+        // oversampling: `working_size · working_increment = sampling · n · Δx`.
+        let [grid_n, _] = geometry.grid_shape();
+        let image_increment = geometry.image().increment_rad[0].abs();
+        for header in imaging.values() {
+            let Some(working_field) = header.working_field_rad else {
+                continue;
+            };
+            let expected = image_increment * f64::from(header.sampling) * grid_n as f64;
+            if (working_field - expected).abs() > 1.0e-6 * expected {
+                return Err(cache_error(
+                    &header.path,
+                    format!(
+                        "generated for a working field of {working_field} rad, the image needs \
+                         {expected} rad: the cache belongs to another image geometry"
+                    ),
+                ));
+            }
         }
         let mut cells = Vec::with_capacity(imaging.len());
         for (rest, header) in imaging {
@@ -330,7 +365,20 @@ impl AwCatalog {
                     .ok_or_else(|| {
                         cache_error(&root, "a (PA, frequency, w) group lacks a Mueller element")
                     })?;
-                Ok(Group { cells })
+                let half_support = cells.iter().fold([0_u16; 2], |half, cell| {
+                    [
+                        half[0]
+                            .max(cell.imaging.support[0])
+                            .max(cell.weight.support[0]),
+                        half[1]
+                            .max(cell.imaging.support[1])
+                            .max(cell.weight.support[1]),
+                    ]
+                });
+                Ok(Group {
+                    cells,
+                    half_support,
+                })
             })
             .collect::<Result<Vec<_>, AwCatalogError>>()?;
         let mueller = routing(&mueller_elements, polarization).ok_or_else(|| {
@@ -340,6 +388,23 @@ impl AwCatalog {
             )
         })?;
         let [nx, ny] = geometry.grid_shape();
+        // `AWProjectFT::getImage` and `getWeightImage` divide every image
+        // by the sampling sinc `sin(x)/x`, `x = π(i − n/2)/(n·sampling)`;
+        // the spheroidal lives in the cells under `psterm`, and
+        // `initializeToVis` leaves the model uncorrected (its `sincConv`
+        // is reset to one).
+        let sampling_correction = |len: usize| {
+            (0..len)
+                .map(|index| {
+                    if index == len / 2 {
+                        return 1.0;
+                    }
+                    let x = std::f64::consts::PI * (index as f64 - (len / 2) as f64)
+                        / (len as f64 * f64::from(oversampling));
+                    x / x.sin()
+                })
+                .collect::<Vec<_>>()
+        };
         Ok(Self {
             root,
             indexing,
@@ -352,12 +417,15 @@ impl AwCatalog {
             oversampling,
             max_half_support,
             mueller,
-            // `AWProjectFT::getImage` applies no grid correction; with
-            // `psterm` the spheroidal lives in the cells.
-            correction: ImageCorrection::new(vec![1.0; nx], vec![1.0; ny]),
+            correction: ImageCorrection::split(
+                sampling_correction(nx),
+                sampling_correction(ny),
+                vec![1.0; nx],
+                vec![1.0; ny],
+            ),
             lru: Mutex::new(Lru {
                 loaded: HashMap::new(),
-                order: Vec::new(),
+                clock: 0,
                 bytes: 0,
                 bound: bound_bytes,
             }),
@@ -375,6 +443,7 @@ impl AwCatalog {
     pub fn generate_native(
         root: impl AsRef<Path>,
         input: &NativeAwRequestInput,
+        only_missing: bool,
     ) -> Result<(), AwCatalogError> {
         let root = root.as_ref();
         std::fs::create_dir_all(root)
@@ -404,6 +473,12 @@ impl AwCatalog {
                 };
                 for (iw, &w) in input.w_values.iter().enumerate() {
                     for (im, &mueller) in input.mueller_elements.iter().enumerate() {
+                        let suffix = format!("{ipa}_0_CF_{inu}_{iw}_{im}.im");
+                        let imaging_path = root.join(format!("{IMAGING_PREFIX}{suffix}"));
+                        let weight_path = root.join(format!("{WEIGHT_PREFIX}{suffix}"));
+                        if only_missing && imaging_path.is_dir() && weight_path.is_dir() {
+                            continue;
+                        }
                         let request = EvlaAwCellRequest {
                             size: grid.size,
                             sky_increment_rad: grid.sky_increment_rad,
@@ -421,7 +496,6 @@ impl AwCatalog {
                             None => workspace.insert(EvlaAwWorkspace::new(request)?),
                         };
                         let pair = workspace.generate(&model, request)?;
-                        let suffix = format!("{ipa}_0_CF_{inu}_{iw}_{im}.im");
                         let misc = CellMisc {
                             sampling: grid.oversampling as f64,
                             pa_deg: pa.to_degrees(),
@@ -431,23 +505,65 @@ impl AwCatalog {
                             conjugate_frequency,
                             conjugate_mueller: MUELLER_ELEMENTS - 1 - mueller as u32,
                             diameter_m: input.antenna_diameter_m,
+                            sky_increment_rad: grid.sky_increment_rad[1].abs(),
+                            working_size: grid.size,
                         };
-                        write_cell(
-                            &root.join(format!("{IMAGING_PREFIX}{suffix}")),
-                            &pair.imaging,
-                            frequency,
-                            grid,
-                            &misc,
-                        )?;
-                        write_cell(
-                            &root.join(format!("{WEIGHT_PREFIX}{suffix}")),
-                            &pair.weight,
-                            frequency,
-                            grid,
-                            &misc,
-                        )?;
+                        write_cell(&imaging_path, &pair.imaging, frequency, grid, &misc)?;
+                        write_cell(&weight_path, &pair.weight, frequency, grid, &misc)?;
                     }
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// How many of the cells `input` names exist under `root` (both the
+    /// `CFS_` and `WTCFS_` images), and how many it names.
+    pub fn native_cells_present(
+        root: impl AsRef<Path>,
+        input: &NativeAwRequestInput,
+    ) -> (usize, usize) {
+        let root = root.as_ref();
+        let mut present = 0;
+        let mut expected = 0;
+        for ipa in 0..input.pa_values.len() {
+            for inu in 0..input.frequencies.len() {
+                for iw in 0..input.w_values.len() {
+                    for im in 0..input.mueller_elements.len() {
+                        let suffix = format!("{ipa}_0_CF_{inu}_{iw}_{im}.im");
+                        expected += 1;
+                        if root.join(format!("{IMAGING_PREFIX}{suffix}")).is_dir()
+                            && root.join(format!("{WEIGHT_PREFIX}{suffix}")).is_dir()
+                        {
+                            present += 1;
+                        }
+                    }
+                }
+            }
+        }
+        (present, expected)
+    }
+
+    /// Remove every `CFS_` and `WTCFS_` cell under `root`, so a regenerated
+    /// catalog carries no member of an earlier request.
+    pub fn clear_native(root: impl AsRef<Path>) -> Result<(), AwCatalogError> {
+        let root = root.as_ref();
+        if !root.is_dir() {
+            return Ok(());
+        }
+        let entries = std::fs::read_dir(root)
+            .map_err(|error| cache_error(root, format!("cannot list: {error}")))?;
+        for entry in entries {
+            let entry =
+                entry.map_err(|error| cache_error(root, format!("cannot list: {error}")))?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            if name.starts_with(IMAGING_PREFIX) || name.starts_with(WEIGHT_PREFIX) {
+                std::fs::remove_dir_all(entry.path()).map_err(|error| {
+                    cache_error(entry.path(), format!("cannot remove: {error}"))
+                })?;
             }
         }
         Ok(())
@@ -556,23 +672,26 @@ impl AwCatalog {
     /// them in `hold`.
     fn loaded(&self, group: usize) -> (Arc<DenseCell>, Arc<DenseCell>) {
         let mut lru = self.lru.lock().expect("cache lock");
-        if let Some(loaded) = lru.loaded.get(&group) {
-            let pair = (loaded.imaging.clone(), loaded.weight.clone());
-            if let Some(position) = lru.order.iter().position(|g| *g == group) {
-                lru.order.remove(position);
-            }
-            lru.order.push(group);
-            return pair;
+        lru.clock += 1;
+        let now = lru.clock;
+        if let Some(loaded) = lru.loaded.get_mut(&group) {
+            loaded.last_use = now;
+            return (loaded.imaging.clone(), loaded.weight.clone());
         }
-        let loaded = load_group(&self.groups[group], self.oversampling)
+        let mut loaded = load_group(&self.groups[group], self.oversampling)
             .unwrap_or_else(|error| panic!("AW cell group {group} cannot be read: {error}"));
+        loaded.last_use = now;
         let pair = (loaded.imaging.clone(), loaded.weight.clone());
         lru.bytes += loaded.bytes();
         lru.loaded.insert(group, loaded);
-        lru.order.push(group);
-        while lru.bytes > lru.bound && lru.order.len() > 1 {
-            let evicted = lru.order.remove(0);
-            if let Some(cell) = lru.loaded.remove(&evicted) {
+        while lru.bytes > lru.bound && lru.loaded.len() > 1 {
+            let oldest = lru
+                .loaded
+                .iter()
+                .min_by_key(|(_, loaded)| loaded.last_use)
+                .map(|(group, _)| *group)
+                .expect("a loaded group");
+            if let Some(cell) = lru.loaded.remove(&oldest) {
                 lru.bytes -= cell.bytes();
             }
         }
@@ -584,22 +703,24 @@ impl ConvolutionFunctionSet for AwCatalog {
     /// Group: the (PA, frequency, w) cell; cube 0. The parallactic angle is
     /// CASA's visibility polarization operator angle negated back to the
     /// physical angle in degrees, as the cells record it.
+    /// `group` is the gridding cell (the conjugate-frequency cell under
+    /// `conjbeams`, `DataToGrid` with `conjBeams`); `cube` the
+    /// native-frequency cell a prediction reads (`GridToData`,
+    /// `nearestFreqNdx(spw, chan)`).
     fn key(&self, row: &RowContext, freq_hz: f64, w_lambda: f64) -> CfKey {
         let pa_deg = (-row.parallactic_angle_rad[0]).to_degrees();
-        let group = self.group_index(
-            self.pa_cell(pa_deg),
-            self.frequency_cell(freq_hz),
-            self.w_cell(w_lambda),
-        );
+        let pa = self.pa_cell(pa_deg);
+        let w = self.w_cell(w_lambda);
+        let group = self.group_index(pa, self.frequency_cell(freq_hz), w);
+        let native = self.group_index(pa, nearest(&self.frequencies_hz, freq_hz).0, w);
         CfKey {
             group: u16::try_from(group).expect("AW group fits u16"),
-            cube: 0,
+            cube: u16::try_from(native).expect("AW group fits u16"),
         }
     }
 
     fn taps<'s>(&'s self, key: CfKey, hold: &'s mut CellHold) -> TapLayout<'s> {
-        let (imaging, _) = self.loaded(usize::from(key.group));
-        hold.lend(imaging)
+        hold.lend_keyed(key, 0, || self.loaded(usize::from(key.group)).0)
     }
 
     fn max_half_support(&self) -> [u16; 2] {
@@ -607,8 +728,26 @@ impl ConvolutionFunctionSet for AwCatalog {
     }
 
     fn weight_taps<'s>(&'s self, key: CfKey, hold: &'s mut CellHold) -> Option<TapLayout<'s>> {
-        let (_, weight) = self.loaded(usize::from(key.group));
-        Some(hold.lend(weight))
+        Some(hold.lend_keyed(key, 1, || self.loaded(usize::from(key.group)).1))
+    }
+
+    /// `AWProjectFT::findConvFunction` maps `cfwts2_p` when `makingPSF`:
+    /// the PSF is gridded with the weight cell at the sample's uv position.
+    fn psf_taps<'s>(&'s self, key: CfKey, hold: &'s mut CellHold) -> TapLayout<'s> {
+        hold.lend_keyed(key, 1, || self.loaded(usize::from(key.group)).1)
+    }
+
+    fn prediction_taps<'s>(&'s self, key: CfKey, hold: &'s mut CellHold) -> TapLayout<'s> {
+        hold.lend_keyed(key, 2, || self.loaded(usize::from(key.cube)).0)
+    }
+
+    fn placement_half_support(&self, key: CfKey, _hold: &mut CellHold) -> [u16; 2] {
+        let gridding = self.groups[usize::from(key.group)].half_support;
+        let prediction = self.groups[usize::from(key.cube)].half_support;
+        [
+            gridding[0].max(prediction[0]),
+            gridding[1].max(prediction[1]),
+        ]
     }
 
     fn mueller(&self) -> &MuellerRouting {
@@ -764,6 +903,28 @@ fn read_header(path: &Path) -> Result<CellHeader, AwCatalogError> {
             return Err(cache_error(path, "support does not fit the cell image"));
         }
     }
+    // Native cells carry the working sky increment they were generated on;
+    // CASA's own caches do not.
+    let sky_increment_rad = match misc.get("CasaRsSkyIncrement") {
+        Some(Value::Scalar(ScalarValue::Float64(value))) => Some(*value),
+        _ => None,
+    };
+    if sky_increment_rad.is_some_and(|value| !value.is_finite() || value <= 0.0) {
+        return Err(cache_error(
+            path,
+            "CasaRsSkyIncrement must be finite and positive",
+        ));
+    }
+    let working_size = match misc.get("CasaRsWorkingSize") {
+        Some(Value::Scalar(ScalarValue::Int32(value))) if *value > 0 => Some(*value as usize),
+        Some(_) => {
+            return Err(cache_error(path, "CasaRsWorkingSize must be positive"));
+        }
+        None => None,
+    };
+    let working_field = sky_increment_rad
+        .zip(working_size)
+        .map(|(increment, size)| increment * size as f64);
     Ok(CellHeader {
         path: path.to_path_buf(),
         shape: [shape[0], shape[1]],
@@ -774,6 +935,7 @@ fn read_header(path: &Path) -> Result<CellHeader, AwCatalogError> {
         w_increment,
         pa_deg,
         frequency_hz,
+        working_field_rad: working_field,
     })
 }
 
@@ -858,12 +1020,7 @@ fn cf_area(plane: &[Complex32], shape: [usize; 2], support: [u16; 2], sampling: 
 fn load_group(group: &Group, sampling: u16) -> Result<Loaded, AwCatalogError> {
     let build = |select: fn(&CellFiles) -> &CellHeader| -> Result<Arc<DenseCell>, AwCatalogError> {
         let headers = group.cells.iter().map(select).collect::<Vec<_>>();
-        let half = headers.iter().fold([0_u16; 2], |half, header| {
-            [
-                half[0].max(header.support[0]),
-                half[1].max(header.support[1]),
-            ]
-        });
+        let half = group.half_support;
         let mut planes = Vec::with_capacity(headers.len());
         for header in &headers {
             let mut plane = read_plane(header)?;
@@ -875,22 +1032,26 @@ fn load_group(group: &Group, sampling: u16) -> Result<Loaded, AwCatalogError> {
             for value in &mut plane {
                 *value *= scale;
             }
-            planes.push((plane, header.shape));
+            planes.push((plane, header.shape, header.support));
         }
         Ok(Arc::new(dense_cell_padded(&planes, half, sampling)))
     };
     Ok(Loaded {
         imaging: build(|cell| &cell.imaging)?,
         weight: build(|cell| &cell.weight)?,
+        last_use: 0,
     })
 }
 
-/// The dense cell of `planes` (each `[y][x]` with origin at `shape/2`) at
-/// `half` taps each side: tap `k` at fine offset `off` reads pixel
-/// `origin + k·sampling + off` (`accumulateToGrid.inc`: `convOrigin +
-/// (Int)(sampling·ix + off)`), zero outside the plane.
+/// The dense cell of `planes` (each `[y][x]` with origin at `shape/2` and
+/// its own declared half support) at `half` taps each side: tap `k` at
+/// fine offset `off` reads pixel `origin + k·sampling + off`
+/// (`accumulateToGrid.inc`: `convOrigin + (Int)(sampling·ix + off)`), zero
+/// outside the plane and beyond the plane's own support (`AWVisResampler`
+/// takes the support per Mueller cell; the crop buffer around it is not
+/// part of the kernel).
 fn dense_cell_padded(
-    planes: &[(Vec<Complex32>, [usize; 2])],
+    planes: &[(Vec<Complex32>, [usize; 2], [u16; 2])],
     half: [u16; 2],
     sampling: u16,
 ) -> DenseCell {
@@ -903,17 +1064,20 @@ fn dense_cell_padded(
         let off_y = oy as i64 - fine_half;
         for ox in 0..rows {
             let off_x = ox as i64 - fine_half;
-            for (plane, shape) in planes {
+            for (plane, shape, plane_half) in planes {
                 let origin = [(shape[0] / 2) as i64, (shape[1] / 2) as i64];
                 for iy in 0..sy {
-                    let y =
-                        origin[1] + (iy as i64 - i64::from(half[1])) * i64::from(sampling) + off_y;
+                    let ky = iy as i64 - i64::from(half[1]);
+                    let y = origin[1] + ky * i64::from(sampling) + off_y;
                     for ix in 0..sx {
-                        let x = origin[0]
-                            + (ix as i64 - i64::from(half[0])) * i64::from(sampling)
-                            + off_x;
-                        let inside =
-                            x >= 0 && y >= 0 && (x as usize) < shape[0] && (y as usize) < shape[1];
+                        let kx = ix as i64 - i64::from(half[0]);
+                        let x = origin[0] + kx * i64::from(sampling) + off_x;
+                        let inside = kx.abs() <= i64::from(plane_half[0])
+                            && ky.abs() <= i64::from(plane_half[1])
+                            && x >= 0
+                            && y >= 0
+                            && (x as usize) < shape[0]
+                            && (y as usize) < shape[1];
                         data.push(if inside {
                             plane[y as usize * shape[0] + x as usize]
                         } else {
@@ -942,6 +1106,12 @@ struct CellMisc {
     conjugate_frequency: f64,
     conjugate_mueller: u32,
     diameter_m: f64,
+    /// The working sky increment and size the cell was generated on:
+    /// private keys (`CasaRsSkyIncrement`, `CasaRsWorkingSize`) the loader
+    /// checks against the image geometry so a cache is never reused for
+    /// another one.
+    sky_increment_rad: f64,
+    working_size: usize,
 }
 
 /// Write one generated plane as a CASA cell image (`CFCell::makePersistent`
@@ -1024,6 +1194,17 @@ fn write_cell(
             field("BandName", ScalarValue::String(String::new())),
             field("Diameter", ScalarValue::Float64(misc.diameter_m)),
             field("OpCode", ScalarValue::Bool(false)),
+            field(
+                "CasaRsSkyIncrement",
+                ScalarValue::Float64(misc.sky_increment_rad),
+            ),
+            field(
+                "CasaRsWorkingSize",
+                ScalarValue::Int32(
+                    i32::try_from(misc.working_size)
+                        .map_err(|_| write_error("working size exceeds i32".to_string()))?,
+                ),
+            ),
         ]))
         .map_err(|error| write_error(format!("cannot write misc info: {error}")))?;
     image
@@ -1068,7 +1249,11 @@ mod tests {
         let small = (0..16)
             .map(|index| Complex32::new(100.0 + (index % 4) as f32, (index / 4) as f32))
             .collect::<Vec<_>>();
-        let cell = dense_cell_padded(&[(values, [side, side]), (small, [4, 4])], [1, 1], 2);
+        let cell = dense_cell_padded(
+            &[(values, [side, side], [1, 1]), (small, [4, 4], [1, 1])],
+            [1, 1],
+            2,
+        );
         assert_eq!(cell.support, [3, 3]);
         assert_eq!(cell.mueller_planes, 2);
         let tile = 9;

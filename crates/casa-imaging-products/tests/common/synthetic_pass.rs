@@ -218,6 +218,7 @@ impl Scene {
             polarizations: 1,
             residual,
             psf,
+            published_sum_weights: sum_weights.clone(),
             sum_weights,
             weight: None,
         }

@@ -208,6 +208,12 @@ impl<'a> Run<'a> {
             });
         }
         let correlations = selected_correlations(problem)?;
+        let selected = inputs
+            .access
+            .into_deferred()
+            .open(problem)
+            .map_err(|error| ImagingError::Observation(Box::new(error)))?;
+        let dish_classes = selected.antenna_response_classes();
         let domains = problem
             .geometry()
             .domains()
@@ -219,6 +225,7 @@ impl<'a> Run<'a> {
                     &correlations,
                     backend,
                     inputs.aw_catalog.as_ref(),
+                    &dish_classes,
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -231,11 +238,6 @@ impl<'a> Run<'a> {
         let (workers, memory) = inputs.authority.phase_budget(inputs.policy)?;
         let team = WorkerTeam::new(workers)?;
         let cancel = Cancel::new();
-        let selected = inputs
-            .access
-            .into_deferred()
-            .open(problem)
-            .map_err(|error| ImagingError::Observation(Box::new(error)))?;
         let main = &domains[0].operator;
         let mut source = MeasurementSetSource::new(
             problem,
@@ -245,6 +247,7 @@ impl<'a> Run<'a> {
             domains
                 .iter()
                 .any(|domain| domain.operator.cf().pointing_ramp()),
+            dish_classes,
         );
         let started = Instant::now();
         let weighting = weighting(problem, &domains[0], &mut source, &team, &cancel)?;

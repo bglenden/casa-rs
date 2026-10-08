@@ -106,70 +106,6 @@ impl ArtifactIdentity {
     pub const fn from_logical_identity(identity: casa_imaging_model::LogicalIdentity) -> Self {
         Self(identity.as_bytes())
     }
-
-    pub(crate) const fn from_owner_digest(digest: [u8; 32]) -> Self {
-        Self(digest)
-    }
-}
-
-/// Fail-closed reason that a plan-listed warm artifact was not reusable,
-/// recorded in receipt evidence as a derived identity.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PreparedArtifactRejection {
-    /// No entry exists for the exact owner-derived identity.
-    Missing,
-    /// The entry was incomplete or had unknown inventory.
-    Incomplete,
-    /// The schema, manifest, identity, or layout was incompatible.
-    Incompatible,
-    /// Payload bytes or their integrity digests were corrupt.
-    Corrupt,
-    /// A floating-point payload contained NaN or infinity.
-    NonFinite,
-}
-
-impl PreparedArtifactRejection {
-    const EVIDENCE_DOMAIN: &[u8] = b"casa-rs/private-prepared-artifact/rejection\0";
-    const EVIDENCE_VERSION: u32 = 7;
-    const ALL: [Self; 5] = [
-        Self::Missing,
-        Self::Incomplete,
-        Self::Incompatible,
-        Self::Corrupt,
-        Self::NonFinite,
-    ];
-
-    /// The evidence identity recorded for this rejection of `planned`.
-    #[must_use]
-    pub(crate) fn evidence_identity(self, planned: ArtifactIdentity) -> ArtifactIdentity {
-        let mut hasher = Sha256::new();
-        hasher.update(Self::EVIDENCE_DOMAIN);
-        hasher.update(Self::EVIDENCE_VERSION.to_le_bytes());
-        hasher.update(planned.as_bytes());
-        hasher.update([self.tag()]);
-        ArtifactIdentity::from_owner_digest(hasher.finalize().into())
-    }
-
-    /// Recover a typed rejection from durable receipt evidence.
-    #[must_use]
-    pub fn from_evidence_identity(
-        planned: ArtifactIdentity,
-        evidence: ArtifactIdentity,
-    ) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|rejection| rejection.evidence_identity(planned) == evidence)
-    }
-
-    const fn tag(self) -> u8 {
-        match self {
-            Self::Missing => 0,
-            Self::Incomplete => 1,
-            Self::Incompatible => 2,
-            Self::Corrupt => 3,
-            Self::NonFinite => 4,
-        }
-    }
 }
 
 /// Fixed-point confidence in a conservative planner prediction.
@@ -3849,10 +3785,11 @@ fn validate_artifact_measurements(
                 disposition,
             });
         }
+        // A stale rejection observed something other than the planned
+        // artifact; reporting the planned identity as what was found
+        // contradicts the disposition.
         if disposition == ArtifactDisposition::RejectedStale
-            && measurement.observed_identity().is_none_or(|observed| {
-                PreparedArtifactRejection::from_evidence_identity(artifact, observed).is_none()
-            })
+            && measurement.observed_identity() == Some(artifact)
         {
             return Err(ExecutionEvidenceError::ArtifactDispositionMismatch {
                 node: node.clone(),
@@ -5361,14 +5298,9 @@ mod artifact_measurement_tests {
     fn store_owned_rejection_requires_typed_identity_bound_to_planned_artifact() {
         let node = WorkNodeId::new("cache");
         let identity = ArtifactIdentity::from_sha256([1; 32]);
-        let other_identity = ArtifactIdentity::from_sha256([2; 32]);
         let planned = PlannedArtifact::new(identity, node.clone(), ArtifactRole::Cache, None);
         let planned_artifacts = BTreeMap::from([(identity, &planned)]);
-        let invalid = [
-            None,
-            Some(ArtifactIdentity::from_sha256([3; 32])),
-            Some(PreparedArtifactRejection::Missing.evidence_identity(other_identity)),
-        ];
+        let invalid = [Some(identity)];
 
         for observed in invalid {
             let measurements = WorkMeasurements::new(
@@ -5400,7 +5332,7 @@ mod artifact_measurement_tests {
             Vec::new(),
             vec![ArtifactMeasurement::new_store_owned(
                 identity,
-                Some(PreparedArtifactRejection::Missing.evidence_identity(identity)),
+                None,
                 ArtifactDisposition::RejectedStale,
                 0,
                 None,

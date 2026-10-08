@@ -323,10 +323,19 @@ fn w_planes_are_exactly_adjoint_without_a_norm_division() {
         .map(|((ax, d), w)| (Complex64::new(f64::from(ax.re), f64::from(ax.im)).conj() * d * w).re)
         .sum::<f64>();
     let (image, _) = dirty(&operator, &block);
+    // `WProjectFT` multiplies the model by its sinc and divides the image
+    // by it, so the pairing holds with the model carrying the ratio of the
+    // two sides (as `MosaicFT`).
+    let correction = operator.cf().image_correction();
+    // The tables span the padded grid; the image sits at its origin.
+    let offset = operator.geometry().image_origin();
     let image_side = image
-        .iter()
-        .zip(&model.planes[0].images[0])
-        .map(|(image, model)| f64::from(*image) * f64::from(*model))
+        .indexed_iter()
+        .map(|((y, x), image)| {
+            let (gx, gy) = (x + offset[0], y + offset[1]);
+            let factor = correction.model_at(gx, gy) / correction.at(gx, gy);
+            f64::from(*image) * f64::from(model.planes[0].images[0][(y, x)]) * factor
+        })
         .sum::<f64>();
     let scale = visibility_side.abs().max(image_side.abs());
     assert!(
@@ -365,6 +374,113 @@ fn sumwt_accumulates_the_weight_times_the_real_kernel_sum() {
         (sumwt - weights.iter().sum::<f64>()).abs() > 1.0e-6,
         "complex planes make Re N differ from one"
     );
+}
+
+/// The predictions of `model` for every sample of `block`, `[sample][pol]`.
+fn predict(
+    operator: &MeasurementOperator,
+    model: &ModelImages,
+    block: &SampleBuffer,
+) -> Vec<Complex32> {
+    let prepared = operator
+        .prepare_model(model, ModelPrescale::Unit)
+        .expect("prepared");
+    let mut out = vec![Complex32::default(); block.len() * 2];
+    CpuBackend::new()
+        .apply(
+            &block.block(),
+            operator.cf(),
+            Work::Predict {
+                model: &prepared,
+                out: &mut out,
+            },
+        )
+        .expect("predict");
+    out
+}
+
+fn point_model(pixel: [usize; 2]) -> ModelImages {
+    let mut image = Array2::<f32>::zeros((IMAGE, IMAGE));
+    image[(pixel[1], pixel[0])] = 1.0;
+    ModelImages {
+        first_plane: 0,
+        planes: vec![ModelPlane {
+            images: vec![image],
+        }],
+    }
+}
+
+#[test]
+fn the_w_term_carries_the_opposite_sign_to_the_uv_term() {
+    // `V(u, v, w) = ∫ I(l, m) e^{−2πi(ul + vm + w(n − 1))}` for the
+    // MeasurementSet's uvw; placements carry CASA's gridder coordinates,
+    // `u` and `v` negated and `w` kept (`FTMachine::negateUV`), so whichever
+    // sign the transform gives the placement `(u, v)` term, the `w` term
+    // carries the opposite one. A plane's `w` is taken exactly, so no
+    // quantisation enters; the phase `2π w (n − 1)` is 0.47 rad here, and
+    // the wrong sign would miss the expectation by 0.9.
+    let mut rng = Rng::new(31);
+    let operator = operator_with(Box::new(w_planes(8)), GridPrecision::F64);
+    let geometry = operator.geometry();
+    let increment = geometry.image().increment_rad;
+    let offset = [28_i64, -20];
+    let centre = IMAGE as i64 / 2;
+    let pixel = [
+        usize::try_from(centre + offset[0]).expect("inside"),
+        usize::try_from(centre + offset[1]).expect("inside"),
+    ];
+    let l = offset[0] as f64 * increment[0];
+    let m = offset[1] as f64 * increment[1];
+    let n_minus_one = (1.0 - l * l - m * m).sqrt() - 1.0;
+    // Plane 5 of 8: `w = (5/7)² · 0.25/|Δx|` (`WPConvFunc`'s quadratic
+    // spacing of the `maxW = −1` range).
+    let w = (5.0_f64 / 7.0).powi(2) * 0.25 / increment[0].abs();
+    let mut placed = placements(geometry, 4, 1, &mut rng);
+    for placement in &mut placed {
+        placement.u *= 0.3;
+        placement.v *= 0.3;
+        placement.phase = 0.0;
+    }
+    let at = |w: f64| {
+        let mut block = SampleBuffer::new(2);
+        for placement in &placed {
+            let placement = Placement {
+                w,
+                cf: operator.cf().key(&context(), 1.0e9, w),
+                ..*placement
+            };
+            assert!(fits(&operator, &placement));
+            block.push(placement, &[Complex32::default(); 2], &[1.0; 2]);
+        }
+        predict(&operator, &point_model(pixel), &block)
+    };
+    let flat = at(0.0);
+    let lifted = at(w);
+    let widen = |value: Complex32| Complex64::new(f64::from(value.re), f64::from(value.im));
+    for (index, placement) in placed.iter().enumerate() {
+        let flat = widen(flat[index * 2]);
+        let lifted = widen(lifted[index * 2]);
+        assert!(
+            flat.norm() > 0.5,
+            "sample {index}: |P(w = 0)| {}",
+            flat.norm()
+        );
+        let uv_phase = std::f64::consts::TAU * (placement.u * l + placement.v * m);
+        let direction = flat / flat.norm();
+        let minus = (direction - Complex64::from_polar(1.0, -uv_phase)).norm();
+        let plus = (direction - Complex64::from_polar(1.0, uv_phase)).norm();
+        assert!(
+            minus.min(plus) < 0.3,
+            "sample {index}: the (u, v) phase {uv_phase} is neither sign of {direction}"
+        );
+        let sign = if minus < plus { -1.0 } else { 1.0 };
+        let expected = Complex64::from_polar(1.0, -sign * std::f64::consts::TAU * w * n_minus_one);
+        let ratio = lifted / flat;
+        assert!(
+            (ratio - expected).norm() < 0.15,
+            "sample {index}: P(w)/P(0) = {ratio}, expected {expected} for w = {w}"
+        );
+    }
 }
 
 #[test]

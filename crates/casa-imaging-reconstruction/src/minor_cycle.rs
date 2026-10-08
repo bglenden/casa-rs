@@ -374,13 +374,16 @@ impl MinorCycleProgram {
             &mut algorithm,
             problem.reconstruction().controls(),
         )?;
-        program.requires_image_response =
-            matches!(program.algorithm, ReconstructionAlgorithm::Mtmfs { .. })
-                && problem
-                    .science()
-                    .measurement_equation()
-                    .aw_projection()
-                    .is_some();
+        // A direction-dependent sensitivity (mosaic, A-projection) puts the
+        // solvers' residual in CASA's flat-noise or flat-sky units; every
+        // algorithm needs the binding then.
+        program.requires_image_response = problem
+            .science()
+            .measurement_equation()
+            .aw_projection()
+            .is_some()
+            || problem.science().instrument_model()
+                == Some(casa_imaging_model::InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1);
         Ok(program)
     }
 
@@ -2117,6 +2120,9 @@ pub(crate) fn run_minor_cycle_plane(
 ) -> Result<MinorCycleResult, MinorCycleError> {
     let view = plane.owner();
     let shape = view.shape();
+    if controls.requires_image_response && controls.image_response.is_none() {
+        return Err(MinorCycleError::MissingImageResponse);
+    }
     let cells = shape[0] * shape[1];
     let model_plane = controls.model_plane();
     if base
@@ -2197,22 +2203,46 @@ pub(crate) fn run_minor_cycle_plane(
         _ => return Err(MinorCycleError::UnsupportedAlgorithm),
     };
 
-    // Private working copy: authoritative state is never mutated.
+    // Private working copy: authoritative state is never mutated. Under a
+    // direction-dependent response the copy is CASA's flat-noise (or
+    // flat-sky) residual (`divideResidualByWeight`) scaled back by the raw
+    // PSF peak, so the peak search, the thresholds and the PSF subtraction
+    // below work in the units the products publish; the deltas convert
+    // back to the physical model at the end (`divideModelByWeight`).
+    let window;
+    let response = match controls.image_response {
+        Some(binding) => {
+            window = view.read_window(view.slab().core_range())?;
+            TaylorSolveResponse::for_plane(
+                window
+                    .domain(plane.domain_ordinal())
+                    .ok_or(MinorCycleError::ModelShapeMismatch)?,
+                plane.polarization(),
+                Some(binding),
+            )?
+        }
+        None => TaylorSolveResponse::unbound(),
+    };
+    let response_scale = if response.directional.is_some() {
+        psf_peak
+    } else {
+        1.0
+    };
     let mut residual = Vec::with_capacity(cells);
     if let Some(real) = plane.residual_real() {
-        for &value in real {
+        for (index, &value) in real.iter().enumerate() {
             if !value.is_finite() {
                 return Err(MinorCycleError::GeneratedNonfinite);
             }
-            residual.push(f64::from(value));
+            residual.push(response.residual(f64::from(value), index)? * response_scale);
         }
     } else {
-        for value in plane.residual() {
+        for (index, value) in plane.residual().iter().enumerate() {
             let real = value.re;
             if !real.is_finite() {
                 return Err(MinorCycleError::GeneratedNonfinite);
             }
-            residual.push(real);
+            residual.push(response.residual(real, index)? * response_scale);
         }
     }
     let noise_rms = controls
@@ -2508,7 +2538,9 @@ pub(crate) fn run_minor_cycle_plane(
                     .shape()
                     .cell_at(*flat)
                     .expect("accumulated flat keys stay inside the base shape");
-                Ok(ModelDeltaTerm::new(cell, ModelValue::new(*flux)?))
+                let pixel = cell.pixel();
+                let physical = response.physical_delta(*flux, pixel[0] * shape[1] + pixel[1])?;
+                Ok(ModelDeltaTerm::new(cell, ModelValue::new(physical)?))
             })
             .collect::<Result<Vec<_>, MinorCycleError>>()?;
         Some(base.compile_delta(lifecycle, deltas)?)
@@ -2784,16 +2816,65 @@ struct TaylorSolveResponse<'a> {
 }
 
 impl<'a> TaylorSolveResponse<'a> {
+    /// No direction-dependent response: residuals and deltas pass through.
+    const fn unbound() -> Self {
+        Self {
+            directional: None,
+            normal_scale: 1.0,
+            published_sum_weight: 1.0,
+        }
+    }
+
+    /// The response of one polarization plane of a constant-basis state:
+    /// its dense sensitivity and the sum weights of its gridding (the PSF's
+    /// for the beam, the data's for the residual).
+    fn for_plane(
+        domain: crate::FinalNormalDomainState<'a>,
+        polarization: usize,
+        binding: Option<crate::MinorCycleImageResponse>,
+    ) -> Result<Self, MinorCycleError> {
+        let Some(binding) = binding else {
+            return Ok(Self::unbound());
+        };
+        let shape = domain.shape();
+        let cells = shape[0] * shape[1];
+        let sensitivity = domain
+            .sensitivity()
+            .dense()
+            .and_then(|dense| dense.get(polarization * cells..(polarization + 1) * cells))
+            .ok_or(MinorCycleError::ModelShapeMismatch)?;
+        let normal_weight = *domain
+            .sum_weights()
+            .get(polarization)
+            .ok_or(MinorCycleError::ModelShapeMismatch)?;
+        let published_weight = *domain
+            .published_sum_weights()
+            .get(polarization)
+            .ok_or(MinorCycleError::ModelShapeMismatch)?;
+        if !normal_weight.is_finite()
+            || normal_weight <= 0.0
+            || !published_weight.is_finite()
+            || published_weight <= 0.0
+        {
+            return Err(MinorCycleError::InvalidPsfPeak);
+        }
+        Ok(Self {
+            directional: Some((
+                crate::MosaicSensitivity::new(sensitivity)?
+                    .with_normal_sum_weight(normal_weight)?,
+                binding,
+            )),
+            normal_scale: 1.0 / normal_weight,
+            published_sum_weight: published_weight,
+        })
+    }
+
     fn new(
         view: &'a crate::FinalNormalStateWindow<'_>,
         binding: Option<crate::MinorCycleImageResponse>,
     ) -> Result<Self, MinorCycleError> {
         let Some(binding) = binding else {
-            return Ok(Self {
-                directional: None,
-                normal_scale: 1.0,
-                published_sum_weight: 1.0,
-            });
+            return Ok(Self::unbound());
         };
         let principal = view
             .normal_moment(0)

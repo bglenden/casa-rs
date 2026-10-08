@@ -8368,7 +8368,7 @@ mod tests {
         use crate::{ArtifactIdentity, ArtifactRole, CacheIdentity, PlannedArtifact, WorkNodeId};
 
         let artifact = PlannedArtifact::new(
-            ArtifactIdentity::from_owner_digest([1; 32]),
+            ArtifactIdentity::from_sha256([1; 32]),
             WorkNodeId::new("catalog-\"escaped\"-node"),
             ArtifactRole::Prepared,
             Some(CacheIdentity::from_sha256([2; 32])),

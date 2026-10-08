@@ -49,8 +49,15 @@ pub struct PassImages {
     pub residual: Vec<f32>,
     /// PSF moment planes on an initial pass; `None` on a residual pass.
     pub psf: Option<Vec<f32>>,
-    /// `sumwt` per PSF-moment plane on an initial pass; empty otherwise.
+    /// `sumwt` of the PSF gridding per PSF-moment plane on an initial pass;
+    /// empty otherwise. It normalises the PSF and weight planes.
     pub sum_weights: Vec<f64>,
+    /// `sumwt` of the data gridding per PSF-moment plane on an initial pass
+    /// (the PSF's beyond the data terms); empty otherwise. It normalises
+    /// the residual (CASA `getImage` divides each image by its own
+    /// gridding's `sumwt`), and equals `sum_weights` unless the set grids
+    /// its PSF with another kernel than its data (`AWProjectFT`).
+    pub published_sum_weights: Vec<f64>,
     /// The gridded sensitivity (weight) planes of an initial pass with a
     /// kernel set that has weight taps (mosaic, AW), `[channel][pol]`;
     /// `None` when the sensitivity is the scalar `sumwt`.
@@ -317,9 +324,11 @@ impl PassNormalState {
             residual,
             psf,
             sum_weights,
+            published_sum_weights,
             // A channel-local state keeps the per-plane `sumwt` as its
-            // sensitivity (`SensitivityValues::PerPlane`); the gridded weight
-            // planes of a cube are not stored yet (IF-3 deviation on #652).
+            // sensitivity (`SensitivityValues::PerPlane`); the application
+            // refuses the kernel sets that grid a weight image for a cube
+            // until the cube tickets store it (IF-3 deviation on #652).
             weight: _,
         } = images;
         let planes = channels.len() * polarizations;
@@ -330,6 +339,7 @@ impl PassNormalState {
             || residual.len() != values
             || psf.len() != values
             || sum_weights.len() != planes
+            || published_sum_weights.len() != planes
         {
             return Err(SpectralOperatorError::InvalidSlab);
         }
@@ -354,7 +364,7 @@ impl PassNormalState {
                 psf: Box::new([]),
                 clark_workspace: Mutex::new(None),
                 sensitivity: Box::new([]),
-                published_sum_weights: sum_weights.clone().into_boxed_slice(),
+                published_sum_weights: published_sum_weights.into_boxed_slice(),
                 sum_weights: sum_weights.into_boxed_slice(),
                 validity,
                 residual_model: Some(self.model),
@@ -374,6 +384,7 @@ impl PassNormalState {
             residual,
             psf,
             sum_weights,
+            published_sum_weights,
             weight,
         } = images;
         let slab = SpectralSlabPlan {
@@ -389,6 +400,7 @@ impl PassNormalState {
             || residual.len() != terms * polarizations * cells
             || psf.len() != moments * polarizations * cells
             || sum_weights.len() != moments * polarizations
+            || published_sum_weights.len() != moments * polarizations
             || weight
                 .as_ref()
                 .is_some_and(|weight| weight.len() != polarizations * cells)
@@ -424,7 +436,7 @@ impl PassNormalState {
                 psf: widen(&psf),
                 clark_workspace: Mutex::new(None),
                 sensitivity,
-                published_sum_weights: sum_weights.clone().into_boxed_slice(),
+                published_sum_weights: published_sum_weights.into_boxed_slice(),
                 sum_weights: sum_weights.into_boxed_slice(),
                 validity,
                 residual_model: Some(self.model),
@@ -441,6 +453,10 @@ fn all_finite(images: &PassImages) -> bool {
             .as_ref()
             .is_none_or(|psf| psf.iter().all(|value| value.is_finite()))
         && images.sum_weights.iter().all(|weight| weight.is_finite())
+        && images
+            .published_sum_weights
+            .iter()
+            .all(|weight| weight.is_finite())
         && images
             .weight
             .as_ref()

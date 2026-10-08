@@ -30,17 +30,21 @@ const NONFINITE_INPUT: &str = "a selected visibility, weight or uvw is not finit
 /// of a cube: the low edge of the first plane to the high edge of the last.
 pub(crate) type PlaneBounds = Box<dyn Fn(PlaneRange) -> [f64; 2] + Send + Sync>;
 
-/// The mosaic dish index of each antenna of a row: the 12 m dish first, as
-/// [`super::measurement::domain_operator`] lists them; a row without
-/// response classes (every problem without an instrument model) is on the
-/// first dish.
-fn antenna_types(responses: Option<SelectedAntennaResponses>) -> [u8; 2] {
-    const fn index(class: AntennaResponseClass) -> u8 {
-        match class {
-            AntennaResponseClass::CasaAlma12m => 0,
-            AntennaResponseClass::CasaAca7m => 1,
-        }
-    }
+/// The mosaic dish index of each antenna of a row: its aperture class's
+/// position in the selection's `classes`, the order
+/// [`super::measurement::domain_operator`] lists the dishes in; a row
+/// without response classes (every problem without an instrument model)
+/// is on the first dish.
+fn antenna_types(
+    responses: Option<SelectedAntennaResponses>,
+    classes: &[AntennaResponseClass],
+) -> [u8; 2] {
+    let index = |class: AntennaResponseClass| {
+        classes
+            .iter()
+            .position(|known| *known == class)
+            .map_or(0, |index| u8::try_from(index).expect("few dish classes"))
+    };
     responses.map_or([0, 0], |responses| {
         [index(responses.antenna1), index(responses.antenna2)]
     })
@@ -113,6 +117,8 @@ pub(crate) struct MeasurementSetSource<'a> {
     /// The direction law of every domain when a kernel set ramps each row
     /// to its pointing; empty otherwise.
     pointing: Vec<DirectionCoordinateSpec>,
+    /// The selection's aperture classes in dish order.
+    dish_classes: Vec<AntennaResponseClass>,
     planes: u32,
     bounds: Option<PlaneBounds>,
     proven: bool,
@@ -127,13 +133,15 @@ impl<'a> MeasurementSetSource<'a> {
     /// A source over `selected` delivering rows projected on every domain.
     /// `bounds` enables restricted traversals for a basis of `planes`
     /// planes; `pointing_ramp` carries each row's pointing offset for a
-    /// kernel set that ramps to it.
+    /// kernel set that ramps to it; `dish_classes` orders the antenna
+    /// types the mosaic set keys on.
     pub(crate) fn new(
         problem: &'a CompiledProblem,
         selected: BoundSelectedObservation,
         planes: u32,
         bounds: Option<PlaneBounds>,
         pointing_ramp: bool,
+        dish_classes: Vec<AntennaResponseClass>,
     ) -> Self {
         let domains = problem.geometry().domains();
         Self {
@@ -144,6 +152,7 @@ impl<'a> MeasurementSetSource<'a> {
             } else {
                 Vec::new()
             },
+            dish_classes,
             planes,
             bounds,
             proven: false,
@@ -218,7 +227,7 @@ impl<'a> MeasurementSetSource<'a> {
                 context: RowContext {
                     time_s: coordinates.time.mjd_days() * SECONDS_PER_DAY,
                     antennas: [metadata.antenna1 as u32, metadata.antenna2 as u32],
-                    antenna_types: antenna_types(metadata.antenna_responses),
+                    antenna_types: antenna_types(metadata.antenna_responses, &self.dish_classes),
                     parallactic_angle_rad: coordinates.parallactic_angles_rad.unwrap_or([0.0; 2]),
                     field: metadata.field_id as u32,
                     spectral_window: numeric.row.spectral_window_id,

@@ -136,6 +136,7 @@ fn synthetic_pass_images(
         polarizations: 1,
         residual: planes(&moments[..terms]),
         psf: Some(planes(&moments)),
+        published_sum_weights: moments.clone(),
         sum_weights: moments,
         weight: None,
     }

@@ -67,12 +67,13 @@ pub(super) fn spread<T: GridScalar>(
             );
             let [sx, sy] = [usize::from(support[0]), usize::from(support[1])];
             let (x0, y0) = block_origin(tile, location, [sx / 2, sy / 2]);
+            let fraction = fine_fraction(location, oversampling);
             let nx = tile.shape[0];
             for iy in 0..sy {
                 let row = &mut grid[(y0 + iy) * nx + x0..][..sx];
                 let tap_row = &tile_taps[iy * sx..][..sx];
                 for (ix, (cell, tap)) in row.iter_mut().zip(tap_row).enumerate() {
-                    let tap = dense_tap(*tap, conjugate, gradient, ix, iy, sx, sy);
+                    let tap = dense_tap(*tap, conjugate, gradient, fraction, ix, iy, sx, sy);
                     let tap = Complex::new(T::from_f64(tap.re), T::from_f64(tap.im));
                     *cell = *cell + value * tap;
                 }
@@ -130,13 +131,14 @@ pub(super) fn gather<T: GridScalar>(
             );
             let [sx, sy] = [usize::from(support[0]), usize::from(support[1])];
             let (x0, y0) = block_origin(tile, location, [sx / 2, sy / 2]);
+            let fraction = fine_fraction(location, oversampling);
             let nx = tile.shape[0];
             let mut sum = Complex64::default();
             for iy in 0..sy {
                 let row = &grid[(y0 + iy) * nx + x0..][..sx];
                 let tap_row = &tile_taps[iy * sx..][..sx];
                 for (ix, (cell, tap)) in row.iter().zip(tap_row).enumerate() {
-                    let tap = dense_tap(*tap, conjugate, gradient, ix, iy, sx, sy);
+                    let tap = dense_tap(*tap, conjugate, gradient, fraction, ix, iy, sx, sy);
                     let cell = Complex64::new(cell.re.into_f64(), cell.im.into_f64());
                     sum += tap.conj() * cell;
                 }
@@ -268,10 +270,22 @@ fn dense_tile(
     &data[offset * taps..][..taps]
 }
 
+/// The sample's offset from its cell in cells, `(off − s/2)/s` per axis,
+/// from its fine rows: the pointing ramp is anchored at the sample itself
+/// (CASA reads the ramped kernel at `ix·sampling + off`), so every mode,
+/// the PSF and weight image included, carries the same per-sample phase.
+fn fine_fraction(location: CellLocation, oversampling: u16) -> [f64; 2] {
+    let half = f64::from(oversampling) / 2.0;
+    let fraction = |offset: u16| (f64::from(offset) - half) / f64::from(oversampling);
+    [fraction(location.ox), fraction(location.oy)]
+}
+
+#[allow(clippy::too_many_arguments)]
 fn dense_tap(
     tap: Complex32,
     conjugate: bool,
     gradient: [f32; 2],
+    fraction: [f64; 2],
     ix: usize,
     iy: usize,
     sx: usize,
@@ -282,8 +296,8 @@ fn dense_tap(
         tap = tap.conj();
     }
     if gradient != [0.0, 0.0] {
-        let kx = ix as f64 - (sx / 2) as f64;
-        let ky = iy as f64 - (sy / 2) as f64;
+        let kx = ix as f64 - (sx / 2) as f64 + fraction[0];
+        let ky = iy as f64 - (sy / 2) as f64 + fraction[1];
         let phase = kx * f64::from(gradient[0]) + ky * f64::from(gradient[1]);
         tap *= Complex64::from_polar(1.0, phase);
     }

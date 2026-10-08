@@ -203,25 +203,41 @@ impl WPlanes {
                 dense_cell_from_quadrant(&cropped_quadrant, cropped_side, sampling, half_support)
             })
             .collect::<Vec<_>>();
+        // `WProjectFT`'s sinc of the oversampled kernel cell: `getImage`
+        // tabulates it over `max(nx, ny)` for both axes and divides the
+        // image by `correctX1D · sinc`; `initializeToVis` tabulates it per
+        // axis and divides the model by `correctX1D / sinc`, so the model is
+        // multiplied by the sinc the image is divided by (the `MosaicFT`
+        // asymmetry).
         let [grid_nx, grid_ny] = geometry.grid_shape();
-        let sinc_len = grid_nx.max(grid_ny);
-        let sinc = |index: usize| {
-            let x = std::f64::consts::PI * (index as f64 - (sinc_len / 2) as f64)
-                / (sinc_len as f64 * f64::from(sampling));
-            if index == sinc_len / 2 {
-                1.0
-            } else {
-                x.sin() / x
-            }
+        let sinc = |len: usize, index: usize| {
+            let x = std::f64::consts::PI * (index as f64 - (len / 2) as f64)
+                / (len as f64 * f64::from(sampling));
+            if index == len / 2 { 1.0 } else { x.sin() / x }
         };
-        let grid_correction = |len: usize| {
+        let spheroidal = |len: usize, index: usize| {
+            let nu = ((index as f64 - (len / 2) as f64).abs() / (len / 2) as f64).clamp(0.0, 1.0);
+            grdsf(nu)
+        };
+        let sinc_len = grid_nx.max(grid_ny);
+        let image_correction = |len: usize| {
             (0..len)
                 .map(|index| {
-                    let nu = ((index as f64 - (len / 2) as f64).abs() / (len / 2) as f64)
-                        .clamp(0.0, 1.0);
-                    let value = grdsf(nu) * sinc(index);
+                    let value = spheroidal(len, index) * sinc(sinc_len, index);
                     if value.abs() > 1.0e-6 {
                         1.0 / value
+                    } else {
+                        0.0
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+        let model_correction = |len: usize| {
+            (0..len)
+                .map(|index| {
+                    let value = spheroidal(len, index);
+                    if value.abs() > 1.0e-6 {
+                        sinc(len, index) / value
                     } else {
                         0.0
                     }
@@ -233,7 +249,12 @@ impl WPlanes {
             planes: cells,
             w_scale,
             mueller: MuellerRouting::scalar(polarization.pol_map(), polarization.grid_pols()),
-            correction: ImageCorrection::new(grid_correction(grid_nx), grid_correction(grid_ny)),
+            correction: ImageCorrection::split(
+                image_correction(grid_nx),
+                image_correction(grid_ny),
+                model_correction(grid_nx),
+                model_correction(grid_ny),
+            ),
         })
     }
 

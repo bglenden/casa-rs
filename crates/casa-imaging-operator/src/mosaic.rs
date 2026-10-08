@@ -335,14 +335,15 @@ impl MosaicPb {
         let mut fft = PlaneFft::<f64>::new([conv_size, conv_size], false)?;
         let mut screen = vec![Complex64::default(); conv_size * conv_size];
         let planes = pair_planes(dishes.len());
-        let mut imaging = Vec::with_capacity(planes * cell_count);
-        let mut weight = Vec::with_capacity(planes * cell_count);
-        let mut max_half_support = 0_usize;
+        // One lattice per beam frequency of every pair and window, in
+        // CASA's `[x][y]` quarter-cropped layout, with the pair's support
+        // (`supportAndNormalizeLatt`: from the weight plane of the last beam
+        // frequency), in the cell order the keys index.
+        let mut screened = Vec::with_capacity(planes * cells.len());
+        let mut window_support = vec![0_usize; cells.len()];
         for k in 0..dishes.len() {
             for j in k..dishes.len() {
-                for window in &cells {
-                    // One lattice per beam frequency of this window and
-                    // pair, in CASA's `[x][y]` quarter-cropped layout.
+                for (window_index, window) in cells.iter().enumerate() {
                     let mut lattices = Vec::with_capacity(window.frequencies_hz.len());
                     for &frequency_hz in &window.frequencies_hz {
                         lattices.push(screen_pair(
@@ -355,20 +356,33 @@ impl MosaicPb {
                             frequency_hz,
                         )?);
                     }
-                    // `supportAndNormalizeLatt`: the support from the weight
-                    // plane of the last beam frequency, every cell of the
-                    // pair normalised over that support.
                     let last = lattices.last().expect("a window has a cell");
                     let support = weight_plane_support(&last.weight, lattice)?;
-                    let crop = (2 * (support + 2)).min(lattice);
-                    max_half_support = max_half_support.max(support);
-                    for lattice_pair in &lattices {
-                        let (imaging_cell, weight_cell) =
-                            finish_pair(lattice_pair, lattice, support, crop)?;
-                        imaging.push(imaging_cell);
-                        weight.push(weight_cell);
-                    }
+                    window_support[window_index] = window_support[window_index].max(support);
+                    screened.push((window_index, support, lattices));
                 }
+            }
+        }
+        // `findConvFunction` crops every pair of a window to the widest
+        // pair's `2(support + 2)`; each pair is normalised over its own
+        // support.
+        let mut imaging = Vec::with_capacity(planes * cell_count);
+        let mut weight = Vec::with_capacity(planes * cell_count);
+        let max_half_support = window_support.iter().copied().max().unwrap_or(0);
+        for (window_index, support, lattices) in &screened {
+            let crop = (2 * (window_support[*window_index] + 2)).min(lattice);
+            // `interpLanczos` zeroes within three input pixels of the edge, so
+            // a crop under seven pixels resamples to nothing.
+            if crop < 2 * LANCZOS_A as usize + 1 {
+                return Err(OperatorError::ConvolutionFunction {
+                    reason: "the mosaic beam spans too few screen pixels; use a larger image or finer cells",
+                });
+            }
+            for lattice_pair in lattices {
+                let (imaging_cell, weight_cell) =
+                    finish_pair(lattice_pair, lattice, *support, crop)?;
+                imaging.push(imaging_cell);
+                weight.push(weight_cell);
             }
         }
         let half_support = u16::try_from(max_half_support).expect("support fits u16");
@@ -634,11 +648,19 @@ fn weight_plane_support(plane: &[Complex32], side: usize) -> Result<usize, Opera
         }
         trial += 1;
     }
+    // `supportAndNormalizeLatt`'s fallbacks reach `side/2 − 4·sampling`;
+    // a screen too small for that has no usable beam.
+    let fallback =
+        (side / 2)
+            .checked_sub(4 * sampling)
+            .ok_or(OperatorError::ConvolutionFunction {
+                reason: "the mosaic screen is too small for its beam support",
+            })?;
     if !found {
         if max_abs - min_abs > cut {
             found = true;
         }
-        trial = side / 2 - 4 * sampling;
+        trial = fallback;
     }
     if !found {
         return Err(OperatorError::ConvolutionFunction {
@@ -649,7 +671,7 @@ fn weight_plane_support(plane: &[Complex32], side: usize) -> Result<usize, Opera
         trial = if 10 * sampling < side {
             5 * sampling
         } else {
-            side / 2 - 4 * sampling
+            fallback
         };
     }
     let mut support = (0.5 + trial as f64 / sampling as f64) as usize + 1;

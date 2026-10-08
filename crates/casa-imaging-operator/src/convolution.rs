@@ -125,23 +125,50 @@ impl DenseCell {
 /// the cache may drop its own reference without invalidating the borrow,
 /// and a worker holds at most one cell per slot beyond the cache's bound.
 #[derive(Clone, Debug, Default)]
-pub struct CellHold(Option<Arc<DenseCell>>);
+pub struct CellHold {
+    cell: Option<Arc<DenseCell>>,
+    /// The cell's key and the set's slot (imaging, weight, prediction cell)
+    /// when parked through [`Self::lend_keyed`]; a repeated key lends the
+    /// parked cell again without touching the set's cache.
+    keyed: Option<(CfKey, u8)>,
+}
 
 impl CellHold {
     /// An empty slot.
     #[must_use]
     pub const fn new() -> Self {
-        Self(None)
+        Self {
+            cell: None,
+            keyed: None,
+        }
     }
 
     /// Park `cell` and lend its taps.
     pub fn lend(&mut self, cell: Arc<DenseCell>) -> TapLayout<'_> {
-        self.0.insert(cell).layout()
+        self.keyed = None;
+        self.cell.insert(cell).layout()
+    }
+
+    /// Lend the taps of the cell parked for `key` in the set's `slot` (the
+    /// set numbers its kinds of cell), fetching it with `load` when another
+    /// cell is parked: rows of one key in sequence cost one fetch.
+    pub fn lend_keyed(
+        &mut self,
+        key: CfKey,
+        slot: u8,
+        load: impl FnOnce() -> Arc<DenseCell>,
+    ) -> TapLayout<'_> {
+        if self.keyed != Some((key, slot)) || self.cell.is_none() {
+            self.cell = Some(load());
+            self.keyed = Some((key, slot));
+        }
+        self.cell.as_ref().expect("a parked cell").layout()
     }
 
     /// Release the parked cell.
     pub fn clear(&mut self) {
-        self.0 = None;
+        self.cell = None;
+        self.keyed = None;
     }
 }
 
@@ -252,10 +279,11 @@ pub struct RowContext {
 /// adjoint forms ([`Self::at`]) and to the model the forward transform
 /// reads ([`Self::model_at`]).
 ///
-/// CASA's `GridFT` and `WProjectFT` divide the model and the dirty image
-/// by the same response ([`Self::new`]); `MosaicFT` multiplies the model by
-/// its sinc (`prepGridForDegrid`) and divides the image by it (`getImage`),
-/// so the sides differ ([`Self::split`]).
+/// CASA's `GridFT` divides the model and the dirty image by the same
+/// response ([`Self::new`]); `MosaicFT` (`prepGridForDegrid`, `getImage`)
+/// and `WProjectFT` (`initializeToVis`, `getImage`) multiply the model by
+/// their sinc and divide the image by it, so the sides differ
+/// ([`Self::split`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImageCorrection {
     x: Box<[f64]>,
@@ -361,4 +389,26 @@ pub trait ConvolutionFunctionSet: Send + Sync {
     /// (`Placement::gradient`): the kernels encode a pointing offset from
     /// the image centre as `e^{i(k·g)}` over the taps (mosaic, AW).
     fn pointing_ramp(&self) -> bool;
+
+    /// The taps `Mode::Psf` grids a sample with at its uv position: the
+    /// imaging taps for `GridFT`, `WProjectFT` and `MosaicFT`; the AW
+    /// catalog grids its PSF with the weight cells (`AWProjectFT::
+    /// findConvFunction` maps `cfwts2_p` when `makingPSF`).
+    fn psf_taps<'s>(&'s self, key: CfKey, hold: &'s mut CellHold) -> TapLayout<'s> {
+        self.taps(key, hold)
+    }
+
+    /// The taps a prediction gathers with: the gridding taps for every set
+    /// but the AW catalog, whose `GridToData` reads the native-frequency
+    /// cell (`CFBuffer::nearestFreqNdx(spw, chan)` without `conjBeams`)
+    /// where `DataToGrid` read the conjugate one.
+    fn prediction_taps<'s>(&'s self, key: CfKey, hold: &'s mut CellHold) -> TapLayout<'s> {
+        self.taps(key, hold)
+    }
+
+    /// The half support a placement keyed `key` must keep inside the grid:
+    /// the largest of every tap layout the key can lend.
+    fn placement_half_support(&self, key: CfKey, hold: &mut CellHold) -> [u16; 2] {
+        self.taps(key, hold).half_support()
+    }
 }

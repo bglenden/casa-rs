@@ -12,8 +12,8 @@ use casa_imaging_operator::{
     AiryDish, Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend, GridBackend,
     GridGeometry, GridPadding, GridPrecision, ImageExtent, KernelNormalisation,
     MOSAIC_OVERSAMPLING, MeasurementOperator, Mode, ModeSet, ModelImages, ModelPlane,
-    ModelPrescale, MosaicPb, MosaicWindow, Placement, PlaneRange, PolarizationRouting, RowContext,
-    SampleBuffer, Work, pair_plane,
+    ModelPrescale, MosaicPb, MosaicWindow, OperatorError, Placement, PlaneRange,
+    PolarizationRouting, RowContext, SampleBuffer, Work, pair_plane,
 };
 use casa_numerics::AnnularApertureVoltageTable;
 use common::{IMAGE, Rng, buffer, placements, samples};
@@ -212,6 +212,37 @@ fn point_model(pixel: [usize; 2]) -> ModelImages {
     }
 }
 
+/// A 16-cell image gives a 16-pixel screen whose quarter lattice cannot
+/// hold `supportAndNormalizeLatt`'s fallback, and a 32-cell image a beam
+/// crop too small for the Lanczos resample: both are typed errors.
+#[test]
+fn too_small_a_screen_is_a_typed_error_not_a_panic() {
+    for side in [16_usize, 32] {
+        let geometry = GridGeometry::new(
+            ImageExtent {
+                shape: [side, side],
+                increment_rad: [-4.85e-6, 4.85e-6],
+                reference_pixel: [side / 2, side / 2],
+            },
+            GridPadding::None,
+        )
+        .expect("geometry");
+        let dishes = [AiryDish::casa_alma(12.0, &geometry)];
+        let result = MosaicPb::new(
+            &geometry,
+            &routing(),
+            5.0e10,
+            &dishes,
+            &[window(0, vec![5.0e10], 5.0e10)],
+        );
+        assert!(
+            matches!(result, Err(OperatorError::ConvolutionFunction { .. })),
+            "side {side}: {:?}",
+            result.err()
+        );
+    }
+}
+
 #[test]
 fn keys_follow_the_pair_plane_and_the_window_cells() {
     let geometry = geometry();
@@ -400,6 +431,47 @@ fn predictions_attenuate_the_model_by_the_beam_at_the_pointing() {
                 "offset {offset:?}: {ratio} vs {expected}"
             );
         }
+    }
+}
+
+/// `Mode::Psf` grids the weight as a unit visibility through the same
+/// ramped kernel the data use, fine offset included (CASA reads the ramped
+/// kernel at `ix·sampling + off` for `dopsf` too), so it equals the data
+/// grid of unit visibilities placed identically.
+#[test]
+fn the_psf_is_the_data_grid_of_unit_visibilities_under_ramps() {
+    let mut rng = Rng::new(97);
+    let geometry = geometry();
+    let operator = operator_with(Box::new(single_window_mosaic(&geometry)));
+    let placed = keyed_placements(&operator, 24, &mut rng);
+    assert!(placed.len() >= 16);
+    let mut psf_block = SampleBuffer::new(2);
+    let mut data_block = SampleBuffer::new(2);
+    for placement in &placed {
+        let weights = [0.5 + rng.unit() as f32, 0.5 + rng.unit() as f32];
+        psf_block.push(*placement, &[Complex32::default(); 2], &weights);
+        data_block.push(
+            Placement {
+                phase: 0.0,
+                ..*placement
+            },
+            &[
+                Complex32::new(weights[0], 0.0),
+                Complex32::new(weights[1], 0.0),
+            ],
+            &weights,
+        );
+    }
+    let (psf, psf_sumwt) = grid(&operator, &psf_block, Mode::Psf);
+    let (data, data_sumwt) = grid(&operator, &data_block, Mode::Data);
+    assert!((psf_sumwt - data_sumwt).abs() < 1.0e-9 * data_sumwt);
+    let peak = common::max_abs(psf.iter().copied());
+    assert!(peak > 0.0);
+    for (index, (psf, data)) in psf.iter().zip(&data).enumerate() {
+        assert!(
+            (f64::from(*psf) - f64::from(*data)).abs() < 1.0e-5 * peak,
+            "pixel {index}: PSF {psf}, unit-visibility data {data}"
+        );
     }
 }
 

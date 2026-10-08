@@ -124,8 +124,8 @@ fn far_point(observation: &Observation, name: &str, controls: Value) -> FarPoint
         )
     );
     observation.assert_image_wcs(image);
-    // `sumwt = Σ W·|N|` over unit-weight samples; the W planes' sampled
-    // sums sit within a part in a thousand of one.
+    // `sumwt = Σ W·Re N` over unit-weight samples (`wprojgrid.f`); the W
+    // planes' sampled real sums sit within a part in a thousand of one.
     let sumwt = f64::from(products.get(".sumwt").pixels[[0, 0]]);
     let samples = observation.stokes_i_samples() as f64;
     assert!(
@@ -165,15 +165,12 @@ fn w_projection_recovers_the_far_point_the_standard_gridder_smears() {
         "W-projected far point offset {:?} px",
         projected.offset_px
     );
-    // The automatic plane count quantises w (`WPConvFunc`); the residual
-    // phase across each plane's w bin decorrelates the far point by about
-    // two per cent on this track, as it does in CASA.
     for (product, flux_jy) in [
         ("restored peak", projected.peak_jy),
         ("model", projected.model_jy),
     ] {
         assert!(
-            (flux_jy - FAR.flux_jy).abs() < 0.035 * FAR.flux_jy,
+            (flux_jy - FAR.flux_jy).abs() < 0.02 * FAR.flux_jy,
             "W-projected far {product} {flux_jy} Jy, injected {} Jy",
             FAR.flux_jy
         );

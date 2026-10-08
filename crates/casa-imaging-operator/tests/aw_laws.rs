@@ -104,7 +104,6 @@ fn indexing(conjugate_beams: bool) -> AwIndexing {
     AwIndexing {
         conjugate_beams,
         image_reference_hz: REFERENCE_HZ,
-        pa_tolerance_deg: 1.0,
     }
 }
 
@@ -122,7 +121,7 @@ fn context(pa_deg: f64, spectral_window: u32) -> RowContext {
 
 /// Generate a cache into `root` and open it.
 fn generated(root: &std::path::Path, conjugate_beams: bool, bound: usize) -> AwCatalog {
-    AwCatalog::generate_native(root, &request(conjugate_beams)).expect("generate");
+    AwCatalog::generate_native(root, &request(conjugate_beams), false).expect("generate");
     AwCatalog::open_casa(
         root,
         indexing(conjugate_beams),
@@ -226,14 +225,15 @@ fn generated_cells_open_with_casa_index_rules_and_swapped_mueller_tables() {
     assert_eq!(catalog.frequency_cell(1.51e9), 1);
     assert_eq!(catalog.pa_cell(17.0), 0);
     assert_eq!(catalog.pa_cell(-350.0), 0);
-    // Keys: the same group for ±w; cube 0.
+    // Keys: the same group for ±w; the cube field names the native-frequency
+    // cell, which without conjugate beams is the gridding cell itself.
     let key = catalog.key(&context(17.0, 1), 1.6e9, w_of(0.9));
     assert_eq!(key, catalog.key(&context(17.0, 1), 1.6e9, -w_of(0.9)));
     assert_eq!(
         key,
         CfKey {
             group: catalog.group_index(0, 1, 1) as u16,
-            cube: 0
+            cube: catalog.group_index(0, 1, 1) as u16
         }
     );
     // makeConjPolMap: RR reads the RR plane on the direct table and the LL
@@ -282,6 +282,40 @@ fn conjugate_beams_select_the_cell_nearest_the_conjugate_frequency() {
     let other = tempfile::tempdir().expect("cache directory");
     let direct = generated(other.path(), false, usize::MAX);
     assert_eq!(direct.frequency_cell(1.4e9), 0);
+
+    // `DataToGrid` grids a 1.4 GHz row with the conjugate (1.6 GHz) cell;
+    // `GridToData` predicts it with the native 1.4 GHz cell
+    // (`nearestFreqNdx(spw, chan)` without `conjBeams`), and the PSF is
+    // gridded with the weight cell (`cfwts2_p` when `makingPSF`).
+    let key = catalog.key(&context(0.31_f64.to_degrees(), 0), 1.4e9, 0.0);
+    assert_eq!(usize::from(key.group), catalog.group_index(0, 1, 0));
+    assert_eq!(usize::from(key.cube), catalog.group_index(0, 0, 0));
+    let native = CfKey {
+        group: key.cube,
+        cube: key.cube,
+    };
+    let dense = |taps: TapLayout<'_>| match taps {
+        TapLayout::Dense { data, .. } => data.to_vec(),
+        TapLayout::SeparableReal { .. } => panic!("AW cells are dense"),
+    };
+    let mut lent = CellHold::new();
+    let mut other = CellHold::new();
+    assert_eq!(
+        dense(catalog.prediction_taps(key, &mut lent)),
+        dense(catalog.taps(native, &mut other))
+    );
+    assert_ne!(
+        dense(catalog.prediction_taps(key, &mut lent)),
+        dense(catalog.taps(key, &mut other))
+    );
+    assert_eq!(
+        dense(catalog.psf_taps(key, &mut lent)),
+        dense(catalog.weight_taps(key, &mut other).expect("weight cell"))
+    );
+    assert_ne!(
+        dense(catalog.psf_taps(key, &mut lent)),
+        dense(catalog.taps(key, &mut other))
+    );
 }
 
 #[test]
@@ -472,4 +506,27 @@ fn the_bounded_cache_evicts_but_a_held_cell_stays_valid() {
         panic!("dense");
     };
     assert_eq!(data, &snapshot[..]);
+}
+
+/// `AWProjectFT::getImage` and `getWeightImage` divide the images by the
+/// sampling sinc `sin(x)/x`, `x = π(i − n/2)/(n·sampling)`, 2.6 % at the
+/// grid edge for sampling 4; `initializeToVis` resets its `sincConv` to
+/// one, so the model side is uncorrected.
+#[test]
+fn the_image_correction_is_the_sampling_sinc_and_the_model_is_uncorrected() {
+    let root = tempfile::tempdir().expect("cache directory");
+    let catalog = generated(root.path(), false, usize::MAX);
+    let [nx, ny] = geometry().grid_shape();
+    let correction = catalog.image_correction();
+    let sinc = |len: usize, index: usize| {
+        let x = std::f64::consts::PI * (index as f64 - (len / 2) as f64)
+            / (len as f64 * OVERSAMPLING as f64);
+        x.sin() / x
+    };
+    assert_eq!(correction.at(nx / 2, ny / 2), 1.0);
+    let (gx, gy) = (3, ny - 5);
+    assert!((correction.at(gx, gy) - 1.0 / (sinc(nx, gx) * sinc(ny, gy))).abs() < 1.0e-12);
+    assert!((correction.at(0, ny / 2) - 1.0262).abs() < 1.0e-3);
+    assert_eq!(correction.model_at(gx, gy), 1.0);
+    assert_eq!(correction.model_at(0, 0), 1.0);
 }

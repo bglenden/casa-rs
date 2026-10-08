@@ -292,6 +292,12 @@ impl MsCalEngine {
         })
     }
 
+    /// The source-derived CASA aperture class of every ANTENNA row; `None`
+    /// for a dish outside the ALMA and ACA classes.
+    pub(crate) fn antenna_response_classes(&self) -> &[Option<AntennaResponseClass>] {
+        &self.antenna_response_classes
+    }
+
     /// Return the source-derived CASA aperture class for one antenna row.
     pub(crate) fn antenna_response_class(&self, antenna_id: usize) -> Option<AntennaResponseClass> {
         self.antenna_response_classes

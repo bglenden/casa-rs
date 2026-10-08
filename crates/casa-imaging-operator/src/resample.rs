@@ -459,9 +459,9 @@ fn sample_weight(
 }
 
 /// The placement of `row`'s sample at `frequency_hz` on `plane`: its cell,
-/// its pointing gradient when the set has a ramp, and its phase (the
-/// phase-centre shift plus the ramp's constant at the fine offset), when
-/// the cell's support fits the padded grid.
+/// its pointing gradient when the set has a ramp (the kernels anchor the
+/// ramp at the sample's fine offset), and its phase-centre shift, when the
+/// cell's support fits the padded grid.
 fn locate_sample(
     cf: &dyn ConvolutionFunctionSet,
     geometry: &GridGeometry,
@@ -475,9 +475,9 @@ fn locate_sample(
     let w = row.uvw_m[2] * scale;
     let key = cf.key(&row.context, frequency_hz, w);
     let (u, v) = (row.uvw_m[0] * scale, row.uvw_m[1] * scale);
-    let taps = cf.taps(key, hold);
-    let location = geometry.locate(u, v, taps.oversampling());
-    if !geometry.fits(location, taps.half_support()) {
+    let oversampling = cf.taps(key, hold).oversampling();
+    let location = geometry.locate(u, v, oversampling);
+    if !geometry.fits(location, cf.placement_half_support(key, hold)) {
         return None;
     }
     let gradient = if cf.pointing_ramp() {
@@ -485,8 +485,7 @@ fn locate_sample(
     } else {
         [0.0, 0.0]
     };
-    let phase = std::f64::consts::TAU * row.phase_shift_m * scale
-        + GridGeometry::fractional_ramp_phase(location, taps.oversampling(), gradient);
+    let phase = std::f64::consts::TAU * row.phase_shift_m * scale;
     Some((
         Placement {
             u,
