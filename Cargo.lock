@@ -1061,6 +1061,7 @@ dependencies = [
  "casa-ms",
  "casa-numerics",
  "casa-provider-contracts",
+ "casa-simulation-synthesis",
  "casa-task-runtime",
  "casa-test-support",
  "casa-types",

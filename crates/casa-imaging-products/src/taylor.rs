@@ -186,6 +186,17 @@ impl TaylorProducts {
             } else {
                 None
             };
+        // A direction-dependent normalisation over a dense sensitivity: the
+        // residual divides by the weight image and the model is published in
+        // apparent units (CASA `divideResidualByWeight`,
+        // `multiplyModelByWeight`); unit-response products keep the scalar
+        // sum-weight division whatever beam they publish.
+        let directional = mosaic_sensitivity.filter(|_| {
+            matches!(
+                normalization,
+                ProductNormalization::FlatNoise | ProductNormalization::FlatSky
+            )
+        });
         let sensitivity = principal_normal
             .sensitivity()
             .iter()
@@ -265,10 +276,8 @@ impl TaylorProducts {
                 let source = state
                     .coefficient_term(term)
                     .ok_or(ProductsError::SourceLineageMismatch)?;
-                if aw_projection {
-                    let response = mosaic_sensitivity
-                        .ok_or(ProductsError::SourceLineageMismatch)?
-                        .with_normal_sum_weight(principal_sum_weight)?;
+                if let Some(sensitivity) = directional {
+                    let response = sensitivity.with_normal_sum_weight(principal_sum_weight)?;
                     return source
                         .residual()
                         .iter()
@@ -300,10 +309,10 @@ impl TaylorProducts {
         let mut model = (0..terms)
             .map(|term| model_term(inputs, term, shape))
             .collect::<Result<Vec<_>, _>>()?;
-        if aw_projection {
-            let response = mosaic_sensitivity
-                .ok_or(ProductsError::SourceLineageMismatch)?
-                .with_normal_sum_weight(principal_sum_weight)?;
+        // CASA restores and publishes the flat-noise model in apparent units
+        // (`SynthesisNormalizer::multiplyModelByWeight`).
+        if let Some(sensitivity) = directional {
+            let response = sensitivity.with_normal_sum_weight(principal_sum_weight)?;
             let policy = inputs.problem().products().validity().primary_beam();
             for plane in &mut model {
                 for (index, value) in plane.iter_mut().enumerate() {
@@ -427,18 +436,12 @@ impl TaylorProducts {
             Some(AnalyticPrimaryBeamModel::CasaAca7mAiry) => {
                 analytic_alma_airy_primary_beam(inputs, domain_role, shape, 0, 6.25)?
             }
-            Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => {
-                if aw_projection {
-                    mosaic_sensitivity
-                        .ok_or(ProductsError::SourceLineageMismatch)?
-                        .with_normal_sum_weight(principal_sum_weight)?
-                        .weighted_primary_beam(
-                            inputs.problem().products().validity().primary_beam(),
-                        )?
-                } else {
-                    MosaicSensitivity::primary_beam_from_weight(&weight[0])?
-                }
-            }
+            Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => match directional {
+                Some(sensitivity) => sensitivity
+                    .with_normal_sum_weight(principal_sum_weight)?
+                    .weighted_primary_beam(inputs.problem().products().validity().primary_beam())?,
+                None => MosaicSensitivity::primary_beam_from_weight(&weight[0])?,
+            },
             None if requests_primary_beam => return Err(ProductsError::UnsupportedProblem),
             None => MosaicSensitivity::primary_beam_from_weight(&weight[0])?,
         };

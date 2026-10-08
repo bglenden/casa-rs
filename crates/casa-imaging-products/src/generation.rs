@@ -664,13 +664,31 @@ pub fn produce_continuum_members(
                                     plane_shape[0] * plane_shape[1],
                                 )?
                             } else {
-                                model_real_plane(
+                                let model = model_real_plane(
                                     inputs.final_model(),
                                     domain_ordinal,
                                     channel,
                                     polarization,
                                     plane_shape,
-                                )?
+                                )?;
+                                if planned.primary_beam_model
+                                    == Some(AnalyticPrimaryBeamModel::MosaicSensitivity)
+                                {
+                                    let plane = normal_state.read_plane(
+                                        domain_ordinal,
+                                        channel,
+                                        polarization,
+                                    )?;
+                                    apparent_model(
+                                        model,
+                                        &plane,
+                                        inputs.problem().products().normalization(),
+                                        inputs.problem().products().validity().primary_beam(),
+                                        planned.primary_beam_model,
+                                    )?
+                                } else {
+                                    model
+                                }
                             };
                             scatter_image_polarization_plane(
                                 &mut output.payload,
@@ -918,6 +936,7 @@ fn produce_plane_member(
                 polarization,
                 fitted_beam,
                 restoring_beam,
+                primary_beam_model,
                 fft_threads,
             )
         }
@@ -938,6 +957,7 @@ fn produce_plane_member(
                 polarization,
                 fitted_beam,
                 restoring_beam,
+                primary_beam_model,
                 fft_threads,
             )?;
             let primary_beam =
@@ -971,6 +991,42 @@ fn normalize_domain_plane(
     }
 }
 
+/// The model in the units CASA restores and publishes: under flat-noise
+/// with a direction-dependent sensitivity the apparent model, the physical
+/// model the lifecycle holds times the unit-peak beam and zero outside its
+/// support (`SynthesisNormalizer::multiplyModelByWeight` after every major
+/// cycle); the physical model otherwise (flat-sky, or a scalar
+/// sensitivity).
+fn apparent_model(
+    model: Vec<f32>,
+    plane: &FinalNormalPlaneReader<'_>,
+    normalization: ProductNormalization,
+    policy: casa_imaging_model::PrimaryBeamValidityPolicy,
+    primary_beam_model: Option<AnalyticPrimaryBeamModel>,
+) -> Result<Vec<f32>, ProductsError> {
+    if primary_beam_model != Some(AnalyticPrimaryBeamModel::MosaicSensitivity)
+        || !matches!(
+            normalization,
+            ProductNormalization::FlatNoise | ProductNormalization::FlatSky
+        )
+    {
+        return Ok(model);
+    }
+    let sensitivity = plane.read_sensitivity()?;
+    let response =
+        MosaicSensitivity::new(&sensitivity)?.with_normal_sum_weight(plane.sum_weight())?;
+    model
+        .into_iter()
+        .enumerate()
+        .map(|(index, value)| {
+            Ok(
+                response.physical_to_apparent(f64::from(value), index, normalization, policy)?
+                    as f32,
+            )
+        })
+        .collect()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn restored_plane(
     member: &PlannedMember,
@@ -980,6 +1036,7 @@ fn restored_plane(
     polarization: usize,
     fitted_beam: Option<RestoringBeam>,
     restoring_beam: Option<RestoringBeam>,
+    primary_beam_model: Option<AnalyticPrimaryBeamModel>,
     fft_threads: usize,
 ) -> Result<Vec<f32>, ProductsError> {
     let beam = restoring_beam.ok_or_else(|| {
@@ -987,12 +1044,18 @@ fn restored_plane(
             "restoration requires a fitted beam for every valid plane".to_string(),
         )
     })?;
-    let model = model_real_plane(
-        inputs.final_model(),
-        domain_ordinal,
-        plane.output_channel(),
-        polarization,
-        plane.shape(),
+    let model = apparent_model(
+        model_real_plane(
+            inputs.final_model(),
+            domain_ordinal,
+            plane.output_channel(),
+            polarization,
+            plane.shape(),
+        )?,
+        plane,
+        required_normalization(member)?,
+        inputs.problem().products().validity().primary_beam(),
+        primary_beam_model,
     )?;
     let cell_size = inputs.cell_size_rad_for_domain(member.axes().domain())?;
     let residual = normalize_domain_plane(

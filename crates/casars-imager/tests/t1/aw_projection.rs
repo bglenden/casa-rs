@@ -14,6 +14,7 @@
 use std::collections::BTreeSet;
 
 use casa_ms::{SyntheticAntenna, SyntheticSpectralSetup, tutorial_vla_a_antennas};
+use casa_simulation_synthesis::{AiryPrimaryBeam, AiryVoltagePattern};
 use ndarray::Array2;
 use serde_json::json;
 
@@ -117,33 +118,27 @@ fn local_peak(
     (value, [centre[0] - half + x, centre[1] - half + y], offset)
 }
 
-/// The off-axis point as the standard gridder sees it: the simulator's
-/// attenuated flux, with no beam applied or corrected.
-fn standard_off_axis_peak_jy(observation: &Observation) -> f64 {
-    let (_, products) = observation.image(
-        "aw-standard",
-        json!({
-            "weighting": { "kind": "natural" },
-            "deconvolver": "hogbom",
-            "niter": 3000,
-            "threshold_jy": THRESHOLD_JY,
-            "force_standard_gridder": true,
-        }),
-    );
-    let off_axis_pixel = observation.geometry().pixel(OFF_AXIS);
-    let (peak_jy, at, offset) = local_peak(&products.get(".image").pixels, off_axis_pixel, 6);
-    eprintln!(
-        "T1 AW standard control: off-axis peak {peak_jy:.5} Jy at {at:?} offset {offset:.3?}"
-    );
-    assert_eq!(at, off_axis_pixel);
-    f64::from(peak_jy)
+/// The off-axis point's flux as the simulator attenuates it: the injected
+/// flux times the power of the unblocked 25 m Airy disc an `EVLA`
+/// observation gets (`AiryVoltagePattern`). A standard-gridder control run
+/// measures the same value, but the production resource authority binds
+/// one storage profile per process and an A-projection request needs its
+/// own, so the control cannot share this test's process.
+fn attenuated_off_axis_jy() -> f64 {
+    let [l_rad, m_rad] = OFF_AXIS.direction_cosines(GEOMETRY);
+    let voltage = AiryVoltagePattern::new(AiryPrimaryBeam {
+        dish_diameter_m: 25.0,
+        blockage_diameter_m: 0.0,
+    })
+    .evaluate_offsets(l_rad, m_rad, FREQUENCY_HZ);
+    OFF_AXIS.flux_jy * f64::from(voltage).powi(2)
 }
 
 #[test]
 fn aw_projection_generates_its_catalog_and_recovers_the_sky() {
     let observation =
         Observation::synthesise_setup(setup(), &[("centre", CENTRE), ("off-axis", OFF_AXIS)]);
-    let attenuated_off_axis_jy = standard_off_axis_peak_jy(&observation);
+    let attenuated_off_axis_jy = attenuated_off_axis_jy();
     let surface = observation.scratch("evla.surface");
     std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
     let catalog = observation.scratch("native-cf");
@@ -188,7 +183,8 @@ fn aw_projection_generates_its_catalog_and_recovers_the_sky() {
     let off_axis_flat_noise = f64::from(image.pixels[off_axis_pixel]);
     let model_centre = box_sum(&products.get(".model").pixels, centre_pixel, 2);
     eprintln!(
-        "T1 AW: samples {}, thermal {noise_jy:.3e} Jy; products {:?}; pb peak {pb_peak:.5} at \
+        "T1 AW: samples {}, thermal {noise_jy:.3e} Jy; simulator-attenuated off-axis flux \
+         {attenuated_off_axis_jy:.5} Jy; products {:?}; pb peak {pb_peak:.5} at \
          {pb_at:?}, off axis {pb_off_axis:.5}; pbcor centre {centre_peak:.5} Jy at {centre_at:?} \
          offset {centre_offset:.3?}, off axis {off_axis_peak:.5} Jy at {off_axis_at:?} offset \
          {off_axis_offset:.3?}; flat-noise off axis {off_axis_flat_noise:.5} Jy; model centre \
