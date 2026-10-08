@@ -207,6 +207,12 @@ impl Observation {
     /// Run the production route with `controls` merged over the T1 geometry
     /// and read back every product it reports.
     pub fn image(&self, name: &str, controls: Value) -> (RunSummary, Products) {
+        self.try_image(name, controls)
+            .expect("production imaging route")
+    }
+
+    /// [`Observation::image`], or the route's refusal.
+    pub fn try_image(&self, name: &str, controls: Value) -> Result<(RunSummary, Products), String> {
         set_production_io_environment();
         let image_name = self.root.path().join(name);
         let mut request = json!({
@@ -221,9 +227,9 @@ impl Observation {
         }
         let request: ImagerRunTaskRequest =
             serde_json::from_value(request).expect("typed T1 imager request");
-        let summary = run_from_request(&request).expect("production imaging route");
+        let summary = run_from_request(&request)?;
         let products = Products::read(&image_name, &summary.output_products);
-        (summary, products)
+        Ok((summary, products))
     }
 
     /// `(DATA, MODEL_DATA)` of every unflagged parallel-hand sample.

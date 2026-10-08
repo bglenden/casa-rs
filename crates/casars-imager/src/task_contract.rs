@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     AutoMultiThresholdConfig, AwProjectControls, AwProjectNormalization, CleanMaskMode,
     CleanStopReason, CliConfig, Deconvolver, GaussianUvTaper, HogbomIterationMode,
-    ImagerAwCfSource, RestoringBeamMode, RunSummary, SaveModelMode, SpectralMode,
+    ImagerAwCfSource, ImagingBackend, RestoringBeamMode, RunSummary, SaveModelMode, SpectralMode,
     StandardMfsAccelerationPolicy, StandardMfsBackend, UvTaperSize, WTermMode, WeightingMode,
     apply_parallel_runtime_control, run_from_request, validate_parallel_acceleration,
 };
@@ -32,7 +32,7 @@ use crate::{
 /// Stable protocol name advertised by `casars-imager --protocol-info`.
 pub const IMAGER_TASK_PROTOCOL_NAME: &str = "casa_imager_task";
 /// Stable protocol version advertised by `casars-imager --protocol-info`.
-pub const IMAGER_TASK_PROTOCOL_VERSION: u32 = 10;
+pub const IMAGER_TASK_PROTOCOL_VERSION: u32 = 11;
 /// Version of the newline-delimited imager progress-event payload.
 pub const IMAGER_PROGRESS_EVENT_SCHEMA_VERSION: u32 = 1;
 /// Version of the authoritative observability snapshot embedded in progress events.
@@ -295,6 +295,7 @@ const IMAGER_PROJECTED_PARAMETERS: &[&str] = &[
     "wterm",
     "gridder",
     "standard_mfs_acceleration",
+    "backend",
     "parallel",
     "uvrange",
     "intent",
@@ -2285,6 +2286,9 @@ pub struct ImagerRunTaskRequest {
     /// Optional explicit standard-MFS backend override.
     #[serde(default)]
     pub standard_mfs_backend: Option<StandardMfsBackend>,
+    /// Where the major-cycle passes grid: `cpu` or, on macOS, `metal`.
+    #[serde(default)]
+    pub backend: ImagingBackend,
     /// Optional standard-MFS planner memory target in MiB.
     #[serde(default)]
     pub standard_mfs_memory_target_mb: Option<usize>,
@@ -2384,6 +2388,7 @@ impl ImagerRunTaskRequest {
             parallel: config.parallel,
             standard_mfs_acceleration: config.standard_mfs_acceleration,
             standard_mfs_backend: config.standard_mfs_backend,
+            backend: config.backend,
             standard_mfs_memory_target_mb: config.standard_mfs_memory_target_mb,
             imaging_memory_target_mb: config.imaging_memory_target_mb,
             progress: None,
@@ -2540,6 +2545,7 @@ impl ImagerRunTaskRequest {
             parallel: self.parallel,
             standard_mfs_acceleration: self.standard_mfs_acceleration,
             standard_mfs_backend: self.standard_mfs_backend,
+            backend: self.backend,
             standard_mfs_memory_target_mb: self.standard_mfs_memory_target_mb,
             imaging_memory_target_mb: self.imaging_memory_target_mb,
         };
@@ -3635,6 +3641,7 @@ mod tests {
             parallel: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Cpu,
             standard_mfs_backend: None,
+            backend: crate::ImagingBackend::Cpu,
             standard_mfs_memory_target_mb: None,
             imaging_memory_target_mb: None,
             progress: None,
@@ -3733,6 +3740,7 @@ mod tests {
             parallel: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
             standard_mfs_backend: None,
+            backend: crate::ImagingBackend::Cpu,
             standard_mfs_memory_target_mb: None,
             imaging_memory_target_mb: None,
             progress: None,
@@ -3991,6 +3999,7 @@ mod tests {
             parallel: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
             standard_mfs_backend: None,
+            backend: crate::ImagingBackend::Cpu,
             standard_mfs_memory_target_mb: None,
             imaging_memory_target_mb: None,
             progress: None,
@@ -4133,6 +4142,7 @@ mod tests {
             parallel: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
             standard_mfs_backend: None,
+            backend: crate::ImagingBackend::Cpu,
             standard_mfs_memory_target_mb: None,
             imaging_memory_target_mb: None,
             progress: None,
@@ -4693,6 +4703,7 @@ mod tests {
             parallel: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
             standard_mfs_backend: None,
+            backend: crate::ImagingBackend::Cpu,
             standard_mfs_memory_target_mb: None,
             imaging_memory_target_mb: None,
             progress: None,

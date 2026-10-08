@@ -1065,6 +1065,7 @@ mod tests {
                 .expect("bind test spill"),
             confidence_parts_per_million: 900_000,
             resource_policy: ResourcePolicy::Exclusive,
+            backend: crate::BackendChoice::Cpu,
             cost_model: PlannerCostModelProfileId::from_sha256([2; 32]),
             authority,
             receipts: ExecutionReceiptStore::new(

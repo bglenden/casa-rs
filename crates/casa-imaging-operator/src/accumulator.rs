@@ -208,12 +208,14 @@ impl GridScalar for f32 {
     fn cells(storage: &GridStorage) -> &[Complex<Self>] {
         match storage {
             GridStorage::F32(cells) => cells,
+            GridStorage::Device(cells) => cells.cells(),
             GridStorage::F64(_) => panic!("f32 kernel on an f64 grid"),
         }
     }
     fn cells_mut(storage: &mut GridStorage) -> &mut [Complex<Self>] {
         match storage {
             GridStorage::F32(cells) => cells,
+            GridStorage::Device(cells) => cells.cells_mut(),
             GridStorage::F64(_) => panic!("f32 kernel on an f64 grid"),
         }
     }
@@ -236,24 +238,117 @@ impl GridScalar for f64 {
     fn cells(storage: &GridStorage) -> &[Complex<Self>] {
         match storage {
             GridStorage::F64(cells) => cells,
-            GridStorage::F32(_) => panic!("f64 kernel on an f32 grid"),
+            GridStorage::F32(_) | GridStorage::Device(_) => panic!("f64 kernel on an f32 grid"),
         }
     }
     fn cells_mut(storage: &mut GridStorage) -> &mut [Complex<Self>] {
         match storage {
             GridStorage::F64(cells) => cells,
-            GridStorage::F32(_) => panic!("f64 kernel on an f32 grid"),
+            GridStorage::F32(_) | GridStorage::Device(_) => panic!("f64 kernel on an f32 grid"),
         }
     }
 }
 
 /// Interleaved complex cells in one of the two precisions.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug)]
 pub enum GridStorage {
     /// `f32` cells.
     F32(Vec<Complex32>),
     /// `f64` cells.
     F64(Vec<Complex64>),
+    /// `f32` cells in memory a device backend allocated and addresses
+    /// directly; the host reads them like [`GridStorage::F32`].
+    Device(DeviceCells),
+}
+
+impl Clone for GridStorage {
+    /// A device storage clones into host cells.
+    fn clone(&self) -> Self {
+        match self {
+            Self::F32(cells) => Self::F32(cells.clone()),
+            Self::F64(cells) => Self::F64(cells.clone()),
+            Self::Device(cells) => Self::F32(cells.cells().to_vec()),
+        }
+    }
+}
+
+impl PartialEq for GridStorage {
+    /// Equal precision and equal cells, wherever they live.
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::F64(mine), Self::F64(theirs)) => mine == theirs,
+            (Self::F64(_), _) | (_, Self::F64(_)) => false,
+            _ => f32::cells(self) == f32::cells(other),
+        }
+    }
+}
+
+/// `f32` cells in memory another allocator owns: a buffer a device and the
+/// host share.
+///
+/// A device backend completes every dispatch against these cells before
+/// its [`GridBackend::apply`](crate::GridBackend::apply) returns, so between
+/// dispatches the host owns them exclusively through the accumulator that
+/// holds them. The owner keeps the memory alive and is dropped with the
+/// cells; a backend reads it back with [`DeviceCells::owner`].
+pub struct DeviceCells {
+    cells: std::ptr::NonNull<Complex32>,
+    len: usize,
+    owner: Box<dyn std::any::Any + Send + Sync>,
+}
+
+// SAFETY: the cells are plain `f32` pairs reached only through `&self` or
+// `&mut self` of this value (see `new`), and the owner is itself
+// `Send + Sync`.
+unsafe impl Send for DeviceCells {}
+// SAFETY: as for `Send`: shared access only reads.
+unsafe impl Sync for DeviceCells {}
+
+impl DeviceCells {
+    /// Cells at `cells`, kept alive by `owner`.
+    ///
+    /// # Safety
+    ///
+    /// `cells` must point to `len` initialised, aligned `Complex32` values
+    /// that stay valid for as long as `owner` lives, and nothing may read or
+    /// write them except through the returned value: a device may write
+    /// them only while its backend holds `&mut` access to this value.
+    #[must_use]
+    pub unsafe fn new(
+        cells: std::ptr::NonNull<Complex32>,
+        len: usize,
+        owner: Box<dyn std::any::Any + Send + Sync>,
+    ) -> Self {
+        Self { cells, len, owner }
+    }
+
+    /// The cells.
+    #[must_use]
+    pub fn cells(&self) -> &[Complex32] {
+        // SAFETY: `new`'s contract.
+        unsafe { std::slice::from_raw_parts(self.cells.as_ptr(), self.len) }
+    }
+
+    /// The cells, mutably.
+    pub fn cells_mut(&mut self) -> &mut [Complex32] {
+        // SAFETY: `new`'s contract; `&mut self` is the only access.
+        unsafe { std::slice::from_raw_parts_mut(self.cells.as_ptr(), self.len) }
+    }
+
+    /// The allocation that keeps the cells alive.
+    #[must_use]
+    pub fn owner(&self) -> &(dyn std::any::Any + Send + Sync) {
+        self.owner.as_ref()
+    }
+}
+
+impl std::fmt::Debug for DeviceCells {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DeviceCells")
+            .field("len", &self.len)
+            .finish_non_exhaustive()
+    }
 }
 
 impl GridStorage {
@@ -270,7 +365,7 @@ impl GridStorage {
     #[must_use]
     pub const fn precision(&self) -> GridPrecision {
         match self {
-            Self::F32(_) => GridPrecision::F32,
+            Self::F32(_) | Self::Device(_) => GridPrecision::F32,
             Self::F64(_) => GridPrecision::F64,
         }
     }
@@ -281,6 +376,16 @@ impl GridStorage {
         match self {
             Self::F32(cells) => cells.len(),
             Self::F64(cells) => cells.len(),
+            Self::Device(cells) => cells.len,
+        }
+    }
+
+    /// The device cells, when the storage lives on a device.
+    #[must_use]
+    pub fn device(&self) -> Option<&DeviceCells> {
+        match self {
+            Self::Device(cells) => Some(cells),
+            Self::F32(_) | Self::F64(_) => None,
         }
     }
 
@@ -295,6 +400,7 @@ impl GridStorage {
         match self {
             Self::F32(cells) => cells.fill(Complex32::default()),
             Self::F64(cells) => cells.fill(Complex64::default()),
+            Self::Device(cells) => cells.cells_mut().fill(Complex32::default()),
         }
     }
 }
@@ -450,6 +556,20 @@ impl GridAccumulator {
     #[must_use]
     pub fn new(layout: AccumulatorLayout, precision: GridPrecision) -> Self {
         let storage = GridStorage::zeros(precision, layout.cells());
+        Self::with_storage(layout, storage)
+    }
+
+    /// Accumulator for `layout` over `storage`, which a device backend
+    /// allocates in memory it addresses; the cells must be zero.
+    ///
+    /// Panics when `storage` does not hold exactly `layout.cells()` cells.
+    #[must_use]
+    pub fn with_storage(layout: AccumulatorLayout, storage: GridStorage) -> Self {
+        assert_eq!(
+            storage.len(),
+            layout.cells(),
+            "accumulator storage must hold the layout's cells"
+        );
         let sumwt = vec![0.0; layout.blocks()];
         Self {
             layout,
@@ -536,19 +656,31 @@ impl GridAccumulator {
                 reason: "tile lies outside the target",
             });
         }
-        match (&mut self.storage, &other.storage) {
-            (GridStorage::F32(target), GridStorage::F32(source)) => {
-                add_tiles(target, source, mine, theirs);
-            }
-            (GridStorage::F64(target), GridStorage::F64(source)) => {
-                add_tiles(target, source, mine, theirs);
-            }
-            _ => unreachable!("precision checked"),
+        match self.storage.precision() {
+            GridPrecision::F32 => add_tiles(
+                f32::cells_mut(&mut self.storage),
+                f32::cells(&other.storage),
+                mine,
+                theirs,
+            ),
+            GridPrecision::F64 => add_tiles(
+                f64::cells_mut(&mut self.storage),
+                f64::cells(&other.storage),
+                mine,
+                theirs,
+            ),
         }
         for (target, source) in self.sumwt.iter_mut().zip(&other.sumwt) {
             *target += source;
         }
         Ok(())
+    }
+
+    /// Layout, cell storage and `sumwt` for a backend that dispatches on the
+    /// storage itself: a device backend reads the buffer behind
+    /// [`GridStorage::Device`] and adds `sumwt` on the host.
+    pub fn backend_parts(&mut self) -> (&AccumulatorLayout, &GridStorage, &mut [f64]) {
+        (&self.layout, &self.storage, &mut self.sumwt)
     }
 
     /// Layout, cells and `sumwt` for a kernel at precision `T`.

@@ -5,7 +5,7 @@ use std::ops::Range;
 
 use casa_imaging_operator::{MeasurementOperator, ModeSet, Placement, PlaneRange, Tile};
 
-use super::{PassDomain, PassError};
+use super::{BackendChoice, PassDomain, PassError, native_residuals};
 
 /// How one pass divides an image domain's grid accumulation among owners
 /// (one per worker).
@@ -107,6 +107,8 @@ pub struct WaveDemand<'a> {
     pub native_spacing_hz: f64,
     /// Workers transforming planes at once.
     pub workers: usize,
+    /// Where the owners grid.
+    pub backend: BackendChoice,
 }
 
 impl WaveDemand<'_> {
@@ -123,7 +125,10 @@ impl WaveDemand<'_> {
     /// and the normal state's copy); with a model, the prepared grids of the
     /// wave's planes and of its model halo on each side. Per worker: one
     /// transform plane and one image per grid polarization of the largest
-    /// domain.
+    /// domain. On Metal the accumulators are device memory and cost nothing
+    /// more; each owner adds its ring ([`casa_imaging_metal::ring_bytes`]),
+    /// and a pass that subtracts the model on the device adds the device
+    /// copy of the model grids.
     #[must_use]
     pub fn bytes(&self, planes: u32) -> u64 {
         let total = self.planes();
@@ -148,10 +153,21 @@ impl WaveDemand<'_> {
                 let model_planes = planes
                     .saturating_add(2 * domain.resampler.model_halo(self.native_spacing_hz))
                     .min(total);
-                bytes += operator
-                    .accumulator_layout(one, None, ModeSet::DATA)
-                    .bytes(precision) as u64
+                let fused = !native_residuals(self.domains, self.with_model);
+                let copies = if self.backend == BackendChoice::Metal && fused {
+                    2
+                } else {
+                    1
+                };
+                bytes += copies
+                    * operator
+                        .accumulator_layout(one, None, ModeSet::DATA)
+                        .bytes(precision) as u64
                     * u64::from(model_planes);
+            }
+            if self.backend == BackendChoice::Metal {
+                let npol = operator.polarization().correlations().len();
+                bytes += domain.partition.owners() as u64 * casa_imaging_metal::ring_bytes(npol);
             }
             let grid_cells = operator.geometry().cells() as u64;
             let gpols = operator.polarization().grid_pols() as u64;

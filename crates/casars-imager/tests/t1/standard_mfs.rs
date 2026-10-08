@@ -38,7 +38,10 @@ fn controls(deconvolver: &str) -> Value {
 
 /// Image the point-and-Gaussian sky and check the laws every deconvolver
 /// must meet; returns the run for algorithm-specific checks.
-fn assert_recovers_the_point(name: &str, controls: Value) -> (Observation, RunSummary, Products) {
+pub(super) fn assert_recovers_the_point(
+    name: &str,
+    controls: Value,
+) -> (Observation, RunSummary, Products) {
     let observation = Observation::synthesise(&[("point", POINT), ("gaussian", GAUSSIAN)]);
     let (summary, products) = observation.image(name, controls);
     let image = products.get(".image");

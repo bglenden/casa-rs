@@ -11,6 +11,7 @@ use casa_imaging_operator::{
     ImageExtent, MeasurementOperator, PolarizationRouting, SpectralAxis, SpectralResampler,
     Spheroidal,
 };
+use casa_imaging_runtime::pass::BackendChoice;
 
 use super::ImagingError;
 
@@ -85,20 +86,25 @@ pub(crate) fn reference_frequency_hz(problem: &CompiledProblem) -> Result<f64, I
     }
 }
 
-/// Grid precision of plan decision D2 (`gridprecision = auto`): f64 for the
-/// constant and Taylor bases, f32 for channel-local cubes.
-pub(crate) const fn precision(basis: Basis) -> GridPrecision {
-    match basis {
-        Basis::Constant | Basis::Taylor { .. } => GridPrecision::F64,
-        Basis::ChannelLocal { .. } => GridPrecision::F32,
+/// Grid precision of plan decision D2 (`gridprecision = auto`): f32 on
+/// Metal, which accumulates in `f32` for every basis; on the CPU f64 for
+/// the constant and Taylor bases and f32 for channel-local cubes.
+pub(crate) const fn precision(basis: Basis, backend: BackendChoice) -> GridPrecision {
+    match (backend, basis) {
+        (BackendChoice::Cpu, Basis::Constant | Basis::Taylor { .. }) => GridPrecision::F64,
+        (BackendChoice::Cpu, Basis::ChannelLocal { .. }) | (BackendChoice::Metal, _) => {
+            GridPrecision::F32
+        }
     }
 }
 
-/// The operator of `domain` for the standard kernel set.
+/// The operator of `domain` for the standard kernel set, in the precision
+/// `backend` grids at.
 pub(crate) fn domain_operator(
     problem: &CompiledProblem,
     domain: &CompiledImageDomain,
     correlations: &[CorrelationType],
+    backend: BackendChoice,
 ) -> Result<DomainOperator, ImagingError> {
     let geometry = GridGeometry::new(image_extent(domain)?, GridPadding::CasaComposite)?;
     let polarization = PolarizationRouting::compile(
@@ -114,7 +120,7 @@ pub(crate) fn domain_operator(
             basis,
             polarization,
             Box::new(cf),
-            precision(basis),
+            precision(basis, backend),
         ),
         resampler,
     })

@@ -355,8 +355,8 @@ mod tests {
     fn imager_wide_field_controls_share_one_catalog_owned_surface() {
         let catalog = builtin_surface_catalog().unwrap();
         let surface = catalog.surface("imager").unwrap();
-        assert_eq!(surface.contract_version(), 18);
-        assert_eq!(surface.bindings().len(), 91);
+        assert_eq!(surface.contract_version(), 19);
+        assert_eq!(surface.bindings().len(), 92);
         for binding in surface.bindings() {
             let concept = catalog
                 .catalog

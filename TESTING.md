@@ -244,11 +244,14 @@ existing no-cache I/O path and does not require this Linux-specific setup.
   suite-install, and CI-like coverage
 - Main-branch pushes run the rustdoc and MkDocs deployment workflow
 
-Metal imaging is unavailable from IF-2 until IF-4 (#653) installs the Metal
-backend in the major-cycle pass; IF-4 defines its Apple-silicon acceptance
-gate. A Metal gate must run outside command sandboxes and prove device
-creation, pipeline creation, command dispatch and verified output; a
-capability diagnostic is not evidence that a Metal workload ran.
+The Metal backend's gate is T0 Metal versus CPU
+(`cargo nextest run -p casa-imaging-metal`), the pass laws'
+`metal` and residency laws, the application's
+`continuum_application metal::` cases (including coarse output channels in
+waves) and T1's `metal::` cases. Each compares Metal with the CPU on the same
+input. On a host without a unified-memory Metal 3 device these laws print
+`skipped: no Metal device` and pass, so a Metal gate must run outside command
+sandboxes on Apple silicon; a skip is not evidence that a Metal workload ran.
 
 Large spectral-cube storage changes additionally run the sparse logical-capacity
 test and the explicit release throughput guard:

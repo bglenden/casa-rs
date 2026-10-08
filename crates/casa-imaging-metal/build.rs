@@ -2,4 +2,5 @@
 
 fn main() {
     println!("cargo:rustc-check-cfg=cfg(coverage)");
+    println!("cargo:rerun-if-changed=src/kernels.metal");
 }

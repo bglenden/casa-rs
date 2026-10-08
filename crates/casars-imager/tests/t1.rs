@@ -9,6 +9,8 @@
 mod cube;
 #[path = "t1/fixture.rs"]
 mod fixture;
+#[path = "t1/metal.rs"]
+mod metal;
 #[path = "t1/model_column.rs"]
 mod model_column;
 #[path = "t1/mtmfs.rs"]

@@ -39,10 +39,8 @@ pub enum TaskRequirement {
     ExecutionAuto,
     /// Fixed-tile CPU execution override.
     FixedTileCpu,
-    /// Metal gridding override.
+    /// Gridding on the Metal backend (`backend = metal`); macOS only.
     MetalGridder,
-    /// Grouped Metal row-run gridding override.
-    MetalRowRunGroupedGridder,
     /// Non-Stokes-I or raw-correlation selection.
     PolarizationSelection,
     /// UV tapering.
@@ -58,7 +56,7 @@ pub enum TaskRequirement {
 impl TaskRequirement {
     /// Complete stable task-only capability catalog for the current application
     /// contract.
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 20] = [
         Self::SpectralCube,
         Self::SpectralCubedata,
         Self::SpectralCubeSource,
@@ -74,7 +72,6 @@ impl TaskRequirement {
         Self::ExecutionAuto,
         Self::FixedTileCpu,
         Self::MetalGridder,
-        Self::MetalRowRunGroupedGridder,
         Self::PolarizationSelection,
         Self::UvTaper,
         Self::PerChannelWeightDensity,
@@ -101,7 +98,6 @@ impl TaskRequirement {
             Self::ExecutionAuto => "execution_auto",
             Self::FixedTileCpu => "fixed_tile_cpu",
             Self::MetalGridder => "metal_gridder",
-            Self::MetalRowRunGroupedGridder => "metal_row_run_grouped_gridder",
             Self::PolarizationSelection => "polarization_selection",
             Self::UvTaper => "uv_taper",
             Self::PerChannelWeightDensity => "per_channel_weight_density",
@@ -329,22 +325,25 @@ fn coupled_basis_requires_independent_polarization(
 
 /// Task surfaces the major-cycle pass runs. W projection, A projection and
 /// mosaic (with `mvc`, which always carries a primary beam) wait for their
-/// convolution-function sets (IF-3, #652); Metal gridding waits for the
-/// Metal backend (IF-4, #653).
+/// convolution-function sets (IF-3, #652); the Metal backend exists only on
+/// macOS.
 const fn supports_task(requirement: TaskRequirement) -> bool {
-    matches!(
-        requirement,
-        TaskRequirement::SpectralCube
-            | TaskRequirement::SpectralCubedata
-            | TaskRequirement::SpectralCubeSource
-            | TaskRequirement::PolarizationSelection
-            | TaskRequirement::Automasking
-            | TaskRequirement::MaskProduct
-            | TaskRequirement::ModelColumnWrite
-            | TaskRequirement::PerChannelWeightDensity
-            | TaskRequirement::SerialCpu
-            | TaskRequirement::FixedTileCpu
-    )
+    match requirement {
+        TaskRequirement::MetalGridder => cfg!(target_os = "macos"),
+        _ => matches!(
+            requirement,
+            TaskRequirement::SpectralCube
+                | TaskRequirement::SpectralCubedata
+                | TaskRequirement::SpectralCubeSource
+                | TaskRequirement::PolarizationSelection
+                | TaskRequirement::Automasking
+                | TaskRequirement::MaskProduct
+                | TaskRequirement::ModelColumnWrite
+                | TaskRequirement::PerChannelWeightDensity
+                | TaskRequirement::SerialCpu
+                | TaskRequirement::FixedTileCpu
+        ),
+    }
 }
 
 /// Scientific capabilities of the major-cycle pass. Faceted geometry has no
@@ -399,18 +398,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn convolution_function_sets_and_metal_wait_for_their_tickets() {
+    fn convolution_function_sets_wait_for_their_ticket_and_metal_needs_macos() {
         for task in [
             TaskRequirement::MosaicGridder,
             TaskRequirement::WProjection,
             TaskRequirement::WProjectionPlanes,
             TaskRequirement::AwProjection,
             TaskRequirement::SpectralMtmfsViaCube,
-            TaskRequirement::MetalGridder,
-            TaskRequirement::MetalRowRunGroupedGridder,
         ] {
             assert!(!supports_task(task), "{task:?}");
         }
+        assert_eq!(
+            supports_task(TaskRequirement::MetalGridder),
+            cfg!(target_os = "macos")
+        );
         for capability in [
             RequiredCapability::WProjection,
             RequiredCapability::AwProjection,

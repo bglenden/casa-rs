@@ -8,13 +8,13 @@ use casa_imaging_operator::{
     WeightingGeneration,
 };
 use casa_imaging_runtime::pass::{
-    Cancel, MajorCyclePass, PassError, Residency, VisibilitySink, WaveDemand, WorkerTeam,
-    run_major_cycle,
+    BackendChoice, Cancel, MajorCyclePass, PassError, Residency, VisibilitySink, WaveDemand,
+    WorkerTeam, run_major_cycle,
 };
 
 use crate::fixture::{
     IMAGE, Rows, Run, WIDTH_HZ, nearest_cube, operator, planes, run, sparse_model, try_run,
-    window_of,
+    window_of, worst_relative,
 };
 
 /// A budget that fits exactly one plane gives one-plane waves whose images
@@ -23,7 +23,23 @@ use crate::fixture::{
 /// moves the boundary.
 #[test]
 fn a_one_plane_budget_gives_one_plane_waves_equal_to_the_resident_pass() {
-    let operator = operator(GridPrecision::F64, Basis::ChannelLocal { planes: 3 });
+    one_plane_budget(BackendChoice::Cpu, GridPrecision::F64);
+}
+
+/// The same law under the Metal demand (each owner's ring, the device copy
+/// of the model); its waves equal the resident pass to the order of the
+/// device's `f32` additions.
+#[test]
+fn a_one_plane_metal_budget_gives_one_plane_waves() {
+    if !casa_imaging_metal::available() {
+        eprintln!("skipped: no Metal device");
+        return;
+    }
+    one_plane_budget(BackendChoice::Metal, GridPrecision::F32);
+}
+
+fn one_plane_budget(backend: BackendChoice, precision: GridPrecision) {
+    let operator = operator(precision, Basis::ChannelLocal { planes: 3 });
     let resampler = nearest_cube();
     let model = sparse_model(IMAGE, 3, 7);
     let prepare = |_: usize, planes: PlaneRange| -> Result<_, PassError> {
@@ -38,6 +54,7 @@ fn a_one_plane_budget_gives_one_plane_waves_equal_to_the_resident_pass() {
             with_model,
             native_spacing_hz: WIDTH_HZ,
             workers: 1,
+            backend,
         };
         let one = demand.bytes(1);
         assert_eq!(
@@ -59,6 +76,7 @@ fn a_one_plane_budget_gives_one_plane_waves_equal_to_the_resident_pass() {
             &Run {
                 model,
                 modes,
+                backend,
                 ..Run::initial()
             },
         );
@@ -69,10 +87,17 @@ fn a_one_plane_budget_gives_one_plane_waves_equal_to_the_resident_pass() {
                 residency: Residency::plan(&demand, one).expect("one plane fits"),
                 model,
                 modes,
+                backend,
                 ..Run::initial()
             },
         );
-        assert_eq!(waved, resident, "{modes:?}");
+        match backend {
+            BackendChoice::Cpu => assert_eq!(waved, resident, "{modes:?}"),
+            BackendChoice::Metal => {
+                let worst = worst_relative(&waved[0], &resident[0]);
+                assert!(worst <= 1.0e-4, "{modes:?}: {worst}");
+            }
+        }
     }
 }
 
@@ -92,6 +117,7 @@ fn a_writing_pass_in_waves_is_a_typed_error() {
         model: None,
         residency: Residency::Waves { planes_per_wave: 1 },
         native_spacing_hz: WIDTH_HZ,
+        backend: BackendChoice::Cpu,
     };
     let mut write = |_: &_, _: &[_]| -> Result<(), _> { panic!("nothing is written") };
     let mut sink = VisibilitySink {

@@ -9,7 +9,8 @@
 //! convolution-function set ([`ConvolutionFunctionSet`]: the standard
 //! [`Spheroidal`] set here, W-planes, AW catalog and mosaic primary beam in
 //! later tickets) and a gridding backend ([`GridBackend`]: [`CpuBackend`]
-//! here, Metal later). It also owns the global weighting generation
+//! here; the Metal backend in `casa-imaging-metal` grids into
+//! [`GridStorage::Device`] cells). It also owns the global weighting generation
 //! ([`WeightingGeneration`]) and the spectral resampler that turns native
 //! rows into [`Placement`]s.
 //!
@@ -45,15 +46,15 @@ mod spheroidal;
 mod weighting;
 
 pub use accumulator::{
-    AccumulatorLayout, GridAccumulator, GridPrecision, GridScalar, GridStorage, Mode, ModeSet,
-    PlaneRange, Tile,
+    AccumulatorLayout, DeviceCells, GridAccumulator, GridPrecision, GridScalar, GridStorage, Mode,
+    ModeSet, PlaneRange, Tile,
 };
 pub use backend::{GridBackend, PreparedModelGrids, Work};
 pub use convolution::{
     ConvolutionFunctionSet, ImageCorrection, MuellerRouting, RowContext, TapLayout,
 };
 pub use cpu::CpuBackend;
-pub use error::OperatorError;
+pub use error::{DeviceFailure, OperatorError};
 pub use geometry::{CellLocation, GridGeometry, GridPadding, ImageExtent};
 pub use operator::{
     Basis, MeasurementOperator, ModelImages, ModelPlane, ModelPrescale, NormalImages, NormalPlane,

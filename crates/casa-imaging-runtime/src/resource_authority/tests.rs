@@ -816,13 +816,6 @@ fn inventory_retains_typed_storage_transfer_queue_and_metal_topology() {
 }
 
 #[test]
-fn metal_inventory_requires_process_device_and_queue_access() {
-    assert!(!metal_inventory_available(false, true));
-    assert!(!metal_inventory_available(true, false));
-    assert!(metal_inventory_available(true, true));
-}
-
-#[test]
 fn demand_is_admitted_against_named_storage_rate_and_queue_domains() {
     let host_domain = CapacityDomainId::new("host-domain");
     let host_view = CapacityViewId::new("host-view");

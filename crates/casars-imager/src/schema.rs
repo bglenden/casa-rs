@@ -130,8 +130,20 @@ mod tests {
             panic!("standard_mfs_acceleration should use an option parser");
         };
         assert!(flags.contains(&"--standard-mfs-acceleration".to_string()));
-        assert!(choices.contains(&"metal".to_string()));
+        assert!(!choices.contains(&"metal".to_string()));
         assert!(choices.contains(&"multi-cpu".to_string()));
+        let backend = schema
+            .arguments
+            .iter()
+            .find(|argument| argument.id == "backend")
+            .expect("backend argument");
+        assert_eq!(backend.default.as_deref(), Some("cpu"));
+        assert!(!backend.advanced);
+        let UiArgumentParser::Option { flags, choices, .. } = &backend.parser else {
+            panic!("backend should use an option parser");
+        };
+        assert_eq!(flags, &vec!["--backend".to_string()]);
+        assert_eq!(choices, &vec!["cpu".to_string(), "metal".to_string()]);
 
         let stokes = schema
             .arguments
@@ -205,7 +217,6 @@ mod tests {
             &vec![
                 "auto".to_string(),
                 "cpu".to_string(),
-                "metal".to_string(),
                 "multi-cpu".to_string(),
             ]
         );
