@@ -288,10 +288,6 @@ fn t55_artifact_file_descriptors_stay_reserved_until_the_backing_drops() {
     let permit = lease
         .prepare_artifact_retention(lease.permit(resource.clone(), 3).unwrap())
         .unwrap();
-    assert_eq!(
-        ResourcePermit::artifact_retention_heap_bytes(&resource, "host-memory", "artifact-storage",),
-        Some(0)
-    );
     lease
         .release_retaining_artifact_resources(&BTreeSet::from([resource]))
         .unwrap();
@@ -350,35 +346,18 @@ fn t55_artifact_memory_and_storage_survive_finalization_and_release_independentl
                     demand_id: "artifact-bytes".to_string(),
                     use_kind: StorageUseKind::Temporary,
                 },
-                700,
+                300,
             )
             .unwrap();
-        let mut storage = lease.prepare_artifact_retention(storage).unwrap();
+        let storage = lease.prepare_artifact_retention(storage).unwrap();
         let Some(ArtifactCapacity::Memory(domains)) = memory.artifact_capacity.as_ref() else {
             panic!("memory permit needs domain provenance");
         };
         assert_eq!(domains.as_ref(), &[CapacityDomainId::new("unified-memory")]);
-        assert_eq!(
-            ResourcePermit::artifact_retention_heap_bytes(
-                memory.resource(),
-                "unified-memory",
-                "artifact-storage"
-            ),
-            Some(std::mem::size_of_val(domains.as_ref()) + domains[0].as_str().len())
-        );
         assert!(
             matches!(storage.artifact_capacity.as_ref(), Some(ArtifactCapacity::Storage(domain))
             if domain.as_str() == "artifact-storage")
         );
-        assert_eq!(
-            ResourcePermit::artifact_retention_heap_bytes(
-                storage.resource(),
-                "unified-memory",
-                "artifact-storage"
-            ),
-            Some("artifact-storage".len())
-        );
-        storage.narrow_temporary_storage_to(300).unwrap();
         let memory_domain = CapacityDomainId::new("unified-memory");
         let storage_domain = StorageDomainId::new("artifact-storage");
         assert_eq!(
@@ -517,42 +496,6 @@ fn t55_artifact_memory_and_storage_survive_finalization_and_release_independentl
             .acquire(ResourcePolicy::Exclusive, single_alternative(demand))
             .expect("final artifact drop restores full capacity");
     }
-}
-
-#[test]
-fn retained_memory_narrowing_returns_only_the_reclaimed_capacity() {
-    let (authority, demand) = t55_artifact_fixture();
-    let lease = authority
-        .acquire(
-            ResourcePolicy::Exclusive,
-            single_alternative(demand.clone()),
-        )
-        .unwrap();
-    let lease_id = lease.lease_id;
-    let resource = LeaseResource::Memory {
-        allocation_id: "artifact-metadata".to_string(),
-    };
-    let mut retained = lease
-        .prepare_artifact_retention(lease.permit(resource.clone(), 600).unwrap())
-        .unwrap();
-    lease
-        .release_retaining_artifact_resources(&BTreeSet::from([resource]))
-        .unwrap();
-    retained.narrow_memory_to(300).unwrap();
-    assert_eq!(retained.amount(), 300);
-    assert_eq!(
-        authority.inner.state.lock().unwrap().leases[&lease_id]
-            .reserved
-            .memory_bytes(&CapacityDomainId::new("unified-memory")),
-        300
-    );
-    let mut competitor = demand;
-    competitor.memory[0].hard_bytes = 700;
-    competitor.memory[0].preferred_bytes = 700;
-    authority
-        .acquire(ResourcePolicy::Exclusive, single_alternative(competitor))
-        .expect("the returned capacity admits a larger mandatory later wave");
-    drop(retained);
 }
 
 #[test]
@@ -1211,18 +1154,6 @@ fn host_use_policies_apply_distinct_aggregate_hard_admission_caps() {
     };
 
     let interactive = make_authority();
-    let mut planning_base = demand("planning-base", 100);
-    planning_base.alternatives[0].headroom.memory_bytes =
-        BTreeMap::from([(CapacityDomainId::new("unified-memory"), 100)]);
-    assert_eq!(
-        interactive
-            .remaining_planning_memory_bytes(
-                &ResourcePolicy::Interactive,
-                &planning_base.alternatives[0],
-            )
-            .expect("interactive planning capacity"),
-        300
-    );
     let error = interactive
         .acquire(
             ResourcePolicy::Interactive,
@@ -1233,15 +1164,6 @@ fn host_use_policies_apply_distinct_aggregate_hard_admission_caps() {
     let _interactive_a = interactive
         .acquire(ResourcePolicy::Interactive, demand("interactive-a", 250))
         .expect("first interactive lease fits");
-    assert_eq!(
-        interactive
-            .remaining_planning_memory_bytes(
-                &ResourcePolicy::Interactive,
-                &planning_base.alternatives[0],
-            )
-            .expect("active leases reduce planning capacity"),
-        50
-    );
     let _interactive_b = interactive
         .acquire(ResourcePolicy::Interactive, demand("interactive-b", 250))
         .expect("second interactive lease reaches the aggregate cap");
@@ -1256,15 +1178,6 @@ fn host_use_policies_apply_distinct_aggregate_hard_admission_caps() {
     let balanced = make_authority();
     assert_eq!(
         balanced
-            .remaining_planning_memory_bytes(
-                &ResourcePolicy::Balanced,
-                &planning_base.alternatives[0],
-            )
-            .expect("balanced planning capacity"),
-        550
-    );
-    assert_eq!(
-        balanced
             .acquire(ResourcePolicy::Balanced, demand("balanced-too-large", 751))
             .expect_err("balanced admission caps memory at seventy-five percent")
             .available(),
@@ -1275,15 +1188,6 @@ fn host_use_policies_apply_distinct_aggregate_hard_admission_caps() {
         .expect("balanced hard cap is usable");
 
     let exclusive = make_authority();
-    assert_eq!(
-        exclusive
-            .remaining_planning_memory_bytes(
-                &ResourcePolicy::Exclusive,
-                &planning_base.alternatives[0],
-            )
-            .expect("exclusive planning capacity"),
-        800
-    );
     exclusive
         .acquire(ResourcePolicy::Exclusive, demand("exclusive", 1_000))
         .expect("exclusive admission may consume all pressured capacity");
@@ -1402,6 +1306,41 @@ fn t51_source_memory_quote_obeys_policy_pressure_and_active_headroom_without_a_l
     drop(lease);
     assert_eq!(quote(&ResourcePolicy::Balanced), 450);
     assert_eq!(quote(&capped), 300);
+}
+
+/// An imaging phase's budget is the policy's worker capacity, at least one
+/// worker, and the policy's host-memory quote: an explicit worker count is
+/// taken as given, the shared policies leave room for other work, and the
+/// memory is what the source quote leaves.
+#[test]
+fn phase_budget_follows_the_policy_workers_and_memory() {
+    let domain = CapacityDomainId::new("unified-memory");
+    let authority = ResourceAuthority::with_inventory(inventory_with_views(vec![MemoryView {
+        id: CapacityViewId::new("host-memory"),
+        domain: domain.clone(),
+        kind: MemoryViewKind::Host,
+    }]))
+    .expect("valid policy inventory");
+    let budget = |policy: ResourcePolicy| authority.phase_budget(&policy).expect("budget");
+    let explicit = |workers, memory| {
+        ResourcePolicy::Explicit(ResourceOverride {
+            workers: Some(workers),
+            memory_bytes: BTreeMap::from([(domain.clone(), memory)]),
+            ..ResourceOverride::default()
+        })
+    };
+    assert_eq!(budget(explicit(1, 300)), (1, 300));
+    assert_eq!(budget(explicit(2, 600)), (2, 600));
+    let (exclusive_workers, exclusive_memory) = budget(ResourcePolicy::Exclusive);
+    let (balanced_workers, balanced_memory) = budget(ResourcePolicy::Balanced);
+    let (interactive_workers, interactive_memory) = budget(ResourcePolicy::Interactive);
+    assert_eq!(exclusive_workers, 4, "every logical thread");
+    assert!(1 <= interactive_workers && interactive_workers <= balanced_workers);
+    assert!(balanced_workers <= exclusive_workers);
+    assert_eq!(
+        (interactive_memory, balanced_memory, exclusive_memory),
+        (500, 750, 1_000)
+    );
 }
 
 #[test]
@@ -2359,15 +2298,12 @@ fn storage_transfer_and_accelerator_demands_bind_their_topology_resources() {
                 demand_id: "scratch-io".to_string(),
                 use_kind: StorageUseKind::Temporary,
             },
-            1_000,
+            100,
         )
         .expect("artifact storage fits the admitted plan");
-    let mut retained = lease
+    let retained = lease
         .prepare_artifact_retention(retained)
         .expect("prepared storage provenance");
-    retained
-        .narrow_temporary_storage_to(100)
-        .expect("sealed artifact returns unused planned storage");
     assert!(
         !lease
             .release_retaining_artifact_resources(&BTreeSet::from([retained.resource().clone()]))

@@ -1868,7 +1868,6 @@ struct AuthorityState {
 #[derive(Debug)]
 struct AuthorityInner {
     topology: ResourceTopology,
-    cpu_replay_capacity: Option<(u64, u64)>,
     production_storage_profile: Option<ProductionStorageProfile>,
     state: Mutex<AuthorityState>,
 }
@@ -2026,40 +2025,14 @@ impl ResourceAuthority {
         Self::with_inventory_and_storage_profile(inventory, None)
     }
 
-    #[cfg(test)]
-    pub(crate) fn with_inventory_and_cpu_replay_capacity(
-        inventory: HostInventory,
-        cpu_replay_capacity: Option<(u64, u64)>,
-    ) -> Result<Self, ResourceError> {
-        Self::build(inventory, None, cpu_replay_capacity)
-    }
-
     fn with_inventory_and_storage_profile(
         inventory: HostInventory,
         production_storage_profile: Option<ProductionStorageProfile>,
     ) -> Result<Self, ResourceError> {
-        Self::build(
-            inventory,
-            production_storage_profile,
-            detected_cpu_replay_capacity(),
-        )
-    }
-
-    fn build(
-        inventory: HostInventory,
-        production_storage_profile: Option<ProductionStorageProfile>,
-        cpu_replay_capacity: Option<(u64, u64)>,
-    ) -> Result<Self, ResourceError> {
         validate_inventory(&inventory)?;
-        if cpu_replay_capacity.is_some_and(|(bytes, lanes)| bytes == 0 || lanes == 0) {
-            return Err(ResourceError::Invalid(
-                "CPU replay capacity must contain positive bytes and lanes".to_string(),
-            ));
-        }
         Ok(Self {
             inner: Arc::new(AuthorityInner {
                 topology: inventory.topology,
-                cpu_replay_capacity,
                 production_storage_profile,
                 state: Mutex::new(AuthorityState {
                     pressure: inventory.pressure,
@@ -2073,120 +2046,15 @@ impl ResourceAuthority {
         })
     }
 
-    pub(crate) fn cpu_replay_capacity(&self) -> Option<(u64, u64)> {
-        self.inner.cpu_replay_capacity
-    }
-
-    /// Return host memory remaining for an extension of one already composed
-    /// physical alternative after policy, pressure, active leases, its base
-    /// demand, and its reserved headroom.
-    pub(crate) fn remaining_planning_memory_bytes(
-        &self,
-        policy: &ResourcePolicy,
-        base: &DemandAlternative,
-    ) -> Result<u64, ResourceError> {
-        validate_policy(&self.inner.topology, policy)?;
-        validate_alternative(&self.inner.topology, base)?;
-        let totals = base.demand.resource_totals(&self.inner.topology)?;
-        let mut reserved = totals.hard;
-        let headroom = headroom_grant(
-            &self.inner.topology,
-            &base.headroom,
-            &base.demand.host_memory_view,
-        )?;
-        add_grant(&mut reserved, &headroom)?;
-        self.remaining_memory_bytes(policy, &base.demand.host_memory_view, reserved)
-    }
-
-    /// Keep one host allocation charged between execution plans. Its owner
-    /// releases physical storage before dropping this ordinary RAII lease.
-    pub(crate) fn reserve_host_memory(
-        &self,
-        policy: ResourcePolicy,
-        allocation_id: &str,
-        bytes: u64,
-    ) -> Result<ResourceLease, ResourceError> {
-        self.reserve_host_residency(policy, allocation_id, bytes, false)
-    }
-
-    /// Optional immutable replay residency obeys both cache and host ceilings.
-    pub(crate) fn reserve_host_cache(
-        &self,
-        policy: ResourcePolicy,
-        allocation_id: &str,
-        bytes: u64,
-    ) -> Result<ResourceLease, ResourceError> {
-        self.reserve_host_residency(policy, allocation_id, bytes, true)
-    }
-
-    fn reserve_host_residency(
-        &self,
-        policy: ResourcePolicy,
-        allocation_id: &str,
-        bytes: u64,
-        cache: bool,
-    ) -> Result<ResourceLease, ResourceError> {
-        let host = self
-            .inner
-            .topology
-            .memory_views
-            .iter()
-            .find(|view| view.kind == MemoryViewKind::Host)
-            .ok_or_else(|| ResourceError::Invalid("host memory view is missing".into()))?;
-        self.acquire(
-            policy,
-            DemandAlternatives {
-                required_capabilities: BTreeSet::new(),
-                alternatives: vec![DemandAlternative {
-                    id: AlternativeId::new(allocation_id),
-                    capabilities: CapabilityPredicate::default(),
-                    demand: DemandEnvelope {
-                        host_memory_view: host.id.clone(),
-                        // CacheDemand includes its physical host bytes. Do not
-                        // also charge them through a MemoryDemand allocation.
-                        memory: if cache {
-                            vec![]
-                        } else {
-                            vec![MemoryDemand {
-                                allocation_id: allocation_id.into(),
-                                hard_bytes: bytes,
-                                preferred_bytes: bytes,
-                                views: vec![host.id.clone()],
-                            }]
-                        },
-                        workers: CountDemand::zero(),
-                        overhead: RuntimeOverheadDemand::zero(),
-                        storage: vec![],
-                        rates: vec![],
-                        caches: if cache {
-                            CacheDemand {
-                                hard_resident_bytes: bytes,
-                                preferred_resident_bytes: bytes,
-                            }
-                        } else {
-                            CacheDemand::zero()
-                        },
-                        locks: CountDemand::zero(),
-                        file_descriptors: CountDemand::zero(),
-                        queues: vec![],
-                        transfers: vec![],
-                        accelerators: vec![],
-                        io_buffers: IoBufferDemand::zero(),
-                    },
-                    headroom: ResourceHeadroom::default(),
-                    scaling: ScalingMetadata {
-                        minimum_workers: 0,
-                        maximum_workers: 0,
-                        maximum_batch_size: 1,
-                        maximum_tile_width: 1,
-                        maximum_tile_height: 1,
-                        maximum_slab_depth: 1,
-                        memory_bytes_per_worker: BTreeMap::new(),
-                    },
-                    quiescence_points: BTreeSet::from([QuiescencePoint::MajorCycle]),
-                }],
-            },
-        )
+    /// Workers and host-memory bytes one imaging phase may use under
+    /// `policy`, after the leases already held.
+    pub fn phase_budget(&self, policy: &ResourcePolicy) -> Result<(usize, u64), ResourceError> {
+        let workers = usize::try_from(self.planning_worker_capacity(policy)?)
+            .map_err(|_| ResourceError::Invalid("worker capacity overflows usize".to_string()))?;
+        Ok((
+            workers.max(1),
+            self.remaining_selected_source_memory_bytes(policy)?,
+        ))
     }
 
     /// Quote current host capacity for an unopened selected source, preserving
@@ -2990,27 +2858,6 @@ pub struct ResourcePermit {
 }
 
 impl ResourcePermit {
-    /// Additional prepared-permit heap for production's single physical host domain.
-    /// Multiple views of that domain share one capacity entry; inline provenance
-    /// is already included in the permit allocation itself.
-    pub(crate) fn artifact_retention_heap_bytes(
-        resource: &LeaseResource,
-        memory_domain: &str,
-        storage_domain: &str,
-    ) -> Option<usize> {
-        match resource {
-            LeaseResource::Memory { .. } => {
-                std::mem::size_of::<CapacityDomainId>().checked_add(memory_domain.len())
-            }
-            LeaseResource::Storage {
-                use_kind: StorageUseKind::Temporary,
-                ..
-            } => Some(storage_domain.len()),
-            LeaseResource::FileDescriptors => Some(0),
-            _ => None,
-        }
-    }
-
     /// Returns the named resource owned by this permit.
     pub const fn resource(&self) -> &LeaseResource {
         &self.resource
@@ -3019,74 +2866,6 @@ impl ResourcePermit {
     /// Returns the amount owned by this permit.
     pub const fn amount(&self) -> u64 {
         self.amount
-    }
-
-    /// Return unused capacity from this permit while preserving the remaining
-    /// ownership under the same admitted lease.
-    pub(crate) fn narrow_temporary_storage_to(&mut self, amount: u64) -> Result<(), ResourceError> {
-        if !matches!(
-            self.resource,
-            LeaseResource::Storage {
-                use_kind: StorageUseKind::Temporary,
-                ..
-            }
-        ) {
-            return Err(ResourceError::Invalid(
-                "only temporary-storage permits may be narrowed".to_string(),
-            ));
-        }
-        if amount == 0 || amount > self.amount {
-            return Err(ResourceError::Invalid(
-                "a narrowed resource permit must retain a positive amount within its current ownership"
-                    .to_string(),
-            ));
-        }
-        if amount == self.amount {
-            return Ok(());
-        }
-        let returned = self
-            .amount
-            .checked_sub(amount)
-            .ok_or(ResourceError::Overflow("narrowed resource permit"))?;
-        release_permit(
-            &self.inner,
-            self.lease_id,
-            &self.resource,
-            &self.accounting_resource,
-            returned,
-            self.artifact_capacity.as_ref(),
-        )?;
-        self.amount = amount;
-        Ok(())
-    }
-
-    /// Return unused retained host-memory capacity after its physical owner
-    /// has first reclaimed all allocations above the new limit.
-    pub(crate) fn narrow_memory_to(&mut self, amount: u64) -> Result<(), ResourceError> {
-        if !matches!(self.resource, LeaseResource::Memory { .. }) {
-            return Err(ResourceError::Invalid(
-                "only memory permits may be narrowed here".to_string(),
-            ));
-        }
-        if amount == 0 || amount > self.amount {
-            return Err(ResourceError::Invalid(
-                "narrowed memory must retain a positive owned amount".to_string(),
-            ));
-        }
-        if amount == self.amount {
-            return Ok(());
-        }
-        let returned = self.amount - amount;
-        release_permit(
-            &self.inner,
-            self.lease_id,
-            &self.resource,
-            &self.accounting_resource,
-            returned,
-            self.artifact_capacity.as_ref(),
-        )?;
-        self.amount = amount;
-        Ok(())
     }
 
     /// Releases this consumption and any now-quiescent pending lease.
@@ -4844,86 +4623,6 @@ fn detect_performance_cpu_cores() -> Option<u64> {
 
 #[cfg(not(target_os = "macos"))]
 fn detect_performance_cpu_cores() -> Option<u64> {
-    None
-}
-
-fn detected_cpu_replay_capacity() -> Option<(u64, u64)> {
-    static CAPACITY: OnceLock<Option<(u64, u64)>> = OnceLock::new();
-    *CAPACITY.get_or_init(detect_cpu_replay_capacity)
-}
-
-#[cfg(target_os = "macos")]
-fn detect_cpu_replay_capacity() -> Option<(u64, u64)> {
-    let logical_cpu_threads = std::thread::available_parallelism().ok()?.get() as u64;
-    let performance_cpu_cores = detect_performance_cpu_cores()?.clamp(1, logical_cpu_threads);
-    let shared_l2_bytes =
-        command_u64("/usr/sbin/sysctl", &["-n", "hw.perflevel0.l2cachesize"]).ok()?;
-    let bytes_per_lane = shared_l2_bytes.checked_div(performance_cpu_cores)?;
-    (bytes_per_lane > 0).then_some((bytes_per_lane, performance_cpu_cores))
-}
-
-#[cfg(target_os = "linux")]
-fn detect_cpu_replay_capacity() -> Option<(u64, u64)> {
-    let logical_cpu_threads = std::thread::available_parallelism().ok()?.get() as u64;
-    let cache_root = std::path::Path::new("/sys/devices/system/cpu/cpu0/cache");
-    let mut indexes = std::fs::read_dir(cache_root)
-        .ok()?
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_name().to_string_lossy().starts_with("index"))
-        .collect::<Vec<_>>();
-    indexes.sort_unstable_by_key(std::fs::DirEntry::file_name);
-    for index in indexes {
-        let path = index.path();
-        if std::fs::read_to_string(path.join("level")).ok()?.trim() != "2" {
-            continue;
-        }
-        let kind = std::fs::read_to_string(path.join("type")).ok()?;
-        if !matches!(kind.trim(), "Data" | "Unified") {
-            continue;
-        }
-        let bytes =
-            parse_linux_cache_bytes(std::fs::read_to_string(path.join("size")).ok()?.trim())?;
-        let sharing_lanes = parse_linux_cpu_list_count(
-            std::fs::read_to_string(path.join("shared_cpu_list"))
-                .ok()?
-                .trim(),
-        )?;
-        let bytes_per_lane = bytes.checked_div(sharing_lanes)?;
-        return (bytes_per_lane > 0).then_some((bytes_per_lane, logical_cpu_threads));
-    }
-    None
-}
-
-#[cfg(target_os = "linux")]
-fn parse_linux_cache_bytes(value: &str) -> Option<u64> {
-    let split = value.find(|character: char| !character.is_ascii_digit())?;
-    let magnitude = value[..split].parse::<u64>().ok()?;
-    let multiplier = match value[split..].trim() {
-        "K" | "KB" => 1024,
-        "M" | "MB" => 1024 * 1024,
-        "B" => 1,
-        _ => return None,
-    };
-    magnitude.checked_mul(multiplier)
-}
-
-#[cfg(target_os = "linux")]
-fn parse_linux_cpu_list_count(value: &str) -> Option<u64> {
-    value.split(',').try_fold(0_u64, |total, range| {
-        let mut bounds = range.trim().split('-');
-        let first = bounds.next()?.parse::<u64>().ok()?;
-        let last = bounds
-            .next()
-            .map_or(Some(first), |value| value.parse::<u64>().ok())?;
-        if bounds.next().is_some() || last < first {
-            return None;
-        }
-        total.checked_add(last - first + 1)
-    })
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn detect_cpu_replay_capacity() -> Option<(u64, u64)> {
     None
 }
 

@@ -3,7 +3,7 @@
 //! uniform, Briggs and taper weights derived from it.
 
 use casa_imaging_operator::{
-    BandwidthTaper, CfKey, DensityCellRule, DensityGridShape, OperatorError, Placement,
+    BandwidthTaper, CfKey, DensityCellRule, DensityGridShape, DensityUv, OperatorError, Placement,
     SampleBuffer, Taper, WeightingGeneration, build_density_grid,
 };
 use num_complex::Complex32;
@@ -15,6 +15,7 @@ fn shape(rule: DensityCellRule) -> DensityGridShape {
         width: 8,
         height: 8,
         planes: 1,
+        padding: 0,
         increment_rad: [-1.0e-3, 1.0e-3],
         rule,
     }
@@ -31,6 +32,19 @@ fn placement(u: f64, v: f64) -> Placement {
         cf: CfKey::default(),
         gradient: [0.0, 0.0],
     }
+}
+
+/// Density coordinates equal to the placement's (exact in single precision).
+fn uv(u: f64, v: f64) -> DensityUv {
+    DensityUv {
+        u: u as f32,
+        v: v as f32,
+    }
+}
+
+/// The imaging weight of a placement at `(u, v)` looked up at the same point.
+fn weight(generation: &WeightingGeneration, u: f64, v: f64, input: f32) -> f32 {
+    generation.imaging_weight(&placement(u, v), uv(u, v), input)
 }
 
 fn density_buffer(samples: &[(f64, f64, f32)]) -> SampleBuffer {
@@ -68,8 +82,8 @@ fn standard_cells_truncate_toward_zero_and_add_the_conjugate() {
     assert_eq!(at(1, 4), 0.0);
     assert_eq!(cells.iter().sum::<f64>(), 9.0);
     assert_eq!(grid.sum_weights(), &[5.0]);
-    assert_eq!(grid.lookup(0, -500.0, 0.0), None);
-    assert_eq!(grid.lookup(0, 0.0, 0.0), Some(2.0));
+    assert_eq!(grid.lookup(0, uv(-500.0, 0.0)), None);
+    assert_eq!(grid.lookup(0, uv(0.0, 0.0)), Some(2.0));
 }
 
 #[test]
@@ -86,12 +100,12 @@ fn uniform_and_briggs_weights_follow_the_casa_formulae() {
     // Cells: (6,5) = 3, (2,3) = 3, (7,4) = 1 (its conjugate falls on
     // column 0): Σd = 7, Σd² = 19.
     let uniform = WeightingGeneration::density(grid.clone(), None, None, None).expect("uniform");
-    assert!((uniform.imaging_weight(&placement(-250.0, 125.0), 1.5) - 0.5).abs() < 1e-7);
-    assert_eq!(uniform.imaging_weight(&placement(-437.5, 0.0), 1.0), 1.0);
-    assert_eq!(uniform.imaging_weight(&placement(-500.0, 0.0), 1.0), 0.0);
-    assert_eq!(uniform.imaging_weight(&placement(-250.0, 125.0), 0.0), 0.0);
+    assert!((weight(&uniform, -250.0, 125.0, 1.5) - 0.5).abs() < 1e-7);
+    assert_eq!(weight(&uniform, -437.5, 0.0, 1.0), 1.0);
+    assert_eq!(weight(&uniform, -500.0, 0.0, 1.0), 0.0);
+    assert_eq!(weight(&uniform, -250.0, 125.0, 0.0), 0.0);
     // Empty cell: uniform gives zero.
-    assert_eq!(uniform.imaging_weight(&placement(100.0, 100.0), 1.0), 0.0);
+    assert_eq!(weight(&uniform, 100.0, 100.0, 1.0), 0.0);
 
     let briggs = WeightingGeneration::density(grid, Some(0.0), None, None).expect("briggs");
     let WeightingGeneration::Density { robust, .. } = &briggs else {
@@ -100,11 +114,42 @@ fn uniform_and_briggs_weights_follow_the_casa_formulae() {
     let f2 = robust.as_ref().expect("factors").factor(0);
     assert!((f2 - 25.0 / (19.0 / 7.0)).abs() < 1e-12, "f2 = {f2}");
     let expected = 1.0 / (3.0 * f2 + 1.0);
-    assert!(
-        (f64::from(briggs.imaging_weight(&placement(-250.0, 125.0), 1.0)) - expected).abs() < 1e-7
-    );
-    // An empty cell under standard Briggs keeps the input weight.
-    assert_eq!(briggs.imaging_weight(&placement(100.0, 100.0), 1.0), 1.0);
+    assert!((f64::from(weight(&briggs, -250.0, 125.0, 1.0)) - expected).abs() < 1e-7);
+    // An empty cell weighs nothing under Briggs too
+    // (`VisImagingWeight::weightUniform` divides only when `a_gwt > 0`).
+    assert_eq!(weight(&briggs, 100.0, 100.0, 1.0), 0.0);
+}
+
+/// CASA's cell origin is the integer `n/2` (`uorigin_p = nx/2`, `GridFT`'s
+/// `offset_p` likewise): on a 7 × 7 grid it is cell 3, not 3.5. With
+/// `Δx = −1e-3` the scale is `−7e-3`, so the sample at `u = 100` sits at
+/// `x = 3 ∓ 0.7` with its conjugate:
+/// - standard (truncate): 2.3 → 2 and 3.7 → 3, where a half-cell origin
+///   gives 2.8 → 2 and 4.2 → 4;
+/// - cube build (`nint(x + 1) − 1`): 3.3 → 2 and 4.7 → 4, where a half-cell
+///   origin gives 3.8 → 3; the cube lookup rounds 2.3 → 2, not 2.8 → 3.
+#[test]
+fn odd_sizes_put_the_density_origin_on_the_lower_middle_cell() {
+    let odd = |rule| DensityGridShape {
+        width: 7,
+        height: 7,
+        planes: 1,
+        padding: 0,
+        increment_rad: [-1.0e-3, 1.0e-3],
+        rule,
+    };
+    // (rule, density at columns 2, 3 and 4 of row 3)
+    for (rule, expected) in [
+        (DensityCellRule::Standard, [2.0, 1.0 + 1.0 + 2.0, 0.0]),
+        (DensityCellRule::Cube, [2.0, 1.0 + 1.0, 2.0]),
+    ] {
+        let buffer = density_buffer(&[(0.0, 0.0, 1.0), (100.0, 0.0, 2.0)]);
+        let grid = build_density_grid(std::iter::once(buffer.block()), odd(rule));
+        let row = &grid.plane(0)[3 * 7..4 * 7];
+        assert_eq!(row[2..5], expected, "{rule:?}");
+        assert_eq!(grid.lookup(0, uv(100.0, 0.0)), Some(2.0), "{rule:?}");
+        assert_eq!(grid.lookup(0, uv(0.0, 0.0)), Some(expected[1]), "{rule:?}");
+    }
 }
 
 #[test]
@@ -126,9 +171,9 @@ fn cube_cells_round_and_mirror_v() {
     assert_eq!(cells.iter().sum::<f64>(), 4.0);
     assert_eq!(grid.sum_weights(), &[2.0]);
     // Lookup: x = round(4 − 8e-3·u), y = round(4 − 8e-3·v) in single precision.
-    assert_eq!(grid.lookup(0, -250.0, 125.0), Some(1.0));
-    assert_eq!(grid.lookup(0, -200.0, 50.0), Some(1.0));
-    assert_eq!(grid.lookup(0, 100.0, 100.0), Some(0.0));
+    assert_eq!(grid.lookup(0, uv(-250.0, 125.0)), Some(1.0));
+    assert_eq!(grid.lookup(0, uv(-200.0, 50.0)), Some(1.0));
+    assert_eq!(grid.lookup(0, uv(100.0, 100.0)), Some(0.0));
     let briggs = WeightingGeneration::density(grid, Some(0.0), None, None).expect("briggs");
     // Cube Briggs uses 2·Σw for the density sum and zeroes empty cells.
     let WeightingGeneration::Density { robust, .. } = &briggs else {
@@ -137,10 +182,8 @@ fn cube_cells_round_and_mirror_v() {
     let f2 = robust.as_ref().expect("factors").factor(0);
     assert!((f2 - 25.0 / (4.0 / 4.0)).abs() < 1e-12, "f2 = {f2}");
     let expected = 1.0 / (f2 + 1.0);
-    assert!(
-        (f64::from(briggs.imaging_weight(&placement(-250.0, 125.0), 1.0)) - expected).abs() < 1e-7
-    );
-    assert_eq!(briggs.imaging_weight(&placement(100.0, 100.0), 1.0), 0.0);
+    assert!((f64::from(weight(&briggs, -250.0, 125.0, 1.0)) - expected).abs() < 1e-7);
+    assert_eq!(weight(&briggs, 100.0, 100.0, 1.0), 0.0);
 }
 
 #[test]
@@ -158,23 +201,29 @@ fn per_channel_grids_select_the_placement_plane() {
     assert_eq!(grid.plane(0).iter().sum::<f64>(), 0.0);
     assert_eq!(grid.plane(1).iter().sum::<f64>(), 2.0);
     let uniform = WeightingGeneration::density(grid, None, None, None).expect("uniform");
-    assert_eq!(uniform.imaging_weight(&on_plane, 1.0), 1.0);
-    assert_eq!(uniform.imaging_weight(&off_grid, 1.0), 0.0);
+    assert_eq!(
+        uniform.imaging_weight(&on_plane, uv(-250.0, 125.0), 1.0),
+        1.0
+    );
+    assert_eq!(
+        uniform.imaging_weight(&off_grid, uv(-250.0, 125.0), 1.0),
+        0.0
+    );
 }
 
 #[test]
 fn natural_weighting_applies_the_gaussian_taper() {
     let natural = WeightingGeneration::Natural { taper: None };
-    assert_eq!(natural.imaging_weight(&placement(10.0, 20.0), 3.0), 3.0);
+    assert_eq!(weight(&natural, 10.0, 20.0, 3.0), 3.0);
     let tapered = WeightingGeneration::Natural {
         taper: Some(Taper::new(100.0, 50.0, 0.0)),
     };
     // Position angle 0: rotated_u = v, rotated_v = −u.
-    let weight = f64::from(tapered.imaging_weight(&placement(50.0, 100.0), 1.0));
+    let tapered = f64::from(weight(&tapered, 50.0, 100.0, 1.0));
     let expected = (-std::f64::consts::LN_2 * (100.0_f64 / 100.0).powi(2)
         - std::f64::consts::LN_2 * (50.0_f64 / 50.0).powi(2))
     .exp();
-    assert!((weight - expected).abs() < 1e-6, "{weight} vs {expected}");
+    assert!((tapered - expected).abs() < 1e-6, "{tapered} vs {expected}");
 }
 
 #[test]
@@ -201,8 +250,8 @@ fn briggs_bandwidth_taper_divides_the_density_term_by_the_uv_distance_factor() {
     let factor = (4.0 - cells) / (4.0 - 2.0 * cells);
     assert!((factor - 1.059_585).abs() < 1e-6, "factor {factor}");
     let expected = 1.0 / (3.0 * f2 / factor + 1.0);
-    let weight = f64::from(tapered.imaging_weight(&placement(-250.0, 125.0), 1.0));
-    assert!((weight - expected).abs() < 1e-7, "{weight} vs {expected}");
+    let actual = f64::from(weight(&tapered, -250.0, 125.0, 1.0));
+    assert!((actual - expected).abs() < 1e-7, "{actual} vs {expected}");
     // Once n reaches 1 the factor is n + 0.5: with unit fractional bandwidth
     // (1 to 3 GHz) the sample at (−437.5, 0), 3.5 cells out, gets 4.0.
     let wide = BandwidthTaper::from_frequency_range(1.0e9, 3.0e9).expect("taper");
@@ -210,8 +259,8 @@ fn briggs_bandwidth_taper_divides_the_density_term_by_the_uv_distance_factor() {
     let tapered = WeightingGeneration::density(grid.clone(), Some(0.0), Some(wide), None)
         .expect("briggsbwtaper");
     let expected = 1.0 / (f2 / 4.0 + 1.0);
-    let weight = f64::from(tapered.imaging_weight(&placement(-437.5, 0.0), 1.0));
-    assert!((weight - expected).abs() < 1e-7, "{weight} vs {expected}");
+    let actual = f64::from(weight(&tapered, -437.5, 0.0, 1.0));
+    assert!((actual - expected).abs() < 1e-7, "{actual} vs {expected}");
     assert!(matches!(
         WeightingGeneration::density(grid, None, Some(bandwidth), None),
         Err(OperatorError::Weighting { .. })

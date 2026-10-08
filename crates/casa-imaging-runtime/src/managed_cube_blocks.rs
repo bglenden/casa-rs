@@ -41,7 +41,6 @@ struct Entry {
     resident: bool,
     read_pins: usize,
     write_pin: bool,
-    next_use: u64,
     last_use: u64,
 }
 
@@ -63,16 +62,6 @@ struct ResidencyState {
     next_backend_id: BackendId,
     entries: Registry<Entry>,
     backends: Registry<BackendEntry>,
-    metrics: ResidencyMetrics,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct ResidencyMetrics {
-    pub(crate) peak_used_bytes: usize,
-    pub(crate) dirty_write_operations: u64,
-    pub(crate) dirty_write_bytes: u64,
-    pub(crate) reload_read_operations: u64,
-    pub(crate) reload_read_bytes: u64,
 }
 
 impl ResidencyState {
@@ -174,10 +163,6 @@ impl CubeResidency {
                 next_backend_id: 0,
                 entries: Registry::new(),
                 backends: Registry::new(),
-                metrics: ResidencyMetrics {
-                    peak_used_bytes: owner_bytes,
-                    ..ResidencyMetrics::default()
-                },
             }),
             wake: Condvar::new(),
             creation: Mutex::new(()),
@@ -232,6 +217,7 @@ impl CubeResidency {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn used_bytes(&self) -> usize {
         self.state.lock().expect("residency lock poisoned").used
     }
@@ -250,50 +236,13 @@ impl CubeResidency {
             .sum()
     }
 
+    #[cfg(test)]
     pub(crate) fn limit_bytes(&self) -> usize {
         self.state.lock().expect("residency lock poisoned").limit
     }
 
-    pub(crate) fn metrics(&self) -> ResidencyMetrics {
-        self.state.lock().expect("residency lock poisoned").metrics
-    }
-
-    /// Evict optional planes before returning the corresponding cache capacity
-    /// to the owning lease. The old ceiling is restored if live pins prevent
-    /// reclamation; any completed evictions remain valid.
-    pub(crate) fn shrink_to(self: &Arc<Self>, target: usize) -> io::Result<()> {
-        let old = {
-            let mut state = self.state.lock().map_err(poison)?;
-            if target == 0 || target > state.limit || state.admitting {
-                return Err(invalid("invalid managed cache shrink request"));
-            }
-            let old = state.limit;
-            state.limit = target;
-            old
-        };
-        match self.try_admit(&[], 0) {
-            Ok(pins) => {
-                drop(pins);
-                Ok(())
-            }
-            Err(error) => {
-                self.state.lock().map_err(poison)?.limit = old;
-                Err(error)
-            }
-        }
-    }
-
-    pub(crate) fn set_next_use(&self, id: BlockId, phase: u64) -> io::Result<()> {
-        let mut state = self.state.lock().map_err(poison)?;
-        state
-            .entries
-            .get_mut(&id)
-            .ok_or_else(|| invalid("unknown cube block"))?
-            .next_use = phase;
-        Ok(())
-    }
-
-    /// Explicit phase-end spill; write and flush errors remain on this call.
+    /// Spill one unpinned block; write and flush errors remain on this call.
+    #[cfg(test)]
     pub(crate) fn evict_unpinned(&self, id: BlockId) -> io::Result<()> {
         let mut state = self.state.lock().map_err(poison)?;
         if state.admitting {
@@ -319,16 +268,11 @@ impl CubeResidency {
         state.admitting = false;
         state.version += 1;
         self.wake.notify_all();
-        let wrote = result?;
+        result?;
         let entry = state.entries.get_mut(&id).expect("registered block");
         entry.resident = false;
         entry.cold_bytes = cold_bytes;
-        let payload_bytes = entry.payload_bytes;
         state.used -= bytes - cold_bytes;
-        if wrote {
-            state.metrics.dirty_write_operations += 1;
-            state.metrics.dirty_write_bytes += payload_bytes as u64;
-        }
         Ok(())
     }
 
@@ -410,11 +354,7 @@ impl CubeResidency {
                     entry.resident && entry.read_pins == 0 && !entry.write_pin && !ids.contains(id)
                 })
                 .max_by_key(|(id, entry)| {
-                    (
-                        entry.next_use,
-                        std::cmp::Reverse(entry.last_use),
-                        std::cmp::Reverse(**id),
-                    )
+                    (std::cmp::Reverse(entry.last_use), std::cmp::Reverse(**id))
                 })
                 .map(|(id, entry)| (*id, entry.block.clone(), entry.bytes));
             if let Some((id, block, bytes)) = victim {
@@ -422,24 +362,16 @@ impl CubeResidency {
                 let result = block.evict();
                 let cold_bytes = block.cold_bytes();
                 state = self.state.lock().map_err(poison)?;
-                let wrote = match result {
-                    Ok(wrote) => wrote,
-                    Err(error) => {
-                        state.admitting = false;
-                        state.version += 1;
-                        self.wake.notify_all();
-                        return Err(error);
-                    }
-                };
+                if let Err(error) = result {
+                    state.admitting = false;
+                    state.version += 1;
+                    self.wake.notify_all();
+                    return Err(error);
+                }
                 let entry = state.entries.get_mut(&id).expect("registered block");
                 entry.resident = false;
                 entry.cold_bytes = cold_bytes;
-                let payload_bytes = entry.payload_bytes;
                 state.used -= bytes - cold_bytes;
-                if wrote {
-                    state.metrics.dirty_write_operations += 1;
-                    state.metrics.dirty_write_bytes += payload_bytes as u64;
-                }
                 continue;
             }
             let idle = state
@@ -520,21 +452,15 @@ impl CubeResidency {
         }
         state.used += scratch_bytes;
         state.scratch += scratch_bytes;
-        state.metrics.peak_used_bytes = state.metrics.peak_used_bytes.max(state.used);
         drop(state);
 
-        let mut reloaded = Vec::new();
         let result = to_open
             .iter()
             .try_for_each(|(_, backend)| backend.reopen())
             .and_then(|_| {
-                to_load.iter().try_for_each(|(id, block, write)| {
-                    let read = block.prepare(*write)?;
-                    if read {
-                        reloaded.push(*id);
-                    }
-                    Ok(())
-                })
+                to_load
+                    .iter()
+                    .try_for_each(|(_, block, write)| block.prepare(*write).map(|_| ()))
             });
         let open_results: Vec<_> = to_open
             .iter()
@@ -545,10 +471,6 @@ impl CubeResidency {
             .map(|(id, block, _)| (*id, block.resident()))
             .collect();
         let mut state = self.state.lock().map_err(poison)?;
-        for id in reloaded {
-            state.metrics.reload_read_operations += 1;
-            state.metrics.reload_read_bytes += state.entries[&id].payload_bytes as u64;
-        }
         for (id, open) in open_results {
             if !open {
                 let backend = state.backends.get_mut(&id).expect("registered backend");
@@ -590,6 +512,7 @@ impl CubeResidency {
     }
 
     /// Close idle tiled handles and release their real codec cache allocation.
+    #[cfg(test)]
     pub(crate) fn reclaim_idle_staging(&self) -> io::Result<()> {
         let mut state = self.state.lock().map_err(poison)?;
         if state.admitting {
@@ -1101,7 +1024,6 @@ impl<T: LatticeElement + TilePixel> ManagedPlaneArray<T> {
                     resident: false,
                     read_pins: 0,
                     write_pin: false,
-                    next_use: u64::MAX,
                     last_use: 0,
                 },
             );
@@ -1203,11 +1125,6 @@ impl<T: LatticeElement + TilePixel> ManagedPlaneArray<T> {
                 .0,
             write,
         })
-    }
-
-    pub(crate) fn set_next_use(&self, index: usize, phase: u64) -> io::Result<()> {
-        self.manager
-            .set_next_use(self.request(index, false)?.id, phase)
     }
 
     pub(crate) fn read<'a>(
@@ -1335,52 +1252,6 @@ fn poison<T>(error: std::sync::PoisonError<T>) -> io::Error {
     other(error)
 }
 
-/// Mandatory simultaneous owners for a worker wave, in bytes. The separate
-/// Cargo build-job limit is not an imaging worker limit.
-pub(crate) struct WorkerMemory {
-    pub(crate) budget: usize,
-    pub(crate) shared: usize,
-    pub(crate) backend_staging: usize,
-    pub(crate) workspace_per_worker: usize,
-    pub(crate) queued_result_per_worker: usize,
-}
-
-impl WorkerMemory {
-    pub(crate) fn admitted_workers(
-        &self,
-        requested: usize,
-        usable_cpus: usize,
-        ready_jobs: usize,
-    ) -> io::Result<usize> {
-        let fixed = self
-            .shared
-            .checked_add(self.backend_staging)
-            .ok_or_else(|| invalid("shared owner byte count overflow"))?;
-        let per_worker = self
-            .workspace_per_worker
-            .checked_add(self.queued_result_per_worker)
-            .ok_or_else(|| invalid("worker owner byte count overflow"))?;
-        if requested == 0
-            || usable_cpus == 0
-            || ready_jobs == 0
-            || per_worker == 0
-            || fixed > self.budget
-        {
-            return Err(invalid("no valid worker admission"));
-        }
-        let workers = requested
-            .min(usable_cpus)
-            .min(ready_jobs)
-            .min((self.budget - fixed) / per_worker);
-        if workers == 0 {
-            return Err(invalid(
-                "one worker and mandatory shared owners exceed budget",
-            ));
-        }
-        Ok(workers)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1500,35 +1371,6 @@ mod tests {
         exercise([1.0_f64, 2.0, 3.0, 4.0]);
         exercise([Complex32::new(2.0, -1.0); 4]);
         exercise([false, true, false, true]);
-    }
-
-    #[test]
-    fn shrinking_cache_spills_before_returning_capacity_and_reloads() {
-        let root = tempfile::tempdir().unwrap();
-        let manager = CubeResidency::new(1 << 20).unwrap();
-        let array =
-            ManagedPlaneArray::create(manager.clone(), root.path(), 64, 64, 3, Some(0.0_f32))
-                .unwrap();
-        for plane in 0..2 {
-            let pins = manager
-                .admit(&[array.request(plane, true).unwrap()], 0)
-                .unwrap();
-            let mut values = array.write(&pins, plane, 0..4096).unwrap();
-            values.fill((plane + 1) as f32);
-            values.finish();
-        }
-        let one_block = manager.state.lock().unwrap().entries[&array.blocks[0].0].bytes;
-        let target = manager.used_bytes() - one_block / 2;
-        manager.shrink_to(target).unwrap();
-        assert_eq!(manager.limit_bytes(), target);
-        assert!(manager.used_bytes() <= manager.limit_bytes());
-        assert!(manager.metrics().dirty_write_operations >= 1);
-        let pins = manager
-            .admit(&[array.request(0, false).unwrap()], 0)
-            .unwrap();
-        assert_eq!(&*array.read(&pins, 0, 0..4096).unwrap(), &[1.0; 4096]);
-        assert!(manager.metrics().reload_read_operations >= 1);
-        assert!(manager.metrics().reload_read_bytes >= 4096 * size_of::<f32>() as u64);
     }
 
     #[test]
@@ -1789,34 +1631,6 @@ mod tests {
     }
 
     #[test]
-    fn phase_hint_precedes_lru() {
-        let (_root, manager, array) = fixture(3, 2, Some(0.0_f32));
-        drop(
-            manager
-                .admit(
-                    &[
-                        array.request(0, false).unwrap(),
-                        array.request(1, false).unwrap(),
-                    ],
-                    0,
-                )
-                .unwrap(),
-        );
-        array.set_next_use(0, 1).unwrap();
-        array.set_next_use(1, 100).unwrap();
-        // Keep operation metadata identical to the initial two-plane request.
-        let scratch = operation_metadata_bytes(2).unwrap() - operation_metadata_bytes(1).unwrap();
-        drop(
-            manager
-                .admit(&[array.request(2, false).unwrap()], scratch)
-                .unwrap(),
-        );
-        assert!(array.blocks[0].1.resident());
-        assert!(!array.blocks[1].1.resident());
-        assert!(array.blocks[2].1.resident());
-    }
-
-    #[test]
     fn backing_failure_and_impossible_construction_leave_no_stranded_permit() {
         let (_root, manager, array) = fixture(1, 1, None::<f32>);
         assert!(
@@ -1981,28 +1795,5 @@ mod tests {
         let next = manager.admit(&[], available).unwrap();
         drop(next);
         assert_eq!(manager.state.lock().unwrap().scratch, 0);
-    }
-
-    #[test]
-    fn worker_admission_scales_beyond_four_and_checks_boundaries() {
-        let mut memory = WorkerMemory {
-            budget: 1000,
-            shared: 100,
-            backend_staging: 100,
-            workspace_per_worker: 40,
-            queued_result_per_worker: 10,
-        };
-        for workers in [1, 2, 4, 8, 16] {
-            assert_eq!(memory.admitted_workers(workers, 32, 100).unwrap(), workers);
-        }
-        assert_eq!(memory.admitted_workers(16, 32, 3).unwrap(), 3);
-        memory.budget = 450;
-        assert_eq!(memory.admitted_workers(16, 32, 100).unwrap(), 5);
-        memory.budget = 249;
-        assert!(memory.admitted_workers(1, 1, 1).is_err());
-        memory.budget = 250;
-        assert_eq!(memory.admitted_workers(1, 1, 1).unwrap(), 1);
-        memory.shared = usize::MAX;
-        assert!(memory.admitted_workers(16, 16, 16).is_err());
     }
 }

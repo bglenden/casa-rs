@@ -42,15 +42,11 @@ use casa_imaging_model::{
     WProjectionContract, WeightColumn as OwnerWeightColumn, WeightDensityScope, WeightingContract,
     WeightingScheme,
 };
-use casa_imaging_reconstruction::{
-    MinorCycleImageResponse, ReconstructionMaskPlan, WeightingExecutionLimits,
-    minor_cycle_workspace_bytes,
-};
+use casa_imaging_reconstruction::{MinorCycleImageResponse, ReconstructionMaskPlan};
 use casa_imaging_runtime::{
     BuildIdentity, ExecutionAttemptId, ExecutionReceiptStore, ImplementationRegistryId,
-    ManagedSpillStorage, PlannerCostModelProfileId, ProductionStorageProfile, ReceiptRetention,
-    ResourceAuthority, ResourceOverride, ResourcePolicy, SelectedObservationSourceResources,
-    WorkImplementationId,
+    PagedStateDirectory, PlannerCostModelProfileId, ProductionStorageProfile, ReceiptRetention,
+    ResourceAuthority, ResourceOverride, ResourcePolicy, WorkImplementationId,
 };
 use casa_ms::{
     CubeAxisConfig, CubeInterpolation, CubeSpectralSetup, MeasurementSet, MsSelectionIoBudget,
@@ -1044,7 +1040,7 @@ fn prepare(
         request.uv_range.as_deref(),
         request.intent.as_deref(),
     )?;
-    let content_budget = SelectedObservationSourceResources::bootstrap_content_budget();
+    let content_budget = casa_imaging_runtime::bootstrap_source_budget();
     let candidate_bindings = ddids
         .iter()
         .copied()
@@ -1628,7 +1624,7 @@ fn prepare(
             })
         })
         .and_then(|profile| {
-            let runtime = runtime(&request, &prepared_domains, &profile)?;
+            let runtime = runtime(&request, &profile)?;
             let aw_preparation = request
                 .aw_projection
                 .as_ref()
@@ -3208,7 +3204,6 @@ fn production_storage_profile(
 
 fn runtime(
     request: &ContinuumImagingRequest,
-    domains: &[PreparedImageDomain],
     profile: &ProductionStorageProfile,
 ) -> Result<ApplicationRuntime, crate::ApplicationError> {
     let digest = request_digest(request, b"attempt");
@@ -3220,57 +3215,22 @@ fn runtime(
     let receipts = output_directory.join(".casa-rs-imaging-receipts");
     let authority = ResourceAuthority::production_with_storage_profile(profile)?.clone();
     let storage_io = profile.io_resources();
-    let gridded_normal_storage =
-        ManagedSpillStorage::bind(&authority, storage_io.clone(), &output_directory)?;
+    let paged_state_storage =
+        PagedStateDirectory::bind(&authority, &storage_io, &output_directory)?;
     Ok(ApplicationRuntime {
         registry: ImplementationRegistryId::from_sha256(hash(b"spectral-cycle-registry")),
         implementation: WorkImplementationId::new("spectral-cycle-cpu-v1"),
-        weighting_limits: WeightingExecutionLimits::new(4096, 1)?,
         stage_nanos: 1_000_000,
-        minor_cycle_bytes: domains.iter().try_fold(0_u64, |total, domain| {
-            total
-                .checked_add(planned_minor_cycle_bytes(
-                    domain.image_size,
-                    request.polarizations.len(),
-                    &request.algorithm,
-                    request.iterations,
-                ))
-                .ok_or_else(|| boxed("multi-domain minor-cycle residency overflowed"))
-        })?,
         storage_io,
-        gridded_normal_storage,
+        paged_state_storage,
         confidence_parts_per_million: 900_000,
         resource_policy: request.resource_policy.clone(),
         cost_model: PlannerCostModelProfileId::from_sha256(hash(b"spectral-cycle-cost-v1")),
         authority,
         receipts: ExecutionReceiptStore::new(receipts, ReceiptRetention::new(512, 256 << 20)?)?,
         build: BuildIdentity::from_sha256(hash(env!("CARGO_PKG_VERSION").as_bytes())),
-        attempts: [
-            ExecutionAttemptId::from_sha256(scoped(digest, 0)),
-            ExecutionAttemptId::from_sha256(scoped(digest, 1)),
-            ExecutionAttemptId::from_sha256(scoped(digest, 2)),
-        ],
+        publication_attempt: ExecutionAttemptId::from_sha256(scoped(digest, 2)),
     })
-}
-
-fn planned_minor_cycle_bytes(
-    image_size: usize,
-    polarizations: usize,
-    algorithm: &ContinuumAlgorithm,
-    maximum_iterations: usize,
-) -> u64 {
-    let basis = match algorithm {
-        ContinuumAlgorithm::Mtmfs { terms, .. } => ReconstructionBasis::Taylor { terms: *terms },
-        _ => ReconstructionBasis::Constant,
-    };
-    minor_cycle_workspace_bytes(
-        [image_size, image_size],
-        polarizations,
-        basis,
-        &reconstruction_algorithm(algorithm),
-        maximum_iterations,
-        64,
-    )
 }
 
 /// Project stable task execution intent into the application-owned Resource
@@ -3422,8 +3382,7 @@ mod tests {
         continuum_pointing_centre_law, cube_rest_frequency_hz,
         effective_aw_pointing_offset_sigdev_arcsec, image_coordinates, image_reference_pixel,
         instrument_model_supports_diameter, model_plane_samples, parse_phase_center_direction,
-        planned_minor_cycle_bytes, requested_products, resource_policy_for_task_requirements,
-        supports_projected_w_planes,
+        requested_products, resource_policy_for_task_requirements, supports_projected_w_planes,
     };
 
     #[test]
@@ -3576,25 +3535,6 @@ mod tests {
     #[test]
     fn model_delta_bound_covers_one_complete_multiscale_plane() {
         assert_eq!(model_plane_samples(64), 4096);
-    }
-
-    #[test]
-    fn mtmfs_runtime_claim_grows_with_taylor_terms_and_scales() {
-        let point = ContinuumAlgorithm::Mtmfs {
-            terms: 2,
-            scales_px: vec![0.0],
-            small_scale_bias: 0.0,
-        };
-        let higher_order = ContinuumAlgorithm::Mtmfs {
-            terms: 3,
-            scales_px: vec![0.0, 5.0],
-            small_scale_bias: 0.0,
-        };
-
-        assert!(
-            planned_minor_cycle_bytes(128, 1, &higher_order, 8)
-                > planned_minor_cycle_bytes(128, 1, &point, 8)
-        );
     }
 
     #[test]

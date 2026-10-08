@@ -1831,8 +1831,8 @@ fn planning_selects_the_largest_feasible_exact_worker_variant() {
         [WorkImplementationId::new("cpu-reference")],
     );
     let maximum_workers = 4;
-    let stack_bytes = u64::try_from(crate::bounded_stream::BOUNDED_WORKER_STACK_BYTES)
-        .expect("worker stack bytes fit u64");
+    let stack_bytes =
+        u64::try_from(crate::pass::WORKER_STACK_BYTES).expect("worker stack bytes fit u64");
     let maximum_stack_bytes = maximum_workers * stack_bytes;
     let mut work = cpu_node("work", BTreeSet::new());
     work.claims[0].amount = maximum_workers;
@@ -2134,26 +2134,78 @@ fn planning_resolves_each_distinct_implementation_once() {
 
 #[test]
 fn scheduler_rejects_discrete_metal_memory_instead_of_inventing_a_mac_model() {
+    let (authority, plan) = metal_plan(false);
+    assert!(matches!(
+        ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &authority, None),
+        Err(ExecutionError::InvalidPlan(message)) if message.contains("unified")
+    ));
+}
+
+/// Metal work is refused, typed, before the Resource Authority is asked:
+/// even under a policy admission would refuse for want of memory, the error
+/// is the missing backend, and the whole host memory stays available.
+#[test]
+fn scheduler_refuses_metal_work_before_admission_until_the_backend_exists() {
+    let (authority, plan) = metal_plan(true);
+    let no_memory = ResourcePolicy::Explicit(crate::ResourceOverride {
+        memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 0)]),
+        ..crate::ResourceOverride::default()
+    });
+    for policy in [ResourcePolicy::Exclusive, no_memory] {
+        assert!(matches!(
+            ExecutionScheduler::start(&plan, &policy, &authority, None),
+            Err(ExecutionError::MetalUnavailable)
+        ));
+    }
+    assert_eq!(
+        authority
+            .phase_budget(&ResourcePolicy::Exclusive)
+            .expect("budget")
+            .1,
+        1_024
+    );
+}
+
+/// An authority with one Metal accelerator, its memory unified with the
+/// host's or private to the device, and a plan of one Metal work node.
+fn metal_plan(unified: bool) -> (ResourceAuthority, ExecutionDag) {
     let host_domain = CapacityDomainId::new("host-memory");
-    let device_domain = CapacityDomainId::new("device-memory");
+    let device_domain = if unified {
+        host_domain.clone()
+    } else {
+        CapacityDomainId::new("device-memory")
+    };
     let host_view = CapacityViewId::new("host-memory");
     let metal_view = CapacityViewId::new("metal-memory");
     let accelerator = AcceleratorId::new("metal-0");
     let command_queue = QueueResourceId::new("metal-command-queue");
+    let memory_domains = if unified {
+        vec![MemoryCapacityDomain {
+            id: host_domain.clone(),
+            kind: MemoryCapacityKind::Unified,
+            capacity_bytes: 1_024,
+        }]
+    } else {
+        vec![
+            MemoryCapacityDomain {
+                id: host_domain.clone(),
+                kind: MemoryCapacityKind::Host,
+                capacity_bytes: 1_024,
+            },
+            MemoryCapacityDomain {
+                id: device_domain.clone(),
+                kind: MemoryCapacityKind::DevicePrivate,
+                capacity_bytes: 1_024,
+            },
+        ]
+    };
+    let memory_available_bytes = memory_domains
+        .iter()
+        .map(|domain| (domain.id.clone(), 1_024))
+        .collect();
     let authority = ResourceAuthority::with_inventory(HostInventory {
         topology: ResourceTopology {
-            memory_domains: vec![
-                MemoryCapacityDomain {
-                    id: host_domain.clone(),
-                    kind: MemoryCapacityKind::Host,
-                    capacity_bytes: 1_024,
-                },
-                MemoryCapacityDomain {
-                    id: device_domain.clone(),
-                    kind: MemoryCapacityKind::DevicePrivate,
-                    capacity_bytes: 1_024,
-                },
-            ],
+            memory_domains,
             memory_views: vec![
                 MemoryView {
                     id: host_view,
@@ -2186,7 +2238,7 @@ fn scheduler_rejects_discrete_metal_memory_instead_of_inventing_a_mac_model() {
             file_descriptor_capacity: 8,
         },
         pressure: ExternalPressure {
-            memory_available_bytes: BTreeMap::from([(host_domain, 1_024), (device_domain, 1_024)]),
+            memory_available_bytes,
             available_cpu_threads: 2,
             storage_available_bytes: BTreeMap::new(),
             rate_available_per_second: BTreeMap::new(),
@@ -2197,7 +2249,7 @@ fn scheduler_rejects_discrete_metal_memory_instead_of_inventing_a_mac_model() {
             available_file_descriptors: 8,
         },
     })
-    .expect("resource layer can describe a topology the Apple scheduler rejects");
+    .expect("resource layer can describe a Metal topology");
     let lifetime = ClaimLifetime::through_fence(FenceKind::Device);
     let node = WorkNode {
         id: WorkNodeId::new("metal-work"),
@@ -2241,11 +2293,7 @@ fn scheduler_rejects_discrete_metal_memory_instead_of_inventing_a_mac_model() {
         ..RuntimeOverheadDemand::zero()
     };
     let plan = ExecutionDag::new(specification).expect("valid declared Metal work");
-
-    assert!(matches!(
-        ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &authority, None),
-        Err(ExecutionError::InvalidPlan(message)) if message.contains("unified")
-    ));
+    (authority, plan)
 }
 
 #[test]
@@ -2343,7 +2391,6 @@ fn fence_context_exposes_only_capabilities_live_for_that_fence() {
                 lifetime: ClaimLifetime::through_fence(FenceKind::Io),
             },
         ],
-        metal_execution: None,
     };
 
     let fence = context.for_fence(FenceKind::Io);
@@ -2386,7 +2433,6 @@ fn unified_physical_slot_reuse_waits_for_every_declared_fence() {
     let writeback_id = WorkNodeId::new("c-writeback");
     let publication_id = WorkNodeId::new("d-publication");
     let reuse_id = WorkNodeId::new("e-reuse");
-    let device_fence = FenceId::new(compute_id.clone(), FenceKind::Device);
     let io_fence = FenceId::new(io_id.clone(), FenceKind::Io);
     let writeback_io_fence = FenceId::new(writeback_id.clone(), FenceKind::Io);
     let writeback_fence = FenceId::new(writeback_id.clone(), FenceKind::Writeback);
@@ -2395,32 +2441,19 @@ fn unified_physical_slot_reuse_waits_for_every_declared_fence() {
     let compute = WorkNode {
         id: compute_id.clone(),
         kind: WorkKind::Compute,
-        domain: WorkDomain::Metal {
-            demand_id: "metal".to_string(),
-        },
+        domain: WorkDomain::Cpu,
         implementation: WorkImplementationId::new("cpu-reference"),
         dependencies: BTreeSet::new(),
-        claims: vec![
-            ResourceClaim {
-                resource: crate::LeaseResource::Accelerator {
-                    demand_id: "metal".to_string(),
-                },
-                amount: 1,
-                lifetime: ClaimLifetime::through_fence(FenceKind::Device),
-            },
-            ResourceClaim {
-                resource: crate::LeaseResource::AcceleratorCommandQueue {
-                    demand_id: "metal".to_string(),
-                },
-                amount: 1,
-                lifetime: ClaimLifetime::through_fence(FenceKind::Device),
-            },
-        ],
+        claims: vec![ResourceClaim {
+            resource: crate::LeaseResource::Workers,
+            amount: 1,
+            lifetime: ClaimLifetime::Work,
+        }],
         allocations: vec![AllocationUse {
             allocation: AllocationId::new("first-grid"),
-            lifetime: ClaimLifetime::through_fence(FenceKind::Device),
+            lifetime: ClaimLifetime::Work,
         }],
-        fences: BTreeSet::from([FenceKind::Device]),
+        fences: BTreeSet::new(),
         quiescence_after: BTreeSet::new(),
     };
     let io_claims = |lifetime: ClaimLifetime| {
@@ -2446,7 +2479,7 @@ fn unified_physical_slot_reuse_waits_for_every_declared_fence() {
         kind: WorkKind::Io,
         domain: WorkDomain::Io,
         implementation: WorkImplementationId::new("cpu-reference"),
-        dependencies: BTreeSet::from([WorkDependency::Fence(device_fence.clone())]),
+        dependencies: BTreeSet::from([WorkDependency::Work(compute_id.clone())]),
         claims: io_claims(ClaimLifetime::through_fence(FenceKind::Io)),
         allocations: vec![AllocationUse {
             allocation: AllocationId::new("first-grid"),
@@ -2517,18 +2550,6 @@ fn unified_physical_slot_reuse_waits_for_every_declared_fence() {
         preferred_bytes: 100,
         views: views.into_iter().collect(),
     }];
-    specification.resource_alternative.demand.accelerators = vec![AcceleratorDemand {
-        demand_id: "metal".to_string(),
-        accelerator: AcceleratorId::new("metal-0"),
-        slots: CountDemand::new(1, 1),
-        command_queue_slots: CountDemand::new(1, 1),
-    }];
-    specification.resource_alternative.demand.overhead = RuntimeOverheadDemand {
-        driver_bytes: 1,
-        jit_bytes: 1,
-        command_buffer_bytes: 1,
-        ..RuntimeOverheadDemand::zero()
-    };
     specification.resource_alternative.demand.rates = vec![RateDemand {
         demand_id: "output-rate".to_string(),
         resource: RateResourceId::new("io-rate"),
@@ -2540,7 +2561,7 @@ fn unified_physical_slot_reuse_waits_for_every_declared_fence() {
         slots: CountDemand::new(1, 1),
     }];
     let first_release = BTreeSet::from([
-        WorkDependency::Fence(device_fence.clone()),
+        WorkDependency::Work(compute_id.clone()),
         WorkDependency::Fence(io_fence.clone()),
         WorkDependency::Fence(writeback_io_fence.clone()),
         WorkDependency::Fence(writeback_fence.clone()),
@@ -2589,7 +2610,7 @@ fn unified_physical_slot_reuse_waits_for_every_declared_fence() {
     .expect("admitted reuse plan");
 
     for (node_id, fences) in [
-        (compute_id, vec![device_fence]),
+        (compute_id, Vec::new()),
         (io_id, vec![io_fence]),
         (writeback_id, vec![writeback_io_fence, writeback_fence]),
         (

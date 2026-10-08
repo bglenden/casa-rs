@@ -5,7 +5,15 @@
 //! imaged through `casars-imager`'s production route, checked against
 //! analytic flux, position, beam, noise, inventory and WCS expectations.
 
+#[path = "t1/cube.rs"]
+mod cube;
 #[path = "t1/fixture.rs"]
 mod fixture;
-#[path = "t1/standard_mfs_hogbom.rs"]
-mod standard_mfs_hogbom;
+#[path = "t1/model_column.rs"]
+mod model_column;
+#[path = "t1/mtmfs.rs"]
+mod mtmfs;
+#[path = "t1/standard_mfs.rs"]
+mod standard_mfs;
+#[path = "t1/standard_mfs_masks.rs"]
+mod standard_mfs_masks;

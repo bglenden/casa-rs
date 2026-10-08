@@ -399,7 +399,7 @@ impl MeasurementOperator {
         let requested = self.polarization.requested().len();
         let gpols = self.polarization.grid_pols();
         let terms = layout.terms();
-        let mut fft = PlaneFft::<T>::new([nx, ny])?;
+        let mut fft = PlaneFft::<T>::new([nx, ny], self.measured_fft())?;
         let mut cells = vec![Complex::<T>::default(); layout.cells()];
         for (plane_local, plane) in model.planes.iter().enumerate() {
             let factor = match prescale {
@@ -456,7 +456,7 @@ impl MeasurementOperator {
     ) -> Result<NormalImages, OperatorError> {
         let layout = acc.layout();
         let [nx, ny] = self.geometry.grid_shape();
-        let mut fft = PlaneFft::<T>::new([nx, ny])?;
+        let mut fft = PlaneFft::<T>::new([nx, ny], self.measured_fft())?;
         let mut work = vec![Complex::<T>::default(); nx * ny];
         let gpols = layout.pols();
         let pols = self.polarization.requested().len();
@@ -503,6 +503,13 @@ impl MeasurementOperator {
             psf_terms: layout.term_range(Mode::Psf).map_or(0, |terms| terms.len()),
             planes,
         })
+    }
+
+    /// A channel cube transforms every plane with one plan, so measured
+    /// planning pays off; a constant or Taylor operator transforms a few
+    /// planes per pass.
+    const fn measured_fft(&self) -> bool {
+        matches!(self.basis, Basis::ChannelLocal { .. })
     }
 
     /// Correction and crop of one transformed grid plane, `[y][x]` over the

@@ -2,51 +2,29 @@
 #![warn(missing_docs)]
 //! Plan-bound imaging execution, process resource arbitration, and leases.
 
-mod bounded_stream;
-mod complete_data_operator;
-#[cfg(test)]
-mod complete_data_parallel_mfs_tests;
-mod continuum_transform;
-mod cube_state_plan;
+mod cube_state;
 mod execution;
 mod execution_bindings;
-mod major_cycle;
-#[allow(
-    dead_code,
-    reason = "review-1 foundation is connected to cube callers in milestone B"
-)]
 mod managed_cube_blocks;
 mod managed_model;
 mod managed_normal;
-#[allow(dead_code)]
-mod managed_spill;
-#[cfg(all(target_os = "macos", not(coverage)))]
-mod metal_cube;
-mod metal_runtime;
 mod observation_transaction;
-mod paged_cube_state;
+mod paged_state_directory;
+pub mod pass;
+pub use cube_state::CubeState;
+mod minor;
+pub use minor::{MinorCycleOutcome, MinorCycleRunError, run_minor_cycle};
+// Nothing reads prepared artifacts until the AW catalog replaces the store
+// (plan section 6 row 5).
+#[expect(dead_code, reason = "IF-3 (#652) deletes the prepared-artifact store")]
 mod prepared_artifact;
 pub mod product_publication;
 mod publication_layout;
 mod receipt;
-mod reconstruction_executor;
-#[doc(hidden)]
-pub use reconstruction_executor::ClarkWorkspaceReservation;
 mod resource_authority;
 mod serial_product_publication;
-mod spectral_cycle;
-mod spectral_cycle_plan;
-mod streaming_cube;
-/// Native streaming-cube phases composed by the imaging application.
-#[doc(hidden)]
-pub use streaming_cube::{CubePhase, NativeReplay};
-
-/// Whether the shared device normal operator supports this compiled MFS problem.
-#[doc(hidden)]
-pub fn supports_metal_normal(problem: &casa_imaging_model::CompiledProblem) -> bool {
-    casa_imaging_reconstruction::runtime_adapter::supports_device_normal(problem)
-}
-mod weighting;
+mod source_access;
+pub use source_access::{SourceAccessError, bootstrap_source_budget, finalize_source_access};
 
 pub use execution_bindings::{
     ArtifactDisposition, ArtifactIdentity, ArtifactMeasurement, ArtifactMeasurementError,
@@ -62,16 +40,6 @@ pub use execution_bindings::{
     WorkMeasurements, plan, run,
 };
 
-pub use casa_imaging_reconstruction::{MajorCyclePreparation, SpectralPrimitiveCatalog};
-pub use complete_data_operator::{
-    CompleteDataOperatorError, CompleteDataOperatorResult, CompleteDataPlanError,
-    CompleteDataPlanFragment, CompleteDataPreparedState, CompleteDataResidency,
-    FrozenGriddedNormalReplay, GriddedNormalReplayDescriptor, SpectralOperatorState,
-};
-pub use continuum_transform::{
-    ContinuumTransformCompletion, ContinuumTransformError, ContinuumTransformRowPlan,
-    ContinuumTransformStream, ContinuumTransformedSample, plan_continuum_transform_row,
-};
 pub use execution::{
     AdaptationId, AdaptationTransition, AllocationAccess, AllocationDisposition, AllocationId,
     AllocationLayout, AllocationLifetime, AllocationPurpose, AllocationUse, ClaimLifetime,
@@ -81,15 +49,11 @@ pub use execution::{
     WorkAllocationCapability, WorkDependency, WorkDomain, WorkImplementationId, WorkKind, WorkNode,
     WorkNodeId, WorkResourceCapability,
 };
-pub use major_cycle::{MajorCycleOperatorError, MajorCycleOperatorResult, MajorCycleOperatorState};
-pub use managed_spill::ManagedSpillStorage;
-pub use metal_runtime::{
-    MetalExecutionDecision, MetalNodeDecision, MetalRuntimeError, MetalRuntimeInventory,
-};
 pub use observation_transaction::{
     BoundObservationTransaction, ObservationTransactionPlanError,
     ObservationTransactionPublicationScope, ObservationTransactionWork,
 };
+pub use paged_state_directory::{PagedStateDirectory, PagedStateDirectoryError};
 pub use prepared_artifact::{
     PreparedArtifact, PreparedArtifactBudget, PreparedArtifactCatalogEntryOutcome,
     PreparedArtifactCatalogPlanFragment, PreparedArtifactCatalogReuseOutcome,
@@ -143,22 +107,4 @@ pub use serial_product_publication::{
     SerialProductPublicationExecutionError, SerialProductPublicationExecutor,
     SerialProductPublicationPlan, SerialProductPublicationPlanError,
     SerialProductPublicationPolicy, SerialProductPublicationRegistry, SerialProductPublicationSink,
-};
-pub use spectral_cycle::{
-    FinalMajorPhaseInput, FinalVisibilityReplay, FinalVisibilitySink,
-    ReconstructionCyclePhaseCompletion, ReconstructionCyclePhaseEvidence, SpectralCycleExecutor,
-    SpectralCyclePassInput, SpectralCycleRegistry,
-};
-pub use spectral_cycle_plan::{
-    PlannedGriddedNormalBinding, SpectralCycleExecutionPolicy, SpectralCyclePlan,
-    SpectralCyclePlanError, SpectralCyclePlanParts, SpectralCyclePlanningLimits,
-};
-pub use weighting::{
-    ContinuumDensityCallbackError, ContinuumDensityTraversalError, FrozenWeightingArtifact,
-    FrozenWeightingReservation, ReplayCallbackError, SelectedObservationSourceResources,
-    SpectralPassIdentity, SpectralPassPhase, WeightedObservationBlock, WeightedObservationSample,
-    WeightedSpectralValue, WeightingEvidenceError, WeightingExecutionState,
-    WeightingGenerationCompletionError, WeightingGenerationError, WeightingPlanFragment,
-    WeightingPlanFragmentError, WeightingReplayCompletion, WeightingReplayCompletionError,
-    WeightingReplayError, WeightingSourceTraversalError, WeightingStreamingMode,
 };

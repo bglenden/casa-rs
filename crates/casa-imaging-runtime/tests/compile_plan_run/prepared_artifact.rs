@@ -2,9 +2,6 @@
 
 use super::*;
 
-#[path = "prepared_artifact/aw_metadata_residency.rs"]
-mod aw_metadata_residency;
-
 #[path = "prepared_artifact/catalog_import.rs"]
 mod catalog_import;
 

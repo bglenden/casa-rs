@@ -10,9 +10,9 @@ use std::{
 use casa_imaging_model::{
     CompiledGeometry, CompiledGeometryId, CompiledProblem, CompiledProblemId, NumericsContract,
     NumericsContractId, ObservationProvenanceId, ObservationReadSet, ObservationSnapshotId,
-    ObservationTransactionContract, ObservationWriteSet, ProblemInputIdentities, ProductGraphId,
-    ProductRequirements, ReconstructionContract, ReferenceDataKind, RequiredCapability,
-    ScientificContract, SelectedObservationCommitmentId, WeightingOperatorContract,
+    ObservationTransactionContract, ProblemInputIdentities, ProductGraphId, ProductRequirements,
+    ReconstructionContract, ReferenceDataKind, RequiredCapability, ScientificContract,
+    SelectedObservationCommitmentId, WeightingOperatorContract,
 };
 use casa_imaging_reconstruction::ExecutableModelProblem;
 use sha2::{Digest, Sha256};
@@ -24,7 +24,6 @@ use crate::{
     PhysicalSlotId, PublicationLayoutLedger, ReceiptError, ReceiptFailureKind, ReceiptStatus,
     ResourceAuthority, ResourceError, ResourceOverride, ResourcePolicy, WorkImplementationId,
     WorkKind, WorkNodeId,
-    bounded_stream::BOUNDED_WORKER_STACK_BYTES,
     execution::{
         ExecutionDag, ExecutionScheduler, PublicationReservation, SchedulerAction,
         SchedulerTerminal, WorkResult, io_buffer_kind_supports_work_kind, validate_topology,
@@ -931,11 +930,6 @@ impl Error for PhysicalWorkBindingError {}
 /// Adapter evidence did not exactly cover the work sealed into the plan.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExecutionEvidenceError {
-    /// A Metal node returned without submitting through the execution-owned runtime.
-    MetalRuntimeBypassed {
-        /// Exact node.
-        node: WorkNodeId,
-    },
     /// The adapter reported the same planned resource claim more than once.
     DuplicateResource {
         /// Exact node.
@@ -1062,8 +1056,7 @@ pub enum ExecutionEvidenceError {
 impl ExecutionEvidenceError {
     fn node(&self) -> &WorkNodeId {
         match self {
-            Self::MetalRuntimeBypassed { node }
-            | Self::DuplicateResource { node, .. }
+            Self::DuplicateResource { node, .. }
             | Self::UnplannedResource { node, .. }
             | Self::MissingResource { node, .. }
             | Self::ResourcePeakExceeded { node, .. }
@@ -1085,11 +1078,6 @@ impl ExecutionEvidenceError {
 impl fmt::Display for ExecutionEvidenceError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MetalRuntimeBypassed { node } => write!(
-                formatter,
-                "Metal node {} bypassed the execution-owned runtime",
-                node.as_str()
-            ),
             Self::DuplicateResource { node, resource, .. } => write!(
                 formatter,
                 "node {} repeated resource measurement {}",
@@ -1765,7 +1753,7 @@ impl PhysicalWorkBinding {
             0
         } else {
             workers
-                .checked_mul(BOUNDED_WORKER_STACK_BYTES as u64)
+                .checked_mul(crate::pass::WORKER_STACK_BYTES as u64)
                 .ok_or_else(|| {
                     ExecutionError::InvalidPlan(
                         "bounded worker stack projection overflowed".to_string(),
@@ -2956,7 +2944,6 @@ pub struct WorkExecutionContext<'a> {
     resource_alternative: &'a crate::DemandAlternative,
     observation_consistency: Option<&'a ObservationTransactionContract>,
     observation_reads: Option<&'a ObservationReadSet>,
-    visibility_writes: Option<&'a ObservationWriteSet>,
     publication: Option<&'a ObservationTransactionContract>,
     publication_resources: Option<PublicationResources<'a>>,
     completed_observation_reads: &'a BTreeMap<WorkNodeId, AttemptBoundObservationCompletion>,
@@ -3007,7 +2994,6 @@ impl<'a> WorkExecutionContext<'a> {
             resource_alternative,
             observation_consistency: None,
             observation_reads: None,
-            visibility_writes: None,
             publication: None,
             publication_resources: None,
             completed_observation_reads: bindings.completed_observation_reads,
@@ -3088,14 +3074,6 @@ impl<'a> WorkExecutionContext<'a> {
         self.scheduled.allocations()
     }
 
-    pub(crate) fn metal_execution(
-        self,
-    ) -> Result<&'a crate::metal_runtime::MetalExecutionState, crate::MetalRuntimeError> {
-        self.scheduled
-            .metal_execution()
-            .ok_or(crate::MetalRuntimeError::UnsupportedPlatform)
-    }
-
     /// Return the canonical plan-listed artifacts owned by this exact node.
     pub fn planned_artifacts(self) -> impl Iterator<Item = &'a PlannedArtifact> + 'a {
         let node = &self.scheduled.node().id;
@@ -3147,12 +3125,6 @@ impl<'a> WorkExecutionContext<'a> {
         } else {
             None
         }
-    }
-
-    /// Return exact selected-visibility writes only for the bound private writeback node.
-    #[must_use]
-    pub const fn visibility_writes(self) -> Option<&'a ObservationWriteSet> {
-        self.visibility_writes
     }
 
     /// Return the complete transaction only for the sole atomic Publication node.
@@ -3953,7 +3925,6 @@ fn work_execution_context<'a>(
     let transaction_work = plan.observation_transaction.work();
     let common = |observation_consistency,
                   observation_reads,
-                  visibility_writes,
                   publication,
                   publication_resources| WorkExecutionContext {
         control: None,
@@ -3966,40 +3937,23 @@ fn work_execution_context<'a>(
         resource_alternative: plan.execution_dag.resource_alternative(),
         observation_consistency,
         observation_reads,
-        visibility_writes,
         publication,
         publication_resources,
         completed_observation_reads,
     };
-    if work.node().kind == WorkKind::ObservationReadWriteback {
+    if work.node().kind == WorkKind::ObservationRead {
         common(
             None,
             Some(problem.observation_transaction().read_set()),
-            Some(problem.observation_transaction().write_set()),
-            None,
-            None,
-        )
-    } else if work.node().kind == WorkKind::ObservationRead {
-        common(
-            None,
-            Some(problem.observation_transaction().read_set()),
-            None,
             None,
             None,
         )
     } else if transaction_work.commit() == &work.node().id {
-        common(
-            None,
-            None,
-            None,
-            Some(problem.observation_transaction()),
-            None,
-        )
+        common(None, None, Some(problem.observation_transaction()), None)
     } else {
         common(
             (transaction_work.initial_consistency_check() == Some(&work.node().id))
                 .then_some(problem.observation_transaction()),
-            None,
             None,
             None,
             None,
@@ -4392,19 +4346,7 @@ where
                         if work.node().kind == WorkKind::Publication {
                             controller_stopped = true;
                         }
-                        let metal_submitted = if work.node().metal_demand_id().is_some() {
-                            context
-                                .metal_execution()
-                                .and_then(|execution| execution.submitted(&node_id))
-                                .unwrap_or(false)
-                        } else {
-                            true
-                        };
-                        let validation = if !metal_submitted {
-                            Err(ExecutionEvidenceError::MetalRuntimeBypassed {
-                                node: node_id.clone(),
-                            })
-                        } else if work.node().fences.is_empty() {
+                        let validation = if work.node().fences.is_empty() {
                             validate_work_measurements(plan, &context, &measurements)
                         } else {
                             validate_partial_work_measurements(plan, &context, &measurements)
@@ -5242,13 +5184,6 @@ fn encode_observation_transaction(
         encoder.string(check.as_str());
     }
     encode_dependencies(encoder, work.observation_reads());
-    match work.final_model_preparation() {
-        Some(node) => {
-            encoder.u8(1);
-            encoder.string(node.as_str());
-        }
-        None => encoder.u8(0),
-    }
     match work.post_replay_reconciliation() {
         Some(node) => {
             encoder.u8(1);
@@ -5257,13 +5192,6 @@ fn encode_observation_transaction(
         None => encoder.u8(0),
     }
     encode_dependencies(encoder, work.product_staging());
-    match work.visibility_writeback() {
-        Some(node) => {
-            encoder.u8(1);
-            encoder.string(node.as_str());
-        }
-        None => encoder.u8(0),
-    }
     encoder.string(work.commit().as_str());
 }
 

@@ -277,6 +277,48 @@ impl ImplementationRegistry for PhaseRegistry {
     }
 }
 
+/// The application's planning registry, declaring the AW preparation as the
+/// owner of the artifacts it plans.
+pub(crate) struct AwArtifactOwner {
+    planning: crate::PlanningRegistry,
+    registration: PreparedArtifactRegistration,
+}
+
+impl AwArtifactOwner {
+    pub(crate) fn new(runtime: &ApplicationRuntime, problem: &CompiledProblem) -> Self {
+        Self {
+            planning: crate::PlanningRegistry::new(
+                runtime.registry,
+                runtime.implementation.clone(),
+                problem,
+            ),
+            registration: prepared_aw_registration(runtime.implementation.clone()),
+        }
+    }
+}
+
+impl ImplementationRegistry for AwArtifactOwner {
+    type Implementation = <crate::PlanningRegistry as ImplementationRegistry>::Implementation;
+    fn registry_id(&self) -> ImplementationRegistryId {
+        self.planning.registry_id()
+    }
+    fn resolve(&self, id: &WorkImplementationId) -> Option<&Self::Implementation> {
+        self.planning.resolve(id)
+    }
+    fn implementation_contract(
+        &self,
+        id: &WorkImplementationId,
+    ) -> Option<ImplementationContractMetadata> {
+        self.planning.implementation_contract(id)
+    }
+    fn prepared_artifact_registration(
+        &self,
+        implementation: &WorkImplementationId,
+    ) -> Option<&PreparedArtifactRegistration> {
+        (implementation == self.registration.implementation()).then_some(&self.registration)
+    }
+}
+
 impl PhaseRegistry {
     fn catalog(&self) -> &CatalogAdapter {
         self.implementations
@@ -372,8 +414,7 @@ pub(crate) fn prepare_aw_projection(
         &deployment.storage_domain,
         budget,
     )?);
-    let owner =
-        super::PlanningRegistry::new(runtime.registry, runtime.implementation.clone(), problem);
+    let owner = AwArtifactOwner::new(runtime, problem);
     let prepared = cache.prepared_cells(&store, &owner, &runtime.implementation, problem)?;
     let largest_cell = prepared
         .iter()
@@ -550,7 +591,7 @@ fn run_catalog(
                 },
             ),
         ]),
-        prepared_artifact: crate::prepared_aw_registration(runtime.implementation.clone()),
+        prepared_artifact: prepared_aw_registration(runtime.implementation.clone()),
     };
     let catalog = registry.catalog();
     let CatalogOperation::Exact { descriptors, cold } = &catalog.input else {
@@ -613,7 +654,7 @@ fn run_phase(
         &runtime.resource_policy,
         runtime.cost_model,
     );
-    let attempt = aw_attempt(runtime.attempts[0], phase);
+    let attempt = aw_attempt(runtime.publication_attempt, phase);
     let execution = run(
         &executable,
         &execution_plan,
@@ -635,6 +676,18 @@ fn run_phase(
         return Err(Box::new(error));
     }
     Ok((registry.into_result()?, runtime.receipts.open(attempt)?))
+}
+
+pub(crate) fn prepared_aw_registration(
+    implementation: WorkImplementationId,
+) -> PreparedArtifactRegistration {
+    PreparedArtifactRegistration::new(
+        "casa-rs-imaging-v1",
+        "native-awproject",
+        env!("CARGO_PKG_VERSION"),
+        implementation,
+    )
+    .expect("static AW preparation registration is valid")
 }
 
 fn aw_attempt(base: ExecutionAttemptId, phase: u64) -> ExecutionAttemptId {
@@ -667,9 +720,8 @@ mod tests {
         UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope, WeightingContract,
         WeightingScheme, compile,
     };
-    use casa_imaging_reconstruction::WeightingExecutionLimits;
     use casa_imaging_runtime::{
-        BuildIdentity, ExecutionReceiptStore, ManagedSpillStorage, PlannerCostModelProfileId,
+        BuildIdentity, ExecutionReceiptStore, PagedStateDirectory, PlannerCostModelProfileId,
         ProductionStorageProfile, ReceiptRetention, ResourceAuthority, ResourcePolicy,
     };
     use tempfile::TempDir;
@@ -775,11 +827,7 @@ mod tests {
         drop(cold.bind_plan().expect("fresh cold reader binding"));
 
         let mut warm_runtime = runtime(root.path(), &profile);
-        warm_runtime.attempts = [
-            ExecutionAttemptId::from_sha256([7; 32]),
-            ExecutionAttemptId::from_sha256([8; 32]),
-            ExecutionAttemptId::from_sha256([9; 32]),
-        ];
+        warm_runtime.publication_attempt = ExecutionAttemptId::from_sha256([7; 32]);
         let warm = prepare_aw_projection(&problem, deployment, &warm_runtime).expect("warm Reuse");
         assert_eq!(warm.receipts.len(), 1);
         assert_eq!(
@@ -870,11 +918,7 @@ mod tests {
             );
             let private_root = deployment.private_root.clone();
             let mut clean_runtime = runtime(root.path(), &profile);
-            clean_runtime.attempts = [
-                ExecutionAttemptId::from_sha256([7; 32]),
-                ExecutionAttemptId::from_sha256([8; 32]),
-                ExecutionAttemptId::from_sha256([9; 32]),
-            ];
+            clean_runtime.publication_attempt = ExecutionAttemptId::from_sha256([7; 32]);
             let warm = prepare_aw_projection(&clean, deployment, &clean_runtime)
                 .expect("warm CLEAN preparation");
             assert_eq!(
@@ -981,7 +1025,7 @@ mod tests {
             })
         };
         let before = snapshot();
-        runtime.attempts[0] = ExecutionAttemptId::from_sha256([10; 32]);
+        runtime.publication_attempt = ExecutionAttemptId::from_sha256([10; 32]);
         let mixed = prepare_aw_projection(&problem(), deployment, &runtime)
             .expect("mixed cold/warm catalog preparation");
         assert_eq!(mixed.receipts.len(), 2);
@@ -1015,11 +1059,9 @@ mod tests {
         ApplicationRuntime {
             registry: ImplementationRegistryId::from_sha256([1; 32]),
             implementation: WorkImplementationId::new("aw-preparation-test"),
-            weighting_limits: WeightingExecutionLimits::new(16, 1).expect("test weighting limits"),
             stage_nanos: 1_000,
-            minor_cycle_bytes: 1 << 20,
             storage_io: storage_io.clone(),
-            gridded_normal_storage: ManagedSpillStorage::bind(&authority, storage_io, &spill)
+            paged_state_storage: PagedStateDirectory::bind(&authority, &storage_io, &spill)
                 .expect("bind test spill"),
             confidence_parts_per_million: 900_000,
             resource_policy: ResourcePolicy::Exclusive,
@@ -1031,11 +1073,7 @@ mod tests {
             )
             .expect("test receipt store"),
             build: BuildIdentity::from_sha256([3; 32]),
-            attempts: [
-                ExecutionAttemptId::from_sha256([4; 32]),
-                ExecutionAttemptId::from_sha256([5; 32]),
-                ExecutionAttemptId::from_sha256([6; 32]),
-            ],
+            publication_attempt: ExecutionAttemptId::from_sha256([4; 32]),
         }
     }
 

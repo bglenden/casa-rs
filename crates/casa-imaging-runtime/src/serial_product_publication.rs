@@ -20,7 +20,7 @@ use std::{
 const GENERATE: &str = "product-generation-write";
 const COMMIT: &str = "product-publication-commit";
 
-impl casa_imaging_products::ProductWindowExecutor for crate::bounded_stream::FixedWorkerTeam {
+impl casa_imaging_products::ProductWindowExecutor for crate::pass::WorkerTeam {
     fn prepare<T: Send>(
         &self,
         slots: &mut [Option<T>],
@@ -148,7 +148,7 @@ fn build_physical<R: ImplementationRegistry>(
     } else {
         workers
             .checked_mul(
-                (crate::bounded_stream::BOUNDED_WORKER_STACK_BYTES
+                (crate::pass::WORKER_STACK_BYTES
                     + std::mem::size_of::<std::thread::JoinHandle<()>>()) as u64,
             )
             .ok_or(SerialProductPublicationPlanError::Overflow)?
@@ -580,10 +580,20 @@ fn publication_fft_stack_bytes(
 ) -> Result<u64, SerialProductPublicationPlanError> {
     // Single- and double-precision FFTW pools can both survive imaging into
     // publication. Bound both by the admitted CPU budget, not by window lanes.
-    crate::reconstruction_executor::native_fft_stack_bytes(workers, thread_stack_bytes)
-        .map_err(SerialProductPublicationPlanError::NativeFftStacks)?
-        .checked_mul(2)
+    native_fft_stack_bytes(workers, thread_stack_bytes)
+        .and_then(|bytes| bytes.checked_mul(2))
         .ok_or(SerialProductPublicationPlanError::Overflow)
+}
+
+/// FFTW's pthread pool can survive between phases, so its default stack
+/// bound is reserved as process-lifetime external-library overhead.
+/// `thread_stack_bytes` is the host's default native thread stack from
+/// `ResourceTopology::native_thread_stack_bytes`; `None` on overflow.
+fn native_fft_stack_bytes(threads: usize, thread_stack_bytes: u64) -> Option<u64> {
+    if threads <= 1 {
+        return Some(0);
+    }
+    ((threads - 1) as u64).checked_mul(thread_stack_bytes)
 }
 
 #[cfg(test)]
@@ -592,11 +602,7 @@ mod tests {
     fn publication_charges_persistent_native_pools_without_replica_images() {
         const THREAD_STACK_BYTES: u64 = 8 << 20;
         for workers in [1, 2, 4, 8, 16] {
-            let expected = 2 * crate::reconstruction_executor::native_fft_stack_bytes(
-                workers,
-                THREAD_STACK_BYTES,
-            )
-            .unwrap();
+            let expected = 2 * super::native_fft_stack_bytes(workers, THREAD_STACK_BYTES).unwrap();
             assert_eq!(
                 super::publication_fft_stack_bytes(workers, THREAD_STACK_BYTES).unwrap(),
                 expected
@@ -618,8 +624,6 @@ pub enum SerialProductPublicationPlanError {
     Physical(PhysicalWorkBindingError),
     /// Invalid output layout.
     Layout(PublicationLayoutError),
-    /// The platform's native FFTW worker-stack bound could not be queried.
-    NativeFftStacks(std::io::Error),
 }
 impl fmt::Display for SerialProductPublicationPlanError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -778,10 +782,10 @@ impl<S: SerialProductPublicationSink> WorkImplementation for SerialProductPublic
             if context.knobs().workers != self.window.maximum_workers() as u64 {
                 return Err(SerialProductPublicationExecutionError::State);
             }
-            let team = crate::bounded_stream::FixedWorkerTeam::new(self.window.maximum_workers())
-                .map_err(|error| {
-                SerialProductPublicationExecutionError::Workers(format!("{error:?}"))
-            })?;
+            let team =
+                crate::pass::WorkerTeam::new(self.window.maximum_workers()).map_err(|error| {
+                    SerialProductPublicationExecutionError::Workers(error.to_string())
+                })?;
             let generated =
                 produce_continuum_members(&planned, &inputs, self.window, &team, &self.sink)
                     .map_err(SerialProductPublicationExecutionError::Products)?;

@@ -12,11 +12,46 @@ use num_complex::{Complex32, Complex64};
 use crate::{
     SpectralOperatorError,
     primary_beam::PreparedPrimaryBeamPower,
-    spectral_operator::{
-        MosaicProjectorKey, PreparedFft, SpectralOperatorGeometry, fft_planning_words_for_shape,
-        fft_resident_complex_values_for_shape,
-    },
+    spectral_operator::{PreparedFft, fft_resident_complex_values_for_shape},
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct MosaicProjectorKey {
+    frequency_bits: u64,
+    support_frequency_bits: u64,
+    antenna1: casa_imaging_model::AntennaResponseClass,
+    antenna2: casa_imaging_model::AntennaResponseClass,
+    family_envelope: casa_imaging_model::AntennaResponseClass,
+}
+
+pub(crate) fn mosaic_response_key(
+    frequency_hz: f64,
+    support_frequency_hz: f64,
+    responses: SelectedAntennaResponses,
+) -> MosaicProjectorKey {
+    let (antenna1, antenna2) = if responses.antenna1 <= responses.antenna2 {
+        (responses.antenna1, responses.antenna2)
+    } else {
+        (responses.antenna2, responses.antenna1)
+    };
+    MosaicProjectorKey {
+        frequency_bits: frequency_hz.to_bits(),
+        support_frequency_bits: support_frequency_hz.to_bits(),
+        antenna1,
+        antenna2,
+        family_envelope: responses.family_envelope,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct SpectralOperatorGeometry {
+    pub(crate) image_shape: [usize; 2],
+    pub(crate) grid_shape: [usize; 2],
+    pub(crate) image_blc: [usize; 2],
+    pub(crate) reference_pixel: [f64; 2],
+    pub(crate) increment_rad: [f64; 2],
+    pub(crate) direction: casa_imaging_model::DirectionCoordinateSpec,
+}
 
 pub(crate) const MOSAIC_OVERSAMPLING: usize = 10;
 
@@ -151,11 +186,9 @@ pub(crate) fn residency_projection(
         .checked_mul(conv_size)
         .and_then(|values| values.checked_mul(size_of::<Complex64>()))
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    // The FFT allowance already charges FFTW's full-grid planning buffer.
     let fft_bytes = fft_resident_complex_values_for_shape([conv_size, conv_size])?
         .checked_mul(size_of::<Complex64>())
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    let fft_planning_bytes = fft_planning_words_for_shape([conv_size, conv_size])?
-        .checked_mul(size_of::<usize>())
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     let temp_bytes = temp_side
         .checked_mul(temp_side)
@@ -180,7 +213,6 @@ pub(crate) fn residency_projection(
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     let screen_build_workspace = screen_bytes
         .checked_add(fft_bytes)
-        .and_then(|bytes| bytes.checked_add(fft_planning_bytes))
         .and_then(|bytes| bytes.checked_add(double_temp_bytes))
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     let resample_workspace = double_temp_bytes
@@ -1161,7 +1193,7 @@ mod tests {
     }
 
     fn response_key() -> MosaicProjectorKey {
-        crate::spectral_operator::mosaic_response_key(230.0e9, 230.0e9, aca_pair())
+        mosaic_response_key(230.0e9, 230.0e9, aca_pair())
     }
 
     fn projector_inputs() -> (SpectralOperatorGeometry, PreparedPrimaryBeamPower) {
@@ -1372,10 +1404,7 @@ mod tests {
         let fft_bytes = fft_resident_complex_values_for_shape([conv_size, conv_size])
             .expect("FFT residency")
             * size_of::<Complex64>();
-        let planning_bytes = fft_planning_words_for_shape([conv_size, conv_size])
-            .expect("FFT planning residency")
-            * size_of::<usize>();
-        let charged_screen_peak = screen_bytes + fft_bytes + planning_bytes + 2 * temp_bytes;
+        let charged_screen_peak = screen_bytes + fft_bytes + 2 * temp_bytes;
         assert!(
             residency.workspace_bytes >= charged_screen_peak,
             "the workspace must charge the retained science crop and the support FFT output crop"

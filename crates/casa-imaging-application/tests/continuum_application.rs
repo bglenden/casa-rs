@@ -19,10 +19,7 @@ use casa_imaging_application::{
 use casa_imaging_model::{
     ImageDomainRole, ProductBeamRule, ProductRole, ProductTerm, ProductUnit, ProductValidityRule,
 };
-use casa_imaging_runtime::{
-    ArtifactDisposition, ArtifactRole, ClaimLifetime, FenceId, FenceKind, IoBufferKind,
-    LeaseResource, ReceiptStatus, StorageUseKind,
-};
+use casa_imaging_runtime::ReceiptStatus;
 use casa_ms::{
     CubeAxisConfig, CubeAxisValue, MeasurementSet, MeasurementSetBuilder, OptionalMainColumn,
     SubtableId, VisibilityDataColumn,
@@ -119,31 +116,21 @@ fn fixture_model_samples(
 
 static EXECUTION_LOCK: Mutex<()> = Mutex::new(());
 
-// Production admits one immutable storage calibration per process. AW adds a
-// prepared-reader queue and IOPS rate, so mode-specific fixtures need isolation.
-fn isolated_application_case(test: &str, family: &str) -> bool {
-    let selected = format!("{test}:{family}");
-    if let Ok(active) = std::env::var("CASA_RS_APPLICATION_ISOLATED_CASE") {
-        return active == selected;
-    }
-    let status = std::process::Command::new(std::env::current_exe().expect("test binary"))
-        .args([test, "--exact", "--nocapture"])
-        .env("CASA_RS_APPLICATION_ISOLATED_CASE", selected)
-        .status()
-        .expect("isolated production application process");
-    assert!(
-        status.success(),
-        "{test} {family}: isolated execution failed"
-    );
-    false
-}
-
 #[path = "common/continuum_fixture.rs"]
 mod continuum_fixture;
 use continuum_fixture::*;
 
+#[path = "continuum_application/clean_cycles.rs"]
+mod clean_cycles;
+
+#[path = "continuum_application/visibility_writes.rs"]
+mod visibility_writes;
+
 #[path = "continuum_application/t53_spectral_joins.rs"]
 mod t53_spectral_joins;
+
+#[path = "continuum_application/domains_and_waves.rs"]
+mod domains_and_waves;
 
 #[path = "continuum_application/t55_cube_pipeline.rs"]
 mod t55_cube_pipeline;
@@ -329,15 +316,6 @@ fn product_plane_with_size(image_name: &Path, suffix: &str, image_size: usize) -
         .expect("read application product plane")
 }
 
-fn peak_pixel(plane: &ArrayD<f32>) -> [usize; 2] {
-    let (index, _) = plane
-        .iter()
-        .enumerate()
-        .max_by(|(_, left), (_, right)| left.total_cmp(right))
-        .expect("nonempty image plane");
-    [index / plane.shape()[1], index % plane.shape()[1]]
-}
-
 fn assert_model_residual_respect_mask(image_name: &Path, expected_mask_pixels: usize) {
     let mask = product_plane(image_name, ".mask");
     let model = product_plane(image_name, ".model");
@@ -400,645 +378,6 @@ fn application_executes_single_ddid_stokes_i_mfs_dirty_and_publishes_products() 
         "ordinary model units remain unchanged"
     );
     assert!(!PathBuf::from(format!("{}.mask", image_name.display())).exists());
-}
-
-#[test]
-fn t49_application_executes_nonzero_w_through_major_cycle_replay() {
-    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
-    let root = tempfile::tempdir().expect("test root");
-    let measurement_set = multi_row_measurement_set(root.path());
-    let image_name = root.path().join("w-projection");
-    let mut imaging = request(
-        measurement_set,
-        image_name.clone(),
-        ContinuumAlgorithm::Hogbom,
-    );
-    imaging.image_size = 32;
-    imaging.iterations = 2;
-    imaging.cycle_iterations = 1;
-    imaging.maximum_major_cycles = Some(2);
-    imaging.w_projection_planes = Some(5);
-    imaging.task_requirements = vec![
-        TaskRequirement::WProjection,
-        TaskRequirement::WProjectionPlanes,
-    ];
-
-    let result = execute_continuum(imaging).expect("native W-projection execution");
-    assert_eq!(result.minor_iterations, 2);
-    assert_standard_products(&image_name, &result.product_names);
-}
-
-#[test]
-fn t51_lazy_aw_reader_executes_real_science_and_closes_at_its_io_fence() {
-    if !isolated_application_case(
-        "t51_lazy_aw_reader_executes_real_science_and_closes_at_its_io_fence",
-        "aw",
-    ) {
-        return;
-    }
-    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
-    let root = tempfile::tempdir().expect("test root");
-    let measurement_set = vla_aw_measurement_set(root.path());
-    let cache = root.path().join("aw-cache");
-    write_aw_test_cache(&cache);
-    let image_name = root.path().join("aw-dirty");
-    let mut imaging = request(
-        measurement_set,
-        image_name.clone(),
-        ContinuumAlgorithm::Dirty,
-    );
-    imaging.aw_projection = Some(aw_projection(cache, false));
-    imaging.task_requirements = vec![TaskRequirement::AwProjection];
-    imaging.write_primary_beam = true;
-
-    let result = execute_continuum(imaging).expect("native AW dirty execution");
-    let normal = result.outcome.output.scientific.normal_state();
-    assert_eq!(normal.sum_weights().len(), 1);
-    assert_eq!(normal.published_sum_weights().len(), 1);
-    // The fixture's prepared imaging cells hold 3x3 taps of (3 - i) and the
-    // paired weight cells hold 5x5 taps of (7 + 2i); every accepted sample has
-    // unit post-Briggs weight, so each hand's statistic is the tap-sum norm.
-    let imaging_hand = 9.0 * 3.0_f64.hypot(1.0);
-    let weight_hand = 25.0 * 7.0_f64.hypot(2.0);
-    assert!(
-        (normal.published_sum_weights()[0] - imaging_hand).abs()
-            <= f64::EPSILON * normal.published_sum_weights()[0].abs() * 8.0,
-        "single-term CASA publication keeps the minimum correlation-plane imaging-CF sumweight: published={} expected={imaging_hand}",
-        normal.published_sum_weights()[0]
-    );
-    assert!(
-        (normal.sum_weights()[0] - 2.0 * weight_hand).abs()
-            <= f64::EPSILON * normal.sum_weights()[0].abs() * 8.0,
-        "paired RR/LL measurements both contribute to the WTCF normal operator sum: normal={} expected={}",
-        normal.sum_weights()[0],
-        2.0 * weight_hand
-    );
-    assert_products(
-        &image_name,
-        &result.product_names,
-        &[
-            ".psf",
-            ".residual",
-            ".model",
-            ".image",
-            ".sumwt",
-            ".weight",
-            ".pb",
-        ],
-    );
-    let weight = product_plane(&image_name, ".weight");
-    let primary_beam = product_plane(&image_name, ".pb");
-    let peak_weight = weight.iter().copied().fold(0.0_f32, f32::max);
-    assert!(peak_weight.is_finite() && peak_weight > 0.0);
-    assert!(
-        weight
-            .iter()
-            .any(|value| (*value - peak_weight).abs() > 1.0e-6),
-        "AW weight must retain the spatial WTCF sensitivity instead of repeating sumwt"
-    );
-    for (weight, primary_beam) in weight.iter().zip(primary_beam.iter()) {
-        let expected = (weight.max(0.0) / peak_weight).sqrt();
-        let expected = if expected >= 0.2 { expected } else { 0.0 };
-        assert!(
-            (*primary_beam - expected).abs() <= 1.0e-6,
-            "AW PB must derive from the same WTCF sensitivity: weight={weight} pb={primary_beam} expected={expected}"
-        );
-    }
-    let receipt = &result.outcome.output.initial_receipt;
-    assert_eq!(receipt.initial_execution_knobs().io_depth, 2);
-    let nodes = receipt.plan_node_identities();
-    let reader = nodes
-        .iter()
-        .find(|node| {
-            node.as_str().starts_with("prepared-artifact-reader-")
-                && !node
-                    .as_str()
-                    .starts_with("prepared-artifact-reader-release-")
-        })
-        .expect("plan-owned AW reader Cache node");
-    let release = nodes
-        .iter()
-        .find(|node| {
-            node.as_str()
-                .starts_with("prepared-artifact-reader-release-")
-        })
-        .expect("terminal AW reader Release node");
-    let reader_fence = FenceId::new(reader.clone(), FenceKind::Io);
-    assert_eq!(
-        receipt.fence_status(&reader_fence),
-        Some(ReceiptStatus::Completed)
-    );
-    assert!(receipt.fence_actual_elapsed_nanos(&reader_fence).is_some());
-    let (read_bytes, read_operations) = receipt
-        .stage_actual_io(reader, IoBufferKind::StorageManager)
-        .expect("reader I/O evidence is emitted only at the fence");
-    assert!(read_bytes > 0);
-    assert!(read_operations > 0);
-    assert_eq!(
-        receipt.stage_actual_io(release, IoBufferKind::StorageManager),
-        Some((0, 0))
-    );
-
-    let retained = ClaimLifetime::through_fence(FenceKind::Io);
-    assert_eq!(
-        receipt.planned_resource_amount(reader, &LeaseResource::Workers, &ClaimLifetime::Work),
-        Some(1)
-    );
-    let selected = receipt.selected_alternative_projection();
-    let prepared_storage = selected
-        .demand
-        .storage
-        .iter()
-        .find(|demand| demand.demand_id.starts_with("private-prepared-cache-"))
-        .expect("reader private-cache storage demand");
-    assert!(prepared_storage.persistent_cache_bytes > 0);
-    assert!(prepared_storage.read_rate.hard() > 0);
-    assert!(prepared_storage.write_rate.hard() > 0);
-    assert!(prepared_storage.operations_rate.hard() > 0);
-    assert!(prepared_storage.queue_slots.hard() > 0);
-    assert!(selected.demand.locks.hard() > 0);
-    assert!(selected.demand.file_descriptors.hard() >= 2);
-    for (resource, amount) in [
-        (LeaseResource::Locks, 1),
-        (LeaseResource::FileDescriptors, 2),
-        (
-            LeaseResource::StorageReadRate {
-                demand_id: prepared_storage.demand_id.clone(),
-            },
-            1,
-        ),
-        (
-            LeaseResource::StorageWriteRate {
-                demand_id: prepared_storage.demand_id.clone(),
-            },
-            1,
-        ),
-        (
-            LeaseResource::StorageOperationsRate {
-                demand_id: prepared_storage.demand_id.clone(),
-            },
-            1,
-        ),
-        (
-            LeaseResource::StorageQueue {
-                demand_id: prepared_storage.demand_id.clone(),
-            },
-            1,
-        ),
-    ] {
-        assert_eq!(
-            receipt.planned_resource_amount(reader, &resource, &retained),
-            Some(amount)
-        );
-    }
-    assert_eq!(
-        receipt.planned_resource_amount(
-            reader,
-            &LeaseResource::Storage {
-                demand_id: prepared_storage.demand_id.clone(),
-                use_kind: StorageUseKind::PersistentCache,
-            },
-            &retained,
-        ),
-        Some(prepared_storage.persistent_cache_bytes)
-    );
-    let decoder_workspace_bytes = 2 * (40_960 / 4);
-    assert!(
-        receipt
-            .planned_resource_amount(
-                reader,
-                &LeaseResource::IoBuffer(IoBufferKind::StorageManager),
-                &retained,
-            )
-            .is_some_and(|bytes| {
-                bytes > (1 << 20) + decoder_workspace_bytes
-                    && bytes <= (1 << 20) + decoder_workspace_bytes + (8 << 20)
-            })
-    );
-
-    let cache_artifacts = receipt
-        .artifact_identities()
-        .into_iter()
-        .filter(|identity| receipt.artifact_role(*identity) == Some(ArtifactRole::Cache))
-        .collect::<Vec<_>>();
-    assert_eq!(cache_artifacts.len(), 1);
-    let artifact = cache_artifacts[0];
-    assert_eq!(receipt.artifact_node(artifact).as_ref(), Some(reader));
-    assert_eq!(
-        receipt.artifact_disposition(artifact),
-        Some(ArtifactDisposition::Reused)
-    );
-    assert_eq!(receipt.artifact_actual_bytes(artifact), Some(40_960));
-    assert_eq!(
-        receipt.artifact_observed_identity(artifact),
-        Some(artifact.as_bytes())
-    );
-}
-
-#[test]
-fn t52_native_evla_dirty_and_clean_without_a_casa_cache_or_runtime() {
-    if !isolated_application_case(
-        "t52_native_evla_dirty_and_clean_without_a_casa_cache_or_runtime",
-        "aw",
-    ) {
-        return;
-    }
-    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
-    let root = tempfile::tempdir().unwrap();
-    let measurement_set = native_evla_measurement_set(root.path());
-    let surface = root.path().join("evla.surface");
-    let text = (0..=125)
-        .map(|i| {
-            let r = i as f64 / 10.0;
-            format!("{r} {} {}\n", r * r / 36.0, r / 18.0)
-        })
-        .collect::<String>();
-    std::fs::write(&surface, text).unwrap();
-    let cache = root.path().join("native-cf");
-    for (role, algorithm, receipts) in [
-        ("dirty", ContinuumAlgorithm::Dirty, 2),
-        ("clean", ContinuumAlgorithm::Hogbom, 1),
-    ] {
-        let image_name = root.path().join(role);
-        let mut imaging = request(measurement_set.clone(), image_name.clone(), algorithm);
-        imaging.image_size = 64;
-        imaging.cell_arcsec = 60.0;
-        imaging.data_description = None;
-        imaging.channel_count = Some(2);
-        let mut aw = aw_projection(PathBuf::new(), false);
-        aw.source = casa_imaging_application::ContinuumAwCfSource::NativeEvla(
-            casa_imaging_application::NativeEvlaAwCache {
-                root: cache.clone(),
-                surface: surface.clone(),
-                policy: casa_imaging_application::NativeAwCachePolicy::GenerateMissing,
-                working_size: 128,
-                oversampling: 4,
-                cache_bytes: 64 << 20,
-                maximum_cells: 128,
-            },
-        );
-        imaging.aw_projection = Some(aw);
-        imaging.task_requirements = vec![TaskRequirement::SerialCpu, TaskRequirement::AwProjection];
-        imaging.resource_policy = casa_imaging_runtime::ResourcePolicy::Explicit(
-            casa_imaging_runtime::ResourceOverride {
-                workers: Some(1),
-                ..casa_imaging_runtime::ResourceOverride::default()
-            },
-        );
-        imaging.write_primary_beam = true;
-        let result = execute_continuum(imaging).unwrap();
-        assert_eq!(
-            result.outcome.output.aw_preparation_receipts.len(),
-            receipts
-        );
-        for (index, receipt) in result
-            .outcome
-            .output
-            .aw_preparation_receipts
-            .iter()
-            .enumerate()
-        {
-            if role == "dirty" && index == 0 {
-                assert_eq!(
-                    receipt.status(),
-                    casa_imaging_runtime::ReceiptStatus::Failed
-                );
-                assert_eq!(
-                    receipt.failure_kind(),
-                    Some(casa_imaging_runtime::ReceiptFailureKind::EvidenceContract)
-                );
-            } else {
-                assert_eq!(
-                    receipt.status(),
-                    casa_imaging_runtime::ReceiptStatus::Completed
-                );
-            }
-        }
-        assert!(
-            result
-                .outcome
-                .output
-                .scientific
-                .normal_state()
-                .sum_weights()
-                .iter()
-                .all(|v| v.is_finite() && *v > 0.0)
-        );
-        let mut suffixes = if role == "dirty" {
-            DIRTY_PRODUCT_SUFFIXES.to_vec()
-        } else {
-            PRODUCT_SUFFIXES.to_vec()
-        };
-        suffixes.extend([".weight", ".pb"]);
-        assert_products(&image_name, &result.product_names, &suffixes);
-    }
-}
-
-#[test]
-fn t51_aw_use_pointing_applies_distinct_nonzero_field_phase_gradients() {
-    if !isolated_application_case(
-        "t51_aw_use_pointing_applies_distinct_nonzero_field_phase_gradients",
-        "aw",
-    ) {
-        return;
-    }
-    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
-    let root = tempfile::tempdir().expect("test root");
-
-    let peak = |field: i32, use_pointing: bool| {
-        let run_root = root.path().join(format!(
-            "field-{field}-{}",
-            if use_pointing {
-                "pointing"
-            } else {
-                "phase-centre"
-            }
-        ));
-        std::fs::create_dir(&run_root).expect("create isolated AW run root");
-        let measurement_set = two_pointing_vla_aw_measurement_set(&run_root);
-        let cache = run_root.join("aw-pointing-cache");
-        write_aw_test_cache(&cache);
-        let image_name = run_root.join("image");
-        let mut imaging = request(
-            measurement_set,
-            image_name.clone(),
-            ContinuumAlgorithm::Dirty,
-        );
-        imaging.field_ids = Some(vec![field]);
-        imaging.aw_projection = Some(aw_projection(cache, use_pointing));
-        imaging.task_requirements = vec![TaskRequirement::AwProjection];
-        imaging.write_primary_beam = true;
-
-        execute_continuum(imaging).expect("native AW pointing execution");
-        peak_pixel(&product_plane(&image_name, ".weight"))
-    };
-
-    let phase_centre_peak = peak(0, false);
-    let first_pointing_peak = peak(0, true);
-    let second_pointing_peak = peak(1, true);
-    assert_ne!(first_pointing_peak, phase_centre_peak);
-    assert_ne!(second_pointing_peak, phase_centre_peak);
-    assert_ne!(first_pointing_peak, second_pointing_peak);
-}
-
-#[test]
-fn t51_direct_taylor_aw_clean_executes_the_application_replay_path() {
-    if !isolated_application_case(
-        "t51_direct_taylor_aw_clean_executes_the_application_replay_path",
-        "aw",
-    ) {
-        return;
-    }
-    execute_taylor_aw_clean_with_memory_policy(false);
-}
-
-#[test]
-#[ignore = "recompute route unreachable since 1dc92262ac (final major prefers a resident source); replaced by the IF-6 admission test, issue #655"]
-fn t51_fixed_memory_aw_clean_preserves_prepared_projection_during_recompute() {
-    if !isolated_application_case(
-        "t51_fixed_memory_aw_clean_preserves_prepared_projection_during_recompute",
-        "aw",
-    ) {
-        return;
-    }
-    execute_taylor_aw_clean_with_memory_policy(true);
-}
-
-fn execute_taylor_aw_clean_with_memory_policy(fixed_memory: bool) {
-    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
-    let root = tempfile::tempdir().expect("test root");
-    let measurement_set = four_spw_vla_measurement_set(root.path());
-    let cache = root.path().join("aw-cache");
-    write_aw_test_cache(&cache);
-    let image_name = root.path().join("clean-mtmfs");
-    let mut imaging = request(
-        measurement_set,
-        image_name.clone(),
-        ContinuumAlgorithm::Mtmfs {
-            terms: 2,
-            scales_px: vec![0.0],
-            small_scale_bias: 0.0,
-        },
-    );
-    imaging.data_description = None;
-    imaging.channel_count = Some(8);
-    imaging.iterations = 1;
-    imaging.normalization = casa_imaging_model::ProductNormalization::FlatNoise;
-    imaging.mask = ContinuumMask::Boxes(vec![ContinuumMaskBox {
-        blc: [3, 4],
-        trc: [11, 12],
-    }]);
-    imaging.aw_projection = Some(aw_projection(cache, false));
-    imaging.task_requirements = vec![TaskRequirement::SerialCpu, TaskRequirement::AwProjection];
-    imaging.resource_policy = resource_policy_for_task_requirements(&imaging.task_requirements);
-    if fixed_memory {
-        imaging.resource_policy = casa_imaging_runtime::ResourcePolicy::Explicit(
-            casa_imaging_runtime::ResourceOverride {
-                memory_bytes: std::collections::BTreeMap::from([(
-                    casa_imaging_runtime::CapacityDomainId::new("host-memory"),
-                    256 << 20,
-                )]),
-                workers: Some(1),
-                ..casa_imaging_runtime::ResourceOverride::default()
-            },
-        );
-    }
-
-    let result = execute_continuum(imaging).expect("direct Taylor AW CLEAN execution");
-    assert_eq!(result.actual_minor_iterations, 1);
-    let final_receipt = result
-        .outcome
-        .output
-        .final_major_receipt
-        .as_ref()
-        .expect("terminal AW gridded replay receipt");
-    if fixed_memory {
-        assert!(
-            final_receipt
-                .adaptation_identities()
-                .iter()
-                .filter_map(|id| final_receipt.adaptation_projection(id))
-                .any(|adaptation| {
-                    adaptation.was_applied() && adaptation.transition().to.recomputation
-                }),
-            "the fixed-memory policy must execute the actual AW recomputation route",
-        );
-    }
-    let normal = result.outcome.output.scientific.normal_state();
-    assert_eq!(normal.coefficient_term_count(), 2);
-    assert_eq!(normal.normal_moment_count(), 3);
-    let normal = normal.read_window(0..1).expect("coupled normal window");
-    let response = casa_imaging_reconstruction::MosaicSensitivity::new(
-        normal
-            .normal_moment(0)
-            .expect("principal normal")
-            .sensitivity(),
-    )
-    .expect("AW image response")
-    .with_normal_sum_weight(
-        normal
-            .normal_moment(0)
-            .expect("principal normal")
-            .sum_weight(),
-    )
-    .expect("normal response scale");
-    let model = result.outcome.output.scientific.final_model();
-    let policy = casa_imaging_model::PrimaryBeamValidityPolicy::new(
-        0.2,
-        casa_imaging_model::ProductSupportComparison::StrictlyGreater,
-        casa_imaging_model::ProductBlankingPolicy::Zero,
-    )
-    .expect("PB support");
-    for term in 0..2 {
-        let published_model = product_plane(&image_name, &format!(".model.tt{term}"));
-        for x in 0..16 {
-            for y in 0..16 {
-                let cell = casa_imaging_model::ModelCell::new(0, term, 0, [x, y]);
-                let index = model.shape().flat_index(cell).expect("model cell");
-                let physical = model.read_samples(index..index + 1).unwrap()[0]
-                    .value()
-                    .value();
-                let apparent = response
-                    .physical_to_apparent(
-                        f64::from(physical as f32),
-                        x * 16 + y,
-                        casa_imaging_model::ProductNormalization::FlatNoise,
-                        policy,
-                    )
-                    .expect("apparent model") as f32;
-                assert_eq!(published_model[[x, y, 0, 0]], apparent);
-            }
-        }
-    }
-    let published_mask = product_plane(&image_name, ".mask");
-    for y in 0..16 {
-        for x in 0..16 {
-            let selected = (3..=11).contains(&x) && (4..=12).contains(&y);
-            for cycle in &result.outcome.output.minor_cycles {
-                assert_eq!(cycle.mask_support[x * 16 + y], selected);
-            }
-            assert_eq!(published_mask[[x, y, 0, 0]], f32::from(selected));
-        }
-    }
-}
-
-#[test]
-fn t51_zero_iteration_mtmfs_executes_dirty_taylor_basis_and_publishes_products() {
-    if !isolated_application_case(
-        "t51_zero_iteration_mtmfs_executes_dirty_taylor_basis_and_publishes_products",
-        "aw",
-    ) {
-        return;
-    }
-    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
-    let root = tempfile::tempdir().expect("test root");
-    let measurement_set = four_spw_vla_measurement_set(root.path());
-    let cache = root.path().join("aw-cache");
-    write_aw_test_cache(&cache);
-    let image_name = root.path().join("dirty-mtmfs");
-    let mut imaging = request(
-        measurement_set,
-        image_name.clone(),
-        ContinuumAlgorithm::Mtmfs {
-            terms: 2,
-            scales_px: vec![0.0],
-            small_scale_bias: 0.0,
-        },
-    );
-    imaging.data_description = None;
-    imaging.channel_count = Some(8);
-    imaging.iterations = 0;
-    imaging.normalization = casa_imaging_model::ProductNormalization::FlatNoise;
-    imaging.aw_projection = Some(aw_projection(cache, false));
-    imaging.task_requirements = vec![TaskRequirement::AwProjection];
-
-    let result = execute_continuum(imaging).expect("native zero-iteration MT-MFS execution");
-    assert_unit_psf_planes(&PathBuf::from(format!("{}.psf.tt0", image_name.display())));
-    assert_eq!(result.minor_iterations, 0);
-    assert_eq!(result.actual_minor_iterations, 0);
-    assert!(result.minor_cycles.is_empty());
-    assert_eq!(result.outcome.output.major_cycle_count, 1);
-    assert!(result.outcome.output.final_major_receipt.is_none());
-    let normal = result.outcome.output.scientific.normal_state();
-    assert_eq!(normal.coefficient_term_count(), 2);
-    assert_eq!(normal.normal_moment_count(), 3);
-    assert_ne!(
-        (normal.sum_weights()[0] as f32).to_bits(),
-        (normal.published_sum_weights()[0] as f32).to_bits(),
-        "direct AW Taylor completion keeps the WTCF normal sum distinct from CASA's published CFS statistic for coefficient terms"
-    );
-    assert_ne!(
-        (normal.sum_weights()[1] as f32).to_bits(),
-        (normal.published_sum_weights()[1] as f32).to_bits(),
-        "the AW fixture must distinguish the WTCF normal moment from the published CFS first-order Taylor statistic"
-    );
-    assert_eq!(
-        (normal.sum_weights()[2] as f32).to_bits(),
-        (normal.published_sum_weights()[2] as f32).to_bits(),
-        "direct AW Taylor completion retains the WTCF normal sum for the highest Taylor moment"
-    );
-    for moment in 0..3 {
-        let product = PagedImage::<f32>::open(PathBuf::from(format!(
-            "{}.sumwt.tt{moment}",
-            image_name.display()
-        )))
-        .expect("open Taylor sumweight product");
-        let value = product
-            .get_slice(&[0, 0, 0, 0], &[1, 1, 1, 1])
-            .expect("read Taylor sumweight scalar");
-        assert_eq!(
-            value
-                .iter()
-                .next()
-                .expect("Taylor sumweight scalar")
-                .to_bits(),
-            (normal.published_sum_weights()[moment] as f32).to_bits(),
-            "direct MT-MFS sumweight term {moment} must persist CASA's published hybrid statistic"
-        );
-    }
-
-    let expected = [
-        ".alpha",
-        ".alpha.error",
-        ".image.tt0",
-        ".image.tt1",
-        ".model.tt0",
-        ".model.tt1",
-        ".psf.tt0",
-        ".psf.tt1",
-        ".psf.tt2",
-        ".residual.tt0",
-        ".residual.tt1",
-        ".sumwt.tt0",
-        ".sumwt.tt1",
-        ".sumwt.tt2",
-        ".weight.tt0",
-        ".weight.tt1",
-        ".weight.tt2",
-    ]
-    .into_iter()
-    .map(str::to_string)
-    .collect::<std::collections::BTreeSet<_>>();
-    assert_eq!(
-        result
-            .product_names
-            .iter()
-            .cloned()
-            .collect::<std::collections::BTreeSet<_>>(),
-        expected
-    );
-    for suffix in result.product_names {
-        assert!(
-            PathBuf::from(format!("{}{suffix}", image_name.display())).is_dir(),
-            "missing published MT-MFS product {suffix}"
-        );
-    }
 }
 
 #[test]
@@ -1263,139 +602,6 @@ fn t49_plane_count_does_not_infer_w_projection() {
 }
 
 #[test]
-fn t49_zero_projected_w_matches_the_production_standard_operator() {
-    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
-    let root = tempfile::tempdir().expect("test root");
-    let measurement_set = tiny_measurement_set(root.path());
-    let standard_name = root.path().join("zero-w-standard");
-    let w_name = root.path().join("zero-w-requested");
-
-    execute_continuum(request(
-        measurement_set.clone(),
-        standard_name.clone(),
-        ContinuumAlgorithm::Dirty,
-    ))
-    .expect("standard zero-W execution");
-    let mut w_request = request(measurement_set, w_name.clone(), ContinuumAlgorithm::Dirty);
-    w_request.task_requirements = vec![TaskRequirement::WProjection];
-    execute_continuum(w_request).expect("requested zero-W execution");
-
-    for suffix in DIRTY_PRODUCT_SUFFIXES {
-        assert_eq!(
-            product_plane(&standard_name, suffix),
-            product_plane(&w_name, suffix),
-            "zero projected W must reduce structurally to Standard for {suffix}",
-        );
-    }
-}
-
-#[test]
-fn t49_w_projection_composes_with_multifield_recentered_cube() {
-    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
-    let root = tempfile::tempdir().expect("test root");
-    let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
-    let image_name = root.path().join("w-cube-main");
-    let outlier_name = root.path().join("w-cube-outlier");
-    let outlier_file = root.path().join("w-cube.outlier");
-    std::fs::write(
-        &outlier_file,
-        format!(
-            "imagename={}\nimsize=[32,32]\ncell=[1arcsec,1arcsec]\nphasecenter=J2000 1.001rad 0.499rad\nmask=circle[[16pix,16pix],8pix]\n",
-            outlier_name.display()
-        ),
-    )
-    .expect("write recentered W-cube outlier");
-    let mut imaging = request(
-        measurement_set,
-        image_name.clone(),
-        ContinuumAlgorithm::Dirty,
-    );
-    imaging.image_size = 32;
-    imaging.field_ids = Some(vec![0, 1]);
-    imaging.outlier_file = Some(outlier_file);
-    imaging.spectral_window = Some("0:0~31".to_string());
-    imaging.channel_count = Some(32);
-    imaging.spectral_mode = SpectralImagingMode::Cube {
-        axis: CubeAxisConfig {
-            outframe: FrequencyRef::TOPO,
-            ..CubeAxisConfig::default()
-        },
-        output_channels: Some(32),
-    };
-    imaging.w_projection_planes = Some(5);
-    imaging.task_requirements = vec![
-        TaskRequirement::SpectralCube,
-        TaskRequirement::WProjection,
-        TaskRequirement::WProjectionPlanes,
-    ];
-
-    let result = execute_continuum(imaging)
-        .expect("native recentered, faceted, multi-domain W-cube execution");
-    assert_eq!(
-        result
-            .outcome
-            .output
-            .scientific
-            .normal_state()
-            .domain_count(),
-        2
-    );
-    assert_eq!(result.outcome.output.planned_products.members().len(), 10);
-    for base in [&image_name, &outlier_name] {
-        for suffix in DIRTY_PRODUCT_SUFFIXES {
-            let product =
-                PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", base.display())))
-                    .expect("open W-cube product");
-            assert_eq!(
-                product.shape(),
-                if suffix == ".sumwt" {
-                    &[1, 1, 1, 32]
-                } else {
-                    &[32, 32, 1, 32]
-                },
-                "{suffix}"
-            );
-        }
-    }
-}
-
-#[test]
-fn t49_w_projection_composes_with_faceted_continuum() {
-    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
-    let root = tempfile::tempdir().expect("test root");
-    let measurement_set = multi_row_measurement_set(root.path());
-    let image_name = root.path().join("w-faceted-continuum");
-    let mut imaging = request(
-        measurement_set,
-        image_name.clone(),
-        ContinuumAlgorithm::Dirty,
-    );
-    imaging.image_size = 32;
-    imaging.facets = 2;
-    imaging.w_projection_planes = Some(5);
-    imaging.task_requirements = vec![
-        TaskRequirement::WProjection,
-        TaskRequirement::WProjectionPlanes,
-    ];
-
-    let result =
-        execute_continuum(imaging).expect("native faceted W-projection continuum execution");
-    assert_eq!(
-        result
-            .outcome
-            .output
-            .scientific
-            .normal_state()
-            .domain_count(),
-        1
-    );
-    assert_dirty_products(&image_name, &result.product_names);
-}
-
-#[test]
 fn stokes_i_uses_one_shared_imaging_weight_for_each_linear_parallel_hand() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();
@@ -1549,23 +755,38 @@ fn application_executes_raw_linear_correlation_products_with_exact_axis() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
-    let measurement_set = full_stokes_measurement_set(root.path());
     let image_name = root.path().join("linear-correlations");
-    let mut imaging = request(
-        measurement_set,
-        image_name.clone(),
-        ContinuumAlgorithm::Dirty,
-    );
-    imaging.polarizations = vec![
-        casa_imaging_application::PolarizationCoordinate::LinearXx,
-        casa_imaging_application::PolarizationCoordinate::LinearXy,
-        casa_imaging_application::PolarizationCoordinate::LinearYx,
-        casa_imaging_application::PolarizationCoordinate::LinearYy,
-    ];
-    imaging.image_size = 64;
-    imaging.task_requirements = vec![TaskRequirement::PolarizationSelection];
+    let linear_request = |measurement_set| {
+        let mut imaging = request(
+            measurement_set,
+            image_name.clone(),
+            ContinuumAlgorithm::Dirty,
+        );
+        imaging.polarizations = vec![
+            casa_imaging_application::PolarizationCoordinate::LinearXx,
+            casa_imaging_application::PolarizationCoordinate::LinearXy,
+            casa_imaging_application::PolarizationCoordinate::LinearYx,
+            casa_imaging_application::PolarizationCoordinate::LinearYy,
+        ];
+        imaging.image_size = 64;
+        imaging.task_requirements = vec![TaskRequirement::PolarizationSelection];
+        imaging
+    };
 
-    let result = execute_continuum(imaging).expect("native raw-correlation dirty execution");
+    // Circular feeds hold no linear correlation to image.
+    let circular = execute_continuum(linear_request(full_stokes_measurement_set(root.path())));
+    assert!(
+        circular.err().is_some_and(|error| error
+            .to_string()
+            .contains("requested correlation is not selected")),
+        "linear products of circular-feed data must be rejected"
+    );
+    assert!(!PathBuf::from(format!("{}.residual", image_name.display())).exists());
+
+    let result = execute_continuum(linear_request(full_polarization_linear_measurement_set(
+        root.path(),
+    )))
+    .expect("native raw-correlation dirty execution");
     assert_dirty_products(&image_name, &result.product_names);
     let product =
         PagedImage::<f32>::open(PathBuf::from(format!("{}.residual", image_name.display())))
@@ -1602,6 +823,60 @@ fn application_uses_weight_when_selected_weight_spectrum_cells_are_undefined() {
     .expect("undefined WEIGHT_SPECTRUM cells select scalar WEIGHT before traversal");
 
     assert_dirty_products(&image_name, &result.product_names);
+}
+
+/// The compiled `FiniteValuePolicy::FlagInputRejectGenerated`: a non-finite
+/// visibility is a flagged sample, so the image equals the image of the
+/// same data with that sample flagged instead.
+#[test]
+fn nonfinite_visibilities_image_as_flagged_samples() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    const ROW: usize = 3;
+    let mut images = Vec::new();
+    for nonfinite in [true, false] {
+        let root = tempfile::tempdir().expect("test root");
+        let path = multi_row_measurement_set(root.path());
+        let mut ms = MeasurementSet::open(&path).expect("open fixture");
+        if nonfinite {
+            let mut data = ms
+                .data_column_mut(VisibilityDataColumn::Data)
+                .expect("DATA column");
+            let ArrayValue::Complex32(cell) = data.get(ROW).expect("DATA cell").clone() else {
+                panic!("DATA is complex");
+            };
+            data.put(
+                ROW,
+                ArrayValue::Complex32(cell.mapv(|_| Complex32::new(f32::NAN, 0.0))),
+            )
+            .expect("write NaN");
+        } else {
+            let flags = ms.flag_column();
+            let ArrayValue::Bool(cell) = flags.get(ROW).expect("FLAG cell").clone() else {
+                panic!("FLAG is boolean");
+            };
+            ms.main_table_mut()
+                .row_accessor_mut()
+                .set_cell(
+                    ROW,
+                    "FLAG",
+                    Value::Array(ArrayValue::Bool(cell.mapv(|_| true))),
+                )
+                .expect("flag the row's samples");
+        }
+        ms.save().expect("save fixture");
+        drop(ms);
+        let image_name = root.path().join("finite");
+        let result =
+            execute_continuum(request(path, image_name.clone(), ContinuumAlgorithm::Dirty))
+                .unwrap_or_else(|error| panic!("nonfinite={nonfinite}: {error}"));
+        assert_dirty_products(&image_name, &result.product_names);
+        images.push([".residual", ".psf", ".sumwt"].map(|suffix| {
+            product_plane_with_size(&image_name, suffix, if suffix == ".sumwt" { 1 } else { 16 })
+        }));
+    }
+    assert!(images[0][0].iter().all(|value| value.is_finite()));
+    assert_eq!(images[0], images[1]);
 }
 
 #[test]
@@ -1711,6 +986,90 @@ fn t31_application_executes_recentered_domains_through_one_scientific_route() {
             _ => unreachable!(),
         }
     }
+}
+
+/// Image domains are independent measurements of one observation: a dirty
+/// cube's main domain is the same with or without a recentred outlier cube,
+/// and the outlier carries the same spectral axis.
+#[test]
+fn outlier_cube_domains_image_independently_of_the_main_cube() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
+    let cube = |image_name: &Path, outlier_file: Option<PathBuf>| {
+        let mut imaging = request(
+            measurement_set.clone(),
+            image_name.to_path_buf(),
+            ContinuumAlgorithm::Dirty,
+        );
+        imaging.image_size = 32;
+        imaging.field_ids = Some(vec![0, 1]);
+        imaging.outlier_file = outlier_file;
+        imaging.spectral_window = Some("0:0~31".to_string());
+        imaging.channel_count = Some(32);
+        imaging.spectral_mode = SpectralImagingMode::Cube {
+            axis: CubeAxisConfig {
+                outframe: FrequencyRef::TOPO,
+                ..CubeAxisConfig::default()
+            },
+            output_channels: Some(32),
+        };
+        imaging.task_requirements = vec![TaskRequirement::SpectralCube];
+        execute_continuum(imaging).expect("dirty cube execution")
+    };
+    let alone = root.path().join("cube-alone");
+    cube(&alone, None);
+    let main = root.path().join("cube-main");
+    let outlier = root.path().join("cube-outlier");
+    let outlier_file = root.path().join("cube.outlier");
+    std::fs::write(
+        &outlier_file,
+        format!(
+            "imagename={}\nimsize=[32,32]\ncell=[1arcsec,1arcsec]\nphasecenter=J2000 1.001rad 0.499rad\n",
+            outlier.display()
+        ),
+    )
+    .expect("write recentred outlier cube");
+    let result = cube(&main, Some(outlier_file));
+    assert_eq!(
+        result
+            .outcome
+            .output
+            .scientific
+            .normal_state()
+            .domain_count(),
+        2
+    );
+    let read = |base: &Path, suffix: &str| {
+        let image = PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", base.display())))
+            .expect("open cube product");
+        let shape = image.shape().to_vec();
+        (
+            shape.clone(),
+            image.get_slice(&[0, 0, 0, 0], &shape).expect("read"),
+        )
+    };
+    for suffix in DIRTY_PRODUCT_SUFFIXES {
+        assert_eq!(read(&main, suffix), read(&alone, suffix), "main {suffix}");
+        let (shape, values) = read(&outlier, suffix);
+        let expected: &[usize] = if suffix == ".sumwt" {
+            &[1, 1, 1, 32]
+        } else {
+            &[32, 32, 1, 32]
+        };
+        assert_eq!(shape, expected, "outlier {suffix}");
+        assert!(
+            values.iter().all(|value| value.is_finite()),
+            "outlier {suffix}"
+        );
+    }
+    // Natural weights do not depend on the phase centre: the outlier
+    // grids every sample of every channel the main cube does.
+    let (_, outlier_sumwt) = read(&outlier, ".sumwt");
+    let (_, main_sumwt) = read(&main, ".sumwt");
+    assert!(main_sumwt.iter().all(|value| *value > 0.0));
+    assert_eq!(outlier_sumwt, main_sumwt);
 }
 
 #[test]
@@ -1827,7 +1186,7 @@ fn t31_application_canonicalizes_reversed_outliers_before_domain_indexed_derivat
 }
 
 #[test]
-fn application_preserves_the_bounded_source_budget_across_multiple_rows() {
+fn application_executes_a_multi_row_dirty_image() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
@@ -1836,40 +1195,11 @@ fn application_preserves_the_bounded_source_budget_across_multiple_rows() {
 
     let result = execute_continuum(request(
         measurement_set,
-        image_name,
+        image_name.clone(),
         ContinuumAlgorithm::Dirty,
     ))
     .expect("native multi-row dirty execution");
-    let receipt = result.outcome.output.initial_receipt;
-    let source_read = receipt
-        .plan_node_identities()
-        .into_iter()
-        .find(|node| node.as_str().starts_with("transaction-read-initial-major"))
-        .expect("initial source-read node");
-    let source_buffer = casa_imaging_runtime::LeaseResource::IoBuffer(
-        casa_imaging_runtime::IoBufferKind::SourceReadAhead,
-    );
-    let io_lifetime =
-        casa_imaging_runtime::ClaimLifetime::through_fence(casa_imaging_runtime::FenceKind::Io);
-    let planned = receipt
-        .planned_resource_amount(&source_read, &source_buffer, &io_lifetime)
-        .expect("source residency claim");
-    let actual = receipt
-        .actual_resource_peak(&source_read, &source_buffer, &io_lifetime)
-        .expect("measured source residency");
-    assert!(planned > 0 && planned <= 64 << 20);
-    assert!(actual > 0 && actual <= planned);
-    let (_, operations) = receipt
-        .stage_actual_io(
-            &source_read,
-            casa_imaging_runtime::IoBufferKind::SourceReadAhead,
-        )
-        .expect("measured selected-observation source reads");
-
-    assert_eq!(
-        operations, 19,
-        "the owner's finalized budget should fill all eight rows in one bounded block"
-    );
+    assert_dirty_products(&image_name, &result.product_names);
 }
 
 #[test]
@@ -1898,85 +1228,6 @@ fn application_compiles_common_beam_requests_with_common_spectral_coupling() {
             .beam_set
             .has_single_beam()
     );
-}
-
-#[test]
-fn mtmfs_via_cube_executes_one_bounded_sixteen_channel_axis_from_four_spectral_windows() {
-    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
-    let root = tempfile::tempdir().expect("test root");
-    let measurement_set = four_spw_aca_measurement_set(root.path());
-    let image_name = root.path().join("four-spw-mvc");
-    let mut imaging = request(
-        measurement_set,
-        image_name.clone(),
-        ContinuumAlgorithm::Mtmfs {
-            terms: 2,
-            scales_px: vec![0.0],
-            small_scale_bias: 0.0,
-        },
-    );
-    imaging.data_description = None;
-    imaging.channel_count = Some(8);
-    imaging.maximum_major_cycles = Some(1);
-    imaging.task_requirements = vec![
-        TaskRequirement::SpectralMtmfsViaCube,
-        TaskRequirement::SerialCpu,
-    ];
-    imaging.spectral_mode = SpectralImagingMode::MtmfsViaCube {
-        axis: CubeAxisConfig {
-            outframe: FrequencyRef::TOPO,
-            ..CubeAxisConfig::default()
-        },
-        output_channels: Some(16),
-    };
-
-    let result = execute_continuum(imaging).expect("bounded multi-SPW MVC execution");
-    assert_unit_psf_planes(&PathBuf::from(format!("{}.psf.tt0", image_name.display())));
-    assert_eq!(
-        result.product_names,
-        [
-            ".psf.tt0",
-            ".psf.tt1",
-            ".psf.tt2",
-            ".residual.tt0",
-            ".residual.tt1",
-            ".model.tt0",
-            ".model.tt1",
-            ".image.tt0",
-            ".image.tt1",
-            ".sumwt.tt0",
-            ".sumwt.tt1",
-            ".sumwt.tt2",
-            ".mask",
-            ".alpha",
-            ".alpha.error",
-        ]
-        .map(str::to_string),
-    );
-    assert!(
-        result
-            .outcome
-            .output
-            .scientific
-            .normal_state()
-            .sample_count()
-            > 0
-    );
-    for suffix in &result.product_names {
-        let product =
-            PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", image_name.display())))
-                .expect("reopen MVC Taylor product");
-        assert_eq!(
-            product.shape(),
-            if suffix.starts_with(".sumwt.") {
-                &[1, 1, 1, 1]
-            } else {
-                &[16, 16, 1, 1]
-            },
-            "{suffix}"
-        );
-    }
 }
 
 #[test]
@@ -2094,13 +1345,6 @@ fn t607_application_preserves_channel_topology_and_wcs_through_cube_planning() {
         result.outcome.output.scientific.normal_state().catalog(),
         casa_imaging_reconstruction::NormalStateCatalog::UnnormalizedChannelSlabV1
     );
-    let slab_depth = result
-        .outcome
-        .output
-        .initial_receipt
-        .initial_execution_knobs()
-        .slab_depth;
-    assert!((1..=32).contains(&slab_depth));
     let residual =
         PagedImage::<f32>::open(PathBuf::from(format!("{}.residual", image_name.display())))
             .expect("reopen 32-channel residual");
@@ -2114,1034 +1358,4 @@ fn t607_application_preserves_channel_topology_and_wcs_through_cube_planning() {
         .to_world(&[8.0, 8.0, 0.0, 31.0])
         .expect("last channel world coordinate");
     assert!(last[3] > first[3], "ascending spectral WCS");
-}
-
-#[test]
-fn application_executes_single_ddid_stokes_i_mfs_hogbom_with_one_iteration() {
-    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
-    let root = tempfile::tempdir().expect("test root");
-    let measurement_set = tiny_measurement_set(root.path());
-    let image_name = root.path().join("hogbom");
-    let mut imaging = request(
-        measurement_set,
-        image_name.clone(),
-        ContinuumAlgorithm::Hogbom,
-    );
-    imaging.task_requirements = vec![TaskRequirement::SerialCpu, TaskRequirement::FixedTileCpu];
-
-    let result = execute_continuum(imaging).expect("native Högbom application execution");
-
-    assert_eq!(result.minor_iterations, 1);
-    assert_eq!(
-        result.minor_stop_reason,
-        Some(ContinuumStopReason::IterationBound)
-    );
-    assert_eq!(
-        result
-            .outcome
-            .output
-            .minor_cycles
-            .last()
-            .expect("minor diagnostic")
-            .recorded_components
-            .len(),
-        1
-    );
-    let output = &result.outcome.output;
-    assert!(
-        output.visibility_products.is_none(),
-        "a no-write clean must not manufacture per-visibility diagnostics"
-    );
-    assert!(
-        output.visibility_write_receipt.is_none(),
-        "a no-write clean must not execute a selected-output traversal"
-    );
-    let final_receipt = output
-        .final_major_receipt
-        .as_ref()
-        .expect("clean retains its terminal artifact-science receipt");
-    assert_eq!(
-        final_receipt.projected_resource_policy(),
-        casa_imaging_runtime::ResourcePolicy::Balanced
-    );
-    let final_nodes = final_receipt.plan_node_identities();
-    assert!(final_nodes.iter().any(|node| {
-        node.as_str()
-            .starts_with("gridded-normal-replay-final-major")
-    }));
-    assert!(
-        final_nodes
-            .iter()
-            .all(|node| !node.as_str().starts_with("transaction-read-final-major")),
-        "terminal artifact science must be the last observation-facing work"
-    );
-    assert_eq!(
-        final_receipt
-            .selected_alternative_projection()
-            .demand
-            .io_buffers
-            .bytes(casa_imaging_runtime::IoBufferKind::SourceReadAhead),
-        0
-    );
-    let selected = final_receipt.selected_alternative_projection();
-    let planned_workers = selected.demand.workers.hard();
-    assert!((1..=4).contains(&planned_workers));
-    assert_eq!(
-        selected.id.as_str(),
-        format!(
-            "spectral-cycle-gridded-1-workers-{planned_workers}-gridded-1-read-spectral-operator"
-        ),
-        "the owner-specific replay profile is fixed before artifact-route composition",
-    );
-    if std::thread::available_parallelism().is_ok_and(|threads| threads.get() > 1) {
-        assert!(
-            planned_workers > 1,
-            "normal production planning must not pin replay to the serial baseline on a parallel host",
-        );
-    }
-    assert_standard_products(&image_name, &result.product_names);
-}
-
-#[test]
-fn application_serial_cpu_requirement_caps_replay_to_one_worker() {
-    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
-    let root = tempfile::tempdir().expect("test root");
-    let measurement_set = tiny_measurement_set(root.path());
-    let image_name = root.path().join("serial-hogbom");
-    let mut imaging = request(measurement_set, image_name, ContinuumAlgorithm::Hogbom);
-    imaging.task_requirements = vec![TaskRequirement::SerialCpu];
-    imaging.resource_policy =
-        casa_imaging_runtime::ResourcePolicy::Explicit(casa_imaging_runtime::ResourceOverride {
-            workers: Some(1),
-            ..casa_imaging_runtime::ResourceOverride::default()
-        });
-
-    let result = execute_continuum(imaging).expect("serial native Högbom execution");
-    let final_receipt = result
-        .outcome
-        .output
-        .final_major_receipt
-        .as_ref()
-        .expect("serial clean retains its terminal replay receipt");
-    assert_eq!(
-        final_receipt.projected_resource_policy(),
-        casa_imaging_runtime::ResourcePolicy::Explicit(casa_imaging_runtime::ResourceOverride {
-            workers: Some(1),
-            ..casa_imaging_runtime::ResourceOverride::default()
-        })
-    );
-    assert_eq!(
-        final_receipt
-            .selected_alternative_projection()
-            .demand
-            .workers
-            .hard(),
-        1
-    );
-}
-
-#[test]
-fn uniform_multi_spw_mfs_clark_matches_serial_with_four_admitted_workers() {
-    let _execution_guard = EXECUTION_LOCK.lock().unwrap();
-    set_production_io_environment();
-    let root = tempfile::tempdir().unwrap();
-    let measurement_set = four_spw_vla_measurement_set(root.path());
-    for selection in ["0~3", "0:0,1:0~2,2:0~4,3:0~6"] {
-        assert_uniform_mfs_workers(measurement_set.clone(), root.path(), selection);
-    }
-}
-
-fn assert_uniform_mfs_workers(measurement_set: PathBuf, root: &Path, selection: &str) {
-    // Admission caps explicit worker overrides at the host thread count, so a
-    // team larger than this host is infeasible rather than a parity failure.
-    let host_threads = std::thread::available_parallelism().unwrap().get() as u64;
-    assert!(host_threads >= 4, "parity needs at least four host threads");
-    let mut prefixes = Vec::new();
-    for workers in [1, 4, 8]
-        .into_iter()
-        .filter(|&workers| workers <= host_threads)
-    {
-        let prefix = root.join(format!("uniform-mfs-{selection}-w{workers}"));
-        let mut imaging = request(
-            measurement_set.clone(),
-            prefix.clone(),
-            ContinuumAlgorithm::Clark,
-        );
-        imaging.image_size = 256;
-        imaging.cell_arcsec = 3.0;
-        imaging.data_description = None;
-        imaging.spectral_window = Some(selection.into());
-        imaging.channel_start = None;
-        imaging.channel_count = None;
-        imaging.weighting = ContinuumWeighting::Uniform;
-        imaging.gain = 0.1;
-        imaging.task_requirements = if workers == 1 {
-            vec![TaskRequirement::SerialCpu]
-        } else {
-            vec![]
-        };
-        imaging.resource_policy = casa_imaging_runtime::ResourcePolicy::Explicit(
-            casa_imaging_runtime::ResourceOverride {
-                workers: Some(workers),
-                memory_bytes: std::collections::BTreeMap::from([(
-                    casa_imaging_runtime::CapacityDomainId::new("host-memory"),
-                    2 << 30,
-                )]),
-                ..Default::default()
-            },
-        );
-        let result = execute_continuum(imaging).expect("uniform multi-SPW MFS Clark execution");
-        assert!(result.actual_minor_iterations > 0);
-        let initial_workers = result
-            .outcome
-            .output
-            .initial_receipt
-            .selected_alternative_projection()
-            .demand
-            .workers
-            .hard();
-        assert!((1..=workers).contains(&initial_workers));
-        if workers <= 4 {
-            assert_eq!(initial_workers, workers);
-        }
-        let final_receipt = result
-            .outcome
-            .output
-            .final_major_receipt
-            .as_ref()
-            .expect("CLEAN residual refresh");
-        let final_workers = final_receipt
-            .selected_alternative_projection()
-            .demand
-            .workers
-            .hard();
-        assert!((1..=workers).contains(&final_workers));
-        if workers <= 4 {
-            assert_eq!(final_workers, workers);
-        }
-        assert_standard_products(&prefix, &result.product_names);
-        prefixes.push(prefix);
-    }
-    assert!(
-        prefixes.len() >= 2,
-        "parity needs a serial and a parallel run"
-    );
-    for candidate in 1..prefixes.len() {
-        for suffix in PRODUCT_SUFFIXES {
-            let left = PagedImage::<f32>::open(PathBuf::from(format!(
-                "{}{suffix}",
-                prefixes[0].display()
-            )))
-            .unwrap();
-            let right = PagedImage::<f32>::open(PathBuf::from(format!(
-                "{}{suffix}",
-                prefixes[candidate].display()
-            )))
-            .unwrap();
-            assert_eq!(left.shape(), right.shape());
-            assert_eq!(left.units(), right.units());
-            assert_eq!(left.default_mask_name(), right.default_mask_name());
-            let left = left.get().unwrap();
-            let right = right.get().unwrap();
-            let mut square_error = 0.0_f64;
-            let mut square_signal = 0.0_f64;
-            for (&left, &right) in left.iter().zip(right.iter()) {
-                assert_eq!(left.is_finite(), right.is_finite(), "{suffix} validity");
-                if left.is_finite() {
-                    if suffix == ".mask" {
-                        assert_eq!(left, right);
-                    }
-                    square_error += f64::from(left - right).powi(2);
-                    square_signal += f64::from(left).powi(2);
-                }
-            }
-            assert!(
-                square_error.sqrt() <= 1e-6 * square_signal.sqrt().max(1e-12),
-                "{suffix} normalized difference"
-            );
-        }
-    }
-}
-
-#[test]
-fn application_algorithms_do_not_invent_a_flux_staleness_bound() {
-    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
-    let root = tempfile::tempdir().expect("test root");
-    let measurement_set = tiny_measurement_set(root.path());
-    let image_name = root.path().join("model-envelope");
-    let imaging = request(measurement_set, image_name, ContinuumAlgorithm::Clark);
-
-    let result = execute_continuum(imaging).expect("exact Clark execution");
-
-    assert!(
-        result.minor_iterations > 0,
-        "active Clark execution must make scientific progress"
-    );
-    assert_ne!(
-        result.minor_stop_reason,
-        Some(ContinuumStopReason::StalenessBound)
-    );
-}
-
-#[test]
-fn application_reconciles_between_bounded_minor_cycles() {
-    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
-    let root = tempfile::tempdir().expect("test root");
-    let measurement_set = tiny_measurement_set(root.path());
-    let image_name = root.path().join("bounded-cycles");
-    let mut imaging = request(
-        measurement_set,
-        image_name.clone(),
-        ContinuumAlgorithm::Hogbom,
-    );
-    imaging.iterations = 3;
-    imaging.cycle_iterations = 1;
-    imaging.maximum_major_cycles = Some(3);
-    imaging.gain = 0.37;
-    imaging.threshold_jy = 1.0e-12;
-    imaging.noise_sigma = Some(1.0e-12);
-    imaging.cycle_factor = 1.4;
-
-    let result = execute_continuum(imaging).expect("bounded multi-cycle execution");
-
-    assert_eq!(result.minor_iterations, 3);
-    assert_eq!(result.actual_minor_iterations, 3);
-    assert_eq!(result.outcome.output.total_minor_iterations, 3);
-    assert_eq!(result.outcome.output.total_actual_minor_iterations, 3);
-    assert_eq!(result.outcome.output.major_cycle_count, 4);
-    assert_eq!(result.outcome.output.minor_cycles.len(), 3);
-    assert_eq!(
-        result
-            .outcome
-            .output
-            .minor_cycles
-            .iter()
-            .map(|cycle| cycle.cycle)
-            .collect::<Vec<_>>(),
-        vec![1, 2, 3]
-    );
-    assert!(
-        result
-            .outcome
-            .output
-            .minor_cycles
-            .iter()
-            .all(|cycle| cycle.iterations == 1)
-    );
-    assert_eq!(
-        result
-            .outcome
-            .output
-            .minor_cycles
-            .iter()
-            .map(|cycle| (
-                cycle.iterations_entering,
-                cycle.iterations,
-                cycle.total_iterations,
-                cycle.associated_replay_ordinal,
-            ))
-            .collect::<Vec<_>>(),
-        vec![(0, 1, 1, 1), (1, 1, 2, 2), (2, 1, 3, 3)]
-    );
-    assert!(result.outcome.output.minor_cycles.iter().all(|cycle| {
-        cycle.initial_peak_flux.is_finite()
-            && cycle.final_peak_flux.is_finite()
-            && cycle.global_threshold.is_finite()
-            && cycle.effective_threshold.is_finite()
-    }));
-    assert_eq!(
-        result.minor_stop_reason,
-        Some(ContinuumStopReason::IterationBound)
-    );
-    assert_standard_products(&image_name, &result.product_names);
-}
-
-#[test]
-fn application_uses_reported_iterations_for_casa_inclusive_continuation() {
-    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
-    let root = tempfile::tempdir().expect("test root");
-    let measurement_set = tiny_measurement_set(root.path());
-    let mut imaging = request(
-        measurement_set,
-        root.path().join("unlimited-major-cycles"),
-        ContinuumAlgorithm::Hogbom,
-    );
-    imaging.iterations = 3;
-    imaging.cycle_iterations = 1;
-    imaging.hogbom_iteration_accounting =
-        casa_imaging_application::HogbomIterationAccounting::CasaInclusive;
-    imaging.maximum_major_cycles = None;
-    imaging.gain = 0.37;
-    imaging.threshold_jy = 1.0e-12;
-    imaging.noise_sigma = Some(1.0e-12);
-    imaging.cycle_factor = 0.01;
-    imaging.minimum_psf_fraction = 0.0;
-    imaging.maximum_psf_fraction = 0.01;
-
-    let result = execute_continuum(imaging).expect("unlimited major-cycle execution");
-
-    assert_eq!(result.outcome.output.total_minor_iterations, 3);
-    assert_eq!(result.outcome.output.total_actual_minor_iterations, 6);
-    assert_eq!(result.outcome.output.minor_cycles.len(), 3);
-    assert_eq!(result.outcome.output.major_cycle_count, 4);
-    assert!(
-        result
-            .outcome
-            .output
-            .minor_cycles
-            .iter()
-            .all(|cycle| cycle.iterations == 1 && cycle.actual_iterations == 2),
-        "every bound-stopped cycle charges one reported iteration after applying two components"
-    );
-}
-
-#[test]
-fn application_commits_exact_final_prediction_to_model_data() {
-    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
-    let root = tempfile::tempdir().expect("test root");
-    let measurement_set = tiny_measurement_set(root.path());
-    let image_name = root.path().join("savemodel");
-    let mut imaging = request(
-        measurement_set.clone(),
-        image_name,
-        ContinuumAlgorithm::Hogbom,
-    );
-    imaging.save_model_column = true;
-    imaging.task_requirements = vec![TaskRequirement::SerialCpu];
-    imaging.resource_policy = casa_imaging_runtime::ResourcePolicy::Balanced;
-
-    let result = execute_continuum(imaging).expect("native save-model application execution");
-    let visibility = result
-        .outcome
-        .output
-        .visibility_products
-        .expect("final visibility completion");
-    assert_eq!(visibility.sample_count(), 1);
-    let model_receipt = result
-        .outcome
-        .output
-        .visibility_write_receipt
-        .as_ref()
-        .expect("MODEL_DATA write is receipted by the selected-output traversal");
-    assert_eq!(
-        model_receipt.observation_transaction_publication_scope(),
-        casa_imaging_runtime::ObservationTransactionPublicationScope::ReconstructionOnly
-    );
-    assert_eq!(model_receipt.publication_layout_count(), 0);
-    let final_receipt = result
-        .outcome
-        .output
-        .final_major_receipt
-        .as_ref()
-        .expect("save-model execution has a terminal science receipt");
-    assert_ne!(model_receipt, final_receipt);
-    let plan_nodes = final_receipt.plan_node_identities();
-    let preparation = plan_nodes
-        .iter()
-        .find(|node| {
-            node.as_str()
-                .starts_with("final-model-preparation-final-major")
-        })
-        .expect("final-model preparation is planned");
-    assert!(plan_nodes.iter().any(|node| {
-        node.as_str()
-            .starts_with("post-replay-reconciliation-final-major")
-    }));
-    assert!(plan_nodes.iter().any(|node| {
-        node.as_str()
-            .starts_with("gridded-normal-replay-final-major")
-    }));
-    assert!(
-        plan_nodes
-            .iter()
-            .all(|node| !node.as_str().starts_with("transaction-read-final-major")),
-        "terminal science never reopens the selected observation"
-    );
-    let science_demand = final_receipt.selected_alternative_projection().demand;
-    assert_eq!(science_demand.locks.hard(), 0);
-    assert_eq!(
-        science_demand.file_descriptors.hard(),
-        1,
-        "the later-major plan owns exactly its private replay artifact handle"
-    );
-    assert_eq!(
-        science_demand
-            .io_buffers
-            .bytes(casa_imaging_runtime::IoBufferKind::SourceReadAhead),
-        0
-    );
-    assert!(
-        plan_nodes
-            .iter()
-            .all(|node| !node.as_str().contains("stage-model")),
-        "MODEL_DATA has no physical staging node"
-    );
-    let output_nodes = model_receipt.plan_node_identities();
-    let terminal_pass = output_nodes
-        .iter()
-        .find(|node| node.as_str().starts_with("transaction-read-final-major"))
-        .expect("the bounded selected-output pass is planned");
-    assert_eq!(
-        output_nodes
-            .iter()
-            .filter(|node| node.as_str().starts_with("transaction-read-final-major"))
-            .count(),
-        1,
-        "MODEL_DATA uses exactly one selected-output traversal"
-    );
-    assert!(output_nodes.iter().all(|node| {
-        !node
-            .as_str()
-            .starts_with("gridded-normal-replay-final-major")
-    }));
-    assert_ne!(preparation, terminal_pass);
-    assert_eq!(
-        model_receipt
-            .stage_predicted_io(terminal_pass, casa_imaging_runtime::IoBufferKind::Writeback,),
-        Some((16, 1)),
-        "first creation writes the zero-initialized column and selected prediction"
-    );
-    assert_eq!(
-        model_receipt
-            .stage_actual_io(terminal_pass, casa_imaging_runtime::IoBufferKind::Writeback,),
-        None,
-        "the table adapter exposes no trustworthy physical byte counter"
-    );
-    let write_lifetime =
-        casa_imaging_runtime::ClaimLifetime::through_fence(casa_imaging_runtime::FenceKind::Io);
-    let write_stack = casa_imaging_runtime::LeaseResource::RuntimeOverhead(
-        casa_imaging_runtime::RuntimeOverheadKind::ThreadStack,
-    );
-    assert_eq!(
-        model_receipt.planned_resource_amount(terminal_pass, &write_stack, &write_lifetime),
-        Some(2 * 1024 * 1024)
-    );
-    assert_eq!(
-        model_receipt.actual_resource_peak(terminal_pass, &write_stack, &write_lifetime),
-        Some(2 * 1024 * 1024)
-    );
-    let model_storage = casa_imaging_runtime::LeaseResource::Storage {
-        demand_id: "serial-visibility-write-column".to_string(),
-        use_kind: casa_imaging_runtime::StorageUseKind::FinalOutput,
-    };
-    assert_eq!(
-        model_receipt.planned_resource_amount(terminal_pass, &model_storage, &write_lifetime),
-        Some(8),
-        "column creation reserves its new persistent capacity"
-    );
-
-    let reopened = MeasurementSet::open(&measurement_set).expect("reopen saved MODEL_DATA");
-    let schema = reopened.main_table().schema().expect("MAIN schema");
-    assert!(schema.contains_column("MODEL_DATA"));
-    let model_column = reopened
-        .data_column(VisibilityDataColumn::ModelData)
-        .expect("MODEL_DATA was committed");
-    let ArrayValue::Complex32(model) = model_column.get(0).expect("MODEL_DATA row") else {
-        panic!("MODEL_DATA row is complex")
-    };
-    assert!(model[[0, 0]].re.is_finite());
-    assert!(model[[0, 0]].im.is_finite());
-    assert_ne!(model[[0, 0]], Complex32::new(0.0, 0.0));
-    drop(reopened);
-
-    let mut overwrite = request(
-        measurement_set,
-        root.path().join("savemodel-overwrite"),
-        ContinuumAlgorithm::Hogbom,
-    );
-    overwrite.save_model_column = true;
-    let overwrite_result =
-        execute_continuum(overwrite).expect("native in-place MODEL_DATA overwrite");
-    let overwrite_receipt = overwrite_result
-        .outcome
-        .output
-        .visibility_write_receipt
-        .as_ref()
-        .expect("overwrite receipt");
-    let overwrite_terminal_pass = overwrite_receipt
-        .plan_node_identities()
-        .iter()
-        .find(|node| node.as_str().starts_with("transaction-read-final-major"))
-        .expect("overwrite selected-output traversal")
-        .clone();
-    assert_eq!(
-        overwrite_receipt.stage_predicted_io(
-            &overwrite_terminal_pass,
-            casa_imaging_runtime::IoBufferKind::Writeback,
-        ),
-        Some((8, 1)),
-        "overwrite predicts only the selected in-place cell write"
-    );
-    assert_eq!(
-        overwrite_receipt.planned_resource_amount(
-            &overwrite_terminal_pass,
-            &model_storage,
-            &write_lifetime,
-        ),
-        None,
-        "existing MODEL_DATA reserves no new full-column persistent capacity"
-    );
-}
-
-#[test]
-fn continuum_fit_only_channels_are_read_but_not_persisted_as_line_model_data() {
-    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
-    let root = tempfile::tempdir().expect("test root");
-    let measurement_set = spectral_line_measurement_set(root.path());
-    let mut imaging = request(
-        measurement_set.clone(),
-        root.path().join("continuum-subtracted-line"),
-        ContinuumAlgorithm::Hogbom,
-    );
-    imaging.channel_start = Some(1);
-    imaging.channel_count = Some(1);
-    imaging.spectral_window = Some("0:1".to_string());
-    let axis = CubeAxisConfig {
-        outframe: FrequencyRef::TOPO,
-        start: Some(CubeAxisValue::Channel(1)),
-        width: Some(CubeAxisValue::Channel(1)),
-        ..CubeAxisConfig::default()
-    };
-    imaging.spectral_mode = SpectralImagingMode::Cube {
-        axis,
-        output_channels: Some(1),
-    };
-    imaging.continuum_subtraction = Some(VisibilityContinuumSubtraction {
-        fit_spw: "0:0;3".to_string(),
-        fit_order: 0,
-    });
-    imaging.save_model_column = true;
-
-    let result = execute_continuum(imaging).expect("line-only MODEL_DATA write");
-    assert_eq!(
-        result
-            .outcome
-            .output
-            .visibility_products
-            .expect("final visibility completion")
-            .sample_count(),
-        4,
-        "only the output channel contributes final line predictions"
-    );
-    let reopened = MeasurementSet::open(&measurement_set).expect("reopen MODEL_DATA");
-    let model_column = reopened
-        .data_column(VisibilityDataColumn::ModelData)
-        .expect("MODEL_DATA");
-    let model = model_column.get(0).expect("MODEL_DATA row");
-    let ArrayValue::Complex32(model) = model else {
-        panic!("MODEL_DATA row is complex")
-    };
-    for correlation in 0..4 {
-        assert_eq!(
-            model[[correlation, 0]],
-            Complex32::new(9.0, 9.0),
-            "fit-only channel must remain untouched"
-        );
-        assert_ne!(
-            model[[correlation, 1]],
-            Complex32::new(9.0, 9.0),
-            "output channel must receive the final line model"
-        );
-        assert_eq!(
-            model[[correlation, 3]],
-            Complex32::new(9.0, 9.0),
-            "second fit-only channel must remain untouched"
-        );
-    }
-}
-
-#[test]
-fn continuum_residual_persistence_overwrites_only_output_roles_in_the_terminal_pass() {
-    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
-    let root = tempfile::tempdir().expect("test root");
-    let measurement_set = spectral_line_measurement_set(root.path());
-    let before = MeasurementSet::open(&measurement_set).expect("open before persistence");
-    let flags_before = before
-        .main_table()
-        .column_accessor("FLAG")
-        .expect("FLAG")
-        .get(0)
-        .expect("read FLAG")
-        .cloned();
-    let weights_before = before
-        .main_table()
-        .column_accessor("WEIGHT")
-        .expect("WEIGHT")
-        .get(0)
-        .expect("read WEIGHT")
-        .cloned();
-    drop(before);
-
-    let mut imaging = request(
-        measurement_set.clone(),
-        root.path().join("persisted-continuum-residual"),
-        ContinuumAlgorithm::Hogbom,
-    );
-    imaging.channel_start = Some(1);
-    imaging.channel_count = Some(1);
-    imaging.spectral_window = Some("0:1".to_string());
-    imaging.spectral_mode = SpectralImagingMode::Cube {
-        axis: CubeAxisConfig {
-            outframe: FrequencyRef::TOPO,
-            start: Some(CubeAxisValue::Channel(1)),
-            width: Some(CubeAxisValue::Channel(1)),
-            ..CubeAxisConfig::default()
-        },
-        output_channels: Some(1),
-    };
-    imaging.continuum_subtraction = Some(VisibilityContinuumSubtraction {
-        fit_spw: "0:0;3".to_string(),
-        fit_order: 0,
-    });
-    imaging.save_model_column = true;
-    imaging.save_continuum_residual = true;
-
-    let result = execute_continuum(imaging).expect("persist continuum residual");
-    assert_eq!(result.outcome.output.major_cycle_count, 2);
-    let receipt = result
-        .outcome
-        .output
-        .visibility_write_receipt
-        .expect("combined visibility-write receipt");
-    assert_eq!(
-        receipt
-            .plan_node_identities()
-            .into_iter()
-            .filter(|node| node.as_str().starts_with("transaction-read-final-major"))
-            .count(),
-        1,
-        "MODEL_DATA and CORRECTED_DATA share the one terminal replay"
-    );
-
-    let reopened = MeasurementSet::open(&measurement_set).expect("reopen persisted residual");
-    let corrected_column = reopened
-        .data_column(VisibilityDataColumn::CorrectedData)
-        .expect("CORRECTED_DATA");
-    let ArrayValue::Complex32(corrected) = corrected_column.get(0).expect("CORRECTED_DATA row")
-    else {
-        panic!("CORRECTED_DATA is complex")
-    };
-    for correlation in 0..4 {
-        assert_eq!(
-            corrected[[correlation, 0]],
-            Complex32::new(20.0 + (correlation * 4) as f32, -3.0),
-            "fit-only cells remain unchanged"
-        );
-        assert_eq!(
-            corrected[[correlation, 1]],
-            Complex32::new(1.0, 0.0),
-            "output-role cells receive exact transformed observations"
-        );
-        assert_eq!(
-            corrected[[correlation, 2]],
-            Complex32::new(22.0 + (correlation * 4) as f32, -3.0),
-            "nonselected cells remain unchanged"
-        );
-        assert_eq!(
-            corrected[[correlation, 3]],
-            Complex32::new(23.0 + (correlation * 4) as f32, -3.0),
-            "second fit-only cells remain unchanged"
-        );
-    }
-    assert_eq!(
-        reopened
-            .main_table()
-            .column_accessor("FLAG")
-            .expect("FLAG")
-            .get(0)
-            .expect("read FLAG")
-            .cloned(),
-        flags_before
-    );
-    assert_eq!(
-        reopened
-            .main_table()
-            .column_accessor("WEIGHT")
-            .expect("WEIGHT")
-            .get(0)
-            .expect("read WEIGHT")
-            .cloned(),
-        weights_before
-    );
-    assert!(!measurement_set.join(".casa-rs-write-incomplete").exists());
-}
-
-#[test]
-fn dirty_continuum_residual_persistence_is_independent_of_model_writeback() {
-    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
-    let root = tempfile::tempdir().expect("test root");
-    let measurement_set = spectral_line_measurement_set(root.path());
-    let mut imaging = request(
-        measurement_set.clone(),
-        root.path().join("dirty-persisted-continuum-residual"),
-        ContinuumAlgorithm::Dirty,
-    );
-    imaging.channel_start = Some(1);
-    imaging.channel_count = Some(1);
-    imaging.spectral_window = Some("0:1".to_string());
-    imaging.spectral_mode = SpectralImagingMode::Cube {
-        axis: CubeAxisConfig {
-            outframe: FrequencyRef::TOPO,
-            start: Some(CubeAxisValue::Channel(1)),
-            width: Some(CubeAxisValue::Channel(1)),
-            ..CubeAxisConfig::default()
-        },
-        output_channels: Some(1),
-    };
-    imaging.continuum_subtraction = Some(VisibilityContinuumSubtraction {
-        fit_spw: "0:0;3".to_string(),
-        fit_order: 0,
-    });
-    imaging.save_continuum_residual = true;
-    assert!(!imaging.save_model_column);
-
-    let result = execute_continuum(imaging).expect("dirty residual-only persistence");
-    assert_eq!(result.outcome.output.major_cycle_count, 1);
-    let receipt = result
-        .outcome
-        .output
-        .visibility_write_receipt
-        .expect("initial terminal visibility-write receipt");
-    assert_eq!(
-        receipt
-            .plan_node_identities()
-            .into_iter()
-            .filter(|node| node.as_str().starts_with("transaction-read-initial-major"))
-            .count(),
-        1,
-        "dirty persistence reuses its sole observation pass"
-    );
-
-    let reopened = MeasurementSet::open(&measurement_set).expect("reopen residual-only MS");
-    let corrected_column = reopened
-        .data_column(VisibilityDataColumn::CorrectedData)
-        .expect("CORRECTED_DATA");
-    let ArrayValue::Complex32(corrected) = corrected_column.get(0).expect("CORRECTED_DATA row")
-    else {
-        panic!("CORRECTED_DATA is complex")
-    };
-    for correlation in 0..4 {
-        assert_eq!(corrected[[correlation, 1]], Complex32::new(1.0, 0.0));
-    }
-    let model_column = reopened
-        .data_column(VisibilityDataColumn::ModelData)
-        .expect("MODEL_DATA");
-    let ArrayValue::Complex32(model) = model_column.get(0).expect("MODEL_DATA row") else {
-        panic!("MODEL_DATA is complex")
-    };
-    assert!(
-        model.iter().all(|value| *value == Complex32::new(9.0, 9.0)),
-        "residual-only persistence leaves MODEL_DATA untouched"
-    );
-}
-
-#[test]
-fn application_replaces_every_selected_model_cell_when_flags_and_correlations_differ() {
-    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
-    let root = tempfile::tempdir().expect("test root");
-    let measurement_set = flagged_polarized_measurement_set(root.path());
-    let mut imaging = request(
-        measurement_set.clone(),
-        root.path().join("polarized-savemodel"),
-        ContinuumAlgorithm::Hogbom,
-    );
-    imaging.channel_count = Some(2);
-    imaging.save_model_column = true;
-
-    let result = execute_continuum(imaging).expect("partially flagged MODEL_DATA write");
-    let visibility = result
-        .outcome
-        .output
-        .visibility_products
-        .expect("terminal visibility completion");
-    assert_eq!(
-        visibility.sample_count(),
-        8,
-        "the sink covers all selected rows, channels, and correlations"
-    );
-    let receipt = result
-        .outcome
-        .output
-        .visibility_write_receipt
-        .expect("MODEL_DATA receipt");
-    let terminal_pass = receipt
-        .plan_node_identities()
-        .into_iter()
-        .find(|node| node.as_str().starts_with("transaction-read-final-major"))
-        .expect("single selected-output traversal");
-    assert_eq!(
-        receipt.stage_predicted_io(
-            &terminal_pass,
-            casa_imaging_runtime::IoBufferKind::Writeback,
-        ),
-        Some((64, 1)),
-        "the existing column receives all eight selected Complex cells"
-    );
-
-    let reopened = MeasurementSet::open(&measurement_set).expect("reopen MODEL_DATA");
-    let model_column = reopened
-        .data_column(VisibilityDataColumn::ModelData)
-        .expect("MODEL_DATA column");
-    let ArrayValue::Complex32(model) = model_column.get(0).expect("MODEL_DATA row") else {
-        panic!("MODEL_DATA row is complex")
-    };
-    let flag_column = reopened
-        .main_table()
-        .column_accessor("FLAG")
-        .expect("FLAG column");
-    let Value::Array(ArrayValue::Bool(flags)) = flag_column
-        .get(0)
-        .expect("read FLAG row")
-        .cloned()
-        .expect("defined FLAG row")
-    else {
-        panic!("FLAG row is boolean")
-    };
-    assert!(
-        model.iter().all(|value| *value != Complex32::new(9.0, 9.0)),
-        "no selected destination retains its stale pre-run value"
-    );
-    for correlation in 0..4 {
-        for channel in 0..2 {
-            let model_value = model[[correlation, channel]];
-            let parallel_hand = matches!(correlation, 0 | 3);
-            if flags[[correlation, channel]] || !parallel_hand {
-                assert_eq!(
-                    model_value,
-                    Complex32::new(0.0, 0.0),
-                    "flagged and unsupported cross-hand predictions persist as CASA zeros"
-                );
-            } else {
-                assert_ne!(
-                    model_value,
-                    Complex32::new(0.0, 0.0),
-                    "unflagged parallel-hand predictions retain the solved Stokes-I model"
-                );
-            }
-        }
-    }
-}
-
-#[test]
-fn application_materializes_static_and_auto_masks_at_the_normal_state_boundary() {
-    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
-    let root = tempfile::tempdir().expect("test root");
-
-    let static_ms = tiny_measurement_set(root.path());
-    let static_image = root.path().join("static-mask");
-    let mut static_request = request(static_ms, static_image.clone(), ContinuumAlgorithm::Hogbom);
-    static_request.mask = ContinuumMask::Boxes(vec![ContinuumMaskBox {
-        blc: [4, 4],
-        trc: [11, 11],
-    }]);
-    let static_result = execute_continuum(static_request).expect("static-mask solve");
-    assert!(
-        static_result
-            .outcome
-            .output
-            .minor_cycles
-            .last()
-            .expect("minor-cycle evidence")
-            .auto_mask
-            .is_none()
-    );
-    let published_mask = PagedImage::<f32>::open(root.path().join("static-mask.mask"))
-        .expect("open published reconstruction mask");
-    let mask_pixels = published_mask
-        .get_slice(&[0, 0, 0, 0], &[16, 16, 1, 1])
-        .expect("read published reconstruction mask");
-    assert_eq!(mask_pixels[[0, 0, 0, 0]], 0.0);
-    assert_eq!(mask_pixels[[8, 8, 0, 0]], 1.0);
-    assert_model_residual_respect_mask(&static_image, 64);
-
-    let image_root = root.path().join("image-mask-input");
-    std::fs::create_dir(&image_root).expect("image-mask fixture directory");
-    let image_ms = tiny_measurement_set(&image_root);
-    let mask_path = root.path().join("shifted.mask");
-    let mut coordinates = CoordinateSystem::new();
-    coordinates.add_coordinate(DirectionCoordinate::new(
-        casa_types::measures::direction::DirectionRef::J2000,
-        Projection::new(ProjectionType::SIN),
-        [1.0, 0.5],
-        [
-            -std::f64::consts::PI / (180.0 * 3600.0),
-            std::f64::consts::PI / (180.0 * 3600.0),
-        ],
-        [9.0, 8.0],
-    ));
-    let mut image = PagedImage::<f32>::create(vec![16, 16], coordinates, &mask_path)
-        .expect("create shifted CASA image mask");
-    let mut pixels = ArrayD::from_elem(ndarray::IxDyn(&[16, 16]), 0.0_f32);
-    pixels[[3, 3]] = 1.0;
-    image
-        .put_slice(&pixels, &[0, 0])
-        .expect("write mask pixels");
-    image.save().expect("persist image mask");
-    let image_output = root.path().join("image-mask");
-    let mut image_request = request(image_ms, image_output.clone(), ContinuumAlgorithm::Hogbom);
-    image_request.mask = ContinuumMask::Image(mask_path);
-    let image_result = execute_continuum(image_request).expect("reprojected image-mask solve");
-    assert!(!image_result.outcome.output.minor_cycles.is_empty());
-    let reprojected_mask = product_plane(&image_output, ".mask");
-    assert_eq!(reprojected_mask[[2, 3, 0, 0]], 1.0);
-    assert_model_residual_respect_mask(&image_output, 1);
-
-    let auto_root = root.path().join("auto-input");
-    std::fs::create_dir(&auto_root).expect("auto fixture directory");
-    let auto_ms = tiny_measurement_set(&auto_root);
-    let mut auto_request = request(
-        auto_ms,
-        root.path().join("auto-mask"),
-        ContinuumAlgorithm::Hogbom,
-    );
-    auto_request.mask = ContinuumMask::AutoMultithresh(ContinuumAutoMaskControls {
-        sidelobe_factor: 0.0,
-        noise_factor: 0.0,
-        low_noise_factor: 0.0,
-        negative_factor: 0.0,
-        minimum_beam_fraction: 0.0,
-        smooth_factor: 1.0,
-        cut_threshold: 0.01,
-        grow_iterations: 0,
-        minimum_percent_change: -1.0,
-    });
-    auto_request.iterations = 2;
-    auto_request.cycle_iterations = 1;
-    auto_request.maximum_major_cycles = Some(2);
-    auto_request.gain = 0.1;
-    let auto_result = execute_continuum(auto_request).expect("auto-mask solve");
-    let cycles = &auto_result.outcome.output.minor_cycles;
-    assert_eq!(cycles.len(), 2);
-    let first_evidence = cycles[0].auto_mask.expect("first auto-mask evidence");
-    assert_eq!(first_evidence.previous_mask_generation, None);
-    let evidence = cycles[1].auto_mask.expect("second auto-mask evidence");
-    assert_eq!(
-        evidence.previous_mask_generation,
-        Some(cycles[0].mask_generation),
-        "the next automatic mask must retain the exact prior generation"
-    );
-    assert!(cycles.iter().all(|cycle| cycle.mask_normal_state.is_some()));
-    assert_ne!(
-        cycles[0].mask_normal_state, cycles[1].mask_normal_state,
-        "each automatic-mask generation must consume the current reconciled Normal State"
-    );
-    assert_ne!(
-        cycles[0].mask_model_generation, cycles[1].mask_model_generation,
-        "each automatic mask must constrain the current model generation"
-    );
-    assert!(evidence.robust_rms.is_finite());
-    assert!(evidence.positive_threshold.is_finite());
-    assert_eq!(auto_result.outcome.output.major_cycle_count, 3);
-    assert_eq!(auto_result.minor_iterations, 2);
 }

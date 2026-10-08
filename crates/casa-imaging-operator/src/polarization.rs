@@ -222,11 +222,17 @@ impl PolarizationRouting {
         self.to_requested[requested * self.grid.len() + gpol]
     }
 
-    /// Coefficient of grid plane `gpol` in the PSF (and weight) image of
-    /// requested plane `requested` (CASA `StokesImageUtil::ToStokesPSF`):
-    /// with one or two requested Stokes parameters every plane takes the
-    /// parallel-hand sum, or the cross-hand sum for U and V on linear feeds
-    /// and Q and U on circular feeds; otherwise the data conversion.
+    /// Coefficient of grid plane `gpol` in the PSF image of requested plane
+    /// `requested` (CASA `StokesImageUtil::ToStokesPSF`): with one or two
+    /// requested Stokes parameters every plane takes the parallel-hand sum,
+    /// or the cross-hand sum for U and V on linear feeds and Q and U on
+    /// circular feeds; with three or four, every plane takes the first
+    /// parameter's conversion; a single-correlation grid, a Stokes grid or a
+    /// request with a non-Stokes coordinate takes the data conversion.
+    ///
+    /// The operator forms its weight image with these coefficients too,
+    /// whereas CASA applies `ToStokesPSF` to the PSF only; no kernel set
+    /// with a weight image is installed before the AW and mosaic operators.
     #[must_use]
     pub fn to_requested_psf(&self, requested: usize, gpol: usize) -> Complex64 {
         self.to_requested_psf[requested * self.grid.len() + gpol]
@@ -410,11 +416,12 @@ fn to_coefficient(
     }
 }
 
-/// `StokesImageUtil::ToStokesPSF`: with one or two requested Stokes
-/// parameters on physical feeds, both PSF planes come from one Stokes row
+/// `StokesImageUtil::ToStokesPSF` on physical feeds: with one or two
+/// requested Stokes parameters, every PSF plane comes from one Stokes row
 /// of the data conversion (CASA applies the cross-hand rule to both planes
-/// whenever either requested parameter is a cross-hand one); with three or
-/// four, the data conversion applies plane by plane.
+/// whenever either requested parameter is a cross-hand one); with more, every
+/// plane is the first requested parameter's PSF (`sv(outMap(0))`), since the
+/// grid holds more than one correlation.
 fn psf_coefficient(
     feed: FeedBasis,
     requested_all: &[PolarizationCoordinate],
@@ -424,12 +431,14 @@ fn psf_coefficient(
     use PolarizationCoordinate::{StokesI, StokesQ, StokesU, StokesV};
     if feed == FeedBasis::Stokes
         || plane == GridPolarization::StokesI
-        || requested_all.len() > 2
         || !requested_all
             .iter()
             .all(|coordinate| is_stokes(*coordinate))
     {
         return to_coefficient(feed, requested, plane);
+    }
+    if requested_all.len() > 2 {
+        return to_coefficient(feed, requested_all[0], plane);
     }
     let cross_hand = |coordinate: &PolarizationCoordinate| match feed {
         FeedBasis::Linear => matches!(coordinate, StokesU | StokesV),

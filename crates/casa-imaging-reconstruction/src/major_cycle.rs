@@ -30,10 +30,7 @@ use crate::{
     ModelGenerationId, ModelLifecycle, ModelLifecycleError, PreparedFinalModel,
     SpectralOperatorError, SpectralPrimitiveCatalog, WeightingGenerationId, WeightingReplayId,
     runtime_adapter::CompleteDataNormalState,
-    spectral_operator::{
-        ReusableNormalState,
-        normal_storage::{NormalStatePrimitives, NormalStateWindowPayload},
-    },
+    spectral_operator::normal_storage::{NormalStatePrimitives, NormalStateWindowPayload},
 };
 
 /// Heap bound for one domain's channel-local window and its backing-access
@@ -113,6 +110,14 @@ pub struct FinalNormalState {
 }
 
 impl FinalNormalState {
+    pub(crate) const fn primitives(&self) -> &NormalStatePrimitives {
+        &self.primitives
+    }
+
+    pub(crate) fn into_primitives(self) -> NormalStatePrimitives {
+        self.primitives
+    }
+
     pub(crate) fn clark_workspace(
         &self,
     ) -> Option<&std::sync::Mutex<Option<crate::minor_cycle::ClarkRefreshWorkspace>>> {
@@ -136,105 +141,11 @@ impl FinalNormalState {
         self.primitives.retained_resident_bytes()
     }
 
-    /// Start a residual-only candidate sharing this complete state's immutable
-    /// normal fields. Source/operator association is checked without array reads;
-    /// the previous complete state remains usable if the candidate fails.
-    #[doc(hidden)]
-    pub fn begin_streaming_cube_refresh(
-        &self,
-        specification: &crate::SpectralOperatorSpecification,
-        replay: &crate::weighting::WeightingReplaySummary,
-        model: ModelGenerationId,
-        storage: &crate::spectral_operator::normal_storage::NormalStoragePlan,
-    ) -> Result<CubeNormalRefresh, SpectralOperatorError> {
-        let completion =
-            crate::spectral_operator::CompleteDataOwnerCompletion::from_streaming_cube(
-                specification,
-                replay,
-            )?;
-        if self.catalog != NormalStateCatalog::UnnormalizedChannelSlabV1
-            || self.problem != completion.problem_id()
-            || self.geometry != completion.geometry_id()
-            || self.numerics != completion.numerics_id()
-            || self.weighting_commitment != completion.weighting_commitment_id()
-            || self.weighting_generation != completion.weighting_generation()
-            || self.sample_count != replay.sample_count()
-            || self.block_count != replay.block_count()
-        {
-            return Err(SpectralOperatorError::ReusableNormalStateMismatch);
-        }
-        Ok(CubeNormalRefresh {
-            fold: crate::spectral_operator::normal_storage::StoredChannelNormalFold::refresh(
-                &self.primitives,
-                completion,
-                model,
-                storage,
-            )?,
-        })
-    }
     /// Maximum channel window supported by this generation's backing capability.
     #[doc(hidden)]
     #[must_use]
     pub fn maximum_read_channels(&self) -> usize {
         self.primitives.maximum_read_channels()
-    }
-
-    pub(crate) fn read_reusable_window(
-        &self,
-        channels: std::ops::Range<usize>,
-    ) -> Result<Vec<ReusableNormalState>, SpectralOperatorError> {
-        let NormalStateWindowPayload::ChannelLocal(domains) =
-            self.primitives.read_window(channels)?
-        else {
-            return Err(SpectralOperatorError::ReusableNormalStateMismatch);
-        };
-        domains
-            .into_iter()
-            .map(|domain| {
-                let (ordinal, _role, primitives) = domain.into_parts();
-                ReusableNormalState::new(
-                    ordinal,
-                    self.problem,
-                    self.geometry,
-                    self.numerics,
-                    self.weighting_commitment,
-                    self.weighting_generation,
-                    primitives,
-                )
-            })
-            .collect()
-    }
-
-    pub(crate) fn into_reusable_domains(
-        self,
-    ) -> Result<Vec<ReusableNormalState>, SpectralOperatorError> {
-        let Self {
-            problem,
-            geometry,
-            numerics,
-            weighting_commitment,
-            weighting_generation,
-
-            primitives,
-            ..
-        } = self;
-        let channels = primitives.primary_metadata().slab.core_range();
-        primitives
-            .into_window(channels)?
-            .into_iter()
-            .map(|domain| {
-                let (domain_ordinal, _role, primitives) = domain.into_parts();
-                ReusableNormalState::new(
-                    domain_ordinal,
-                    problem,
-                    geometry,
-                    numerics,
-                    weighting_commitment,
-                    weighting_generation,
-                    primitives,
-                )
-            })
-            .collect()
     }
 
     /// Return the canonical number of image-domain normal states in this one completion.
@@ -503,34 +414,6 @@ impl FinalNormalState {
     }
 }
 
-/// Incomplete residual-only candidate; no complete-state access until coverage
-/// closes. Its shared invariant owner never retains a previous residual epoch.
-#[doc(hidden)]
-#[derive(Debug)]
-pub struct CubeNormalRefresh {
-    fold: crate::spectral_operator::normal_storage::StoredChannelNormalFold,
-}
-
-impl CubeNormalRefresh {
-    /// Append the next exclusive channel range at the candidate's model epoch.
-    pub fn append(
-        &mut self,
-        residual: crate::streaming_cube::band::CubeResidual,
-    ) -> Result<(), SpectralOperatorError> {
-        self.fold.append_residual(residual)
-    }
-
-    /// Transfer a complete candidate only after ordered full-axis coverage.
-    pub fn finish(
-        self,
-    ) -> Result<
-        crate::spectral_operator::normal_storage::CompleteDataNormalState,
-        SpectralOperatorError,
-    > {
-        self.fold.finish()
-    }
-}
-
 /// Explicitly loaded Normal State data retaining its global completion owner.
 /// Channel-local windows do not mint local completion or mask identities.
 #[derive(Debug)]
@@ -615,13 +498,6 @@ impl FinalNormalStateWindow<'_> {
     #[must_use]
     pub fn sensitivity(&self) -> crate::SensitivityValues<'_> {
         self.primitives.sensitivity()
-    }
-
-    /// Return the completed scalar primary-beam `sum(W B)` statistic, when
-    /// the compiled measurement equation includes that response.
-    #[must_use]
-    pub fn primary_beam_weighted_sum(&self) -> Option<&[f64]> {
-        self.primitives.primary_beam_weighted_sum()
     }
 
     /// Borrow one reconstruction-coefficient residual term.
@@ -759,12 +635,6 @@ impl<'a> FinalNormalDomainState<'a> {
     #[must_use]
     pub fn sensitivity(self) -> crate::SensitivityValues<'a> {
         self.domain.primitives().sensitivity()
-    }
-
-    /// Return the completed scalar primary-beam `sum(W B)` statistic.
-    #[must_use]
-    pub fn primary_beam_weighted_sum(self) -> Option<&'a [f64]> {
-        self.domain.primitives().primary_beam_weighted_sum()
     }
 
     /// Return this chart's normal-moment-major, polarization-minor weights.
@@ -975,7 +845,7 @@ impl<'a> FinalNormalStatePlane<'a> {
         self.shape
     }
 
-    /// Return mapped, blank, or unmapped channel validity.
+    /// Return weighted or unmapped channel validity.
     #[must_use]
     pub const fn validity(&self) -> crate::SpectralChannelValidity {
         self.validity
@@ -1138,8 +1008,8 @@ impl MajorCycleOwner {
             primitives,
             completion,
         } = result;
-        let primitives = primitives
-            .promote_major_cycle_residual(preparation.final_model_generation())
+        primitives
+            .require_residual_model(preparation.final_model_generation())
             .map_err(MajorCycleError::Residual)?;
         Ok(Self {
             problem: completion.problem_id(),

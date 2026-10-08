@@ -141,7 +141,6 @@ fn run_q_band_cube(expected_rows: usize, image_size: usize, full_input: bool) {
         panic!("Q-band preflight failed: {error}");
     });
     let task_wall_seconds = started.elapsed().as_secs_f64();
-    super::t55_cube_pipeline::assert_cube_execution_route(&result, true);
     assert!(result.outcome.output.major_cycle_count > 1);
     assert!(result.actual_minor_iterations > 0);
     if std::env::var_os("CASA_RS_PROFILE_CUBE").is_some() {
@@ -153,40 +152,8 @@ fn run_q_band_cube(expected_rows: usize, image_size: usize, full_input: bool) {
                 .as_nanos()
         );
     }
-    let worker_evidence = [
-        ("initial-major", &result.outcome.output.initial_receipt),
-        (
-            "final-major",
-            result
-                .outcome
-                .output
-                .final_major_receipt
-                .as_ref()
-                .expect("final-major receipt"),
-        ),
-    ]
-    .into_iter()
-    .map(|(phase, receipt)| {
-        assert_eq!(receipt.status(), ReceiptStatus::Completed);
-        assert_eq!(receipt.initial_execution_knobs().workers, workers);
-        let peaks = receipt
-            .plan_node_identities()
-            .into_iter()
-            .map(|node| {
-                let peak = receipt.actual_resource_peak(
-                    &node,
-                    &LeaseResource::Workers,
-                    &ClaimLifetime::Work,
-                );
-                (node.as_str().to_owned(), peak)
-            })
-            .collect::<BTreeMap<_, _>>();
-        (
-            phase,
-            serde_json::json!({"admitted_workers": workers, "worker_peaks": peaks}),
-        )
-    })
-    .collect::<BTreeMap<_, _>>();
+    let pass_workers = result.outcome.output.workers;
+    assert_eq!(pass_workers as u64, workers);
     assert_products(&image_name, &result.product_names, &REAL_PRODUCTS);
     let pb = PagedImage::<f32>::open(root.join("image.pb")).expect("published PB");
     assert_eq!(pb.shape(), &[image_size, image_size, 1, 512]);
@@ -214,11 +181,11 @@ fn run_q_band_cube(expected_rows: usize, image_size: usize, full_input: bool) {
             } else {
                 "diagnostic only: reduced rows, all 512 Q-band channels, CPU Clark cube"
             },
-            "execution_route": "native-streaming-cube",
+            "execution_route": "major-cycle-pass",
             "rows": expected_rows,
             "requested_workers": workers,
             "native_memory_bytes": memory_bytes,
-            "worker_evidence": worker_evidence,
+            "pass_workers": pass_workers,
             "image_size": image_size,
             "task_wall_seconds": task_wall_seconds,
             "publication_seconds": publication_seconds,
@@ -483,91 +450,47 @@ fn real_clark_worker_cases(
                     ReceiptRetention::new(512, 256 << 20).unwrap(),
                 )
                 .unwrap();
-                let final_receipt = output
-                    .final_major_receipt
-                    .as_ref()
-                    .expect("final-major receipt");
-                let mut receipt_summary = Vec::new();
-                for (phase, receipt) in [
-                    ("initial", &output.initial_receipt),
-                    ("final-major", final_receipt),
-                    ("publication", &output.publication_receipt),
-                ] {
-                    assert_eq!(receipts.open(receipt.attempt_id()).unwrap(), *receipt);
-                    assert_eq!(receipt.status(), ReceiptStatus::Completed);
-                    assert_eq!(
-                        receipt
-                            .compiled_problem_evidence()
-                            .field("weighting.density_scope"),
-                        Some(if weighting == ContinuumWeighting::Natural {
-                            "not_applicable"
-                        } else {
-                            "per_output_channel"
-                        }),
-                        "executed weighting scope must match the CASA workload",
-                    );
-                    assert_eq!(
-                        receipt
-                            .compiled_problem_evidence()
-                            .field("weighting.casa_cube_density_padding"),
-                        if weighting == ContinuumWeighting::Natural {
-                            None
-                        } else {
-                            Some("1")
-                        },
-                        "the single-field LSRK cube binds CASA nominal density padding"
-                    );
-                    let peaks = receipt
-                        .plan_node_identities()
-                        .into_iter()
-                        .map(|node| {
-                            let peak = receipt.actual_resource_peak(
-                                &node,
-                                &LeaseResource::Workers,
-                                &ClaimLifetime::Work,
-                            );
-                            (node.as_str().to_owned(), peak)
-                        })
-                        .collect::<BTreeMap<_, _>>();
-                    receipt_summary.push(serde_json::json!({
-                    "phase": phase, "attempt_id": receipt.attempt_id().to_string(),
-                    "path": receipts.root_path().join(format!("{}.receipt.json", receipt.attempt_id())),
-                    "selected_workers": receipt.initial_execution_knobs().workers,
-                    "worker_peaks": peaks,
-                }));
-                }
-                let actual_workers = output
-                    .initial_receipt
-                    .actual_resource_peak(
-                        &WorkNodeId::new("spectral-cycle-minor-cycle"),
-                        &LeaseResource::Workers,
-                        &ClaimLifetime::Work,
-                    )
-                    .expect("physical minor worker evidence");
+                let publication = &output.publication_receipt;
+                assert_eq!(
+                    receipts.open(publication.attempt_id()).unwrap(),
+                    *publication
+                );
+                assert_eq!(publication.status(), ReceiptStatus::Completed);
+                assert_eq!(
+                    publication
+                        .compiled_problem_evidence()
+                        .field("weighting.density_scope"),
+                    Some(if weighting == ContinuumWeighting::Natural {
+                        "not_applicable"
+                    } else {
+                        "per_output_channel"
+                    }),
+                    "executed weighting scope must match the CASA workload",
+                );
+                assert_eq!(
+                    publication
+                        .compiled_problem_evidence()
+                        .field("weighting.casa_cube_density_padding"),
+                    if weighting == ContinuumWeighting::Natural {
+                        None
+                    } else {
+                        Some("1")
+                    },
+                    "the single-field LSRK cube binds CASA nominal density padding"
+                );
+                let receipt_summary = serde_json::json!({
+                    "phase": "publication", "attempt_id": publication.attempt_id().to_string(),
+                    "path": receipts.root_path().join(format!("{}.receipt.json", publication.attempt_id())),
+                });
                 fs::write(directory.join("summary.json"), serde_json::to_vec_pretty(&serde_json::json!({
-                "weighting": label, "requested_workers": workers, "actual_minor_workers": actual_workers,
+                "weighting": label, "requested_workers": workers, "pass_workers": output.workers,
                 "task_wall_seconds": task_wall_seconds, "repetition": repetition,
                 "native_memory_bytes": memory_bytes, "major_cycles": output.major_cycle_count,
                 "minor_cycles": output.minor_cycles.len(), "minor_iterations": result.minor_iterations,
                 "actual_minor_iterations": result.actual_minor_iterations,
-                "products": result.product_names, "receipts": receipt_summary,
+                "products": result.product_names, "receipts": [receipt_summary],
             })).unwrap()).unwrap();
-                for receipt in [&output.initial_receipt, final_receipt] {
-                    assert_eq!(receipt.initial_execution_knobs().workers, workers);
-                    assert_eq!(
-                        receipt
-                            .selected_alternative_projection()
-                            .demand
-                            .workers
-                            .hard(),
-                        workers
-                    );
-                }
-                assert!(actual_workers > 0 && actual_workers <= workers);
-                assert!(
-                    workers == 1 || actual_workers > 1,
-                    "parallel execution must be real"
-                );
+                assert_eq!(output.workers as u64, workers);
                 assert!(output.major_cycle_count > 1 && output.minor_cycles.len() > 1);
                 assert!(result.actual_minor_iterations > 0);
                 assert_products(&image_name, &result.product_names, &REAL_PRODUCTS);
@@ -670,11 +593,6 @@ fn real_clark_worker_cases(
                         .collect::<Vec<_>>(),
                     normal.sum_weights().to_vec(),
                     normal.published_sum_weights().to_vec(),
-                    windows
-                        .iter()
-                        .map(|window| window.primary_beam_weighted_sum().map(<[f64]>::to_vec))
-                        .collect::<Option<Vec<_>>>()
-                        .map(|planes| planes.into_iter().flatten().collect::<Vec<_>>()),
                     output.minor_cycles.clone(),
                     output.major_cycle_count,
                     result.minor_iterations,
@@ -684,8 +602,8 @@ fn real_clark_worker_cases(
                     None => baseline = Some((products, evidence)),
                     Some((baseline_products, baseline_evidence)) => {
                         // Live IDs are execution-local; numerical reductions may round differently.
-                        assert_eq!(baseline_evidence.6.len(), evidence.6.len());
-                        for (expected, actual) in baseline_evidence.6.iter().zip(&mut evidence.6) {
+                        assert_eq!(baseline_evidence.5.len(), evidence.5.len());
+                        for (expected, actual) in baseline_evidence.5.iter().zip(&mut evidence.5) {
                             actual.mask_generation = expected.mask_generation;
                             actual.mask_model_generation = expected.mask_model_generation;
                         }
@@ -704,16 +622,9 @@ fn real_clark_worker_cases(
                         assert_complex_agreement(&baseline_evidence.2, &evidence.2);
                         assert_real_agreement(&baseline_evidence.3, &evidence.3);
                         assert_real_agreement(&baseline_evidence.4, &evidence.4);
-                        match (&baseline_evidence.5, &evidence.5) {
-                            (Some(expected), Some(actual)) => {
-                                assert_real_agreement(expected, actual)
-                            }
-                            (None, None) => (),
-                            _ => panic!("primary-beam inventory changed"),
-                        }
+                        assert_eq!(baseline_evidence.6, evidence.6);
                         assert_eq!(baseline_evidence.7, evidence.7);
                         assert_eq!(baseline_evidence.8, evidence.8);
-                        assert_eq!(baseline_evidence.9, evidence.9);
                     }
                 }
                 fs::write(

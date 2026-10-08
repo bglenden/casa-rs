@@ -600,6 +600,7 @@ dependencies = [
  "casa-coordinates",
  "casa-images",
  "casa-imaging-model",
+ "casa-imaging-operator",
  "casa-imaging-products",
  "casa-imaging-reconstruction",
  "casa-imaging-runtime",
@@ -612,6 +613,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "thiserror 2.0.18",
  "tracing",
 ]
 
@@ -701,8 +703,8 @@ dependencies = [
 name = "casa-imaging-runtime"
 version = "0.27.0"
 dependencies = [
- "bytemuck",
  "casa-imaging-model",
+ "casa-imaging-operator",
  "casa-imaging-products",
  "casa-imaging-reconstruction",
  "casa-lattices",
@@ -714,8 +716,6 @@ dependencies = [
  "libc",
  "ndarray",
  "num-complex",
- "objc2",
- "objc2-foundation",
  "objc2-metal",
  "rayon",
  "serde",
@@ -787,7 +787,6 @@ version = "0.27.0"
 dependencies = [
  "casa-coordinates",
  "casa-imaging-model",
- "casa-imaging-reconstruction",
  "casa-logging",
  "casa-measures-data",
  "casa-numerics",

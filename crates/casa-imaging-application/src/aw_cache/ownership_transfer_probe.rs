@@ -4,16 +4,13 @@
 
 use super::*;
 use std::cell::Cell;
-use std::sync::atomic::{AtomicBool, Ordering};
-
-static PROCESS_COPY_CONTROL: AtomicBool = AtomicBool::new(false);
 
 thread_local! {
     static COPY_CONTROL: Cell<bool> = const { Cell::new(false) };
 }
 
 pub(super) fn copy_control_enabled() -> bool {
-    COPY_CONTROL.get() || PROCESS_COPY_CONTROL.load(Ordering::Relaxed)
+    COPY_CONTROL.get()
 }
 
 fn copying_control<T>(operation: impl FnOnce() -> T) -> T {
@@ -203,142 +200,6 @@ fn write_control_cache(cache: &Path, imaging_extent: usize, weight_extent: usize
                     extent,
                 );
             }
-        }
-    }
-}
-
-fn normal_fingerprint(normal: &casa_imaging_reconstruction::FinalNormalState) -> String {
-    use sha2::{Digest, Sha256};
-    let window = normal
-        .read_window(normal.slab().core_range())
-        .expect("complete final normal window");
-    let mut digest = Sha256::new();
-    for values in [window.residual(), window.normal_approximation()] {
-        digest.update((values.len() as u64).to_le_bytes());
-        for value in values {
-            digest.update(value.re.to_bits().to_le_bytes());
-            digest.update(value.im.to_bits().to_le_bytes());
-        }
-    }
-    for values in [
-        window.sensitivity().dense().expect("AW dense sensitivity"),
-        normal.sum_weights(),
-    ] {
-        digest.update((values.len() as u64).to_le_bytes());
-        for value in values {
-            digest.update(value.to_bits().to_le_bytes());
-        }
-    }
-    format!("{:x}", digest.finalize())
-}
-
-#[test]
-fn ownership_transfer_dirty_fingerprint_uses_complete_normal_arrays() {
-    if std::env::var_os("CASA_RS_T51_DIRTY_FINGERPRINT_CHILD").is_none() {
-        let status = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "aw_cache::ownership_transfer_probe::ownership_transfer_dirty_fingerprint_uses_complete_normal_arrays",
-                "--nocapture",
-                "--test-threads=1",
-            ])
-            .env("CASA_RS_T51_DIRTY_FINGERPRINT_CHILD", "1")
-            .env("CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND", "3000000000")
-            .env("CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND", "3000000000")
-            .env("RUST_MIN_STACK", "16777216")
-            .status()
-            .unwrap();
-        assert!(status.success());
-        return;
-    }
-    let root = tempfile::TempDir::new().unwrap();
-    let ms = application_fixture::vla_aw_measurement_set(root.path());
-    let cache = root.path().join("aw-cache");
-    write_control_cache(&cache, 16, 32);
-    let mut request = application_fixture::request(
-        ms,
-        root.path().join("dirty"),
-        crate::ContinuumAlgorithm::Dirty,
-    );
-    request.aw_projection = Some(application_fixture::aw_projection(cache, false));
-    let result = crate::execute_continuum(request).unwrap();
-    let normal = result.outcome.output.scientific.normal_state();
-    assert!(normal.coefficient_term_count() > 0);
-    assert!(normal.normal_moment_count() > 0);
-    let window = normal
-        .read_window(normal.slab().core_range())
-        .expect("complete final normal window");
-    assert!(window.coefficient_term(0).is_none());
-    assert!(window.normal_moment(0).is_none());
-    assert!(!window.residual().is_empty());
-    assert!(!window.normal_approximation().is_empty());
-    assert!(window.sensitivity().iter().next().is_some());
-    assert!(!normal.sum_weights().is_empty());
-    assert_eq!(normal_fingerprint(normal).len(), 64);
-}
-
-#[test]
-#[ignore = "T51 ownership-transfer controls require the authorized outer 900-second guard"]
-fn t51_ownership_transfer_provider_controls() {
-    let raw = PathBuf::from(std::env::var_os("CASA_RS_VLASS_CF_CACHE").unwrap());
-    let root = PathBuf::from(std::env::var_os("CASA_RS_T51_TRANSFER_CONTROL_ROOT").unwrap());
-    fs::create_dir(&root).unwrap();
-    let catalog = CasaAwCache::open(raw).unwrap();
-    for payload_bytes in [1_139_200_usize, 5_939_200, 19_302_400] {
-        let entry = catalog
-            .entries
-            .values()
-            .find(|entry| {
-                (entry.imaging.shape[0] * entry.imaging.shape[1]
-                    + entry.weight.shape[0] * entry.weight.shape[1])
-                    * 8
-                    == payload_bytes
-            })
-            .expect("predeclared size must exist in the observed source catalog");
-        assert_eq!(entry.imaging.shape[0], entry.imaging.shape[1]);
-        assert_eq!(entry.weight.shape[0], entry.weight.shape[1]);
-        let fixture_root = root.join(payload_bytes.to_string());
-        fs::create_dir(&fixture_root).unwrap();
-        let ms = application_fixture::vla_aw_measurement_set(&fixture_root);
-        let cache = fixture_root.join("aw-cache");
-        write_control_cache(&cache, entry.imaging.shape[0], entry.weight.shape[0]);
-        CasaAwCache::open(&cache).expect("validate controlled catalog before measured cohorts");
-        let mut expected = None;
-        for (trial, copying) in [true, false, false, true, true, false]
-            .into_iter()
-            .enumerate()
-        {
-            let mut request = application_fixture::request(
-                ms.clone(),
-                fixture_root.join(format!("trial-{trial}")),
-                crate::ContinuumAlgorithm::Dirty,
-            );
-            let mut aw = application_fixture::aw_projection(cache.clone(), false);
-            aw.resident_bytes = 402_653_184;
-            request.aw_projection = Some(aw);
-            request.task_requirements = vec![
-                crate::TaskRequirement::AwProjection,
-                crate::TaskRequirement::SerialCpu,
-            ];
-            request.resource_policy =
-                crate::resource_policy_for_task_requirements(&request.task_requirements);
-            eprintln!(
-                "t51_transfer_begin payload_bytes={payload_bytes} trial={trial} copying={copying}"
-            );
-            PROCESS_COPY_CONTROL.store(copying, Ordering::Relaxed);
-            let result = crate::execute_continuum(request);
-            PROCESS_COPY_CONTROL.store(false, Ordering::Relaxed);
-            let result = result.expect("canonical controlled AW application execution");
-            let normal = result.outcome.output.scientific.normal_state();
-            let digest = normal_fingerprint(normal);
-            if let Some(expected) = &expected {
-                assert_eq!(&digest, expected);
-            } else {
-                expected = Some(digest.clone());
-            }
-            eprintln!(
-                "t51_transfer_complete payload_bytes={payload_bytes} trial={trial} copying={copying} normal_sha256={digest}"
-            );
         }
     }
 }

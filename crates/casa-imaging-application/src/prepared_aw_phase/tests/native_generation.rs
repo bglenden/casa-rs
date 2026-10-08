@@ -87,7 +87,7 @@ fn t52_native_generation_and_fresh_execution_reuse_share_the_reader() {
         .collect::<Vec<_>>();
     cold.bind_plan().unwrap();
     drop(cold);
-    cold_runtime.attempts[0] = ExecutionAttemptId::from_sha256([21; 32]);
+    cold_runtime.publication_attempt = ExecutionAttemptId::from_sha256([21; 32]);
     let warm = prepare_aw_projection(&problem, deployment, &cold_runtime).unwrap();
     assert_eq!(
         warm.receipts.len(),

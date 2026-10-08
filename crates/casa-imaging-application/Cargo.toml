@@ -16,6 +16,7 @@ tracing.workspace = true
 casa-coordinates = { path = "../casa-coordinates" }
 casa-images = { path = "../casa-images" }
 casa-imaging-model = { path = "../casa-imaging-model" }
+casa-imaging-operator = { path = "../casa-imaging-operator" }
 casa-imaging-products = { path = "../casa-imaging-products" }
 casa-imaging-reconstruction = { path = "../casa-imaging-reconstruction" }
 casa-imaging-runtime = { path = "../casa-imaging-runtime" }
@@ -26,6 +27,7 @@ ndarray.workspace = true
 num-complex.workspace = true
 sha2 = "0.10"
 tempfile = "3"
+thiserror.workspace = true
 
 [dev-dependencies]
 casa-test-support = { path = "../casa-test-support" }

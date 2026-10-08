@@ -164,9 +164,6 @@ fn private_synthetic_request_crosses_the_complete_compile_plan_run_seam() {
         .collect::<BTreeSet<_>>();
     assert_eq!(planned_participants, expected_participants);
 
-    let transaction = skeleton.plan.observation_transaction().work();
-    assert!(transaction.final_model_preparation().is_none());
-    assert!(transaction.visibility_writeback().is_none());
     let dag = skeleton.plan.execution_dag();
     let dag_nodes = dag.nodes().keys().collect::<BTreeSet<_>>();
     for required in [
@@ -185,11 +182,6 @@ fn private_synthetic_request_crosses_the_complete_compile_plan_run_seam() {
     }
     assert!(!dag_nodes.contains(&WorkNodeId::new("final-model-preparation")));
     assert!(!dag_nodes.contains(&WorkNodeId::new("transaction-stage-model")));
-    assert!(
-        dag.nodes()
-            .values()
-            .all(|node| node.kind != WorkKind::ObservationReadWriteback)
-    );
     assert!(dag.nodes().values().all(|node| {
         node.claims
             .iter()

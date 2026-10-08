@@ -18,7 +18,7 @@ coordinates, measures, and related workflows.
 | foundation crates (`casa-types`, `casa-measures-data`, `casa-measures-tools`) | Public scalar/quanta/measures algorithms and contracts plus explicit runtime-data validation, loading, installation, and maintenance | core codecs; `casa-measures-data` also uses canonical `casa-tables` accessors |
 | shared numerics (`casa-numerics`) | Domain-neutral numerical algorithms reused by observation, calibration, and imaging owners | Rust numerical ecosystem crates only |
 | persistent storage (`casa-tables`) | CASA table persistence, codecs, data managers/storage backends, schema/mutation APIs, and TaQL engine | core codecs, foundation crates |
-| native imaging contracts (`casa-imaging-model`, `casa-imaging-reconstruction`, `casa-imaging-products`, `casa-imaging-runtime`) | Dependency-free logical schemas and commitments; authoritative model-state ingest, reprojection, delta, and completion algorithms; continuum product algorithms with bounded owned windows streamed directly to CASA staging and atomic individual-image replacement; process-level resource topology, policies, demand envelopes, arbitration, leases, and planner-owned Metal device, unified-residency, queue, and fence execution | `casa-imaging-model` has no workspace dependencies; `casa-imaging-reconstruction` and `casa-imaging-products` depend inward on the model and domain-neutral numerics, with products also depending on reconstruction completions; `casa-imaging-runtime` depends on the model and the reconstruction-owned executable-problem brand at its execution boundary and composes bounded generation and ordinary publication lifecycle |
+| native imaging contracts (`casa-imaging-model`, `casa-imaging-operator`, `casa-imaging-deconvolution`, `casa-imaging-reconstruction`, `casa-imaging-products`, `casa-imaging-runtime`, `casa-imaging-metal`) | Dependency-free logical schemas and commitments; the measurement operator (weighting, spectral resampling, gridding, degridding, FFT and normalization); minor-cycle solvers; authoritative model-state ingest, reprojection, delta, and completion algorithms; continuum product algorithms with bounded owned windows streamed directly to CASA staging and atomic individual-image replacement; process-level resource topology, policies, demand envelopes, arbitration and leases; the major-cycle pass, worker team and paged cube state; the Metal backend | ADR-0016 layering, enforced by `scripts/check-imaging-dependencies.py`: `casa-imaging-model` has no workspace dependencies; the operator and deconvolution depend on the model, `casa-fft` and `casa-numerics`; reconstruction and products depend inward on the model and domain-neutral numerics, with products also depending on reconstruction completions; runtime composes the operator, reconstruction and products; the Metal crate depends only on the operator |
 | imaging application composition (`casa-imaging-application`) | Sole production composition seam across MeasurementSet authority, reconstruction, products, resources, execution, typed installed-implementation availability, and CASA product publication | Native imaging owners only; unavailable requests invoke no execution implementation |
 | domain libraries (`casa-ms`, `casa-simulation-synthesis`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-calibration`, `casa-vla`) | Higher-level astronomy data models and algorithms built on table/image persistence; simulation synthesis owns only the serial model predictor and Airy voltage pattern used by MeasurementSet simulation | foundation crates, `casa-tables`, selected peer domain crates where documented |
 | boundary contracts (`casa-provider-contracts`, `casars-imagebrowser-protocol`, `casars-tablebrowser-protocol`) | The generic provider envelope, canonical parameter and application catalogs, task/session surface definitions, and protocol surfaces between providers, apps, and Python/runtime layers | domain libraries and foundation crates; must not become a second source of truth |
@@ -72,19 +72,10 @@ at each work/fence event or scans of historical receipts during admission.
 and depends inward on the model plus reconstruction's opaque executable-problem
 brand. That reconstruction edge is limited to admitting owner-prepared model
 inputs at the execution and receipt boundary; runtime does not own or invoke
-reprojection algorithms. Its Metal module binds only plan-selected physical
-facts under a scheduler-issued lease authority, materializes only admitted live
-GPU-visible slots, and retires them at the allocation ledger's release events.
-An observation or managed-replay I/O node may explicitly claim accelerator participation while
-retaining I/O-depth admission and both I/O/device terminal fences; CPU-only
-buffers do not become Metal allocations. Bounded command batches reuse residency
-within the stage without completing either terminal fence. Pending commands own
-their device dependencies; batch-scoped autorelease pools release framework
-temporaries without relying on a Cocoa event loop on Rust worker threads.
-The runtime owns command queues, device fences, cancellation drain,
-and canonical work measurements; implementation registries retain kernel and
-Numerics Contract ownership, and unavailable Metal work fails typed without CPU
-substitution. Runtime also
+reprojection algorithms. It owns the major-cycle pass, its worker team and
+bounded source stream, and the paged cube state (see Imaging execution). The
+scheduler rejects Metal work until IF-4 installs a Metal backend in the pass;
+there is no CPU substitution. Runtime also
 owns content-addressed prepared implementation artifacts: an exact artifact
 identity, a separate cache identity, bounded generation or load, integrity
 validation, private atomic caching, and deterministic eviction. Artifact
@@ -131,8 +122,10 @@ buffer are charged inside one
 measurement policy explicitly; there is no default that can silently discard
 completed I/O or mutation evidence.
 
-Native EVLA paired A/W cells use that same private store and downstream
-prepared-cell decoder/operator. `casa-imaging-model` owns the immutable,
+Native EVLA paired A/W cells use that same private store. From IF-2 until IF-3
+(#652) no imaging run consumes them: AW projection is typed unavailable, and
+the preparation below is kept, unused, for the convolution-function set IF-3
+installs in the major-cycle pass. `casa-imaging-model` owns the immutable,
 content-identified dish model and complete frequency/W/PA/Mueller/term request.
 `casa-imaging-reconstruction` owns aperture evaluation, shared float FFT,
 support selection and sampled-area normalization without filesystem or runtime
@@ -147,24 +140,6 @@ The first provider is EVLA-specific, not evidence of general telescope support.
 Its surface data is an explicit input, never discovered in an installed CASA
 runtime. Native cache files are private schema-7 implementation artifacts, not
 CASA-readable CF tables; existing CASA caches remain read-only import inputs.
-
-Run-scoped gridded replay exports a dedicated immutable Host/Data allocation
-from its original admitted execution lease. Work and I/O fences settle before
-scientific sealing transfers the existing permit; there is no release/reacquire
-gap or second lease. Runtime-owned shared backing couples the compiled program,
-temporary artifact, and retention capability to every reader and operator.
-The final owning alias releases the exact retained metadata and storage.
-When the complete next phase leaves room, immutable replay frames also retain
-one optional run-scoped host-cache lease, charged exactly once against both
-host-memory and cache ceilings. CPU and Metal use fresh batch cursors over the
-same frame storage; changing batch size does not copy or reload payloads. The
-last view retains the memory charge. At a quiescent major boundary, a phase that
-cannot fit may evict this optional cache before planning bounded disk replay;
-channel-selected replay does not require full-artifact residency.
-Compiler transient and later minor-cycle heaps may reuse one max-sized host
-workspace only across ordered, disjoint lifetimes; exported allocations never
-reuse a physical slot. Private receipt schema 23 records each allocation's
-release or export disposition. CASA-interoperable formats are unchanged.
 
 `casa-imaging-application` owns production composition across
 MeasurementSet observation authority, reconstruction, products, and physical
@@ -408,9 +383,9 @@ column generation, metadata generation, and consistency token. Optional
 `MODEL_DATA` writes carry exact selected-cell scope plus an absent-or-generation
 precondition captured independently of whether `MODEL_DATA` was read. Every
 `PhysicalWorkBinding` passed to the sole `plan` entrypoint must type every
-MeasurementSet source operation as `ObservationRead`; a terminal replay that
-also writes bounded predictions in place to `MODEL_DATA` is
-typed `ObservationReadWriteback`. Each transaction declares final
+MeasurementSet source operation as `ObservationRead`. Visibility writes are
+not plan nodes: the final major-cycle pass writes them (see Imaging
+execution). Each transaction declares final
 complete-data reconciliation, private per-product staging events, and the
 applicable product Publication nodes. `plan`
 mechanically derives every
@@ -425,13 +400,14 @@ versioned identity includes the complete transaction declaration. The initial
 consistency check precedes every observation read; every read precedes
 reconciliation; and each terminal commit waits for every node and fence in its
 own transaction. Controller polling ends when that transaction's Publication launches.
-Initial-check, observation-read, and writeback nodes reserve one table lock
-per source; every read revalidates under those locks. Staging storage,
-writeback/publication buffers, and commit fences are ordinary Resource Authority
-claims. Product publication replaces conventional images individually; failure
-fails the run, without rollback or a resumable per-member recovery ledger.
-`MODEL_DATA` instead follows ADR-0008: the terminal replay writes selected cells
-in place under the retained lock and a small incomplete-write marker, then
+Initial-check and observation-read nodes reserve one table lock per source;
+every read revalidates under those locks. Staging storage, publication buffers,
+and commit fences are ordinary Resource Authority claims. Product publication
+replaces conventional images individually; failure fails the run, without
+rollback or a resumable per-member recovery ledger.
+`MODEL_DATA` and `CORRECTED_DATA` instead follow ADR-0008: the final major-cycle
+pass writes selected cells in place through casa-ms's selected-visibility
+writer under its lock and a small incomplete-write marker, then
 updates the owner generation and removes the marker only after a successful
 flush. Interruption may leave partial derived values, as in CASA, but the marker
 makes that state fail closed until explicit recovery or recomputation. No
@@ -467,11 +443,8 @@ containing only claims and allocations still live through that exact fence;
 work-scoped capabilities are never replayed after synchronous completion. No
 whole-plan executor or public scheduler can bypass the compile/plan/run seam.
 The transaction's initial consistency node alone receives the expected
-observation transaction, typed observation reads receive its exact read set,
-and the private writeback node receives its exact write set. The terminal
-combined replay performs any requested bounded `MODEL_DATA` mutation directly;
-there is no later model-column publication plan. Conventional product
-publication remains independently planned and receipted.
+observation transaction, and typed observation reads receive its exact read
+set. Conventional product publication is planned and receipted.
 Controllers can observe only plan-listed transitions eligible at the current
 global cut. Cancellation, rejected directives, and adapter errors drain every
 launched fence before `run` returns; mapped pages and storage-manager state also
@@ -714,95 +687,58 @@ calculate science nor inspect execution devices.
 Reusable buffers may reduce allocation churn but do not form a second memory
 budget or admission authority.
 
-The app uses one shared bounded producer/consumer primitive for source
-read-ahead across standard and mosaic MFS replay, standard MT-MFS, standard
-and mosaic cube slabs, cubedata preparation, and trace preparation.
-The read-ahead bound is a maximum live row-block count, not a queue depth. The
-default is two: one producer-owned block and one consumer-owned block. Queue
-capacity is `max_live_row_blocks - 2`, so the default two-block case uses a
-rendezvous channel and cannot retain a third queued block. A value of one runs
-synchronously. Full-slab spectral routes remain single-block. Consumer failure
-sets a shared cancellation token, drops the rendezvous receiver to wake a
-blocked producer, and prevents another bounded source read after the current
-in-flight read; the original consumer error remains the returned context.
+Every installed request runs through one major-cycle pass
+(`casa_imaging_runtime::pass`, plan section 5.4), driven by
+`casa-imaging-application`'s cycle loop: a density pass for uniform and Briggs
+weights, an initial pass that forms the dirty image and PSF, the minor cycle,
+residual passes, and a final pass that writes `MODEL_DATA` or `CORRECTED_DATA`
+when requested. Standard MFS, MT-MFS, channel-local cubes, dirty-only runs and
+outlier domains share this path; there is no per-mode driver. A pass reads
+native row blocks, each row projected on every image domain, from the bounded
+source through a two-slot stream (one block filled by a producer thread while
+the caller consumes the other), places each row on every domain with that
+domain's spectral resampler and the imaging weights, and accumulates `V − A·m`
+when a model is present and `V` otherwise. With several domains, or a linear
+cube, the pass forms CASA's residual at native channels
+(`SIMapperCollection::degrid` then `grid`): every domain's model is predicted
+at each native channel, the predictions are summed, and the difference is
+gridded into every domain. Cancellation and failure stop the producer at the
+next block boundary.
 
-The bounded mosaic application path supports one MeasurementSet, constant-basis
-`specmode='mfs'` and channel-local cube reconstruction, natural, uniform, or
-Briggs weighting, user masks, clean or dirty products, and optional
-PB/PB-corrected products. Taylor-basis mosaic requests are not an installed
-production capability: observation-pointing mosaics require a
-pointing-dependent primary-beam response for which neither direct Taylor nor
-Taylor-via-channel-major execution is admitted. They fail closed during
-installed-implementation validation. Reconstruction and product owners retain
-the reusable Taylor mosaic accumulation, sensitivity, PB, PB-correction, and
-masking mechanics, but those lower-layer mechanics do not make the application
-route available. The ordinary mosaic gridder remains a no-W path. Each
-weighting, initial-dirty, and residual-refresh pass replays the same bounded row
-stream; Briggs density uses a raw-UVW sidecar so CASA's density cell conventions
-remain independent of mosaic projection coordinates. Start-model, outlier,
-multi-MS, and higher-term combinations outside those admitted slices still
-reject during planning.
+Accumulation is split among the workers of one `WorkerTeam`.
+`Partition::Planes` gives each worker a disjoint range of channel-local planes,
+so nothing is merged and the result is bitwise independent of the worker count;
+`Partition::Regions` gives each worker a horizontal strip of the grid plus the
+kernel halo and adds the tiles in region order, so a run is deterministic for
+a given worker count and agrees with one worker to rounding. Per-plane FFTs run single-threaded
+on each worker. `Residency::plan` holds every plane when the run's memory
+budget allows; otherwise the pass runs consecutive waves of planes, one
+traversal each, with model and normal state paged through one disk-backed cube
+state that keeps every domain at its own size. A wave's model includes a halo
+of planes sized from the native channel spacing, since a native channel's
+prediction interpolates output channels around it. A wave reads only the
+native channels that feed it unless a prediction or a continuum fit needs the
+whole row. The residency is planned once per major cycle for the pass and its
+paged normal state; a run that writes visibilities must hold every plane in
+its final pass and is refused at the start otherwise.
 
 Imager task protocol v10 carries the local execution controls (`parallel` and
-the shared imaging memory target). Diagnostic progress events expose
-planned and measured memory, source bytes and read bandwidth, read/prepare
-overlap, producer/consumer blocking, live-block high water, worker/queue state,
-stage timings, and backend selection or fallback reasons. The task protocol is
-v10, the newline-delimited progress event schema is v1, and the embedded
-observability snapshot schema is v2. `parallel=false` selects the serial CPU
-comparison surface, including one live source block and FFTW product
-transforms.
+the shared imaging memory target). It defines a newline-delimited progress
+event schema (v1) with an embedded observability snapshot (v2), but the
+installed imager emits no progress events; the cycle loop logs worker counts
+and stage timings through `tracing`. `parallel=false` runs the pass with one
+worker. All production FFTs use FFTW; there is no FFT backend selector or
+fallback.
 
-For every cube plan, the runtime derives active-plane and worker concurrency
-from plane/channel geometry, hardware capacity, the exact source-cache size, the
-per-plane working set, and the run-level memory target. If all planes fit, it
-uses the ordinary one-slab route. Any selected multi-slab shape is eligible for
-bounded shared-source reuse when the same formula proves the source cache and
-concurrent plane state resident; dataset identity does not select that route.
-Dirty cubes may therefore execute as multiple bounded slabs. Bulk cube CLEAN
-also processes memory-admitted channel-band waves rather than requiring every
-plane resident together. The shared reader feeds each wave;
-after initial spectral discovery, source reads are restricted to the wave's
-required native channel window, including interpolation support. Model and
-normal-state buffers use the shared residency and paged-storage machinery
-between phases and waves. Admission charges retained band state plus at most
-the worker-count concurrent transition buffers, alongside the bounded input and
-retained-state reservations. The existing CLEAN controller remains authoritative
-across major cycles; a wave that cannot fit even one output band fails instead
-of exceeding its budget.
-
-Explicit Metal spatial execution is installed for supported standard channel-local
-cubes and single-chart Stokes-I, constant-basis MFS residual refresh. Both use the
-same admitted device/queue/residency/fence runtime and seven-tap spatial primitives.
-MFS keeps model and normal grids resident across bounded replay batches, using
-two reusable staging slots and a single final normal-grid import. Model FFTs,
-normalization, CLEAN and publication remain authoritative shared machinery;
-initial MFS imaging remains CPU work. Unsupported device geometry fails rather
-than falling back. All production FFTs use FFTW; there is no application-level
-FFT backend selector or fallback. Performance evidence for capped CLEAN is not
-full scientific acceptance.
-
-W-projection is installed as an explicit paired measurement transform. The
-model binds the selected projected-|W| envelope and optional plane count;
-reconstruction owns one kernel plan used by prediction and weighted adjoint
-gridding; runtime carries that same plan through bounded compact replay; and
-the application exposes only the explicit capability boundary. A zero-|W|
-selection reduces structurally to the standard convolution operator. Mosaic+W
-remains typed unavailable before physical planning. AW-projection is a distinct
-EVLA/VLA paired transform: the application validates a CASA imaging/weight CF
-catalog, imports or reuses cells through the private prepared-artifact store,
-and reconstruction applies one bounded operator across W, aperture/PS,
-pointing, parallactic-angle, spectral, Mueller, and normalization coordinates.
-It has no W-only alias or fallback, and the displaced CPU/Metal routes remain
-deleted.
-
-The installed mosaic execution route therefore consists of bounded serial CPU
-constant-basis MFS and channel-local cube reconstruction. Standard MT-MFS
-remains installed through its non-mosaic Taylor route. Reconstruction and
-product crates may own reusable mosaic/Taylor data structures and product
-semantics, but application availability is the capability boundary: component
-  presence alone never makes mosaic Taylor, Metal execution, or automatic
-backend selection available.
+W-projection, AW-projection, mosaics (including `mtmfs` via cube), Metal
+execution, facets and cubic spectral interpolation are typed unavailability in
+`casa-imaging-application`'s availability check, before planning, until the
+convolution-function sets of IF-3 and the Metal backend of IF-4 install them
+in the pass (cubic and facets await owner decisions on #651).
+Reconstruction's AW, mosaic and primary-beam modules, the runtime
+prepared-artifact store and the application's AW preparation are kept, unused,
+for IF-3. Application availability is the capability boundary: component
+presence alone never makes a route available.
 
 ## Persistence / external systems
 
@@ -863,11 +799,12 @@ backend selection available.
   environment reads, `eprintln!` and content hashing in imaging crates. Its
   grandfathered-file lists only shrink as tickets IF-1 to IF-9 delete the
   listed files.
-- The imaging foundation refactor (#648, ADR-0016) is in progress. Until IF-2
-  lands, the four CPU gridding drivers, the replay cache and the receipt
-  runtime described above remain the production path; the plan in
+- The imaging foundation refactor (#648, ADR-0016) is in progress; the plan in
   `docs/imaging-architecture/imaging-foundation-plan-20261007.md` is the
-  target.
+  target. IF-2 replaced the gridding drivers and replay cache with the
+  major-cycle pass. Product publication still runs through the runtime's
+  plan, executor and receipt layers, which IF-6 deletes; W, AW, mosaic and
+  Metal imaging are unavailable until IF-3 and IF-4.
 
 ## ADR index
 

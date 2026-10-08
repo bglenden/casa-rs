@@ -7,8 +7,10 @@ mod common;
 
 use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 use casa_imaging_operator::{
-    Basis, GridPrecision, NativeRow, OperatorError, RowContext, SampleBuffer, SpectralAxis,
-    SpectralKernel, SpectralResampler, WeightingGeneration,
+    Basis, DensityCellRule, DensityGridShape, DensityUv, GridGeometry, GridPadding, GridPrecision,
+    ImageExtent, MeasurementOperator, NativeRow, OperatorError, PolarizationRouting, RowContext,
+    SampleBuffer, SpectralAxis, SpectralKernel, SpectralResampler, Spheroidal, WeightingGeneration,
+    build_density_grid,
 };
 use common::operator;
 use num_complex::Complex32;
@@ -62,8 +64,16 @@ fn planes_of(
     };
     let mut out = SampleBuffer::new(if density { 1 } else { 2 });
     if density {
+        let shape = DensityGridShape {
+            width: 64,
+            height: 64,
+            planes: resampler.basis().planes() as usize,
+            padding: 0,
+            increment_rad: [-2.0e-5, 2.0e-5],
+            rule: DensityCellRule::Cube,
+        };
         resampler
-            .place_density(&operator, &row, &mut out)
+            .place_density(&operator, &row, &shape, &mut out)
             .expect("density");
     } else {
         resampler
@@ -105,6 +115,8 @@ fn direct_sampling_places_every_unflagged_channel_on_plane_zero() {
     resampler
         .place(&operator, &natural(), &row, &mut out)
         .expect("place");
+    // CASA `FTMachine::setSpectralFlag` flags every correlation of a channel
+    // when any one is flagged (pseudo-I aside), before gridding.
     assert_eq!(
         out.len(),
         2,
@@ -218,7 +230,7 @@ fn nearest_mapping_rounds_the_spectral_pixel() {
 }
 
 #[test]
-fn linear_mapping_interpolates_values_keeps_the_nearer_weight_and_ors_flags() {
+fn linear_mapping_interpolates_values_and_channel_weights_and_ors_flags() {
     let resampler = SpectralResampler::channel_local(axis(1.05, 0.1, 2), SpectralKernel::Linear);
     let operator = operator(GridPrecision::F64, resampler.basis(), &XX_YY, &STOKES_I);
     let frequencies = [1.0e9, 1.1e9, 1.2e9];
@@ -255,12 +267,72 @@ fn linear_mapping_interpolates_values_keeps_the_nearer_weight_and_ors_flags() {
         "fine frequency"
     );
     let block = out.block();
-    // Midpoint ties keep the left weight: 2 then 4; values (1+3)/2·2 and (3+5)/2·4.
-    assert_eq!(block.weights_of(0), &[2.0, 2.0]);
-    assert_eq!(block.weights_of(1), &[4.0, 4.0]);
-    assert!((block.values_of(0)[0].re - 4.0).abs() < 1e-5);
-    assert!((block.values_of(0)[1].re - 40.0).abs() < 1e-5);
-    assert!((block.values_of(1)[0].re - 16.0).abs() < 1e-5);
+    // CASA weights native channels (`VisImagingWeight`) and interpolates the
+    // weights linearly: 3 then 6 at the midpoints; values (1+3)/2·3 and
+    // (3+5)/2·6.
+    assert_eq!(block.weights_of(0), &[3.0, 3.0]);
+    assert_eq!(block.weights_of(1), &[6.0, 6.0]);
+    assert!((block.values_of(0)[0].re - 6.0).abs() < 1e-5);
+    assert!((block.values_of(0)[1].re - 60.0).abs() < 1e-5);
+    assert!((block.values_of(1)[0].re - 24.0).abs() < 1e-5);
+
+    // A global density accumulates the native channels, which share one
+    // cell here (2 + 4 + 8); the channels' uniform weights then
+    // interpolate: (2 + 4)/2/14 and (4 + 8)/2/14.
+    let global = DensityGridShape {
+        width: 64,
+        height: 64,
+        planes: 1,
+        padding: 0,
+        increment_rad: [-2.0e-5, 2.0e-5],
+        rule: DensityCellRule::Standard,
+    };
+    let mut density = SampleBuffer::new(1);
+    resampler
+        .place_density(&operator, &row, &global, &mut density)
+        .expect("density");
+    assert_eq!(density.len(), 3, "one density sample per native channel");
+    let uniform = WeightingGeneration::density(
+        build_density_grid(std::iter::once(density.block()), global),
+        None,
+        None,
+        None,
+    )
+    .expect("uniform");
+    out.clear();
+    resampler
+        .place(&operator, &uniform, &row, &mut out)
+        .expect("place");
+    let block = out.block();
+    assert!((block.weights_of(0)[0] - 3.0 / 14.0).abs() < 1e-6);
+    assert!((block.weights_of(1)[0] - 6.0 / 14.0).abs() < 1e-6);
+
+    // CASA's cube Briggs weightor weights each output sample from the
+    // nearest native weight instead, a tie keeping the left one; this
+    // robustness makes the density term vanish.
+    let per_channel = DensityGridShape {
+        planes: 2,
+        rule: DensityCellRule::Cube,
+        ..global
+    };
+    let mut density = SampleBuffer::new(1);
+    resampler
+        .place_density(&operator, &row, &per_channel, &mut density)
+        .expect("density");
+    let briggs = WeightingGeneration::density(
+        build_density_grid(std::iter::once(density.block()), per_channel),
+        Some(10.0),
+        None,
+        None,
+    )
+    .expect("briggs");
+    out.clear();
+    resampler
+        .place(&operator, &briggs, &row, &mut out)
+        .expect("place");
+    let block = out.block();
+    assert!((block.weights_of(0)[0] - 2.0).abs() < 1e-5);
+    assert!((block.weights_of(1)[0] - 4.0).abs() < 1e-5);
 
     let mut flagged = [false; 6];
     flagged[2] = true;
@@ -276,6 +348,182 @@ fn linear_mapping_interpolates_values_keeps_the_nearer_weight_and_ors_flags() {
         out.is_empty(),
         "a flag on either neighbour flags both interpolated samples"
     );
+}
+
+#[test]
+fn cube_briggs_weights_come_from_the_nearest_native_channel_on_the_padded_axis() {
+    // CASA `BriggsCubeWeightor::getWeightUniform` weights native channels on
+    // the density plane their rounded spectral pixel names on the padded
+    // axis (`FTMachine::matchChannel`); `interpolateFrequencyTogrid` hands
+    // each output sample its nearest channel's weight. Image channels here
+    // are half the native width, so the nearest channel's plane differs from
+    // the sample's, and the first sample's lies on a padding plane.
+    let output = axis(1.0, 0.05, 4);
+    let resampler = SpectralResampler::channel_local(output, SpectralKernel::Linear);
+    let operator = operator(GridPrecision::F64, resampler.basis(), &XX_YY, &STOKES_I);
+    let shape = DensityGridShape {
+        width: 64,
+        height: 64,
+        planes: 6,
+        padding: 1,
+        increment_rad: [-2.0e-5, 2.0e-5],
+        rule: DensityCellRule::Cube,
+    };
+    let row = |frequencies: &[f64], weights: &[f32]| -> (Vec<f64>, Vec<Complex32>, Vec<f32>) {
+        (
+            frequencies.iter().map(|f| f * 1.0e9).collect(),
+            vec![Complex32::new(1.0, 0.0); frequencies.len() * 2],
+            weights.iter().flat_map(|w| [*w, *w]).collect(),
+        )
+    };
+    // A density row with one native channel on every padded plane centre,
+    // weight `plane + 1`; on this short baseline every sample and its
+    // conjugate share one cell, so plane `p` holds density `2(p + 1)`.
+    let (frequencies, values, weights) = row(
+        &[0.95, 1.0, 1.05, 1.1, 1.15, 1.2],
+        &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+    );
+    let flags = vec![false; values.len()];
+    fn native<'a>(
+        frequencies_hz: &'a [f64],
+        values: &'a [Complex32],
+        weights: &'a [f32],
+        flags: &'a [bool],
+    ) -> NativeRow<'a> {
+        NativeRow {
+            uvw_m: [10.0, 0.0, 0.0],
+            phase_shift_m: 0.0,
+            frequencies_hz,
+            values,
+            weights,
+            flags,
+            row_flag: false,
+            context: context(),
+        }
+    }
+    let mut density = SampleBuffer::new(1);
+    resampler
+        .place_density(
+            &operator,
+            &native(&frequencies, &values, &weights, &flags),
+            &shape,
+            &mut density,
+        )
+        .expect("density");
+    let grid = build_density_grid(std::iter::once(density.block()), shape);
+    let uniform = WeightingGeneration::density(grid, None, None, None).expect("uniform");
+
+    // Natives 0.97, 1.07, 1.17 GHz: the samples at 1.00, 1.05, 1.10 and
+    // 1.15 GHz take the weights of 0.97 (padding plane 0), 1.07 (plane 2),
+    // 1.07 and 1.17 (plane 4).
+    let (frequencies, values, weights) = row(&[0.97, 1.07, 1.17], &[1.0, 1.0, 1.0]);
+    let flags = vec![false; values.len()];
+    let mut out = SampleBuffer::new(2);
+    resampler
+        .place(
+            &operator,
+            &uniform,
+            &native(&frequencies, &values, &weights, &flags),
+            &mut out,
+        )
+        .expect("place");
+    let block = out.block();
+    let placed = (0..out.len())
+        .map(|sample| (out.placements()[sample].plane, block.weights_of(sample)[0]))
+        .collect::<Vec<_>>();
+    let expected = [(0, 0), (1, 2), (2, 2), (3, 4)]
+        .map(|(plane, density_plane)| (plane, 1.0 / (2.0 * (density_plane as f32 + 1.0))));
+    assert_eq!(placed.len(), expected.len());
+    for ((plane, weight), (expected_plane, expected_weight)) in placed.iter().zip(expected) {
+        assert_eq!(*plane, expected_plane);
+        assert!(
+            (weight - expected_weight).abs() < 1e-6,
+            "plane {plane}: weight {weight}, expected {expected_weight}"
+        );
+    }
+
+    // Without padding the first sample's nearest channel is off the axis
+    // and weighs nothing.
+    let unpadded = DensityGridShape {
+        planes: 4,
+        padding: 0,
+        ..shape
+    };
+    let (frequencies, values, weights) = row(&[1.0, 1.05, 1.1, 1.15], &[2.0, 3.0, 4.0, 5.0]);
+    let flags = vec![false; values.len()];
+    let mut density = SampleBuffer::new(1);
+    resampler
+        .place_density(
+            &operator,
+            &native(&frequencies, &values, &weights, &flags),
+            &unpadded,
+            &mut density,
+        )
+        .expect("density");
+    let grid = build_density_grid(std::iter::once(density.block()), unpadded);
+    let uniform = WeightingGeneration::density(grid, None, None, None).expect("uniform");
+    let (frequencies, values, weights) = row(&[0.97, 1.07, 1.17], &[1.0, 1.0, 1.0]);
+    let flags = vec![false; values.len()];
+    out.clear();
+    resampler
+        .place(
+            &operator,
+            &uniform,
+            &native(&frequencies, &values, &weights, &flags),
+            &mut out,
+        )
+        .expect("place");
+    assert_eq!(
+        out.placements().iter().map(|p| p.plane).collect::<Vec<_>>(),
+        [1, 2, 3]
+    );
+}
+
+/// On identical output and native grids every output sample lies on a
+/// native channel, where casacore `InterpolateArray1D` takes that channel
+/// alone: a flagged non-finite neighbour must not reach it.
+#[test]
+fn an_end_point_sample_takes_its_own_channel_value() {
+    let operator = operator(
+        GridPrecision::F64,
+        Basis::ChannelLocal { planes: 3 },
+        &XX_YY,
+        &STOKES_I,
+    );
+    let resampler = SpectralResampler::channel_local(axis(1.0, 0.1, 3), SpectralKernel::Linear);
+    let frequencies = [1.0e9, 1.1e9, 1.2e9];
+    let mut values = vec![Complex32::new(2.0, -1.0); 6];
+    values[2] = Complex32::new(f32::NAN, 0.0);
+    values[3] = Complex32::new(f32::NAN, 0.0);
+    let flags = [false, false, true, true, false, false];
+    let row = NativeRow {
+        uvw_m: [10.0, 10.0, 0.0],
+        phase_shift_m: 0.0,
+        frequencies_hz: &frequencies,
+        values: &values,
+        weights: &[1.0; 6],
+        flags: &flags,
+        row_flag: false,
+        context: context(),
+    };
+    let mut out = SampleBuffer::new(2);
+    resampler
+        .place(&operator, &natural(), &row, &mut out)
+        .expect("place");
+    let block = out.block();
+    let planes = block
+        .placements
+        .iter()
+        .map(|placement| placement.plane)
+        .collect::<Vec<_>>();
+    assert_eq!(planes, [0, 2], "the flagged channel's plane is empty");
+    for index in 0..block.placements.len() {
+        assert_eq!(
+            block.values_of(index),
+            [Complex32::new(2.0, -1.0); 2],
+            "sample {index}"
+        );
+    }
 }
 
 #[test]
@@ -337,15 +585,179 @@ fn density_pass_carries_the_unpolarized_weight_without_a_support_test() {
         row_flag: false,
         context: context(),
     };
+    let shape = DensityGridShape {
+        width: 64,
+        height: 64,
+        planes: 1,
+        padding: 0,
+        increment_rad: [-2.0e-5, 2.0e-5],
+        rule: DensityCellRule::Standard,
+    };
     let mut out = SampleBuffer::new(1);
     resampler
-        .place_density(&operator, &row, &mut out)
+        .place_density(&operator, &row, &shape, &mut out)
         .expect("density");
     assert_eq!(out.len(), 1);
     assert_eq!(out.block().weights_of(0), &[4.0]);
     let mut wrong = SampleBuffer::new(2);
     assert!(matches!(
-        resampler.place_density(&operator, &row, &mut wrong),
+        resampler.place_density(&operator, &row, &shape, &mut wrong),
         Err(OperatorError::NativeRow { .. })
     ));
+}
+
+/// CASA grids the cube density with natural weights linearly interpolated
+/// onto its fine grid (`BriggsCubeWeightor` uses a `GridFT` without a
+/// Briggs weightor), not the nearest native weight: a sample a quarter of
+/// the way from a weight-2 to a weight-6 channel carries 3.
+#[test]
+fn cube_density_samples_interpolate_native_weights_linearly() {
+    // Output channels at 1.025 and 1.075 GHz, 50 MHz wide, over natives at
+    // 1.0 and 1.1 GHz: the output centres are a quarter and three quarters
+    // of the way between them.
+    let resampler = SpectralResampler::channel_local(axis(1.025, 0.05, 2), SpectralKernel::Linear);
+    let operator = operator(GridPrecision::F64, resampler.basis(), &XX_YY, &STOKES_I);
+    let frequencies = [1.0e9, 1.1e9];
+    let row = NativeRow {
+        uvw_m: [10.0, 10.0, 0.0],
+        phase_shift_m: 0.0,
+        frequencies_hz: &frequencies,
+        values: &[Complex32::new(1.0, 0.0); 4],
+        weights: &[2.0, 2.0, 6.0, 6.0],
+        flags: &[false; 4],
+        row_flag: false,
+        context: context(),
+    };
+    let shape = DensityGridShape {
+        width: 64,
+        height: 64,
+        planes: 2,
+        padding: 0,
+        increment_rad: [-2.0e-5, 2.0e-5],
+        rule: DensityCellRule::Cube,
+    };
+    let mut out = SampleBuffer::new(1);
+    resampler
+        .place_density(&operator, &row, &shape, &mut out)
+        .expect("density");
+    let block = out.block();
+    let weights = (0..block.placements.len())
+        .map(|index| (block.placements[index].plane, block.weights_of(index)[0]))
+        .collect::<Vec<_>>();
+    assert_eq!(weights, [(0, 3.0), (1, 5.0)]);
+}
+
+/// An autocorrelation weighs in the density grid, as CASA's
+/// `VisImagingWeight` and its cube weightor's `GridFT` (`usezero = true`)
+/// count it, but is neither gridded nor predicted (`GridFT::put`/`get` with
+/// `usezero = false`).
+#[test]
+fn autocorrelations_reach_the_density_but_not_the_grid() {
+    let operator = operator(GridPrecision::F64, Basis::Constant, &XX_YY, &STOKES_I);
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("resampler");
+    let frequencies = [1.0e9];
+    let row = NativeRow {
+        uvw_m: [0.0; 3],
+        phase_shift_m: 0.0,
+        frequencies_hz: &frequencies,
+        values: &[Complex32::new(1.0, 0.0); 2],
+        weights: &[1.0, 1.0],
+        flags: &[false; 2],
+        row_flag: false,
+        context: RowContext {
+            antennas: [3, 3],
+            ..context()
+        },
+    };
+    let shape = DensityGridShape {
+        width: 64,
+        height: 64,
+        planes: 1,
+        padding: 0,
+        increment_rad: [-2.0e-5, 2.0e-5],
+        rule: DensityCellRule::Standard,
+    };
+    let mut density = SampleBuffer::new(1);
+    resampler
+        .place_density(&operator, &row, &shape, &mut density)
+        .expect("density");
+    assert_eq!(density.len(), 1);
+    let mut placed = SampleBuffer::new(2);
+    resampler
+        .place(&operator, &natural(), &row, &mut placed)
+        .expect("place");
+    assert!(placed.is_empty());
+}
+
+#[test]
+fn standard_density_cells_use_casa_single_precision_coordinates() {
+    // CASA forms `Float f = ν/c`, then `Float u = uvw·f`, before it picks a
+    // density cell (`VisImagingWeight`). On 4096 cells of 0.05″ this
+    // baseline then lands in cell 1760; single-precision rounding of the
+    // double u would put it in cell 1761.
+    let uvw_m = [-13_719.554, 0.0, 0.0];
+    let frequency_hz = 6_316_229_891.0;
+    let casa = DensityUv::casa(uvw_m, frequency_hz);
+    // The f32 values -289052.84375 and -289052.8125, one ulp apart.
+    assert_eq!(casa.u, -289_052.84);
+    assert_eq!((uvw_m[0] * frequency_hz / C) as f32, -289_052.8);
+
+    let increment = 0.05_f64.to_radians() / 3600.0;
+    let geometry = GridGeometry::new(
+        ImageExtent {
+            shape: [64, 64],
+            increment_rad: [increment, increment],
+            reference_pixel: [32, 32],
+        },
+        GridPadding::CasaComposite,
+    )
+    .expect("geometry");
+    let polarization = PolarizationRouting::compile(&XX_YY, &STOKES_I).expect("routing");
+    let cf = Spheroidal::new(&geometry, &polarization);
+    let operator = MeasurementOperator::new(
+        geometry,
+        Basis::Constant,
+        polarization,
+        Box::new(cf),
+        GridPrecision::F64,
+    );
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("resampler");
+    let frequencies = [frequency_hz];
+    let values = [Complex32::new(1.0, 0.0); 2];
+    let weights = [1.0; 2];
+    let flags = [false; 2];
+    let row = NativeRow {
+        uvw_m,
+        phase_shift_m: 0.0,
+        frequencies_hz: &frequencies,
+        values: &values,
+        weights: &weights,
+        flags: &flags,
+        row_flag: false,
+        context: context(),
+    };
+    let shape = DensityGridShape {
+        width: 4096,
+        height: 4096,
+        planes: 1,
+        padding: 0,
+        increment_rad: [increment, increment],
+        rule: DensityCellRule::Standard,
+    };
+    let mut density = SampleBuffer::new(1);
+    resampler
+        .place_density(&operator, &row, &shape, &mut density)
+        .expect("density");
+    let grid = build_density_grid(std::iter::once(density.block()), shape);
+    assert_eq!(grid.plane(0)[2048 * 4096 + 1760], 1.0);
+    assert_eq!(grid.plane(0)[2048 * 4096 + 1761], 0.0);
+
+    // The imaging weight looks the sample up in the cell it was added to.
+    let uniform = WeightingGeneration::density(grid, None, None, None).expect("uniform");
+    let mut placed = SampleBuffer::new(2);
+    resampler
+        .place(&operator, &uniform, &row, &mut placed)
+        .expect("place");
+    assert_eq!(placed.len(), 1);
+    assert_eq!(placed.block().weights_of(0), &[1.0, 1.0]);
 }

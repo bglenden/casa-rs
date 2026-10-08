@@ -99,35 +99,33 @@ The native Rust generator and application must still neither link nor invoke
 CASA; CASA is used only to prepare/compare the frozen independent reference.
 These amendments are recorded in the [T52 work record](https://github.com/bglenden/casa-rs/issues/538#issuecomment-5577836559).
 
-Focused T52 gates are `t52_` model/reconstruction/application tests, the runtime
-`catalog` integration tests (including `native_catalog`) and `prepared_artifact`
-library tests, existing
-`prepared_aw_phase` import/reuse regressions, and the directly affected imager,
-provider and profile projection tests. The ignored frozen-cell tests require
-explicit surface/catalog paths; no CASA installation or model-data path is
-discovered implicitly. The historical T51/T52 pair-driver acceptance harnesses
-were removed with their test-only Rust entry points (IF-0, #649); the native
-AW representative row is re-established by the IF-10 performance pass.
+AW projection is unavailable from IF-2 until IF-3 (#652) installs its
+convolution-function set in the major-cycle pass, and the T52 application
+gates return with it. The kept AW preparation (runtime `catalog` and
+`prepared_artifact` tests, application `prepared_aw_phase` and `aw_cache`
+regressions) still runs in the ordinary suites. The ignored frozen-cell tests
+require explicit surface/catalog paths; no CASA installation or model-data
+path is discovered implicitly. The historical T51/T52 pair-driver acceptance
+harnesses were removed with their test-only Rust entry points (IF-0, #649);
+the native AW representative row is re-established by the IF-10 performance
+pass.
 
-T53 spectral joins use the public compiled/prepared operator and normal
-application boundaries. Run the `t53_` tests in the `continuum_application`
-integration target, the `mtmfs_block_normal` integration target, spectral
-selection/sampling and typed availability regressions, and directly affected
-polarization/product checks. The `casa-tables` integration target
-`selected_incremental_arrays` checks public typed UVW reads, sparse/repeated
-row order, output reuse and unmaterialized metadata in both byte orders.
+T53 spectral joins use the public compiled operator and normal application
+boundaries. Run the `t53_` tests in the `continuum_application` integration
+target, the cube laws in `casa-imaging-operator` (`resample`, `predict`,
+`weighting`) and `casa-imaging-runtime` (`pass_laws`), typed availability
+regressions, and directly affected polarization/product checks. The
+`casa-tables` integration target `selected_incremental_arrays` checks public
+typed UVW reads, sparse/repeated row order, output reuse and unmaterialized
+metadata in both byte orders.
 `tools/perf/imager/test_bench_cli.py` checks the
 benchmark command against a current release imager before opening a dataset.
-The representative workloads are `issue607-standard-cube-dirty-representative`,
-`t53-mosaic-cube-alma-representative`, and
-`t53-w-cube-shared-phase-representative`; the last uses the immutable-source
-copy produced by `tools/perf/imager/stage_t53_shared_phase.py` with CASA Python.
-The staged copy preserves the original IncrementalStMan UVW layout and values.
-Set `CASA_RS_T53_DATA_ROOT` to its directory and run the ignored
-`t53_w_cube_reads_native_uvw_and_publishes_vla_l_band_products` test
-as the two-channel native-reader, complete-product and off-axis CASA PSF
-application preflight. Its 512-square geometry exercises W-screen sampling
-when the requested padded size differs from the rounded FFT grid.
+The representative workload is `issue607-standard-cube-dirty-representative`.
+The W and mosaic cube workloads (`t53-w-cube-shared-phase-representative`,
+`t53-mosaic-cube-alma-representative`) are unavailable until IF-3; the W one
+uses the immutable-source copy produced by
+`tools/perf/imager/stage_t53_shared_phase.py` with CASA Python, which
+preserves the original IncrementalStMan UVW layout and values.
 Current native-AW Taylor evidence may be reused only after checking code and
 input applicability. These rows retain the size, channel, complete-product,
 validity and resource limits above; diagnostic laws do not replace them.
@@ -246,19 +244,11 @@ existing no-cache I/O path and does not require this Linux-specific setup.
   suite-install, and CI-like coverage
 - Main-branch pushes run the rustdoc and MkDocs deployment workflow
 
-The AWProject Metal acceptance gate must run outside command
-sandboxes on an Apple-silicon Mac:
-
-- `scripts/test-macos-awproject-metal.sh`
-
-The gate fails when `MTLCreateSystemDefaultDevice()` is unavailable. It runs
-the ignored role-segmented source-major initial-grid and retained grouped-Metal
-integration tests and requires receipts proving device creation, pipeline
-creation, command dispatch, and verified output. The ordinary capability
-diagnostic remains runnable in a command sandbox and distinguishes supported
-Apple-silicon hardware with unavailable process device creation from a
-successfully created device; that diagnostic is not itself evidence that a
-Metal workload ran.
+Metal imaging is unavailable from IF-2 until IF-4 (#653) installs the Metal
+backend in the major-cycle pass; IF-4 defines its Apple-silicon acceptance
+gate. A Metal gate must run outside command sandboxes and prove device
+creation, pipeline creation, command dispatch and verified output; a
+capability diagnostic is not evidence that a Metal workload ran.
 
 Large spectral-cube storage changes additionally run the sparse logical-capacity
 test and the explicit release throughput guard:
