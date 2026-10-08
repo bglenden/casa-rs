@@ -167,14 +167,21 @@ def test_shared_cross_surface_profile_matches_canonical_expected_values(
         assert invocation.protocol_version == 10
         assert json.loads(invocation.stdin or "null") == expected["request"]
         unsupported = {reason.id for reason in invocation.unsupported_reasons}
-        assert "task.aw_projection" not in unsupported
-        assert unsupported >= {"task.memory_target"}
+        # AW and W projection are typed unavailable from IF-2 until IF-3
+        # installs their convolution-function sets (#652).
+        assert unsupported == {
+            "task.aw_projection",
+            "task.w_projection_planes",
+            "task.memory_target",
+        }
 
 
+# Mosaic, W and AW projection are typed unavailable from IF-2 until IF-3
+# installs their convolution-function sets (#652); the requests still round-trip.
 @pytest.mark.parametrize(
-    ("name", "overrides", "expected_reason"),
+    ("name", "overrides", "expected_reasons"),
     [
-        ("continuum", {}, None),
+        ("continuum", {}, []),
         (
             "cube",
             {
@@ -182,12 +189,12 @@ def test_shared_cross_surface_profile_matches_canonical_expected_values(
                 "channel_count": 4,
                 "perchanweightdensity": False,
             },
-            None,
+            [],
         ),
         (
             "mosaic",
             {"gridder": "mosaic", "usepointing": True},
-            None,
+            ["task.mosaic_gridder"],
         ),
         (
             "native-aw",
@@ -203,7 +210,7 @@ def test_shared_cross_surface_profile_matches_canonical_expected_values(
                 "native_cf_maximum_cells": 1024,
                 "wprojplanes": 32,
             },
-            None,
+            ["task.aw_projection", "task.w_projection_planes"],
         ),
     ],
 )
@@ -211,7 +218,7 @@ def test_imager_python_profiles_round_trip_exact_provider_requests(
     tmp_path: Path,
     name: str,
     overrides: dict[str, object],
-    expected_reason: str | None,
+    expected_reasons: list[str],
 ) -> None:
     values = TaskParameters.defaults("imager", workspace=tmp_path)
     values.set_many(
@@ -233,6 +240,4 @@ def test_imager_python_profiles_round_trip_exact_provider_requests(
             "working_size": 256, "oversampling": 20,
             "cache_bytes": 2147483648, "maximum_cells": 1024,
         }
-    assert [reason.id for reason in before.unsupported_reasons] == (
-        [] if expected_reason is None else [expected_reason]
-    )
+    assert [reason.id for reason in before.unsupported_reasons] == expected_reasons
