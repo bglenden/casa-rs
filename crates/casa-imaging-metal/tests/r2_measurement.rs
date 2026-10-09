@@ -52,6 +52,7 @@ fn centred_placements(
             u,
             v,
             w: rng.signed() * 50.0,
+            prediction_w_positive: None,
             phase: rng.signed() * std::f64::consts::PI,
             plane: 0,
             spectral: 0.0,

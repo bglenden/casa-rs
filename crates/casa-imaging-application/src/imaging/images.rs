@@ -34,10 +34,11 @@ pub(crate) fn pass_images(domain: usize, images: &NormalImages, initial: bool) -
             for image in &plane.psf {
                 push_x_major(&mut psf, image);
             }
-            // CASA divides each image by the `sumwt` of its own gridding
-            // (`getImage`): the PSF and weight planes by the PSF's, the
-            // residual by the data's, which differ for a set whose PSF
-            // kernel is not its imaging kernel (`AWProjectFT`'s `cfwts2_p`).
+            // Retain both kernel sums: AW's PSF uses cfwts2_p and can
+            // differ from its data gridding. Constant-basis FTMachine
+            // keeps the PSF sum for normalization; MultiTermFTNew replaces
+            // each term's publication sum during the data pass. The
+            // reconstruction/product consumer applies its basis's rule.
             for term in 0..images.psf_terms {
                 for pol in 0..images.pols {
                     sum_weights.push(images.psf_sumwt(index, term, pol));

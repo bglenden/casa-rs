@@ -71,8 +71,8 @@ impl ComplexDense {
             support,
             oversampling,
             mueller: MuellerRouting {
-                direct: table.clone(),
-                conjugate: table,
+                adjoint: [table.clone(), table.clone()],
+                forward: [table.clone(), table],
             },
             correction: ImageCorrection::new(correction.x().to_vec(), correction.y().to_vec()),
         }
