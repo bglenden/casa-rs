@@ -8,6 +8,7 @@
 //! [`Reservation`] drops. Reservations of every run in the process count
 //! against each run's policy.
 
+#[cfg(target_os = "macos")]
 use std::process::Command;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
