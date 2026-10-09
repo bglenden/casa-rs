@@ -1004,7 +1004,7 @@ impl ModelLifecycle {
         encoder.identity(self.authority.as_bytes());
         encoder.u64(self.seal.0);
         encoder.u64(ordinal);
-        ModelGenerationId(LogicalIdentity::from_sha256(encoder.finish()))
+        ModelGenerationId(LogicalIdentity::from_bytes(encoder.finish()))
     }
 
     fn ensure_open(&self) -> Result<(), ModelLifecycleError> {
@@ -1143,7 +1143,7 @@ fn lifecycle_authority(
     encoder.identity(contract.contract_id().as_bytes());
     encoder.identity(attempt.identity().as_bytes());
     encoder.u64(epoch);
-    LogicalIdentity::from_sha256(encoder.finish())
+    LogicalIdentity::from_bytes(encoder.finish())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1170,7 +1170,7 @@ fn final_completion_id(
         }
     }
     encoder.identity(generation.as_bytes());
-    FinalModelCompletionId(LogicalIdentity::from_sha256(encoder.finish()))
+    FinalModelCompletionId(LogicalIdentity::from_bytes(encoder.finish()))
 }
 
 fn store_exact_samples<E>(

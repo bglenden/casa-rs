@@ -1,91 +1,27 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![warn(missing_docs)]
-//! Plan-bound imaging execution, process resource arbitration, and leases.
+//! Imaging execution (plan section 5.4): host resources and per-phase
+//! admission, the major-cycle pass on the bounded worker team, cooperative
+//! cancellation, the paged cube state, the minor-cycle adapter and the run
+//! summary.
 
 mod cube_state;
-mod execution;
-mod execution_bindings;
 mod managed_cube_blocks;
 mod managed_model;
 mod managed_normal;
-mod observation_transaction;
-mod paged_state_directory;
-pub mod pass;
-pub use cube_state::CubeState;
 mod minor;
+pub mod pass;
+mod resources;
+mod source_access;
+mod summary;
+
+pub use cube_state::CubeState;
 pub use minor::{
     MinorCycleOutcome, MinorCycleRunError, MinorCycleSetup, MinorCycleSummary, PreparedMinorCycle,
     PsfCache, TracedComponent, prepare_minor_cycle, run_minor_cycle,
 };
-pub mod product_publication;
-mod publication_layout;
-mod receipt;
-mod resource_authority;
-mod serial_product_publication;
-mod source_access;
+pub use resources::{
+    Admission, Demand, HostError, HostResources, Reservation, ResourcePolicy, admit, free_memory,
+};
 pub use source_access::{SourceAccessError, bootstrap_source_budget, finalize_source_access};
-
-pub use execution_bindings::{
-    ArtifactDisposition, ArtifactIdentity, ArtifactMeasurement, ArtifactMeasurementError,
-    ArtifactRole, AttemptBoundObservationCompletion, BatchMeasurement, BindingKind, CacheIdentity,
-    CompiledWorkContext, ExecutionEvidenceError, ExecutionPlan, ExecutionPlanId, ExecutionStatus,
-    ImplementationContractCatalog, ImplementationContractMetadata, ImplementationRegistry,
-    ImplementationRegistryId, IoMeasurement, IoPrediction, ObservationCompletionBindingError,
-    ObservationReadCompletionContext, PhysicalWorkBinding, PhysicalWorkBindingError,
-    PhysicalWorkId, PlanError, PlanPrediction, PlannedArtifact, PlannerCostModelProfileId,
-    PlanningBindings, PredictionConfidence, PredictionUncertainty, PublicationResources,
-    RedactedPath, ResourceMeasurement, ResourcePolicyId, RunBindings, RunController, RunDirective,
-    RunError, RunToCompletion, StagePrediction, WorkExecutionContext, WorkImplementation,
-    WorkMeasurements, plan, run,
-};
-
-pub use execution::{
-    AdaptationId, AdaptationTransition, AllocationAccess, AllocationDisposition, AllocationId,
-    AllocationLayout, AllocationLifetime, AllocationPurpose, AllocationUse, ClaimLifetime,
-    ExecutionDag, ExecutionDagSpecification, ExecutionError, ExecutionKnobs, ExecutionOutcome,
-    FenceId, FenceKind, InitializationPolicy, LogicalAllocation, PhysicalSlot, PhysicalSlotId,
-    ResourceClaim, RetainedArtifactPermit, SlotCompatibility, StorageMode,
-    WorkAllocationCapability, WorkDependency, WorkDomain, WorkImplementationId, WorkKind, WorkNode,
-    WorkNodeId, WorkResourceCapability,
-};
-pub use observation_transaction::{
-    BoundObservationTransaction, ObservationTransactionPlanError,
-    ObservationTransactionPublicationScope, ObservationTransactionWork,
-};
-pub use paged_state_directory::{PagedStateDirectory, PagedStateDirectoryError};
-pub use product_publication::{
-    ProductPublicationEntry, ProductPublicationError, ProductPublicationPlan,
-};
-pub use publication_layout::{
-    PhysicalLayoutId, PublicationBoundKind, PublicationLayoutError, PublicationLayoutLedger,
-    PublicationMappedStaging, PublicationParticipant, PublicationPhysicalLayout,
-    PublicationResourceBounds, PublicationResourceBoundsError, PublicationStaging,
-    PublicationStagingError,
-};
-pub use receipt::{
-    BuildIdentity, CompiledProblemEvidence, ExecutionAttemptId, ExecutionProvenance,
-    ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore, ReceiptAdaptation,
-    ReceiptError, ReceiptFailureKind, ReceiptInfeasibilityCertificate,
-    ReceiptPublicationParticipant, ReceiptRetention, ReceiptStatus,
-};
-pub use resource_authority::{
-    Accelerator, AcceleratorDemand, AcceleratorId, AcceleratorKind,
-    AdmissionInfeasibilityCertificate, AlternativeId, AlternativeRejection,
-    AlternativeRejectionReason, CacheDemand, CapabilityId, CapabilityPredicate, CapacityDomainId,
-    CapacityViewId, CountDemand, CpuClassCapacity, DemandAlternative, DemandAlternatives,
-    DemandEnvelope, ExternalPressure, HostInventory, IoBufferDemand, IoBufferKind, LeaseRelease,
-    LeaseResource, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView,
-    MemoryViewKind, PressureUpdate, ProductionStorageProfile, QueueDemand, QueueResource,
-    QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId, RateUnit,
-    ResourceAuthority, ResourceError, ResourceFence, ResourceGrant, ResourceHeadroom,
-    ResourceIdentity, ResourceLease, ResourceOverride, ResourcePermit, ResourcePolicy,
-    ResourceTopology, RuntimeOverheadDemand, RuntimeOverheadKind, ScalingMetadata, StorageDemand,
-    StorageDomain, StorageDomainId, StorageIoResourceBinding, StorageUseKind, TransferDemand,
-    TransferLink, TransferLinkId,
-};
-pub use serial_product_publication::{
-    ProductSinkResidency, SerialProductPublicationCompletion,
-    SerialProductPublicationExecutionError, SerialProductPublicationExecutor,
-    SerialProductPublicationPlan, SerialProductPublicationPlanError,
-    SerialProductPublicationPolicy, SerialProductPublicationRegistry, SerialProductPublicationSink,
-};
+pub use summary::{Cancelled, Phase, RunSummary, SummaryTarget, run_phase};

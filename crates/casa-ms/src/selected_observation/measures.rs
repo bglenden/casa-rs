@@ -42,7 +42,7 @@ impl SelectedObservationMeasures {
     /// Return the provider-owned reference-data identity.
     #[must_use]
     pub const fn identity(&self) -> LogicalIdentity {
-        LogicalIdentity::from_sha256(self.provider_state.identity_sha256())
+        LogicalIdentity::from_bytes(self.provider_state.identity_sha256())
     }
 
     pub(crate) const fn retained_bytes(&self) -> usize {

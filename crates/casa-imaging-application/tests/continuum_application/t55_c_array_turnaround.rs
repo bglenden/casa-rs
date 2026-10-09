@@ -5,8 +5,7 @@
 //! fresh durable product directory, and the sampled aggregate 16-GiB RSS guard.
 
 use super::*;
-use casa_imaging_runtime::{CapacityDomainId, ResourceOverride, ResourcePolicy};
-use std::{collections::BTreeMap, fs};
+use std::fs;
 
 #[test]
 #[ignore = "requires explicit C-array turnaround MS, channel, CASA mask, durable outputs and 16-GiB RSS guard"]
@@ -47,7 +46,7 @@ fn run_c_array(block: bool) {
     } else {
         1
     };
-    let workers: u64 = if block {
+    let workers: usize = if block {
         std::env::var("CASA_RS_C_ARRAY_WORKERS")
             .expect("explicit block worker count")
             .parse()
@@ -146,11 +145,10 @@ fn run_c_array(block: bool) {
         .map(|value| value.parse::<u64>().expect("explicit native memory budget"))
         .unwrap_or(16 << 30);
     assert!(memory_bytes > 0 && memory_bytes <= 16 << 30);
-    imaging.resource_policy = ResourcePolicy::Explicit(ResourceOverride {
-        workers: Some(workers),
-        memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), memory_bytes)]),
-        ..ResourceOverride::default()
-    });
+    imaging.resource_policy = ResourcePolicy::Explicit {
+        workers,
+        memory: memory_bytes,
+    };
     fs::write(root.join("request.txt"), format!("{imaging:#?}\n")).unwrap();
     eprintln!(
         "C-array matched application start channel={channel} root={}",
@@ -170,15 +168,11 @@ fn run_c_array(block: bool) {
         );
     }
     let output = &result.outcome.output;
-    assert_eq!(
-        output.publication_receipt.status(),
-        ReceiptStatus::Completed
-    );
     if dirty_only {
         assert_eq!(output.major_cycle_count, 1);
     }
     let route = "major-cycle-pass";
-    assert_eq!(output.workers as u64, workers);
+    assert_eq!(output.workers, workers);
     let mut products = vec![".image", ".model", ".residual", ".psf", ".pb", ".sumwt"];
     if !dirty_only {
         products.push(".mask");

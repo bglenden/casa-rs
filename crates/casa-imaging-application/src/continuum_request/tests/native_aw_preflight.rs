@@ -82,9 +82,17 @@ fn native_aw_request(w_plane_count: Option<usize>) -> ContinuumImagingRequest {
             compute_pa_step_deg: 360.0,
             rotate_pa_step_deg: 360.0,
         }),
+        host: HostResources {
+            threads: 1,
+            performance_cores: 1,
+            available_memory: 1 << 30,
+            metal: false,
+        },
         resource_policy: resource_policy_for_task_requirements(&requirements),
         task_requirements: requirements,
         backend: crate::BackendChoice::Cpu,
+        cancel: Cancel::new(),
+        summary: None,
     }
 }
 

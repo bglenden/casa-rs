@@ -51,7 +51,7 @@ fn complex_scalar_windows_preserve_bits_and_allocation_identity() {
 }
 
 fn model() -> ModelGenerationId {
-    ModelGenerationId(LogicalIdentity::from_sha256([19; 32]))
+    ModelGenerationId(LogicalIdentity::from_bytes([19; 32]))
 }
 
 fn domain(range: Range<usize>, published_differ: bool) -> SpectralDomainPrimitives {
@@ -493,7 +493,7 @@ fn residual_epochs_share_only_invariants_without_old_array_access_or_owner_chain
     }));
     let invariants = Arc::downgrade(&old.invariants);
     for epoch in 1..=3 {
-        let next_model = ModelGenerationId(LogicalIdentity::from_sha256([epoch; 32]));
+        let next_model = ModelGenerationId(LogicalIdentity::from_bytes([epoch; 32]));
         let mut next = old.refresh(next_model, &plan).unwrap();
         let values: Box<[_]> = (0..CHANNELS * POLARIZATIONS * CELLS)
             .map(|index| index as f32 + f32::from(epoch))

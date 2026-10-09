@@ -1407,7 +1407,7 @@ pub(crate) fn compile_geometry(
     };
 
     let mut compiled = CompiledGeometry {
-        geometry_id: CompiledGeometryId(LogicalIdentity::from_sha256([0; 32])),
+        geometry_id: CompiledGeometryId(LogicalIdentity::from_bytes([0; 32])),
         domains: domains.into_boxed_slice(),
         centres: input.centres,
         uvw: input.uvw,
@@ -1759,7 +1759,7 @@ fn canonical_geometry_id(geometry: &CompiledGeometry) -> CompiledGeometryId {
     encode_spectral(&mut encoder, &geometry.spectral);
     encode_optional_identity(&mut encoder, geometry.measures_reference);
     encode_optional_identity(&mut encoder, geometry.ephemeris_reference);
-    CompiledGeometryId(LogicalIdentity::from_sha256(encoder.finish()))
+    CompiledGeometryId(LogicalIdentity::from_bytes(encoder.finish()))
 }
 
 fn encode_direction_coordinate(encoder: &mut CanonicalEncoder, direction: DirectionCoordinateSpec) {

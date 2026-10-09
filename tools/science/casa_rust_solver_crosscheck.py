@@ -15,7 +15,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-import os
 import pathlib
 import shutil
 import struct
@@ -775,12 +774,7 @@ def rust_case(
         command += ["--mask-box", ",".join(str(value) for value in case["box"])]
     elif case["mask"] == "image":
         command += ["--mask-image", str(case["mask_image"])]
-    environment = os.environ.copy()
-    environment.update({
-        "CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND": "1000000000",
-        "CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND": "1000000000",
-    })
-    return run(command, environment=environment).stdout
+    return run(command).stdout
 
 
 def casa_case(

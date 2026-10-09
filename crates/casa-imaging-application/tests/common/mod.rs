@@ -13,7 +13,7 @@ use casa_imaging_model::{
 };
 
 fn identity(scope: u8) -> LogicalIdentity {
-    LogicalIdentity::from_sha256([scope; 32])
+    LogicalIdentity::from_bytes([scope; 32])
 }
 
 pub fn model_lifecycle() -> ModelLifecycleRequirements {

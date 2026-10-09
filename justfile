@@ -82,7 +82,6 @@ imaging-t41-moving-source:
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model --test compiled_problem t41_
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model --test compiled_geometry ephemeris_centre_laws_require_and_identify_one_bound_snapshot -- --exact
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction t41_
-    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime --test compile_plan_run t41_
     CARGO_INCREMENTAL=0 cargo test -p casars-imager task_contract
 
 # Representative #527 frozen-CASA cubesource and MVC geometry gate. The
@@ -134,7 +133,6 @@ imaging-t43-mtmfs-clean:
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model --test measurement_equation_contract
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction --lib mtmfs_
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction --test mtmfs_minor_cycle
-    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime --test compile_plan_run receipt_projection::effective_problem_projection_carries_mtmfs_scales_and_bias -- --exact
 
 # Focused #530 sealed Taylor-product and frozen-CASA publication gate.
 imaging-t44-mtmfs-products testdata_root casa_python casa_prefix:
@@ -143,17 +141,16 @@ imaging-t44-mtmfs-products testdata_root casa_python casa_prefix:
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-products --test continuum_products
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-products --test taylor_products
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test availability
-    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime --lib serial_product_publication -- --nocapture
     python3 tools/science/t44_test_mtmfs_products_compare.py
     CASA_RS_TESTDATA_ROOT="{{testdata_root}}" CASA_RS_T44_APPLICATION_PREFIX="{{justfile_directory()}}/target/t43-t44-casa-oracle/rust-application/casa" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test mtmfs_publication_oracle t44_application_mtmfs_publishes_frozen_casa_product_contract -- --ignored --exact --nocapture
     "{{casa_python}}" tools/science/t44_mtmfs_products_compare.py --casa-prefix "{{casa_prefix}}" --rust-prefix "{{justfile_directory()}}/target/t43-t44-casa-oracle/rust-application/casa" --summary-output "{{justfile_directory()}}/target/t43-t44-casa-oracle/t44-comparison.json"
 
-# Focused #545 bounded cache admission, conditional routes and representative frozen-CASA production gate.
+# Focused #545 memory admission and representative frozen-CASA production gate.
 imaging-t59-low-memory representative_ms casa_prefix:
     test -d "{{representative_ms}}"
     test -e "{{casa_prefix}}.psf.tt0"
-    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime adaptation_ --lib
-    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime --test compile_plan_run receipt_evidence::receipt_records_only_the_atomically_selected_conditional_route -- --exact
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime --test pass_laws residency::
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test continuum_application domains_and_waves::
     CASA_RS_ISSUE607_MTMFS_MS="{{representative_ms}}" CASA_RS_ISSUE607_MTMFS_CASA_PREFIX="{{casa_prefix}}" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test mtmfs_publication_oracle issue607_representative_mtmfs_matches_casa_products --release -- --ignored --exact --nocapture
 
 release-perf:

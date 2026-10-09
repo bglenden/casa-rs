@@ -4,8 +4,7 @@
 //! The caller provides durable inputs/outputs and the sampled 16-GiB RSS guard.
 
 use super::*;
-use casa_imaging_runtime::{CapacityDomainId, ResourceOverride, ResourcePolicy};
-use std::{collections::BTreeMap, fs};
+use std::fs;
 
 #[test]
 #[ignore = "requires a caller-selected MFS input, durable outputs and a 16-GiB RSS guard"]
@@ -13,7 +12,7 @@ fn full_field_application() {
     let _execution_guard = EXECUTION_LOCK.lock().unwrap();
     let input = PathBuf::from(std::env::var_os("CASA_RS_MFS_MS").expect("pilot MS"));
     let root = PathBuf::from(std::env::var_os("CASA_RS_MFS_OUTPUT").expect("fresh output"));
-    let workers: u64 = std::env::var("CASA_RS_MFS_WORKERS")
+    let workers: usize = std::env::var("CASA_RS_MFS_WORKERS")
         .unwrap()
         .parse()
         .unwrap();
@@ -69,11 +68,10 @@ fn full_field_application() {
     if workers == 1 {
         imaging.task_requirements.push(TaskRequirement::SerialCpu);
     }
-    imaging.resource_policy = ResourcePolicy::Explicit(ResourceOverride {
-        workers: Some(workers),
-        memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 16 << 30)]),
-        ..ResourceOverride::default()
-    });
+    imaging.resource_policy = ResourcePolicy::Explicit {
+        workers,
+        memory: 16 << 30,
+    };
     fs::write(root.join("request.txt"), format!("{imaging:#?}\n")).unwrap();
     eprintln!("MFS pilot application start root={}", root.display());
     let started = std::time::Instant::now();
@@ -85,11 +83,7 @@ fn full_field_application() {
     let psf_suffix = if terms == 1 { ".psf" } else { ".psf.tt0" };
     assert_unit_psf_planes(&root.join(format!("image{psf_suffix}")));
     let output = &result.outcome.output;
-    assert_eq!(
-        output.publication_receipt.status(),
-        ReceiptStatus::Completed
-    );
-    assert_eq!(output.workers as u64, workers);
+    assert_eq!(output.workers, workers);
     let image_suffix = if terms == 1 { ".image" } else { ".image.tt0" };
     assert_eq!(
         PagedImage::<f32>::open(root.join(format!("image{image_suffix}")))

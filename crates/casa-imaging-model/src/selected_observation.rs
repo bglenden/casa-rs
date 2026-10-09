@@ -39,7 +39,7 @@ const SELECTED_OBSERVATION_COMMITMENT_IDENTITY_VERSION: u32 = 1;
 /// ```compile_fail
 /// use casa_imaging_model::SelectedObservationCommitmentId;
 ///
-/// let _ = SelectedObservationCommitmentId::from_sha256([0; 32]);
+/// let _ = SelectedObservationCommitmentId::from_bytes([0; 32]);
 /// ```
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SelectedObservationCommitmentId([u8; 32]);

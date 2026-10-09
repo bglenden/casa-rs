@@ -6,7 +6,6 @@
 //! width imaged in waves. Skipped, saying so, without a Metal device.
 
 use casa_imaging_application::BackendChoice;
-use casa_imaging_runtime::{CapacityDomainId, ResourceOverride, ResourcePolicy};
 
 use super::*;
 
@@ -88,7 +87,6 @@ fn both(
 #[test]
 fn metal_mfs_clean_equals_the_cpu_clean() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = multi_row_measurement_set(root.path());
     let Some((metal, cpu, _)) = both(root.path(), "mfs", |name, backend| {
@@ -104,7 +102,6 @@ fn metal_mfs_clean_equals_the_cpu_clean() {
 #[test]
 fn metal_cleaned_cube_equals_the_cpu_cube() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = spectral_line_measurement_set(root.path());
     let Some((metal, cpu, _)) = both(root.path(), "cube", |name, backend| {
@@ -139,7 +136,6 @@ fn metal_cleaned_cube_equals_the_cpu_cube() {
 #[test]
 fn metal_cube_with_coarse_output_channels_in_waves_equals_the_cpu_cube() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
     let Some((metal, cpu, waves)) = both(root.path(), "coarse", |name, backend| {
@@ -158,17 +154,13 @@ fn metal_cube_with_coarse_output_channels_in_waves_equals_the_cpu_cube() {
             output_channels: Some(15),
         };
         imaging.task_requirements = vec![TaskRequirement::SpectralCube];
-        imaging.resource_policy = ResourcePolicy::Explicit(ResourceOverride {
-            workers: Some(2),
-            memory_bytes: std::collections::BTreeMap::from([(
-                CapacityDomainId::new("host-memory"),
-                match backend {
-                    BackendChoice::Metal => COARSE_METAL_MEMORY_BYTES,
-                    BackendChoice::Cpu => 4 << 30,
-                },
-            )]),
-            ..ResourceOverride::default()
-        });
+        imaging.resource_policy = ResourcePolicy::Explicit {
+            workers: 2,
+            memory: match backend {
+                BackendChoice::Metal => COARSE_METAL_MEMORY_BYTES,
+                BackendChoice::Cpu => 4 << 30,
+            },
+        };
         imaging.backend = backend;
         imaging
     }) else {

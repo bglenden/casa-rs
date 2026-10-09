@@ -10,7 +10,6 @@ use super::*;
 #[test]
 fn t53_cube_rest_frequency_uses_selected_native_channels_not_the_output_axis() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
     let prefix = root.path().join("selected-rest-frequency");
@@ -53,7 +52,6 @@ fn t53_cube_rest_frequency_uses_selected_native_channels_not_the_output_axis() {
 #[test]
 fn t53_one_channel_standard_cubes_preserve_all_products() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
     let mut products = Vec::new();
@@ -141,7 +139,6 @@ fn read_product(prefix: &Path, suffix: &str) -> (Vec<usize>, ArrayD<f32>) {
 #[test]
 fn t53_nonidentity_linear_sampling_preserves_affine_spectra() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let mut products = Vec::new();
     for unit in [true, false] {
@@ -193,12 +190,10 @@ fn t53_nonidentity_linear_sampling_preserves_affine_spectra() {
             output_channels: Some(2),
         };
         imaging.task_requirements = vec![TaskRequirement::SerialCpu, TaskRequirement::SpectralCube];
-        imaging.resource_policy = casa_imaging_runtime::ResourcePolicy::Explicit(
-            casa_imaging_runtime::ResourceOverride {
-                workers: Some(1),
-                ..casa_imaging_runtime::ResourceOverride::default()
-            },
-        );
+        imaging.resource_policy = ResourcePolicy::Explicit {
+            workers: 1,
+            memory: u64::MAX,
+        };
         let result = execute_continuum(imaging)
             .unwrap_or_else(|error| panic!("standard affine={}: {error}", !unit));
         assert!(

@@ -20,7 +20,7 @@ use casa_imaging_model::{
 pub fn identity(seed: u8, scope: u8) -> LogicalIdentity {
     let mut bytes = [seed; 32];
     bytes[0] = scope;
-    LogicalIdentity::from_sha256(bytes)
+    LogicalIdentity::from_bytes(bytes)
 }
 
 /// The model execution attempt named by `seed`.

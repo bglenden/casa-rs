@@ -17,7 +17,6 @@ use casa_imaging_products::{
     ContinuumGenerationDemand, PlannedContinuumGeneration, PlannedMember, ProductOutput,
     ProductWindow, ProductWindowLayout, ProductWriter, ProductsError, RestoringBeam,
 };
-use casa_imaging_runtime::{ProductSinkResidency, SerialProductPublicationSink};
 use casa_types::{RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
@@ -92,14 +91,15 @@ impl CasaImageProductSink {
     }
 }
 
-impl SerialProductPublicationSink for CasaImageProductSink {
-    type Error = std::io::Error;
-
-    fn residency(
+impl CasaImageProductSink {
+    /// Bytes the sink holds while it writes `planned`: the image writer, its
+    /// cache and serialization workspace, and the registry of staged
+    /// members kept until [`CasaImageProductSink::publish`].
+    pub fn residency(
         &self,
         planned: &PlannedContinuumGeneration,
         demand: &ContinuumGenerationDemand,
-    ) -> Result<ProductSinkResidency, Self::Error> {
+    ) -> Result<u64, std::io::Error> {
         const IMAGE_ADAPTER_ENVELOPE_BYTES: u64 = 4_096;
         const STAGED_MEMBER_RECORD_BYTES: u64 = 512;
         let coordinate_bytes = self.domains.values().try_fold(0_u64, |maximum, output| {
@@ -155,13 +155,14 @@ impl SerialProductPublicationSink for CasaImageProductSink {
             .and_then(|bytes| bytes.checked_add(coordinate_bytes))
             .and_then(|bytes| bytes.checked_add(beam_bytes))
             .ok_or_else(|| std::io::Error::other("product staging residency overflow"))?;
-        Ok(ProductSinkResidency {
-            writer_bytes,
-            retained_bytes: registry_bytes,
-        })
+        writer_bytes
+            .checked_add(registry_bytes)
+            .ok_or_else(|| std::io::Error::other("product staging residency overflow"))
     }
 
-    fn publish(&self) -> Result<(), Self::Error> {
+    /// Move every staged member to its target, in generation order. A
+    /// failure leaves the set incomplete; the run must be repeated.
+    pub fn publish(&self) -> Result<(), std::io::Error> {
         let staged =
             std::mem::take(&mut *self.staged.lock().map_err(|_| {
                 std::io::Error::other("CASA product staging registry lock poisoned")

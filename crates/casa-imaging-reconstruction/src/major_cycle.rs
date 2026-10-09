@@ -1165,7 +1165,7 @@ fn final_normal_state_id(
         }
         None => encoder.u8(0),
     }
-    FinalNormalStateCompletionId(LogicalIdentity::from_sha256(encoder.finish()))
+    FinalNormalStateCompletionId(LogicalIdentity::from_bytes(encoder.finish()))
 }
 
 fn major_cycle_completion_id(
@@ -1181,7 +1181,7 @@ fn major_cycle_completion_id(
     encoder.u64(epoch);
     encoder.identity(normal_state.as_bytes());
     encoder.identity(model.as_bytes());
-    MajorCycleCompletionId(LogicalIdentity::from_sha256(encoder.finish()))
+    MajorCycleCompletionId(LogicalIdentity::from_bytes(encoder.finish()))
 }
 
 /// Exact reason a Major-Cycle reconciliation failed closed.

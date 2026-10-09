@@ -168,7 +168,7 @@ impl<'a> VisibilityWriter<'a> {
             corrected_data: self
                 .transform
                 .filter(|_| self.corrected_data)
-                .map(|transform| LogicalIdentity::from_sha256(transform.contract_id().as_bytes())),
+                .map(|transform| LogicalIdentity::from_bytes(transform.contract_id().as_bytes())),
         })?;
         Ok(self.samples)
     }

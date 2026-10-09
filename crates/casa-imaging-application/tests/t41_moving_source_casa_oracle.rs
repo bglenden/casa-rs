@@ -38,7 +38,7 @@ const MVC_MS_ENV: &str = "CASA_RS_T41_MVC_MS";
 #[test]
 #[ignore = "requires the representative T41 MS and frozen CASA MVC spectral coordinates"]
 fn t41_mvc_selected_spectral_range_matches_casa_edge_topology() -> Result<(), Box<dyn Error>> {
-    set_production_io_environment();
+    set_mmap_io_environment();
     let measurement_set = MeasurementSet::open(required_table(MVC_MS_ENV)?)?;
     let row_selection =
         measurement_set.selected_observation_row_selection(&[0, 1], Some(&[1]), None, None)?;
@@ -112,7 +112,7 @@ fn t41_tracked_cubesource_matches_casa_geometry_and_dirty_products() -> Result<(
     let measurement_set = staging.path().join("alma_ephemobj_icrs.ms");
     copy_tree(&source, &measurement_set)?;
     casa_ms::initialize_measurement_set_owner_manifest(&measurement_set)?;
-    set_production_io_environment();
+    set_mmap_io_environment();
     let rust_prefix = staging.path().join("rust-uranus-cubesource");
 
     let result = execute_continuum(request(measurement_set, rust_prefix.clone()))?;
@@ -240,13 +240,14 @@ fn request(measurement_set: PathBuf, image_name: PathBuf) -> ContinuumImagingReq
             TaskRequirement::SpectralCubeSource,
             TaskRequirement::SerialCpu,
         ],
-        resource_policy: casa_imaging_runtime::ResourcePolicy::Explicit(
-            casa_imaging_runtime::ResourceOverride {
-                workers: Some(1),
-                ..Default::default()
-            },
-        ),
+        host: casa_imaging_application::HostResources::detect().expect("host"),
+        resource_policy: casa_imaging_application::ResourcePolicy::Explicit {
+            workers: 1,
+            memory: u64::MAX,
+        },
         backend: casa_imaging_application::BackendChoice::Cpu,
+        cancel: casa_imaging_application::Cancel::new(),
+        summary: None,
     }
 }
 
@@ -371,11 +372,9 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn set_production_io_environment() {
+fn set_mmap_io_environment() {
     // SAFETY: this ignored gate runs serially before any MeasurementSet is opened.
     unsafe {
-        std::env::set_var("CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND", "1000000000");
-        std::env::set_var("CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND", "1000000000");
         std::env::set_var("CASA_RS_IO_BACKEND", "mmap");
         std::env::set_var("CASA_RS_IO_MMAP_TILES", "true");
     }

@@ -441,5 +441,5 @@ fn canonical_transaction_id(
         CorrectedDataWrite::Disabled => 0,
         CorrectedDataWrite::SelectedOutputRows => 1,
     });
-    ObservationTransactionId(LogicalIdentity::from_sha256(encoder.finish()))
+    ObservationTransactionId(LogicalIdentity::from_bytes(encoder.finish()))
 }

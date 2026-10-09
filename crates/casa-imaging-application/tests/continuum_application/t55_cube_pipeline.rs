@@ -4,9 +4,7 @@ use super::*;
 
 #[test]
 fn streaming_cube_complete_application_handoff() {
-    use casa_imaging_runtime::{CapacityDomainId, ResourceOverride, ResourcePolicy};
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = spectral_line_measurement_set(root.path());
     let image_name = root.path().join("native-cube");
@@ -33,27 +31,25 @@ fn streaming_cube_complete_application_handoff() {
     imaging.gain = 0.37;
     imaging.threshold_jy = 1.0e-12;
     imaging.noise_sigma = Some(1.0e-12);
-    imaging.resource_policy = ResourcePolicy::Explicit(ResourceOverride {
-        workers: Some(1),
-        memory_bytes: std::collections::BTreeMap::from([(
-            CapacityDomainId::new("host-memory"),
-            4 << 30,
-        )]),
-        ..ResourceOverride::default()
-    });
+    imaging.resource_policy = ResourcePolicy::Explicit {
+        workers: 1,
+        memory: 4 << 30,
+    };
     let mut capped = imaging.clone();
-    capped.resource_policy = ResourcePolicy::Explicit(ResourceOverride {
-        workers: Some(1),
-        memory_bytes: std::collections::BTreeMap::from([(
-            CapacityDomainId::new("host-memory"),
-            1 << 20,
-        )]),
-        ..ResourceOverride::default()
-    });
+    capped.resource_policy = ResourcePolicy::Explicit {
+        workers: 1,
+        memory: 1 << 20,
+    };
     let error = execute_continuum(capped)
         .err()
         .expect("insufficient memory must fail closed");
-    assert!(error.to_string().contains("memory"), "{error}");
+    assert!(
+        matches!(
+            error,
+            casa_imaging_application::ApplicationDispatchError::Admission(_)
+        ),
+        "{error}"
+    );
     assert!(!image_name.with_extension("image").exists());
 
     let result = execute_continuum(imaging.clone()).expect("complete native cube application");
@@ -79,10 +75,10 @@ fn streaming_cube_complete_application_handoff() {
     drop(result);
     imaging.image_name = root.path().join("cube-model-column");
     imaging.save_model_column = true;
-    // Visibility publication admits the selected-source and writer lanes.
-    if let ResourcePolicy::Explicit(resources) = &mut imaging.resource_policy {
-        resources.workers = Some(2);
-    }
+    imaging.resource_policy = ResourcePolicy::Explicit {
+        workers: 2,
+        memory: 4 << 30,
+    };
     let output = execute_continuum(imaging).expect("cube visibility output keeps its owner");
     assert_eq!(output.outcome.output.major_cycle_count, 3);
 }
@@ -90,7 +86,6 @@ fn streaming_cube_complete_application_handoff() {
 #[test]
 fn streaming_cube_single_output_runs_clean_refresh_and_publication() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = spectral_line_measurement_set(root.path());
     let mut imaging = request(
@@ -125,16 +120,11 @@ fn streaming_cube_single_output_runs_clean_refresh_and_publication() {
             .shape(),
         &[64, 64, 1, 1]
     );
-    assert_eq!(
-        result.outcome.output.publication_receipt.status(),
-        ReceiptStatus::Completed
-    );
 }
 
 #[test]
 fn t55_shifted_cube_density_retains_native_endpoint_weights() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = four_channel_measurement_set(root.path());
     let mut imaging = request(
@@ -164,30 +154,17 @@ fn t55_shifted_cube_density_retains_native_endpoint_weights() {
         vec![casa_imaging_application::TaskRequirement::PerChannelWeightDensity];
     let result = execute_continuum(imaging).expect("shifted native endpoint density execution");
     // CASA `estimateSwingChanPad`: no frame swing, plus max(min(4, nchan/10), 1).
+    let weighting = result.outcome.output.problem.weighting();
+    assert_eq!(weighting.casa_cube_density_padding(), Some(1));
     assert_eq!(
-        result
-            .outcome
-            .output
-            .publication_receipt
-            .compiled_problem_evidence()
-            .field("weighting.casa_cube_density_padding"),
-        Some("1")
-    );
-    assert_eq!(
-        result
-            .outcome
-            .output
-            .publication_receipt
-            .compiled_problem_evidence()
-            .field("weighting.density_scope"),
-        Some("per_output_channel"),
+        weighting.density_scope(),
+        WeightDensityScope::PerOutputChannel
     );
 }
 
 #[test]
 fn t55_per_channel_density_request_is_bound_into_the_executed_cube() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = spectral_line_measurement_set(root.path());
     for cube in [true, false] {
@@ -222,20 +199,15 @@ fn t55_per_channel_density_request_is_bound_into_the_executed_cube() {
                 }
                 let result = execute_continuum(imaging).expect("density scope execution");
                 let expected = if weighting == ContinuumWeighting::Natural {
-                    "not_applicable"
+                    WeightDensityScope::NotApplicable
                 } else if cube && per_channel {
-                    "per_output_channel"
+                    WeightDensityScope::PerOutputChannel
                 } else {
-                    "global_selection"
+                    WeightDensityScope::GlobalSelection
                 };
                 assert_eq!(
-                    result
-                        .outcome
-                        .output
-                        .publication_receipt
-                        .compiled_problem_evidence()
-                        .field("weighting.density_scope"),
-                    Some(expected),
+                    result.outcome.output.problem.weighting().density_scope(),
+                    expected,
                     "cube={cube} per_channel={per_channel} weighting={weighting:?}",
                 );
             }
@@ -264,9 +236,8 @@ fn t55_clark_cube_products_and_repeated_cycles_agree_across_channel_windows() {
     );
 }
 
-fn compare_clark_cube_cases(cases: &[(u64, Option<u64>)], weightings: &[ContinuumWeighting]) {
+fn compare_clark_cube_cases(cases: &[(usize, Option<u64>)], weightings: &[ContinuumWeighting]) {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = spectral_line_measurement_set(root.path());
     for &weighting in weightings {
@@ -300,21 +271,16 @@ fn compare_clark_cube_cases(cases: &[(u64, Option<u64>)], weightings: &[Continuu
             imaging.gain = 0.37;
             imaging.threshold_jy = 1.0e-12;
             imaging.noise_sigma = Some(1.0e-12);
-            imaging.resource_policy = casa_imaging_runtime::ResourcePolicy::Explicit(
-                casa_imaging_runtime::ResourceOverride {
-                    workers: Some(workers),
-                    memory_bytes: memory_bytes
-                        .map(|bytes| {
-                            (
-                                casa_imaging_runtime::CapacityDomainId::new("host-memory"),
-                                bytes,
-                            )
-                        })
-                        .into_iter()
-                        .collect(),
-                    ..casa_imaging_runtime::ResourceOverride::default()
-                },
-            );
+            // A four-thread host, so the policy, not this machine, sets the team.
+            imaging.host = HostResources {
+                threads: 4,
+                performance_cores: 4,
+                ..HostResources::detect().expect("host")
+            };
+            imaging.resource_policy = ResourcePolicy::Explicit {
+                workers,
+                memory: memory_bytes.unwrap_or(u64::MAX),
+            };
             let started = std::time::Instant::now();
             let result = execute_continuum(imaging).expect("bounded production Clark cube");
             eprintln!(
@@ -330,7 +296,7 @@ fn compare_clark_cube_cases(cases: &[(u64, Option<u64>)], weightings: &[Continuu
                 "fixture must cross a synchronized major-cycle boundary"
             );
             assert!(result.actual_minor_iterations > 0);
-            assert_eq!(result.outcome.output.workers as u64, workers);
+            assert_eq!(result.outcome.output.workers, workers);
             let mut products = Vec::new();
             for suffix in PRODUCT_SUFFIXES {
                 let product = PagedImage::<f32>::open(PathBuf::from(format!(
@@ -436,7 +402,6 @@ fn compare_clark_cube_cases(cases: &[(u64, Option<u64>)], weightings: &[Continuu
 #[test]
 fn t55_signed_primary_beam_limit_separates_pixels_search_support_and_stored_masks() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = vla_spectral_line_measurement_set(root.path());
     for weighting in [ContinuumWeighting::Natural, ContinuumWeighting::Briggs(0.5)] {

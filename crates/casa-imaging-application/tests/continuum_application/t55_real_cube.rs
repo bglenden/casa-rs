@@ -7,10 +7,6 @@
 //! with casa-ms's `initialize_imaging_owner` example before invoking this test.
 
 use super::*;
-use casa_imaging_runtime::{
-    CapacityDomainId, ExecutionReceiptStore, ReceiptRetention, ResourceOverride, ResourcePolicy,
-    WorkNodeId,
-};
 use std::{collections::BTreeMap, fs};
 
 const REAL_PRODUCTS: [&str; 7] = [
@@ -62,7 +58,7 @@ fn run_q_band_cube(expected_rows: usize, image_size: usize, full_input: bool) {
     } else {
         "CASA_RS_T55_PREFLIGHT_WORKERS"
     };
-    let workers: u64 = std::env::var(worker_variable)
+    let workers: usize = std::env::var(worker_variable)
         .map(|value| value.parse().expect("positive diagnostic worker count"))
         .unwrap_or(1);
     assert!([1, 2, 4].contains(&workers));
@@ -120,11 +116,10 @@ fn run_q_band_cube(expected_rows: usize, image_size: usize, full_input: bool) {
     imaging.primary_beam_limit = -0.2;
     imaging.write_primary_beam = true;
     imaging.task_requirements = vec![TaskRequirement::PerChannelWeightDensity];
-    imaging.resource_policy = ResourcePolicy::Explicit(ResourceOverride {
-        workers: Some(workers),
-        memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), memory_bytes)]),
-        ..ResourceOverride::default()
-    });
+    imaging.resource_policy = ResourcePolicy::Explicit {
+        workers,
+        memory: memory_bytes,
+    };
     fs::write(root.join("request.txt"), format!("{imaging:#?}\n")).unwrap();
     if std::env::var_os("CASA_RS_PROFILE_CUBE").is_some() {
         eprintln!(
@@ -153,24 +148,19 @@ fn run_q_band_cube(expected_rows: usize, image_size: usize, full_input: bool) {
         );
     }
     let pass_workers = result.outcome.output.workers;
-    assert_eq!(pass_workers as u64, workers);
+    assert_eq!(pass_workers, workers);
     assert_products(&image_name, &result.product_names, &REAL_PRODUCTS);
     let pb = PagedImage::<f32>::open(root.join("image.pb")).expect("published PB");
     assert_eq!(pb.shape(), &[image_size, image_size, 1, 512]);
-    let publication = &result.outcome.output.publication_receipt;
-    assert_eq!(publication.status(), ReceiptStatus::Completed);
-    let publication_stage_nanos = ["product-generation-write", "product-publication-commit"]
-        .into_iter()
-        .map(|name| {
-            (
-                name,
-                publication
-                    .stage_actual_elapsed_nanos(&WorkNodeId::new(name))
-                    .expect("completed publication stage timing"),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
-    let publication_seconds = publication_stage_nanos.values().sum::<u64>() as f64 / 1.0e9;
+    let publication_seconds = result
+        .outcome
+        .output
+        .summary
+        .phases
+        .iter()
+        .find(|phase| phase.name == "products")
+        .expect("the products phase")
+        .seconds;
     let fingerprints = std::env::var_os("CASA_RS_T55_PUBLICATION_PROBE")
         .map(|_| publication_probe_fingerprints(&root));
     fs::write(
@@ -189,7 +179,6 @@ fn run_q_band_cube(expected_rows: usize, image_size: usize, full_input: bool) {
             "image_size": image_size,
             "task_wall_seconds": task_wall_seconds,
             "publication_seconds": publication_seconds,
-            "publication_stage_nanos": publication_stage_nanos,
             "product_fingerprints": fingerprints,
             "major_cycles": result.outcome.output.major_cycle_count,
             "minor_iterations": result.minor_iterations,
@@ -327,7 +316,7 @@ fn real_clark_worker_cases(
         .map(|value| {
             value
                 .split(',')
-                .map(|worker| worker.parse::<u64>().expect("positive worker count"))
+                .map(|worker| worker.parse::<usize>().expect("positive worker count"))
                 .collect::<Vec<_>>()
         })
         .unwrap_or_else(|_| vec![1, 2, 3]);
@@ -339,7 +328,6 @@ fn real_clark_worker_cases(
     let root = required_path("CASA_RS_T55_ARTIFACT_ROOT");
     fs::create_dir(&root).expect("artifact root must be fresh and its parent must exist");
     let root = root.canonicalize().unwrap();
-    set_production_io_environment();
     fs::write(
         root.join("request.json"),
         serde_json::to_vec_pretty(&serde_json::json!({
@@ -359,8 +347,6 @@ fn real_clark_worker_cases(
             "maximum_major_cycles": 3, "gain": 0.1, "threshold_jy": 0,
             "psf_cutoff": casa_imaging_products::DEFAULT_PSF_CUTOFF,
             "pblimit": -0.2, "write_pb": true, "pbcor": false, "wterm": "none",
-            "spill_read_bytes_per_second": 1_000_000_000_u64,
-            "spill_write_bytes_per_second": 1_000_000_000_u64,
         }))
         .unwrap(),
     )
@@ -420,14 +406,10 @@ fn real_clark_worker_cases(
                 imaging.pbcor = false;
                 imaging.task_requirements =
                     vec![casa_imaging_application::TaskRequirement::PerChannelWeightDensity];
-                imaging.resource_policy = ResourcePolicy::Explicit(ResourceOverride {
-                    workers: Some(workers),
-                    memory_bytes: BTreeMap::from([(
-                        CapacityDomainId::new("host-memory"),
-                        memory_bytes,
-                    )]),
-                    ..ResourceOverride::default()
-                });
+                imaging.resource_policy = ResourcePolicy::Explicit {
+                    workers,
+                    memory: memory_bytes,
+                };
                 eprintln!(
                     "T55 real cube start: {label} workers={workers} artifacts={}",
                     directory.display()
@@ -445,52 +427,30 @@ fn real_clark_worker_cases(
                 };
                 let task_wall_seconds = task_started.elapsed().as_secs_f64();
                 let output = &result.outcome.output;
-                let receipts = ExecutionReceiptStore::new(
-                    directory.join(".casa-rs-imaging-receipts"),
-                    ReceiptRetention::new(512, 256 << 20).unwrap(),
-                )
-                .unwrap();
-                let publication = &output.publication_receipt;
+                let contract = output.problem.weighting();
                 assert_eq!(
-                    receipts.open(publication.attempt_id()).unwrap(),
-                    *publication
-                );
-                assert_eq!(publication.status(), ReceiptStatus::Completed);
-                assert_eq!(
-                    publication
-                        .compiled_problem_evidence()
-                        .field("weighting.density_scope"),
-                    Some(if weighting == ContinuumWeighting::Natural {
-                        "not_applicable"
+                    contract.density_scope(),
+                    if weighting == ContinuumWeighting::Natural {
+                        WeightDensityScope::NotApplicable
                     } else {
-                        "per_output_channel"
-                    }),
+                        WeightDensityScope::PerOutputChannel
+                    },
                     "executed weighting scope must match the CASA workload",
                 );
                 assert_eq!(
-                    publication
-                        .compiled_problem_evidence()
-                        .field("weighting.casa_cube_density_padding"),
-                    if weighting == ContinuumWeighting::Natural {
-                        None
-                    } else {
-                        Some("1")
-                    },
+                    contract.casa_cube_density_padding(),
+                    (weighting != ContinuumWeighting::Natural).then_some(1),
                     "the single-field LSRK cube binds CASA nominal density padding"
                 );
-                let receipt_summary = serde_json::json!({
-                    "phase": "publication", "attempt_id": publication.attempt_id().to_string(),
-                    "path": receipts.root_path().join(format!("{}.receipt.json", publication.attempt_id())),
-                });
                 fs::write(directory.join("summary.json"), serde_json::to_vec_pretty(&serde_json::json!({
                 "weighting": label, "requested_workers": workers, "pass_workers": output.workers,
                 "task_wall_seconds": task_wall_seconds, "repetition": repetition,
                 "native_memory_bytes": memory_bytes, "major_cycles": output.major_cycle_count,
                 "minor_cycles": output.minor_cycles.len(), "minor_iterations": result.minor_iterations,
                 "actual_minor_iterations": result.actual_minor_iterations,
-                "products": result.product_names, "receipts": [receipt_summary],
+                "products": result.product_names, "phases": output.summary.phases,
             })).unwrap()).unwrap();
-                assert_eq!(output.workers as u64, workers);
+                assert_eq!(output.workers, workers);
                 assert!(output.major_cycle_count > 1 && output.minor_cycles.len() > 1);
                 assert!(result.actual_minor_iterations > 0);
                 assert_products(&image_name, &result.product_names, &REAL_PRODUCTS);

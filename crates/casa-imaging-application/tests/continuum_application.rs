@@ -11,14 +11,14 @@ use casa_coordinates::{
 use casa_images::PagedImage;
 use casa_imaging_application::{
     CleanStop, ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy,
-    ContinuumImagingRequest, ContinuumMask, ContinuumMaskBox, ContinuumWeighting,
-    SpectralImagingMode, TaskRequirement, VisibilityContinuumSubtraction, execute_continuum,
-    resource_policy_for_task_requirements,
+    ContinuumImagingRequest, ContinuumMask, ContinuumMaskBox, ContinuumWeighting, HostResources,
+    ResourcePolicy, SpectralImagingMode, TaskRequirement, VisibilityContinuumSubtraction,
+    execute_continuum, resource_policy_for_task_requirements,
 };
 use casa_imaging_model::{
     ImageDomainRole, ProductBeamRule, ProductRole, ProductTerm, ProductUnit, ProductValidityRule,
+    WeightDensityScope,
 };
-use casa_imaging_runtime::ReceiptStatus;
 use casa_ms::{
     CubeAxisConfig, CubeAxisValue, MeasurementSet, MeasurementSetBuilder, OptionalMainColumn,
     SubtableId, VisibilityDataColumn,
@@ -147,9 +147,8 @@ mod t55_c_array_turnaround;
 mod t55_mfs_pilot;
 
 #[test]
-fn unsupported_primary_beam_frequency_rejects_before_execution_receipts() {
+fn unsupported_primary_beam_frequency_rejects_before_any_phase() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     // This existing fixture labels 44 GHz as EVLA; the selected common EVLA
     // model represents only L/S/C, unlike the separate legacy-VLA Q model.
@@ -175,20 +174,17 @@ fn unsupported_primary_beam_frequency_rejects_before_execution_receipts() {
     // frequency, not the source's exactly 44-GHz TOPO channel.
     assert_ne!(*frequency_hz, 44.0e9);
     assert!((*frequency_hz - 44.0e9).abs() < 2.0e6);
-    assert!(
-        std::fs::read_dir(root.path().join(".casa-rs-imaging-receipts"))
-            .expect("prepared receipt directory")
-            .next()
-            .is_none(),
-        "no weighting, replay, reconstruction or publication may execute"
-    );
-    assert!(!root.path().join("unsupported-beam.pb").exists());
+    // No phase ran: nothing but the input is in the output directory.
+    let entries = std::fs::read_dir(root.path())
+        .expect("output directory")
+        .map(|entry| entry.expect("entry").file_name())
+        .collect::<Vec<_>>();
+    assert_eq!(entries, ["vla-aw-input.ms"], "no pass or product may run");
 }
 
 #[test]
 fn image_pointing_center_preserves_casa_positive_pi_longitude() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let image_name = root.path().join("antimeridian");
     let mut imaging = request(
@@ -208,7 +204,6 @@ fn image_pointing_center_preserves_casa_positive_pi_longitude() {
 #[test]
 fn image_observation_metadata_accepts_matching_labels_across_observations() {
     let _execution_guard = EXECUTION_LOCK.lock().unwrap();
-    set_production_io_environment();
     for (second_telescope, second_observer, accepted) in [
         ("EVLA", "casa-rs-test", true),
         ("VLA", "casa-rs-test", false),
@@ -339,7 +334,6 @@ fn assert_model_residual_respect_mask(image_name: &Path, expected_mask_pixels: u
 #[test]
 fn application_executes_single_ddid_stokes_i_mfs_dirty_and_publishes_products() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = tiny_measurement_set(root.path());
     let image_name = root.path().join("dirty");
@@ -395,7 +389,6 @@ fn t51_taylor_publication_persists_casa_metadata_without_changing_logical_contra
 
 fn t51_taylor_publication_persists_casa_metadata_without_changing_logical_contract_impl() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = alma_primary_beam_measurement_set(root.path());
     let image_name = root.path().join("taylor-metadata");
@@ -579,7 +572,6 @@ fn t51_taylor_publication_persists_casa_metadata_without_changing_logical_contra
 #[test]
 fn t49_plane_count_does_not_infer_w_projection() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = tiny_measurement_set(root.path());
     let image_name = root.path().join("w-planes-without-capability");
@@ -606,7 +598,6 @@ fn t49_plane_count_does_not_infer_w_projection() {
 #[test]
 fn stokes_i_uses_one_shared_imaging_weight_for_each_linear_parallel_hand() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
 
     let run = |name: &str, weights: [f32; 2]| {
@@ -657,7 +648,6 @@ fn stokes_i_uses_one_shared_imaging_weight_for_each_linear_parallel_hand() {
 #[test]
 fn application_executes_full_stokes_mfs_clean_with_complete_products_and_axes() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = full_stokes_measurement_set(root.path());
     let image_name = root.path().join("full-stokes-dirty");
@@ -757,7 +747,6 @@ fn application_executes_full_stokes_mfs_clean_with_complete_products_and_axes() 
 #[test]
 fn application_executes_raw_linear_correlation_products_with_exact_axis() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let image_name = root.path().join("linear-correlations");
     let linear_request = |measurement_set| {
@@ -814,7 +803,6 @@ fn application_executes_raw_linear_correlation_products_with_exact_axis() {
 #[test]
 fn application_uses_weight_when_selected_weight_spectrum_cells_are_undefined() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = undefined_weight_spectrum_measurement_set(root.path());
     let image_name = root.path().join("undefined-weight-spectrum-dirty");
@@ -835,7 +823,6 @@ fn application_uses_weight_when_selected_weight_spectrum_cells_are_undefined() {
 #[test]
 fn nonfinite_visibilities_image_as_flagged_samples() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     const ROW: usize = 3;
     let mut images = Vec::new();
     for nonfinite in [true, false] {
@@ -886,7 +873,6 @@ fn nonfinite_visibilities_image_as_flagged_samples() {
 #[test]
 fn t31_application_executes_recentered_domains_through_one_scientific_route() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = tiny_measurement_set(root.path());
 
@@ -998,7 +984,6 @@ fn t31_application_executes_recentered_domains_through_one_scientific_route() {
 #[test]
 fn outlier_cube_domains_image_independently_of_the_main_cube() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
     let cube = |image_name: &Path, outlier_file: Option<PathBuf>| {
@@ -1079,7 +1064,6 @@ fn outlier_cube_domains_image_independently_of_the_main_cube() {
 #[test]
 fn t31_application_canonicalizes_reversed_outliers_before_domain_indexed_derivations() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = tiny_measurement_set(root.path());
     let main = root.path().join("main");
@@ -1192,7 +1176,6 @@ fn t31_application_canonicalizes_reversed_outliers_before_domain_indexed_derivat
 #[test]
 fn application_executes_a_multi_row_dirty_image() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = multi_row_measurement_set(root.path());
     let image_name = root.path().join("multi-row-dirty");
@@ -1209,7 +1192,6 @@ fn application_executes_a_multi_row_dirty_image() {
 #[test]
 fn application_compiles_common_beam_requests_with_common_spectral_coupling() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = tiny_measurement_set(root.path());
     let image_name = root.path().join("common-beam");
@@ -1237,7 +1219,6 @@ fn application_compiles_common_beam_requests_with_common_spectral_coupling() {
 #[test]
 fn cube_common_beam_products_preserve_blank_pixels_and_casa_metadata_without_pb() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = spectral_line_measurement_set(root.path());
     let image_name = root.path().join("common-beam-cube");
@@ -1324,7 +1305,6 @@ fn cube_common_beam_products_preserve_blank_pixels_and_casa_metadata_without_pb(
 #[test]
 fn t607_application_preserves_channel_topology_and_wcs_through_cube_planning() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = thirty_two_channel_measurement_set(root.path());
     let image_name = root.path().join("t607-channel-local-cube");

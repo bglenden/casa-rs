@@ -7,7 +7,7 @@ use casa_ms::{
     SelectedObservationContentBudget, SelectedObservationContentPlanError,
 };
 
-use crate::{ResourceAuthority, ResourceError, ResourcePolicy};
+use crate::{Admission, Demand, HostResources, Reservation, ResourcePolicy, admit, free_memory};
 
 /// The budget that bounds source inspection before the compiled problem
 /// can quote its complete initialization and traversal requirements.
@@ -25,55 +25,62 @@ pub enum SourceAccessError {
     /// The requirement curve could not be evaluated or planned.
     #[error("selected-observation content plan: {0}")]
     ContentPlan(#[from] SelectedObservationContentPlanError),
-    /// The policy's memory cannot hold the source's minimum envelope.
+    /// The policy's free memory cannot hold the source's envelope.
     #[error(transparent)]
-    Resource(#[from] ResourceError),
+    Admission(#[from] Admission),
     /// The preferred envelope does not fit the address space.
     #[error("the selected-observation envelope overflows")]
     Overflow,
 }
 
-/// Finalize an unopened source's bounded execution envelope.
+/// Finalize an unopened source's bounded execution envelope and admit it.
 ///
-/// The storage owner supplies the requirement curve; the runtime selects at
-/// most the bootstrap budget of preferred growth beyond its mandatory minimum
-/// under the current policy. The returned budget charges the actual bounded
-/// plan, not all available host memory.
+/// The storage owner supplies the requirement curve; the source takes its
+/// mandatory minimum and grows beyond it by at most the bootstrap budget and
+/// at most a quarter of what `policy` leaves free on `host` past that
+/// minimum, so the paged cube cache and the passes, admitted after it, keep
+/// the rest. The reservation holds the envelope the source plans, and the
+/// run keeps it while the source is open.
 pub fn finalize_source_access(
     problem: &CompiledProblem,
     access: ResolvedSelectedObservationAccess,
-    authority: &ResourceAuthority,
+    host: &HostResources,
     policy: &ResourcePolicy,
-) -> Result<ResolvedSelectedObservationAccess, SourceAccessError> {
+) -> Result<(ResolvedSelectedObservationAccess, Reservation), SourceAccessError> {
     let requirements = access.content_requirements(problem)?;
     let maximum_live_blocks = access
         .source_binding()
         .content_budget()
         .maximum_live_blocks();
     let minimum = requirements.minimum_bytes(maximum_live_blocks)?;
-    let available = authority.remaining_selected_source_memory_bytes(policy)?;
-    let required = u64::try_from(minimum).map_err(|_| SourceAccessError::Overflow)?;
-    if required > available {
-        return Err(ResourceError::Infeasible {
-            resource: "selected-observation host memory".to_string(),
-            required,
-            available,
-        }
-        .into());
-    }
-    let preferred = minimum
-        .checked_add(bootstrap_source_budget().available_bytes())
-        .ok_or(SourceAccessError::Overflow)?;
+    let free = usize::try_from(free_memory(host, policy)).unwrap_or(usize::MAX);
+    let growth = bootstrap_source_budget()
+        .available_bytes()
+        .min(free.saturating_sub(minimum) / 4);
     let budget = SelectedObservationContentBudget::new(
-        preferred.min(usize::try_from(available).unwrap_or(usize::MAX)),
+        minimum
+            .checked_add(growth)
+            .ok_or(SourceAccessError::Overflow)?,
         maximum_live_blocks,
         requirements.maximum_pointing_polynomial_terms(),
     );
     let planned = requirements.plan(budget)?;
+    let reservation = admit(
+        host,
+        policy,
+        &Demand {
+            phase: "selected-observation source",
+            memory: u64::try_from(planned.maximum_resident_bytes())
+                .map_err(|_| SourceAccessError::Overflow)?,
+        },
+    )?;
     let budget = SelectedObservationContentBudget::new(
         planned.maximum_resident_bytes(),
         maximum_live_blocks,
         requirements.maximum_pointing_polynomial_terms(),
     );
-    Ok(access.with_content_budget(problem, &requirements, budget)?)
+    Ok((
+        access.with_content_budget(problem, &requirements, budget)?,
+        reservation,
+    ))
 }

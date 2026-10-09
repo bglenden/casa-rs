@@ -39,7 +39,7 @@ use casa_imaging_reconstruction::{ExecutableModelProblem, ModelLifecycle};
 pub fn identity(seed: u8, scope: u8) -> LogicalIdentity {
     let mut bytes = [seed; 32];
     bytes[0] = scope;
-    LogicalIdentity::from_sha256(bytes)
+    LogicalIdentity::from_bytes(bytes)
 }
 
 pub fn attempt(byte: u8) -> ModelExecutionAttemptId {

@@ -29,7 +29,6 @@ const PRODUCTS: [&str; 6] = [".psf", ".residual", ".model", ".image", ".sumwt", 
 #[test]
 #[ignore = "requires slow-parity casatestdata and matching CASA T34 products"]
 fn t34_full_stokes_hogbom_matches_casa_products() -> Result<(), Box<dyn Error>> {
-    set_production_io_environment();
     let casa_prefix = PathBuf::from(
         std::env::var_os(CASA_PREFIX_ENV).ok_or("CASA_RS_T34_CASA_PREFIX is not set")?,
     );
@@ -279,7 +278,6 @@ fn product_diagnostics(product: &str, rust: &Product, casa: &Product) {
 #[test]
 #[ignore = "requires the frozen issue #607 full-Stokes fixture and CASA products"]
 fn issue607_representative_full_stokes_matches_casa_products() -> Result<(), Box<dyn Error>> {
-    set_production_io_environment();
     let source = PathBuf::from(
         std::env::var_os(REPRESENTATIVE_MS_ENV)
             .ok_or("CASA_RS_ISSUE607_FULL_STOKES_MS is not set")?,
@@ -566,8 +564,11 @@ fn request(measurement_set: PathBuf, image_name: PathBuf) -> ContinuumImagingReq
             TaskRequirement::SerialCpu,
             TaskRequirement::FixedTileCpu,
         ],
-        resource_policy: casa_imaging_runtime::ResourcePolicy::Balanced,
+        host: casa_imaging_application::HostResources::detect().expect("host"),
+        resource_policy: casa_imaging_application::ResourcePolicy::Balanced,
         backend: casa_imaging_application::BackendChoice::Cpu,
+        cancel: casa_imaging_application::Cancel::new(),
+        summary: None,
     }
 }
 
@@ -630,12 +631,5 @@ fn normalized_rms(rust: &[f32], casa: &[f32], valid: &[bool]) -> f64 {
         (error / count as f64).sqrt()
     } else {
         (error / reference).sqrt()
-    }
-}
-
-fn set_production_io_environment() {
-    unsafe {
-        std::env::set_var("CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND", "1000000000");
-        std::env::set_var("CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND", "1000000000");
     }
 }

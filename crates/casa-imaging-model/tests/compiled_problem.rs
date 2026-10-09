@@ -1866,7 +1866,7 @@ fn compiled_problem_identity_has_a_pinned_schema_twenty_six_digest() {
         compiled.problem_id().to_string(),
         "ad436425a54249ca67e1582e56bb8bc036be7f810bb948d5ac1b8d4037174eb3"
     );
-    let lifecycle = casa_imaging_model::LogicalIdentity::from_sha256(
+    let lifecycle = casa_imaging_model::LogicalIdentity::from_bytes(
         compiled.model_lifecycle().contract_id().as_bytes(),
     );
     assert!(casa_imaging_model::validate_compiled_problem_identity(
@@ -1883,7 +1883,7 @@ fn compiled_problem_identity_has_a_pinned_schema_twenty_six_digest() {
     ));
     assert!(!casa_imaging_model::validate_compiled_problem_identity(
         compiled.problem_id().as_bytes(),
-        casa_imaging_model::LogicalIdentity::from_sha256([0; 32]),
+        casa_imaging_model::LogicalIdentity::from_bytes([0; 32]),
         compiled.inputs().model(),
         lifecycle,
     ));

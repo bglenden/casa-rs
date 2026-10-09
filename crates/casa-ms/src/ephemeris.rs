@@ -226,7 +226,7 @@ impl SelectedObservationEphemeris {
         hasher.update(b"tracking-and-attached-fields");
         hasher.update(self.identity.as_bytes());
         hasher.update(attached.identity.as_bytes());
-        self.identity = LogicalIdentity::from_sha256(hasher.finalize().into());
+        self.identity = LogicalIdentity::from_bytes(hasher.finalize().into());
         let shared_owner_bytes = selected_ephemeris_allocation_bytes()?;
         self.retained_bytes = self
             .retained_bytes
@@ -567,7 +567,7 @@ fn series_identity(
             hasher.update(value.to_bits().to_le_bytes());
         }
     }
-    LogicalIdentity::from_sha256(hasher.finalize().into())
+    LogicalIdentity::from_bytes(hasher.finalize().into())
 }
 
 fn tracked_identity(fields: &[FieldEphemerisBinding]) -> LogicalIdentity {
@@ -579,7 +579,7 @@ fn tracked_identity(fields: &[FieldEphemerisBinding]) -> LogicalIdentity {
         hasher.update((field.field_id as u64).to_le_bytes());
         hasher.update(field.series.identity.as_bytes());
     }
-    LogicalIdentity::from_sha256(hasher.finalize().into())
+    LogicalIdentity::from_bytes(hasher.finalize().into())
 }
 
 fn interpolate(before: f64, after: f64, factor: f64) -> f64 {

@@ -1077,7 +1077,7 @@ fn model_data_write_read_interoperability_matrix() {
     let model_selection = selection.clone();
     let request = SelectedObservationResolutionRequest::new(
         ms_path.display().to_string(),
-        LogicalIdentity::from_sha256([2; 32]),
+        LogicalIdentity::from_bytes([2; 32]),
         selection,
         VisibilityColumn::Data,
         WeightColumn::Weight,
@@ -1101,7 +1101,7 @@ fn model_data_write_read_interoperability_matrix() {
         .expect("write prediction");
     writer
         .complete(SelectedVisibilityWriteGenerations {
-            model_data: Some(LogicalIdentity::from_sha256([73; 32])),
+            model_data: Some(LogicalIdentity::from_bytes([73; 32])),
             corrected_data: None,
         })
         .expect("complete MODEL_DATA write");
@@ -1187,7 +1187,7 @@ fn model_data_clone_preserves_cpp_heterogeneous_tiled_shape_storage() {
     );
     let request = SelectedObservationResolutionRequest::new(
         path.display().to_string(),
-        LogicalIdentity::from_sha256([82; 32]),
+        LogicalIdentity::from_bytes([82; 32]),
         selection.clone(),
         VisibilityColumn::Data,
         WeightColumn::Weight,
@@ -1222,7 +1222,7 @@ fn model_data_clone_preserves_cpp_heterogeneous_tiled_shape_storage() {
         .expect("write 4x8 cell");
     writer
         .complete(SelectedVisibilityWriteGenerations {
-            model_data: Some(LogicalIdentity::from_sha256([83; 32])),
+            model_data: Some(LogicalIdentity::from_bytes([83; 32])),
             corrected_data: None,
         })
         .expect("complete Rust write");

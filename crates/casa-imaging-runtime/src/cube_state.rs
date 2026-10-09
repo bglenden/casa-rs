@@ -8,6 +8,7 @@ use std::{io, path::Path, sync::Arc};
 use casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan;
 use casa_imaging_reconstruction::{ModelLifecycleError, ModelStoragePlan, SpectralOperatorError};
 
+use crate::Reservation;
 use crate::managed_cube_blocks::{CubeResidency, ManagedPlaneArray};
 use crate::managed_model::ManagedModelFactory;
 use crate::managed_normal::ManagedNormalFactory;
@@ -85,9 +86,13 @@ impl CubeState {
         ))
     }
 
-    /// A cache of `cache_bytes` over files in `directory` for `planes`
-    /// planes of each `[width, height]` in `domains` (each domain's planes
-    /// are its channels × polarizations).
+    /// A cache of the bytes `cache` holds over files in `directory` for
+    /// `planes` planes of each `[width, height]` in `domains` (each domain's
+    /// planes are its channels × polarizations).
+    ///
+    /// The reservation is released when the last storage this state hands
+    /// out drops, so a completed run's model and normal state stay charged
+    /// for as long as anything holds them.
     ///
     /// Every plane may be paged out, so the directory's file system must have
     /// room for the whole payload; otherwise the error is
@@ -96,8 +101,10 @@ impl CubeState {
         directory: &Path,
         domains: &[[usize; 2]],
         planes: usize,
-        cache_bytes: usize,
+        cache: Reservation,
     ) -> io::Result<Self> {
+        let cache_bytes = usize::try_from(cache.memory())
+            .map_err(|_| io::Error::other("the cube cache exceeds the address space"))?;
         let disk = footprint(directory, domains, planes, 1)?.disk;
         let available = fs2::available_space(directory)?;
         if available < disk as u64 {
@@ -114,7 +121,7 @@ impl CubeState {
             .map(|[width, height]| [*height, *width])
             .collect::<Vec<_>>();
         let residency = CubeResidency::new(cache_bytes)?;
-        let retention: Arc<dyn std::fmt::Debug + Send + Sync> = Arc::new(());
+        let retention: Arc<dyn std::fmt::Debug + Send + Sync> = Arc::new(cache);
         Ok(Self {
             model: Arc::new(ManagedModelFactory::new(
                 residency.clone(),

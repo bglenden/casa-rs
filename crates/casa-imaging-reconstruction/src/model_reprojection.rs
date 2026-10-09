@@ -257,7 +257,7 @@ pub fn prepare_reprojected_seed<R: ModelSourceReader>(
     }
 
     let preparation_contract =
-        LogicalIdentity::from_sha256(target_contract.contract_id().as_bytes());
+        LogicalIdentity::from_bytes(target_contract.contract_id().as_bytes());
     let mapping = model_reprojected_seed_mapping_identity(
         preparation_contract,
         source_shape.identity(),

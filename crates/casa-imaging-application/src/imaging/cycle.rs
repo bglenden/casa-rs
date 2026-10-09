@@ -29,8 +29,9 @@ use casa_imaging_runtime::pass::{
     run_major_cycle,
 };
 use casa_imaging_runtime::{
-    AcceleratorKind, CubeState, MinorCycleOutcome, MinorCycleSetup, PsfCache, ResourceAuthority,
-    ResourcePolicy, prepare_minor_cycle, run_minor_cycle,
+    CubeState, Demand, HostResources, MinorCycleOutcome, MinorCycleSetup, PsfCache, Reservation,
+    ResourcePolicy, RunSummary, admit, free_memory, prepare_minor_cycle, run_minor_cycle,
+    run_phase,
 };
 use casa_ms::ResolvedSelectedObservationAccess;
 
@@ -50,8 +51,12 @@ pub(crate) struct ImagingInputs<'a> {
     pub(crate) masks: ImageDomainReconstructionMaskPlans,
     pub(crate) image_response: Option<MinorCycleImageResponse>,
     pub(crate) visibility_write: Option<VisibilityWriteTarget>,
-    pub(crate) authority: &'a ResourceAuthority,
-    pub(crate) policy: &'a ResourcePolicy,
+    pub(crate) host: HostResources,
+    pub(crate) policy: ResourcePolicy,
+    /// The run's one worker team, which products reuse.
+    pub(crate) team: &'a WorkerTeam,
+    pub(crate) cancel: Cancel,
+    /// Where the paged cube state of a channel-local run lives.
     pub(crate) spill_directory: &'a Path,
     /// The AW catalog of an A-projection run.
     pub(crate) aw_catalog: Option<AwCatalogDeployment>,
@@ -68,7 +73,6 @@ pub(crate) struct ImagingOutcome {
     pub(crate) total_minor_iterations: usize,
     pub(crate) total_actual_minor_iterations: usize,
     pub(crate) visibility_products: Option<VisibilityProductCompletion>,
-    pub(crate) workers: usize,
     pub(crate) planes_per_wave: Option<u32>,
 }
 
@@ -79,10 +83,11 @@ struct Run<'a> {
     source: MeasurementSetSource<'a>,
     weighting: WeightingGeneration,
     weighting_id: WeightingGenerationId,
-    team: WorkerTeam,
+    team: &'a WorkerTeam,
     cancel: Cancel,
+    host: HostResources,
+    policy: ResourcePolicy,
     cube: Option<CubeState>,
-    budget: u64,
     native_spacing_hz: f64,
     backend: BackendChoice,
     attempts: u64,
@@ -100,33 +105,46 @@ struct Major {
     visibility: Option<VisibilityProductCompletion>,
 }
 
+impl ImagingOutcome {
+    /// The outcome of a run that has done its initial major cycle `major`.
+    fn initial(major: Major, run: &Run<'_>) -> Self {
+        Self {
+            scientific: major.completion,
+            masks: None,
+            minor_cycles: Vec::new(),
+            stop: None,
+            major_cycle_count: 1,
+            total_minor_iterations: 0,
+            total_actual_minor_iterations: 0,
+            visibility_products: major.visibility,
+            planes_per_wave: run.planes_per_wave,
+        }
+    }
+}
+
 /// Run every major and minor cycle of `inputs.problem`.
 ///
 /// The loop is tclean's: after each major cycle the controller decides from
 /// the fresh residual whether cleaning is complete (`cleanComplete`);
 /// otherwise a minor cycle runs under its controls and a major cycle
 /// refreshes the residual. A minor cycle that cleans nothing ends the run
-/// without another major cycle.
-pub(crate) fn run(inputs: ImagingInputs<'_>) -> Result<ImagingOutcome, ImagingError> {
+/// without another major cycle. Each cycle is a phase of `summary`; a
+/// cancelled run stops at the next block boundary of a pass or before the
+/// next phase.
+pub(crate) fn run(
+    inputs: ImagingInputs<'_>,
+    summary: &mut RunSummary,
+) -> Result<ImagingOutcome, ImagingError> {
     let problem = inputs.problem;
     let controls = problem.reconstruction().controls();
     let cleaning = controls.max_minor_iterations() > 0;
     let setup = minor_setup(problem, inputs.image_response, &inputs.masks);
     let mut mask_plans = inputs.masks.clone();
-    let mut run = Run::open(inputs)?;
-    let major = run.initial(!cleaning)?;
-    let mut outcome = ImagingOutcome {
-        scientific: major.completion,
-        masks: None,
-        minor_cycles: Vec::new(),
-        stop: None,
-        major_cycle_count: 1,
-        total_minor_iterations: 0,
-        total_actual_minor_iterations: 0,
-        visibility_products: major.visibility,
-        workers: run.team.workers(),
-        planes_per_wave: run.planes_per_wave,
-    };
+    let cancel = inputs.cancel.clone();
+    // Operators, the source, the imaging weights and the paged cube state.
+    let mut run = run_phase("setup", &cancel, summary, || Run::open(inputs))?;
+    let major = run_phase("major cycle 1", &cancel, summary, || run.initial(!cleaning))?;
+    let mut outcome = ImagingOutcome::initial(major, &run);
     if !cleaning {
         return Ok(outcome);
     }
@@ -138,7 +156,7 @@ pub(crate) fn run(inputs: ImagingInputs<'_>) -> Result<ImagingOutcome, ImagingEr
             &mask_plans,
             &setup,
             &mut cache,
-            &run.team,
+            run.team,
         )?;
         let statistics = prepared.statistics;
         if let Some(stop) = controller.clean_complete(&statistics) {
@@ -151,14 +169,17 @@ pub(crate) fn run(inputs: ImagingInputs<'_>) -> Result<ImagingOutcome, ImagingEr
         }
         let cycle_controls = controller.cycle_controls(&statistics);
         let started = Instant::now();
-        let minor = run_minor_cycle(
-            prepared,
-            &outcome.scientific,
-            &setup,
-            &cycle_controls,
-            &mut cache,
-            &run.team,
-        )?;
+        let name = format!("minor cycle {}", outcome.minor_cycles.len() + 1);
+        let minor = run_phase(name, &cancel, summary, || {
+            Ok::<_, ImagingError>(run_minor_cycle(
+                prepared,
+                &outcome.scientific,
+                &setup,
+                &cycle_controls,
+                &mut cache,
+                run.team,
+            )?)
+        })?;
         let global_threshold = controls
             .threshold_jy_per_beam()
             .max(statistics.nsigma_threshold);
@@ -180,19 +201,27 @@ pub(crate) fn run(inputs: ImagingInputs<'_>) -> Result<ImagingOutcome, ImagingEr
                 &mask_plans,
                 &setup,
                 &mut cache,
-                &run.team,
+                run.team,
             )?;
             outcome.stop = controller.clean_complete(&prepared.statistics);
             outcome.masks = Some(ReconstructionMaskSet::Domains(prepared.masks().clone()));
             break;
         }
-        let major = run.refresh(outcome.scientific, minor.terms, &minor.masks, last)?;
+        let name = format!("major cycle {}", outcome.major_cycle_count + 1);
+        let scientific = outcome.scientific;
+        let major = run_phase(name, &cancel, summary, || {
+            run.refresh(scientific, minor.terms, &minor.masks, last)
+        })?;
         controller.end_major_cycle();
         outcome.scientific = major.completion;
         outcome.visibility_products = major.visibility;
         outcome.major_cycle_count += 1;
     }
-    let mut outcome = predict_final_model(&mut run, outcome)?;
+    if run.visibility_write.is_some() && outcome.visibility_products.is_none() {
+        outcome = run_phase("model prediction", &cancel, summary, || {
+            predict_final_model(&mut run, outcome)
+        })?;
+    }
     outcome.planes_per_wave = run.planes_per_wave;
     Ok(outcome)
 }
@@ -242,15 +271,12 @@ fn account_minor_cycle(
     cycle
 }
 
-/// Predict the final model once more to write the model column, when the
-/// pass that ended the run was not known to be the last when it ran.
+/// Predict the final model once more to write the model column: the pass
+/// that ended the run was not known to be the last when it ran.
 fn predict_final_model(
     run: &mut Run<'_>,
     mut outcome: ImagingOutcome,
 ) -> Result<ImagingOutcome, ImagingError> {
-    if run.visibility_write.is_none() || outcome.visibility_products.is_some() {
-        return Ok(outcome);
-    }
     let masks = match &outcome.masks {
         Some(ReconstructionMaskSet::Domains(masks)) => masks.clone(),
         _ => unreachable!("a cleaning run has formed its masks"),
@@ -286,14 +312,7 @@ impl<'a> Run<'a> {
     fn open(inputs: ImagingInputs<'a>) -> Result<Self, ImagingError> {
         let problem = inputs.problem;
         let backend = inputs.backend;
-        if backend == BackendChoice::Metal
-            && !inputs
-                .authority
-                .topology()
-                .accelerators
-                .iter()
-                .any(|accelerator| accelerator.kind == AcceleratorKind::Metal)
-        {
+        if backend == BackendChoice::Metal && !inputs.host.metal {
             return Err(ImagingError::Unsupported {
                 reason: "the Metal backend needs a unified-memory Metal 3 device",
             });
@@ -326,9 +345,9 @@ impl<'a> Run<'a> {
                 reason: "visibilities are written back for one image domain",
             });
         }
-        let (workers, memory) = inputs.authority.phase_budget(inputs.policy)?;
-        let team = WorkerTeam::new(workers)?;
-        let cancel = Cancel::new();
+        let team = inputs.team;
+        let workers = team.workers();
+        let cancel = inputs.cancel;
         let main = &domains[0].operator;
         let mut source = MeasurementSetSource::new(
             problem,
@@ -341,13 +360,14 @@ impl<'a> Run<'a> {
             dish_classes,
         );
         let started = Instant::now();
-        let weighting = weighting(problem, &domains[0], &mut source, &team, &cancel)?;
+        let weighting = weighting(problem, &domains[0], &mut source, team, &cancel)?;
         tracing::info!(
             "imaging weights: {workers} workers, {:.2} s",
             started.elapsed().as_secs_f64()
         );
+        let (host, policy) = (inputs.host, inputs.policy);
         let cube = matches!(main.basis(), Basis::ChannelLocal { .. })
-            .then(|| cube_state(problem, inputs.spill_directory, workers, memory))
+            .then(|| cube_state(problem, inputs.spill_directory, workers, &host, &policy))
             .transpose()?;
         let run = Self {
             problem,
@@ -357,8 +377,9 @@ impl<'a> Run<'a> {
             weighting_id: WeightingGenerationId::next(),
             team,
             cancel,
+            host,
+            policy,
             cube,
-            budget: memory.saturating_sub(memory / 4),
             native_spacing_hz: native_spacing_hz(problem),
             backend,
             attempts: 0,
@@ -376,7 +397,7 @@ impl<'a> Run<'a> {
             } else {
                 (run.initial_modes(), start_model(problem))
             };
-            if run.residency(modes, with_model)? != Residency::All {
+            if run.admit_pass(modes, with_model)?.0 != Residency::All {
                 return Err(ImagingError::Pass(PassError::VisibilityWriteWaves));
             }
         }
@@ -399,7 +420,7 @@ impl<'a> Run<'a> {
             lifecycle.initial_empty()?
         };
         let preparation = MajorCyclePreparation::prepare(&lifecycle, named, None)?;
-        let residency = self.residency(self.initial_modes(), start_model)?;
+        let (residency, _pass) = self.admit_pass(self.initial_modes(), start_model)?;
         let state = PassNormalState::initial(
             self.problem,
             self.weighting_id,
@@ -431,7 +452,7 @@ impl<'a> Run<'a> {
             .then(|| lifecycle.compile_delta(&named, terms))
             .transpose()?;
         let preparation = MajorCyclePreparation::prepare(&lifecycle, named, delta)?;
-        let residency = self.residency(ModeSet::DATA, true)?;
+        let (residency, _pass) = self.admit_pass(ModeSet::DATA, true)?;
         let state = PassNormalState::refresh(
             self.problem,
             normal_state,
@@ -522,7 +543,7 @@ impl<'a> Run<'a> {
         identity[0] = 1;
         identity[24..].copy_from_slice(&self.attempts.to_be_bytes());
         casa_imaging_model::ModelExecutionAttemptId::new(
-            casa_imaging_model::LogicalIdentity::from_sha256(identity),
+            casa_imaging_model::LogicalIdentity::from_bytes(identity),
         )
     }
 
@@ -557,21 +578,37 @@ impl<'a> Run<'a> {
     }
 
     /// The waves of a pass accumulating `modes`, with a model when
-    /// `with_model`, that fit the budget: planned once per major cycle for
-    /// both the pass and its normal storage.
-    fn residency(&self, modes: ModeSet, with_model: bool) -> Result<Residency, ImagingError> {
+    /// `with_model`, that fit the free memory, and the reservation of one
+    /// wave: planned once per major cycle for both the pass and its normal
+    /// storage, and held while the pass runs.
+    fn admit_pass(
+        &self,
+        modes: ModeSet,
+        with_model: bool,
+    ) -> Result<(Residency, Reservation), ImagingError> {
         let domains = pass_domains(&self.domains, self.team.workers());
-        Ok(Residency::plan(
-            &WaveDemand {
-                domains: &domains,
-                modes,
-                with_model,
-                native_spacing_hz: self.native_spacing_hz,
-                workers: self.team.workers(),
-                backend: self.backend,
+        let demand = WaveDemand {
+            domains: &domains,
+            modes,
+            with_model,
+            native_spacing_hz: self.native_spacing_hz,
+            workers: self.team.workers(),
+            backend: self.backend,
+        };
+        let residency = Residency::plan(&demand, free_memory(&self.host, &self.policy));
+        let planes = match residency {
+            Residency::All => demand.planes(),
+            Residency::Waves { planes_per_wave } => planes_per_wave,
+        };
+        let reservation = admit(
+            &self.host,
+            &self.policy,
+            &Demand {
+                phase: "major-cycle pass",
+                memory: demand.bytes(planes),
             },
-            self.budget,
-        )?)
+        )?;
+        Ok((residency, reservation))
     }
 
     /// One pass over every image domain, appending its images to `state`.
@@ -611,7 +648,7 @@ impl<'a> Run<'a> {
         Ok(run_major_cycle(
             &pass,
             &mut self.source,
-            &self.team,
+            self.team,
             &self.cancel,
             &mut |domain, images| {
                 let basis = self.domains[domain].operator.basis();
@@ -736,12 +773,14 @@ fn plane_bounds(problem: &CompiledProblem) -> Option<PlaneBounds> {
 }
 
 /// The paged cube state of a channel-local run, with a cache as large as
-/// the whole cube when a quarter of the memory budget allows.
+/// the whole cube when a quarter of the free memory allows; the state holds
+/// the cache's reservation for as long as its storage lives.
 fn cube_state(
     problem: &CompiledProblem,
     directory: &Path,
     workers: usize,
-    memory: u64,
+    host: &HostResources,
+    policy: &ResourcePolicy,
 ) -> Result<CubeState, ImagingError> {
     let target = problem.model_lifecycle().target();
     let domains = target
@@ -751,8 +790,17 @@ fn cube_state(
         .collect::<Vec<_>>();
     let planes = target.coefficients() * target.polarizations();
     let (minimum, full) = CubeState::cache_limits(directory, &domains, planes, workers)?;
-    let cache = full.min(minimum.max(usize::try_from(memory / 4).unwrap_or(usize::MAX)));
-    Ok(CubeState::new(directory, &domains, planes, cache)?)
+    let quarter = usize::try_from(free_memory(host, policy) / 4).unwrap_or(usize::MAX);
+    let cache = full.min(minimum.max(quarter));
+    let reservation = admit(
+        host,
+        policy,
+        &Demand {
+            phase: "paged cube state",
+            memory: cache as u64,
+        },
+    )?;
+    Ok(CubeState::new(directory, &domains, planes, reservation)?)
 }
 
 /// The record of one minor cycle; `global_threshold` is the run's
