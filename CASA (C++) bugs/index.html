@@ -960,6 +960,50 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#matrixcleaner-counts-the-iteration-that-stops-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MatrixCleaner counts the iteration that stops it
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multiscale and multi-term scale convolutions shift by a pixel on odd image sizes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#matrixcleaners-step-residual-forgets-earlier-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MatrixCleaner's step residual forgets earlier steps
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#peak-searches-let-rounding-choose-between-equal-pixels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Peak searches let rounding choose between equal pixels
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -982,7 +1026,12 @@
 <p>Known imaging parity defect: <a href="#casa-hogbom-niter-off-by-one-bug">CASA Högbom <code>niter</code> off-by-one</a>.
 CASA behaviours casa-rs follows for parity:
 <a href="#aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell">AW-projection hand pairing</a>,
-<a href="#aw-projection-predicts-with-the-unrotated-w">AW-projection prediction w</a>.</p>
+<a href="#aw-projection-predicts-with-the-unrotated-w">AW-projection prediction w</a>,
+<a href="#matrixcleaner-counts-the-iteration-that-stops-it">MatrixCleaner's stop iteration</a>,
+<a href="#peak-searches-let-rounding-choose-between-equal-pixels">exact peak comparisons</a>.
+CASA behaviours casa-rs does not follow:
+<a href="#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes">odd-size scale convolutions</a>,
+<a href="#matrixcleaners-step-residual-forgets-earlier-steps">MatrixCleaner's step residual</a>.</p>
 <h2 id="aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell">AW-projection pairs the partner hand's visibility with the conjugate-baseline cell<a class="headerlink" href="#aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-09</li>
@@ -1155,6 +1204,75 @@ difference to <code>7.64e-5</code>, matching the dirty gridding numerical floor.
 <code>niter=500</code>, <code>cycleniter=50</code> heavy row, the same CASA-compatible mode reduced the
 CASA/casa-rs product differences to <code>.model</code> RMS <code>1.71e-7</code>, <code>.residual</code> RMS
 <code>5.68e-5</code>, and <code>.image</code> RMS <code>5.87e-5</code>.</p>
+<h2 id="matrixcleaner-counts-the-iteration-that-stops-it">MatrixCleaner counts the iteration that stops it<a class="headerlink" href="#matrixcleaner-counts-the-iteration-that-stops-it" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-09</li>
+<li>Status: CASA accounting quirk; casa-rs follows it for parity (IF-5, #654)</li>
+<li>Affected code: <code>synthesis/MeasurementEquations/MatrixCleaner.cc</code>
+  (<code>MatrixCleaner::clean</code>), read by <code>SDAlgorithmMSClean::takeOneStep</code></li>
+</ul>
+<p><code>clean</code> increments <code>itsIteration</code> at the top of each pass and only then tests
+the threshold (<code>abs(strength) &lt; threshold()</code>) and the 50% divergence rule, so
+a step that stops on either reports one more iteration
+(<code>numberIterations()</code>) than it cleaned components. Multiscale <code>iterdone</code>,
+the <code>niter</code> budget and the per-cycle <code>summaryminor</code> counts include it; on
+<code>refim_point</code> with scales <code>[0, 6, 10]</code> CASA reports <code>[22, 3, 25, 3, 47]</code> for
+<code>[21, 2, 24, 2, 51]</code> components when the extra iteration is not charged.
+casa-rs charges it (<code>Solver::charges_stop</code>).</p>
+<h2 id="multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes">Multiscale and multi-term scale convolutions shift by a pixel on odd image sizes<a class="headerlink" href="#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-09</li>
+<li>Status: likely CASA bug; casa-rs does not follow it (IF-5, #654)</li>
+<li>Affected code: <code>synthesis/MeasurementEquations/MatrixCleaner.cc</code>
+  (<code>makeScale</code>, <code>makePsfScales</code>, <code>makeDirtyScales</code>),
+  <code>MultiTermMatrixCleaner.cc</code> (<code>computeRHS</code>, <code>computeHessianPeak</code>)</li>
+</ul>
+<p>Scale functions are centred at <code>(nx/2, ny/2)</code> and convolved by FFT without
+moving that centre to the origin. Single convolutions are re-centred with
+<code>FFTServer::flip</code>, which rotates by <code>ceil(n/2)</code>; double convolutions
+(PSF ⊛ scale ⊛ scale) are not flipped, relying on the two <code>n/2</code> shifts
+cancelling. Both are exact only for even <code>n</code>: on an odd axis the scale-
+convolved residual is one pixel off its residual and the PSF cross terms one
+pixel off the PSF peak. casa-rs convolves with the scale centred at the
+origin, which agrees with CASA on every even axis.</p>
+<h2 id="matrixcleaners-step-residual-forgets-earlier-steps">MatrixCleaner's step residual forgets earlier steps<a class="headerlink" href="#matrixcleaners-step-residual-forgets-earlier-steps" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-09</li>
+<li>Status: likely CASA bug; casa-rs does not follow it (IF-5, #654)</li>
+<li>Affected code: <code>synthesis/ImagerObjects/SDAlgorithmMSClean.cc</code>
+  (<code>takeOneStep</code>), <code>SDAlgorithmBase.cc</code> (<code>deconvolve</code>)</li>
+</ul>
+<p>With <code>cycleniter ≥ 5000</code> a plane's minor cycle runs in 2000-iteration
+<code>takeOneStep</code> calls. Each call sets the residual to
+<code>itsDirty − PSF ⊛ (model − prevModel)</code>, where <code>itsDirty</code> is the residual at
+the plane's first step and <code>model − prevModel</code> only this step's components,
+so from the second step on the reported peak residual omits the earlier
+steps' subtraction. That peak drives the minor-cycle stop codes 2 and 4.
+casa-rs carries each step's residual into the next.</p>
+<h2 id="peak-searches-let-rounding-choose-between-equal-pixels">Peak searches let rounding choose between equal pixels<a class="headerlink" href="#peak-searches-let-rounding-choose-between-equal-pixels" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-09</li>
+<li>Status: CASA behaviour casa-rs follows (exact comparisons); it makes
+  parity rows on exactly symmetric skies rounding-dependent (IF-5, #654)</li>
+<li>Affected code: <code>casacore/scimath_f/hclean.f</code>, casacore <code>minMax</code> as read by
+  <code>MatrixCleaner::findMaxAbsMask</code> and <code>MultiTermMatrixCleaner</code>
+  (<code>chooseComponent</code>), Clark's <code>ABSMAXF</code></li>
+</ul>
+<p>Every CASA peak search compares exactly and keeps the first extreme in its
+scan order; casa-rs does the same. On a point-symmetric sky such as
+<code>refim_point</code>, mirror pixels are equal in exact arithmetic (CASA's dirty
+and PSF images are exactly point-symmetric even in float32), and the scale
+convolutions and subtractions of the minor cycle break the tie by an ulp or
+two, so rounding, not the data, picks the component. On <code>refim_point</code>
+CASA's rounding went both ways: <code>MatrixCleaner</code> took the first mirror in
+scan order, and the multi-term cleaner the later one (one tie, at [50,47] /
+[50,53], value 4.9e-5, in the last cycle). casa-rs's FFTW plans are chosen
+by timing, so its <code>refim_point</code> multiscale row comes out at 5.4e-6 or
+4.5e-2 NRMS from run to run; its MT-MFS row is 3.4e-4 when the tie goes
+CASA's way and 3.1e-2 when it does not (as on <code>main</code>). Both outcomes are
+equally valid cleans; such rows cannot measure parity, so
+IF-5's multiscale and MT-MFS acceptance uses skies without the symmetry
+(<code>refim_twopoints_twochan</code>, <code>refim_eptwochan</code>).</p>
 
 
 
