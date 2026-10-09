@@ -277,19 +277,6 @@ pub struct ContinuumAwProjection {
     pub rotate_pa_step_deg: f64,
 }
 
-/// Application projection of the native minor-cycle terminal reason.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ContinuumStopReason {
-    /// The absolute stopping threshold was reached.
-    ThresholdReached,
-    /// The requested component-update bound was reached.
-    IterationBound,
-    /// The accepted model-update envelope required a fresh major cycle.
-    StalenessBound,
-    /// The multiscale component sequence diverged after prior progress.
-    MultiscaleDivergence,
-}
-
 /// Spectral reconstruction shape selected by the thin task surface.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SpectralImagingMode {
@@ -441,8 +428,8 @@ pub struct ContinuumImagingResult {
     pub minor_iterations: usize,
     /// Number of minor-cycle components actually applied.
     pub actual_minor_iterations: usize,
-    /// Scientific minor-cycle terminal reason, when a solve ran.
-    pub minor_stop_reason: Option<ContinuumStopReason>,
+    /// Why cleaning stopped, when it ran.
+    pub stop: Option<crate::CleanStop>,
     /// Ordered owner diagnostics for every executed minor cycle.
     pub minor_cycles: Vec<crate::NativeMinorCycleOutcome>,
     /// Exact compiler-planned conventional CASA member names.
@@ -456,7 +443,6 @@ pub fn execute_continuum(
     let prepared = prepare(request).map_err(ApplicationDispatchError::Preparation)?;
     let outcome = crate::execute(prepared)?;
     let minor_cycles = outcome.output.minor_cycles.clone();
-    let minor = minor_cycles.last();
     let minor_iterations = outcome.output.total_minor_iterations;
     let actual_minor_iterations = outcome.output.total_actual_minor_iterations;
     let product_names = outcome
@@ -469,20 +455,7 @@ pub fn execute_continuum(
     Ok(ContinuumImagingResult {
         minor_iterations,
         actual_minor_iterations,
-        minor_stop_reason: minor.map(|value| match value.stop_reason {
-            crate::NativeMinorCycleStopReason::ThresholdReached => {
-                ContinuumStopReason::ThresholdReached
-            }
-            crate::NativeMinorCycleStopReason::IterationBound => {
-                ContinuumStopReason::IterationBound
-            }
-            crate::NativeMinorCycleStopReason::StalenessBound => {
-                ContinuumStopReason::StalenessBound
-            }
-            crate::NativeMinorCycleStopReason::MultiscaleDivergence => {
-                ContinuumStopReason::MultiscaleDivergence
-            }
-        }),
+        stop: outcome.output.stop,
         minor_cycles,
         product_names,
         outcome,

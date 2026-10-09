@@ -377,7 +377,7 @@ impl PlannedContinuumGeneration {
                 fitting_scratch = fitting_scratch.max(
                     checked_add(conversion, input, "beam input conversion")?.max(checked_add(
                         input,
-                        casa_imaging_reconstruction::psf_fit_workspace_bytes(shape),
+                        casa_imaging_deconvolution::psf_fit_workspace_bytes(shape),
                         "beam fitting workspace",
                     )?),
                 );

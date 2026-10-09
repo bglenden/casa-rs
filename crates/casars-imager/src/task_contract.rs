@@ -2747,8 +2747,7 @@ fn project_minor_cycle(
         stop_reason: match cycle.stop_reason {
             NativeStop::ThresholdReached => ImagerMinorCycleStopReason::ThresholdReached,
             NativeStop::IterationBound => ImagerMinorCycleStopReason::IterationBound,
-            NativeStop::StalenessBound => ImagerMinorCycleStopReason::StalenessBound,
-            NativeStop::MultiscaleDivergence => ImagerMinorCycleStopReason::MultiscaleDivergence,
+            NativeStop::Diverged => ImagerMinorCycleStopReason::MultiscaleDivergence,
         },
         clark_refreshes: cycle.clark_refreshes,
         associated_replay_ordinal: cycle.associated_replay_ordinal,
@@ -2756,7 +2755,7 @@ fn project_minor_cycle(
             .recorded_components
             .iter()
             .map(|component| {
-                let cell = component.cell();
+                let cell = component.cell;
                 let [x, y] = cell.pixel();
                 ImagerMinorCycleComponent {
                     domain: cell.domain(),
@@ -2764,8 +2763,8 @@ fn project_minor_cycle(
                     polarization: cell.polarization(),
                     x,
                     y,
-                    flux: component.flux(),
-                    scale_px: component.scale_px(),
+                    flux: component.flux,
+                    scale_px: component.scale_px,
                 }
             })
             .collect(),

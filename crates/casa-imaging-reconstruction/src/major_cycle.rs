@@ -15,9 +15,6 @@
 
 use std::fmt;
 
-#[cfg(test)]
-pub(crate) mod native_minor_fixture;
-
 use casa_imaging_model::{
     CompiledGeometryId, CompiledProblemId, ImageDomainRole, LogicalIdentity, NumericsContractId,
     WeightingCommitmentId,
@@ -118,16 +115,6 @@ impl FinalNormalState {
         self.primitives
     }
 
-    pub(crate) fn clark_workspace(
-        &self,
-    ) -> Option<&std::sync::Mutex<Option<crate::minor_cycle::ClarkRefreshWorkspace>>> {
-        let NormalStatePrimitives::Coupled(domains) = &self.primitives else {
-            return None;
-        };
-        let psf = domains.primary();
-        (domains.len() == 1 && psf.psf().len() == psf.shape()[0] * psf.shape()[1])
-            .then_some(&psf.clark_workspace)
-    }
     /// Release a superseded channel-local residual epoch after its successor
     /// has completed. Shared invariant fields remain with that successor.
     #[doc(hidden)]
@@ -383,7 +370,20 @@ impl FinalNormalState {
             .read_plane(domain_ordinal, absolute_channel, polarization)
     }
 
-    pub(crate) fn read_reconstruction_plane(
+    /// Read the residual and point-spread function of one plane, the inputs
+    /// of that plane's minor cycle.
+    ///
+    /// `domain_ordinal` names the image domain, `absolute_channel` the
+    /// output channel (in the slab's absolute numbering) and `polarization`
+    /// the polarization plane. Both fields are unnormalized, in their stored
+    /// precision: a paged state reads only this plane, a resident state
+    /// borrows it. The plane also carries its shape, validity and sum of
+    /// weights.
+    ///
+    /// # Errors
+    ///
+    /// When the plane is outside the state or its storage cannot be read.
+    pub fn read_reconstruction_plane(
         &self,
         domain_ordinal: usize,
         absolute_channel: usize,
@@ -785,10 +785,6 @@ pub struct FinalNormalStatePlane<'a> {
 }
 
 impl<'a> FinalNormalStatePlane<'a> {
-    pub(crate) fn into_normal_approximation(self) -> crate::normal_values::NormalPlane<'a> {
-        self.psf
-    }
-
     /// Return the slab owner this view borrows.
     #[must_use]
     pub const fn owner(&self) -> &'a FinalNormalState {
@@ -819,18 +815,10 @@ impl<'a> FinalNormalStatePlane<'a> {
         self.residual.values()
     }
 
-    pub(crate) fn residual_real(&self) -> Option<&[f32]> {
-        self.residual.values().real()
-    }
-
     /// Return this plane's unnormalized PSF approximation.
     #[must_use]
     pub fn normal_approximation(&self) -> crate::NormalValues<'_> {
         self.psf.values()
-    }
-
-    pub(crate) fn normal_real(&self) -> Option<&[f32]> {
-        self.psf.values().real()
     }
 
     /// Return this plane's accumulated sum weight.

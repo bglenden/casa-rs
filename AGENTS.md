@@ -15,6 +15,11 @@ applications.
   but typically to about 0.001 normalized RMS. CASA has bugs; a justified
   divergence is fine when it is explained and recorded (see
   `docs/CASA (C++) bugs.md`).
+- **Bitwise reproducibility is not a goal.** Deconvolution is nonlinear and
+  runs on low-S/N data, so results that differ only through rounding (FFTW
+  plan choice, summation order, a near-tie broken the other way) are
+  equally valid; compare them by normalized RMS. Do not give up speed or
+  add tie-breaking rules to make runs bit-identical.
 - **Performance is a top priority.** Measure before and after; do not trade
   speed away without saying so.
 - **Clarity follows the mathematics.** Structure code around the underlying

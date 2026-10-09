@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 tracing.workspace = true
+casa-imaging-deconvolution = { path = "../casa-imaging-deconvolution" }
 casa-imaging-metal = { path = "../casa-imaging-metal" }
 casa-imaging-model = { path = "../casa-imaging-model" }
 casa-imaging-operator = { path = "../casa-imaging-operator" }

@@ -10,17 +10,18 @@
 use std::path::Path;
 use std::time::Instant;
 
-use casa_imaging_model::{CompiledProblem, ModelInputCommitment, SpectralWcs, WeightingScheme};
+use casa_imaging_deconvolution::{CleanStop, Controller, CycleControls};
+use casa_imaging_model::{
+    CompiledProblem, ModelDeltaTerm, ModelInputCommitment, SpectralWcs, WeightingScheme,
+};
 use casa_imaging_operator::{BandwidthTaper, Basis, ModeSet, PlaneRange, WeightingGeneration};
 use casa_imaging_products::VisibilityProductCompletion;
-use casa_imaging_reconstruction::runtime_adapter::{
-    NormalStoragePlan, ReconstructionPlaneWorkspace,
-};
+use casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan;
 use casa_imaging_reconstruction::{
-    ExecutableModelProblem, ImageDomainReconstructionMaskPlans, MajorCycleCompletion,
-    MajorCycleOwner, MajorCyclePreparation, MinorCycleImageResponse, MinorCycleProgram,
-    ModelGeneration, ModelLifecycle, ModelStoragePlan, PassNormalState, ReconstructionMaskSet,
-    WeightingGenerationId,
+    ExecutableModelProblem, ImageDomainReconstructionMaskPlans, ImageDomainReconstructionMasks,
+    MajorCycleCompletion, MajorCycleOwner, MajorCyclePreparation, MinorCycleImageResponse,
+    ModelGeneration, ModelLifecycle, ModelStoragePlan, PassNormalState, ReconstructionMaskPlan,
+    ReconstructionMaskSet, WeightingGenerationId,
 };
 use casa_imaging_runtime::pass::{
     BackendChoice, Cancel, MajorCyclePass, ModelPreparation, Partition, PassDomain, PassError,
@@ -28,8 +29,8 @@ use casa_imaging_runtime::pass::{
     run_major_cycle,
 };
 use casa_imaging_runtime::{
-    AcceleratorKind, CubeState, MinorCycleOutcome, ResourceAuthority, ResourcePolicy,
-    run_minor_cycle,
+    AcceleratorKind, CubeState, MinorCycleOutcome, MinorCycleSetup, PsfCache, ResourceAuthority,
+    ResourcePolicy, prepare_minor_cycle, run_minor_cycle,
 };
 use casa_ms::ResolvedSelectedObservationAccess;
 
@@ -40,7 +41,7 @@ use super::measurement::{
 };
 use super::source::{MeasurementSetSource, PlaneBounds};
 use super::visibility_write::{VisibilityWriteTarget, VisibilityWriter};
-use crate::{AwCatalogDeployment, NativeMinorCycleOutcome};
+use crate::{AwCatalogDeployment, NativeMinorCycleOutcome, NativeMinorCycleStopReason};
 
 /// What one native imaging run needs besides the compiled problem.
 pub(crate) struct ImagingInputs<'a> {
@@ -62,6 +63,7 @@ pub(crate) struct ImagingOutcome {
     pub(crate) scientific: MajorCycleCompletion,
     pub(crate) masks: Option<ReconstructionMaskSet>,
     pub(crate) minor_cycles: Vec<NativeMinorCycleOutcome>,
+    pub(crate) stop: Option<CleanStop>,
     pub(crate) major_cycle_count: usize,
     pub(crate) total_minor_iterations: usize,
     pub(crate) total_actual_minor_iterations: usize,
@@ -92,102 +94,191 @@ struct Run<'a> {
     weight_image: bool,
 }
 
-/// One reconciled major cycle and the lifecycle that owns its model.
+/// One reconciled major cycle.
 struct Major {
-    lifecycle: ModelLifecycle,
     completion: MajorCycleCompletion,
     visibility: Option<VisibilityProductCompletion>,
 }
 
 /// Run every major and minor cycle of `inputs.problem`.
+///
+/// The loop is tclean's: after each major cycle the controller decides from
+/// the fresh residual whether cleaning is complete (`cleanComplete`);
+/// otherwise a minor cycle runs under its controls and a major cycle
+/// refreshes the residual. A minor cycle that cleans nothing ends the run
+/// without another major cycle.
 pub(crate) fn run(inputs: ImagingInputs<'_>) -> Result<ImagingOutcome, ImagingError> {
     let problem = inputs.problem;
     let controls = problem.reconstruction().controls();
     let cleaning = controls.max_minor_iterations() > 0;
-    let image_response = inputs.image_response;
+    let setup = minor_setup(problem, inputs.image_response, &inputs.masks);
     let mut mask_plans = inputs.masks.clone();
     let mut run = Run::open(inputs)?;
-    let mut major = run.initial(!cleaning)?;
+    let major = run.initial(!cleaning)?;
+    let mut outcome = ImagingOutcome {
+        scientific: major.completion,
+        masks: None,
+        minor_cycles: Vec::new(),
+        stop: None,
+        major_cycle_count: 1,
+        total_minor_iterations: 0,
+        total_actual_minor_iterations: 0,
+        visibility_products: major.visibility,
+        workers: run.team.workers(),
+        planes_per_wave: run.planes_per_wave,
+    };
     if !cleaning {
-        return Ok(ImagingOutcome {
-            scientific: major.completion,
-            masks: None,
-            minor_cycles: Vec::new(),
-            major_cycle_count: 1,
-            total_minor_iterations: 0,
-            total_actual_minor_iterations: 0,
-            visibility_products: major.visibility,
-            workers: run.team.workers(),
-            planes_per_wave: run.planes_per_wave,
-        });
+        return Ok(outcome);
     }
-    // CASA's `nmajor = -1` leaves the major-cycle count open, but every
-    // productive cycle spends at least one of the minor-iteration budget.
-    let maximum_cycles = controls
-        .maximum_major_cycles()
-        .unwrap_or(controls.max_minor_iterations());
-    let clark_reuse = ReconstructionPlaneWorkspace::clark_reuse_bytes(problem);
-    let mut minor_cycles = Vec::new();
-    let mut totals = (0_usize, 0_usize);
-    for cycle in 1.. {
-        let remaining = (cycle > 1).then(|| controls.max_minor_iterations() - totals.0);
-        let program = minor_program(problem, image_response, remaining)?
-            .with_clark_workspace_reuse(clark_reuse);
-        let started = Instant::now();
-        let outcome = run_minor_cycle(
-            major.completion,
-            &major.lifecycle,
+    let mut controller = Controller::new(&controls);
+    let mut cache = PsfCache::default();
+    loop {
+        let prepared = prepare_minor_cycle(
+            &outcome.scientific,
             &mask_plans,
-            program,
+            &setup,
+            &mut cache,
             &run.team,
         )?;
-        let entering = totals;
-        totals = (
-            totals
-                .0
-                .checked_add(outcome.evidence.controller_iterations())
-                .ok_or(ImagingError::IterationOverflow)?,
-            totals
-                .1
-                .checked_add(outcome.evidence.iterations())
-                .ok_or(ImagingError::IterationOverflow)?,
-        );
-        let record = minor_cycle_record(cycle, &outcome, entering, totals);
-        tracing::info!(
-            "imaging minor cycle {cycle}: {} iterations ({} total), peak {:.6} -> {:.6} Jy, \
-             threshold {:.6} Jy, stop {:?}, {:.2} s",
-            record.iterations,
-            totals.0,
-            record.initial_peak_flux,
-            record.final_peak_flux,
-            record.effective_threshold,
-            record.stop_reason,
-            started.elapsed().as_secs_f64(),
-        );
-        minor_cycles.push(record);
-        let continue_cleaning = cycle < maximum_cycles
-            && totals.0 < controls.max_minor_iterations()
-            && outcome.evidence.requests_reconciliation();
-        let next_masks = next_masks(&mask_plans, &outcome, cycle)?;
-        let masks = outcome.masks.clone();
-        major = run.refresh(outcome, !continue_cleaning)?;
-        if continue_cleaning {
-            mask_plans = next_masks;
-            continue;
+        let statistics = prepared.statistics;
+        if let Some(stop) = controller.clean_complete(&statistics) {
+            tracing::info!("imaging stopped: {stop:?} (stopcode {})", stop.code());
+            outcome.stop = Some(stop);
+            outcome
+                .masks
+                .get_or_insert_with(|| ReconstructionMaskSet::Domains(prepared.masks().clone()));
+            break;
         }
-        return Ok(ImagingOutcome {
-            scientific: major.completion,
-            masks: Some(masks),
-            minor_cycles,
-            major_cycle_count: cycle + 1,
-            total_minor_iterations: totals.0,
-            total_actual_minor_iterations: totals.1,
-            visibility_products: major.visibility,
-            workers: run.team.workers(),
-            planes_per_wave: run.planes_per_wave,
-        });
+        let cycle_controls = controller.cycle_controls(&statistics);
+        let started = Instant::now();
+        let minor = run_minor_cycle(
+            prepared,
+            &outcome.scientific,
+            &setup,
+            &cycle_controls,
+            &mut cache,
+            &run.team,
+        )?;
+        let global_threshold = controls
+            .threshold_jy_per_beam()
+            .max(statistics.nsigma_threshold);
+        let cycle = account_minor_cycle(
+            &mut outcome,
+            &mut controller,
+            &minor,
+            &cycle_controls,
+            global_threshold,
+            started,
+        );
+        let last = controller.budget_spent() || controller.last_cycle(&statistics);
+        mask_plans = next_masks(&mask_plans, &minor, cycle, cycle_controls.threshold_reached)?;
+        if minor.summary.iterations == 0 {
+            // tclean skips the major cycle, updates the mask and still asks
+            // `hasConverged` for the stop it reports.
+            let prepared = prepare_minor_cycle(
+                &outcome.scientific,
+                &mask_plans,
+                &setup,
+                &mut cache,
+                &run.team,
+            )?;
+            outcome.stop = controller.clean_complete(&prepared.statistics);
+            outcome.masks = Some(ReconstructionMaskSet::Domains(prepared.masks().clone()));
+            break;
+        }
+        let major = run.refresh(outcome.scientific, minor.terms, &minor.masks, last)?;
+        controller.end_major_cycle();
+        outcome.scientific = major.completion;
+        outcome.visibility_products = major.visibility;
+        outcome.major_cycle_count += 1;
     }
-    unreachable!("the cycle counter is unbounded")
+    let mut outcome = predict_final_model(&mut run, outcome)?;
+    outcome.planes_per_wave = run.planes_per_wave;
+    Ok(outcome)
+}
+
+/// Fold one minor cycle into the run's totals and its controller
+/// (`mergeMinorCycleSummary`), record and log it; returns its ordinal.
+fn account_minor_cycle(
+    outcome: &mut ImagingOutcome,
+    controller: &mut Controller,
+    minor: &MinorCycleOutcome,
+    cycle_controls: &CycleControls,
+    global_threshold: f64,
+    started: Instant,
+) -> usize {
+    let entering = (
+        outcome.total_minor_iterations,
+        outcome.total_actual_minor_iterations,
+    );
+    controller.record_minor_cycle(minor.summary.iterations, minor.summary.peak);
+    outcome.total_minor_iterations = controller.iterations();
+    outcome.total_actual_minor_iterations += minor.summary.components;
+    let cycle = outcome.minor_cycles.len() + 1;
+    let record = minor_cycle_record(
+        cycle,
+        minor,
+        cycle_controls,
+        global_threshold,
+        entering,
+        (
+            outcome.total_minor_iterations,
+            outcome.total_actual_minor_iterations,
+        ),
+    );
+    tracing::info!(
+        "imaging minor cycle {cycle}: {} iterations ({} total), peak {:.6} -> {:.6} Jy, \
+         cycle threshold {:.6} Jy, stop {:?}, {:.2} s",
+        record.iterations,
+        record.total_iterations,
+        record.initial_peak_flux,
+        record.final_peak_flux,
+        record.effective_threshold,
+        record.stop_reason,
+        started.elapsed().as_secs_f64(),
+    );
+    outcome.minor_cycles.push(record);
+    outcome.masks = Some(ReconstructionMaskSet::Domains(minor.masks.clone()));
+    cycle
+}
+
+/// Predict the final model once more to write the model column, when the
+/// pass that ended the run was not known to be the last when it ran.
+fn predict_final_model(
+    run: &mut Run<'_>,
+    mut outcome: ImagingOutcome,
+) -> Result<ImagingOutcome, ImagingError> {
+    if run.visibility_write.is_none() || outcome.visibility_products.is_some() {
+        return Ok(outcome);
+    }
+    let masks = match &outcome.masks {
+        Some(ReconstructionMaskSet::Domains(masks)) => masks.clone(),
+        _ => unreachable!("a cleaning run has formed its masks"),
+    };
+    let major = run.refresh(outcome.scientific, Vec::new(), &masks, true)?;
+    outcome.scientific = major.completion;
+    outcome.visibility_products = major.visibility;
+    outcome.major_cycle_count += 1;
+    Ok(outcome)
+}
+
+/// The minor cycle's view of the run.
+fn minor_setup(
+    problem: &CompiledProblem,
+    response: Option<MinorCycleImageResponse>,
+    masks: &ImageDomainReconstructionMaskPlans,
+) -> MinorCycleSetup {
+    let controls = problem.reconstruction().controls();
+    MinorCycleSetup {
+        algorithm: problem.reconstruction().algorithm().clone(),
+        accounting: controls.hogbom_iteration_accounting(),
+        response,
+        nsigma: controls.noise_sigma().unwrap_or(0.0),
+        automask: matches!(
+            masks.primary(),
+            ReconstructionMaskPlan::AutoMultithresh { .. }
+        ),
+    }
 }
 
 impl<'a> Run<'a> {
@@ -318,16 +409,16 @@ impl<'a> Run<'a> {
         self.reconcile(lifecycle, state, preparation, None, last, residency)
     }
 
-    /// The major cycle after a minor cycle: the residual of the updated model.
-    fn refresh(&mut self, outcome: MinorCycleOutcome, last: bool) -> Result<Major, ImagingError> {
-        let MinorCycleOutcome {
-            normal_state,
-            continuation,
-            masks,
-            delta,
-            ..
-        } = outcome;
-        let terms = delta.map(|delta| delta.terms().to_vec());
+    /// The major cycle after a minor cycle: the residual of the model updated
+    /// by `terms`, cleaned within `masks`.
+    fn refresh(
+        &mut self,
+        completion: MajorCycleCompletion,
+        terms: Vec<ModelDeltaTerm>,
+        masks: &ImageDomainReconstructionMasks,
+        last: bool,
+    ) -> Result<Major, ImagingError> {
+        let (normal_state, continuation) = completion.into_continuation();
         let attempt = self.next_attempt();
         let (lifecycle, named) = ModelLifecycle::continue_from(
             ExecutableModelProblem::from_compiled(self.problem.clone())?,
@@ -336,9 +427,8 @@ impl<'a> Run<'a> {
             continuation,
             self.model_storage()?,
         )?;
-        let delta = terms
-            .filter(|terms| !terms.is_empty())
-            .map(|terms| lifecycle.compile_delta(&named, terms))
+        let delta = (!terms.is_empty())
+            .then(|| lifecycle.compile_delta(&named, terms))
             .transpose()?;
         let preparation = MajorCyclePreparation::prepare(&lifecycle, named, delta)?;
         let residency = self.residency(ModeSet::DATA, true)?;
@@ -348,6 +438,7 @@ impl<'a> Run<'a> {
             preparation.final_model_generation(),
             self.normal_storage(residency)?,
         )?;
+        let masks = ReconstructionMaskSet::Domains(masks.clone());
         self.reconcile(lifecycle, state, preparation, Some(&masks), last, residency)
     }
 
@@ -420,7 +511,6 @@ impl<'a> Run<'a> {
             started.elapsed().as_secs_f64(),
         );
         Ok(Major {
-            lifecycle,
             completion,
             visibility,
         })
@@ -560,24 +650,20 @@ fn start_model(problem: &CompiledProblem) -> bool {
     )
 }
 
-/// The next cycle's mask plans: automask evolves from the masks just used.
+/// The next cycle's mask plans: automask evolves from the masks just used,
+/// and knows whether the cycle cleaned to the global threshold.
 fn next_masks(
     plans: &ImageDomainReconstructionMaskPlans,
     outcome: &MinorCycleOutcome,
     cycle: usize,
+    threshold_reached: bool,
 ) -> Result<ImageDomainReconstructionMaskPlans, ImagingError> {
-    let ReconstructionMaskSet::Domains(applied) = &outcome.masks else {
-        unreachable!("the minor cycle masks every image domain")
-    };
-    let stopped = (0..applied.len())
-        .map(|domain| outcome.auto_masks[domain].is_some_and(|evidence| evidence.channel_stopped))
+    let stopped = outcome
+        .auto_masks
+        .iter()
+        .map(|evidence| evidence.is_some_and(|evidence| evidence.channel_stopped))
         .collect::<Vec<_>>();
-    Ok(plans.next_cycle(
-        applied,
-        cycle,
-        outcome.evidence.cycle_threshold_is_global(),
-        &stopped,
-    )?)
+    Ok(plans.next_cycle(&outcome.masks, cycle, threshold_reached, &stopped)?)
 }
 
 /// CASA's imaging weights for the run: the input weights (natural) or the
@@ -669,48 +755,37 @@ fn cube_state(
     Ok(CubeState::new(directory, &domains, planes, cache)?)
 }
 
-fn minor_program(
-    problem: &CompiledProblem,
-    response: Option<MinorCycleImageResponse>,
-    remaining: Option<usize>,
-) -> Result<MinorCycleProgram, ImagingError> {
-    let mut program = MinorCycleProgram::for_problem(problem)?.record_component_sequence(64)?;
-    if let Some(remaining) = remaining {
-        program = program.limit_iterations(remaining)?;
-    }
-    if let Some(response) = response {
-        program = program.with_image_response(response);
-    }
-    Ok(program)
-}
-
+/// The record of one minor cycle; `global_threshold` is the run's
+/// threshold or n-sigma threshold, whichever is larger.
 fn minor_cycle_record(
     cycle: usize,
     outcome: &MinorCycleOutcome,
+    controls: &CycleControls,
+    global_threshold: f64,
     (iterations_entering, actual_iterations_entering): (usize, usize),
     (total_iterations, total_actual_iterations): (usize, usize),
 ) -> NativeMinorCycleOutcome {
-    let evidence = &outcome.evidence;
+    let summary = &outcome.summary;
     let mask = outcome.masks.primary();
     NativeMinorCycleOutcome {
         cycle,
         iterations_entering,
-        iterations: evidence.controller_iterations(),
+        iterations: summary.iterations,
         total_iterations,
         actual_iterations_entering,
-        actual_iterations: evidence.iterations(),
+        actual_iterations: summary.components,
         total_actual_iterations,
-        total_flux: evidence.total_flux(),
-        initial_peak_flux: evidence.initial_peak_flux(),
-        final_peak_flux: evidence.final_peak_flux(),
-        noise_rms: evidence.noise_rms(),
-        effective_threshold: evidence.effective_threshold(),
-        global_threshold: evidence.global_threshold(),
-        cycle_threshold: evidence.cycle_threshold(),
-        stop_reason: evidence.stop_reason().into(),
-        clark_refreshes: evidence.clark_refreshes(),
+        total_flux: summary.absolute_flux,
+        initial_peak_flux: summary.start_peak,
+        final_peak_flux: summary.peak,
+        noise_rms: summary.noise_rms,
+        effective_threshold: controls.threshold.max(global_threshold),
+        global_threshold,
+        cycle_threshold: Some(controls.threshold),
+        stop_reason: NativeMinorCycleStopReason::from_planes(&summary.stops),
+        clark_refreshes: summary.refreshes,
         associated_replay_ordinal: cycle,
-        recorded_components: evidence.recorded_components().copied().collect(),
+        recorded_components: summary.trace.clone(),
         mask_support: mask.support().to_vec(),
         mask_generation: mask.generation_id(),
         mask_model_generation: mask.model_generation(),

@@ -8,7 +8,7 @@ pub(crate) mod normal_storage;
 mod pass_state;
 pub use pass_state::{PassImages, PassNormalState};
 
-use std::{mem::size_of, sync::Mutex};
+use std::mem::size_of;
 
 use casa_imaging_model::{
     CompiledGeometryId, CompiledProblemId, ImageDomainRole, LogicalIdentity, NumericsContractId,
@@ -59,10 +59,6 @@ impl SpectralBasisPlan {
 }
 
 const NORMAL_STATE_CONTENT_DOMAIN: &[u8] = b"casa-rs-normal-state-content";
-// FFTW's native plan internals are opaque. Admission charges a full-grid
-// planning buffer and a full-grid native plan allowance; sampled aggregate RSS
-// remains the guard for native allocations.
-const FFTW_PLANNING_SLACK_VALUES: usize = 64;
 
 /// The output channels one normal state covers.
 ///
@@ -95,16 +91,6 @@ impl SpectralSlabPlan {
     }
 }
 
-pub(crate) fn fft_resident_complex_values_for_shape(
-    shape: [usize; 2],
-) -> Result<usize, SpectralOperatorError> {
-    shape[0]
-        .checked_mul(shape[1])
-        .and_then(|values| values.checked_mul(2))
-        .and_then(|values| values.checked_add(FFTW_PLANNING_SLACK_VALUES))
-        .ok_or(SpectralOperatorError::ResidencyOverflow)
-}
-
 /// Compact real outputs from the supported channel-local cube imager.
 #[doc(hidden)]
 #[derive(Debug)]
@@ -135,7 +121,6 @@ pub struct SpectralOperatorPrimitives {
     dirty: Box<[Complex64]>,
     pub(crate) cube_real: Option<CubeRealFields>,
     psf: Box<[Complex64]>,
-    pub(crate) clark_workspace: Mutex<Option<crate::minor_cycle::ClarkRefreshWorkspace>>,
     sensitivity: Box<[f64]>,
     sum_weights: Box<[f64]>,
     published_sum_weights: Box<[f64]>,

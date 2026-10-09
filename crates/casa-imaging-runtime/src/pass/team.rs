@@ -44,6 +44,16 @@ impl WorkerTeam {
         self.workers
     }
 
+    /// Run `operation` with the team as the current rayon pool, so that
+    /// parallel work inside it (a single plane's sparse refresh) runs on the
+    /// team's threads.
+    pub fn install<R: Send>(&self, operation: impl FnOnce() -> R + Send) -> R {
+        match &self.pool {
+            None => operation(),
+            Some(pool) => pool.install(operation),
+        }
+    }
+
     /// Run `operation` on every item, one item per job, and join. Items are
     /// independent; the first error in item order is returned.
     pub fn for_each_mut<T: Send, E: Send>(

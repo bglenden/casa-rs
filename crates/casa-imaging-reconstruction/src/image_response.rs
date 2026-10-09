@@ -176,14 +176,6 @@ impl<'a> MosaicSensitivity<'a> {
         Self::finite(f64::from(pb))
     }
 
-    pub(crate) fn model_valid_at(
-        self,
-        index: usize,
-        policy: PrimaryBeamValidityPolicy,
-    ) -> Result<bool, ImageResponseError> {
-        Ok(Self::supported(self.model_primary_beam_at(index)?, policy))
-    }
-
     /// Build CASA's unit-peak PB, `sqrt(max(sensitivity,0) / peak)`.
     #[must_use]
     pub fn primary_beam(self) -> Vec<f32> {
@@ -628,14 +620,6 @@ mod tests {
             .with_normal_sum_weight(17.0)
             .unwrap();
         let pb = policy(0.0001);
-        let expected_support = load("edges_expected_support.f32le");
-        for (index, expected) in expected_support.iter().enumerate() {
-            assert_eq!(
-                response.model_valid_at(index, pb).unwrap(),
-                *expected != 0.0,
-                "native model cutoff at pixel {index}"
-            );
-        }
         for term in 0..2 {
             for (input_name, output_name, divide) in [
                 (

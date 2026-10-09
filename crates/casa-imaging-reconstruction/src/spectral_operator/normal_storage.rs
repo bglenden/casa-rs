@@ -976,7 +976,6 @@ impl StoredChannelNormalDomain {
             self.role.clone(),
             SpectralOperatorPrimitives {
                 shape: self.shape,
-                clark_workspace: std::sync::Mutex::new(None),
                 slab: SpectralSlabPlan {
                     total_channels: self.total_channels,
                     core_start: range.start,

@@ -22,10 +22,7 @@ fn application_executes_single_ddid_stokes_i_mfs_hogbom_with_one_iteration() {
     let result = execute_continuum(imaging).expect("native Högbom application execution");
 
     assert_eq!(result.minor_iterations, 1);
-    assert_eq!(
-        result.minor_stop_reason,
-        Some(ContinuumStopReason::IterationBound)
-    );
+    assert_eq!(result.stop, Some(CleanStop::Iterations));
     assert_eq!(
         result
             .outcome
@@ -172,12 +169,12 @@ fn assert_uniform_mfs_workers(measurement_set: PathBuf, root: &Path, selection: 
 }
 
 #[test]
-fn application_algorithms_do_not_invent_a_flux_staleness_bound() {
+fn application_clark_cleans_until_a_casa_stopping_rule() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = tiny_measurement_set(root.path());
-    let image_name = root.path().join("model-envelope");
+    let image_name = root.path().join("clark");
     let imaging = request(measurement_set, image_name, ContinuumAlgorithm::Clark);
 
     let result = execute_continuum(imaging).expect("exact Clark execution");
@@ -186,10 +183,7 @@ fn application_algorithms_do_not_invent_a_flux_staleness_bound() {
         result.minor_iterations > 0,
         "active Clark execution must make scientific progress"
     );
-    assert_ne!(
-        result.minor_stop_reason,
-        Some(ContinuumStopReason::StalenessBound)
-    );
+    assert!(result.stop.is_some(), "cleaning ends on a CASA stop code");
 }
 
 #[test]
@@ -259,10 +253,7 @@ fn application_reconciles_between_bounded_minor_cycles() {
             && cycle.global_threshold.is_finite()
             && cycle.effective_threshold.is_finite()
     }));
-    assert_eq!(
-        result.minor_stop_reason,
-        Some(ContinuumStopReason::IterationBound)
-    );
+    assert_eq!(result.stop, Some(CleanStop::Iterations));
     assert_standard_products(&image_name, &result.product_names);
 }
 

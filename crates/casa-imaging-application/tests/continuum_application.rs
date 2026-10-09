@@ -10,9 +10,9 @@ use casa_coordinates::{
 };
 use casa_images::PagedImage;
 use casa_imaging_application::{
-    ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
-    ContinuumMask, ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting, SpectralImagingMode,
-    TaskRequirement, VisibilityContinuumSubtraction, execute_continuum,
+    CleanStop, ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy,
+    ContinuumImagingRequest, ContinuumMask, ContinuumMaskBox, ContinuumWeighting,
+    SpectralImagingMode, TaskRequirement, VisibilityContinuumSubtraction, execute_continuum,
     resource_policy_for_task_requirements,
 };
 use casa_imaging_model::{
@@ -352,7 +352,7 @@ fn application_executes_single_ddid_stokes_i_mfs_dirty_and_publishes_products() 
     .expect("native dirty application execution");
 
     assert_eq!(result.minor_iterations, 0);
-    assert_eq!(result.minor_stop_reason, None);
+    assert_eq!(result.stop, None);
     assert_dirty_products(&image_name, &result.product_names);
     for suffix in [".residual", ".image"] {
         let product =
@@ -684,9 +684,11 @@ fn application_executes_full_stokes_mfs_clean_with_complete_products_and_axes() 
     let result = execute_continuum(imaging).expect("native full-Stokes Högbom execution");
     assert_eq!(result.minor_iterations, 1);
     assert_eq!(result.actual_minor_iterations, 1);
+    // The fixture allows one major cycle after the initial one (nmajor).
+    assert_eq!(result.stop, Some(CleanStop::MajorCycles));
     assert_eq!(
-        result.minor_stop_reason,
-        Some(ContinuumStopReason::ThresholdReached),
+        result.minor_cycles[0].stop_reason,
+        casa_imaging_application::NativeMinorCycleStopReason::ThresholdReached,
         "an early scientific stop reports the actual component count without CASA iteration-bound clamping"
     );
     assert_eq!(

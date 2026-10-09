@@ -15,7 +15,7 @@ pub(crate) use visibility_write::VisibilityWriteTarget;
 
 use casa_imaging_operator::OperatorError;
 use casa_imaging_reconstruction::{
-    MajorCycleError, MaskError, MinorCycleError, ModelLifecycleError, SpectralOperatorError,
+    MajorCycleError, MaskError, ModelLifecycleError, SpectralOperatorError,
 };
 use casa_imaging_runtime::pass::PassError;
 use casa_imaging_runtime::{MinorCycleRunError, ResourceError};
@@ -41,9 +41,6 @@ pub(crate) enum ImagingError {
     /// A minor cycle failed.
     #[error(transparent)]
     Minor(#[from] MinorCycleRunError),
-    /// The minor-cycle controls are invalid.
-    #[error(transparent)]
-    MinorProgram(#[from] MinorCycleError),
     /// A normal state could not be assembled.
     #[error(transparent)]
     Normal(#[from] SpectralOperatorError),
@@ -65,7 +62,4 @@ pub(crate) enum ImagingError {
     /// The paged cube state could not be created.
     #[error("cube state: {0}")]
     CubeState(#[from] std::io::Error),
-    /// The minor-cycle iteration count overflowed.
-    #[error("minor-cycle iteration count overflowed")]
-    IterationOverflow,
 }

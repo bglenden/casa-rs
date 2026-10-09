@@ -305,6 +305,7 @@ fn two_domain_members_consume_their_matching_normal_and_model_chart() {
         .materialize(
             first_round.join.final_model(),
             first_round.join.normal_state(),
+            None,
         )
         .expect("domain masks")
         .into_parts();
@@ -322,6 +323,7 @@ fn two_domain_members_consume_their_matching_normal_and_model_chart() {
         .materialize(
             first_round.join.final_model(),
             first_round.join.normal_state(),
+            None,
         )
         .expect("alternate domain masks")
         .into_parts();
@@ -439,6 +441,7 @@ fn direct_generation_rejects_same_problem_with_foreign_completions() {
         .materialize(
             first_round.join.final_model(),
             first_round.join.normal_state(),
+            None,
         )
         .expect("domain masks")
         .into_parts();
@@ -856,7 +859,7 @@ fn cube_generation_demand_retains_channel_beams_and_charges_common_fit_scratch()
         );
         assert!(
             demand.beam_scratch_bytes()
-                >= casa_imaging_reconstruction::psf_fit_workspace_bytes(SHAPE)
+                >= casa_imaging_deconvolution::psf_fit_workspace_bytes(SHAPE)
         );
         if policy == RestoringBeamPolicy::Common {
             assert!(
