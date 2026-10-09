@@ -17,17 +17,18 @@ pub use availability::{
     TaskRequirement, UnsupportedRequirement, installed_imaging_capability_catalog,
     validate_installed_implementation,
 };
+pub use casa_imaging_deconvolution::CleanStop;
 pub use casa_imaging_model::{
     HogbomIterationAccounting, ImagingRequestVersion, PolarizationCoordinate, ProductNormalization,
 };
 pub use casa_imaging_runtime::pass::BackendChoice;
-pub use casa_imaging_runtime::{ResourceOverride, ResourcePolicy};
+pub use casa_imaging_runtime::{ResourceOverride, ResourcePolicy, TracedComponent};
 pub use casa_product_sink::{CasaImageDomainOutput, CasaImageProductSink};
 pub use continuum_request::{
     ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumAwCfSource, ContinuumAwProjection,
     ContinuumBeamPolicy, ContinuumImagingRequest, ContinuumImagingResult, ContinuumMask,
-    ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting, NativeAwCachePolicy,
-    NativeEvlaAwCache, SpectralImagingMode, VisibilityContinuumSubtraction, execute_continuum,
+    ContinuumMaskBox, ContinuumWeighting, NativeAwCachePolicy, NativeEvlaAwCache,
+    SpectralImagingMode, VisibilityContinuumSubtraction, execute_continuum,
     resource_policy_for_task_requirements,
 };
 
@@ -44,7 +45,7 @@ use casa_imaging_products::{
 };
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, ImageDomainReconstructionMaskPlans, MajorCycleCompletion,
-    MinorCycleImageResponse, MinorCycleStopReason, ReconstructionMaskSet,
+    MinorCycleImageResponse, ReconstructionMaskSet,
 };
 use casa_imaging_runtime::{
     AttemptBoundObservationCompletion, BuildIdentity, ExecutionAttemptId, ExecutionProvenance,
@@ -159,6 +160,9 @@ pub struct ApplicationPublication<S> {
 pub struct NativeApplicationOutcome {
     /// Ordered solve evidence captured before each major-cycle pass.
     pub minor_cycles: Vec<NativeMinorCycleOutcome>,
+    /// Why cleaning stopped (CASA's `stopcode`); `None` for a dirty run or
+    /// when a minor cycle cleaned nothing.
+    pub stop: Option<CleanStop>,
     /// Number of executed major passes, including the initial pass.
     pub major_cycle_count: usize,
     /// Total component count charged to the reported task/controller budget.
@@ -215,12 +219,12 @@ pub struct NativeMinorCycleOutcome {
     pub cycle_threshold: Option<f64>,
     /// Scientific terminal reason.
     pub stop_reason: NativeMinorCycleStopReason,
-    /// Number of exact Clark residual refreshes.
+    /// Number of exact whole-plane residual refreshes (Clark's cycles).
     pub clark_refreshes: usize,
     /// One-based major replay ordinal associated with this cycle's accepted update.
     pub associated_replay_ordinal: usize,
-    /// Bounded leading component sequence for CASA/Rust first-divergence diagnostics.
-    pub recorded_components: Vec<casa_imaging_reconstruction::MinorCycleComponent>,
+    /// The first components of the cycle.
+    pub recorded_components: Vec<casa_imaging_runtime::TracedComponent>,
     /// Exact x-major reconstruction support used for component placement.
     pub mask_support: Vec<bool>,
     /// Immutable mask generation used for this cycle.
@@ -246,43 +250,23 @@ pub enum NativeMinorCycleStopReason {
     MultiscaleDivergence,
 }
 
-impl From<MinorCycleStopReason> for NativeMinorCycleStopReason {
-    fn from(value: MinorCycleStopReason) -> Self {
-        match value {
-            MinorCycleStopReason::ThresholdReached => Self::ThresholdReached,
-            MinorCycleStopReason::IterationBound => Self::IterationBound,
-            MinorCycleStopReason::StalenessBound => Self::StalenessBound,
-            MinorCycleStopReason::MultiscaleDivergence => Self::MultiscaleDivergence,
-        }
-    }
-}
-
-impl NativeMinorCycleOutcome {
-    /// Return the first exact component mismatch against a CASA/parity baseline.
+impl NativeMinorCycleStopReason {
+    /// The cycle's reason from its planes' CASA stop codes: divergence in any
+    /// plane, else an iteration limit or early exit in any plane, else a
+    /// threshold.
     #[must_use]
-    pub fn first_component_divergence(
-        &self,
-        baseline: &[casa_imaging_reconstruction::MinorCycleComponent],
-    ) -> Option<(
-        usize,
-        Option<casa_imaging_reconstruction::MinorCycleComponent>,
-        Option<casa_imaging_reconstruction::MinorCycleComponent>,
-    )> {
-        let shared = baseline.len().min(self.recorded_components.len());
-        for (index, (expected, actual)) in
-            baseline.iter().zip(&self.recorded_components).enumerate()
+    pub fn from_planes(stops: &[casa_imaging_deconvolution::PlaneStop]) -> Self {
+        use casa_imaging_deconvolution::PlaneStop;
+        if stops.contains(&PlaneStop::Diverged) {
+            Self::MultiscaleDivergence
+        } else if stops
+            .iter()
+            .any(|stop| matches!(stop, PlaneStop::Iterations | PlaneStop::Exited))
         {
-            if expected != actual {
-                return Some((index, Some(*expected), Some(*actual)));
-            }
+            Self::IterationBound
+        } else {
+            Self::ThresholdReached
         }
-        (baseline.len() != self.recorded_components.len()).then(|| {
-            (
-                shared,
-                baseline.get(shared).copied(),
-                self.recorded_components.get(shared).copied(),
-            )
-        })
     }
 }
 
@@ -394,6 +378,7 @@ where
         publication,
         PriorPhaseOutcome {
             minor_cycles: outcome.minor_cycles,
+            stop: outcome.stop,
             major_cycle_count: outcome.major_cycle_count,
             total_minor_iterations: outcome.total_minor_iterations,
             total_actual_minor_iterations: outcome.total_actual_minor_iterations,
@@ -452,6 +437,7 @@ struct PriorPhaseOutcome {
     workers: usize,
     planes_per_wave: Option<u32>,
     minor_cycles: Vec<NativeMinorCycleOutcome>,
+    stop: Option<CleanStop>,
     major_cycle_count: usize,
     total_minor_iterations: usize,
     total_actual_minor_iterations: usize,
@@ -597,6 +583,7 @@ where
     let (planned_products, scientific, products) = completion.into_parts();
     Ok(NativeApplicationOutcome {
         minor_cycles: prior.minor_cycles,
+        stop: prior.stop,
         major_cycle_count: prior.major_cycle_count,
         total_minor_iterations: prior.total_minor_iterations,
         total_actual_minor_iterations: prior.total_actual_minor_iterations,

@@ -83,7 +83,6 @@ fn domain(range: Range<usize>, published_differ: bool) -> SpectralDomainPrimitiv
             dirty: complex(0.25),
             cube_real: None,
             psf: complex(-0.125),
-            clark_workspace: std::sync::Mutex::new(None),
             sensitivity: values.clone().map(|i| i as f64 * 0.25).collect(),
             sum_weights: planes.clone().map(|i| (i + 1) as f64).collect(),
             published_sum_weights: planes

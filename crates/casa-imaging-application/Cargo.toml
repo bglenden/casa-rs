@@ -15,6 +15,7 @@ workspace = true
 tracing.workspace = true
 casa-coordinates = { path = "../casa-coordinates" }
 casa-images = { path = "../casa-images" }
+casa-imaging-deconvolution = { path = "../casa-imaging-deconvolution" }
 casa-imaging-model = { path = "../casa-imaging-model" }
 casa-imaging-operator = { path = "../casa-imaging-operator" }
 casa-imaging-products = { path = "../casa-imaging-products" }

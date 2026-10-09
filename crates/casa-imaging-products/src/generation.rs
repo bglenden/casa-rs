@@ -35,7 +35,7 @@ use crate::taylor::{
 pub const CONTINUUM_ALGORITHM_CATALOG_VERSION: u32 = 10;
 
 /// Default main-lobe cutoff fraction for restoring-beam fitting.
-pub const DEFAULT_PSF_CUTOFF: f32 = casa_imaging_reconstruction::DEFAULT_PSF_FIT_CUTOFF;
+pub const DEFAULT_PSF_CUTOFF: f32 = casa_imaging_deconvolution::DEFAULT_PSF_FIT_CUTOFF;
 
 /// Explicit analytic primary-beam law available to product construction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

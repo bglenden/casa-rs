@@ -2756,7 +2756,7 @@ fn project_minor_cycle(
             .recorded_components
             .iter()
             .map(|component| {
-                let cell = component.cell();
+                let cell = component.cell;
                 let [x, y] = cell.pixel();
                 ImagerMinorCycleComponent {
                     domain: cell.domain(),
@@ -2764,8 +2764,8 @@ fn project_minor_cycle(
                     polarization: cell.polarization(),
                     x,
                     y,
-                    flux: component.flux(),
-                    scale_px: component.scale_px(),
+                    flux: component.flux,
+                    scale_px: component.scale_px,
                 }
             })
             .collect(),

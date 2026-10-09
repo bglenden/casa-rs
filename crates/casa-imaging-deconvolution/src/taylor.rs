@@ -9,7 +9,7 @@ use crate::Error;
 use crate::patch::subtract_window;
 use crate::plane::{PlaneShape, Support, beam_patch, casacore_max_abs};
 use crate::scales::ScaleBank;
-use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepStop};
+use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepEnd, StepStop};
 
 /// The scale-mask threshold of the multi-term cleaner (`setupUserMask`).
 const SCALE_MASK_THRESHOLD: f64 = 0.1;
@@ -312,7 +312,7 @@ impl Solver for Taylor {
         _: &MinorCycleView<'_>,
         residual: &mut [Vec<f64>],
         _: &Delta,
-    ) -> Result<f64, Error> {
+    ) -> Result<StepEnd, Error> {
         let peak = state.principal_peak();
         let scales = state.scales();
         // The point-scale right-hand sides are the residuals the cleaner
@@ -320,7 +320,7 @@ impl Solver for Taylor {
         for (term, plane) in residual.iter_mut().enumerate() {
             plane.clone_from(&state.rhs[term * scales]);
         }
-        Ok(peak)
+        Ok(StepEnd { peak, refreshes: 0 })
     }
 }
 

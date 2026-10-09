@@ -5,8 +5,8 @@
 use std::time::Instant;
 
 use casa_imaging_application::{
-    ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumAwProjection, ContinuumBeamPolicy,
-    ContinuumImagingRequest, ContinuumMask, ContinuumMaskBox, ContinuumStopReason,
+    CleanStop, ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumAwProjection,
+    ContinuumBeamPolicy, ContinuumImagingRequest, ContinuumMask, ContinuumMaskBox,
     ContinuumWeighting, HogbomIterationAccounting, ImagingCapabilityRequirement,
     PolarizationCoordinate, ProductNormalization, ResourcePolicy, SpectralImagingMode,
     TaskRequirement, UnsupportedRequirement, VisibilityContinuumSubtraction, execute_continuum,
@@ -42,11 +42,15 @@ pub(super) fn execute(config: &CliConfig) -> Result<RunSummary, String> {
             sample_count: completion.sample_count(),
         }
     });
-    let clean_stop_reason = result.minor_stop_reason.map(|reason| match reason {
-        ContinuumStopReason::ThresholdReached => CleanStopReason::GlobalThresholdReached,
-        ContinuumStopReason::IterationBound => CleanStopReason::IterationLimitReached,
-        ContinuumStopReason::StalenessBound => CleanStopReason::MajorCycleLimitReached,
-        ContinuumStopReason::MultiscaleDivergence => CleanStopReason::DivergenceDetected,
+    let clean_stop_reason = result.stop.map(|stop| match stop {
+        CleanStop::Iterations => CleanStopReason::IterationLimitReached,
+        CleanStop::Threshold => CleanStopReason::GlobalThresholdReached,
+        CleanStop::NSigma => CleanStopReason::NsigmaThresholdReached,
+        CleanStop::ZeroMask => CleanStopReason::NoCleanablePixels,
+        CleanStop::MajorCycles => CleanStopReason::MajorCycleLimitReached,
+        CleanStop::NoChange | CleanStop::DivergedFromPrevious | CleanStop::DivergedFromMinimum => {
+            CleanStopReason::DivergenceDetected
+        }
     });
     Ok(RunSummary {
         warnings: Vec::new(),

@@ -5,7 +5,7 @@
 use crate::Error;
 use crate::patch::subtract_shifted;
 use crate::plane::{first_peak, peak_magnitude};
-use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepStop};
+use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepEnd, StepStop};
 
 /// Högbom's point CLEAN on one plane.
 ///
@@ -96,7 +96,10 @@ impl Solver for Hogbom {
         view: &MinorCycleView<'_>,
         residual: &mut [Vec<f64>],
         _: &Delta,
-    ) -> Result<f64, Error> {
-        Ok(peak_magnitude(&residual[0], view.support))
+    ) -> Result<StepEnd, Error> {
+        Ok(StepEnd {
+            peak: peak_magnitude(&residual[0], view.support),
+            refreshes: 0,
+        })
     }
 }

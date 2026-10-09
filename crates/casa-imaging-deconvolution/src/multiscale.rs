@@ -6,7 +6,7 @@ use crate::Error;
 use crate::patch::subtract_window;
 use crate::plane::{PlaneShape, Support, casacore_max_abs, peak_magnitude};
 use crate::scales::ScaleBank;
-use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepStop};
+use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepEnd, StepStop};
 
 /// The scale-mask threshold of `MatrixCleaner` (`itsMaskThreshold`): a
 /// scale may be centred where at least 90% of it lies inside the mask.
@@ -196,8 +196,9 @@ impl Solver for Multiscale {
         view: &MinorCycleView<'_>,
         residual: &mut [Vec<f64>],
         delta: &Delta,
-    ) -> Result<f64, Error> {
-        if !delta.is_empty() {
+    ) -> Result<StepEnd, Error> {
+        let refreshed = !delta.is_empty();
+        if refreshed {
             // SDAlgorithmMSClean: the step's residual less the PSF convolved
             // with the step's model, by circular FFT.
             let shape = state.shape;
@@ -219,6 +220,9 @@ impl Solver for Multiscale {
                 *value -= subtracted;
             }
         }
-        Ok(peak_magnitude(&residual[0], view.support))
+        Ok(StepEnd {
+            peak: peak_magnitude(&residual[0], view.support),
+            refreshes: usize::from(refreshed),
+        })
     }
 }

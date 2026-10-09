@@ -44,12 +44,13 @@ pub use driver::{Component, PlaneOutcome, run_plane};
 pub use hogbom::Hogbom;
 pub use multiscale::{Multiscale, MultiscaleState};
 pub use plane::{
-    PlaneShape, RobustNoise, Support, casacore_max_abs, first_peak, peak_magnitude, robust_noise,
+    PlaneShape, RobustNoise, Support, casacore_max_abs, first_peak, peak_magnitude, psf_peak,
+    robust_noise,
 };
 pub use psf::{ClarkPatch, PsfSummary};
 pub use refresh::LinearRefresh;
 pub use scales::spheroidal;
-pub use solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepStop};
+pub use solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepEnd, StepStop};
 pub use taylor::{Taylor, TaylorState};
 
 /// Why a minor cycle could not run.

@@ -7,7 +7,6 @@
 //! assembles them.
 //!
 //! This root holds the shared problems and sky; the tests live in
-//! `major_cycle/channel_cycles.rs` (channel-local reconstruction cycles) and
 //! `major_cycle/reconciliation.rs` (reconciliation, lineage and refreshes).
 
 use casa_imaging_model::{
@@ -15,40 +14,36 @@ use casa_imaging_model::{
     CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
     DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
     DopplerConvention, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame, GeometryInput,
-    HogbomIterationAccounting, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec,
-    ImageShape, ImagingRequest, InstrumentResponse, IntentSelection, LogicalIdentity,
-    MeasurementEquationContract, MeasurementSetIdentity, MetadataGeneration, MetadataTableKind,
-    ModelBounds, ModelCell, ModelColumnState, ModelColumnWrite, ModelDeltaTerm,
-    ModelExecutionAttemptId, ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements,
-    ModelStateIdentity, MsColumnKind, NumericPrecision, NumericalStage, NumericsContract,
-    ObservationSelection, ObservationSnapshotInput, ObservationSourceInput,
-    ObservationSourceProvenance, ObservationTransactionRequirements, PhaseCentreLaw,
-    PointingCentreLaw, PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
-    ProblemInputIdentities, ProblemSpecification, ProductBlankingPolicy, ProductKind,
-    ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
-    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
-    ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection,
-    ScientificContract, SelectedColumns, SelectedMainRow, SelectedRows, SkyDirection,
-    SourceGenerations, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
-    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection,
-    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, TimeSelection, UvSelection,
-    UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope,
-    WeightingContract, WeightingScheme, compile, compile_observation,
+    IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest,
+    InstrumentResponse, IntentSelection, LogicalIdentity, MeasurementEquationContract,
+    MeasurementSetIdentity, MetadataGeneration, MetadataTableKind, ModelBounds, ModelCell,
+    ModelColumnState, ModelColumnWrite, ModelDeltaTerm, ModelExecutionAttemptId, ModelInnerProduct,
+    ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity, MsColumnKind,
+    NumericPrecision, NumericalStage, NumericsContract, ObservationSelection,
+    ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance,
+    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PolarizationContract,
+    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInputIdentities,
+    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
+    ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
+    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
+    ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection, ScientificContract,
+    SelectedColumns, SelectedMainRow, SelectedRows, SkyDirection, SourceGenerations,
+    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
+    TaylorSupportReference, TaylorValidityPolicy, TimeSelection, UvSelection, UvwCoordinateLaw,
+    VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract,
+    WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
-    ChannelCyclePolicy, ExecutableModelProblem, FinalModelContinuation, FinalNormalState,
-    MajorCycleError, MajorCycleOwner, MajorCyclePreparation, MinorCycleProgram, ModelDelta,
-    ModelLifecycle, ModelLifecycleError, PassNormalState, ReconstructionCycle, ReconstructionMask,
-    SpectralChannelValidity, SpectralOperatorError, WeightingGenerationId,
-    runtime_adapter::NormalStoragePlan,
+    ExecutableModelProblem, MajorCycleError, MajorCycleOwner, MajorCyclePreparation,
+    ModelLifecycle, ModelLifecycleError, PassNormalState, SpectralOperatorError,
+    WeightingGenerationId, runtime_adapter::NormalStoragePlan,
 };
 
 #[path = "support/synthetic_pass.rs"]
 mod synthetic_pass;
 use synthetic_pass::Scene;
 
-#[path = "major_cycle/channel_cycles.rs"]
-mod channel_cycles;
 #[path = "major_cycle/reconciliation.rs"]
 mod reconciliation;
 
@@ -348,30 +343,6 @@ fn bind_lifecycle(
             .expect("positive model window"),
     )
     .expect("bind model lifecycle")
-}
-
-/// Reconcile `scene`'s initial pass over the empty model in a fresh epoch-1
-/// lifecycle, releasing the normal state and the model continuation.
-fn initial_round(
-    problem: &casa_imaging_model::CompiledProblem,
-    scene: &Scene,
-    attempt_byte: u8,
-) -> (ModelLifecycle, FinalNormalState, FinalModelContinuation) {
-    let mut lifecycle = ModelLifecycle::bind(
-        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem"),
-        attempt(attempt_byte),
-        1,
-        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
-            .expect("positive model window"),
-    )
-    .expect("initial lifecycle");
-    let initial = lifecycle.initial_empty().expect("empty initial model");
-    let preparation =
-        MajorCyclePreparation::prepare(&lifecycle, initial, None).expect("prepare initial model");
-    let (normal, continuation) = scene
-        .reconcile(problem, &mut lifecycle, preparation)
-        .into_continuation();
-    (lifecycle, normal, continuation)
 }
 
 /// Content of an independent initial pass of `scene` over the empty model:

@@ -13,7 +13,10 @@ mod paged_state_directory;
 pub mod pass;
 pub use cube_state::CubeState;
 mod minor;
-pub use minor::{MinorCycleOutcome, MinorCycleRunError, run_minor_cycle};
+pub use minor::{
+    MinorCycleOutcome, MinorCycleRunError, MinorCycleSetup, MinorCycleSummary, PreparedMinorCycle,
+    PsfCache, TracedComponent, prepare_minor_cycle, run_minor_cycle,
+};
 pub mod product_publication;
 mod publication_layout;
 mod receipt;

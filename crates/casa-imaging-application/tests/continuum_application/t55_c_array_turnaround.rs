@@ -229,7 +229,7 @@ fn run_c_array(block: bool) {
         "iterations": result.actual_minor_iterations, "reported_iterations": result.minor_iterations,
         "dirty_only": dirty_only,
         "maximum_major_cycles": maximum_major_cycles,
-        "majors": output.major_cycle_count, "stop_reason": format!("{:?}", result.minor_stop_reason),
+        "majors": output.major_cycle_count, "stop_reason": format!("{:?}", result.stop),
         "prefix": prefix, "products": result.product_names,
         "timing_boundary": "execute_continuum from selected input preparation through publication; excludes input copy and comparison"
     });

@@ -131,7 +131,7 @@ pub trait Solver {
     ) -> Result<(), Error>;
 
     /// End the step: bring `residual` up to date with the step's `delta`
-    /// where the solver defers that, and return the peak residual CASA
+    /// where the solver defers that, and report the peak residual CASA
     /// reports for the step.
     ///
     /// # Errors
@@ -143,7 +143,17 @@ pub trait Solver {
         view: &MinorCycleView<'_>,
         residual: &mut [Vec<f64>],
         delta: &Delta,
-    ) -> Result<f64, Error>;
+    ) -> Result<StepEnd, Error>;
+}
+
+/// How a step ended.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StepEnd {
+    /// The peak residual CASA reports for the step.
+    pub peak: f64,
+    /// Exact whole-plane residual refreshes the step made (Clark's cycles,
+    /// multiscale's terminal convolution).
+    pub refreshes: usize,
 }
 
 /// The model update of a minor cycle: flux per storage index, per Taylor

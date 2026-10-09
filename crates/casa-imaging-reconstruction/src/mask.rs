@@ -255,11 +255,13 @@ impl ReconstructionMaskPlan {
         }
     }
 
-    /// Materialize one immutable generation for the exact current model.
+    /// Materialize one immutable generation for the exact current model;
+    /// `beam` is the primary PSF's, which the automatic mask smooths by.
     pub fn materialize(
         &self,
         base: &crate::ModelGeneration,
         normal: &FinalNormalState,
+        beam: AutoMaskBeam,
     ) -> Result<(ReconstructionMask, Option<AutoMultithreshEvidence>), MaskError> {
         let problem = normal.problem_id();
         let model_generation = base.generation_id();
@@ -323,6 +325,7 @@ impl ReconstructionMaskPlan {
                     *cycle_threshold_reached,
                     *evolution_stopped,
                     *controls,
+                    beam,
                 )?;
                 Ok((mask, Some(evidence)))
             }
@@ -330,8 +333,10 @@ impl ReconstructionMaskPlan {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-struct AutoMaskBeam {
+/// The primary PSF's fitted main lobe (pixels) and sidelobe level, measured
+/// once per PSF by the minor cycle, as the automatic mask needs them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AutoMaskBeam {
     major_fwhm_pixels: f64,
     minor_fwhm_pixels: f64,
     position_angle_rad: f64,
@@ -339,46 +344,24 @@ struct AutoMaskBeam {
     sidelobe_fraction: f64,
 }
 
-fn fit_auto_mask_beam(
-    normal: &crate::FinalNormalStateWindow<'_>,
-) -> Result<AutoMaskBeam, MaskError> {
-    let shape = normal.shape();
-    let psf = normal
-        .normal_approximation()
-        .iter()
-        .map(|sample| sample.re as f32)
-        .collect::<Vec<_>>();
-    let fitted = crate::fit_restoring_beam(&psf, shape, [1.0, 1.0], crate::DEFAULT_PSF_FIT_CUTOFF)
-        .map_err(|_| MaskError::InvalidBeamArea)?;
-    let major_fwhm_pixels = fitted.major_fwhm_rad();
-    let minor_fwhm_pixels = fitted.minor_fwhm_rad();
-    let area_pixels = std::f64::consts::PI * major_fwhm_pixels * minor_fwhm_pixels
-        / (4.0 * std::f64::consts::LN_2);
-    let sidelobe_fraction =
-        crate::psf_beam::fitted_psf_sidelobe_fraction_with_beam(&psf, shape, fitted)
-            .map_err(|_| MaskError::InvalidBeamArea)?;
-    if [
-        major_fwhm_pixels,
-        minor_fwhm_pixels,
-        area_pixels,
-        sidelobe_fraction,
-    ]
-    .into_iter()
-    .all(|value| value.is_finite() && value >= 0.0)
-        && major_fwhm_pixels > 0.0
-        && minor_fwhm_pixels > 0.0
-        && area_pixels > 0.0
-        && fitted.position_angle_rad().is_finite()
-    {
-        Ok(AutoMaskBeam {
+impl AutoMaskBeam {
+    /// A beam of the given full widths at half maximum (pixels), position
+    /// angle and fitted sidelobe level.
+    #[must_use]
+    pub const fn new(
+        major_fwhm_pixels: f64,
+        minor_fwhm_pixels: f64,
+        position_angle_rad: f64,
+        sidelobe_fraction: f64,
+    ) -> Self {
+        Self {
             major_fwhm_pixels,
             minor_fwhm_pixels,
-            position_angle_rad: fitted.position_angle_rad(),
-            area_pixels,
+            position_angle_rad,
+            area_pixels: std::f64::consts::PI * major_fwhm_pixels * minor_fwhm_pixels
+                / (4.0 * std::f64::consts::LN_2),
             sidelobe_fraction,
-        })
-    } else {
-        Err(MaskError::InvalidBeamArea)
+        }
     }
 }
 
@@ -536,11 +519,13 @@ impl ImageDomainReconstructionMaskPlans {
         Self::new(plans)
     }
 
-    /// Materialize every domain support against one shared Normal State.
+    /// Materialize every domain support against one shared Normal State;
+    /// `beam` is the primary PSF's.
     pub fn materialize(
         &self,
         base: &crate::ModelGeneration,
         normal: &FinalNormalState,
+        beam: AutoMaskBeam,
     ) -> Result<ImageDomainMaskMaterialization, MaskError> {
         if self.plans.len() != normal.domain_count()
             || self.plans.len() != base.shape().domains().len()
@@ -548,7 +533,7 @@ impl ImageDomainReconstructionMaskPlans {
             return Err(MaskError::DomainCardinalityMismatch);
         }
         if self.plans.len() == 1 {
-            let (mask, evidence) = self.plans[0].materialize(base, normal)?;
+            let (mask, evidence) = self.plans[0].materialize(base, normal, beam)?;
             return Ok(ImageDomainMaskMaterialization::new(
                 ImageDomainReconstructionMasks::new([mask])?,
                 vec![evidence].into_boxed_slice(),
@@ -905,7 +890,8 @@ pub struct AutoMultithreshEvidence {
     pub channel_stopped: bool,
 }
 
-/// Generate a new auto-multithreshold mask from immutable Normal State.
+/// Generate a new auto-multithreshold mask from immutable Normal State, with
+/// `beam` the PSF's fitted main lobe and sidelobe level.
 #[allow(clippy::too_many_arguments)]
 pub fn auto_multithresh(
     problem: CompiledProblemId,
@@ -918,12 +904,12 @@ pub fn auto_multithresh(
     cycle_threshold_reached: bool,
     evolution_stopped: bool,
     controls: AutoMultithreshControls,
+    beam: AutoMaskBeam,
 ) -> Result<(ReconstructionMask, AutoMultithreshEvidence), MaskError> {
     if normal.channel_count() != 1 {
         return Err(MaskError::ShapeMismatch);
     }
     let normal = &normal.read_window(normal.slab().core_range())?;
-    let beam = fit_auto_mask_beam(normal)?;
     validate_auto_controls(controls, beam.area_pixels)?;
     let shape = normal.shape();
     if valid_support.len() != shape[0] * shape[1]

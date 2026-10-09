@@ -30,9 +30,13 @@ use casa_imaging_products::{
     produce_continuum_members,
 };
 use casa_imaging_reconstruction::{
-    ImageDomainReconstructionMaskPlans, ImageDomainReconstructionMasks, MajorCycleCompletion,
-    MaskBox, ReconstructionMask, ReconstructionMaskPlan, ReconstructionMaskSet,
+    AutoMaskBeam, ImageDomainReconstructionMaskPlans, ImageDomainReconstructionMasks,
+    MajorCycleCompletion, MaskBox, ReconstructionMask, ReconstructionMaskPlan,
+    ReconstructionMaskSet,
 };
+
+/// Full-plane and box masks do not read the PSF beam.
+const STATIC_MASK_BEAM: AutoMaskBeam = AutoMaskBeam::new(3.0, 3.0, 0.0, 0.1);
 
 /// One fixture round: two major cycles, the initial one over the empty model
 /// forming the PSF and a refresh after a nonzero model delta.
@@ -305,6 +309,7 @@ fn two_domain_members_consume_their_matching_normal_and_model_chart() {
         .materialize(
             first_round.join.final_model(),
             first_round.join.normal_state(),
+            STATIC_MASK_BEAM,
         )
         .expect("domain masks")
         .into_parts();
@@ -322,6 +327,7 @@ fn two_domain_members_consume_their_matching_normal_and_model_chart() {
         .materialize(
             first_round.join.final_model(),
             first_round.join.normal_state(),
+            STATIC_MASK_BEAM,
         )
         .expect("alternate domain masks")
         .into_parts();
@@ -439,6 +445,7 @@ fn direct_generation_rejects_same_problem_with_foreign_completions() {
         .materialize(
             first_round.join.final_model(),
             first_round.join.normal_state(),
+            STATIC_MASK_BEAM,
         )
         .expect("domain masks")
         .into_parts();
@@ -856,7 +863,7 @@ fn cube_generation_demand_retains_channel_beams_and_charges_common_fit_scratch()
         );
         assert!(
             demand.beam_scratch_bytes()
-                >= casa_imaging_reconstruction::psf_fit_workspace_bytes(SHAPE)
+                >= casa_imaging_deconvolution::psf_fit_workspace_bytes(SHAPE)
         );
         if policy == RestoringBeamPolicy::Common {
             assert!(

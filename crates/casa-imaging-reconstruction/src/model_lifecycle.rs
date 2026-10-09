@@ -2,10 +2,7 @@
 
 //! Owner of model generations, Model Deltas and affine final-model completion.
 
-use std::{
-    ops::Deref,
-    sync::atomic::{AtomicU64, Ordering},
-};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use casa_imaging_model::{
     CompiledProblemId, LogicalIdentity, ModelCell, ModelContractError, ModelDeltaTerm,
@@ -75,62 +72,6 @@ pub struct ModelGeneration {
     origin: ModelGenerationOrigin,
 }
 
-/// One explicitly loaded canonical window of an authoritative model.
-///
-/// Its borrow keeps the generation alive while the owned buffer can be shared
-/// with computation workers without performing storage I/O on those workers.
-#[doc(hidden)]
-#[derive(Debug)]
-pub struct ModelGenerationWindow<'a> {
-    generation: &'a ModelGeneration,
-    start: usize,
-    samples: Box<[ModelSample]>,
-}
-
-impl Deref for ModelGenerationWindow<'_> {
-    type Target = ModelGeneration;
-
-    fn deref(&self) -> &Self::Target {
-        self.generation
-    }
-}
-
-impl ModelGenerationWindow<'_> {
-    /// Actual capacity of the loaded semantic sample buffer.
-    pub fn owned_bytes(&self) -> usize {
-        std::mem::size_of_val(self.samples.as_ref())
-    }
-    pub(crate) fn sample(&self, canonical_index: usize) -> Option<ModelSample> {
-        canonical_index
-            .checked_sub(self.start)
-            .and_then(|index| self.samples.get(index))
-            .copied()
-    }
-
-    pub(crate) fn indexed_samples(&self) -> impl Iterator<Item = (usize, ModelSample)> + '_ {
-        self.samples
-            .iter()
-            .copied()
-            .enumerate()
-            .map(|(index, sample)| (self.start + index, sample))
-    }
-}
-
-impl ModelGenerationWindow<'_> {
-    pub(crate) fn compile_delta(
-        &self,
-        lifecycle: &ModelLifecycle,
-        terms: impl IntoIterator<Item = ModelDeltaTerm>,
-    ) -> Result<ModelDelta, ModelLifecycleError> {
-        lifecycle.validate_base(self.generation)?;
-        lifecycle.compile_delta_with_support(self.generation.generation_id(), terms, |index| {
-            self.sample(index)
-                .map(|sample| sample.support())
-                .ok_or(ModelLifecycleError::CellOutsideShape)
-        })
-    }
-}
-
 impl ModelGeneration {
     /// Return the canonical generation identity.
     #[must_use]
@@ -171,29 +112,6 @@ impl ModelGeneration {
             .ok_or(ModelLifecycleError::CellOutsideShape)?;
         let [width, height] = self.shape.domains()[domain].pixels();
         self.samples.read(start..start + width * height)
-    }
-
-    /// Load the requested coefficient range for one domain and all its
-    /// polarizations. The range must fit the admitted model window.
-    pub fn read_window(
-        &self,
-        domain: usize,
-        coefficients: std::ops::Range<usize>,
-    ) -> Result<ModelGenerationWindow<'_>, ModelLifecycleError> {
-        if coefficients.is_empty() || coefficients.end > self.shape.coefficients() {
-            return Err(ModelLifecycleError::CellOutsideShape);
-        }
-        let start = self
-            .shape
-            .flat_index(ModelCell::new(domain, coefficients.start, 0, [0, 0]))
-            .ok_or(ModelLifecycleError::CellOutsideShape)?;
-        let [width, height] = self.shape.domains()[domain].pixels();
-        let end = start + coefficients.len() * self.shape.polarizations() * width * height;
-        Ok(ModelGenerationWindow {
-            generation: self,
-            start,
-            samples: self.samples.read(start..end)?,
-        })
     }
 
     /// Return the owner-recorded origin.

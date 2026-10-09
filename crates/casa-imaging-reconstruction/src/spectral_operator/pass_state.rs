@@ -9,7 +9,6 @@
 //! state's PSF, `sumwt` and validity and replaces only the residual.
 
 use std::ops::Range;
-use std::sync::Mutex;
 
 use casa_imaging_model::{
     CompiledGeometryId, CompiledProblem, CompiledProblemId, NumericsContractId,
@@ -365,7 +364,6 @@ impl PassNormalState {
                     psf: psf.into_boxed_slice(),
                 }),
                 psf: Box::new([]),
-                clark_workspace: Mutex::new(None),
                 sensitivity: Box::new([]),
                 published_sum_weights: published_sum_weights.into_boxed_slice(),
                 sum_weights: sum_weights.into_boxed_slice(),
@@ -437,7 +435,6 @@ impl PassNormalState {
                 dirty: widen(&residual),
                 cube_real: None,
                 psf: widen(&psf),
-                clark_workspace: Mutex::new(None),
                 sensitivity,
                 published_sum_weights: published_sum_weights.into_boxed_slice(),
                 sum_weights: sum_weights.into_boxed_slice(),
@@ -508,50 +505,4 @@ fn basis_plan(problem: &CompiledProblem) -> Result<SpectralBasisPlan, SpectralOp
             return Err(SpectralOperatorError::UnsupportedProblem);
         }
     })
-}
-
-#[cfg(test)]
-impl SpectralOperatorPrimitives {
-    /// Coupled one-domain Stokes-I primitives over externally captured
-    /// planes, for lib tests whose sensitivity or published weights no pass
-    /// forms. `response` is `(sensitivity plane, normal weight, published
-    /// weight)`; without it both weights and the sensitivity are one.
-    pub(crate) fn native_taylor_fixture(
-        problem: &CompiledProblem,
-        residual_model: ModelGenerationId,
-        dirty: Box<[Complex64]>,
-        psf: Box<[Complex64]>,
-        response: Option<(Vec<f64>, f64, f64)>,
-    ) -> Self {
-        let basis = basis_plan(problem).expect("fixture coefficient basis");
-        let total_channels = problem.geometry().spectral().output_channels();
-        let slab = SpectralSlabPlan {
-            total_channels,
-            core_start: 0,
-            core_end: total_channels,
-        };
-        let shape = problem.geometry().domains()[0].shape().pixels();
-        let cells = shape[0] * shape[1];
-        let moments = basis.normal_moments(slab);
-        assert_eq!(dirty.len(), basis.coefficient_terms(slab) * cells);
-        assert_eq!(psf.len(), moments * cells);
-        let (sensitivity, normal_weight, published_weight) =
-            response.unwrap_or_else(|| (vec![1.0; cells], 1.0, 1.0));
-        assert_eq!(sensitivity.len(), cells);
-        Self {
-            shape,
-            slab,
-            basis,
-            polarizations: 1,
-            dirty,
-            cube_real: None,
-            psf,
-            clark_workspace: Mutex::new(None),
-            sensitivity: sensitivity.repeat(moments).into_boxed_slice(),
-            sum_weights: vec![normal_weight; moments].into_boxed_slice(),
-            published_sum_weights: vec![published_weight; moments].into_boxed_slice(),
-            validity: vec![SpectralChannelValidity::Valid].into_boxed_slice(),
-            residual_model: Some(residual_model),
-        }
-    }
 }

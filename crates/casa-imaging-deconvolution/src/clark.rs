@@ -8,7 +8,7 @@ use crate::Error;
 use crate::plane::PlaneShape;
 use crate::psf::ClarkPatch;
 use crate::refresh::LinearRefresh;
-use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepStop};
+use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepEnd, StepStop};
 
 /// Clark's major cycles per step (`setMaxNumberMajorCycles(10)`).
 const MAJOR_CYCLES: usize = 10;
@@ -215,18 +215,16 @@ impl Solver for Clark {
         view: &MinorCycleView<'_>,
         residual: &mut [Vec<f64>],
         _: &Delta,
-    ) -> Result<f64, Error> {
+    ) -> Result<StepEnd, Error> {
         if state.cycle_iterations > 0 {
             state.refresh_pending(&mut residual[0], view)?;
         }
-        tracing::debug!(
-            cycles = state.cycles,
-            components = state.step_components,
-            "Clark step"
-        );
-        let peak = state.max_residual;
+        let end = StepEnd {
+            peak: state.max_residual,
+            refreshes: state.cycles,
+        };
         self.refresh.set(Some(state.refresh));
-        Ok(peak)
+        Ok(end)
     }
 }
 

@@ -86,6 +86,7 @@
   ],
   "casa-imaging-products": [
    "casa-fft",
+   "casa-imaging-deconvolution",
    "casa-imaging-model",
    "casa-imaging-reconstruction",
    "casa-numerics"
@@ -94,6 +95,7 @@
    "casa-imaging-operator"
   ],
   "casa-imaging-runtime": [
+   "casa-imaging-deconvolution",
    "casa-imaging-metal",
    "casa-imaging-model",
    "casa-imaging-operator",
@@ -106,6 +108,7 @@
   "casa-imaging-application": [
    "casa-coordinates",
    "casa-images",
+   "casa-imaging-deconvolution",
    "casa-imaging-model",
    "casa-imaging-operator",
    "casa-imaging-products",
@@ -198,8 +201,6 @@
    "regex": "\\benv::var(?:_os)?\\s*\\(|\\bstd::env\\b",
    "grandfathered": [
     "crates/casa-imaging-products/src/taylor.rs",
-    "crates/casa-imaging-reconstruction/src/minor_cycle/clark.rs",
-    "crates/casa-imaging-reconstruction/src/minor_cycle/deep_clark_tests.rs",
     "crates/casa-imaging-runtime/src/receipt.rs",
     "crates/casa-imaging-runtime/src/resource_authority.rs"
    ]
@@ -224,8 +225,6 @@
    "grandfathered": [
     "crates/casa-imaging-application/src/casa_product_sink.rs",
     "crates/casa-imaging-products/src/taylor.rs",
-    "crates/casa-imaging-reconstruction/src/minor_cycle/clark.rs",
-    "crates/casa-imaging-reconstruction/src/minor_cycle/deep_clark_tests.rs",
     "crates/casa-imaging-runtime/src/receipt.rs",
     "crates/casa-imaging-runtime/src/resource_authority.rs"
    ]

@@ -36,6 +36,8 @@ pub struct PlaneOutcome {
     pub stop: PlaneStop,
     /// The first components, up to the requested count.
     pub trace: Vec<Component>,
+    /// Exact whole-plane residual refreshes.
+    pub refreshes: usize,
 }
 
 /// Run one plane's minor cycle.
@@ -67,6 +69,7 @@ pub fn run_plane<S: Solver>(
         peak: start_peak,
         stop: PlaneStop::ZeroMask,
         trace: Vec::new(),
+        refreshes: 0,
     };
     let mut stop = control.stop(start_peak);
     if view.support.is_empty() || stop.is_some() {
@@ -137,7 +140,9 @@ fn run_step<S: Solver>(
             }
         }
     }
-    outcome.peak = solver.finalize(state, view, residual, &delta)?;
+    let end = solver.finalize(state, view, residual, &delta)?;
+    outcome.peak = end.peak;
+    outcome.refreshes += end.refreshes;
     outcome.delta.merge(&delta);
     outcome.components += components;
     let charged = components.min(budget) + charged_stop;

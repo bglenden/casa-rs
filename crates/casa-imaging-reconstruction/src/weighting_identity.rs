@@ -68,10 +68,3 @@ impl fmt::Display for WeightingReplayId {
         self.0.fmt(formatter)
     }
 }
-
-/// `next_owner` stops before `u64::MAX`, so fixture identities never alias a
-/// live owner.
-#[cfg(test)]
-pub(crate) fn native_normal_fixture_weighting_ids() -> (WeightingGenerationId, WeightingReplayId) {
-    (WeightingGenerationId(u64::MAX), WeightingReplayId(u64::MAX))
-}
