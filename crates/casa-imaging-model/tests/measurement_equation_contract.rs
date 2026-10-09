@@ -15,13 +15,13 @@ use casa_imaging_model::{
     AwProjectionContract, AxisOrder, CentreLaws, CompiledProblemId, DeclaredInnerProducts,
     DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FiniteValuePolicy,
     FlagPolicy, FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec,
-    ImageShape, ImagingRequest, InstrumentModel, InstrumentResponse, MeasurementEquationContract,
-    ModelColumnWrite, ModelInnerProduct, ModelStateIdentity, NormalEquationForm,
-    NormalStateNormalization, NumericPrecision, NumericalStage, NumericsContract,
-    ObservationPointingLaw, ObservationTransactionRequirements, PairedMeasurementTransform,
-    PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
-    PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
-    PolarizationCoordinate, ProblemSpecification, ProductBoundaryOperation, ProductKind,
+    ImageShape, InstrumentModel, InstrumentResponse, MeasurementEquationContract, ModelColumnWrite,
+    ModelInnerProduct, ModelStateIdentity, NormalEquationForm, NormalStateNormalization,
+    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
+    ObservationTransactionRequirements, PairedMeasurementTransform, PhaseCentreLaw,
+    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
+    ProblemInput, ProblemSpecification, ProductBoundaryOperation, ProductKind,
     ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
     ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
     ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
@@ -305,7 +305,7 @@ fn compile_contract_with_reduction(
         ModelStateIdentity::Empty,
     );
 
-    compile(ImagingRequest::new(
+    compile(ProblemInput::new(
         ProblemSpecification::new(
             science,
             reconstruction,

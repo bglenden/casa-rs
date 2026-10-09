@@ -4,12 +4,12 @@ use casa_imaging_model::{
     AxisOrder, CentreLaws, CompileGeometryError, CompileProblemError, DeclaredInnerProducts,
     DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, DopplerConvention, Epoch, FacetLayout,
     FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec,
-    ImageShape, ImagingRequest, InstrumentResponse, ItrfPosition, LogicalIdentity,
-    MeasurementEquationContract, MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct,
-    ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
+    ImageShape, InstrumentResponse, ItrfPosition, LogicalIdentity, MeasurementEquationContract,
+    MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct, ModelStateIdentity,
+    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
     ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
     PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
-    PolarizationContract, PolarizationCoordinate, ProblemSpecification, ProductKind,
+    PolarizationContract, PolarizationCoordinate, ProblemInput, ProblemSpecification, ProductKind,
     ProductNormalization, ProductRequirements, Projection, PsfPhaseCentreLaw,
     ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
     ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract,
@@ -114,7 +114,7 @@ fn conversion_anchor(mjd_days: f64) -> SpectralFrameAnchor {
 fn request(
     geometry: GeometryInput,
     references: Vec<(ReferenceDataKind, LogicalIdentity)>,
-) -> ImagingRequest {
+) -> ProblemInput {
     let numerics = NumericsContract::new(
         vec![NumericPrecision::F64],
         ReductionPolicy::Compensated,
@@ -125,7 +125,7 @@ fn request(
             .collect(),
     );
     let inputs = problem_inputs(1, references, ModelStateIdentity::Empty);
-    ImagingRequest::new(
+    ProblemInput::new(
         ProblemSpecification::new(
             ScientificContract::new(
                 SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),

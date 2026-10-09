@@ -8,12 +8,12 @@ use casa_imaging_model::{
     AxisOrder, CentreLaws, CompiledProblem, DeclaredInnerProducts, DelayCentreLaw,
     DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy,
     FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    ImagingRequest, InstrumentResponse, MeasurementEquationContract, ModelBounds, ModelColumnWrite,
+    InstrumentResponse, MeasurementEquationContract, ModelBounds, ModelColumnWrite,
     ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity,
     NumericPrecision, NumericalStage, NumericsContract, ObservationSnapshotInput,
     ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PolarizationContract,
-    PolarizationCoordinate, ProblemInputIdentities, ProblemSpecification, ProductKind,
-    ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
+    PolarizationCoordinate, ProblemInput, ProblemInputIdentities, ProblemSpecification,
+    ProductKind, ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
     ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
     RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection, SpectralContract,
     SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
@@ -150,7 +150,7 @@ pub fn continuum_problem_with_domains_and_reconstruction(
         ModelStateIdentity::Empty,
     ))
     .expect("compile observation snapshot");
-    compile(ImagingRequest::new(
+    compile(ProblemInput::new(
         ProblemSpecification::new(
             ScientificContract::new(
                 SpectralContract::new(

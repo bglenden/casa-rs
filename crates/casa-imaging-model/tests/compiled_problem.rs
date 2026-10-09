@@ -5,13 +5,13 @@ use casa_imaging_model::{
     ContinuumChannelUse, ContinuumFitRule, DeclaredInnerProducts, DelayCentreLaw,
     DirectionCoordinateSpec, DirectionFrame, DopplerConvention, Epoch, FacetLayout,
     FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec,
-    ImageShape, ImagingRequest, InstrumentModel, InstrumentResponse, ItrfPosition,
-    MeasurementEquationContract, MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct,
-    ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
+    ImageShape, InstrumentModel, InstrumentResponse, ItrfPosition, MeasurementEquationContract,
+    MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct, ModelStateIdentity,
+    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
     ObservationSnapshotInput, ObservationTransactionRequirements, PairedMeasurementTransform,
     PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
     PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
-    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInputIdentities,
+    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInput, ProblemInputIdentities,
     ProblemSpecification, ProductAxisKind, ProductBeamRule, ProductBlankingPolicy, ProductKind,
     ProductNormalization, ProductRequirements, ProductRole, ProductSchema,
     ProductSupportComparison, ProductTerm, ProductUnit, ProductValidityPolicies,
@@ -45,7 +45,7 @@ fn compile_with_geometry(
     inputs: ProblemInputIdentities,
 ) -> Result<casa_imaging_model::CompiledProblem, CompileProblemError> {
     let lifecycle = model_lifecycle(inputs.model());
-    compile(ImagingRequest::new(
+    compile(ProblemInput::new(
         specification,
         geometry,
         inputs,

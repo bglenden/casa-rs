@@ -20,7 +20,7 @@ pub use availability::{
 };
 pub use casa_imaging_deconvolution::CleanStop;
 pub use casa_imaging_model::{
-    HogbomIterationAccounting, ImagingRequestVersion, PolarizationCoordinate, ProductNormalization,
+    HogbomIterationAccounting, PolarizationCoordinate, ProductNormalization,
 };
 pub use casa_imaging_runtime::pass::{BackendChoice, Cancel};
 pub use casa_imaging_runtime::{
@@ -38,8 +38,8 @@ pub use continuum_request::{
 use std::{error::Error, fmt, io, path::PathBuf, sync::Arc};
 
 use casa_imaging_model::{
-    CompileProblemError, CompiledProblem, GeometryInput, ImagingRequest,
-    ModelLifecycleRequirements, ObservationSelection, ProblemInputIdentities, ProblemSpecification,
+    CompileProblemError, CompiledProblem, GeometryInput, ModelLifecycleRequirements,
+    ObservationSelection, ProblemInput, ProblemInputIdentities, ProblemSpecification,
     SpectralWindowSelection, compile, compile_observation,
 };
 use casa_imaging_products::{
@@ -262,13 +262,13 @@ pub fn execute(
     let (snapshot, access) = resolved.into_parts();
     let observation = compile_observation(snapshot)
         .map_err(|error| ApplicationDispatchError::Preparation(Box::new(error)))?;
-    let imaging = ImagingRequest::new(
+    let problem = compile(ProblemInput::new(
         request.specification,
         request.geometry,
         ProblemInputIdentities::new(observation),
         request.model_lifecycle,
-    );
-    let problem = compile(imaging).map_err(ApplicationDispatchError::Compile)?;
+    ))
+    .map_err(ApplicationDispatchError::Compile)?;
     validate_installed_implementation(&problem, request.task_requirements)
         .map_err(ApplicationDispatchError::Unavailable)?;
     let input = NativeInput {

@@ -4,13 +4,13 @@ use casa_imaging_model::{
     AxisOrder, CentreLaws, CompileProblemError, CompiledProblem, DeclaredInnerProducts,
     DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FacetLayout,
     FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec,
-    ImageShape, ImagingRequest, InstrumentResponse, LogicalIdentity, MeasurementEquationContract,
-    ModelBounds, ModelCell, ModelColumnWrite, ModelContractError, ModelDeltaTerm,
-    ModelExecutionAttemptId, ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements,
-    ModelSample, ModelSourceShape, ModelStateIdentity, ModelSupport, ModelValue, NumericPrecision,
+    ImageShape, InstrumentResponse, LogicalIdentity, MeasurementEquationContract, ModelBounds,
+    ModelCell, ModelColumnWrite, ModelContractError, ModelDeltaTerm, ModelExecutionAttemptId,
+    ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements, ModelSample,
+    ModelSourceShape, ModelStateIdentity, ModelSupport, ModelValue, NumericPrecision,
     NumericalStage, NumericsContract, ObservationTransactionRequirements, PhaseCentreLaw,
     PointingCentreLaw, PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
-    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
+    ProblemInput, ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
     ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
     ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
     ReductionPolicy, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
@@ -294,7 +294,7 @@ fn problem_with_contract(
                 .collect(),
         ),
     );
-    compile(ImagingRequest::new(
+    compile(ProblemInput::new(
         specification,
         geometry,
         common::problem_inputs(observation, Vec::new(), model),

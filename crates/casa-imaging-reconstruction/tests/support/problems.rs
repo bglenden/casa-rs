@@ -15,15 +15,15 @@ use casa_imaging_model::{
     CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
     DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
     DopplerConvention, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame, GeometryInput,
-    IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest,
-    InstrumentResponse, IntentSelection, LogicalIdentity, MeasurementEquationContract,
-    MeasurementSetIdentity, MetadataGeneration, MetadataTableKind, ModelBounds, ModelColumnState,
-    ModelColumnWrite, ModelExecutionAttemptId, ModelInnerProduct, ModelInputCommitment,
-    ModelLifecycleRequirements, ModelStateIdentity, MsColumnKind, NumericPrecision, NumericalStage,
-    NumericsContract, ObservationSelection, ObservationSnapshotInput, ObservationSourceInput,
+    IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentResponse,
+    IntentSelection, LogicalIdentity, MeasurementEquationContract, MeasurementSetIdentity,
+    MetadataGeneration, MetadataTableKind, ModelBounds, ModelColumnState, ModelColumnWrite,
+    ModelExecutionAttemptId, ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements,
+    ModelStateIdentity, MsColumnKind, NumericPrecision, NumericalStage, NumericsContract,
+    ObservationSelection, ObservationSnapshotInput, ObservationSourceInput,
     ObservationSourceProvenance, ObservationTransactionRequirements, PhaseCentreLaw,
     PointingCentreLaw, PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
-    ProblemInputIdentities, ProblemSpecification, ProductBlankingPolicy, ProductKind,
+    ProblemInput, ProblemInputIdentities, ProblemSpecification, ProductBlankingPolicy, ProductKind,
     ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
     Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
     ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection,
@@ -210,7 +210,7 @@ pub fn reconstruction_problem(
         ModelStateIdentity::Empty,
     ))
     .expect("compile observation snapshot");
-    compile(ImagingRequest::new(
+    compile(ProblemInput::new(
         ProblemSpecification::new(
             ScientificContract::new(
                 SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),

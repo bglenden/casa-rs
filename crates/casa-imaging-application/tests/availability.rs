@@ -7,16 +7,16 @@ use casa_imaging_model::{
     AwProjectionContract, AxisOrder, CentreLaws, DeclaredInnerProducts, DelayCentreLaw,
     DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy,
     FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    ImagingRequest, InstrumentModel, InstrumentResponse, LogicalIdentity,
-    MeasurementEquationContract, MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct,
-    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
-    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
-    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
-    PolarizationContract, PolarizationCoordinate, ProblemInputIdentities, ProblemSpecification,
-    ProductKind, ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
-    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
-    ReferenceDataKind, RequiredCapability, RestFrequency, RestoringBeamPolicy, ScientificContract,
-    SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    InstrumentModel, InstrumentResponse, LogicalIdentity, MeasurementEquationContract,
+    MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct, NumericPrecision, NumericalStage,
+    NumericsContract, ObservationPointingLaw, ObservationTransactionRequirements, PhaseCentreLaw,
+    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
+    ProblemInput, ProblemInputIdentities, ProblemSpecification, ProductKind, ProductNormalization,
+    ProductRequirements, Projection, ReconstructionAlgorithm, ReconstructionBasis,
+    ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
+    RequiredCapability, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
+    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
     SpectralSamplingLaw, SpectralWcs, SpectralWindowCoordinateCatalog, SpectralWindowSelection,
     StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct, WProjectionContract,
     WeightDensityScope, WeightingContract, WeightingScheme, compile,
@@ -357,7 +357,7 @@ impl ProblemFixture {
         compile(self.request()).expect("compile availability fixture")
     }
 
-    fn request(self) -> ImagingRequest {
+    fn request(self) -> ProblemInput {
         let iteration_budget =
             usize::from(!matches!(self.algorithm, ReconstructionAlgorithm::Dirty));
         let direction = DirectionCoordinateSpec::new(
@@ -413,7 +413,7 @@ impl ProblemFixture {
             Some(model) => science.with_instrument_model(model),
             None => science,
         };
-        ImagingRequest::new(
+        ProblemInput::new(
             ProblemSpecification::new(
                 science,
                 ReconstructionContract::new(

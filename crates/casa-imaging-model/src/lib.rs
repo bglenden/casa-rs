@@ -16,20 +16,19 @@ mod visibility_transform;
 
 pub use compiled_problem::{
     AwProjectionContract, AwProjectionContractError, CompileProblemError, CompiledProblem,
-    CompiledProblemId, FiniteValuePolicy, HogbomIterationAccounting, ImagingRequest,
-    ImagingRequestVersion, InstrumentModel, InstrumentResponse, LogicalIdentity,
-    MeasurementEquationContract, ModelStateIdentity, NumericPrecision, NumericalStage,
-    NumericsContract, NumericsContractId, PolarizationContract, PolarizationCoordinate,
-    PrimaryBeamValidityPolicy, ProblemInputIdentities, ProblemSpecification, ProductBlankingPolicy,
-    ProductKind, ProductNormalization, ProductRequirements, ProductSupportComparison,
-    ProductValidityPolicies, ProductValidityPolicyError, ReconstructionAlgorithm,
-    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
-    ReferenceDataKind, RequiredCapability, RestoringBeamPolicy, ScientificContract,
-    SpectralContract, SpectralCoupling, SpectralCovariance, SpectralEdgePolicy, SpectralKernel,
-    SpectralSamplingLaw, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy,
-    UncorrectedImageMaskPolicy, UvTaper, WProjectionContract, WProjectionContractError,
-    WStatistics, WeightDensityScope, WeightingContract, WeightingScheme, compile,
-    validate_compiled_problem_identity,
+    CompiledProblemId, FiniteValuePolicy, HogbomIterationAccounting, InstrumentModel,
+    InstrumentResponse, LogicalIdentity, MeasurementEquationContract, ModelStateIdentity,
+    NumericPrecision, NumericalStage, NumericsContract, NumericsContractId, PolarizationContract,
+    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInput, ProblemInputIdentities,
+    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
+    ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
+    ProductValidityPolicyError, ReconstructionAlgorithm, ReconstructionBasis,
+    ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
+    RequiredCapability, RestoringBeamPolicy, ScientificContract, SpectralContract,
+    SpectralCoupling, SpectralCovariance, SpectralEdgePolicy, SpectralKernel, SpectralSamplingLaw,
+    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, UncorrectedImageMaskPolicy,
+    UvTaper, WProjectionContract, WProjectionContractError, WStatistics, WeightDensityScope,
+    WeightingContract, WeightingScheme, compile, validate_compiled_problem_identity,
 };
 
 pub use geometry::{

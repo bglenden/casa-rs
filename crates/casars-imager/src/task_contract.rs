@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use casa_imaging_application::{ImagingRequestVersion, installed_imaging_capability_catalog};
+use casa_imaging_application::installed_imaging_capability_catalog;
 use casa_ms::{
     CubeAxisConfig, CubeAxisValue, CubeInterpolation,
     parse_rest_frequency_hz as parse_ms_rest_frequency_hz,
@@ -84,8 +84,6 @@ pub fn imager_protocol_descriptor() -> ProviderProtocolDescriptor {
 pub struct ImagerAdditionalSchemas {
     /// Schema for newline-delimited progress events.
     pub progress_event_schema: RootSchema,
-    /// Current canonical imaging-request contract version.
-    pub imaging_request_version: u32,
     /// Typed installed-capability catalog projected from the application owner.
     pub capability_catalog: ImagerCapabilityCatalog,
     /// Schema for the typed installed-capability catalog.
@@ -192,7 +190,6 @@ pub fn imager_task_schema_bundle() -> TaskProviderContract<ImagerAdditionalSchem
             result_schema,
             additional: ImagerAdditionalSchemas {
                 progress_event_schema,
-                imaging_request_version: ImagingRequestVersion::CURRENT.as_u32(),
                 capability_catalog,
                 capability_catalog_schema,
             },
@@ -3156,7 +3153,6 @@ mod tests {
         assert_eq!(bundle.semantic.operations.len(), 1);
         assert_eq!(bundle.semantic.operations[0].request_kind, "run");
         assert!(bundle.components.contains_key("ImagerRunTaskRequest"));
-        assert_eq!(bundle.domain_schemas.additional.imaging_request_version, 3);
         assert_eq!(bundle.annotations, serde_json::json!({}));
         let capabilities = &bundle.domain_schemas.additional.capability_catalog.entries;
         let awproject = capabilities
