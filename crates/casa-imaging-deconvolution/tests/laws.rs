@@ -237,6 +237,49 @@ fn taylor_recovers_two_components_with_their_spectra() {
 
 /// CASA's Högbom loop does one component more than the cycle's budget and
 /// charges the budget; the plane stops on `cycleniter` (code 1).
+/// A point-symmetric sky has mirror pixels of equal value, and rounding must
+/// not choose between them: nudging one mirror by an ulp leaves every
+/// solver's components as they were, each tie going to the first pixel in
+/// casacore's x-fastest order.
+#[test]
+fn rounding_does_not_choose_between_mirror_pixels() {
+    let point = psf(2.0, 1.0);
+    let [cx, cy] = SHAPE.centre();
+    let early = SHAPE.index(cx + 6, cy - 4);
+    let late = SHAPE.index(cx - 6, cy + 4);
+    let symmetric = convolve(&point, &[(early, 0.8), (late, 0.8)]);
+    assert_eq!(symmetric[early], symmetric[late]);
+    let mut nudged = symmetric.clone();
+    nudged[late] = f64::from_bits(nudged[late].to_bits() + 1);
+    let cycle = cycle(40, 0.0);
+    let components = |residual: &[f64], solver: &dyn Fn(&Plane) -> Vec<(usize, usize)>| {
+        solver(&Plane::new(vec![residual.to_vec()], vec![point.clone()]))
+    };
+    let trace = |outcome: casa_imaging_deconvolution::PlaneOutcome| {
+        outcome
+            .trace
+            .iter()
+            .map(|component| (component.index, component.scale))
+            .collect::<Vec<_>>()
+    };
+    let hogbom = |plane: &Plane| trace(plane.run(&Hogbom::new(false), &cycle).unwrap());
+    let multiscale = |plane: &Plane| {
+        trace(
+            plane
+                .run(&Multiscale::new(vec![0.0, 3.0], 0.0), &cycle)
+                .unwrap(),
+        )
+    };
+    for (name, solver) in [
+        ("hogbom", &hogbom as &dyn Fn(&Plane) -> Vec<(usize, usize)>),
+        ("multiscale", &multiscale),
+    ] {
+        let clean = components(&symmetric, solver);
+        assert_eq!(clean[0].0, early, "{name}: the scan-first mirror wins");
+        assert_eq!(components(&nudged, solver), clean, "{name}");
+    }
+}
+
 #[test]
 fn inclusive_hogbom_cleans_one_extra_component_and_charges_the_budget() {
     let point = psf(2.0, 1.0);
@@ -327,8 +370,7 @@ fn components_stay_on_the_support() {
 fn a_nonfinite_residual_is_refused() {
     let point = psf(2.0, 1.0);
     let mut residual = convolve(&point, &two_points());
-    let last = residual.len() - 1;
-    residual[last] = f64::NAN;
+    residual[SHAPE.index(10, 40)] = f64::NAN;
     let plane = Plane::new(vec![residual], vec![point]);
     assert_eq!(
         plane.run(&Hogbom::new(false), &cycle(100, 0.01)),

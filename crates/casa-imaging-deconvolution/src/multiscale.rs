@@ -4,7 +4,7 @@
 
 use crate::Error;
 use crate::patch::subtract_window;
-use crate::plane::{PlaneShape, Support, casacore_max_abs, peak_magnitude};
+use crate::plane::{PlaneShape, Support, casacore_max_abs, exceeds, peak_magnitude};
 use crate::scales::ScaleBank;
 use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepEnd, StepStop};
 
@@ -116,7 +116,7 @@ impl Solver for Multiscale {
             let maximum = value / state.psf_scale_peak[scale]
                 * state.bank.bias[scale]
                 * state.dirty[scale][index];
-            if maximum.abs() > best.0.abs() {
+            if exceeds(maximum.abs(), best.0.abs()) {
                 best = (maximum, scale, index);
             }
         }

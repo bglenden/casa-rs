@@ -7,7 +7,7 @@ use casa_numerics::solve_symmetric_ldlt_casacore_dynamic;
 
 use crate::Error;
 use crate::patch::subtract_window;
-use crate::plane::{PlaneShape, Support, beam_patch, casacore_max_abs};
+use crate::plane::{PlaneShape, Support, beam_patch, casacore_max_abs, exceeds};
 use crate::scales::ScaleBank;
 use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepEnd, StepStop};
 
@@ -232,7 +232,7 @@ impl Solver for Taylor {
         let mut best = (-1.0e10_f64, 0_usize, 0_usize);
         for scale in 0..state.scales() {
             let (index, value) = casacore_max_abs(&state.work[scale], &state.masks[scale]);
-            if value * state.bank.bias[scale] > best.0 {
+            if exceeds(value * state.bank.bias[scale], best.0) {
                 best = (value * state.bank.bias[scale], scale, index);
             }
         }

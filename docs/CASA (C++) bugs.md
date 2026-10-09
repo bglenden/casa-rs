@@ -6,7 +6,8 @@ Known imaging parity defect: [CASA Högbom `niter` off-by-one](#casa-hogbom-nite
 CASA behaviours casa-rs follows for parity:
 [AW-projection hand pairing](#aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell),
 [AW-projection prediction w](#aw-projection-predicts-with-the-unrotated-w),
-[MatrixCleaner's stop iteration](#matrixcleaner-counts-the-iteration-that-stops-it).
+[MatrixCleaner's stop iteration](#matrixcleaner-counts-the-iteration-that-stops-it),
+[tie order under rounding](#peak-searches-let-rounding-choose-between-equal-pixels).
 CASA behaviours casa-rs does not follow:
 [odd-size scale convolutions](#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes),
 [MatrixCleaner's step residual](#matrixcleaners-step-residual-forgets-earlier-steps).
@@ -260,3 +261,24 @@ the plane's first step and `model − prevModel` only this step's components,
 so from the second step on the reported peak residual omits the earlier
 steps' subtraction. That peak drives the minor-cycle stop codes 2 and 4.
 casa-rs carries each step's residual into the next.
+
+## Peak searches let rounding choose between equal pixels
+
+- Date noted: 2026-10-09
+- Status: CASA fragility; casa-rs resolves rounding ties in CASA's tie order
+  (IF-5, #654)
+- Affected code: `casacore/scimath_f/hclean.f`, casacore `minMax` as read by
+  `MatrixCleaner::findMaxAbsMask` and `MultiTermMatrixCleaner` (`chooseComponent`)
+
+Every CASA peak search compares exactly and keeps the first maximum in
+x-fastest order. On a point-symmetric sky, such as `refim_point`, mirror
+pixels hold the same value in exact arithmetic, but the scale-convolved
+planes come from FFTs whose rounding breaks the tie by an ulp or two (0 to
+6e-16 relative), so the FFT's rounding pattern picks the component. With
+FFTW plans chosen by timing, casa-rs's multiscale `refim_point` row flipped
+between 5.4e-6 and 4.5e-2 NRMS from run to run; CASA's references are the
+scan-first choice. casa-rs treats values within 1e-12 relative as equal and
+takes the first in x-fastest order (`TIE_TOLERANCE` in
+`casa-imaging-deconvolution`), and plans its minor-cycle FFTs by FFTW's
+estimate. No meaningful flux difference is that small; FFT rounding at 4096²
+is about 1e-14 of the peak.
