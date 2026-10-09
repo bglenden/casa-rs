@@ -209,7 +209,7 @@
 <a href=#209 id=209 data-nosnippet>209</a>            prediction.resize(npol, Complex64::default());
 <a href=#210 id=210 data-nosnippet>210</a>            <span class="kw">return</span>;
 <a href=#211 id=211 data-nosnippet>211</a>        }
-<a href=#212 id=212 data-nosnippet>212</a>        <span class="kw">let </span>w_positive = placement.w &gt; <span class="number">0.0</span>;
+<a href=#212 id=212 data-nosnippet>212</a>        <span class="kw">let </span>w_positive = placement.prediction_w_positive;
 <a href=#213 id=213 data-nosnippet>213</a>        <span class="kw">let </span>table = cf.mueller().table(w_positive, <span class="bool-val">true</span>);
 <a href=#214 id=214 data-nosnippet>214</a>        <span class="kw">let </span>plane = layout.planes().local(placement.plane);
 <a href=#215 id=215 data-nosnippet>215</a>        <span class="kw">let </span>divide = cf.normalisation() == KernelNormalisation::KernelSum;

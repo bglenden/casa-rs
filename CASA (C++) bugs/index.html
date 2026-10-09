@@ -711,6 +711,84 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="AW-projection pairs the partner hand&#39;s visibility with the conjugate-baseline cell">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Summary
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-this-looks-like-a-bug" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why this looks like a bug
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#effect" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Effect
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#aw-projection-predicts-with-the-unrotated-w" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AW-projection predicts with the unrotated w
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="AW-projection predicts with the unrotated w">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#summary_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Summary
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#importvla-stale-vlacda-cache-crash-on-old-vla-export-data" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -723,7 +801,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#summary" class="md-nav__link">
+  <a href="#summary_2" class="md-nav__link">
     <span class="md-ellipsis">
       
         Summary
@@ -773,7 +851,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#summary_1" class="md-nav__link">
+  <a href="#summary_3" class="md-nav__link">
     <span class="md-ellipsis">
       
         Summary
@@ -834,7 +912,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#summary_2" class="md-nav__link">
+  <a href="#summary_4" class="md-nav__link">
     <span class="md-ellipsis">
       
         Summary
@@ -901,7 +979,59 @@
 
 <h1 id="casa-c-bugs">CASA (C++) bugs<a class="headerlink" href="#casa-c-bugs" title="Permanent link">&para;</a></h1>
 <p>Notes on bugs or likely bugs observed while doing Rust/C++ parity work against CASA.</p>
-<p>Known imaging parity defect: <a href="#casa-hogbom-niter-off-by-one-bug">CASA Högbom <code>niter</code> off-by-one</a>.</p>
+<p>Known imaging parity defect: <a href="#casa-hogbom-niter-off-by-one-bug">CASA Högbom <code>niter</code> off-by-one</a>.
+CASA behaviours casa-rs follows for parity:
+<a href="#aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell">AW-projection hand pairing</a>,
+<a href="#aw-projection-predicts-with-the-unrotated-w">AW-projection prediction w</a>.</p>
+<h2 id="aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell">AW-projection pairs the partner hand's visibility with the conjugate-baseline cell<a class="headerlink" href="#aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-09</li>
+<li>Status: likely CASA bug; casa-rs follows it for parity (#667, PR #668)</li>
+<li>Affected code:</li>
+<li><code>casatools/src/code/synthesis/TransformMachines2/AWVisResampler.cc</code>
+    (<code>getConvFunc_p</code>, <code>DataToGridImpl_p</code>, <code>GridToData</code>)</li>
+</ul>
+<h3 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h3>
+<p>For a row with <code>w ≤ 0</code>, <code>getConvFunc_p</code> selects the conjugate-baseline cell of
+the outer correlation's Mueller element (<code>conjMNdx</code>, the partner hand:
+<code>RR ↔ LL</code>, <code>RL ↔ LR</code>), and <code>DataToGridImpl_p</code> then grids the visibility of the
+<em>selected cell's</em> hand (<code>visVecElement = muellerElement % nDataPol</code>), not the
+outer correlation's. The RR grid receives <code>RR × conj(CF_RR)</code> for <code>w &gt; 0</code> and
+<code>LL × CF_LL</code> for <code>w ≤ 0</code>; <code>GridToData</code> likewise reads the partner's model
+grid into the outer visibility. Stokes I of an unpolarized source is
+unaffected (the two hands are equal); per-hand grids of data whose hands
+differ, such as a circularly polarized source, mix the hands on the <code>w ≤ 0</code>
+rows.</p>
+<h3 id="why-this-looks-like-a-bug">Why this looks like a bug<a class="headerlink" href="#why-this-looks-like-a-bug" title="Permanent link">&para;</a></h3>
+<p>The Mueller element of a real power pattern has a Hermitian transform, so
+the RR kernel at <code>−|w|</code> is the conjugate of the kernel of the mirrored RR
+beam at <code>+|w|</code>; for the EVLA squint (R and L beams offset in opposite
+directions) the mirrored RR beam is the LL beam, which is why the partner
+cell stands in for the conjugate. The visibility being convolved is still
+the outer hand's. The index <code>muellerElement % nDataPol</code> returns the column
+of the selected cell's own element instead of the column of its position in
+the conjugate Mueller matrix.</p>
+<h3 id="effect">Effect<a class="headerlink" href="#effect" title="Permanent link">&para;</a></h3>
+<p>On <code>refim_mawproject</code> (CASA 6.7.6.14, Stokes I, <code>wbawp=True</code>,
+<code>conjbeams=True</code>) the two pairings differ by 3.06e-3 normalised RMS in the
+dirty image. casa-rs compiles CASA's pairing (<code>casa-imaging-operator</code>,
+<code>aw::routing</code> into <code>MuellerRouting</code>) and agrees with CASA to 2e-7.</p>
+<h2 id="aw-projection-predicts-with-the-unrotated-w">AW-projection predicts with the unrotated w<a class="headerlink" href="#aw-projection-predicts-with-the-unrotated-w" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-09</li>
+<li>Status: CASA inconsistency between gridding and prediction; casa-rs follows it for parity (#667, PR #668)</li>
+<li>Affected code: <code>AWVisResampler.cc</code> (<code>GridToData</code> reads <code>vbs.vb_p-&gt;uvw()(2, irow)</code>;
+  <code>DataToGridImpl_p</code> reads the rotated <code>vbs.uvw_p</code>)</li>
+</ul>
+<h3 id="summary_1">Summary<a class="headerlink" href="#summary_1" title="Permanent link">&para;</a></h3>
+<p><code>AWProjectFT</code> hands the resampler the uvw rotated to the image phase centre
+and the phase shift (<code>vbs.uvw_p</code>, <code>dphase_p</code>) together with the VisBuffer
+(<code>vbs.vb_p</code>). <code>GridToData</code> selects its w-plane and tap conjugation from the
+VisBuffer's unrotated w while placing the sample at the rotated u, v with the
+rotated phasor; <code>DataToGridImpl_p</code> uses the rotated w for both. The two
+differ only where the rotation moves a w across a plane boundary or through
+zero. casa-rs carries the unrotated w per row (<code>RowContext::original_w_m</code>,
+<code>ConvolutionFunctionSet::prediction_w</code>) and keys the AW prediction on it.</p>
 <h2 id="importvla-stale-vlacda-cache-crash-on-old-vla-export-data"><code>importvla</code> stale <code>VLACDA</code> cache crash on old VLA export data<a class="headerlink" href="#importvla-stale-vlacda-cache-crash-on-old-vla-export-data" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-04-15</li>
@@ -912,7 +1042,7 @@
 <li>NRAO Archive file: <code>AG189_1_46325.23029_46325.80807.exp</code></li>
 <li>Standalone note: <a href="../casa-importvla-vlacda-offset-zero/">casa-importvla-vlacda-offset-zero.md</a></li>
 </ul>
-<h3 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h3>
+<h3 id="summary_2">Summary<a class="headerlink" href="#summary_2" title="Permanent link">&para;</a></h3>
 <p><code>importvla</code> can abort on old VLA export data when a CDA is valid in one logical record
 and absent in the next. The immediate failure is the <code>offset != 0</code> assertion in
 <code>VLABaselineRecord::attach()</code>.</p>
@@ -931,7 +1061,7 @@ reattach path runs.</p>
 <li>Status: likely CASA <code>mstransform</code> bug or long-standing implementation quirk</li>
 <li>Affected code: <code>casatools/src/code/mstransform/MSTransform/MSTransformRegridder.cc</code></li>
 </ul>
-<h3 id="summary_1">Summary<a class="headerlink" href="#summary_1" title="Permanent link">&para;</a></h3>
+<h3 id="summary_3">Summary<a class="headerlink" href="#summary_3" title="Permanent link">&para;</a></h3>
 <p>In the transformed <code>mode="channel"</code> / <code>regridQuant == "freq"</code> path, CASA appears to anchor
 the output-grid start edge using <code>transCHAN_WIDTH[firstChan]</code>, while it spaces the uniform
 output grid using <code>transCHAN_WIDTH[0]</code>.</p>
@@ -966,7 +1096,7 @@ parity work that surfaced this CASA-side issue.</p>
 <li><code>casatools/casacore/scimath_f/hclean.f</code></li>
 <li>Source note: <code>/Users/brianglendenning/Downloads/casa-hogbom-niter-findings (2).pdf</code></li>
 </ul>
-<h3 id="summary_2">Summary<a class="headerlink" href="#summary_2" title="Permanent link">&para;</a></h3>
+<h3 id="summary_4">Summary<a class="headerlink" href="#summary_4" title="Permanent link">&para;</a></h3>
 <p>In the current CASA <code>tclean(..., deconvolver='hogbom')</code> path, <code>niter=1</code> appears able to commit
 two clean components inside a single minor cycle while still reporting <code>iterdone = 1</code>.</p>
 <p>The effect is not limited to the top-level <code>niter=1</code> case. Any CASA Hogbom

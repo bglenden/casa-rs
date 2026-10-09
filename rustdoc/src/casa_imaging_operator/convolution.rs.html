@@ -194,245 +194,263 @@
 <a href=#194 id=194 data-nosnippet>194</a>}
 <a href=#195 id=195 data-nosnippet>195</a>
 <a href=#196 id=196 data-nosnippet>196</a><span class="doccomment">/// Which kernel Mueller plane serves each (grid polarization, visibility
-<a href=#197 id=197 data-nosnippet>197</a>/// polarization) pair.
+<a href=#197 id=197 data-nosnippet>197</a>/// polarization) pair, per direction of the transform and sign of `w`.
 <a href=#198 id=198 data-nosnippet>198</a>///
-<a href=#199 id=199 data-nosnippet>199</a>/// `direct` is the adjoint table for `w &gt; 0`; `conjugate` its partner for
-<a href=#200 id=200 data-nosnippet>200</a>/// `w ≤ 0`. `AWVisResampler::getConvFunc_p` reads `mNdx` for `wVal &gt; 0`
-<a href=#201 id=201 data-nosnippet>201</a>/// and `conjMNdx` otherwise, while `accumulateToGrid` conjugates the cell
-<a href=#202 id=202 data-nosnippet>202</a>/// for `wVal &gt; 0`: the table swap and the tap conjugation sit on opposite
-<a href=#203 id=203 data-nosnippet>203</a>/// signs of `w`. The kernel swaps the tables on the sign of `w` and on the
-<a href=#204 id=204 data-nosnippet>204</a>/// direction of the transform (HPG `mueller_indexes` /
-<a href=#205 id=205 data-nosnippet>205</a>/// `conjugate_mueller_indexes`). `None` skips a pair. Both tables are
-<a href=#206 id=206 data-nosnippet>206</a>/// `[grid pol][visibility pol]`.
-<a href=#207 id=207 data-nosnippet>207</a></span><span class="attr">#[derive(Clone, Debug, PartialEq, Eq)]
-<a href=#208 id=208 data-nosnippet>208</a></span><span class="kw">pub struct </span>MuellerRouting {
-<a href=#209 id=209 data-nosnippet>209</a>    <span class="doccomment">/// Adjoint table for `w &gt; 0`.
-<a href=#210 id=210 data-nosnippet>210</a>    </span><span class="kw">pub </span>direct: Vec&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;u8&gt;&gt;&gt;,
-<a href=#211 id=211 data-nosnippet>211</a>    <span class="doccomment">/// Adjoint table for `w ≤ 0`.
-<a href=#212 id=212 data-nosnippet>212</a>    </span><span class="kw">pub </span>conjugate: Vec&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;u8&gt;&gt;&gt;,
-<a href=#213 id=213 data-nosnippet>213</a>}
-<a href=#214 id=214 data-nosnippet>214</a>
-<a href=#215 id=215 data-nosnippet>215</a><span class="kw">impl </span>MuellerRouting {
-<a href=#216 id=216 data-nosnippet>216</a>    <span class="doccomment">/// Scalar routing: Mueller plane 0 for every pair `pol_map` joins
-<a href=#217 id=217 data-nosnippet>217</a>    /// (visibility polarization `p` feeds grid polarization `pol_map[p]`),
-<a href=#218 id=218 data-nosnippet>218</a>    /// with identical direct and conjugate tables.
-<a href=#219 id=219 data-nosnippet>219</a>    </span><span class="attr">#[must_use]
-<a href=#220 id=220 data-nosnippet>220</a>    </span><span class="kw">pub fn </span>scalar(pol_map: <span class="kw-2">&amp;</span>[<span class="prelude-ty">Option</span>&lt;u8&gt;], grid_pols: usize) -&gt; <span class="self">Self </span>{
-<a href=#221 id=221 data-nosnippet>221</a>        <span class="kw">let </span>direct = (<span class="number">0</span>..grid_pols)
-<a href=#222 id=222 data-nosnippet>222</a>            .map(|gpol| {
-<a href=#223 id=223 data-nosnippet>223</a>                pol_map
-<a href=#224 id=224 data-nosnippet>224</a>                    .iter()
-<a href=#225 id=225 data-nosnippet>225</a>                    .map(|target| (<span class="kw-2">*</span>target == <span class="prelude-val">Some</span>(gpol <span class="kw">as </span>u8)).then_some(<span class="number">0</span>))
-<a href=#226 id=226 data-nosnippet>226</a>                    .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
-<a href=#227 id=227 data-nosnippet>227</a>            })
-<a href=#228 id=228 data-nosnippet>228</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#229 id=229 data-nosnippet>229</a>        <span class="self">Self </span>{
-<a href=#230 id=230 data-nosnippet>230</a>            conjugate: direct.clone(),
-<a href=#231 id=231 data-nosnippet>231</a>            direct,
-<a href=#232 id=232 data-nosnippet>232</a>        }
-<a href=#233 id=233 data-nosnippet>233</a>    }
-<a href=#234 id=234 data-nosnippet>234</a>
-<a href=#235 id=235 data-nosnippet>235</a>    <span class="doccomment">/// Number of grid polarizations.
-<a href=#236 id=236 data-nosnippet>236</a>    </span><span class="attr">#[must_use]
-<a href=#237 id=237 data-nosnippet>237</a>    </span><span class="kw">pub fn </span>grid_pols(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#238 id=238 data-nosnippet>238</a>        <span class="self">self</span>.direct.len()
-<a href=#239 id=239 data-nosnippet>239</a>    }
-<a href=#240 id=240 data-nosnippet>240</a>
-<a href=#241 id=241 data-nosnippet>241</a>    <span class="doccomment">/// Number of visibility polarizations.
-<a href=#242 id=242 data-nosnippet>242</a>    </span><span class="attr">#[must_use]
-<a href=#243 id=243 data-nosnippet>243</a>    </span><span class="kw">pub fn </span>visibility_pols(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#244 id=244 data-nosnippet>244</a>        <span class="self">self</span>.direct.first().map_or(<span class="number">0</span>, Vec::len)
-<a href=#245 id=245 data-nosnippet>245</a>    }
-<a href=#246 id=246 data-nosnippet>246</a>
-<a href=#247 id=247 data-nosnippet>247</a>    <span class="doccomment">/// The table for one transform: the adjoint uses `direct` for `w &gt; 0`
-<a href=#248 id=248 data-nosnippet>248</a>    /// and `conjugate` otherwise, the forward transform swaps them.
-<a href=#249 id=249 data-nosnippet>249</a>    </span><span class="attr">#[must_use]
-<a href=#250 id=250 data-nosnippet>250</a>    </span><span class="kw">pub fn </span>table(<span class="kw-2">&amp;</span><span class="self">self</span>, w_positive: bool, forward: bool) -&gt; <span class="kw-2">&amp;</span>[Vec&lt;<span class="prelude-ty">Option</span>&lt;u8&gt;&gt;] {
-<a href=#251 id=251 data-nosnippet>251</a>        <span class="kw">if </span>w_positive != forward {
-<a href=#252 id=252 data-nosnippet>252</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.direct
-<a href=#253 id=253 data-nosnippet>253</a>        } <span class="kw">else </span>{
-<a href=#254 id=254 data-nosnippet>254</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.conjugate
-<a href=#255 id=255 data-nosnippet>255</a>        }
-<a href=#256 id=256 data-nosnippet>256</a>    }
-<a href=#257 id=257 data-nosnippet>257</a>}
-<a href=#258 id=258 data-nosnippet>258</a>
-<a href=#259 id=259 data-nosnippet>259</a><span class="doccomment">/// Per-row context a kernel set keys its cells on.
-<a href=#260 id=260 data-nosnippet>260</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq)]
-<a href=#261 id=261 data-nosnippet>261</a></span><span class="kw">pub struct </span>RowContext {
-<a href=#262 id=262 data-nosnippet>262</a>    <span class="doccomment">/// Row time in seconds (MeasurementSet `TIME`).
-<a href=#263 id=263 data-nosnippet>263</a>    </span><span class="kw">pub </span>time_s: f64,
-<a href=#264 id=264 data-nosnippet>264</a>    <span class="doccomment">/// Antenna pair.
-<a href=#265 id=265 data-nosnippet>265</a>    </span><span class="kw">pub </span>antennas: [u32; <span class="number">2</span>],
-<a href=#266 id=266 data-nosnippet>266</a>    <span class="doccomment">/// Antenna type of each antenna: an index into the kernel set's
-<a href=#267 id=267 data-nosnippet>267</a>    /// antenna classes (CASA `HetArrayConvFunc` dish classes, AW baseline
-<a href=#268 id=268 data-nosnippet>268</a>    /// types); 0 for a homogeneous array.
-<a href=#269 id=269 data-nosnippet>269</a>    </span><span class="kw">pub </span>antenna_types: [u8; <span class="number">2</span>],
-<a href=#270 id=270 data-nosnippet>270</a>    <span class="doccomment">/// CASA's visibility polarization operator angle of each antenna in
-<a href=#271 id=271 data-nosnippet>271</a>    /// radians: the negative of the physical parallactic angle.
-<a href=#272 id=272 data-nosnippet>272</a>    </span><span class="kw">pub </span>parallactic_angle_rad: [f64; <span class="number">2</span>],
-<a href=#273 id=273 data-nosnippet>273</a>    <span class="doccomment">/// Field (pointing) identifier.
-<a href=#274 id=274 data-nosnippet>274</a>    </span><span class="kw">pub </span>field: u32,
-<a href=#275 id=275 data-nosnippet>275</a>    <span class="doccomment">/// Spectral window of the row's data description; kernel sets with
-<a href=#276 id=276 data-nosnippet>276</a>    /// per-window frequency cells key on it.
-<a href=#277 id=277 data-nosnippet>277</a>    </span><span class="kw">pub </span>spectral_window: u32,
-<a href=#278 id=278 data-nosnippet>278</a>}
-<a href=#279 id=279 data-nosnippet>279</a>
-<a href=#280 id=280 data-nosnippet>280</a><span class="doccomment">/// Image-domain gridding correction: one real vector per grid axis on each
-<a href=#281 id=281 data-nosnippet>281</a>/// side of the operator, applied as `x[gx] · y[gy]` to the image the
-<a href=#282 id=282 data-nosnippet>282</a>/// adjoint forms ([`Self::at`]) and to the model the forward transform
-<a href=#283 id=283 data-nosnippet>283</a>/// reads ([`Self::model_at`]).
-<a href=#284 id=284 data-nosnippet>284</a>///
-<a href=#285 id=285 data-nosnippet>285</a>/// CASA's `GridFT` divides the model and the dirty image by the same
-<a href=#286 id=286 data-nosnippet>286</a>/// response ([`Self::new`]); `MosaicFT` (`prepGridForDegrid`, `getImage`)
-<a href=#287 id=287 data-nosnippet>287</a>/// and `WProjectFT` (`initializeToVis`, `getImage`) multiply the model by
-<a href=#288 id=288 data-nosnippet>288</a>/// their sinc and divide the image by it, so the sides differ
-<a href=#289 id=289 data-nosnippet>289</a>/// ([`Self::split`]).
-<a href=#290 id=290 data-nosnippet>290</a></span><span class="attr">#[derive(Clone, Debug, PartialEq)]
-<a href=#291 id=291 data-nosnippet>291</a></span><span class="kw">pub struct </span>ImageCorrection {
-<a href=#292 id=292 data-nosnippet>292</a>    x: Box&lt;[f64]&gt;,
-<a href=#293 id=293 data-nosnippet>293</a>    y: Box&lt;[f64]&gt;,
-<a href=#294 id=294 data-nosnippet>294</a>    model_x: Box&lt;[f64]&gt;,
-<a href=#295 id=295 data-nosnippet>295</a>    model_y: Box&lt;[f64]&gt;,
-<a href=#296 id=296 data-nosnippet>296</a>}
-<a href=#297 id=297 data-nosnippet>297</a>
-<a href=#298 id=298 data-nosnippet>298</a><span class="kw">impl </span>ImageCorrection {
-<a href=#299 id=299 data-nosnippet>299</a>    <span class="doccomment">/// The same correction vectors on both sides, over the padded grid
-<a href=#300 id=300 data-nosnippet>300</a>    /// axes.
-<a href=#301 id=301 data-nosnippet>301</a>    </span><span class="attr">#[must_use]
-<a href=#302 id=302 data-nosnippet>302</a>    </span><span class="kw">pub fn </span>new(x: Vec&lt;f64&gt;, y: Vec&lt;f64&gt;) -&gt; <span class="self">Self </span>{
-<a href=#303 id=303 data-nosnippet>303</a>        <span class="self">Self </span>{
-<a href=#304 id=304 data-nosnippet>304</a>            model_x: x.clone().into_boxed_slice(),
-<a href=#305 id=305 data-nosnippet>305</a>            model_y: y.clone().into_boxed_slice(),
-<a href=#306 id=306 data-nosnippet>306</a>            x: x.into_boxed_slice(),
-<a href=#307 id=307 data-nosnippet>307</a>            y: y.into_boxed_slice(),
-<a href=#308 id=308 data-nosnippet>308</a>        }
-<a href=#309 id=309 data-nosnippet>309</a>    }
-<a href=#310 id=310 data-nosnippet>310</a>
-<a href=#311 id=311 data-nosnippet>311</a>    <span class="doccomment">/// Different vectors for the image side (`x`, `y`) and the model side
-<a href=#312 id=312 data-nosnippet>312</a>    /// (`model_x`, `model_y`).
-<a href=#313 id=313 data-nosnippet>313</a>    </span><span class="attr">#[must_use]
-<a href=#314 id=314 data-nosnippet>314</a>    </span><span class="kw">pub fn </span>split(x: Vec&lt;f64&gt;, y: Vec&lt;f64&gt;, model_x: Vec&lt;f64&gt;, model_y: Vec&lt;f64&gt;) -&gt; <span class="self">Self </span>{
-<a href=#315 id=315 data-nosnippet>315</a>        <span class="self">Self </span>{
-<a href=#316 id=316 data-nosnippet>316</a>            x: x.into_boxed_slice(),
-<a href=#317 id=317 data-nosnippet>317</a>            y: y.into_boxed_slice(),
-<a href=#318 id=318 data-nosnippet>318</a>            model_x: model_x.into_boxed_slice(),
-<a href=#319 id=319 data-nosnippet>319</a>            model_y: model_y.into_boxed_slice(),
-<a href=#320 id=320 data-nosnippet>320</a>        }
-<a href=#321 id=321 data-nosnippet>321</a>    }
-<a href=#322 id=322 data-nosnippet>322</a>
-<a href=#323 id=323 data-nosnippet>323</a>    <span class="doccomment">/// Image-side correction along the grid x axis.
-<a href=#324 id=324 data-nosnippet>324</a>    </span><span class="attr">#[must_use]
-<a href=#325 id=325 data-nosnippet>325</a>    </span><span class="kw">pub fn </span>x(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[f64] {
-<a href=#326 id=326 data-nosnippet>326</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.x
-<a href=#327 id=327 data-nosnippet>327</a>    }
-<a href=#328 id=328 data-nosnippet>328</a>
-<a href=#329 id=329 data-nosnippet>329</a>    <span class="doccomment">/// Image-side correction along the grid y axis.
-<a href=#330 id=330 data-nosnippet>330</a>    </span><span class="attr">#[must_use]
-<a href=#331 id=331 data-nosnippet>331</a>    </span><span class="kw">pub fn </span>y(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[f64] {
-<a href=#332 id=332 data-nosnippet>332</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.y
-<a href=#333 id=333 data-nosnippet>333</a>    }
-<a href=#334 id=334 data-nosnippet>334</a>
-<a href=#335 id=335 data-nosnippet>335</a>    <span class="doccomment">/// Model-side correction along the grid x axis.
-<a href=#336 id=336 data-nosnippet>336</a>    </span><span class="attr">#[must_use]
-<a href=#337 id=337 data-nosnippet>337</a>    </span><span class="kw">pub fn </span>model_x(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[f64] {
-<a href=#338 id=338 data-nosnippet>338</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.model_x
-<a href=#339 id=339 data-nosnippet>339</a>    }
-<a href=#340 id=340 data-nosnippet>340</a>
-<a href=#341 id=341 data-nosnippet>341</a>    <span class="doccomment">/// Model-side correction along the grid y axis.
-<a href=#342 id=342 data-nosnippet>342</a>    </span><span class="attr">#[must_use]
-<a href=#343 id=343 data-nosnippet>343</a>    </span><span class="kw">pub fn </span>model_y(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[f64] {
-<a href=#344 id=344 data-nosnippet>344</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.model_y
-<a href=#345 id=345 data-nosnippet>345</a>    }
-<a href=#346 id=346 data-nosnippet>346</a>
-<a href=#347 id=347 data-nosnippet>347</a>    <span class="doccomment">/// Image-side correction at grid cell `(gx, gy)`.
-<a href=#348 id=348 data-nosnippet>348</a>    </span><span class="attr">#[must_use]
-<a href=#349 id=349 data-nosnippet>349</a>    </span><span class="kw">pub fn </span>at(<span class="kw-2">&amp;</span><span class="self">self</span>, gx: usize, gy: usize) -&gt; f64 {
-<a href=#350 id=350 data-nosnippet>350</a>        <span class="self">self</span>.x[gx] * <span class="self">self</span>.y[gy]
-<a href=#351 id=351 data-nosnippet>351</a>    }
-<a href=#352 id=352 data-nosnippet>352</a>
-<a href=#353 id=353 data-nosnippet>353</a>    <span class="doccomment">/// Model-side correction at grid cell `(gx, gy)`.
-<a href=#354 id=354 data-nosnippet>354</a>    </span><span class="attr">#[must_use]
-<a href=#355 id=355 data-nosnippet>355</a>    </span><span class="kw">pub fn </span>model_at(<span class="kw-2">&amp;</span><span class="self">self</span>, gx: usize, gy: usize) -&gt; f64 {
-<a href=#356 id=356 data-nosnippet>356</a>        <span class="self">self</span>.model_x[gx] * <span class="self">self</span>.model_y[gy]
-<a href=#357 id=357 data-nosnippet>357</a>    }
-<a href=#358 id=358 data-nosnippet>358</a>}
+<a href=#199 id=199 data-nosnippet>199</a>/// Four `[grid pol][visibility pol]` tables; `None` skips a pair. CASA
+<a href=#200 id=200 data-nosnippet>200</a>/// routes the two directions differently (`AWVisResampler`):
+<a href=#201 id=201 data-nosnippet>201</a>/// `getConvFunc_p` selects the cell by the sign of `w` (`mNdx` for
+<a href=#202 id=202 data-nosnippet>202</a>/// `w &gt; 0`, `conjMNdx` otherwise; `GridToData` passes the two swapped),
+<a href=#203 id=203 data-nosnippet>203</a>/// then `DataToGrid` reads the visibility of the selected cell's own hand
+<a href=#204 id=204 data-nosnippet>204</a>/// (`muellerElement % nDataPol`) into the outer grid polarization, while
+<a href=#205 id=205 data-nosnippet>205</a>/// `GridToData` reads the model grid of that hand into the outer
+<a href=#206 id=206 data-nosnippet>206</a>/// visibility polarization. A forward table is therefore not a swap of an
+<a href=#207 id=207 data-nosnippet>207</a>/// adjoint one. Tap conjugation is separate from the routing: adjoint
+<a href=#208 id=208 data-nosnippet>208</a>/// taps are conjugated for `w &gt; 0`, forward taps for `w ≤ 0`
+<a href=#209 id=209 data-nosnippet>209</a>/// (`accumulateToGrid.inc`, `accumulateFromGrid.inc`).
+<a href=#210 id=210 data-nosnippet>210</a></span><span class="attr">#[derive(Clone, Debug, PartialEq, Eq)]
+<a href=#211 id=211 data-nosnippet>211</a></span><span class="kw">pub struct </span>MuellerRouting {
+<a href=#212 id=212 data-nosnippet>212</a>    <span class="doccomment">/// Adjoint tables, indexed by `usize::from(w &gt; 0)`.
+<a href=#213 id=213 data-nosnippet>213</a>    </span><span class="kw">pub </span>adjoint: [Vec&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;u8&gt;&gt;&gt;; <span class="number">2</span>],
+<a href=#214 id=214 data-nosnippet>214</a>    <span class="doccomment">/// Forward tables, indexed by `usize::from(w &gt; 0)`.
+<a href=#215 id=215 data-nosnippet>215</a>    </span><span class="kw">pub </span>forward: [Vec&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;u8&gt;&gt;&gt;; <span class="number">2</span>],
+<a href=#216 id=216 data-nosnippet>216</a>}
+<a href=#217 id=217 data-nosnippet>217</a>
+<a href=#218 id=218 data-nosnippet>218</a><span class="kw">impl </span>MuellerRouting {
+<a href=#219 id=219 data-nosnippet>219</a>    <span class="doccomment">/// Scalar routing: Mueller plane 0 for every pair `pol_map` joins
+<a href=#220 id=220 data-nosnippet>220</a>    /// (visibility polarization `p` feeds grid polarization `pol_map[p]`),
+<a href=#221 id=221 data-nosnippet>221</a>    /// with identical tables for both directions and signs of w.
+<a href=#222 id=222 data-nosnippet>222</a>    </span><span class="attr">#[must_use]
+<a href=#223 id=223 data-nosnippet>223</a>    </span><span class="kw">pub fn </span>scalar(pol_map: <span class="kw-2">&amp;</span>[<span class="prelude-ty">Option</span>&lt;u8&gt;], grid_pols: usize) -&gt; <span class="self">Self </span>{
+<a href=#224 id=224 data-nosnippet>224</a>        <span class="kw">let </span>direct = (<span class="number">0</span>..grid_pols)
+<a href=#225 id=225 data-nosnippet>225</a>            .map(|gpol| {
+<a href=#226 id=226 data-nosnippet>226</a>                pol_map
+<a href=#227 id=227 data-nosnippet>227</a>                    .iter()
+<a href=#228 id=228 data-nosnippet>228</a>                    .map(|target| (<span class="kw-2">*</span>target == <span class="prelude-val">Some</span>(gpol <span class="kw">as </span>u8)).then_some(<span class="number">0</span>))
+<a href=#229 id=229 data-nosnippet>229</a>                    .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+<a href=#230 id=230 data-nosnippet>230</a>            })
+<a href=#231 id=231 data-nosnippet>231</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#232 id=232 data-nosnippet>232</a>        <span class="self">Self </span>{
+<a href=#233 id=233 data-nosnippet>233</a>            adjoint: [direct.clone(), direct.clone()],
+<a href=#234 id=234 data-nosnippet>234</a>            forward: [direct.clone(), direct],
+<a href=#235 id=235 data-nosnippet>235</a>        }
+<a href=#236 id=236 data-nosnippet>236</a>    }
+<a href=#237 id=237 data-nosnippet>237</a>
+<a href=#238 id=238 data-nosnippet>238</a>    <span class="doccomment">/// Number of grid polarizations.
+<a href=#239 id=239 data-nosnippet>239</a>    </span><span class="attr">#[must_use]
+<a href=#240 id=240 data-nosnippet>240</a>    </span><span class="kw">pub fn </span>grid_pols(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#241 id=241 data-nosnippet>241</a>        <span class="self">self</span>.adjoint[<span class="number">0</span>].len()
+<a href=#242 id=242 data-nosnippet>242</a>    }
+<a href=#243 id=243 data-nosnippet>243</a>
+<a href=#244 id=244 data-nosnippet>244</a>    <span class="doccomment">/// Number of visibility polarizations.
+<a href=#245 id=245 data-nosnippet>245</a>    </span><span class="attr">#[must_use]
+<a href=#246 id=246 data-nosnippet>246</a>    </span><span class="kw">pub fn </span>visibility_pols(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#247 id=247 data-nosnippet>247</a>        <span class="self">self</span>.adjoint[<span class="number">0</span>].first().map_or(<span class="number">0</span>, Vec::len)
+<a href=#248 id=248 data-nosnippet>248</a>    }
+<a href=#249 id=249 data-nosnippet>249</a>
+<a href=#250 id=250 data-nosnippet>250</a>    <span class="doccomment">/// The complete routing for one transform and sign of w.
+<a href=#251 id=251 data-nosnippet>251</a>    </span><span class="attr">#[must_use]
+<a href=#252 id=252 data-nosnippet>252</a>    </span><span class="kw">pub fn </span>table(<span class="kw-2">&amp;</span><span class="self">self</span>, w_positive: bool, forward: bool) -&gt; <span class="kw-2">&amp;</span>[Vec&lt;<span class="prelude-ty">Option</span>&lt;u8&gt;&gt;] {
+<a href=#253 id=253 data-nosnippet>253</a>        <span class="kw">if </span>forward {
+<a href=#254 id=254 data-nosnippet>254</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.forward[usize::from(w_positive)]
+<a href=#255 id=255 data-nosnippet>255</a>        } <span class="kw">else </span>{
+<a href=#256 id=256 data-nosnippet>256</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.adjoint[usize::from(w_positive)]
+<a href=#257 id=257 data-nosnippet>257</a>        }
+<a href=#258 id=258 data-nosnippet>258</a>    }
+<a href=#259 id=259 data-nosnippet>259</a>}
+<a href=#260 id=260 data-nosnippet>260</a>
+<a href=#261 id=261 data-nosnippet>261</a><span class="doccomment">/// Per-row context a kernel set keys its cells on.
+<a href=#262 id=262 data-nosnippet>262</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq)]
+<a href=#263 id=263 data-nosnippet>263</a></span><span class="kw">pub struct </span>RowContext {
+<a href=#264 id=264 data-nosnippet>264</a>    <span class="doccomment">/// The row's MeasurementSet `UVW` w in metres before the phase-centre
+<a href=#265 id=265 data-nosnippet>265</a>    /// rotation, when the source rotated the row; `None` when the row's
+<a href=#266 id=266 data-nosnippet>266</a>    /// uvw are the MeasurementSet's. The AW set keys its prediction cell
+<a href=#267 id=267 data-nosnippet>267</a>    /// and parity on it ([`ConvolutionFunctionSet::prediction_w`]).
+<a href=#268 id=268 data-nosnippet>268</a>    </span><span class="kw">pub </span>original_w_m: <span class="prelude-ty">Option</span>&lt;f64&gt;,
+<a href=#269 id=269 data-nosnippet>269</a>    <span class="doccomment">/// Row time in seconds (MeasurementSet `TIME`).
+<a href=#270 id=270 data-nosnippet>270</a>    </span><span class="kw">pub </span>time_s: f64,
+<a href=#271 id=271 data-nosnippet>271</a>    <span class="doccomment">/// Antenna pair.
+<a href=#272 id=272 data-nosnippet>272</a>    </span><span class="kw">pub </span>antennas: [u32; <span class="number">2</span>],
+<a href=#273 id=273 data-nosnippet>273</a>    <span class="doccomment">/// Antenna type of each antenna: an index into the kernel set's
+<a href=#274 id=274 data-nosnippet>274</a>    /// antenna classes (CASA `HetArrayConvFunc` dish classes, AW baseline
+<a href=#275 id=275 data-nosnippet>275</a>    /// types); 0 for a homogeneous array.
+<a href=#276 id=276 data-nosnippet>276</a>    </span><span class="kw">pub </span>antenna_types: [u8; <span class="number">2</span>],
+<a href=#277 id=277 data-nosnippet>277</a>    <span class="doccomment">/// CASA's visibility polarization operator angle of each antenna in
+<a href=#278 id=278 data-nosnippet>278</a>    /// radians: the negative of the physical parallactic angle.
+<a href=#279 id=279 data-nosnippet>279</a>    </span><span class="kw">pub </span>parallactic_angle_rad: [f64; <span class="number">2</span>],
+<a href=#280 id=280 data-nosnippet>280</a>    <span class="doccomment">/// Field (pointing) identifier.
+<a href=#281 id=281 data-nosnippet>281</a>    </span><span class="kw">pub </span>field: u32,
+<a href=#282 id=282 data-nosnippet>282</a>    <span class="doccomment">/// Spectral window of the row's data description; kernel sets with
+<a href=#283 id=283 data-nosnippet>283</a>    /// per-window frequency cells key on it.
+<a href=#284 id=284 data-nosnippet>284</a>    </span><span class="kw">pub </span>spectral_window: u32,
+<a href=#285 id=285 data-nosnippet>285</a>}
+<a href=#286 id=286 data-nosnippet>286</a>
+<a href=#287 id=287 data-nosnippet>287</a><span class="doccomment">/// Image-domain gridding correction: one real vector per grid axis on each
+<a href=#288 id=288 data-nosnippet>288</a>/// side of the operator, applied as `x[gx] · y[gy]` to the image the
+<a href=#289 id=289 data-nosnippet>289</a>/// adjoint forms ([`Self::at`]) and to the model the forward transform
+<a href=#290 id=290 data-nosnippet>290</a>/// reads ([`Self::model_at`]).
+<a href=#291 id=291 data-nosnippet>291</a>///
+<a href=#292 id=292 data-nosnippet>292</a>/// CASA's `GridFT` divides the model and the dirty image by the same
+<a href=#293 id=293 data-nosnippet>293</a>/// response ([`Self::new`]); `MosaicFT` (`prepGridForDegrid`, `getImage`)
+<a href=#294 id=294 data-nosnippet>294</a>/// and `WProjectFT` (`initializeToVis`, `getImage`) multiply the model by
+<a href=#295 id=295 data-nosnippet>295</a>/// their sinc and divide the image by it, so the sides differ
+<a href=#296 id=296 data-nosnippet>296</a>/// ([`Self::split`]).
+<a href=#297 id=297 data-nosnippet>297</a></span><span class="attr">#[derive(Clone, Debug, PartialEq)]
+<a href=#298 id=298 data-nosnippet>298</a></span><span class="kw">pub struct </span>ImageCorrection {
+<a href=#299 id=299 data-nosnippet>299</a>    x: Box&lt;[f64]&gt;,
+<a href=#300 id=300 data-nosnippet>300</a>    y: Box&lt;[f64]&gt;,
+<a href=#301 id=301 data-nosnippet>301</a>    model_x: Box&lt;[f64]&gt;,
+<a href=#302 id=302 data-nosnippet>302</a>    model_y: Box&lt;[f64]&gt;,
+<a href=#303 id=303 data-nosnippet>303</a>}
+<a href=#304 id=304 data-nosnippet>304</a>
+<a href=#305 id=305 data-nosnippet>305</a><span class="kw">impl </span>ImageCorrection {
+<a href=#306 id=306 data-nosnippet>306</a>    <span class="doccomment">/// The same correction vectors on both sides, over the padded grid
+<a href=#307 id=307 data-nosnippet>307</a>    /// axes.
+<a href=#308 id=308 data-nosnippet>308</a>    </span><span class="attr">#[must_use]
+<a href=#309 id=309 data-nosnippet>309</a>    </span><span class="kw">pub fn </span>new(x: Vec&lt;f64&gt;, y: Vec&lt;f64&gt;) -&gt; <span class="self">Self </span>{
+<a href=#310 id=310 data-nosnippet>310</a>        <span class="self">Self </span>{
+<a href=#311 id=311 data-nosnippet>311</a>            model_x: x.clone().into_boxed_slice(),
+<a href=#312 id=312 data-nosnippet>312</a>            model_y: y.clone().into_boxed_slice(),
+<a href=#313 id=313 data-nosnippet>313</a>            x: x.into_boxed_slice(),
+<a href=#314 id=314 data-nosnippet>314</a>            y: y.into_boxed_slice(),
+<a href=#315 id=315 data-nosnippet>315</a>        }
+<a href=#316 id=316 data-nosnippet>316</a>    }
+<a href=#317 id=317 data-nosnippet>317</a>
+<a href=#318 id=318 data-nosnippet>318</a>    <span class="doccomment">/// Different vectors for the image side (`x`, `y`) and the model side
+<a href=#319 id=319 data-nosnippet>319</a>    /// (`model_x`, `model_y`).
+<a href=#320 id=320 data-nosnippet>320</a>    </span><span class="attr">#[must_use]
+<a href=#321 id=321 data-nosnippet>321</a>    </span><span class="kw">pub fn </span>split(x: Vec&lt;f64&gt;, y: Vec&lt;f64&gt;, model_x: Vec&lt;f64&gt;, model_y: Vec&lt;f64&gt;) -&gt; <span class="self">Self </span>{
+<a href=#322 id=322 data-nosnippet>322</a>        <span class="self">Self </span>{
+<a href=#323 id=323 data-nosnippet>323</a>            x: x.into_boxed_slice(),
+<a href=#324 id=324 data-nosnippet>324</a>            y: y.into_boxed_slice(),
+<a href=#325 id=325 data-nosnippet>325</a>            model_x: model_x.into_boxed_slice(),
+<a href=#326 id=326 data-nosnippet>326</a>            model_y: model_y.into_boxed_slice(),
+<a href=#327 id=327 data-nosnippet>327</a>        }
+<a href=#328 id=328 data-nosnippet>328</a>    }
+<a href=#329 id=329 data-nosnippet>329</a>
+<a href=#330 id=330 data-nosnippet>330</a>    <span class="doccomment">/// Image-side correction along the grid x axis.
+<a href=#331 id=331 data-nosnippet>331</a>    </span><span class="attr">#[must_use]
+<a href=#332 id=332 data-nosnippet>332</a>    </span><span class="kw">pub fn </span>x(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[f64] {
+<a href=#333 id=333 data-nosnippet>333</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.x
+<a href=#334 id=334 data-nosnippet>334</a>    }
+<a href=#335 id=335 data-nosnippet>335</a>
+<a href=#336 id=336 data-nosnippet>336</a>    <span class="doccomment">/// Image-side correction along the grid y axis.
+<a href=#337 id=337 data-nosnippet>337</a>    </span><span class="attr">#[must_use]
+<a href=#338 id=338 data-nosnippet>338</a>    </span><span class="kw">pub fn </span>y(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[f64] {
+<a href=#339 id=339 data-nosnippet>339</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.y
+<a href=#340 id=340 data-nosnippet>340</a>    }
+<a href=#341 id=341 data-nosnippet>341</a>
+<a href=#342 id=342 data-nosnippet>342</a>    <span class="doccomment">/// Model-side correction along the grid x axis.
+<a href=#343 id=343 data-nosnippet>343</a>    </span><span class="attr">#[must_use]
+<a href=#344 id=344 data-nosnippet>344</a>    </span><span class="kw">pub fn </span>model_x(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[f64] {
+<a href=#345 id=345 data-nosnippet>345</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.model_x
+<a href=#346 id=346 data-nosnippet>346</a>    }
+<a href=#347 id=347 data-nosnippet>347</a>
+<a href=#348 id=348 data-nosnippet>348</a>    <span class="doccomment">/// Model-side correction along the grid y axis.
+<a href=#349 id=349 data-nosnippet>349</a>    </span><span class="attr">#[must_use]
+<a href=#350 id=350 data-nosnippet>350</a>    </span><span class="kw">pub fn </span>model_y(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[f64] {
+<a href=#351 id=351 data-nosnippet>351</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.model_y
+<a href=#352 id=352 data-nosnippet>352</a>    }
+<a href=#353 id=353 data-nosnippet>353</a>
+<a href=#354 id=354 data-nosnippet>354</a>    <span class="doccomment">/// Image-side correction at grid cell `(gx, gy)`.
+<a href=#355 id=355 data-nosnippet>355</a>    </span><span class="attr">#[must_use]
+<a href=#356 id=356 data-nosnippet>356</a>    </span><span class="kw">pub fn </span>at(<span class="kw-2">&amp;</span><span class="self">self</span>, gx: usize, gy: usize) -&gt; f64 {
+<a href=#357 id=357 data-nosnippet>357</a>        <span class="self">self</span>.x[gx] * <span class="self">self</span>.y[gy]
+<a href=#358 id=358 data-nosnippet>358</a>    }
 <a href=#359 id=359 data-nosnippet>359</a>
-<a href=#360 id=360 data-nosnippet>360</a><span class="doccomment">/// A kernel set: pure cell selection plus the taps, routing and correction
-<a href=#361 id=361 data-nosnippet>361</a>/// the kernels read. Implementations: the standard spheroidal set, W-planes,
-<a href=#362 id=362 data-nosnippet>362</a>/// the AW catalog and the mosaic primary beam.
-<a href=#363 id=363 data-nosnippet>363</a></span><span class="kw">pub trait </span>ConvolutionFunctionSet: Send + Sync {
-<a href=#364 id=364 data-nosnippet>364</a>    <span class="doccomment">/// Cell for one row at `freq_hz` and `w_lambda`. Pure; CASA-pinned
-<a href=#365 id=365 data-nosnippet>365</a>    /// rounding rules for w-planes, frequency and parallactic-angle cells
-<a href=#366 id=366 data-nosnippet>366</a>    /// live here.
-<a href=#367 id=367 data-nosnippet>367</a>    </span><span class="kw">fn </span>key(<span class="kw-2">&amp;</span><span class="self">self</span>, row: <span class="kw-2">&amp;</span>RowContext, freq_hz: f64, w_lambda: f64) -&gt; CfKey;
-<a href=#368 id=368 data-nosnippet>368</a>
-<a href=#369 id=369 data-nosnippet>369</a>    <span class="doccomment">/// Imaging taps of a cell. A set that pages cells parks the cell in
-<a href=#370 id=370 data-nosnippet>370</a>    /// `hold` and lends from it; resident sets lend their own storage.
-<a href=#371 id=371 data-nosnippet>371</a>    </span><span class="kw">fn </span>taps&lt;<span class="lifetime">'s</span>&gt;(<span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="self">self</span>, key: CfKey, hold: <span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="kw-2">mut </span>CellHold) -&gt; TapLayout&lt;<span class="lifetime">'s</span>&gt;;
-<a href=#372 id=372 data-nosnippet>372</a>
-<a href=#373 id=373 data-nosnippet>373</a>    <span class="doccomment">/// The largest [`TapLayout::half_support`] of any cell `key` can
-<a href=#374 id=374 data-nosnippet>374</a>    /// return, `[x, y]`: the halo a tile needs so that every sample anchored
-<a href=#375 id=375 data-nosnippet>375</a>    /// inside it keeps its whole support in the tile.
-<a href=#376 id=376 data-nosnippet>376</a>    </span><span class="kw">fn </span>max_half_support(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; [u16; <span class="number">2</span>];
-<a href=#377 id=377 data-nosnippet>377</a>
-<a href=#378 id=378 data-nosnippet>378</a>    <span class="doccomment">/// `FT[PB²]` taps for the weight (sensitivity) image, placed at the uv
-<a href=#379 id=379 data-nosnippet>379</a>    /// origin; `None` for sets without a weight image.
-<a href=#380 id=380 data-nosnippet>380</a>    </span><span class="kw">fn </span>weight_taps&lt;<span class="lifetime">'s</span>&gt;(<span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="self">self</span>, key: CfKey, hold: <span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="kw-2">mut </span>CellHold) -&gt; <span class="prelude-ty">Option</span>&lt;TapLayout&lt;<span class="lifetime">'s</span>&gt;&gt;;
-<a href=#381 id=381 data-nosnippet>381</a>
-<a href=#382 id=382 data-nosnippet>382</a>    <span class="doccomment">/// Mueller plane routing for every cell of the set.
-<a href=#383 id=383 data-nosnippet>383</a>    </span><span class="kw">fn </span>mueller(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>MuellerRouting;
+<a href=#360 id=360 data-nosnippet>360</a>    <span class="doccomment">/// Model-side correction at grid cell `(gx, gy)`.
+<a href=#361 id=361 data-nosnippet>361</a>    </span><span class="attr">#[must_use]
+<a href=#362 id=362 data-nosnippet>362</a>    </span><span class="kw">pub fn </span>model_at(<span class="kw-2">&amp;</span><span class="self">self</span>, gx: usize, gy: usize) -&gt; f64 {
+<a href=#363 id=363 data-nosnippet>363</a>        <span class="self">self</span>.model_x[gx] * <span class="self">self</span>.model_y[gy]
+<a href=#364 id=364 data-nosnippet>364</a>    }
+<a href=#365 id=365 data-nosnippet>365</a>}
+<a href=#366 id=366 data-nosnippet>366</a>
+<a href=#367 id=367 data-nosnippet>367</a><span class="doccomment">/// A kernel set: pure cell selection plus the taps, routing and correction
+<a href=#368 id=368 data-nosnippet>368</a>/// the kernels read. Implementations: the standard spheroidal set, W-planes,
+<a href=#369 id=369 data-nosnippet>369</a>/// the AW catalog and the mosaic primary beam.
+<a href=#370 id=370 data-nosnippet>370</a></span><span class="kw">pub trait </span>ConvolutionFunctionSet: Send + Sync {
+<a href=#371 id=371 data-nosnippet>371</a>    <span class="doccomment">/// Cell for one row at `freq_hz` and `w_lambda`. Pure; CASA-pinned
+<a href=#372 id=372 data-nosnippet>372</a>    /// rounding rules for w-planes, frequency and parallactic-angle cells
+<a href=#373 id=373 data-nosnippet>373</a>    /// live here.
+<a href=#374 id=374 data-nosnippet>374</a>    </span><span class="kw">fn </span>key(<span class="kw-2">&amp;</span><span class="self">self</span>, row: <span class="kw-2">&amp;</span>RowContext, freq_hz: f64, w_lambda: f64) -&gt; CfKey;
+<a href=#375 id=375 data-nosnippet>375</a>
+<a href=#376 id=376 data-nosnippet>376</a>    <span class="doccomment">/// Imaging taps of a cell. A set that pages cells parks the cell in
+<a href=#377 id=377 data-nosnippet>377</a>    /// `hold` and lends from it; resident sets lend their own storage.
+<a href=#378 id=378 data-nosnippet>378</a>    </span><span class="kw">fn </span>taps&lt;<span class="lifetime">'s</span>&gt;(<span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="self">self</span>, key: CfKey, hold: <span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="kw-2">mut </span>CellHold) -&gt; TapLayout&lt;<span class="lifetime">'s</span>&gt;;
+<a href=#379 id=379 data-nosnippet>379</a>
+<a href=#380 id=380 data-nosnippet>380</a>    <span class="doccomment">/// The largest [`TapLayout::half_support`] of any cell `key` can
+<a href=#381 id=381 data-nosnippet>381</a>    /// return, `[x, y]`: the halo a tile needs so that every sample anchored
+<a href=#382 id=382 data-nosnippet>382</a>    /// inside it keeps its whole support in the tile.
+<a href=#383 id=383 data-nosnippet>383</a>    </span><span class="kw">fn </span>max_half_support(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; [u16; <span class="number">2</span>];
 <a href=#384 id=384 data-nosnippet>384</a>
-<a href=#385 id=385 data-nosnippet>385</a>    <span class="doccomment">/// The paired image-domain correction.
-<a href=#386 id=386 data-nosnippet>386</a>    </span><span class="kw">fn </span>image_correction(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>ImageCorrection;
-<a href=#387 id=387 data-nosnippet>387</a>
-<a href=#388 id=388 data-nosnippet>388</a>    <span class="doccomment">/// The normalisation rule of the set's kernels.
-<a href=#389 id=389 data-nosnippet>389</a>    </span><span class="kw">fn </span>normalisation(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; KernelNormalisation;
-<a href=#390 id=390 data-nosnippet>390</a>
-<a href=#391 id=391 data-nosnippet>391</a>    <span class="doccomment">/// Whether placements carry the pointing phase gradient
-<a href=#392 id=392 data-nosnippet>392</a>    /// (`Placement::gradient`): the kernels encode a pointing offset from
-<a href=#393 id=393 data-nosnippet>393</a>    /// the image centre as `e^{i(k·g)}` over the taps (mosaic, AW).
-<a href=#394 id=394 data-nosnippet>394</a>    </span><span class="kw">fn </span>pointing_ramp(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool;
-<a href=#395 id=395 data-nosnippet>395</a>
-<a href=#396 id=396 data-nosnippet>396</a>    <span class="doccomment">/// The taps `Mode::Psf` grids a sample with at its uv position: the
-<a href=#397 id=397 data-nosnippet>397</a>    /// imaging taps for `GridFT`, `WProjectFT` and `MosaicFT`; the AW
-<a href=#398 id=398 data-nosnippet>398</a>    /// catalog grids its PSF with the weight cells (`AWProjectFT::
-<a href=#399 id=399 data-nosnippet>399</a>    /// findConvFunction` maps `cfwts2_p` when `makingPSF`).
-<a href=#400 id=400 data-nosnippet>400</a>    </span><span class="kw">fn </span>psf_taps&lt;<span class="lifetime">'s</span>&gt;(<span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="self">self</span>, key: CfKey, hold: <span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="kw-2">mut </span>CellHold) -&gt; TapLayout&lt;<span class="lifetime">'s</span>&gt; {
-<a href=#401 id=401 data-nosnippet>401</a>        <span class="self">self</span>.taps(key, hold)
-<a href=#402 id=402 data-nosnippet>402</a>    }
-<a href=#403 id=403 data-nosnippet>403</a>
-<a href=#404 id=404 data-nosnippet>404</a>    <span class="doccomment">/// The taps a prediction gathers with: the gridding taps for every set
-<a href=#405 id=405 data-nosnippet>405</a>    /// but the AW catalog, whose `GridToData` reads the native-frequency
-<a href=#406 id=406 data-nosnippet>406</a>    /// cell (`CFBuffer::nearestFreqNdx(spw, chan)` without `conjBeams`)
-<a href=#407 id=407 data-nosnippet>407</a>    /// where `DataToGrid` read the conjugate one.
-<a href=#408 id=408 data-nosnippet>408</a>    </span><span class="kw">fn </span>prediction_taps&lt;<span class="lifetime">'s</span>&gt;(<span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="self">self</span>, key: CfKey, hold: <span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="kw-2">mut </span>CellHold) -&gt; TapLayout&lt;<span class="lifetime">'s</span>&gt; {
-<a href=#409 id=409 data-nosnippet>409</a>        <span class="self">self</span>.taps(key, hold)
-<a href=#410 id=410 data-nosnippet>410</a>    }
-<a href=#411 id=411 data-nosnippet>411</a>
-<a href=#412 id=412 data-nosnippet>412</a>    <span class="doccomment">/// The half support a placement keyed `key` must keep inside the grid:
-<a href=#413 id=413 data-nosnippet>413</a>    /// the largest of every tap layout the key can lend.
-<a href=#414 id=414 data-nosnippet>414</a>    </span><span class="kw">fn </span>placement_half_support(<span class="kw-2">&amp;</span><span class="self">self</span>, key: CfKey, hold: <span class="kw-2">&amp;mut </span>CellHold) -&gt; [u16; <span class="number">2</span>] {
-<a href=#415 id=415 data-nosnippet>415</a>        <span class="self">self</span>.taps(key, hold).half_support()
-<a href=#416 id=416 data-nosnippet>416</a>    }
-<a href=#417 id=417 data-nosnippet>417</a>
-<a href=#418 id=418 data-nosnippet>418</a>    <span class="doccomment">/// Whether a sample at `w_lambda` is gridded at all. `WProjectFT`'s
-<a href=#419 id=419 data-nosnippet>419</a>    /// gridder drops a row whose plane index `nint(√(wScale·|w|))` lies
-<a href=#420 id=420 data-nosnippet>420</a>    /// beyond the last plane (`wprojgrid.f` `owp` tests the unclamped
-<a href=#421 id=421 data-nosnippet>421</a>    /// `loc(3)`); every other set accepts every `w` (the AW catalog clamps,
-<a href=#422 id=422 data-nosnippet>422</a>    /// `CFBuffer::nearestWNdx`).
-<a href=#423 id=423 data-nosnippet>423</a>    </span><span class="kw">fn </span>admits(<span class="kw-2">&amp;</span><span class="self">self</span>, w_lambda: f64) -&gt; bool {
-<a href=#424 id=424 data-nosnippet>424</a>        <span class="kw">let _ </span>= w_lambda;
-<a href=#425 id=425 data-nosnippet>425</a>        <span class="bool-val">true
-<a href=#426 id=426 data-nosnippet>426</a>    </span>}
-<a href=#427 id=427 data-nosnippet>427</a>
-<a href=#428 id=428 data-nosnippet>428</a>    <span class="doccomment">/// Whether the weight (sensitivity) image receives the image-side
-<a href=#429 id=429 data-nosnippet>429</a>    /// correction. `AWProjectFT::getWeightImage` divides its average PB by
-<a href=#430 id=430 data-nosnippet>430</a>    /// the sampling sinc as `getImage` does; `MosaicFT` publishes the
-<a href=#431 id=431 data-nosnippet>431</a>    /// transform of its gridded weight functions as `skyCoverage_p` with
-<a href=#432 id=432 data-nosnippet>432</a>    /// no correction at all, while its `getImage` divides the data and PSF
-<a href=#433 id=433 data-nosnippet>433</a>    /// by the sinc.
-<a href=#434 id=434 data-nosnippet>434</a>    </span><span class="kw">fn </span>corrects_weight_image(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#435 id=435 data-nosnippet>435</a>        <span class="bool-val">true
-<a href=#436 id=436 data-nosnippet>436</a>    </span>}
-<a href=#437 id=437 data-nosnippet>437</a>}
+<a href=#385 id=385 data-nosnippet>385</a>    <span class="doccomment">/// `FT[PB²]` taps for the weight (sensitivity) image, placed at the uv
+<a href=#386 id=386 data-nosnippet>386</a>    /// origin; `None` for sets without a weight image.
+<a href=#387 id=387 data-nosnippet>387</a>    </span><span class="kw">fn </span>weight_taps&lt;<span class="lifetime">'s</span>&gt;(<span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="self">self</span>, key: CfKey, hold: <span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="kw-2">mut </span>CellHold) -&gt; <span class="prelude-ty">Option</span>&lt;TapLayout&lt;<span class="lifetime">'s</span>&gt;&gt;;
+<a href=#388 id=388 data-nosnippet>388</a>
+<a href=#389 id=389 data-nosnippet>389</a>    <span class="doccomment">/// Mueller plane routing for every cell of the set.
+<a href=#390 id=390 data-nosnippet>390</a>    </span><span class="kw">fn </span>mueller(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>MuellerRouting;
+<a href=#391 id=391 data-nosnippet>391</a>
+<a href=#392 id=392 data-nosnippet>392</a>    <span class="doccomment">/// The w in wavelengths a prediction of `row`'s sample at `freq_hz`
+<a href=#393 id=393 data-nosnippet>393</a>    /// keys its cell and tap conjugation on: the image-frame `w_lambda` the
+<a href=#394 id=394 data-nosnippet>394</a>    /// gridding uses, for every set but AW. `AWVisResampler::GridToData`
+<a href=#395 id=395 data-nosnippet>395</a>    /// reads the MeasurementSet w before the phase-centre rotation
+<a href=#396 id=396 data-nosnippet>396</a>    /// (`vb_p-&gt;uvw()(2, irow)`) for the w-plane and the sign, while its u,
+<a href=#397 id=397 data-nosnippet>397</a>    /// v and phasor are the rotated ones (`sgrid` on `uvw_p`);
+<a href=#398 id=398 data-nosnippet>398</a>    /// `DataToGrid` reads the rotated w for both.
+<a href=#399 id=399 data-nosnippet>399</a>    </span><span class="kw">fn </span>prediction_w(<span class="kw-2">&amp;</span><span class="self">self</span>, _row: <span class="kw-2">&amp;</span>RowContext, _freq_hz: f64, w_lambda: f64) -&gt; f64 {
+<a href=#400 id=400 data-nosnippet>400</a>        w_lambda
+<a href=#401 id=401 data-nosnippet>401</a>    }
+<a href=#402 id=402 data-nosnippet>402</a>
+<a href=#403 id=403 data-nosnippet>403</a>    <span class="doccomment">/// The paired image-domain correction.
+<a href=#404 id=404 data-nosnippet>404</a>    </span><span class="kw">fn </span>image_correction(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>ImageCorrection;
+<a href=#405 id=405 data-nosnippet>405</a>
+<a href=#406 id=406 data-nosnippet>406</a>    <span class="doccomment">/// The normalisation rule of the set's kernels.
+<a href=#407 id=407 data-nosnippet>407</a>    </span><span class="kw">fn </span>normalisation(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; KernelNormalisation;
+<a href=#408 id=408 data-nosnippet>408</a>
+<a href=#409 id=409 data-nosnippet>409</a>    <span class="doccomment">/// Whether placements carry the pointing phase gradient
+<a href=#410 id=410 data-nosnippet>410</a>    /// (`Placement::gradient`): the kernels encode a pointing offset from
+<a href=#411 id=411 data-nosnippet>411</a>    /// the image centre as `e^{i(k·g)}` over the taps (mosaic, AW).
+<a href=#412 id=412 data-nosnippet>412</a>    </span><span class="kw">fn </span>pointing_ramp(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool;
+<a href=#413 id=413 data-nosnippet>413</a>
+<a href=#414 id=414 data-nosnippet>414</a>    <span class="doccomment">/// The taps `Mode::Psf` grids a sample with at its uv position: the
+<a href=#415 id=415 data-nosnippet>415</a>    /// imaging taps for `GridFT`, `WProjectFT` and `MosaicFT`; the AW
+<a href=#416 id=416 data-nosnippet>416</a>    /// catalog grids its PSF with the weight cells (`AWProjectFT::
+<a href=#417 id=417 data-nosnippet>417</a>    /// findConvFunction` maps `cfwts2_p` when `makingPSF`).
+<a href=#418 id=418 data-nosnippet>418</a>    </span><span class="kw">fn </span>psf_taps&lt;<span class="lifetime">'s</span>&gt;(<span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="self">self</span>, key: CfKey, hold: <span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="kw-2">mut </span>CellHold) -&gt; TapLayout&lt;<span class="lifetime">'s</span>&gt; {
+<a href=#419 id=419 data-nosnippet>419</a>        <span class="self">self</span>.taps(key, hold)
+<a href=#420 id=420 data-nosnippet>420</a>    }
+<a href=#421 id=421 data-nosnippet>421</a>
+<a href=#422 id=422 data-nosnippet>422</a>    <span class="doccomment">/// The taps a prediction gathers with: the gridding taps for every set
+<a href=#423 id=423 data-nosnippet>423</a>    /// but the AW catalog, whose `GridToData` reads the native-frequency
+<a href=#424 id=424 data-nosnippet>424</a>    /// cell (`CFBuffer::nearestFreqNdx(spw, chan)` without `conjBeams`)
+<a href=#425 id=425 data-nosnippet>425</a>    /// where `DataToGrid` read the conjugate one.
+<a href=#426 id=426 data-nosnippet>426</a>    </span><span class="kw">fn </span>prediction_taps&lt;<span class="lifetime">'s</span>&gt;(<span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="self">self</span>, key: CfKey, hold: <span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="kw-2">mut </span>CellHold) -&gt; TapLayout&lt;<span class="lifetime">'s</span>&gt; {
+<a href=#427 id=427 data-nosnippet>427</a>        <span class="self">self</span>.taps(key, hold)
+<a href=#428 id=428 data-nosnippet>428</a>    }
+<a href=#429 id=429 data-nosnippet>429</a>
+<a href=#430 id=430 data-nosnippet>430</a>    <span class="doccomment">/// The half support a placement keyed `key` must keep inside the grid:
+<a href=#431 id=431 data-nosnippet>431</a>    /// the largest of every tap layout the key can lend.
+<a href=#432 id=432 data-nosnippet>432</a>    </span><span class="kw">fn </span>placement_half_support(<span class="kw-2">&amp;</span><span class="self">self</span>, key: CfKey, hold: <span class="kw-2">&amp;mut </span>CellHold) -&gt; [u16; <span class="number">2</span>] {
+<a href=#433 id=433 data-nosnippet>433</a>        <span class="self">self</span>.taps(key, hold).half_support()
+<a href=#434 id=434 data-nosnippet>434</a>    }
+<a href=#435 id=435 data-nosnippet>435</a>
+<a href=#436 id=436 data-nosnippet>436</a>    <span class="doccomment">/// Whether a sample at `w_lambda` is gridded at all. `WProjectFT`'s
+<a href=#437 id=437 data-nosnippet>437</a>    /// gridder drops a row whose plane index `nint(√(wScale·|w|))` lies
+<a href=#438 id=438 data-nosnippet>438</a>    /// beyond the last plane (`wprojgrid.f` `owp` tests the unclamped
+<a href=#439 id=439 data-nosnippet>439</a>    /// `loc(3)`); every other set accepts every `w` (the AW catalog clamps,
+<a href=#440 id=440 data-nosnippet>440</a>    /// `CFBuffer::nearestWNdx`).
+<a href=#441 id=441 data-nosnippet>441</a>    </span><span class="kw">fn </span>admits(<span class="kw-2">&amp;</span><span class="self">self</span>, w_lambda: f64) -&gt; bool {
+<a href=#442 id=442 data-nosnippet>442</a>        <span class="kw">let _ </span>= w_lambda;
+<a href=#443 id=443 data-nosnippet>443</a>        <span class="bool-val">true
+<a href=#444 id=444 data-nosnippet>444</a>    </span>}
+<a href=#445 id=445 data-nosnippet>445</a>
+<a href=#446 id=446 data-nosnippet>446</a>    <span class="doccomment">/// Whether the weight (sensitivity) image receives the image-side
+<a href=#447 id=447 data-nosnippet>447</a>    /// correction. `AWProjectFT::getWeightImage` divides its average PB by
+<a href=#448 id=448 data-nosnippet>448</a>    /// the sampling sinc as `getImage` does; `MosaicFT` publishes the
+<a href=#449 id=449 data-nosnippet>449</a>    /// transform of its gridded weight functions as `skyCoverage_p` with
+<a href=#450 id=450 data-nosnippet>450</a>    /// no correction at all, while its `getImage` divides the data and PSF
+<a href=#451 id=451 data-nosnippet>451</a>    /// by the sinc.
+<a href=#452 id=452 data-nosnippet>452</a>    </span><span class="kw">fn </span>corrects_weight_image(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#453 id=453 data-nosnippet>453</a>        <span class="bool-val">true
+<a href=#454 id=454 data-nosnippet>454</a>    </span>}
+<a href=#455 id=455 data-nosnippet>455</a>}
 </code></pre></div></section></main></body></html>
