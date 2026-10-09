@@ -142,10 +142,10 @@ holds a Reservation until it ends, and a refused phase does not start.
 _Avoid_: Planning, lease
 
 **Run Summary**:
-The one record a run leaves beside its products: the request echo, each phase
-with its wall time and peak resident memory, the worker count, the backend,
-the minor-cycle totals and the product list (plan section 8.3). It is O(1)
-per phase.
+The one record a run leaves beside its products, whether it completes or
+fails: the request echo, each phase with its wall time and peak resident
+memory, the worker count, the backend, the minor-cycle totals, the product
+list and a failed run's error (plan section 8.3). It is O(1) per phase.
 _Avoid_: Execution receipt, log, metrics blob
 
 **Acceptance Contract**:

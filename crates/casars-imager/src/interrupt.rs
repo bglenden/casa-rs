@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! SIGINT cancels the run (plan section 5.4). The first interrupt sets the
 //! process's cancellation token: the run stops at the next block boundary of
-//! a pass or before its next phase, and publishes nothing. The handler then
-//! resets itself, so a second interrupt terminates the process.
+//! a pass or before its next phase, and publishes nothing. A system call the
+//! interrupt lands in is restarted, so a read in flight completes rather than
+//! failing with `EINTR`. The handler then resets itself, so a second
+//! interrupt terminates the process.
 
 use std::sync::OnceLock;
 
@@ -30,7 +32,7 @@ pub fn install() -> std::io::Result<()> {
     let status = unsafe {
         let mut action: libc::sigaction = std::mem::zeroed();
         action.sa_sigaction = interrupted as extern "C" fn(libc::c_int) as libc::sighandler_t;
-        action.sa_flags = libc::SA_RESETHAND;
+        action.sa_flags = libc::SA_RESETHAND | libc::SA_RESTART;
         libc::sigemptyset(&mut action.sa_mask);
         libc::sigaction(libc::SIGINT, &action, std::ptr::null_mut())
     };

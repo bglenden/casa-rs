@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The run summary (plan section 8.3): the one record a run leaves, a small
-//! JSON document beside its products.
+//! JSON document beside its products, written whether the run completes or
+//! fails (ADR-0014's final success/failure summary).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use serde::Serialize;
@@ -14,7 +15,10 @@ use crate::pass::{BackendChoice, Cancel};
 pub struct RunSummary {
     /// The request as its caller states it.
     pub request: serde_json::Value,
-    /// Every phase in the order it ran.
+    /// Why the run failed; `None` when it completed.
+    pub error: Option<String>,
+    /// Every phase in the order it ran; a failed run's last phase did not
+    /// complete.
     pub phases: Vec<Phase>,
     /// Workers in the run's team.
     pub workers: usize,
@@ -28,15 +32,26 @@ pub struct RunSummary {
     pub products: Vec<String>,
 }
 
-/// One completed phase.
+/// One phase of a run.
 #[derive(Clone, Debug, Serialize)]
 pub struct Phase {
     /// What the phase did.
     pub name: String,
+    /// Whether it completed; a phase that failed is recorded too.
+    pub completed: bool,
     /// Wall-clock seconds.
     pub seconds: f64,
     /// The process's peak resident memory when the phase ended, in bytes.
     pub peak_rss: u64,
+}
+
+/// Where a run writes its summary, and the request it echoes there.
+#[derive(Clone, Debug)]
+pub struct SummaryTarget {
+    /// The summary file.
+    pub path: PathBuf,
+    /// The request as its caller states it.
+    pub request: serde_json::Value,
 }
 
 /// A phase did not start because the run was cancelled.
@@ -56,15 +71,14 @@ impl RunSummary {
     }
 }
 
-/// Run one phase named `name`, unless `cancel` is set, and record its wall
-/// time and the peak resident memory after it in `summary`.
-///
-/// A phase that fails is not recorded.
+/// Run one phase named `name`, unless `cancel` is set, and record in
+/// `summary` whether it completed, its wall time and the peak resident
+/// memory after it.
 ///
 /// # Errors
 ///
 /// [`Cancelled`] (through `E`) when cancellation was requested before the
-/// phase started; otherwise the step's error.
+/// phase started, and nothing is recorded; otherwise the step's error.
 pub fn run_phase<T, E: From<Cancelled>>(
     name: impl Into<String>,
     cancel: &Cancel,
@@ -75,13 +89,14 @@ pub fn run_phase<T, E: From<Cancelled>>(
         return Err(Cancelled.into());
     }
     let started = Instant::now();
-    let value = step()?;
+    let result = step();
     summary.phases.push(Phase {
         name: name.into(),
+        completed: result.is_ok(),
         seconds: started.elapsed().as_secs_f64(),
         peak_rss: peak_rss(),
     });
-    Ok(value)
+    result
 }
 
 /// The process's peak resident set, in bytes.
@@ -108,23 +123,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_phase_is_recorded_once_it_succeeds() {
+    fn a_phase_is_recorded_whether_it_completes_or_fails_but_not_once_cancelled() {
         let cancel = Cancel::new();
         let mut summary = RunSummary::default();
         let value =
             run_phase("first", &cancel, &mut summary, || Ok::<_, Cancelled>(7)).expect("runs");
         assert_eq!(value, 7);
-        assert_eq!(summary.phases.len(), 1);
-        assert_eq!(summary.phases[0].name, "first");
-        assert!(summary.phases[0].peak_rss > 0);
+        let failed = run_phase("second", &cancel, &mut summary, || Err::<(), _>(Cancelled));
+        assert_eq!(failed, Err(Cancelled));
+        let recorded = summary
+            .phases
+            .iter()
+            .map(|phase| (phase.name.as_str(), phase.completed))
+            .collect::<Vec<_>>();
+        assert_eq!(recorded, [("first", true), ("second", false)]);
+        assert!(summary.phases.iter().all(|phase| phase.peak_rss > 0));
         cancel.cancel();
         let mut ran = false;
-        let cancelled = run_phase("second", &cancel, &mut summary, || {
+        let cancelled = run_phase("third", &cancel, &mut summary, || {
             ran = true;
             Ok::<_, Cancelled>(())
         });
         assert_eq!(cancelled, Err(Cancelled));
         assert!(!ran);
-        assert_eq!(summary.phases.len(), 1);
+        assert_eq!(summary.phases.len(), 2);
     }
 }

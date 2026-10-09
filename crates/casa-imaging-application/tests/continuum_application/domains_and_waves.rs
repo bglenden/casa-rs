@@ -2,7 +2,7 @@
 //! Cubes whose passes run in waves, the admission of their memory, and
 //! outlier domains of their own shape in the paged cube state.
 
-use casa_imaging_application::{Admission, ApplicationDispatchError};
+use casa_imaging_application::{Admission, ApplicationDispatchError, SummaryTarget};
 
 use super::*;
 
@@ -138,6 +138,76 @@ fn a_memory_ceiling_refuses_what_cannot_fit_and_one_plane_runs_one_plane_waves()
     };
     assert!(refusals > 0, "64 KiB holds no line cube");
     assert_eq!(waves, Some(1), "a ceiling just above one plane");
+}
+
+/// A refused run still leaves its summary when the request names one: the
+/// request echo and the error, and no products.
+#[test]
+fn a_refused_run_records_its_error_in_its_summary() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
+    let image_name = root.path().join("refused");
+    let mut imaging = line_cube(&measurement_set, image_name.clone());
+    imaging.resource_policy = memory_policy(64 << 10);
+    let path = root.path().join("refused.summary.json");
+    imaging.summary = Some(SummaryTarget {
+        path: path.clone(),
+        request: serde_json::json!({ "case": "refused" }),
+    });
+    let error = execute_continuum(imaging)
+        .err()
+        .expect("64 KiB holds no cube");
+    assert!(
+        matches!(error, ApplicationDispatchError::Admission(_)),
+        "{error}"
+    );
+    let summary: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("the summary")).expect("JSON");
+    assert_eq!(summary["request"]["case"], "refused");
+    assert!(
+        summary["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("needs")),
+        "{summary}"
+    );
+    assert!(!image_name.with_extension("image").exists());
+}
+
+/// The paged cube cache stays charged while anything holds the run's model
+/// and normal state, products included, and is released with the last
+/// holder.
+#[test]
+fn a_completed_cube_keeps_its_cache_charged_until_its_state_drops() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
+    let mut imaging = line_cube(&measurement_set, root.path().join("held"));
+    imaging.image_size = 128;
+    imaging.resource_policy = memory_policy(64 << 20);
+    let (host, policy) = (imaging.host, imaging.resource_policy);
+    let free = casa_imaging_runtime::free_memory(&host, &policy);
+    let result = execute_continuum(imaging).expect("a cube within 64 MiB");
+    assert!(
+        casa_imaging_runtime::free_memory(&host, &policy) < free,
+        "the returned cube state still charges its cache"
+    );
+    drop(result);
+    assert_eq!(casa_imaging_runtime::free_memory(&host, &policy), free);
+}
+
+/// A source with many rows grows its blocks by at most a quarter of the
+/// memory left past its minimum, so a ceiling that holds its minimum, the
+/// cube cache and one plane of the pass runs the cube.
+#[test]
+fn a_large_source_leaves_room_for_the_cube_cache_and_the_pass() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = thirty_two_channel_many_row_measurement_set(root.path());
+    let mut imaging = line_cube(&measurement_set, root.path().join("rows"));
+    imaging.resource_policy = memory_policy(8 << 20);
+    let result = execute_continuum(imaging).unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(result.outcome.output.major_cycle_count, 1);
 }
 
 /// A cleaned cube of the spectral-line fixture's four channels at

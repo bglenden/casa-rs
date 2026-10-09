@@ -53,6 +53,8 @@ pub(crate) struct ImagingInputs<'a> {
     pub(crate) visibility_write: Option<VisibilityWriteTarget>,
     pub(crate) host: HostResources,
     pub(crate) policy: ResourcePolicy,
+    /// The run's one worker team, which products reuse.
+    pub(crate) team: &'a WorkerTeam,
     pub(crate) cancel: Cancel,
     /// Where the paged cube state of a channel-local run lives.
     pub(crate) spill_directory: &'a Path,
@@ -71,7 +73,6 @@ pub(crate) struct ImagingOutcome {
     pub(crate) total_minor_iterations: usize,
     pub(crate) total_actual_minor_iterations: usize,
     pub(crate) visibility_products: Option<VisibilityProductCompletion>,
-    pub(crate) workers: usize,
     pub(crate) planes_per_wave: Option<u32>,
 }
 
@@ -82,12 +83,11 @@ struct Run<'a> {
     source: MeasurementSetSource<'a>,
     weighting: WeightingGeneration,
     weighting_id: WeightingGenerationId,
-    team: WorkerTeam,
+    team: &'a WorkerTeam,
     cancel: Cancel,
     host: HostResources,
     policy: ResourcePolicy,
-    /// The paged cube state and the reservation of its cache.
-    cube: Option<(CubeState, Reservation)>,
+    cube: Option<CubeState>,
     native_spacing_hz: f64,
     backend: BackendChoice,
     attempts: u64,
@@ -117,7 +117,6 @@ impl ImagingOutcome {
             total_minor_iterations: 0,
             total_actual_minor_iterations: 0,
             visibility_products: major.visibility,
-            workers: run.team.workers(),
             planes_per_wave: run.planes_per_wave,
         }
     }
@@ -142,7 +141,8 @@ pub(crate) fn run(
     let setup = minor_setup(problem, inputs.image_response, &inputs.masks);
     let mut mask_plans = inputs.masks.clone();
     let cancel = inputs.cancel.clone();
-    let mut run = run_phase("imaging weights", &cancel, summary, || Run::open(inputs))?;
+    // Operators, the source, the imaging weights and the paged cube state.
+    let mut run = run_phase("setup", &cancel, summary, || Run::open(inputs))?;
     let major = run_phase("major cycle 1", &cancel, summary, || run.initial(!cleaning))?;
     let mut outcome = ImagingOutcome::initial(major, &run);
     if !cleaning {
@@ -156,7 +156,7 @@ pub(crate) fn run(
             &mask_plans,
             &setup,
             &mut cache,
-            &run.team,
+            run.team,
         )?;
         let statistics = prepared.statistics;
         if let Some(stop) = controller.clean_complete(&statistics) {
@@ -177,7 +177,7 @@ pub(crate) fn run(
                 &setup,
                 &cycle_controls,
                 &mut cache,
-                &run.team,
+                run.team,
             )?)
         })?;
         let global_threshold = controls
@@ -201,7 +201,7 @@ pub(crate) fn run(
                 &mask_plans,
                 &setup,
                 &mut cache,
-                &run.team,
+                run.team,
             )?;
             outcome.stop = controller.clean_complete(&prepared.statistics);
             outcome.masks = Some(ReconstructionMaskSet::Domains(prepared.masks().clone()));
@@ -345,8 +345,8 @@ impl<'a> Run<'a> {
                 reason: "visibilities are written back for one image domain",
             });
         }
-        let workers = inputs.policy.workers(&inputs.host);
-        let team = WorkerTeam::new(workers)?;
+        let team = inputs.team;
+        let workers = team.workers();
         let cancel = inputs.cancel;
         let main = &domains[0].operator;
         let mut source = MeasurementSetSource::new(
@@ -360,7 +360,7 @@ impl<'a> Run<'a> {
             dish_classes,
         );
         let started = Instant::now();
-        let weighting = weighting(problem, &domains[0], &mut source, &team, &cancel)?;
+        let weighting = weighting(problem, &domains[0], &mut source, team, &cancel)?;
         tracing::info!(
             "imaging weights: {workers} workers, {:.2} s",
             started.elapsed().as_secs_f64()
@@ -549,7 +549,7 @@ impl<'a> Run<'a> {
 
     fn model_storage(&self) -> Result<ModelStoragePlan, ImagingError> {
         Ok(match &self.cube {
-            Some((cube, _)) => cube.model_storage()?,
+            Some(cube) => cube.model_storage()?,
             None => ModelStoragePlan::resident(usize::MAX)?,
         })
     }
@@ -559,7 +559,7 @@ impl<'a> Run<'a> {
     fn normal_storage(&self, residency: Residency) -> Result<NormalStoragePlan, ImagingError> {
         let planes = self.domains[0].operator.basis().planes() as usize;
         Ok(match &self.cube {
-            Some((cube, _)) => cube.normal_storage(match residency {
+            Some(cube) => cube.normal_storage(match residency {
                 Residency::All => planes,
                 Residency::Waves { planes_per_wave } => planes_per_wave as usize,
             })?,
@@ -648,7 +648,7 @@ impl<'a> Run<'a> {
         Ok(run_major_cycle(
             &pass,
             &mut self.source,
-            &self.team,
+            self.team,
             &self.cancel,
             &mut |domain, images| {
                 let basis = self.domains[domain].operator.basis();
@@ -773,15 +773,15 @@ fn plane_bounds(problem: &CompiledProblem) -> Option<PlaneBounds> {
 }
 
 /// The paged cube state of a channel-local run, with a cache as large as
-/// the whole cube when a quarter of the free memory allows, and the
-/// reservation of its cache for the run.
+/// the whole cube when a quarter of the free memory allows; the state holds
+/// the cache's reservation for as long as its storage lives.
 fn cube_state(
     problem: &CompiledProblem,
     directory: &Path,
     workers: usize,
     host: &HostResources,
     policy: &ResourcePolicy,
-) -> Result<(CubeState, Reservation), ImagingError> {
+) -> Result<CubeState, ImagingError> {
     let target = problem.model_lifecycle().target();
     let domains = target
         .domains()
@@ -800,10 +800,7 @@ fn cube_state(
             memory: cache as u64,
         },
     )?;
-    Ok((
-        CubeState::new(directory, &domains, planes, cache)?,
-        reservation,
-    ))
+    Ok(CubeState::new(directory, &domains, planes, reservation)?)
 }
 
 /// The record of one minor cycle; `global_threshold` is the run's

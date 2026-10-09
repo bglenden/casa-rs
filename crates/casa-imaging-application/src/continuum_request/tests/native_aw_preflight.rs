@@ -92,6 +92,7 @@ fn native_aw_request(w_plane_count: Option<usize>) -> ContinuumImagingRequest {
         task_requirements: requirements,
         backend: crate::BackendChoice::Cpu,
         cancel: Cancel::new(),
+        summary: None,
     }
 }
 

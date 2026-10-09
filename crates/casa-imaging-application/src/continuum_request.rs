@@ -50,7 +50,7 @@ use casa_imaging_model::{
 };
 use casa_imaging_reconstruction::{MinorCycleImageResponse, ReconstructionMaskPlan};
 use casa_imaging_runtime::pass::{BackendChoice, Cancel};
-use casa_imaging_runtime::{HostResources, ResourcePolicy};
+use casa_imaging_runtime::{HostResources, ResourcePolicy, SummaryTarget};
 use casa_ms::{
     CubeAxisConfig, CubeInterpolation, CubeSpectralSetup, MeasurementSet, MsSelectionIoBudget,
     SelectedObservationEphemeris, SelectedObservationMeasures,
@@ -417,6 +417,9 @@ pub struct ContinuumImagingRequest {
     /// Set by the caller (SIGINT in `casars-imager`) to stop the run at the
     /// next block boundary or phase; nothing is published.
     pub cancel: Cancel,
+    /// Where the run writes its summary, whether it completes or fails;
+    /// `None` writes no file.
+    pub summary: Option<SummaryTarget>,
 }
 
 /// Small presentation projection of one completed native continuum run.
@@ -3237,6 +3240,7 @@ fn runtime(
             .parent()
             .unwrap_or_else(|| Path::new("."))
             .canonicalize()?,
+        summary: request.summary.clone(),
     })
 }
 

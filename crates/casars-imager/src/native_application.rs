@@ -9,8 +9,8 @@ use casa_imaging_application::{
     ContinuumBeamPolicy, ContinuumImagingRequest, ContinuumMask, ContinuumMaskBox,
     ContinuumWeighting, HogbomIterationAccounting, HostResources, ImagingCapabilityRequirement,
     PolarizationCoordinate, ProductNormalization, ResourcePolicy, SpectralImagingMode,
-    TaskRequirement, UnsupportedRequirement, VisibilityContinuumSubtraction, execute_continuum,
-    installed_imaging_capability_catalog, resource_policy_for_task_requirements,
+    SummaryTarget, TaskRequirement, UnsupportedRequirement, VisibilityContinuumSubtraction,
+    execute_continuum, installed_imaging_capability_catalog, resource_policy_for_task_requirements,
 };
 
 use super::{
@@ -31,17 +31,16 @@ fn hex(bytes: [u8; 32]) -> String {
 
 pub(super) fn execute(config: &CliConfig, echo: serde_json::Value) -> Result<RunSummary, String> {
     let started = Instant::now();
-    let result =
-        execute_continuum(application_request(config)?).map_err(|error| error.to_string())?;
-    let minor_cycles = result.minor_cycles.clone();
-    let mut native = result.outcome.output;
-    native.summary.request = echo;
+    let mut request = application_request(config)?;
     let mut summary_path = config.imagename.clone().into_os_string();
     summary_path.push(".summary.json");
-    native
-        .summary
-        .write(std::path::Path::new(&summary_path))
-        .map_err(|error| format!("run summary: {error}"))?;
+    request.summary = Some(SummaryTarget {
+        path: summary_path.into(),
+        request: echo,
+    });
+    let result = execute_continuum(request).map_err(|error| error.to_string())?;
+    let minor_cycles = result.minor_cycles.clone();
+    let native = result.outcome.output;
     let visibility_products = native.visibility_products.map(|completion| {
         crate::task_contract::ImagerVisibilityProductDiagnostic {
             problem_id: hex(completion.problem_id().as_bytes()),
@@ -279,6 +278,7 @@ pub(crate) fn application_request(config: &CliConfig) -> Result<ContinuumImaging
         resource_policy,
         backend: config.backend.choice(),
         cancel: crate::interrupt::token().clone(),
+        summary: None,
     })
 }
 

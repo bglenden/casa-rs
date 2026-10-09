@@ -36,10 +36,11 @@ pub enum SourceAccessError {
 /// Finalize an unopened source's bounded execution envelope and admit it.
 ///
 /// The storage owner supplies the requirement curve; the source takes its
-/// mandatory minimum and at most the bootstrap budget of preferred growth
-/// beyond it, within what `policy` leaves free on `host`. The reservation
-/// holds the envelope the source plans, and the run keeps it while the
-/// source is open.
+/// mandatory minimum and grows beyond it by at most the bootstrap budget and
+/// at most a quarter of what `policy` leaves free on `host` past that
+/// minimum, so the paged cube cache and the passes, admitted after it, keep
+/// the rest. The reservation holds the envelope the source plans, and the
+/// run keeps it while the source is open.
 pub fn finalize_source_access(
     problem: &CompiledProblem,
     access: ResolvedSelectedObservationAccess,
@@ -52,12 +53,14 @@ pub fn finalize_source_access(
         .content_budget()
         .maximum_live_blocks();
     let minimum = requirements.minimum_bytes(maximum_live_blocks)?;
-    let preferred = minimum
-        .checked_add(bootstrap_source_budget().available_bytes())
-        .ok_or(SourceAccessError::Overflow)?;
     let free = usize::try_from(free_memory(host, policy)).unwrap_or(usize::MAX);
+    let growth = bootstrap_source_budget()
+        .available_bytes()
+        .min(free.saturating_sub(minimum) / 4);
     let budget = SelectedObservationContentBudget::new(
-        preferred.min(free).max(minimum),
+        minimum
+            .checked_add(growth)
+            .ok_or(SourceAccessError::Overflow)?,
         maximum_live_blocks,
         requirements.maximum_pointing_polynomial_terms(),
     );

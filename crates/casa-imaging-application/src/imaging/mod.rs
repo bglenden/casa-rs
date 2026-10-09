@@ -66,16 +66,3 @@ pub(crate) enum ImagingError {
     #[error("cube state: {0}")]
     CubeState(#[from] std::io::Error),
 }
-
-impl ImagingError {
-    /// The boxed application error; an admission or a cancellation keeps
-    /// its own type, which [`crate::execute`] reports as its own outcome.
-    pub(crate) fn into_application(self) -> crate::ApplicationError {
-        match self {
-            Self::Admission(admission) => Box::new(admission),
-            Self::Cancelled(cancelled) => Box::new(cancelled),
-            Self::Pass(PassError::Cancelled) => Box::new(Cancelled),
-            error => Box::new(error),
-        }
-    }
-}

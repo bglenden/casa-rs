@@ -106,6 +106,16 @@ pub(super) fn thirty_two_channel_multi_row_measurement_set(root: &Path) -> PathB
     )
 }
 
+/// 16,384 rows of 32 channels: a source whose preferred blocks outgrow a
+/// small memory ceiling.
+pub(super) fn thirty_two_channel_many_row_measurement_set(root: &Path) -> PathBuf {
+    measurement_set_fixture(
+        root,
+        "thirty-two-channel-many-row-input.ms",
+        MeasurementSetFixtureOptions::new(false, false, 32, 1, 2, 16_384, false),
+    )
+}
+
 pub(super) fn four_channel_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,
@@ -757,5 +767,6 @@ pub(super) fn request(
         resource_policy: casa_imaging_application::ResourcePolicy::Balanced,
         backend: casa_imaging_application::BackendChoice::Cpu,
         cancel: casa_imaging_application::Cancel::new(),
+        summary: None,
     }
 }

@@ -406,9 +406,12 @@ applicable Rust/C++ RR, RC, CR, and CC matrix.
 Installed-implementation availability is an application-owned result checked
 before any phase, so a typed-unavailable request starts no work. A run leaves
 one record beside its products, the run summary of plan section 8.3
-(`<imagename>.summary.json`, written by `casars-imager`): the request echo,
-each phase with its wall time and the process's peak resident memory, the
-worker count, the backend, the minor-cycle totals and the product list.
+(`<imagename>.summary.json` for `casars-imager`): the request echo, each
+phase with whether it completed, its wall time and the process's peak
+resident memory, the worker count, the backend, the minor-cycle totals, the
+product list, and the error of a failed run. The application writes it when
+the run completes or fails (ADR-0014's final success/failure summary); a
+cancelled run writes nothing.
 
 ## Runtime model
 

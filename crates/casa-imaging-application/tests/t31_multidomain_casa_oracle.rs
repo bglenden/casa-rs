@@ -277,6 +277,7 @@ fn request(
         resource_policy: casa_imaging_application::ResourcePolicy::Balanced,
         backend: casa_imaging_application::BackendChoice::Cpu,
         cancel: casa_imaging_application::Cancel::new(),
+        summary: None,
     }
 }
 
