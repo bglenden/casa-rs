@@ -5,7 +5,7 @@ use std::ops::Range;
 
 use casa_imaging_operator::{CellHold, MeasurementOperator, ModeSet, Placement, PlaneRange, Tile};
 
-use super::{BackendChoice, PassDomain, PassError, native_residuals};
+use super::{BackendChoice, PassDomain, native_residuals};
 
 /// How one pass divides an image domain's grid accumulation among owners
 /// (one per worker).
@@ -179,18 +179,17 @@ impl WaveDemand<'_> {
 
 impl Residency {
     /// The fewest waves whose [`WaveDemand::bytes`] fit `budget`: every
-    /// plane when they fit, otherwise the largest wave that does.
-    pub fn plan(demand: &WaveDemand<'_>, budget: u64) -> Result<Self, PassError> {
+    /// plane when they fit, otherwise the largest wave that does and at
+    /// least one plane. Whether a wave fits at all is the admission of its
+    /// bytes ([`crate::admit`]).
+    #[must_use]
+    pub fn plan(demand: &WaveDemand<'_>, budget: u64) -> Self {
         let planes = demand.planes();
-        let one = demand.bytes(1);
-        if one > budget {
-            return Err(PassError::Memory {
-                required: one,
-                available: budget,
-            });
+        if planes <= 1 || demand.bytes(planes) <= budget {
+            return Self::All;
         }
-        if demand.bytes(planes) <= budget {
-            return Ok(Self::All);
+        if demand.bytes(1) > budget {
+            return Self::Waves { planes_per_wave: 1 };
         }
         // `bytes` grows with the wave: the largest fitting wave lies in
         // `[fits, too_many)`.
@@ -203,9 +202,9 @@ impl Residency {
                 too_many = middle;
             }
         }
-        Ok(Self::Waves {
+        Self::Waves {
             planes_per_wave: fits,
-        })
+        }
     }
 
     /// The plane ranges of the waves over `planes` planes.

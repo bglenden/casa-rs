@@ -81,6 +81,19 @@ impl WorkerTeam {
     }
 }
 
+impl casa_imaging_products::ProductWindowExecutor for WorkerTeam {
+    fn prepare<T: Send>(
+        &self,
+        slots: &mut [Option<T>],
+        operation: &(dyn Fn(usize) -> Result<T, casa_imaging_products::ProductsError> + Sync),
+    ) -> Result<(), casa_imaging_products::ProductsError> {
+        self.for_each_mut(slots, |index, slot| {
+            *slot = Some(operation(index)?);
+            Ok(())
+        })
+    }
+}
+
 impl std::fmt::Debug for WorkerTeam {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WorkerTeam")

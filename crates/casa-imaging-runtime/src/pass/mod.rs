@@ -100,14 +100,6 @@ pub enum PassError {
     /// once.
     #[error("writing visibilities needs every plane resident")]
     VisibilityWriteWaves,
-    /// Not even one plane of the pass fits the memory budget.
-    #[error("one plane needs {required} bytes but the pass may use {available}")]
-    Memory {
-        /// Bytes one plane needs.
-        required: u64,
-        /// Bytes the pass may use.
-        available: u64,
-    },
     /// The pass was cancelled at a block boundary.
     #[error("the pass was cancelled")]
     Cancelled,
@@ -175,7 +167,8 @@ pub struct PassDomain<'a> {
 /// operator of the pass must be `f32`; placement and the native-channel
 /// predictions of a multi-domain or linearly interpolated residual stay on
 /// the CPU workers.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum BackendChoice {
     /// [`casa_imaging_operator::CpuBackend`].
     #[default]

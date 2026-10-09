@@ -10,11 +10,21 @@ fn main() {
             }
         };
     tracing::info!("casars-imager started");
+    if let Err(error) = casars_imager::interrupt::install() {
+        eprintln!("Error: failed to install the interrupt handler: {error}");
+        std::process::exit(1);
+    }
     if let Err(error) = casars_imager::run_with_cli_args(args) {
-        tracing::error!(casa.priority = "SEVERE", error = %error, "casars-imager failed");
+        // 128 + SIGINT, the shell's status for an interrupted command.
+        let interrupted = casars_imager::interrupt::token().is_cancelled();
+        if interrupted {
+            tracing::warn!("casars-imager interrupted; nothing was published");
+        } else {
+            tracing::error!(casa.priority = "SEVERE", error = %error, "casars-imager failed");
+        }
         eprintln!("Error: {error}");
         let _ = logging_guard.flush();
-        std::process::exit(1);
+        std::process::exit(if interrupted { 130 } else { 1 });
     }
     tracing::info!("casars-imager completed");
     if let Err(error) = logging_guard.flush() {

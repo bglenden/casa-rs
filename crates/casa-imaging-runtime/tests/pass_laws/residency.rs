@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Residency: the planned waves fit the budget and equal one resident pass;
-//! a budget below one plane, a writing pass in waves and rows wider apart
-//! than the planned spacing are typed errors.
+//! a policy below one plane is refused at admission; a writing pass in
+//! waves and rows wider apart than the planned spacing are typed errors.
 
 use casa_imaging_operator::{
     Basis, GridPrecision, ModeSet, PlaneRange, SpectralAxis, SpectralKernel, SpectralResampler,
@@ -11,14 +11,23 @@ use casa_imaging_runtime::pass::{
     BackendChoice, Cancel, MajorCyclePass, PassError, Residency, VisibilitySink, WaveDemand,
     WorkerTeam, run_major_cycle,
 };
+use casa_imaging_runtime::{Admission, Demand, HostResources, ResourcePolicy, admit};
 
 use crate::fixture::{
     IMAGE, Rows, Run, WIDTH_HZ, nearest_cube, operator, planes, run, sparse_model, try_run,
     window_of, worst_relative,
 };
 
+/// A host whose memory never binds, so the policy's ceiling does.
+const HOST: HostResources = HostResources {
+    threads: 1,
+    performance_cores: 1,
+    available_memory: u64::MAX,
+    metal: true,
+};
+
 /// A budget that fits exactly one plane gives one-plane waves whose images
-/// equal one resident pass; a byte less is the typed memory error. Every
+/// equal one resident pass; a byte less is refused at admission. Every
 /// plane fitting gives one resident wave. Nearest mapping, so no model halo
 /// moves the boundary.
 #[test]
@@ -58,16 +67,36 @@ fn one_plane_budget(backend: BackendChoice, precision: GridPrecision) {
         };
         let one = demand.bytes(1);
         assert_eq!(
-            Residency::plan(&demand, one).expect("one plane fits"),
+            Residency::plan(&demand, one),
             Residency::Waves { planes_per_wave: 1 }
         );
-        assert!(matches!(
-            Residency::plan(&demand, one - 1),
-            Err(PassError::Memory { required, available }) if required == one && available == one - 1
-        ));
+        assert_eq!(Residency::plan(&demand, demand.bytes(3)), Residency::All);
+        // A byte less than one plane still plans one-plane waves, and their
+        // admission is refused: a policy that cannot hold one plane rejects
+        // the pass before it reads anything.
         assert_eq!(
-            Residency::plan(&demand, demand.bytes(3)).expect("every plane fits"),
-            Residency::All
+            Residency::plan(&demand, one - 1),
+            Residency::Waves { planes_per_wave: 1 }
+        );
+        let ceiling = ResourcePolicy::Explicit {
+            workers: 1,
+            memory: one - 1,
+        };
+        assert_eq!(
+            admit(
+                &HOST,
+                &ceiling,
+                &Demand {
+                    phase: "pass",
+                    memory: one
+                }
+            )
+            .expect_err("one plane does not fit"),
+            Admission {
+                phase: "pass",
+                required: one,
+                available: one - 1,
+            }
         );
         let model = with_model.then_some(&prepare as &_);
         let resident = run(
@@ -84,7 +113,7 @@ fn one_plane_budget(backend: BackendChoice, precision: GridPrecision) {
             &domains,
             &mut rows,
             &Run {
-                residency: Residency::plan(&demand, one).expect("one plane fits"),
+                residency: Residency::plan(&demand, one),
                 model,
                 modes,
                 backend,

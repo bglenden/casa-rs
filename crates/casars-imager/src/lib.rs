@@ -9,6 +9,7 @@
 //! `casa-imaging-application` and its library dependencies.
 
 mod aw_source;
+pub mod interrupt;
 mod managed_output;
 mod native_application;
 mod schema;
@@ -1098,14 +1099,12 @@ pub struct RunSummary {
     pub output_products: Vec<String>,
 }
 
-/// Execute one parsed config through the application owner.
-pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
-    native_application::execute(config)
-}
-
-/// Execute one canonical task request through the application owner.
+/// Execute one canonical task request through the application owner, and
+/// write the run summary, with `request` as its echo, beside the products
+/// (`<imagename>.summary.json`).
 pub fn run_from_request(request: &ImagerRunTaskRequest) -> Result<RunSummary, String> {
-    run_from_config(&request.to_cli_config()?)
+    let echo = serde_json::to_value(request).map_err(|error| error.to_string())?;
+    native_application::execute(&request.to_cli_config()?, echo)
 }
 
 fn request_from_parameter_cli_args(args: &[OsString]) -> Result<ImagerRunTaskRequest, String> {

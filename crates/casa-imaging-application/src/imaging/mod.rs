@@ -18,7 +18,7 @@ use casa_imaging_reconstruction::{
     MajorCycleError, MaskError, ModelLifecycleError, SpectralOperatorError,
 };
 use casa_imaging_runtime::pass::PassError;
-use casa_imaging_runtime::{MinorCycleRunError, ResourceError};
+use casa_imaging_runtime::{Admission, Cancelled, MinorCycleRunError};
 
 /// A failure of a native imaging run.
 #[derive(Debug, thiserror::Error)]
@@ -53,13 +53,29 @@ pub(crate) enum ImagingError {
     /// The next cycle's masks could not be planned.
     #[error(transparent)]
     Mask(#[from] MaskError),
-    /// The host resources could not be read.
+    /// A phase's memory did not fit the resource policy.
     #[error(transparent)]
-    Resources(#[from] ResourceError),
+    Admission(#[from] Admission),
+    /// The run was cancelled between phases.
+    #[error(transparent)]
+    Cancelled(#[from] Cancelled),
     /// The selected observation could not be opened.
     #[error("selected observation: {0}")]
     Observation(#[source] Box<dyn std::error::Error + Send + Sync>),
     /// The paged cube state could not be created.
     #[error("cube state: {0}")]
     CubeState(#[from] std::io::Error),
+}
+
+impl ImagingError {
+    /// The boxed application error; an admission or a cancellation keeps
+    /// its own type, which [`crate::execute`] reports as its own outcome.
+    pub(crate) fn into_application(self) -> crate::ApplicationError {
+        match self {
+            Self::Admission(admission) => Box::new(admission),
+            Self::Cancelled(cancelled) => Box::new(cancelled),
+            Self::Pass(PassError::Cancelled) => Box::new(Cancelled),
+            error => Box::new(error),
+        }
+    }
 }

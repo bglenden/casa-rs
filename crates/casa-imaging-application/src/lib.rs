@@ -21,8 +21,10 @@ pub use casa_imaging_deconvolution::CleanStop;
 pub use casa_imaging_model::{
     HogbomIterationAccounting, ImagingRequestVersion, PolarizationCoordinate, ProductNormalization,
 };
-pub use casa_imaging_runtime::pass::BackendChoice;
-pub use casa_imaging_runtime::{ResourceOverride, ResourcePolicy, TracedComponent};
+pub use casa_imaging_runtime::pass::{BackendChoice, Cancel};
+pub use casa_imaging_runtime::{
+    Admission, HostResources, Phase, ResourcePolicy, RunSummary, TracedComponent,
+};
 pub use casa_product_sink::{CasaImageDomainOutput, CasaImageProductSink};
 pub use continuum_request::{
     ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumAwCfSource, ContinuumAwProjection,
@@ -41,22 +43,16 @@ use casa_imaging_model::{
 };
 use casa_imaging_products::{
     ContinuumProductControls, ContinuumProductInputs, PlannedContinuumGeneration,
-    PublishedContinuumGeneration, VisibilityProductCompletion,
+    ProductStoragePlan, PublishedContinuumGeneration, VisibilityProductCompletion,
+    produce_continuum_members,
 };
 use casa_imaging_reconstruction::{
-    ExecutableModelProblem, ImageDomainReconstructionMaskPlans, MajorCycleCompletion,
-    MinorCycleImageResponse, ReconstructionMaskSet,
+    ImageDomainReconstructionMaskPlans, MajorCycleCompletion, MinorCycleImageResponse,
+    ReconstructionMaskSet,
 };
+use casa_imaging_runtime::pass::WorkerTeam;
 use casa_imaging_runtime::{
-    AttemptBoundObservationCompletion, BuildIdentity, ExecutionAttemptId, ExecutionProvenance,
-    ExecutionReceipt, ExecutionReceiptStore, ExecutionStatus, FenceKind,
-    ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId,
-    ObservationReadCompletionContext, PagedStateDirectory, PlannerCostModelProfileId,
-    PlanningBindings, ResourceAuthority, RunBindings, RunController, RunDirective,
-    SerialProductPublicationExecutor, SerialProductPublicationPlan, SerialProductPublicationPolicy,
-    SerialProductPublicationRegistry, SerialProductPublicationSink, StorageIoResourceBinding,
-    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkMeasurements,
-    finalize_source_access, plan, run,
+    Cancelled, Demand, SourceAccessError, admit, finalize_source_access, run_phase,
 };
 use casa_ms::{
     ResolvedSelectedObservationAccess, SelectedObservationResolutionRequest,
@@ -66,41 +62,23 @@ use casa_ms::{
 /// Boxed application failure accepted by the native application composition.
 pub type ApplicationError = Box<dyn Error + Send + Sync>;
 
-/// Exact runtime identities and non-scientific limits for one native whole run.
-#[derive(Clone)]
+/// The host, policy, backend and cancellation of one native run.
+#[derive(Clone, Debug)]
 pub struct ApplicationRuntime {
-    /// Immutable registry identity used by product publication.
-    pub registry: ImplementationRegistryId,
-    /// CPU implementation identity.
-    pub implementation: WorkImplementationId,
-    /// Conservative elapsed estimate for each physical stage.
-    pub stage_nanos: u64,
-    /// Exact profiled storage resources shared by selected-observation reads,
-    /// receipt commits, and product publication.
-    pub storage_io: StorageIoResourceBinding,
-    /// Writable run-local directory the major-cycle pass pages cube state into
-    /// when the state does not fit in memory.
-    pub paged_state_storage: PagedStateDirectory,
-    /// Fixed-point confidence in parts per million.
-    pub confidence_parts_per_million: u32,
-    /// Host-use policy bound at planning and execution.
+    /// The host the run admits its phases against.
+    pub host: HostResources,
+    /// How much of the host the run may use.
     pub resource_policy: ResourcePolicy,
     /// Where the major-cycle passes grid (`backend`).
     pub backend: BackendChoice,
-    /// Deployment-selected cost-model profile.
-    pub cost_model: PlannerCostModelProfileId,
-    /// Process resource authority used for admission and execution.
-    pub authority: ResourceAuthority,
-    /// Durable bounded receipt store for product publication.
-    pub receipts: ExecutionReceiptStore,
-    /// Executable build identity recorded in every receipt.
-    pub build: BuildIdentity,
-    /// Attempt identity of the product-publication run.
-    pub publication_attempt: ExecutionAttemptId,
+    /// Set to stop the run at the next block boundary or phase.
+    pub cancel: Cancel,
+    /// Directory the paged cube state of a channel-local run lives in.
+    pub spill_directory: PathBuf,
 }
 
 /// Exact native request template resolved at the sole application boundary.
-pub struct ApplicationRequest<S> {
+pub struct ApplicationRequest {
     /// Backend-independent scientific and product contract.
     pub specification: ProblemSpecification,
     /// Requested image geometry.
@@ -122,15 +100,15 @@ pub struct ApplicationRequest<S> {
     pub task_requirements: Vec<TaskRequirement>,
     /// Native-only deployment inputs evaluated after request compilation.
     /// A preparation error is terminal; there is no alternate execution path.
-    pub native: Result<ApplicationNative<S>, ApplicationError>,
+    pub native: Result<ApplicationNative, ApplicationError>,
 }
 
 /// Runtime and publication inputs consumed only by the Native engine port.
-pub struct ApplicationNative<S> {
-    /// Explicit runtime/resource/receipt inputs.
+pub struct ApplicationNative {
+    /// The run's host, policy, backend and cancellation.
     pub runtime: ApplicationRuntime,
     /// Product-generation and independently atomic publication configuration.
-    pub publication: ApplicationPublication<S>,
+    pub publication: ApplicationPublication,
     /// The AW convolution-function catalog of an A-projection run.
     pub aw_catalog: Option<AwCatalogDeployment>,
 }
@@ -148,16 +126,18 @@ pub struct AwCatalogDeployment {
     pub resident_bytes: usize,
 }
 
-/// Product-generation controls, deployment resources, and sole storage sink.
-pub struct ApplicationPublication<S> {
+/// Product-generation controls and the storage sink.
+pub struct ApplicationPublication {
     /// Scientific continuum-product controls.
     pub controls: ContinuumProductControls,
     /// Storage adapter that privately stages and atomically publishes members.
-    pub sink: S,
+    pub sink: CasaImageProductSink,
 }
 
 /// Typed native result of one whole run.
 pub struct NativeApplicationOutcome {
+    /// The compiled problem the run executed.
+    pub problem: CompiledProblem,
     /// Ordered solve evidence captured before each major-cycle pass.
     pub minor_cycles: Vec<NativeMinorCycleOutcome>,
     /// Why cleaning stopped (CASA's `stopcode`); `None` for a dirty run or
@@ -176,8 +156,9 @@ pub struct NativeApplicationOutcome {
     pub planes_per_wave: Option<u32>,
     /// Final per-visibility product identities and provenance, when requested.
     pub visibility_products: Option<VisibilityProductCompletion>,
-    /// Atomic product-publication receipt.
-    pub publication_receipt: ExecutionReceipt,
+    /// The run's phases, team and totals; the caller adds the request echo
+    /// before writing it beside the products.
+    pub summary: RunSummary,
     /// Final authoritative complete-data and model state.
     pub scientific: MajorCycleCompletion,
     /// Planned product generation used before member production.
@@ -277,13 +258,9 @@ pub struct ApplicationOutcome {
 
 /// Execute one imaging request through the sole installed implementation.
 /// Unsupported requirements fail typed before physical planning or execution.
-pub fn execute<S>(
-    request: ApplicationRequest<S>,
-) -> Result<ApplicationOutcome, ApplicationDispatchError>
-where
-    S: SerialProductPublicationSink + Send + 'static,
-    S::Error: Send + Sync,
-{
+pub fn execute(
+    request: ApplicationRequest,
+) -> Result<ApplicationOutcome, ApplicationDispatchError> {
     let resolved = resolve_selected_observation(request.observation.clone())
         .map_err(|error| ApplicationDispatchError::Preparation(Box::new(error)))?;
     let (snapshot, access) = resolved.into_parts();
@@ -307,32 +284,35 @@ where
         minor_cycle_image_response: request.minor_cycle_image_response,
         native: request.native,
     };
-    let output = run_native(&problem, input).map_err(ApplicationDispatchError::Native)?;
+    let output =
+        run_native(&problem, input).map_err(|error| match error.downcast::<Admission>() {
+            Ok(admission) => ApplicationDispatchError::Admission(*admission),
+            Err(error) => match error.downcast::<Cancelled>() {
+                Ok(_) => ApplicationDispatchError::Cancelled,
+                Err(error) => ApplicationDispatchError::Native(error),
+            },
+        })?;
     Ok(ApplicationOutcome {
         output: Box::new(output),
     })
 }
 
-struct NativeInput<S> {
+struct NativeInput {
     observation: SelectedObservationResolutionRequest,
     initial_access: ResolvedSelectedObservationAccess,
     write_model_column: bool,
     write_corrected_data: bool,
     masks: ImageDomainReconstructionMaskPlans,
     minor_cycle_image_response: Option<MinorCycleImageResponse>,
-    native: Result<ApplicationNative<S>, ApplicationError>,
+    native: Result<ApplicationNative, ApplicationError>,
 }
 
 /// Run the major-cycle passes, the minor cycles between them and any
 /// visibility write, then publish the products.
-fn run_native<S>(
+fn run_native(
     problem: &CompiledProblem,
-    input: NativeInput<S>,
-) -> Result<NativeApplicationOutcome, ApplicationError>
-where
-    S: SerialProductPublicationSink + Send + 'static,
-    S::Error: Send + Sync,
-{
+    input: NativeInput,
+) -> Result<NativeApplicationOutcome, ApplicationError> {
     let ApplicationNative {
         runtime,
         publication,
@@ -350,42 +330,72 @@ where
             })
         })
         .transpose()?;
-    let access = finalize_source_access(
+    let (access, source) = finalize_source_access(
         problem,
         input.initial_access,
-        &runtime.authority,
+        &runtime.host,
         &runtime.resource_policy,
-    )?;
-    let paged_state = runtime.paged_state_storage.clone();
-    let outcome = imaging::run(imaging::ImagingInputs {
-        problem,
-        access,
-        masks: input.masks,
-        image_response: input.minor_cycle_image_response,
-        visibility_write,
-        authority: &runtime.authority,
-        policy: &runtime.resource_policy,
-        spill_directory: paged_state.directory(),
-        aw_catalog,
-        backend: runtime.backend,
-    })?;
-    publish_products(
-        problem,
-        outcome.scientific,
-        outcome.masks,
-        runtime,
-        publication,
-        PriorPhaseOutcome {
-            minor_cycles: outcome.minor_cycles,
-            stop: outcome.stop,
-            major_cycle_count: outcome.major_cycle_count,
-            total_minor_iterations: outcome.total_minor_iterations,
-            total_actual_minor_iterations: outcome.total_actual_minor_iterations,
-            visibility_products: outcome.visibility_products,
-            workers: outcome.workers,
-            planes_per_wave: outcome.planes_per_wave,
-        },
     )
+    .map_err(|error| match error {
+        SourceAccessError::Admission(admission) => Box::new(admission) as ApplicationError,
+        error => Box::new(error),
+    })?;
+    let mut summary = RunSummary {
+        backend: runtime.backend,
+        ..RunSummary::default()
+    };
+    let outcome = imaging::run(
+        imaging::ImagingInputs {
+            problem,
+            access,
+            masks: input.masks,
+            image_response: input.minor_cycle_image_response,
+            visibility_write,
+            host: runtime.host,
+            policy: runtime.resource_policy,
+            cancel: runtime.cancel.clone(),
+            spill_directory: &runtime.spill_directory,
+            aw_catalog,
+            backend: runtime.backend,
+        },
+        &mut summary,
+    )
+    .map_err(imaging::ImagingError::into_application)?;
+    drop(source);
+    summary.workers = outcome.workers;
+    summary.minor_cycles = outcome.minor_cycles.len();
+    summary.minor_iterations = outcome.total_minor_iterations;
+    let (planned_products, scientific, products) =
+        run_phase("products", &runtime.cancel, &mut summary, || {
+            publish_products(
+                problem,
+                outcome.scientific,
+                outcome.masks,
+                &runtime,
+                publication,
+                outcome.workers,
+            )
+        })?;
+    summary.products = planned_products
+        .members()
+        .iter()
+        .map(|member| member.name().to_string())
+        .collect();
+    Ok(NativeApplicationOutcome {
+        problem: problem.clone(),
+        minor_cycles: outcome.minor_cycles,
+        stop: outcome.stop,
+        major_cycle_count: outcome.major_cycle_count,
+        total_minor_iterations: outcome.total_minor_iterations,
+        total_actual_minor_iterations: outcome.total_actual_minor_iterations,
+        workers: outcome.workers,
+        planes_per_wave: outcome.planes_per_wave,
+        visibility_products: outcome.visibility_products,
+        summary,
+        scientific,
+        planned_products,
+        products,
+    })
 }
 
 fn visibility_write_selection(
@@ -432,250 +442,55 @@ fn visibility_write_selection(
     )))
 }
 
-struct PriorPhaseOutcome {
-    workers: usize,
-    planes_per_wave: Option<u32>,
-    minor_cycles: Vec<NativeMinorCycleOutcome>,
-    stop: Option<CleanStop>,
-    major_cycle_count: usize,
-    total_minor_iterations: usize,
-    total_actual_minor_iterations: usize,
-    visibility_products: Option<VisibilityProductCompletion>,
-}
-
-enum ApplicationRunController {
-    Continue,
-    ApplyEligible,
-}
-
-impl RunController for ApplicationRunController {
-    fn directive(&mut self, status: &ExecutionStatus) -> RunDirective {
-        match self {
-            Self::ApplyEligible => status
-                .eligible_adaptations()
-                .first()
-                .map_or(RunDirective::Continue, |transition| {
-                    RunDirective::Adapt(transition.id.clone())
-                }),
-            Self::Continue => RunDirective::Continue,
-        }
-    }
-}
-
-fn application_controller(runtime: &ApplicationRuntime) -> ApplicationRunController {
-    if runtime.resource_policy.has_explicit_memory_ceiling() {
-        ApplicationRunController::ApplyEligible
-    } else {
-        ApplicationRunController::Continue
-    }
-}
-
-fn publish_products<S>(
+/// Generate every planned product member into the sink's private staging,
+/// one output channel per window on `workers` workers, and publish them;
+/// a cancelled run publishes nothing.
+fn publish_products(
     problem: &CompiledProblem,
     scientific: MajorCycleCompletion,
     reconstruction_masks: Option<ReconstructionMaskSet>,
-    runtime: ApplicationRuntime,
-    publication_config: ApplicationPublication<S>,
-    prior: PriorPhaseOutcome,
-) -> Result<NativeApplicationOutcome, ApplicationError>
-where
-    S: SerialProductPublicationSink + Send + 'static,
-    S::Error: Send + Sync,
-{
-    let (planned_products, generation_demand) = {
-        let requested_workers = match &runtime.resource_policy {
-            ResourcePolicy::Explicit(policy) => {
-                policy.workers.map_or(Ok(prior.workers), usize::try_from)?
+    runtime: &ApplicationRuntime,
+    publication: ApplicationPublication,
+    workers: usize,
+) -> Result<
+    (
+        PlannedContinuumGeneration,
+        MajorCycleCompletion,
+        PublishedContinuumGeneration,
+    ),
+    ApplicationError,
+> {
+    let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific)?;
+    if let Some(masks) = reconstruction_masks.as_ref() {
+        inputs = match masks {
+            ReconstructionMaskSet::Shared(mask) => inputs.with_reconstruction_mask(mask)?,
+            ReconstructionMaskSet::Domains(masks) => {
+                inputs.with_domain_reconstruction_masks(masks)?
             }
-            _ => prior.workers,
         };
-        let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific)?;
-        if let Some(masks) = reconstruction_masks.as_ref() {
-            inputs = match masks {
-                ReconstructionMaskSet::Shared(mask) => inputs.with_reconstruction_mask(mask)?,
-                ReconstructionMaskSet::Domains(masks) => {
-                    inputs.with_domain_reconstruction_masks(masks)?
-                }
-            };
-        }
-        let planned = PlannedContinuumGeneration::new(&inputs, &publication_config.controls)?;
-        let demand = planned.demand(
-            &inputs,
-            casa_imaging_products::ProductStoragePlan::new(1, requested_workers)?,
-        )?;
-        (planned, demand)
-    };
-    let staging_residency_bytes = publication_config
-        .sink
-        .residency(&planned_products, &generation_demand)?;
-
-    let planning_registry =
-        PlanningRegistry::new(runtime.registry, runtime.implementation.clone(), problem);
-    let publication_plan = SerialProductPublicationPlan::new(
-        problem,
-        &planned_products,
-        &generation_demand,
-        staging_residency_bytes,
-        &planning_registry,
-        SerialProductPublicationPolicy::new(
-            runtime.implementation.clone(),
-            runtime.storage_io.clone(),
-            runtime.stage_nanos,
-            runtime.confidence_parts_per_million,
-            runtime.authority.topology().native_thread_stack_bytes,
-        ),
-    )?;
-    let (physical, publication, window) = publication_plan.into_parts();
-    // Admit the generation windows and direct writer before opening output images.
-    let execution_plan = plan(
-        problem,
-        PlanningBindings::new(
-            runtime.registry,
-            runtime.resource_policy.clone(),
-            runtime.cost_model,
-        ),
-        &runtime.authority,
-        &planning_registry,
-        &runtime.receipts,
-        move |_, _| Ok::<_, std::convert::Infallible>(vec![physical]),
-    )?;
-    let executor = SerialProductPublicationExecutor::new(
-        runtime.implementation.clone(),
-        problem.clone(),
-        publication,
-        planned_products,
-        scientific,
-        reconstruction_masks,
-        publication_config.sink,
-        window,
-    )?;
-    let registry = SerialProductPublicationRegistry::new(
-        runtime.registry,
-        runtime.implementation.clone(),
-        problem,
-        executor,
-    );
-    let executable = ExecutableModelProblem::from_compiled(problem.clone())?;
-    let current = RunBindings::new(
-        problem.inputs().clone(),
+    }
+    let planned = PlannedContinuumGeneration::new(&inputs, &publication.controls)?;
+    let window = ProductStoragePlan::new(1, workers)?;
+    let demand = planned.demand(&inputs, window)?;
+    let held = admit(
+        &runtime.host,
         &runtime.resource_policy,
-        runtime.cost_model,
-    );
-    let mut controller = application_controller(&runtime);
-    run(
-        &executable,
-        &execution_plan,
-        &current,
-        &registry,
-        &runtime.authority,
-        &mut controller,
-        runtime.receipts.bind(ExecutionProvenance::new(
-            runtime.publication_attempt,
-            runtime.build,
-        )),
+        &Demand {
+            phase: "products",
+            memory: demand.peak_residency_bytes()
+                + publication.sink.residency(&planned, &demand)?,
+        },
     )?;
-    let publication_receipt = runtime.receipts.open(runtime.publication_attempt)?;
-    let completion = registry
-        .implementation()
-        .take_completion()
-        .ok_or_else(|| boxed("publication execution omitted its product completion"))?;
-    let (planned_products, scientific, products) = completion.into_parts();
-    Ok(NativeApplicationOutcome {
-        minor_cycles: prior.minor_cycles,
-        stop: prior.stop,
-        major_cycle_count: prior.major_cycle_count,
-        total_minor_iterations: prior.total_minor_iterations,
-        total_actual_minor_iterations: prior.total_actual_minor_iterations,
-        workers: prior.workers,
-        planes_per_wave: prior.planes_per_wave,
-        visibility_products: prior.visibility_products,
-        publication_receipt,
-        scientific,
-        planned_products,
-        products,
-    })
-}
-
-struct PlanningRegistry {
-    id: ImplementationRegistryId,
-    implementation_id: WorkImplementationId,
-    metadata: ImplementationContractMetadata,
-    implementation: PlanningImplementation,
-}
-
-impl PlanningRegistry {
-    fn new(
-        id: ImplementationRegistryId,
-        implementation_id: WorkImplementationId,
-        problem: &CompiledProblem,
-    ) -> Self {
-        Self {
-            id,
-            implementation: PlanningImplementation(implementation_id.clone()),
-            implementation_id,
-            metadata: ImplementationContractMetadata::new(
-                problem.problem_id(),
-                problem.numerics_id(),
-                problem.required_capabilities().clone(),
-            ),
-        }
+    let team = WorkerTeam::new(workers)?;
+    let products = produce_continuum_members(&planned, &inputs, window, &team, &publication.sink)?;
+    drop(inputs);
+    drop(held);
+    if runtime.cancel.is_cancelled() {
+        // The staged members are removed when the sink drops.
+        return Err(Cancelled.into());
     }
-}
-
-impl ImplementationRegistry for PlanningRegistry {
-    type Implementation = PlanningImplementation;
-
-    fn registry_id(&self) -> ImplementationRegistryId {
-        self.id
-    }
-
-    fn resolve(&self, id: &WorkImplementationId) -> Option<&Self::Implementation> {
-        (id == &self.implementation_id).then_some(&self.implementation)
-    }
-
-    fn implementation_contract(
-        &self,
-        id: &WorkImplementationId,
-    ) -> Option<ImplementationContractMetadata> {
-        (id == &self.implementation_id).then(|| self.metadata.clone())
-    }
-}
-
-struct PlanningImplementation(WorkImplementationId);
-
-impl WorkImplementation for PlanningImplementation {
-    type Error = io::Error;
-
-    fn implementation_id(&self) -> &WorkImplementationId {
-        &self.0
-    }
-
-    fn execute(&self, _: WorkExecutionContext<'_>) -> Result<WorkMeasurements, Self::Error> {
-        Err(io::Error::other("planning-only registry cannot execute"))
-    }
-
-    fn failure_measurements<'a>(&'a self, _: &'a Self::Error) -> Option<&'a WorkMeasurements> {
-        None
-    }
-
-    fn wait_for_fence(
-        &self,
-        _: WorkExecutionContext<'_>,
-        _: FenceKind,
-    ) -> Result<WorkMeasurements, Self::Error> {
-        Err(io::Error::other("planning-only registry cannot execute"))
-    }
-
-    fn complete_observation_read(
-        &self,
-        _: ObservationReadCompletionContext,
-    ) -> Result<AttemptBoundObservationCompletion, Self::Error> {
-        Err(io::Error::other("planning-only registry cannot execute"))
-    }
-
-    fn publish(&self, _: WorkExecutionContext<'_>) -> Result<(), Self::Error> {
-        Err(io::Error::other("planning-only registry cannot execute"))
-    }
+    publication.sink.publish()?;
+    Ok((planned, scientific, products))
 }
 
 /// Failure before or within the installed whole-run implementation.
@@ -687,6 +502,11 @@ pub enum ApplicationDispatchError {
     Compile(CompileProblemError),
     /// No installed implementation satisfies the compiled and task contract.
     Unavailable(ImplementationUnavailable),
+    /// A phase's memory did not fit the resource policy; nothing was
+    /// published.
+    Admission(Admission),
+    /// The run was cancelled; nothing was published.
+    Cancelled,
     /// The sole installed implementation failed.
     Native(ApplicationError),
 }
@@ -701,6 +521,8 @@ impl fmt::Display for ApplicationDispatchError {
                 write!(formatter, "imaging request compilation failed: {error}")
             }
             Self::Unavailable(error) => error.fmt(formatter),
+            Self::Admission(error) => write!(formatter, "native imaging run refused: {error}"),
+            Self::Cancelled => write!(formatter, "native imaging run cancelled"),
             Self::Native(error) => write!(formatter, "native imaging run failed: {error}"),
         }
     }

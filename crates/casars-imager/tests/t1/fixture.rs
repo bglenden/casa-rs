@@ -6,7 +6,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::Once;
 
 use casa_coordinates::{CoordinateModel, ProjectionType, StokesType};
 use casa_images::{GaussianBeam, PagedImage};
@@ -319,7 +318,6 @@ impl Observation {
 
     /// [`Observation::image`], or the route's refusal.
     pub fn try_image(&self, name: &str, controls: Value) -> Result<(RunSummary, Products), String> {
-        set_production_io_environment();
         let image_name = self.root.path().join(name);
         let mut request = json!({
             "measurement_set": self.measurement_set,
@@ -435,16 +433,6 @@ impl Observation {
 fn angle_difference_rad(actual: f64, expected: f64) -> f64 {
     (actual - expected + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU)
         - std::f64::consts::PI
-}
-
-fn set_production_io_environment() {
-    static ONCE: Once = Once::new();
-    // The application requires measured spill rates and refuses to guess;
-    // these are test calibration facts, not measurements.
-    ONCE.call_once(|| unsafe {
-        std::env::set_var("CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND", "1000000000");
-        std::env::set_var("CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND", "1000000000");
-    });
 }
 
 /// One persisted product: the opened image and its first plane `[x, y]`.

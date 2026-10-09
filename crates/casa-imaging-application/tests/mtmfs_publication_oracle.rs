@@ -3,7 +3,7 @@
 //! End-to-end T44 application/publication gate against the frozen CASA oracle.
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeSet,
     error::Error,
     fs,
     path::{Path, PathBuf},
@@ -12,12 +12,9 @@ use std::{
 use casa_coordinates::{CoordinateModel, StokesType};
 use casa_images::PagedImage;
 use casa_imaging_application::{
-    ContinuumAlgorithm, ContinuumBeamPolicy, ContinuumImagingRequest, ContinuumMask,
-    ContinuumWeighting, HogbomIterationAccounting, SpectralImagingMode, TaskRequirement,
-    execute_continuum,
-};
-use casa_imaging_runtime::{
-    CapacityDomainId, ReceiptStatus, ResourceOverride, ResourcePolicy, WorkNodeId,
+    Cancel, ContinuumAlgorithm, ContinuumBeamPolicy, ContinuumImagingRequest, ContinuumMask,
+    ContinuumWeighting, HogbomIterationAccounting, HostResources, ResourcePolicy,
+    SpectralImagingMode, TaskRequirement, execute_continuum,
 };
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
 
@@ -61,7 +58,6 @@ const COMMON_BEAM_PRODUCTS: [&str; 6] = [
 #[test]
 #[ignore = "requires slow-parity casatestdata and the frozen CASA T44 image products"]
 fn t44_application_mtmfs_publishes_frozen_casa_product_contract() -> Result<(), Box<dyn Error>> {
-    set_production_io_environment();
     let output = PathBuf::from(
         std::env::var_os(OUTPUT_ENV).ok_or("CASA_RS_T44_APPLICATION_PREFIX is not set")?,
     );
@@ -124,13 +120,13 @@ fn t44_application_mtmfs_publishes_frozen_casa_product_contract() -> Result<(), 
         w_projection_planes: None,
         aw_projection: None,
         task_requirements: vec![TaskRequirement::SerialCpu],
-        resource_policy: casa_imaging_runtime::ResourcePolicy::Explicit(
-            casa_imaging_runtime::ResourceOverride {
-                workers: Some(1),
-                ..Default::default()
-            },
-        ),
+        host: HostResources::detect()?,
+        resource_policy: ResourcePolicy::Explicit {
+            workers: 1,
+            memory: u64::MAX,
+        },
         backend: casa_imaging_application::BackendChoice::Cpu,
+        cancel: Cancel::new(),
     };
     let result = execute_continuum(request)?;
     let expected_names = PRODUCT_NAMES.map(str::to_string).to_vec();
@@ -148,28 +144,7 @@ fn t44_application_mtmfs_publishes_frozen_casa_product_contract() -> Result<(), 
             .collect::<Vec<_>>(),
         PRODUCT_NAMES
     );
-    assert_eq!(
-        outcome.publication_receipt.status(),
-        ReceiptStatus::Completed
-    );
-    assert_eq!(
-        outcome.publication_receipt.publication_layout_count(),
-        PRODUCT_NAMES.len()
-    );
-    assert_eq!(
-        outcome.publication_receipt.projected_resource_policy(),
-        ResourcePolicy::Explicit(ResourceOverride {
-            workers: Some(1),
-            ..ResourceOverride::default()
-        })
-    );
-    let nodes = outcome.publication_receipt.plan_node_identities();
-    for node in ["product-generation-write", "product-publication-commit"] {
-        assert!(
-            nodes.contains(&WorkNodeId::new(node)),
-            "missing {node} node"
-        );
-    }
+    assert_eq!(outcome.summary.products, PRODUCT_NAMES);
 
     assert_persisted_inventory(&output)?;
     assert_persisted_metadata(&output)?;
@@ -180,7 +155,6 @@ fn t44_application_mtmfs_publishes_frozen_casa_product_contract() -> Result<(), 
 #[test]
 #[ignore = "requires the frozen issue #607 multi-SPW MT-MFS fixture and CASA products"]
 fn issue607_representative_mtmfs_matches_casa_products() -> Result<(), Box<dyn Error>> {
-    set_production_io_environment();
     let source = PathBuf::from(
         std::env::var_os(REPRESENTATIVE_MS_ENV).ok_or("CASA_RS_ISSUE607_MTMFS_MS is not set")?,
     );
@@ -285,12 +259,13 @@ fn representative_mtmfs_request(
         w_projection_planes: None,
         aw_projection: None,
         task_requirements: vec![TaskRequirement::SerialCpu],
-        resource_policy: ResourcePolicy::Explicit(ResourceOverride {
-            workers: Some(1),
-            memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 1 << 30)]),
-            ..ResourceOverride::default()
-        }),
+        host: HostResources::detect().expect("host"),
+        resource_policy: ResourcePolicy::Explicit {
+            workers: 1,
+            memory: 1 << 30,
+        },
         backend: casa_imaging_application::BackendChoice::Cpu,
+        cancel: Cancel::new(),
     }
 }
 
@@ -577,14 +552,6 @@ fn assert_persisted_metadata(prefix: &Path) -> Result<(), Box<dyn Error>> {
     assert!(alpha_mask.iter().any(|valid| *valid));
     assert!(alpha_mask.iter().any(|valid| !*valid));
     Ok(())
-}
-
-fn set_production_io_environment() {
-    // The application requires measured local storage rates at its production boundary.
-    unsafe {
-        std::env::set_var("CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND", "1000000000");
-        std::env::set_var("CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND", "1000000000");
-    }
 }
 
 fn copy_tree(source: &Path, destination: &Path) -> Result<(), Box<dyn Error>> {

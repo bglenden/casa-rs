@@ -8,7 +8,6 @@ use super::*;
 #[test]
 fn application_executes_single_ddid_stokes_i_mfs_hogbom_with_one_iteration() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = tiny_measurement_set(root.path());
     let image_name = root.path().join("hogbom");
@@ -51,17 +50,15 @@ fn application_executes_single_ddid_stokes_i_mfs_hogbom_with_one_iteration() {
 #[test]
 fn application_serial_cpu_requirement_caps_replay_to_one_worker() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = tiny_measurement_set(root.path());
     let image_name = root.path().join("serial-hogbom");
     let mut imaging = request(measurement_set, image_name, ContinuumAlgorithm::Hogbom);
     imaging.task_requirements = vec![TaskRequirement::SerialCpu];
-    imaging.resource_policy =
-        casa_imaging_runtime::ResourcePolicy::Explicit(casa_imaging_runtime::ResourceOverride {
-            workers: Some(1),
-            ..casa_imaging_runtime::ResourceOverride::default()
-        });
+    imaging.resource_policy = ResourcePolicy::Explicit {
+        workers: 1,
+        memory: u64::MAX,
+    };
 
     let result = execute_continuum(imaging).expect("serial native Högbom execution");
     assert_eq!(result.outcome.output.workers, 1);
@@ -70,7 +67,6 @@ fn application_serial_cpu_requirement_caps_replay_to_one_worker() {
 #[test]
 fn uniform_multi_spw_mfs_clark_matches_serial_with_four_admitted_workers() {
     let _execution_guard = EXECUTION_LOCK.lock().unwrap();
-    set_production_io_environment();
     let root = tempfile::tempdir().unwrap();
     let measurement_set = four_spw_vla_measurement_set(root.path());
     for selection in ["0~3", "0:0,1:0~2,2:0~4,3:0~6"] {
@@ -79,15 +75,14 @@ fn uniform_multi_spw_mfs_clark_matches_serial_with_four_admitted_workers() {
 }
 
 fn assert_uniform_mfs_workers(measurement_set: PathBuf, root: &Path, selection: &str) {
-    // Admission caps explicit worker overrides at the host thread count, so a
-    // team larger than this host is infeasible rather than a parity failure.
-    let host_threads = std::thread::available_parallelism().unwrap().get() as u64;
-    assert!(host_threads >= 4, "parity needs at least four host threads");
+    // An eight-thread host, so the policy, not this machine, sets the team.
+    let host = HostResources {
+        threads: 8,
+        performance_cores: 8,
+        ..HostResources::detect().expect("host")
+    };
     let mut prefixes = Vec::new();
-    for workers in [1, 4, 8]
-        .into_iter()
-        .filter(|&workers| workers <= host_threads)
-    {
+    for workers in [1, 4, 8] {
         let prefix = root.join(format!("uniform-mfs-{selection}-w{workers}"));
         let mut imaging = request(
             measurement_set.clone(),
@@ -107,23 +102,14 @@ fn assert_uniform_mfs_workers(measurement_set: PathBuf, root: &Path, selection: 
         } else {
             vec![]
         };
-        imaging.resource_policy = casa_imaging_runtime::ResourcePolicy::Explicit(
-            casa_imaging_runtime::ResourceOverride {
-                workers: Some(workers),
-                memory_bytes: std::collections::BTreeMap::from([(
-                    casa_imaging_runtime::CapacityDomainId::new("host-memory"),
-                    2 << 30,
-                )]),
-                ..Default::default()
-            },
-        );
+        imaging.host = host;
+        imaging.resource_policy = ResourcePolicy::Explicit {
+            workers,
+            memory: 2 << 30,
+        };
         let result = execute_continuum(imaging).expect("uniform multi-SPW MFS Clark execution");
         assert!(result.actual_minor_iterations > 0);
-        let pass_workers = result.outcome.output.workers as u64;
-        assert!((1..=workers).contains(&pass_workers));
-        if workers <= 4 {
-            assert_eq!(pass_workers, workers);
-        }
+        assert_eq!(result.outcome.output.workers, workers);
         assert_standard_products(&prefix, &result.product_names);
         prefixes.push(prefix);
     }
@@ -171,7 +157,6 @@ fn assert_uniform_mfs_workers(measurement_set: PathBuf, root: &Path, selection: 
 #[test]
 fn application_clark_cleans_until_a_casa_stopping_rule() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = tiny_measurement_set(root.path());
     let image_name = root.path().join("clark");
@@ -189,7 +174,6 @@ fn application_clark_cleans_until_a_casa_stopping_rule() {
 #[test]
 fn application_reconciles_between_bounded_minor_cycles() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = tiny_measurement_set(root.path());
     let image_name = root.path().join("bounded-cycles");
@@ -260,7 +244,6 @@ fn application_reconciles_between_bounded_minor_cycles() {
 #[test]
 fn application_uses_reported_iterations_for_casa_inclusive_continuation() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = tiny_measurement_set(root.path());
     let mut imaging = request(
@@ -300,7 +283,6 @@ fn application_uses_reported_iterations_for_casa_inclusive_continuation() {
 #[test]
 fn application_materializes_static_and_auto_masks_at_the_normal_state_boundary() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
 
     let static_ms = tiny_measurement_set(root.path());

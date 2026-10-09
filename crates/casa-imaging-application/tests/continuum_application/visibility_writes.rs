@@ -7,7 +7,6 @@ use super::*;
 #[test]
 fn application_commits_exact_final_prediction_to_model_data() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = tiny_measurement_set(root.path());
     let image_name = root.path().join("savemodel");
@@ -65,7 +64,6 @@ fn application_commits_exact_final_prediction_to_model_data() {
 #[test]
 fn continuum_fit_only_channels_are_read_but_not_persisted_as_line_model_data() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = spectral_line_measurement_set(root.path());
     let mut imaging = request(
@@ -133,7 +131,6 @@ fn continuum_fit_only_channels_are_read_but_not_persisted_as_line_model_data() {
 #[test]
 fn continuum_residual_persistence_overwrites_only_output_roles_in_the_terminal_pass() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = spectral_line_measurement_set(root.path());
     let before = MeasurementSet::open(&measurement_set).expect("open before persistence");
@@ -240,7 +237,6 @@ fn continuum_residual_persistence_overwrites_only_output_roles_in_the_terminal_p
 #[test]
 fn dirty_continuum_residual_persistence_is_independent_of_model_writeback() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = spectral_line_measurement_set(root.path());
     let mut imaging = request(
@@ -300,7 +296,6 @@ fn dirty_continuum_residual_persistence_is_independent_of_model_writeback() {
 #[test]
 fn application_replaces_every_selected_model_cell_when_flags_and_correlations_differ() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = flagged_polarized_measurement_set(root.path());
     let mut imaging = request(

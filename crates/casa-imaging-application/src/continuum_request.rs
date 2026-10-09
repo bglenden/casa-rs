@@ -6,11 +6,17 @@ mod native_aw;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    ffi::CString,
     path::{Path, PathBuf},
     sync::Arc,
+    sync::atomic::{AtomicU64, Ordering},
 };
 
+use crate::continuum_domains::read_outlier_domains;
+use crate::{
+    ApplicationDispatchError, ApplicationNative, ApplicationOutcome, ApplicationPublication,
+    ApplicationRequest, ApplicationRuntime, CasaImageDomainOutput, CasaImageProductSink,
+    TaskRequirement,
+};
 use casa_coordinates::{
     CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate, ObsInfo,
     Projection as CoordinateProjection, ProjectionType, SpectralCoordinate, StokesCoordinate,
@@ -43,15 +49,11 @@ use casa_imaging_model::{
     WeightingContract, WeightingScheme,
 };
 use casa_imaging_reconstruction::{MinorCycleImageResponse, ReconstructionMaskPlan};
-use casa_imaging_runtime::pass::BackendChoice;
-use casa_imaging_runtime::{
-    BuildIdentity, ExecutionAttemptId, ExecutionReceiptStore, ImplementationRegistryId,
-    PagedStateDirectory, PlannerCostModelProfileId, ProductionStorageProfile, ReceiptRetention,
-    ResourceAuthority, ResourceOverride, ResourcePolicy, WorkImplementationId,
-};
+use casa_imaging_runtime::pass::{BackendChoice, Cancel};
+use casa_imaging_runtime::{HostResources, ResourcePolicy};
 use casa_ms::{
     CubeAxisConfig, CubeInterpolation, CubeSpectralSetup, MeasurementSet, MsSelectionIoBudget,
-    SelectedObservationContentBudget, SelectedObservationEphemeris, SelectedObservationMeasures,
+    SelectedObservationEphemeris, SelectedObservationMeasures,
     SelectedObservationResolutionRequest, SelectedObservationRow, SelectedObservationRowSelection,
     SelectedObservationSpectralEnvelope, SelectedObservationSpectralEnvelopeReducer,
     SelectedObservationSpectralWindow, SubtableId, VisibilityDataColumn, parse_spw_selector,
@@ -64,14 +66,6 @@ use casa_types::measures::{
     epoch::{EpochRef, MEpoch},
     frame::MeasFrame,
     frequency::FrequencyRef,
-};
-use sha2::{Digest, Sha256};
-
-use crate::continuum_domains::read_outlier_domains;
-use crate::{
-    ApplicationDispatchError, ApplicationNative, ApplicationOutcome, ApplicationPublication,
-    ApplicationRequest, ApplicationRuntime, CasaImageDomainOutput, CasaImageProductSink,
-    TaskRequirement,
 };
 
 /// Native continuum reconstruction accepted by the application boundary.
@@ -413,11 +407,16 @@ pub struct ContinuumImagingRequest {
     /// capabilities are rejected by the installed implementation registry
     /// before physical execution.
     pub task_requirements: Vec<TaskRequirement>,
-    /// User-selected host-use policy carried unchanged into physical planning.
+    /// The host the run's phases are admitted against.
+    pub host: HostResources,
+    /// How much of the host the run may use.
     pub resource_policy: ResourcePolicy,
     /// Where the major-cycle passes grid. Metal grids in `f32` for every
     /// basis (D2) and needs a unified-memory Metal 3 device.
     pub backend: BackendChoice,
+    /// Set by the caller (SIGINT in `casars-imager`) to stop the run at the
+    /// next block boundary or phase; nothing is published.
+    pub cancel: Cancel,
 }
 
 /// Small presentation projection of one completed native continuum run.
@@ -1006,7 +1005,7 @@ fn spectral_frame_anchor(
 
 fn prepare(
     mut request: ContinuumImagingRequest,
-) -> Result<ApplicationRequest<CasaImageProductSink>, crate::ApplicationError> {
+) -> Result<ApplicationRequest, crate::ApplicationError> {
     canonicalize_polarizations(&mut request.polarizations);
     validate_request(&request)?;
     let ms = MeasurementSet::open(&request.measurement_set)?;
@@ -1608,97 +1607,89 @@ fn prepare(
             domain.coordinates.clone(),
         )
     }))?;
-    let native = production_storage_profile(&request, &prepared_domains, content_budget)
-        .and_then(|profile| {
-            profile.ok_or_else(|| {
-                boxed("native continuum requires input and output on one filesystem")
-            })
-        })
-        .and_then(|profile| {
-            let runtime = runtime(&request, &profile)?;
-            let aw_catalog = request
-                .aw_projection
-                .as_ref()
-                .map(|controls| {
-                    let root = match &controls.source {
-                        ContinuumAwCfSource::CasaImport(path) => path.clone(),
-                        ContinuumAwCfSource::NativeEvla(native) => {
-                            // `AwCatalog::generate_native` writes CASA-format
-                            // cells into the native cache directory, which the
-                            // same loader then serves (plan section 5.6). The
-                            // request is resolved under every policy, so the
-                            // members it names are compared with the directory:
-                            // reuse needs every member, generation fills the
-                            // missing ones, regeneration clears the earlier
-                            // request's members first; the loader then checks
-                            // each cell's sky increment against the image.
-                            let input = native_aw::resolve(
-                                &request,
-                                native,
-                                &ms,
-                                &spectral_windows,
-                                &prepared_spectral,
-                                first_aw_row.ok_or_else(|| {
-                                    boxed("native AW has no unflagged cross-correlation row")
-                                })?,
-                                &frame_engine,
-                            )?;
-                            input.validate()?;
-                            let (present, expected) =
-                                casa_imaging_operator::AwCatalog::native_cells_present(
-                                    &native.root,
-                                    &input,
-                                );
-                            match native.policy {
-                                NativeAwCachePolicy::ReuseOnly => {
-                                    if present != expected {
-                                        return Err(boxed(format!(
-                                            "native AW cache reuse found {present} of the {expected} \
+    let native = runtime(&request, &prepared_domains).and_then(|runtime| {
+        let aw_catalog = request
+            .aw_projection
+            .as_ref()
+            .map(|controls| {
+                let root = match &controls.source {
+                    ContinuumAwCfSource::CasaImport(path) => path.clone(),
+                    ContinuumAwCfSource::NativeEvla(native) => {
+                        // `AwCatalog::generate_native` writes CASA-format
+                        // cells into the native cache directory, which the
+                        // same loader then serves (plan section 5.6). The
+                        // request is resolved under every policy, so the
+                        // members it names are compared with the directory:
+                        // reuse needs every member, generation fills the
+                        // missing ones, regeneration clears the earlier
+                        // request's members first; the loader then checks
+                        // each cell's sky increment against the image.
+                        let input = native_aw::resolve(
+                            &request,
+                            native,
+                            &ms,
+                            &spectral_windows,
+                            &prepared_spectral,
+                            first_aw_row.ok_or_else(|| {
+                                boxed("native AW has no unflagged cross-correlation row")
+                            })?,
+                            &frame_engine,
+                        )?;
+                        input.validate()?;
+                        let (present, expected) =
+                            casa_imaging_operator::AwCatalog::native_cells_present(
+                                &native.root,
+                                &input,
+                            );
+                        match native.policy {
+                            NativeAwCachePolicy::ReuseOnly => {
+                                if present != expected {
+                                    return Err(boxed(format!(
+                                        "native AW cache reuse found {present} of the {expected} \
                                              cells the request names"
-                                        )));
-                                    }
+                                    )));
                                 }
-                                NativeAwCachePolicy::GenerateMissing => {
-                                    if present != expected {
-                                        casa_imaging_operator::AwCatalog::generate_native(
-                                            &native.root,
-                                            &input,
-                                            true,
-                                        )?;
-                                    }
-                                }
-                                NativeAwCachePolicy::Regenerate => {
-                                    casa_imaging_operator::AwCatalog::clear_native(&native.root)?;
+                            }
+                            NativeAwCachePolicy::GenerateMissing => {
+                                if present != expected {
                                     casa_imaging_operator::AwCatalog::generate_native(
                                         &native.root,
                                         &input,
-                                        false,
+                                        true,
                                     )?;
                                 }
                             }
-                            native.root.clone()
+                            NativeAwCachePolicy::Regenerate => {
+                                casa_imaging_operator::AwCatalog::clear_native(&native.root)?;
+                                casa_imaging_operator::AwCatalog::generate_native(
+                                    &native.root,
+                                    &input,
+                                    false,
+                                )?;
+                            }
                         }
-                    };
-                    Ok::<_, crate::ApplicationError>(crate::AwCatalogDeployment {
-                        root,
-                        indexing: casa_imaging_operator::AwIndexing {
-                            conjugate_beams: controls.conjugate_beams,
-                            image_reference_hz: prepared_spectral.reference_frequency_hz,
-                        },
-                        resident_bytes: controls.resident_bytes,
-                    })
+                        native.root.clone()
+                    }
+                };
+                Ok::<_, crate::ApplicationError>(crate::AwCatalogDeployment {
+                    root,
+                    indexing: casa_imaging_operator::AwIndexing {
+                        conjugate_beams: controls.conjugate_beams,
+                        image_reference_hz: prepared_spectral.reference_frequency_hz,
+                    },
+                    resident_bytes: controls.resident_bytes,
                 })
-                .transpose()?;
-            Ok(ApplicationNative {
-                runtime,
-                publication: ApplicationPublication {
-                    controls: product_controls,
-                    sink: product_sink,
-                },
-                aw_catalog,
             })
-        });
-    let digest = request_digest(&request, b"selection");
+            .transpose()?;
+        Ok(ApplicationNative {
+            runtime,
+            publication: ApplicationPublication {
+                controls: product_controls,
+                sink: product_sink,
+            },
+            aw_catalog,
+        })
+    });
     let reconstruction_planes = match &request.algorithm {
         ContinuumAlgorithm::Mtmfs { terms, .. } => *terms,
         _ => prepared_spectral.output_channels,
@@ -1932,7 +1923,7 @@ fn prepare(
             .transpose()?,
         observation: SelectedObservationResolutionRequest::new(
             request.measurement_set.display().to_string(),
-            LogicalIdentity::from_sha256(digest),
+            selection_request_identity(),
             observation_selection,
             visibility_column(&ms, request.data_column.as_deref())?,
             if weight_spectrum_complete {
@@ -2227,23 +2218,18 @@ fn scientific_instrument_model(
             "channel-major primary-beam response requires ANTENNA dish metadata",
         ));
     }
-    let mut hasher = Sha256::new();
-    let instrument_model = if aw_projection {
-        hasher.update(b"casa-rs-instrument-reference/casa-evla-wideband-aw-v1");
-        InstrumentModel::CasaEvlaWidebandAwV1
+    // The instrument reference is named by its model; the antennas it applies
+    // to are the ones checked below.
+    let (instrument_model, reference) = if aw_projection {
+        (InstrumentModel::CasaEvlaWidebandAwV1, 1)
     } else if mosaic {
-        hasher.update(b"casa-rs-instrument-reference/casa-alma-aca-heterogeneous-response-v1");
-        InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1
+        (
+            InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1,
+            2,
+        )
     } else {
-        hasher.update(b"casa-rs-instrument-reference/casa-aca7m-direct-pb-v1");
-        InstrumentModel::CasaAca7mInterferometricDirectPbV1
+        (InstrumentModel::CasaAca7mInterferometricDirectPbV1, 3)
     };
-    hasher.update((telescopes.len() as u64).to_le_bytes());
-    for telescope in &telescopes {
-        hasher.update((telescope.len() as u64).to_le_bytes());
-        hasher.update(telescope.as_bytes());
-    }
-    hasher.update((antenna.row_count() as u64).to_le_bytes());
     for row in 0..antenna.row_count() {
         let diameter = antenna.dish_diameter(row)?;
         let supported_diameter = if aw_projection {
@@ -2263,12 +2249,24 @@ fn scientific_instrument_model(
                 "ALMA/ACA response requires {expected}; row {row} has diameter {diameter} m"
             )));
         }
-        hasher.update(diameter.to_bits().to_le_bytes());
     }
+    let mut identity = [0_u8; 32];
+    identity[0] = 3;
+    identity[31] = reference;
     Ok(Some((
         instrument_model,
-        LogicalIdentity::from_sha256(hasher.finalize().into()),
+        LogicalIdentity::from_sha256(identity),
     )))
+}
+
+/// The identity of one prepared selection request: unique in the process,
+/// since a request is identified by who owns it, not by its content.
+fn selection_request_identity() -> LogicalIdentity {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    let mut identity = [0_u8; 32];
+    identity[0] = 2;
+    identity[24..].copy_from_slice(&NEXT.fetch_add(1, Ordering::Relaxed).to_be_bytes());
+    LogicalIdentity::from_sha256(identity)
 }
 
 fn instrument_model_supports_diameter(mosaic: bool, diameter_m: f64) -> bool {
@@ -3219,80 +3217,26 @@ fn correlation_type(code: i32) -> Result<CorrelationType, crate::ApplicationErro
     })
 }
 
-fn production_storage_profile(
-    request: &ContinuumImagingRequest,
-    domains: &[PreparedImageDomain],
-    content_budget: SelectedObservationContentBudget,
-) -> Result<Option<ProductionStorageProfile>, crate::ApplicationError> {
-    let input_root = filesystem_root(&request.measurement_set.canonicalize()?)?;
-    let mut writable_directory = None;
-    for domain in domains {
-        let output_parent = domain.output.parent().unwrap_or_else(|| Path::new("."));
-        std::fs::create_dir_all(output_parent)?;
-        let output_parent = output_parent.canonicalize()?;
-        if filesystem_root(&output_parent)? != input_root {
-            return Ok(None);
-        }
-        writable_directory.get_or_insert(output_parent);
-    }
-    let (capacity, available) = filesystem_capacity(&input_root)?;
-    let read_rate = positive_environment("CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND")?;
-    let write_rate = positive_environment("CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND")?;
-    let queue_slots = u64::try_from(content_budget.maximum_live_blocks())
-        .map_err(|_| boxed("selected source queue depth overflowed"))?
-        .checked_add(1)
-        .and_then(|slots| slots.checked_add(u64::from(request.aw_projection.is_some())))
-        .ok_or_else(|| boxed("managed-spill and prepared-reader queue depth overflowed"))?;
-    let profile = ProductionStorageProfile::new(
-        input_root,
-        capacity,
-        available,
-        read_rate,
-        write_rate,
-        queue_slots,
-        2,
-    )?;
-    let profile = if request.aw_projection.is_some() {
-        profile.with_measured_operations_rate(
-            writable_directory
-                .as_deref()
-                .ok_or_else(|| boxed("AW preparation requires a writable output directory"))?,
-        )?
-    } else {
-        profile
-    };
-    Ok(Some(profile))
-}
-
+/// The run's host, policy, backend and cancellation, with every image
+/// domain's output directory created. The paged cube state lives beside the
+/// main image.
 fn runtime(
     request: &ContinuumImagingRequest,
-    profile: &ProductionStorageProfile,
+    domains: &[PreparedImageDomain],
 ) -> Result<ApplicationRuntime, crate::ApplicationError> {
-    let digest = request_digest(request, b"attempt");
-    let output_directory = request
-        .image_name
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .canonicalize()?;
-    let receipts = output_directory.join(".casa-rs-imaging-receipts");
-    let authority = ResourceAuthority::production_with_storage_profile(profile)?.clone();
-    let storage_io = profile.io_resources();
-    let paged_state_storage =
-        PagedStateDirectory::bind(&authority, &storage_io, &output_directory)?;
+    for domain in domains {
+        std::fs::create_dir_all(domain.output.parent().unwrap_or_else(|| Path::new(".")))?;
+    }
     Ok(ApplicationRuntime {
-        registry: ImplementationRegistryId::from_sha256(hash(b"spectral-cycle-registry")),
-        implementation: WorkImplementationId::new("spectral-cycle-cpu-v1"),
-        stage_nanos: 1_000_000,
-        storage_io,
-        paged_state_storage,
-        confidence_parts_per_million: 900_000,
-        resource_policy: request.resource_policy.clone(),
+        host: request.host,
+        resource_policy: request.resource_policy,
         backend: request.backend,
-        cost_model: PlannerCostModelProfileId::from_sha256(hash(b"spectral-cycle-cost-v1")),
-        authority,
-        receipts: ExecutionReceiptStore::new(receipts, ReceiptRetention::new(512, 256 << 20)?)?,
-        build: BuildIdentity::from_sha256(hash(env!("CARGO_PKG_VERSION").as_bytes())),
-        publication_attempt: ExecutionAttemptId::from_sha256(scoped(digest, 2)),
+        cancel: request.cancel.clone(),
+        spill_directory: request
+            .image_name
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .canonicalize()?,
     })
 }
 
@@ -3310,117 +3254,17 @@ pub fn resource_policy_for_task_requirements(
         )
     });
     if serial_cpu && !planner_selected_parallelism {
-        ResourcePolicy::Explicit(ResourceOverride {
-            workers: Some(1),
-            ..ResourceOverride::default()
-        })
+        ResourcePolicy::Explicit {
+            workers: 1,
+            memory: u64::MAX,
+        }
     } else {
         ResourcePolicy::Balanced
     }
 }
 
-#[cfg(unix)]
-fn filesystem_root(path: &Path) -> Result<PathBuf, crate::ApplicationError> {
-    use std::os::unix::fs::MetadataExt;
-    let device = std::fs::metadata(path)?.dev();
-    let mut root = path.to_path_buf();
-    while let Some(parent) = root.parent() {
-        if std::fs::metadata(parent)?.dev() != device {
-            break;
-        }
-        root = parent.to_path_buf();
-    }
-    Ok(root)
-}
-
-#[cfg(not(unix))]
-fn filesystem_root(_path: &Path) -> Result<PathBuf, crate::ApplicationError> {
-    Err(boxed(
-        "filesystem-root detection is unavailable on this platform",
-    ))
-}
-
-#[cfg(unix)]
-fn block_count_to_u64<T: Into<u64>>(blocks: T) -> u64 {
-    blocks.into()
-}
-
-#[cfg(unix)]
-fn filesystem_capacity(root: &Path) -> Result<(u64, u64), crate::ApplicationError> {
-    use std::os::unix::ffi::OsStrExt;
-    let root = CString::new(root.as_os_str().as_bytes())?;
-    let mut statistics = std::mem::MaybeUninit::<libc::statvfs>::uninit();
-    // SAFETY: the path is live and NUL-terminated, and the output allocation is valid.
-    if unsafe { libc::statvfs(root.as_ptr(), statistics.as_mut_ptr()) } != 0 {
-        return Err(Box::new(std::io::Error::last_os_error()));
-    }
-    // SAFETY: successful statvfs initialized the complete value.
-    let statistics = unsafe { statistics.assume_init() };
-    let block_size = statistics.f_frsize;
-    Ok((
-        block_count_to_u64(statistics.f_blocks).saturating_mul(block_size),
-        block_count_to_u64(statistics.f_bavail).saturating_mul(block_size),
-    ))
-}
-
-#[cfg(not(unix))]
-fn filesystem_capacity(_root: &Path) -> Result<(u64, u64), crate::ApplicationError> {
-    Err(boxed(
-        "filesystem capacity detection is unavailable on this platform",
-    ))
-}
-
-fn positive_environment(name: &str) -> Result<u64, crate::ApplicationError> {
-    std::env::var(name)
-        .map_err(|_| boxed(format!("native continuum requires {name}")))?
-        .parse::<u64>()
-        .ok()
-        .filter(|value| *value > 0)
-        .ok_or_else(|| boxed(format!("{name} must be a positive integer")))
-}
-
-fn request_digest(request: &ContinuumImagingRequest, domain: &[u8]) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(domain);
-    hasher.update(request.measurement_set.as_os_str().as_encoded_bytes());
-    hasher.update(request.image_name.as_os_str().as_encoded_bytes());
-    hasher.update(request.image_size.to_le_bytes());
-    hasher.update(request.cell_arcsec.to_bits().to_le_bytes());
-    if let Some(field) = request.phase_center_field {
-        hasher.update([1]);
-        hasher.update(field.to_le_bytes());
-    } else {
-        hasher.update([0]);
-    }
-    if let Some(phase_center) = request.phase_center.as_deref() {
-        hasher.update([1]);
-        hasher.update(phase_center.as_bytes());
-    } else {
-        hasher.update([0]);
-    }
-    if let Some(outlier_file) = request.outlier_file.as_deref() {
-        hasher.update([1]);
-        hasher.update(outlier_file.as_os_str().as_encoded_bytes());
-        if let Ok(contents) = std::fs::read(outlier_file) {
-            hasher.update(Sha256::digest(contents));
-        }
-    } else {
-        hasher.update([0]);
-    }
-    hasher.finalize().into()
-}
-
 const fn model_plane_samples(image_size: usize) -> usize {
     image_size.saturating_mul(image_size)
-}
-
-fn hash(value: &[u8]) -> [u8; 32] {
-    Sha256::digest(value).into()
-}
-
-fn scoped(mut digest: [u8; 32], scope: u8) -> [u8; 32] {
-    digest[0] ^= scope;
-    digest
 }
 
 fn boxed(message: impl Into<String>) -> crate::ApplicationError {
@@ -3436,7 +3280,7 @@ mod tests {
         MissingPointingPolicy, PointingCentreLaw, PointingExtrapolation, PointingInterpolation,
         PointingTimeSampling, PolarizationCoordinate,
     };
-    use casa_imaging_runtime::{ResourceOverride, ResourcePolicy};
+    use casa_imaging_runtime::ResourcePolicy;
     use casa_types::measures::frequency::FrequencyRef;
 
     use super::{
@@ -3614,10 +3458,10 @@ mod tests {
     fn explicit_serial_cpu_requirement_caps_the_application_to_one_worker() {
         assert_eq!(
             resource_policy_for_task_requirements(&[TaskRequirement::SerialCpu]),
-            ResourcePolicy::Explicit(ResourceOverride {
-                workers: Some(1),
-                ..ResourceOverride::default()
-            })
+            ResourcePolicy::Explicit {
+                workers: 1,
+                memory: u64::MAX,
+            }
         );
     }
 

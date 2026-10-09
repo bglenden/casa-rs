@@ -7,7 +7,7 @@ use std::time::Instant;
 use casa_imaging_application::{
     CleanStop, ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumAwProjection,
     ContinuumBeamPolicy, ContinuumImagingRequest, ContinuumMask, ContinuumMaskBox,
-    ContinuumWeighting, HogbomIterationAccounting, ImagingCapabilityRequirement,
+    ContinuumWeighting, HogbomIterationAccounting, HostResources, ImagingCapabilityRequirement,
     PolarizationCoordinate, ProductNormalization, ResourcePolicy, SpectralImagingMode,
     TaskRequirement, UnsupportedRequirement, VisibilityContinuumSubtraction, execute_continuum,
     installed_imaging_capability_catalog, resource_policy_for_task_requirements,
@@ -29,12 +29,19 @@ fn hex(bytes: [u8; 32]) -> String {
     encoded
 }
 
-pub(super) fn execute(config: &CliConfig) -> Result<RunSummary, String> {
+pub(super) fn execute(config: &CliConfig, echo: serde_json::Value) -> Result<RunSummary, String> {
     let started = Instant::now();
     let result =
         execute_continuum(application_request(config)?).map_err(|error| error.to_string())?;
     let minor_cycles = result.minor_cycles.clone();
-    let native = result.outcome.output;
+    let mut native = result.outcome.output;
+    native.summary.request = echo;
+    let mut summary_path = config.imagename.clone().into_os_string();
+    summary_path.push(".summary.json");
+    native
+        .summary
+        .write(std::path::Path::new(&summary_path))
+        .map_err(|error| format!("run summary: {error}"))?;
     let visibility_products = native.visibility_products.map(|completion| {
         crate::task_contract::ImagerVisibilityProductDiagnostic {
             problem_id: hex(completion.problem_id().as_bytes()),
@@ -268,8 +275,10 @@ pub(crate) fn application_request(config: &CliConfig) -> Result<ContinuumImaging
                 rotate_pa_step_deg: controls.rotate_pa_step_deg,
             }),
         task_requirements,
+        host: HostResources::detect().map_err(|error| error.to_string())?,
         resource_policy,
         backend: config.backend.choice(),
+        cancel: crate::interrupt::token().clone(),
     })
 }
 
@@ -561,12 +570,12 @@ mod tests {
             StandardMfsAccelerationPolicy::Cpu
         );
 
-        let ResourcePolicy::Explicit(serial_policy) =
+        let ResourcePolicy::Explicit { workers, .. } =
             application_request(&serial).unwrap().resource_policy
         else {
             panic!("serial request must carry an explicit Resource Policy")
         };
-        assert_eq!(serial_policy.workers, Some(1));
+        assert_eq!(workers, 1);
         assert_eq!(
             application_request(&parallel).unwrap().resource_policy,
             ResourcePolicy::Balanced
@@ -577,12 +586,12 @@ mod tests {
     fn t55_serial_cpu_policy_is_independent_of_spectral_mode() {
         for mode in ["mfs", "cube", "cubedata", "cubesource", "mvc"] {
             let serial = config(&["--specmode", mode, "--no-parallel"]);
-            let ResourcePolicy::Explicit(policy) =
+            let ResourcePolicy::Explicit { workers, .. } =
                 application_request(&serial).unwrap().resource_policy
             else {
                 panic!("{mode} CPU baseline must carry an explicit serial policy");
             };
-            assert_eq!(policy.workers, Some(1), "{mode}");
+            assert_eq!(workers, 1, "{mode}");
             let parallel = config(&["--specmode", mode, "--parallel"]);
             assert_eq!(
                 application_request(&parallel).unwrap().resource_policy,

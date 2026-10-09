@@ -15,6 +15,7 @@ workspace = true
 casa-provider-contracts = { path = "../casa-provider-contracts" }
 casa-task-runtime = { path = "../casa-task-runtime" }
 casa-imaging-application = { path = "../casa-imaging-application" }
+libc = "0.2"
 casa-logging = { path = "../casa-logging" }
 casa-ms = { path = "../casa-ms" }
 casa-types = { path = "../casa-types" }

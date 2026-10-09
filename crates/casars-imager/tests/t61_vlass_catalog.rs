@@ -33,10 +33,6 @@ fn t61_vlass_controls_reach_the_real_snapshot_and_exact_typed_unavailability()
     casa_ms::initialize_measurement_set_owner_manifest(&staged_measurement_set)?;
     let output = tempfile::tempdir()?;
     let image_name = output.path().join("vlass-t61");
-    unsafe {
-        std::env::set_var("CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND", "1000000000");
-        std::env::set_var("CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND", "1000000000");
-    }
 
     let overrides = BTreeMap::from([
         (

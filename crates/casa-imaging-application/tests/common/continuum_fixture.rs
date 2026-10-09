@@ -753,16 +753,9 @@ pub(super) fn request(
         w_projection_planes: None,
         aw_projection: None,
         task_requirements: Vec::new(),
-        resource_policy: casa_imaging_runtime::ResourcePolicy::Balanced,
+        host: casa_imaging_application::HostResources::detect().expect("host"),
+        resource_policy: casa_imaging_application::ResourcePolicy::Balanced,
         backend: casa_imaging_application::BackendChoice::Cpu,
-    }
-}
-
-pub(super) fn set_production_io_environment() {
-    // The application deliberately requires measured spill rates at its
-    // production boundary; these values are only test calibration facts.
-    unsafe {
-        std::env::set_var("CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND", "1000000000");
-        std::env::set_var("CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND", "1000000000");
+        cancel: casa_imaging_application::Cancel::new(),
     }
 }

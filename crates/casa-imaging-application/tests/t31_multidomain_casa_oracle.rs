@@ -33,7 +33,6 @@ const PRODUCTS: [&str; 4] = [".psf", ".residual", ".model", ".image"];
 #[test]
 #[ignore = "requires slow-parity casatestdata and the frozen CASA T31 image products"]
 fn t31_multidomain_geometry_matches_frozen_casa_dirty_and_hogbom() -> Result<(), Box<dyn Error>> {
-    set_production_io_environment();
     let casa_root = PathBuf::from(
         std::env::var_os(CASA_PREFIX_ENV).ok_or("CASA_RS_T31_CASA_PREFIX is not set")?,
     );
@@ -120,7 +119,6 @@ fn t31_multidomain_geometry_matches_frozen_casa_dirty_and_hogbom() -> Result<(),
 #[test]
 #[ignore = "requires the issue #607 representative VLA MS and frozen CASA main/outlier products"]
 fn issue607_representative_main_and_outlier_match_casa() -> Result<(), Box<dyn Error>> {
-    set_production_io_environment();
     let source = PathBuf::from(
         std::env::var_os(REPRESENTATIVE_MS_ENV).ok_or("CASA_RS_ISSUE607_OUTLIER_MS is not set")?,
     );
@@ -275,8 +273,10 @@ fn request(
         w_projection_planes: None,
         aw_projection: None,
         task_requirements: vec![TaskRequirement::SerialCpu, TaskRequirement::FixedTileCpu],
-        resource_policy: casa_imaging_runtime::ResourcePolicy::Balanced,
+        host: casa_imaging_application::HostResources::detect().expect("host"),
+        resource_policy: casa_imaging_application::ResourcePolicy::Balanced,
         backend: casa_imaging_application::BackendChoice::Cpu,
+        cancel: casa_imaging_application::Cancel::new(),
     }
 }
 
@@ -396,13 +396,6 @@ fn outlier_centre_rad() -> [f64; 2] {
         (19.0 + 58.0 / 60.0 + 40.895 / 3600.0) * std::f64::consts::PI / 12.0,
         (40.0 + 55.0 / 60.0 + 58.543 / 3600.0) * std::f64::consts::PI / 180.0,
     ]
-}
-
-fn set_production_io_environment() {
-    unsafe {
-        std::env::set_var("CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND", "1000000000");
-        std::env::set_var("CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND", "1000000000");
-    }
 }
 
 fn copy_tree(source: &Path, destination: &Path) -> Result<(), Box<dyn Error>> {

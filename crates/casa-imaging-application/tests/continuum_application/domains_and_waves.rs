@@ -1,21 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Cubes whose passes run in waves, and outlier domains of their own shape
-//! in the paged cube state.
+//! Cubes whose passes run in waves, the admission of their memory, and
+//! outlier domains of their own shape in the paged cube state.
 
-use casa_imaging_runtime::{CapacityDomainId, ResourceOverride, ResourcePolicy};
+use casa_imaging_application::{Admission, ApplicationDispatchError};
 
 use super::*;
 
 /// One worker and `memory` bytes of host memory.
-fn memory_policy(memory: u64) -> ResourcePolicy {
-    ResourcePolicy::Explicit(ResourceOverride {
-        workers: Some(1),
-        memory_bytes: std::collections::BTreeMap::from([(
-            CapacityDomainId::new("host-memory"),
-            memory,
-        )]),
-        ..ResourceOverride::default()
-    })
+const fn memory_policy(memory: u64) -> ResourcePolicy {
+    ResourcePolicy::Explicit { workers: 1, memory }
 }
 
 /// A dirty cube of the 32-channel fixture's channels 1 … 30 at `image_name`.
@@ -60,7 +53,6 @@ fn read_product(base: &Path, suffix: &str) -> (Vec<usize>, ArrayD<f32>) {
 #[test]
 fn dirty_cubes_in_waves_equal_the_resident_cube() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
     for (label, continuum) in [("windowed", false), ("continuum", true)] {
@@ -98,6 +90,56 @@ fn dirty_cubes_in_waves_equal_the_resident_cube() {
 /// waves but the selection and one plane fit.
 const WAVED_MEMORY_BYTES: u64 = 8 << 20;
 
+/// Admission: a memory ceiling that cannot hold the cube is refused, typed,
+/// before anything is written; the smallest ceiling that holds one plane of
+/// the pass runs it one plane per wave.
+#[test]
+fn a_memory_ceiling_refuses_what_cannot_fit_and_one_plane_runs_one_plane_waves() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
+    let entries = || {
+        let mut names = std::fs::read_dir(root.path())
+            .expect("output directory")
+            .map(|entry| entry.expect("entry").file_name())
+            .collect::<Vec<_>>();
+        names.sort();
+        names
+    };
+    let before = entries();
+    let run = |memory: u64| {
+        let mut imaging = line_cube(&measurement_set, root.path().join("admitted"));
+        imaging.image_size = 128;
+        imaging.resource_policy = memory_policy(memory);
+        execute_continuum(imaging)
+    };
+    // Raise the ceiling by what each refusal reports missing until the pass
+    // itself is admitted. Each phase admitted before the pass also takes a
+    // share of a higher ceiling (the cube cache a quarter of what is free),
+    // so each step adds a third more than the gap.
+    let mut memory = 64 << 10;
+    let mut refusals = 0;
+    let waves = loop {
+        match run(memory) {
+            Ok(result) => break result.outcome.output.planes_per_wave,
+            Err(ApplicationDispatchError::Admission(Admission {
+                required,
+                available,
+                ..
+            })) => {
+                assert_eq!(entries(), before, "a refused run writes nothing");
+                let gap = required - available;
+                memory += gap + gap.div_ceil(3);
+                refusals += 1;
+                assert!(refusals < 32, "the ceiling converges");
+            }
+            Err(error) => panic!("only admission refuses a small ceiling: {error}"),
+        }
+    };
+    assert!(refusals > 0, "64 KiB holds no line cube");
+    assert_eq!(waves, Some(1), "a ceiling just above one plane");
+}
+
 /// A cleaned cube of the spectral-line fixture's four channels at
 /// `image_name`, 64 × 64.
 fn cleaned_cube(measurement_set: &Path, image_name: PathBuf) -> ContinuumImagingRequest {
@@ -132,7 +174,6 @@ fn cleaned_cube(measurement_set: &Path, image_name: PathBuf) -> ContinuumImaging
 #[test]
 fn outlier_cubes_of_another_size_page_their_own_planes() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let line_set = thirty_two_channel_multi_row_measurement_set(root.path());
     let clean_set = spectral_line_measurement_set(root.path());

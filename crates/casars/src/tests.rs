@@ -10606,10 +10606,6 @@ fn start_run_with_default_calibrate_launcher(app: &mut AppState) {
 
 fn start_run_with_default_imager_launcher(app: &mut AppState) {
     with_test_env_lock(|| {
-        unsafe {
-            std::env::set_var("CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND", "1000000000");
-            std::env::set_var("CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND", "1000000000");
-        }
         if let Some(path) = test_workspace_binary("casars-imager") {
             set_imager_launcher_bin(&path);
         } else {
@@ -10617,10 +10613,6 @@ fn start_run_with_default_imager_launcher(app: &mut AppState) {
         }
         app.start_run_for_test();
         clear_imager_launcher_bin();
-        unsafe {
-            std::env::remove_var("CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND");
-            std::env::remove_var("CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND");
-        }
     });
 }
 
