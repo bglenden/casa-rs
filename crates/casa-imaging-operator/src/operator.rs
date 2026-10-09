@@ -269,17 +269,18 @@ impl MeasurementOperator {
     /// the forward table routes to `vpol`, of the taps at the sample's fine
     /// offset conjugated for `w ≤ 0` (`accumulateFromGrid.inc` sums the
     /// taps it multiplies the grid by), without the pointing ramp. `sumwt`
-    /// accumulates `W · |norm|` on the adjoint side, so the operator pair
-    /// is exactly adjoint once each sample's data are divided by the
-    /// conjugate norm.
+    /// accumulates `W · |norm|` of the adjoint's routed cells. When the
+    /// two directions have identical cell routing and taps, the operator
+    /// pair is adjoint after dividing samples by the conjugate norm;
+    /// CASA's AW routes need not satisfy that condition.
     #[must_use]
     pub fn prediction_norm(&self, placement: &Placement, vpol: usize) -> Complex64 {
         let mut hold = CellHold::new();
-        let taps = self.cf.taps(placement.cf, &mut hold);
+        let taps = self.cf.prediction_taps(placement.cf, &mut hold);
         let location = self
             .geometry
             .locate(placement.u, placement.v, taps.oversampling());
-        let w_positive = placement.w > 0.0;
+        let w_positive = placement.prediction_w_positive.unwrap_or(placement.w > 0.0);
         self.cf
             .mueller()
             .table(w_positive, true)

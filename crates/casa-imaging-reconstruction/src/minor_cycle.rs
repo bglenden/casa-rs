@@ -2826,8 +2826,11 @@ impl<'a> TaylorSolveResponse<'a> {
     }
 
     /// The response of one polarization plane of a constant-basis state:
-    /// its dense sensitivity and the sum weights of its gridding (the PSF's
-    /// for the beam, the data's for the residual).
+    /// its dense sensitivity and the PSF sum weight. `FTMachine::
+    /// finalizeToSkyNew` keeps the PSF's persistent `.sumwt` and requests
+    /// an unnormalized residual (`getImage(..., false)`); `SIImageStore::
+    /// divideResidualByWeight` divides both residual and weight by that
+    /// same scalar, even when the data kernel has a different sum (#667).
     fn for_plane(
         domain: crate::FinalNormalDomainState<'a>,
         polarization: usize,
@@ -2847,15 +2850,7 @@ impl<'a> TaylorSolveResponse<'a> {
             .sum_weights()
             .get(polarization)
             .ok_or(MinorCycleError::ModelShapeMismatch)?;
-        let published_weight = *domain
-            .published_sum_weights()
-            .get(polarization)
-            .ok_or(MinorCycleError::ModelShapeMismatch)?;
-        if !normal_weight.is_finite()
-            || normal_weight <= 0.0
-            || !published_weight.is_finite()
-            || published_weight <= 0.0
-        {
+        if !normal_weight.is_finite() || normal_weight <= 0.0 {
             return Err(MinorCycleError::InvalidPsfPeak);
         }
         Ok(Self {
@@ -2865,10 +2860,15 @@ impl<'a> TaylorSolveResponse<'a> {
                 binding,
             )),
             normal_scale: 1.0 / normal_weight,
-            published_sum_weight: published_weight,
+            published_sum_weight: normal_weight,
         })
     }
 
+    // Unlike constant-basis FTMachine, MultiTermFTNew::finalizeToSkyNew
+    // overwrites each term's .sumwt during data formation. Its residuals
+    // therefore use the data term-zero sum, while the weight image retains
+    // the earlier PSF normalization (SIImageStoreMultiTerm::
+    // divideWeightBySumWt / divideResidualByWeight).
     fn new(
         view: &'a crate::FinalNormalStateWindow<'_>,
         binding: Option<crate::MinorCycleImageResponse>,

@@ -40,6 +40,7 @@ fn geometry() -> GridGeometry {
 
 fn context(antenna_types: [u8; 2], spectral_window: u32) -> RowContext {
     RowContext {
+        original_w_m: None,
         time_s: 0.0,
         antennas: [0, 1],
         antenna_types,
