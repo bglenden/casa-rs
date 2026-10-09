@@ -12,13 +12,13 @@ use casa_imaging_model::{
 };
 
 pub fn identity(byte: u8) -> LogicalIdentity {
-    LogicalIdentity::from_sha256([byte; 32])
+    LogicalIdentity::from_bytes([byte; 32])
 }
 
 fn scoped_identity(seed: u8, scope: u8) -> LogicalIdentity {
     let mut digest = [seed; 32];
     digest[0] = scope;
-    LogicalIdentity::from_sha256(digest)
+    LogicalIdentity::from_bytes(digest)
 }
 
 pub fn observation_snapshot(

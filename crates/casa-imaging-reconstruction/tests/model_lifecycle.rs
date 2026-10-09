@@ -30,7 +30,7 @@ use casa_imaging_reconstruction::{
 mod common;
 
 fn identity(byte: u8) -> LogicalIdentity {
-    LogicalIdentity::from_sha256([byte; 32])
+    LogicalIdentity::from_bytes([byte; 32])
 }
 
 fn bounds() -> ModelBounds {
@@ -1151,7 +1151,7 @@ fn reprojection_is_owner_derived_streamed_and_support_aware() {
     assert_eq!(
         mapping_id.identity(),
         casa_imaging_model::model_reprojected_seed_mapping_identity(
-            LogicalIdentity::from_sha256(target_shell.model_lifecycle().contract_id().as_bytes()),
+            LogicalIdentity::from_bytes(target_shell.model_lifecycle().contract_id().as_bytes()),
             source_shape.identity(),
             target_shell.model_lifecycle().target().identity(),
         )

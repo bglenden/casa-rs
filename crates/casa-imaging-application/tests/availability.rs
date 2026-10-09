@@ -71,7 +71,7 @@ fn moving_source_is_available_through_selected_observation_geometry() {
         phase_centre: PhaseCentreLaw::Ephemeris("Mars".to_string()),
         inputs: common::problem_inputs(vec![(
             ReferenceDataKind::Ephemeris,
-            LogicalIdentity::from_sha256([2; 32]),
+            LogicalIdentity::from_bytes([2; 32]),
         )]),
         ..ProblemFixture::standard()
     }
@@ -348,7 +348,7 @@ impl ProblemFixture {
         self.instrument_model = Some(instrument_model);
         self.inputs = common::problem_inputs(vec![(
             ReferenceDataKind::Instrument,
-            LogicalIdentity::from_sha256([6; 32]),
+            LogicalIdentity::from_bytes([6; 32]),
         )]);
         self
     }

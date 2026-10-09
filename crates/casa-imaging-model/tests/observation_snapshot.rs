@@ -16,7 +16,7 @@ use casa_imaging_model::{
 };
 
 fn identity(byte: u8) -> LogicalIdentity {
-    LogicalIdentity::from_sha256([byte; 32])
+    LogicalIdentity::from_bytes([byte; 32])
 }
 
 fn selected_rows(row_variant: u8) -> SelectedRows {

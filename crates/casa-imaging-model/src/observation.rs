@@ -531,7 +531,7 @@ impl RowSelection {
 /// ```compile_fail
 /// use casa_imaging_model::SelectedRowSequenceId;
 ///
-/// let _ = SelectedRowSequenceId::from_sha256([0; 32]);
+/// let _ = SelectedRowSequenceId::from_bytes([0; 32]);
 /// ```
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SelectedRowSequenceId(LogicalIdentity);
@@ -902,7 +902,7 @@ impl SelectedRowSequenceAccumulator {
         self.used_data_description_ids.sort_unstable();
         (
             self.observed_row_count,
-            SelectedRowSequenceId(LogicalIdentity::from_sha256(self.encoder.finish())),
+            SelectedRowSequenceId(LogicalIdentity::from_bytes(self.encoder.finish())),
             self.used_data_description_ids.into_iter().collect(),
         )
     }
@@ -2882,7 +2882,7 @@ fn canonical_snapshot_id(
         encoder.identity(*identity);
     }
     encode_model(&mut encoder, model);
-    ObservationSnapshotId(LogicalIdentity::from_sha256(encoder.finish()))
+    ObservationSnapshotId(LogicalIdentity::from_bytes(encoder.finish()))
 }
 
 fn canonical_provenance_id(
@@ -2902,7 +2902,7 @@ fn canonical_provenance_id(
         encoder.bytes(source.provenance.locator.as_bytes());
         encoder.identity(source.provenance.selection_request);
     }
-    ObservationProvenanceId(LogicalIdentity::from_sha256(encoder.finish()))
+    ObservationProvenanceId(LogicalIdentity::from_bytes(encoder.finish()))
 }
 
 fn encode_selection(encoder: &mut CanonicalEncoder, selection: &ObservationSelection) {

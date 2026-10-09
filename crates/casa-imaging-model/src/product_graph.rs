@@ -1105,7 +1105,7 @@ fn graph_id(
     for member in publication_members {
         encoder.usize(member.ordinal());
     }
-    ProductGraphId(LogicalIdentity::from_sha256(encoder.finish()))
+    ProductGraphId(LogicalIdentity::from_bytes(encoder.finish()))
 }
 
 fn encode_normalization_boundary(

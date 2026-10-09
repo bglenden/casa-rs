@@ -55,18 +55,20 @@ impl ImagingRequestVersion {
     }
 }
 
-/// A content identity supplied by an owner outside the problem compiler.
+/// An identity supplied by an owner outside the problem compiler.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LogicalIdentity([u8; 32]);
 
 impl LogicalIdentity {
-    /// Construct an identity from an already computed SHA-256 digest.
+    /// An identity of 32 opaque bytes. Only equality is meaningful: the
+    /// owner chooses the bytes (a digest, a counter or a tag), and nothing
+    /// reads structure from them.
     #[must_use]
-    pub const fn from_sha256(digest: [u8; 32]) -> Self {
-        Self(digest)
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
     }
 
-    /// Return the exact SHA-256 digest.
+    /// The identity's 32 bytes.
     #[must_use]
     pub const fn as_bytes(self) -> [u8; 32] {
         self.0
@@ -2377,7 +2379,7 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
     let problem_id = canonical_problem_id(
         problem_identity_basis,
         inputs.model(),
-        LogicalIdentity::from_sha256(model_lifecycle.contract_id().as_bytes()),
+        LogicalIdentity::from_bytes(model_lifecycle.contract_id().as_bytes()),
     );
     Ok(CompiledProblem {
         problem_id,
@@ -3037,7 +3039,7 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
         }
     }
     encode_numerics(&mut encoder, numerics);
-    LogicalIdentity::from_sha256(encoder.finish())
+    LogicalIdentity::from_bytes(encoder.finish())
 }
 
 fn encode_prepared_operator(
@@ -3261,7 +3263,7 @@ fn canonical_problem_id(
         }
     }
     encoder.identity(model_lifecycle);
-    CompiledProblemId(LogicalIdentity::from_sha256(encoder.finish()))
+    CompiledProblemId(LogicalIdentity::from_bytes(encoder.finish()))
 }
 
 /// Revalidate the parent Compiled Problem identity from its canonical layers.
@@ -3294,7 +3296,7 @@ fn canonical_numerics_id(numerics: &NumericsContract) -> NumericsContractId {
     encoder.bytes(NUMERICS_CONTRACT_IDENTITY_DOMAIN);
     encoder.u32(NUMERICS_CONTRACT_IDENTITY_VERSION);
     encode_numerics(&mut encoder, numerics);
-    NumericsContractId(LogicalIdentity::from_sha256(encoder.finish()))
+    NumericsContractId(LogicalIdentity::from_bytes(encoder.finish()))
 }
 
 fn encode_numerics(encoder: &mut CanonicalEncoder, numerics: &NumericsContract) {

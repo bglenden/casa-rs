@@ -91,8 +91,8 @@ fn dirty_cubes_in_waves_equal_the_resident_cube() {
 const WAVED_MEMORY_BYTES: u64 = 8 << 20;
 
 /// Admission: a memory ceiling that cannot hold the cube is refused, typed,
-/// before anything is written; the smallest ceiling that holds one plane of
-/// the pass runs it one plane per wave.
+/// before anything is written; a ceiling just above one plane of the pass
+/// runs it one plane per wave.
 #[test]
 fn a_memory_ceiling_refuses_what_cannot_fit_and_one_plane_runs_one_plane_waves() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");

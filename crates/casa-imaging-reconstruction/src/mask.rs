@@ -631,7 +631,7 @@ impl ImageDomainReconstructionMasks {
             encoder.identity(mask.generation_id().as_bytes());
         }
         Ok(Self {
-            generation: ReconstructionMaskGenerationId(LogicalIdentity::from_sha256(
+            generation: ReconstructionMaskGenerationId(LogicalIdentity::from_bytes(
                 encoder.finish(),
             )),
             masks,
@@ -1314,7 +1314,7 @@ fn mask_identity(
         )
         .expect("mask generation event space exhausted");
     encoder.u64(ordinal);
-    ReconstructionMaskGenerationId(LogicalIdentity::from_sha256(encoder.finish()))
+    ReconstructionMaskGenerationId(LogicalIdentity::from_bytes(encoder.finish()))
 }
 
 fn encode_coordinate(encoder: &mut Encoder, coordinate: DirectionCoordinateSpec) {

@@ -430,7 +430,7 @@ impl NormalStatePrimitives {
                     }
                     encoder.identity(d.content_identity()?.as_bytes());
                 }
-                Ok(LogicalIdentity::from_sha256(encoder.finish()))
+                Ok(LogicalIdentity::from_bytes(encoder.finish()))
             }
         }
     }
@@ -1076,6 +1076,6 @@ impl StoredChannelNormalDomain {
                 SpectralChannelValidity::Unmapped => 2,
             });
         }
-        Ok(LogicalIdentity::from_sha256(encoder.finish()))
+        Ok(LogicalIdentity::from_bytes(encoder.finish()))
     }
 }

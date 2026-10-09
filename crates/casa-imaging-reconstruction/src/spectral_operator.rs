@@ -309,7 +309,7 @@ impl SpectralOperatorPrimitives {
                 SpectralChannelValidity::Unmapped => 2,
             });
         }
-        LogicalIdentity::from_sha256(encoder.finish())
+        LogicalIdentity::from_bytes(encoder.finish())
     }
 }
 
@@ -514,7 +514,7 @@ impl SpectralPrimitiveDomains {
             }
             encoder.identity(domain.primitives.normal_state_content_identity().as_bytes());
         }
-        LogicalIdentity::from_sha256(encoder.finish())
+        LogicalIdentity::from_bytes(encoder.finish())
     }
 }
 

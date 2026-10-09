@@ -503,7 +503,7 @@ impl SelectedVisibilityWrite {
             hasher.update(generation.as_bytes());
         }
         self.manifest.consistency_token =
-            encode_identity(LogicalIdentity::from_sha256(hasher.finalize().into()));
+            encode_identity(LogicalIdentity::from_bytes(hasher.finalize().into()));
         self.manifest.main_modify_counter = measurement_set
             .main_table()
             .locked_modify_counter()?
@@ -1425,7 +1425,7 @@ fn mint_owner_identity(entropy: &[u8; 32], ordinal: u64, label: &[u8]) -> Logica
     hasher.update(ordinal.to_le_bytes());
     hasher.update((label.len() as u64).to_le_bytes());
     hasher.update(label);
-    LogicalIdentity::from_sha256(hasher.finalize().into())
+    LogicalIdentity::from_bytes(hasher.finalize().into())
 }
 
 fn encode_identity(identity: LogicalIdentity) -> String {
@@ -1452,7 +1452,7 @@ fn parse_identity(
     if bytes == [0; 32] {
         return Err(ObservationOwnerError::InvalidIdentity { field });
     }
-    Ok(LogicalIdentity::from_sha256(bytes))
+    Ok(LogicalIdentity::from_bytes(bytes))
 }
 
 fn validate_transaction_precondition(
@@ -1695,7 +1695,7 @@ mod tests {
     use ndarray::ArrayD;
 
     fn identity(byte: u8) -> LogicalIdentity {
-        LogicalIdentity::from_sha256([byte; 32])
+        LogicalIdentity::from_bytes([byte; 32])
     }
 
     fn one_row_selection() -> ObservationSelection {

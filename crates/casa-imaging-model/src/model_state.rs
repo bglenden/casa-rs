@@ -155,7 +155,7 @@ impl ModelSourceSupportInspection {
     /// Complete the declared external-mask comparison.
     pub fn finish(mut self) -> LogicalIdentity {
         self.encoder.usize(self.count);
-        LogicalIdentity::from_sha256(self.encoder.finish())
+        LogicalIdentity::from_bytes(self.encoder.finish())
     }
 }
 
@@ -435,7 +435,7 @@ impl ModelSourceShape {
         encoder.bytes(MODEL_SOURCE_SHAPE_IDENTITY_DOMAIN);
         encoder.u32(MODEL_SOURCE_SHAPE_IDENTITY_VERSION);
         self.encode(&mut encoder);
-        LogicalIdentity::from_sha256(encoder.finish())
+        LogicalIdentity::from_bytes(encoder.finish())
     }
 
     /// Return a cell's canonical flattened ordinal, when it belongs to this shape.
@@ -1196,7 +1196,7 @@ pub(crate) fn compile_model_lifecycle_contract(
     );
     Ok(ModelLifecycleContract {
         contract_id,
-        reprojection_contract: LogicalIdentity::from_sha256(reprojection.as_bytes()),
+        reprojection_contract: LogicalIdentity::from_bytes(reprojection.as_bytes()),
         reprojection_policy,
         numerics: numerics_id,
         target,
@@ -1276,8 +1276,8 @@ fn model_reprojection_contract_id(
     policy: ModelReprojectionPolicy,
 ) -> ModelReprojectionContractId {
     ModelReprojectionContractId(model_reprojection_contract_identity(
-        LogicalIdentity::from_sha256(product_graph.as_bytes()),
-        LogicalIdentity::from_sha256(numerics.as_bytes()),
+        LogicalIdentity::from_bytes(product_graph.as_bytes()),
+        LogicalIdentity::from_bytes(numerics.as_bytes()),
         conversion_precision,
         policy,
     ))
@@ -1337,7 +1337,7 @@ fn model_reprojection_contract_identity(
     encoder.u8(match policy.uncovered_target() {
         ModelUncoveredTargetPolicy::Invalid => 0,
     });
-    LogicalIdentity::from_sha256(encoder.finish())
+    LogicalIdentity::from_bytes(encoder.finish())
 }
 
 /// Derive the dependency-free identity of one exact source-to-target mapping.
@@ -1356,7 +1356,7 @@ pub fn model_reprojected_seed_mapping_identity(
     encoder.identity(preparation_contract);
     encoder.identity(source_shape);
     encoder.identity(target_shape);
-    LogicalIdentity::from_sha256(encoder.finish())
+    LogicalIdentity::from_bytes(encoder.finish())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1371,8 +1371,8 @@ fn model_lifecycle_contract_id(
     input: &ModelInputCommitment,
 ) -> ModelLifecycleContractId {
     ModelLifecycleContractId(model_lifecycle_contract_identity(
-        LogicalIdentity::from_sha256(numerics.as_bytes()),
-        LogicalIdentity::from_sha256(reprojection.as_bytes()),
+        LogicalIdentity::from_bytes(numerics.as_bytes()),
+        LogicalIdentity::from_bytes(reprojection.as_bytes()),
         target.identity(),
         bounds,
         arithmetic_precision,
@@ -1520,7 +1520,7 @@ fn model_lifecycle_contract_identity(
         ModelSupportSemantics::ExplicitValidity => 0,
     });
     encode_input_commitment_identity(&mut encoder, input);
-    LogicalIdentity::from_sha256(encoder.finish())
+    LogicalIdentity::from_bytes(encoder.finish())
 }
 
 fn encode_input_commitment_identity(
@@ -1566,7 +1566,7 @@ fn model_coefficient_space_identity(space: &ModelCoefficientSpace) -> LogicalIde
     encoder.u8(match space.inner_product() {
         ModelInnerProduct::HermitianEuclidean => 0,
     });
-    LogicalIdentity::from_sha256(encoder.finish())
+    LogicalIdentity::from_bytes(encoder.finish())
 }
 
 const fn coefficient_count(basis: ReconstructionBasis) -> usize {

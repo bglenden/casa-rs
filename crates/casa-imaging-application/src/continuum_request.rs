@@ -2255,7 +2255,7 @@ fn scientific_instrument_model(
     identity[31] = reference;
     Ok(Some((
         instrument_model,
-        LogicalIdentity::from_sha256(identity),
+        LogicalIdentity::from_bytes(identity),
     )))
 }
 
@@ -2266,7 +2266,7 @@ fn selection_request_identity() -> LogicalIdentity {
     let mut identity = [0_u8; 32];
     identity[0] = 2;
     identity[24..].copy_from_slice(&NEXT.fetch_add(1, Ordering::Relaxed).to_be_bytes());
-    LogicalIdentity::from_sha256(identity)
+    LogicalIdentity::from_bytes(identity)
 }
 
 fn instrument_model_supports_diameter(mosaic: bool, diameter_m: f64) -> bool {

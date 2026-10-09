@@ -543,7 +543,7 @@ impl<'a> Run<'a> {
         identity[0] = 1;
         identity[24..].copy_from_slice(&self.attempts.to_be_bytes());
         casa_imaging_model::ModelExecutionAttemptId::new(
-            casa_imaging_model::LogicalIdentity::from_sha256(identity),
+            casa_imaging_model::LogicalIdentity::from_bytes(identity),
         )
     }
 

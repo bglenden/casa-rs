@@ -71,7 +71,7 @@ fn model_lifecycle(model: ModelStateIdentity) -> ModelLifecycleRequirements {
         ModelStateIdentity::Empty => ModelInputCommitment::Empty,
         ModelStateIdentity::Seed(source) => ModelInputCommitment::AlignedSeed {
             source,
-            support: LogicalIdentity::from_sha256([0xa5; 32]),
+            support: LogicalIdentity::from_bytes([0xa5; 32]),
         },
         ModelStateIdentity::Generation(generation) => ModelInputCommitment::Generation(generation),
     };
@@ -5837,13 +5837,13 @@ fn multi_spw_source_input(path: &std::path::Path, source: u8) -> ObservationSour
 }
 
 fn identity(byte: u8) -> LogicalIdentity {
-    LogicalIdentity::from_sha256([byte; 32])
+    LogicalIdentity::from_bytes([byte; 32])
 }
 
 fn scoped_identity(source: u8, byte: u8) -> LogicalIdentity {
     let mut digest = [byte; 32];
     digest[0] = source;
-    LogicalIdentity::from_sha256(digest)
+    LogicalIdentity::from_bytes(digest)
 }
 
 fn specification() -> ProblemSpecification {
