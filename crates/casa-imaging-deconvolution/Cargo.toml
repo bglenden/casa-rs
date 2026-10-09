@@ -11,9 +11,12 @@ publish = false
 workspace = true
 
 [dependencies]
+bytemuck = "1.25"
 casa-fft = { path = "../casa-fft" }
 casa-imaging-model = { path = "../casa-imaging-model" }
 casa-numerics = { path = "../casa-numerics" }
 ndarray.workspace = true
+num-complex = { workspace = true, features = ["bytemuck"] }
+rayon = "1"
 thiserror.workspace = true
 tracing.workspace = true

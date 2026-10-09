@@ -237,30 +237,13 @@ pub fn fit_restoring_beam(
     )))
 }
 
-/// Measure the CASA cycle-threshold sidelobe fraction from a fitted Gaussian.
+/// The CASA cycle-threshold sidelobe fraction of a PSF whose main lobe was
+/// fitted as `beam` in pixel units (`SIImageStore::getPSFSidelobeLevel`).
 ///
 /// CASA defines the positive sidelobe as `max(psf - fitted_gaussian)` while
 /// preserving the magnitude of the most-negative original PSF sample. The
 /// Gaussian is unit peak and is scaled to the measured PSF peak before the
-/// subtraction. Pixel units are sufficient here because both the fit and the
-/// generated Gaussian use the same unit cell scale.
-///
-/// # Errors
-///
-/// Returns [`PsfBeamFitError`] if the Gaussian fit cannot be completed.
-pub fn fitted_psf_sidelobe_fraction(
-    psf: &[f32],
-    shape: [usize; 2],
-) -> Result<f64, PsfBeamFitError> {
-    if psf.len() != shape[0].saturating_mul(shape[1]) {
-        return Err(PsfBeamFitError(
-            "PSF payload length does not match its shape".to_string(),
-        ));
-    }
-    let beam = fit_restoring_beam(psf, shape, [1.0, 1.0], DEFAULT_PSF_FIT_CUTOFF)?;
-    fitted_psf_sidelobe_fraction_with_beam(psf, shape, beam)
-}
-
+/// subtraction.
 pub(crate) fn fitted_psf_sidelobe_fraction_with_beam(
     psf: &[f32],
     shape: [usize; 2],
@@ -413,12 +396,14 @@ fn extract_fit_samples(
         oversampling = 1;
     }
     let mut resampled = resample_psf(&window, oversampling);
-    let max_value = peak_max_value_f32(&resampled);
+    let (_, max_value) = peak_flat(resampled.as_slice()?)?;
     if !(max_value.is_finite() && max_value > 0.0) {
         return None;
     }
     resampled.mapv_inplace(|value| value / max_value);
-    let (resampled_peak, _) = peak_location(&resampled)?;
+    // The peak is located again after the Float division, as CASA does.
+    let (peak, _) = peak_flat(resampled.as_slice()?)?;
+    let resampled_peak = (peak / resampled.shape()[1], peak % resampled.shape()[1]);
     let min_len = nx.min(ny);
     let nrow_re = (oversampling * min_len).saturating_sub(1) / 2;
     let resampled_deltas = [
@@ -711,22 +696,6 @@ struct CasaParams {
     width_fwhm_rad: f64,
     axial_ratio: f64,
     position_angle_rad: f64,
-}
-
-fn peak_location(image: &Array2<f32>) -> Option<((usize, usize), f32)> {
-    image
-        .indexed_iter()
-        .fold(None, |best, (index, value)| match best {
-            None => Some((index, *value)),
-            Some((_, best_value)) if *value > best_value => Some((index, *value)),
-            _ => best,
-        })
-}
-
-fn peak_max_value_f32(image: &Array2<f32>) -> f32 {
-    image
-        .iter()
-        .fold(f32::NEG_INFINITY, |best, value| best.max(*value))
 }
 
 fn fit_gaussian_beam_casa(samples: &[FitSample], cell_size_rad: [f64; 2]) -> Option<RestoringBeam> {
@@ -1076,7 +1045,9 @@ mod tests {
         }
         psf[3 * shape[1] + 4] = 0.2;
         psf[27 * shape[1] + 26] = -0.4;
-        let sidelobe = fitted_psf_sidelobe_fraction(&psf, shape).expect("Gaussian fit");
+        let beam = fit_restoring_beam(&psf, shape, [1.0, 1.0], DEFAULT_PSF_FIT_CUTOFF)
+            .expect("Gaussian fit");
+        let sidelobe = fitted_psf_sidelobe_fraction_with_beam(&psf, shape, beam).unwrap();
         assert!((sidelobe - 0.4).abs() <= 1.0e-6, "{sidelobe}");
     }
 
