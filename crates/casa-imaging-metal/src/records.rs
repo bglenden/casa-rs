@@ -45,7 +45,7 @@ pub(crate) struct SampleRecord {
     pub table: u32,
     /// Taylor variable.
     pub spectral: f32,
-    /// Bit 0: `w > 0`.
+    /// Bit 0: gridding `w > 0`; bit 1: prediction `w > 0`.
     pub flags: u32,
     /// Pointing phase gradient.
     pub gradient: [f32; 2],
@@ -236,6 +236,7 @@ pub(crate) fn prepare(
         };
         let location = geometry.locate(u, v, table.oversampling);
         let w_positive = placement.w > 0.0;
+        let prediction_w_positive = placement.prediction_w_positive.unwrap_or(w_positive);
         let half = table.half_support;
         let (origin, plane) = match &targets.adjoint {
             Some((layout, _)) => (
@@ -261,7 +262,7 @@ pub(crate) fn prepare(
             model_plane,
             table: table.index,
             spectral: placement.spectral,
-            flags: u32::from(w_positive),
+            flags: u32::from(w_positive) | (u32::from(prediction_w_positive) << 1),
             gradient: placement.gradient,
         };
         if let (Some((layout, terms)), Some(sumwt)) = (&targets.adjoint, sumwt.as_deref_mut()) {
@@ -301,10 +302,10 @@ pub(crate) fn prepare(
             // The forward norm sums the taps the gather multiplies the grid
             // by, conjugated for w ≤ 0 (`accumulateFromGrid.inc`): the
             // opposite conjugation from the adjoint's `sumwt` norm above.
-            for row in mueller.table(w_positive, true) {
+            for row in mueller.table(prediction_w_positive, true) {
                 for (vpol, plane_index) in row.iter().enumerate() {
                     if let Some(m) = *plane_index {
-                        norms[vpol] += table.norm(location, m, !w_positive);
+                        norms[vpol] += table.norm(location, m, !prediction_w_positive);
                     }
                 }
             }

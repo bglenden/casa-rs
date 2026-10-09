@@ -226,8 +226,8 @@ struct Lru {
 ///
 /// Cells are keyed on the parallactic-angle cell, the frequency cell and
 /// the w-plane (`CfKey::group`); the Mueller elements live inside the cell
-/// as planes, routed by [`MuellerRouting`] with CASA's swapped tables for
-/// the conjugate baseline (`AWProjectFT::makeConjPolMap`). Prediction
+/// as planes, routed by [`MuellerRouting`] with CASA's selection of both
+/// the cell and its input polarization (`AWVisResampler`). Prediction
 /// divides once by the kernel sum and `sumwt += W·|N|`
 /// ([`KernelNormalisation::KernelSum`]); the pointing ramp applies to
 /// every row ([`ConvolutionFunctionSet::pointing_ramp`]). A row whose
@@ -420,7 +420,7 @@ impl AwCatalog {
         let mueller = routing(&mueller_elements, polarization).ok_or_else(|| {
             cache_error(
                 &root,
-                "the catalog lacks a Mueller element of a selected correlation",
+                "selected correlations have missing or overlapping Mueller routes",
             )
         })?;
         let [nx, ny] = geometry.grid_shape();
@@ -741,14 +741,15 @@ impl ConvolutionFunctionSet for AwCatalog {
     /// physical angle in degrees, as the cells record it.
     /// `group` is the gridding cell (the conjugate-frequency cell under
     /// `conjbeams`, `DataToGrid` with `conjBeams`); `cube` the
-    /// native-frequency cell a prediction reads (`GridToData`,
-    /// `nearestFreqNdx(spw, chan)`).
+    /// native-frequency, original-MS-w cell a prediction reads (`GridToData`,
+    /// `nearestFreqNdx(spw, chan)` and `vb_p->uvw()(2,irow)`).
     fn key(&self, row: &RowContext, freq_hz: f64, w_lambda: f64) -> CfKey {
         let pa_deg = (-row.parallactic_angle_rad[0]).to_degrees();
         let pa = self.pa_cell(pa_deg);
         let w = self.w_cell(w_lambda);
         let group = self.group_index(pa, self.frequency_cell(freq_hz), w);
-        let native = self.group_index(pa, nearest(&self.frequencies_hz, freq_hz).0, w);
+        let prediction_w = self.w_cell(self.prediction_w(row, freq_hz, w_lambda));
+        let native = self.group_index(pa, nearest(&self.frequencies_hz, freq_hz).0, prediction_w);
         CfKey {
             group: u16::try_from(group).expect("AW group fits u16"),
             cube: u16::try_from(native).expect("AW group fits u16"),
@@ -796,6 +797,13 @@ impl ConvolutionFunctionSet for AwCatalog {
         &self.mueller
     }
 
+    fn prediction_w(&self, row: &RowContext, freq_hz: f64, w_lambda: f64) -> f64 {
+        // AWVisResampler::GridToData reads vb_p->uvw()(2,irow) for the
+        // W cell and parity; DataToGrid reads the rotated vbs.uvw_p.
+        row.original_w_m
+            .map_or(w_lambda, |w| w * freq_hz / 299_792_458.0)
+    }
+
     fn image_correction(&self) -> &ImageCorrection {
         &self.correction
     }
@@ -811,11 +819,11 @@ impl ConvolutionFunctionSet for AwCatalog {
     }
 }
 
-/// `AWProjectFT::makeCFPolMap` and `makeConjPolMap`: each visibility
-/// correlation maps to the plane of its own Mueller element (`4·i + j`
-/// over `RR, RL, LR, LL` or `XX, XY, YX, YY`), the conjugate table to the
-/// swapped hand (`RR ↔ LL`, `RL ↔ LR`), feeding the grid polarization
-/// `pol_map` names; `None` when an element is missing.
+/// Compile the diagonal-cell routes of `AWVisResampler`. `getConvFunc_p`
+/// chooses the own/partner cell; `DataToGridImpl_p` then reads visibility
+/// `muellerElement % nDataPol` into the original grid polarization, while
+/// `GridToData` reads that index's grid polarization into the original
+/// visibility. The partner is `RR ↔ LL`, `RL ↔ LR` (likewise linear feeds).
 fn routing(elements: &[u32], polarization: &PolarizationRouting) -> Option<MuellerRouting> {
     let pol_map = polarization.pol_map();
     let gpols = polarization.grid_pols();
@@ -825,18 +833,45 @@ fn routing(elements: &[u32], polarization: &PolarizationRouting) -> Option<Muell
             .ok()
             .map(|plane| u8::try_from(plane).expect("planes fit u8"))
     };
-    let mut direct = vec![vec![None; pol_map.len()]; gpols];
-    let mut conjugate = vec![vec![None; pol_map.len()]; gpols];
+    let empty = || vec![vec![None; pol_map.len()]; gpols];
+    let mut adjoint = [empty(), empty()];
+    let mut forward = [empty(), empty()];
     for (vpol, (correlation, target)) in polarization.correlations().iter().zip(pol_map).enumerate()
     {
         let Some(gpol) = *target else {
             continue;
         };
         let element = mueller_element(*correlation)?;
-        direct[usize::from(gpol)][vpol] = Some(plane_of(element)?);
-        conjugate[usize::from(gpol)][vpol] = Some(plane_of(MUELLER_ELEMENTS - 1 - element)?);
+        // `PolOuterProduct::makeConjPol2CFMat` starts from the direct
+        // map and substitutes a partner only when that hand is active.
+        let partner = polarization
+            .correlations()
+            .iter()
+            .zip(pol_map)
+            .find_map(|(correlation, target)| {
+                (target.is_some()
+                    && mueller_element(*correlation) == Some(MUELLER_ELEMENTS - 1 - element))
+                .then_some(MUELLER_ELEMENTS - 1 - element)
+            })
+            .unwrap_or(element);
+        for (positive, selected) in [partner, element].into_iter().enumerate() {
+            let input = selected as usize % pol_map.len();
+            // A single table entry cannot represent two distinct cells
+            // (possible for noncanonical three-correlation subsets).
+            if adjoint[positive][usize::from(gpol)][input]
+                .replace(plane_of(selected)?)
+                .is_some()
+            {
+                return None;
+            }
+        }
+        for (positive, selected) in [element, partner].into_iter().enumerate() {
+            if let Some(input_grid) = pol_map[selected as usize % pol_map.len()] {
+                forward[positive][usize::from(input_grid)][vpol] = Some(plane_of(selected)?);
+            }
+        }
     }
-    Some(MuellerRouting { direct, conjugate })
+    Some(MuellerRouting { adjoint, forward })
 }
 
 /// The diagonal Mueller element of a parallel or cross hand.
@@ -1259,6 +1294,87 @@ fn write_cell(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn casa_routes_the_selected_cell_to_its_visibility_or_grid_hand() {
+        use CorrelationType as C;
+        use casa_imaging_model::PolarizationCoordinate as P;
+
+        let parallel = [C::CircularRr, C::CircularLl];
+        let pol = PolarizationRouting::compile(&parallel, &[P::CircularRr, P::CircularLl])
+            .expect("parallel hands");
+        let routes = routing(&[0, 15], &pol).expect("routes");
+        let diagonal = vec![vec![Some(0), None], vec![None, Some(1)]];
+        // AWVisResampler.cc:381 uses the selected cell's Mueller element
+        // modulo npol for the INPUT visibility; :540 uses it for the
+        // INPUT grid. The outer loop still names the output in each case.
+        assert_eq!(routes.table(true, false), &diagonal);
+        assert_eq!(routes.table(false, true), &diagonal);
+        assert_eq!(
+            routes.table(false, false),
+            &[vec![None, Some(1)], vec![Some(0), None]]
+        );
+        assert_eq!(
+            routes.table(true, true),
+            &[vec![None, Some(0)], vec![Some(1), None]]
+        );
+
+        // PolOuterProduct::makeConjPol2CFMat: an inactive partner leaves
+        // the direct mapping in place, even if the cache has both cells.
+        for (requested, cells, expected) in [
+            (P::CircularRr, vec![0, 15], vec![Some(0), None]),
+            (P::CircularLl, vec![0, 15], vec![None, Some(1)]),
+            (P::CircularRr, vec![0], vec![Some(0), None]),
+        ] {
+            let pol = PolarizationRouting::compile(&parallel, &[requested]).expect("one hand");
+            let routes = routing(&cells, &pol).expect("one-hand routes");
+            for positive in [false, true] {
+                for forward in [false, true] {
+                    assert_eq!(
+                        routes.table(positive, forward),
+                        std::slice::from_ref(&expected)
+                    );
+                }
+            }
+        }
+
+        let correlations = [C::CircularRr, C::CircularRl, C::CircularLr, C::CircularLl];
+        let pol = PolarizationRouting::compile(
+            &correlations,
+            &[P::CircularRr, P::CircularRl, P::CircularLr, P::CircularLl],
+        )
+        .expect("four hands");
+        let routes = routing(&[0, 5, 10, 15], &pol).expect("four-hand routes");
+        for gpol in 0..4 {
+            for vpol in 0..4 {
+                assert_eq!(
+                    routes.table(true, false)[gpol][vpol],
+                    (gpol == vpol).then_some(vpol as u8)
+                );
+                assert_eq!(
+                    routes.table(false, false)[gpol][vpol],
+                    (gpol + vpol == 3).then_some(vpol as u8)
+                );
+                assert_eq!(
+                    routes.table(true, true)[gpol][vpol],
+                    (gpol + vpol == 3).then_some(gpol as u8)
+                );
+                assert_eq!(
+                    routes.table(false, true)[gpol][vpol],
+                    (gpol == vpol).then_some(gpol as u8)
+                );
+            }
+        }
+        let pol = PolarizationRouting::compile(
+            &[C::CircularRr, C::CircularRl, C::CircularLl],
+            &[P::StokesI],
+        )
+        .expect("three correlations");
+        assert!(
+            routing(&[0, 15], &pol).is_none(),
+            "do not overwrite colliding routes"
+        );
+    }
 
     #[test]
     fn the_row_filter_keeps_every_row_the_smallest_selectable_cell_fits() {

@@ -160,8 +160,8 @@ impl ConvolutionFunctionSet for Separable {
 
 /// Complex random taps on two Mueller planes per cell, for two cells
 /// (`CfKey { cube: 0 | 1 }`). Visibility XX reads grid XX through plane 0
-/// and grid YY through plane 1 (YY symmetrically), and the conjugate table
-/// swaps the planes, so the w-sign swap is exercised.
+/// and grid YY through plane 1 (YY symmetrically). Independent tables for
+/// each direction and w sign exercise all four routing choices.
 struct Dense {
     cells: [Vec<Complex32>; 2],
     support: u16,
@@ -186,8 +186,10 @@ impl Dense {
             support,
             oversampling,
             mueller: MuellerRouting {
-                direct: leak(0, 1),
-                conjugate: leak(1, 0),
+                adjoint: [leak(1, 0), leak(0, 1)],
+                // Exercise forward routes that are not a swap of the
+                // adjoint tables, as CASA's AW routing requires.
+                forward: [leak(0, 0), leak(1, 1)],
             },
             correction: correction(),
         }
@@ -305,6 +307,7 @@ pub fn placements(
             u,
             v,
             w: rng.signed() * 50.0,
+            prediction_w_positive: Some(rng.next_u64().is_multiple_of(2)),
             phase: rng.signed() * std::f64::consts::PI,
             plane: (rng.next_u64() % u64::from(planes)) as u32,
             spectral: (0.3 * rng.signed()) as f32,

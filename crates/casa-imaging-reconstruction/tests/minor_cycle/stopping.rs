@@ -7,6 +7,66 @@
 use super::*;
 
 #[test]
+fn flat_noise_clean_uses_the_psf_sum_for_both_weight_and_residual() {
+    use casa_imaging_reconstruction::{
+        MajorCycleOwner, MinorCycleImageResponse, PassNormalState, WeightingGenerationId,
+        runtime_adapter::NormalStoragePlan,
+    };
+    let problem = problem_with_model(211, ModelStateIdentity::Empty);
+    let mut lifecycle = bind_lifecycle(&problem, 212, 1);
+    let empty = lifecycle.initial_empty().expect("empty model");
+    let preparation = MajorCyclePreparation::prepare(&lifecycle, empty, None).expect("prepare");
+    let mut images = scene(&problem).pass_images(preparation.final_model(), true);
+    let cells = SHAPE[0] * SHAPE[1];
+    images.sum_weights = vec![8.0];
+    // AW's data and weight kernels have different sums. CASA retains the
+    // PSF .sumwt (FTMachine::finalizeToSkyNew), then SIImageStore divides
+    // BOTH raw residual and weight by it before flat-noise normalization.
+    images.published_sum_weights = vec![3.0];
+    images.weight = Some(vec![16.0; cells]);
+    images.residual.fill(0.0);
+    images.residual[4 * SHAPE[1] + 4] = 8.0;
+    images.psf = Some(vec![0.0; cells]);
+    images.psf.as_mut().unwrap()[4 * SHAPE[1] + 4] = 8.0;
+    let mut pass = PassNormalState::initial(
+        &problem,
+        WeightingGenerationId::next(),
+        preparation.final_model_generation(),
+        NormalStoragePlan::resident(1).expect("storage"),
+    )
+    .expect("pass");
+    pass.append(images).expect("images");
+    let joined =
+        MajorCycleOwner::from_complete_data(pass.finish(2, 1).expect("complete"), preparation)
+            .expect("owner")
+            .reconcile(&mut lifecycle)
+            .expect("reconcile");
+    let (normal, _, model) = joined.into_parts();
+    let next = problem_with_model(
+        213,
+        ModelStateIdentity::Generation(model.generation_id().identity()),
+    );
+    let lifecycle = bind_lifecycle(&next, 214, 2);
+    let response =
+        MinorCycleImageResponse::new(ProductNormalization::FlatNoise, validity().primary_beam())
+            .expect("response");
+    let result = hogbom_minor_cycle(
+        &lifecycle,
+        &model,
+        &normal,
+        &full_mask(&normal, &model),
+        HogbomControls::new(0.25, 0.0, 1)
+            .expect("controls")
+            .with_image_response(response),
+    )
+    .expect("minor cycle");
+    // (8 / 8) / (sqrt(16 / 8) * sqrt(16 / 8)) = 0.5 Jy.
+    // The same value follows directly from published raw/sqrt(weight*peak).
+    assert!((result.evidence().initial_peak_flux() - 0.5).abs() < 1e-7);
+    assert!((result.evidence().total_flux() - 0.125).abs() < 1e-7);
+}
+
+#[test]
 fn controls_are_validated_explicitly() {
     let compiled = HogbomControls::from_compiled(ReconstructionControls::new(8, 0.5, 0.0))
         .expect("exact compiled Högbom view");
