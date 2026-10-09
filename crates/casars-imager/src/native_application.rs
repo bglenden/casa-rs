@@ -140,13 +140,7 @@ pub(crate) fn application_request(config: &CliConfig) -> Result<ContinuumImaging
         HogbomIterationAccounting::Strict
     };
     let iterations = if config.dirty_only { 0 } else { config.niter };
-    // CASA's automatic cycleniter: a non-positive length means niter
-    // (`checkAndFixIterationPars`), which the controller limits to what
-    // remains of niter each cycle.
-    let cycle_iterations = match config.minor_cycle_length {
-        0 => iterations.max(1),
-        length => length.min(iterations.max(1)),
-    };
+    let cycle_iterations = config.minor_cycle_length.min(iterations.max(1));
     let task_requirements = task_requirements(config);
     let direction_dependent = task_requirements.contains(&TaskRequirement::MosaicGridder)
         || task_requirements.contains(&TaskRequirement::AwProjection);
