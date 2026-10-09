@@ -126,34 +126,27 @@ _Avoid_: Compatibility profile, historical run replay
 ## Imaging execution
 
 **Resource Policy**:
-The frontend-selected interactive, balanced, exclusive, or explicitly
-overridden host-use policy. It describes intent, not detected capacity.
+The frontend-selected interactive, balanced, exclusive, or explicit host-use
+policy. It describes intent, not detected capacity.
 _Avoid_: Backend choice, device inventory
 
-**Resource Authority**:
-The process-level owner of resource inventory, multi-run arbitration, planning,
-leases, and accounting across CPU, memory, accelerators, storage, transfers,
-queues, caches, and every I/O buffer.
-_Avoid_: Application planner, mode eligibility
+**Host Resources**:
+The host's threads, performance cores, free memory and Metal device, detected
+once per process.
+_Avoid_: Resource inventory, topology
 
-**Resource Lease**:
-An epoch-bearing grant with hard ceilings and preferred targets that may
-change at declared safe execution boundaries.
-_Avoid_: Dynamic configuration, resource hint
+**Admission**:
+The check that one phase's memory, as its owners report it, fits what the
+Resource Policy leaves free beside the live reservations; an admitted phase
+holds a Reservation until it ends, and a refused phase does not start.
+_Avoid_: Planning, lease
 
-**Execution Plan**:
-An immutable problem-bound work DAG containing implementation alternatives,
-preparation, logical allocations, hard bounds, physical-slot assignments,
-quiescence points, and pre-authorized adaptations.
-_Avoid_: Resolved mode, backend choice
-
-**Execution Receipt**:
-A versioned projection of the effective problem and plan, identities,
-predictions and confidence, actual resource and I/O use, adaptations, output
-manifest, and final or failed completion outcome.
-Routine progress is indexed in memory; the receipt is not an event-by-event
-full-plan checkpoint or an admission input from historical runs (ADR-0014).
-_Avoid_: Log, metrics blob
+**Run Summary**:
+The one record a run leaves beside its products: the request echo, each phase
+with its wall time and peak resident memory, the worker count, the backend,
+the minor-cycle totals and the product list (plan section 8.3). It is O(1)
+per phase.
+_Avoid_: Execution receipt, log, metrics blob
 
 **Acceptance Contract**:
 The versioned, capability-specific baseline manifests, comparator rules,

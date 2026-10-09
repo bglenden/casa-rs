@@ -483,7 +483,6 @@ fn publish_products(
     )?;
     let team = WorkerTeam::new(workers)?;
     let products = produce_continuum_members(&planned, &inputs, window, &team, &publication.sink)?;
-    drop(inputs);
     drop(held);
     if runtime.cancel.is_cancelled() {
         // The staged members are removed when the sink drops.

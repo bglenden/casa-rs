@@ -3,12 +3,12 @@
 //! cancellation and the point-source law.
 
 use casa_imaging_operator::{
-    Basis, DensityCellRule, DensityGridShape, GridPrecision, ModeSet, SampleBuffer,
+    Basis, DensityCellRule, DensityGridShape, GridPrecision, ModeSet, PlaneRange, SampleBuffer,
     SpectralResampler, WeightingGeneration, build_density_grid,
 };
 use casa_imaging_runtime::pass::{
-    BackendChoice, Cancel, MajorCyclePass, Partition, PassDomain, PassError, Residency, WorkerTeam,
-    run_density_pass, run_major_cycle,
+    BackendChoice, BoundedSource, Cancel, MajorCyclePass, NativeBlock, Partition, PassDomain,
+    PassError, Residency, SourceError, WorkerTeam, run_density_pass, run_major_cycle,
 };
 use num_complex::Complex32;
 
@@ -146,6 +146,70 @@ fn a_cancelled_pass_stops_with_a_typed_error() {
         None,
     );
     assert!(matches!(result, Err(PassError::Cancelled)), "{result:?}");
+}
+
+/// Rows whose source cancels the pass once it has filled `after` blocks.
+struct CancellingRows {
+    rows: Rows,
+    cancel: Cancel,
+    after: usize,
+    filled: usize,
+}
+
+impl BoundedSource for CancellingRows {
+    fn begin(&mut self, planes: PlaneRange, restrict: bool) -> Result<(), SourceError> {
+        self.rows.begin(planes, restrict)
+    }
+
+    fn fill(&mut self, block: &mut NativeBlock) -> Result<bool, SourceError> {
+        let more = self.rows.fill(block)?;
+        self.filled += usize::from(more);
+        if self.filled == self.after {
+            self.cancel.cancel();
+        }
+        Ok(more)
+    }
+}
+
+/// Cancellation during a pass stops it within one block: the source fills
+/// no block after the one during which the pass was cancelled, and no wave
+/// hands back images.
+#[test]
+fn a_pass_cancelled_midway_reads_no_further_block() {
+    let operator = operator(GridPrecision::F64, Basis::Constant);
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
+    let weighting = WeightingGeneration::Natural { taper: None };
+    let domains = [planes(&operator, &resampler, 1)];
+    let pass = MajorCyclePass {
+        domains: &domains,
+        weighting: &weighting,
+        modes: ModeSet::DATA,
+        model: None,
+        residency: Residency::All,
+        native_spacing_hz: WIDTH_HZ,
+        backend: BackendChoice::Cpu,
+    };
+    for workers in [1, 3] {
+        let cancel = Cancel::new();
+        let mut rows = CancellingRows {
+            // Nine blocks of the fixture's 37 rows.
+            rows: Rows::random(9 * 37, 41, operator.geometry()),
+            cancel: cancel.clone(),
+            after: 3,
+            filled: 0,
+        };
+        let team = WorkerTeam::new(workers).expect("team");
+        let result = run_major_cycle(
+            &pass,
+            &mut rows,
+            &team,
+            &cancel,
+            &mut |_, _| panic!("a cancelled pass hands back no images"),
+            None,
+        );
+        assert!(matches!(result, Err(PassError::Cancelled)), "{result:?}");
+        assert_eq!(rows.filled, 3, "{workers} workers");
+    }
 }
 
 #[test]

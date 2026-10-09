@@ -11,6 +11,8 @@ mod aw_projection;
 mod cube;
 #[path = "t1/fixture.rs"]
 mod fixture;
+#[path = "t1/interrupt.rs"]
+mod interrupt;
 #[path = "t1/metal.rs"]
 mod metal;
 #[path = "t1/model_column.rs"]

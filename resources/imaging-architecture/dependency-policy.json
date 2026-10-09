@@ -200,9 +200,7 @@
    ],
    "regex": "\\benv::var(?:_os)?\\s*\\(|\\bstd::env\\b",
    "grandfathered": [
-    "crates/casa-imaging-products/src/taylor.rs",
-    "crates/casa-imaging-runtime/src/receipt.rs",
-    "crates/casa-imaging-runtime/src/resource_authority.rs"
+    "crates/casa-imaging-products/src/taylor.rs"
    ]
   },
   {
@@ -224,9 +222,7 @@
    "regex": "\\beprintln!\\s*\\(",
    "grandfathered": [
     "crates/casa-imaging-application/src/casa_product_sink.rs",
-    "crates/casa-imaging-products/src/taylor.rs",
-    "crates/casa-imaging-runtime/src/receipt.rs",
-    "crates/casa-imaging-runtime/src/resource_authority.rs"
+    "crates/casa-imaging-products/src/taylor.rs"
    ]
   },
   {
@@ -247,18 +243,11 @@
    ],
    "regex": "\\bsha2::|\\bSha256\\b|\\bcrc32c?::|\\bcrc::",
    "grandfathered": [
-    "crates/casa-imaging-application/src/continuum_request.rs",
     "crates/casa-imaging-model/src/compiled_problem.rs",
     "crates/casa-imaging-model/src/measurement_equation.rs",
     "crates/casa-imaging-model/src/native_aw.rs",
     "crates/casa-imaging-model/src/visibility_transform.rs",
-    "crates/casa-imaging-reconstruction/src/identity.rs",
-    "crates/casa-imaging-runtime/src/execution/tests.rs",
-    "crates/casa-imaging-runtime/src/execution_bindings.rs",
-    "crates/casa-imaging-runtime/src/product_publication.rs",
-    "crates/casa-imaging-runtime/src/receipt.rs",
-    "crates/casa-imaging-runtime/src/resource_authority.rs",
-    "crates/casa-imaging-runtime/src/serial_product_publication.rs"
+    "crates/casa-imaging-reconstruction/src/identity.rs"
    ]
   },
   {

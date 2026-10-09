@@ -351,13 +351,7 @@ finite-`f64` state encoding, and explicit validity semantics. Reconstruction
 alone prepares the target-ordered samples; the model contract derives and
 validates the preparation, mapping, support, and proof identities atomically.
 Another Product or Numerics Contract is rejected.
-Execution receipts preserve the lifecycle and compiler-owned reprojection
-identities, bind the Product Graph and Numerics identities and conversion
-precision, and carry the five closed direction/basis/polarization/support-policy
-tags. Receipt validation canonically recomputes the lifecycle and input proof
-from its typed target, bounds, precision, support, and input projections, rejects
-zero sentinels, and cross-checks duplicate audit fields; those fields never
-grant execution authority. Aligned ingest is a fallible one-pass stream
+Aligned ingest is a fallible one-pass stream
 whose terminal source errors remain source errors. Reconstruction-derived
 target-ordered reprojection accepts only the closed direction, spectral-basis,
 and real parallel-hand polarization conversions owned by reconstruction: a
@@ -378,35 +372,22 @@ consume this surface but cannot construct raw generations. No
 MeasurementSet/image persistence, runner, or model-column writer changes in
 T28.
 
-The Compiled Problem also owns one compiler-derived Observation Transaction.
-Its canonical read set contains every consumed per-MS selection, selected MAIN
-column generation, metadata generation, and consistency token. Optional
-`MODEL_DATA` writes carry exact selected-cell scope plus an absent-or-generation
-precondition captured independently of whether `MODEL_DATA` was read. Every
-`PhysicalWorkBinding` passed to the sole `plan` entrypoint must type every
-MeasurementSet source operation as `ObservationRead`. Visibility writes are
-not plan nodes: the final major-cycle pass writes them (see Imaging
-execution). Each transaction declares final
-complete-data reconciliation, private per-product staging events, and the
-applicable product Publication nodes. `plan`
-mechanically derives every
-observation-read terminal event and binds the declaration against the exact
-`CompiledProblem`; the crate-private binder rejects untyped lock-bearing I/O,
-product keys that differ from `ProductRequirements`, missing completion
-fences, any post-commit work, or any bypass publication. Conventional image
-members and `MODEL_DATA` are separate side effects: failure of one never rolls
-back or hides a result already completed by the other. The sealed plan retains the
-compiled-problem, logical-transaction, and physical-work identities, and its
-versioned identity includes the complete transaction declaration. The initial
-consistency check precedes every observation read; every read precedes
-reconciliation; and each terminal commit waits for every node and fence in its
-own transaction. Controller polling ends when that transaction's Publication launches.
-Initial-check and observation-read nodes reserve one table lock per source;
-every read revalidates under those locks. Staging storage, publication buffers,
-and commit fences are ordinary Resource Authority claims. Product publication
-replaces conventional images individually; failure fails the run, without
-rollback or a resumable per-member recovery ledger.
-`MODEL_DATA` and `CORRECTED_DATA` instead follow ADR-0008: the final major-cycle
+The Compiled Problem also derives one Observation Transaction: the canonical
+read set of every consumed per-MS selection, selected MAIN column generation,
+metadata generation and consistency token, and the exact selected-cell scope
+and absent-or-generation precondition of an optional `MODEL_DATA` write. No
+runtime plan binds it (IF-6 deleted the plan, its binder and the receipts):
+the application resolves the selected observation once, every pass reads it
+through the bounded source, and the final major-cycle pass writes the
+visibilities (see Imaging execution). Conventional image members and
+`MODEL_DATA` are separate side effects: failure of one never rolls back or
+hides a result already completed by the other. Every product member is
+generated into private staging beside its target and moved into place only
+after all of them have been generated; a failure or cancellation before then
+removes the staging and publishes nothing, and a failure while moving leaves an
+incomplete set that must be regenerated, without rollback or a resumable
+per-member recovery ledger.
+`MODEL_DATA` and `CORRECTED_DATA` follow ADR-0008: the final major-cycle
 pass writes selected cells in place through casa-ms's selected-visibility
 writer under its lock and a small incomplete-write marker, then
 updates the owner generation and removes the marker only after a successful
@@ -417,69 +398,17 @@ copy-on-write generation is part of this path. Users may retain or delete
 conventional products independently; `MODEL_DATA` remains a distinct
 MeasurementSet side effect.
 
-The Observation Transaction contract and binder do not themselves change
-`casa-ms`, casacore metadata, or persistent bytes. A storage adapter that
-implements the declared `MODEL_DATA` commit is the interoperability boundary
-and must pass the applicable Rust/C++ RR, RC, CR, and CC matrix before it can
-be selected by a production plan.
+The Observation Transaction does not itself change `casa-ms`, casacore
+metadata, or persistent bytes. The selected-visibility writer that implements
+the `MODEL_DATA` commit is the interoperability boundary and passes the
+applicable Rust/C++ RR, RC, CR, and CC matrix.
 
-`plan` is the only transaction-sealing path. It gives every structurally valid
-planner candidate to Resource Authority, which selects the first capable
-candidate feasible under the current topology, policy, pressure, and
-reservations. The provisional selection lease is released before `plan` seals
-that one candidate and its transaction declaration to the exact compiled
-problem and
-geometry, the complete Observation Snapshot, Numerics Contract,
-implementation-registry snapshot, Resource Policy, and planner cost-model
-profile identity. The plan owns the complete immutable physical work DAG:
-explicit nodes and dependencies, per-node implementation identities, resource
-claims, logical allocation lifetimes, compatible reusable physical slots,
-asynchronous fences, quiescence points, and pre-authorized adaptations. `run`
-validates the bindings and registry snapshot, reacquires the selected plan's
-sole Resource Authority lease, then privately drives every node and fence to a
-terminal outcome. Registry adapters execute only one exact scheduled node and
-receive only scheduler-issued, lease-epoch-bound resource and allocation
-capabilities for that call. Fence callbacks receive a freshly narrowed context
-containing only claims and allocations still live through that exact fence;
-work-scoped capabilities are never replayed after synchronous completion. No
-whole-plan executor or public scheduler can bypass the compile/plan/run seam.
-The transaction's initial consistency node alone receives the expected
-observation transaction, and typed observation reads receive its exact read
-set. Conventional product publication is planned and receipted.
-Controllers can observe only plan-listed transitions eligible at the current
-global cut. Cancellation, rejected directives, and adapter errors drain every
-launched fence before `run` returns; mapped pages and storage-manager state also
-execute their plan-owned terminal release nodes in dependency order. If release
-cannot be established, the scheduler drains all other work and fences, then
-retains only each failed physical-slot reservation fail-closed.
-Typed I/O-buffer ceilings bound concurrent logical activity while MemoryDemand
-and plan-owned physical slots are the sole physical-byte charge, allowing
-compatible buffers from disjoint processing segments to reuse storage.
-Execution receipts retain the plan and outcome evidence defined by the runtime
-receipt schema until ticket IF-6 replaces them with the run summary of
-ADR-0016. Installed-implementation availability is an application-owned
-pre-plan result, so a typed-unavailable request invokes no runtime and creates
-no execution receipt.
-Stores opened on the same canonical receipt root share one process-wide mutation lock and
-must agree on one registered retention policy, so pruning and persistence
-enforce one aggregate retention ceiling.
-Receipt schema 7 stores the Product Graph identity, schema, complete node
-ordinals, and exact atomic-publication member ordinals as a closed typed
-projection; publication validation never reconstructs authority from the open
-Compiled Problem audit field map. This T13 receipt projection and the version-3
-request/identity ratchets are CASA-RS control and evidence schemas only. They do
-not change casacore MeasurementSet or image-table columns, keywords, data
-managers, bytes, or on-disk identities. T13's focused gates therefore do not
-claim the programme's final Rust/C++ persistent-interoperability evidence,
-which remains required after the production storage adapters are integrated.
-ADR-0014 supersedes prepared-publication receipt choreography and partial-output
-recovery. Progress is maintained in memory without rewriting the whole receipt.
-A useful final success/failure summary is persisted; only small intermediate
-state with an actual storage/concurrency consumer is justified. Receipt-store
-I/O errors propagate as ordinary run failures, even if some output images have
-already been replaced. Such output sets are incomplete and require a rerun.
-Historical receipts do not constrain current resource admission and are not
-enumerated or reread during planning.
+Installed-implementation availability is an application-owned result checked
+before any phase, so a typed-unavailable request starts no work. A run leaves
+one record beside its products, the run summary of plan section 8.3
+(`<imagename>.summary.json`, written by `casars-imager`): the request echo,
+each phase with its wall time and the process's peak resident memory, the
+worker count, the backend, the minor-cycle totals and the product list.
 
 ## Runtime model
 
@@ -681,9 +610,14 @@ weighting, gridding/degridding, FFT, normalization, deconvolution, restoration,
 and product meaning reside only in their declared native owners.
 
 The application compiles one backend-independent problem, rejects unsupported
-requirements before planning, and then composes the runtime plan and sole
-installed executor directly. Runtime resource policy owns admitted workers,
-buffers, queues, caches, storage, and device resources; frontends neither
+requirements before any phase, and runs the cycle loop directly.
+`casa-imaging-runtime` detects the host once per process (`HostResources`:
+threads, performance cores, free memory, a Metal device). The run's
+`ResourcePolicy` (interactive, balanced, exclusive, or explicit ceilings) sets
+its worker team and its memory, and each phase admits the bytes its owners
+report (`admit`: the source envelope, the paged cube cache, one wave of each
+pass, the product writer) and holds them in a `Reservation` until it ends; a
+phase that does not fit is refused, typed, before it starts. Frontends neither
 calculate science nor inspect execution devices.
 Reusable buffers may reduce allocation churn but do not form a second memory
 budget or admission authority.
@@ -704,7 +638,10 @@ cube, the pass forms CASA's residual at native channels
 (`SIMapperCollection::degrid` then `grid`): every domain's model is predicted
 at each native channel, the predictions are summed, and the difference is
 gridded into every domain. Cancellation and failure stop the producer at the
-next block boundary.
+next block boundary. `casars-imager` turns the first SIGINT into the run's
+`Cancel`: the run stops at the next block boundary or before its next phase,
+removes its staging and paged state, publishes nothing, and exits with status
+130.
 
 Accumulation is split among the workers of one `WorkerTeam`.
 `Partition::Planes` gives each worker a disjoint range of channel-local planes,
@@ -712,8 +649,8 @@ so nothing is merged and the result is bitwise independent of the worker count;
 `Partition::Regions` gives each worker a horizontal strip of the grid plus the
 kernel halo and adds the tiles in region order, so a run is deterministic for
 a given worker count and agrees with one worker to rounding. Per-plane FFTs run single-threaded
-on each worker. `Residency::plan` holds every plane when the run's memory
-budget allows; otherwise the pass runs consecutive waves of planes, one
+on each worker. `Residency::plan` holds every plane when the memory the policy
+leaves free allows; otherwise the pass runs consecutive waves of planes, one
 traversal each, with model and normal state paged through one disk-backed cube
 state that keeps every domain at its own size. A wave's model includes a halo
 of planes sized from the native channel spacing, since a native channel's

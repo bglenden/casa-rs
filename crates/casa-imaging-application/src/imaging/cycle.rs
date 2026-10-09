@@ -105,6 +105,24 @@ struct Major {
     visibility: Option<VisibilityProductCompletion>,
 }
 
+impl ImagingOutcome {
+    /// The outcome of a run that has done its initial major cycle `major`.
+    fn initial(major: Major, run: &Run<'_>) -> Self {
+        Self {
+            scientific: major.completion,
+            masks: None,
+            minor_cycles: Vec::new(),
+            stop: None,
+            major_cycle_count: 1,
+            total_minor_iterations: 0,
+            total_actual_minor_iterations: 0,
+            visibility_products: major.visibility,
+            workers: run.team.workers(),
+            planes_per_wave: run.planes_per_wave,
+        }
+    }
+}
+
 /// Run every major and minor cycle of `inputs.problem`.
 ///
 /// The loop is tclean's: after each major cycle the controller decides from
@@ -126,18 +144,7 @@ pub(crate) fn run(
     let cancel = inputs.cancel.clone();
     let mut run = run_phase("imaging weights", &cancel, summary, || Run::open(inputs))?;
     let major = run_phase("major cycle 1", &cancel, summary, || run.initial(!cleaning))?;
-    let mut outcome = ImagingOutcome {
-        scientific: major.completion,
-        masks: None,
-        minor_cycles: Vec::new(),
-        stop: None,
-        major_cycle_count: 1,
-        total_minor_iterations: 0,
-        total_actual_minor_iterations: 0,
-        visibility_products: major.visibility,
-        workers: run.team.workers(),
-        planes_per_wave: run.planes_per_wave,
-    };
+    let mut outcome = ImagingOutcome::initial(major, &run);
     if !cleaning {
         return Ok(outcome);
     }
@@ -358,16 +365,9 @@ impl<'a> Run<'a> {
             "imaging weights: {workers} workers, {:.2} s",
             started.elapsed().as_secs_f64()
         );
+        let (host, policy) = (inputs.host, inputs.policy);
         let cube = matches!(main.basis(), Basis::ChannelLocal { .. })
-            .then(|| {
-                cube_state(
-                    problem,
-                    inputs.spill_directory,
-                    workers,
-                    &inputs.host,
-                    &inputs.policy,
-                )
-            })
+            .then(|| cube_state(problem, inputs.spill_directory, workers, &host, &policy))
             .transpose()?;
         let run = Self {
             problem,
@@ -377,8 +377,8 @@ impl<'a> Run<'a> {
             weighting_id: WeightingGenerationId::next(),
             team,
             cancel,
-            host: inputs.host,
-            policy: inputs.policy,
+            host,
+            policy,
             cube,
             native_spacing_hz: native_spacing_hz(problem),
             backend,

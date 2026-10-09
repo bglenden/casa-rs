@@ -278,6 +278,11 @@ impl Observation {
         self.root.path().join(name)
     }
 
+    /// The synthesised MeasurementSet.
+    pub fn measurement_set(&self) -> &Path {
+        &self.measurement_set
+    }
+
     /// Native channel centres in Hz.
     pub fn channel_frequencies_hz(&self) -> &[f64] {
         &self.channel_frequencies_hz
