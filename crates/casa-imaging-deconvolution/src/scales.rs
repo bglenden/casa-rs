@@ -9,9 +9,7 @@ use crate::Error;
 use crate::plane::{PlaneShape, Support};
 
 /// Real two-dimensional transforms of one plane shape, in double precision
-/// on one thread. Plans are FFTW's estimated ones: a measured plan is chosen
-/// by timing, so its rounding, and with it a solve, could differ from run
-/// to run.
+/// on one thread.
 pub(crate) struct PlaneFft {
     shape: PlaneShape,
     fft: RealFft2<f64>,
@@ -21,7 +19,7 @@ impl PlaneFft {
     pub(crate) fn new(shape: PlaneShape) -> Result<Self, Error> {
         Ok(Self {
             shape,
-            fft: RealFft2::with_threads([shape.nx, shape.ny], 1)?.with_estimated_plan(),
+            fft: RealFft2::with_threads([shape.nx, shape.ny], 1)?,
         })
     }
 

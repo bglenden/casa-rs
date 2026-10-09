@@ -6,11 +6,11 @@ Known imaging parity defect: [CASA Högbom `niter` off-by-one](#casa-hogbom-nite
 CASA behaviours casa-rs follows for parity:
 [AW-projection hand pairing](#aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell),
 [AW-projection prediction w](#aw-projection-predicts-with-the-unrotated-w),
-[MatrixCleaner's stop iteration](#matrixcleaner-counts-the-iteration-that-stops-it).
+[MatrixCleaner's stop iteration](#matrixcleaner-counts-the-iteration-that-stops-it),
+[exact peak comparisons](#peak-searches-let-rounding-choose-between-equal-pixels).
 CASA behaviours casa-rs does not follow:
 [odd-size scale convolutions](#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes),
-[MatrixCleaner's step residual](#matrixcleaners-step-residual-forgets-earlier-steps),
-[rounding-decided ties](#peak-searches-let-rounding-choose-between-equal-pixels).
+[MatrixCleaner's step residual](#matrixcleaners-step-residual-forgets-earlier-steps).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
 
@@ -265,28 +265,24 @@ casa-rs carries each step's residual into the next.
 ## Peak searches let rounding choose between equal pixels
 
 - Date noted: 2026-10-09
-- Status: CASA fragility; casa-rs breaks such ties deterministically in
-  casacore's exact-tie order, which agrees with CASA only where CASA's own
-  arithmetic happens to keep the tie (IF-5, #654)
+- Status: CASA behaviour casa-rs follows (exact comparisons); it makes
+  parity rows on exactly symmetric skies rounding-dependent (IF-5, #654)
 - Affected code: `casacore/scimath_f/hclean.f`, casacore `minMax` as read by
   `MatrixCleaner::findMaxAbsMask` and `MultiTermMatrixCleaner`
   (`chooseComponent`), Clark's `ABSMAXF`
 
 Every CASA peak search compares exactly and keeps the first extreme in its
-scan order. On a point-symmetric sky such as `refim_point`, mirror pixels
-are equal in exact arithmetic; CASA's dirty and PSF images are exactly
-point-symmetric even in float32. The scale convolutions and subtractions of
-the minor cycle then break the tie by an ulp or two, so rounding, not the
-data, picks the component. On `refim_point` CASA's rounding went both ways:
-`MatrixCleaner` took the first mirror in scan order, and the multi-term
-cleaner took the later one (one tie, at [50,47] / [50,53], value 4.9e-5, in
-the last cycle). In casa-rs, timed FFTW plans made the multiscale row flip
-between 5.4e-6 and 4.5e-2 NRMS from run to run.
-
-casa-rs treats values within 1e-12 of the larger of their magnitude and the
-step's peak as equal and takes casacore's first (`TIE_TOLERANCE` in
-`casa-imaging-deconvolution`), and plans its minor-cycle FFTs by FFTW's
-estimate, so a run is reproducible. No meaningful flux difference is that
-small; FFT rounding at 4096² is about 1e-14 of the peak. The `refim_point`
-multiscale row agrees with CASA to 5.4e-6. The MT-MFS row differs at 3.1e-2:
-its model is CASA's with the two mirror values swapped.
+scan order; casa-rs does the same. On a point-symmetric sky such as
+`refim_point`, mirror pixels are equal in exact arithmetic (CASA's dirty
+and PSF images are exactly point-symmetric even in float32), and the scale
+convolutions and subtractions of the minor cycle break the tie by an ulp or
+two, so rounding, not the data, picks the component. On `refim_point`
+CASA's rounding went both ways: `MatrixCleaner` took the first mirror in
+scan order, and the multi-term cleaner the later one (one tie, at [50,47] /
+[50,53], value 4.9e-5, in the last cycle). casa-rs's FFTW plans are chosen
+by timing, so its `refim_point` multiscale row comes out at 5.4e-6 or
+4.5e-2 NRMS from run to run; its MT-MFS row is 3.4e-4 with the timed plans
+seen so far and 3.1e-2 under FFTW's estimated plans. Both outcomes are
+equally valid cleans; such rows cannot measure parity, so
+IF-5's multiscale and MT-MFS acceptance uses skies without the symmetry
+(`refim_twopoints_twochan`, `refim_eptwochan`).

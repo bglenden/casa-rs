@@ -5,7 +5,7 @@
 use std::cell::Cell;
 
 use crate::Error;
-use crate::plane::{PlaneShape, exceeds};
+use crate::plane::PlaneShape;
 use crate::psf::ClarkPatch;
 use crate::refresh::LinearRefresh;
 use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepEnd, StepStop};
@@ -65,8 +65,6 @@ pub struct ClarkState {
     step_components: usize,
     active: Vec<Active>,
     refresh: LinearRefresh,
-    /// The step's starting peak, the scale of its rounding ties.
-    tie_scale: f64,
 }
 
 /// C++ `std::max(value, floor)`: `floor` only when `value < floor`, so a NaN
@@ -122,7 +120,6 @@ impl Solver for Clark {
             step_components: 0,
             active: Vec::new(),
             refresh,
-            tie_scale: max_residual,
         };
         state.begin(&residual[0], view);
         Ok(state)
@@ -137,9 +134,7 @@ impl Solver for Clark {
         loop {
             // ABSMAXF: the first largest in list order.
             let peak = state.active.iter().fold(None::<&Active>, |best, pixel| {
-                if best.is_none_or(|current| {
-                    exceeds(pixel.value.abs(), current.value.abs(), state.tie_scale)
-                }) {
+                if best.is_none_or(|current| pixel.value.abs() > current.value.abs()) {
                     Some(pixel)
                 } else {
                     best

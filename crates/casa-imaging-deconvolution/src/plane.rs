@@ -126,59 +126,24 @@ impl Support {
     }
 }
 
-/// Relative difference within which two values a solver compares are a
-/// tie.
-///
-/// A point-symmetric sky gives mirror pixels that are equal in exact
-/// arithmetic, and the FFT convolutions and accumulated subtractions of a
-/// solve leave them equal only to rounding: about 1e-14 of the step's peak
-/// at 4096², growing slowly with the number of components. Comparing
-/// exactly would let that rounding choose the component, differently for
-/// different FFT plans. casacore compares exactly and keeps the first
-/// extreme in its scan order, which is what CASA does when its own
-/// arithmetic keeps a tie (CASA's float rounding breaks some ties either
-/// way; see `docs/CASA (C++) bugs.md`). Here values within this fraction of
-/// the larger of their magnitude and a tie scale (the step's peak) are
-/// equal and take casacore's order deterministically; no meaningful flux
-/// difference is this small.
-pub const TIE_TOLERANCE: f64 = 1.0e-12;
-
-/// The values `value` ties with at tie scale `scale`, or `value` alone when
-/// the margin is not finite.
-fn tie_band(value: f64, scale: f64) -> (f64, f64) {
-    let margin = TIE_TOLERANCE * value.abs().max(scale);
-    if margin.is_finite() {
-        (value - margin, value + margin)
-    } else {
-        (value, value)
-    }
-}
-
-/// Whether `value` exceeds `best` by more than a tie at tie scale `scale`.
-pub(crate) fn exceeds(value: f64, best: f64, scale: f64) -> bool {
-    value - best > TIE_TOLERANCE * value.abs().max(best.abs()).max(scale)
-}
-
 /// The supported pixel of largest absolute value, as the Fortran `hclean`
-/// peak search finds it: a pixel replaces the best only when larger, so
-/// among equal magnitudes the first in x-fastest order wins. Magnitudes
-/// that differ by less than [`TIE_TOLERANCE`] of the larger of themselves
-/// and `tie_scale` are equal. NaN values are skipped ([`crate::run_plane`]
-/// refuses a nonfinite plane).
+/// peak search finds it: a pixel replaces the best only when strictly
+/// larger, so among equal magnitudes the first in x-fastest order wins.
+/// NaN values are skipped ([`crate::run_plane`] refuses a nonfinite plane).
 /// Returns the index and the signed value; `None` when nothing is supported.
 #[must_use]
-pub fn first_peak(values: &[f64], support: &Support, tie_scale: f64) -> Option<(usize, f64)> {
+pub fn first_peak(values: &[f64], support: &Support) -> Option<(usize, f64)> {
     let shape = support.shape();
     let mut best: Option<(usize, f64)> = None;
-    let (mut lower, mut upper) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
     for (index, (&value, &supported)) in values.iter().zip(support.as_slice()).enumerate() {
-        let magnitude = value.abs();
-        if !supported || magnitude < lower || magnitude.is_nan() {
+        if !supported {
             continue;
         }
-        if best.is_none_or(|(at, _)| magnitude > upper || shape.scans_before(index, at)) {
+        let magnitude = value.abs();
+        if best.is_none_or(|(at, peak)| {
+            magnitude > peak.abs() || (magnitude == peak.abs() && shape.scans_before(index, at))
+        }) {
             best = Some((index, value));
-            (lower, upper) = tie_band(magnitude, tie_scale);
         }
     }
     best
@@ -187,31 +152,25 @@ pub fn first_peak(values: &[f64], support: &Support, tie_scale: f64) -> Option<(
 /// casacore's `findMaxAbsMask`: the signed extreme of largest magnitude
 /// over the supported pixels, taken from `minMax`. The maximum and the
 /// minimum are each the first occurrence in x-fastest order, and the
-/// minimum wins only when larger in magnitude. Values that differ by less
-/// than [`TIE_TOLERANCE`] of the larger of their magnitude and `tie_scale`
-/// are equal.
+/// minimum wins only when strictly larger in magnitude.
 ///
 /// Unsupported pixels take part as zeros (casacore multiplies by the mask),
 /// so with no supported pixel the result is `(0, 0.0)`.
 #[must_use]
-pub fn casacore_max_abs(values: &[f64], support: &Support, tie_scale: f64) -> (usize, f64) {
+pub fn casacore_max_abs(values: &[f64], support: &Support) -> (usize, f64) {
     let shape = support.shape();
     let mut maximum = (0, f64::NEG_INFINITY);
     let mut minimum = (0, f64::INFINITY);
-    let (mut maximum_low, mut maximum_high) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
-    let (mut minimum_low, mut minimum_high) = (f64::INFINITY, f64::INFINITY);
     for (index, (&value, &supported)) in values.iter().zip(support.as_slice()).enumerate() {
         let value = if supported { value } else { 0.0 };
-        if value >= maximum_low && (value > maximum_high || shape.scans_before(index, maximum.0)) {
+        if value > maximum.1 || (value == maximum.1 && shape.scans_before(index, maximum.0)) {
             maximum = (index, value);
-            (maximum_low, maximum_high) = tie_band(value, tie_scale);
         }
-        if value <= minimum_high && (value < minimum_low || shape.scans_before(index, minimum.0)) {
+        if value < minimum.1 || (value == minimum.1 && shape.scans_before(index, minimum.0)) {
             minimum = (index, value);
-            (minimum_low, minimum_high) = tie_band(value, tie_scale);
         }
     }
-    if exceeds(minimum.1.abs(), maximum.1.abs(), tie_scale) {
+    if minimum.1.abs() > maximum.1.abs() {
         minimum
     } else {
         maximum
@@ -327,24 +286,21 @@ mod tests {
         values[shape.index(2, 1)] = 2.0;
         let support = Support::full(shape);
         assert_eq!(
-            first_peak(&values, &support, 0.0),
+            first_peak(&values, &support),
             Some((shape.index(2, 1), 2.0))
         );
         values[shape.index(1, 0)] = -2.0;
         assert_eq!(
-            first_peak(&values, &support, 0.0),
+            first_peak(&values, &support),
             Some((shape.index(1, 0), -2.0))
         );
         let masked = Support::new(
             shape,
             (0..shape.len()).map(|i| i != shape.index(1, 0)).collect(),
         );
+        assert_eq!(first_peak(&values, &masked), Some((shape.index(2, 1), 2.0)));
         assert_eq!(
-            first_peak(&values, &masked, 0.0),
-            Some((shape.index(2, 1), 2.0))
-        );
-        assert_eq!(
-            first_peak(&values, &Support::new(shape, vec![false; 12]), 0.0),
+            first_peak(&values, &Support::new(shape, vec![false; 12])),
             None
         );
     }
@@ -357,57 +313,19 @@ mod tests {
         values[shape.index(3, 2)] = 3.0;
         let support = Support::full(shape);
         assert_eq!(
-            casacore_max_abs(&values, &support, 0.0),
+            casacore_max_abs(&values, &support),
             (shape.index(3, 2), 3.0)
         );
         values[shape.index(1, 1)] = -3.5;
         assert_eq!(
-            casacore_max_abs(&values, &support, 0.0),
+            casacore_max_abs(&values, &support),
             (shape.index(1, 1), -3.5)
         );
         // Masked pixels count as zeros.
         let only_low = Support::new(shape, (0..12).map(|i| values[i] == 0.5).collect());
-        assert_eq!(casacore_max_abs(&values, &only_low, 0.0).1, 0.5);
+        assert_eq!(casacore_max_abs(&values, &only_low).1, 0.5);
         let none = Support::new(shape, vec![false; 12]);
-        assert_eq!(casacore_max_abs(&values, &none, 0.0), (0, 0.0));
-    }
-
-    /// Rounding never chooses between mirror pixels: values a few ulps apart
-    /// resolve to the first in x-fastest order whichever is larger and in
-    /// either sign, and a real difference still picks the larger.
-    #[test]
-    fn rounding_ties_resolve_in_scan_order() {
-        let shape = PlaneShape::new(5, 4);
-        let support = Support::full(shape);
-        let first = shape.index(3, 1);
-        let later = shape.index(1, 2);
-        let nudged = |value: f64, ulps: i64| f64::from_bits((value.to_bits() as i64 + ulps) as u64);
-        for sign in [1.0, -1.0] {
-            let peak = sign * 1.25e-3;
-            for ulps in [-3, -1, 0, 1, 3] {
-                let mut values = vec![sign * 1.0e-4; shape.len()];
-                values[first] = peak;
-                values[later] = nudged(peak, ulps);
-                assert_eq!(first_peak(&values, &support, 0.0), Some((first, peak)));
-                assert_eq!(casacore_max_abs(&values, &support, 0.0), (first, peak));
-            }
-            let mut values = vec![sign * 1.0e-4; shape.len()];
-            values[first] = peak;
-            values[later] = peak * (1.0 + 1.0e-9);
-            assert_eq!(first_peak(&values, &support, 0.0).unwrap().0, later);
-            assert_eq!(casacore_max_abs(&values, &support, 0.0).0, later);
-            // Late in a step rounding is relative to the step's peak: at a
-            // tie scale of 10 the same difference is a tie.
-            assert_eq!(first_peak(&values, &support, 10.0).unwrap().0, first);
-            assert_eq!(casacore_max_abs(&values, &support, 10.0).0, first);
-        }
-        // Between the maximum and the minimum a tie goes to the maximum.
-        let mut values = vec![0.0; shape.len()];
-        values[first] = -2.0;
-        values[later] = nudged(2.0, -2);
-        assert_eq!(casacore_max_abs(&values, &support, 0.0).0, later);
-        values[later] = 2.0 * (1.0 - 1.0e-9);
-        assert_eq!(casacore_max_abs(&values, &support, 0.0).0, first);
+        assert_eq!(casacore_max_abs(&values, &none), (0, 0.0));
     }
 
     #[test]

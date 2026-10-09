@@ -235,55 +235,27 @@ fn taylor_recovers_two_components_with_their_spectra() {
     }
 }
 
-/// A point-symmetric sky has mirror pixels of equal value, and rounding must
-/// not choose between them: nudging one mirror by an ulp leaves every
-/// solver's components as they were, each tie going to the first pixel in
-/// casacore's x-fastest order.
+/// Exactly equal peaks go to casacore's first: x-fastest for Högbom's
+/// `hclean` search, list order (x-major, GETBIMF) for Clark. The two point
+/// components here are mirror images, so their peaks are equal exactly.
 #[test]
-fn rounding_does_not_choose_between_mirror_pixels() {
+fn exact_ties_go_to_casacores_first_pixel() {
     let point = psf(2.0, 1.0);
     let [cx, cy] = SHAPE.centre();
     let early = SHAPE.index(cx + 6, cy - 4);
     let late = SHAPE.index(cx - 6, cy + 4);
-    let symmetric = convolve(&point, &[(early, 0.8), (late, 0.8)]);
-    assert_eq!(symmetric[early], symmetric[late]);
-    let mut nudged = symmetric.clone();
-    nudged[late] = f64::from_bits(nudged[late].to_bits() + 1);
-    let cycle = cycle(40, 0.0);
-    let components = |residual: &[f64], solver: &dyn Fn(&Plane) -> Vec<(usize, usize)>| {
-        solver(&Plane::new(vec![residual.to_vec()], vec![point.clone()]))
-    };
-    let trace = |outcome: casa_imaging_deconvolution::PlaneOutcome| {
-        outcome
-            .trace
-            .iter()
-            .map(|component| (component.index, component.scale))
-            .collect::<Vec<_>>()
-    };
-    let hogbom = |plane: &Plane| trace(plane.run(&Hogbom::new(false), &cycle).unwrap());
-    let multiscale = |plane: &Plane| {
-        trace(
-            plane
-                .run(&Multiscale::new(vec![0.0, 3.0], 0.0), &cycle)
-                .unwrap(),
-        )
-    };
-    let clark = |plane: &Plane| trace(plane.run(&Clark::default(), &cycle).unwrap());
-    // Clark's active list is x-major (GETBIMF), so its first is the other
-    // mirror.
-    for (name, solver, first) in [
-        (
-            "hogbom",
-            &hogbom as &dyn Fn(&Plane) -> Vec<(usize, usize)>,
-            early,
-        ),
-        ("multiscale", &multiscale, early),
-        ("clark", &clark, late),
-    ] {
-        let clean = components(&symmetric, solver);
-        assert_eq!(clean[0].0, first, "{name}: casacore's first mirror wins");
-        assert_eq!(components(&nudged, solver), clean, "{name}");
-    }
+    let plane = Plane::new(
+        vec![convolve(&point, &[(early, 0.8), (late, 0.8)])],
+        vec![point.clone()],
+    );
+    assert_eq!(plane.residual[0][early], plane.residual[0][late]);
+    let cycle = cycle(1, 0.0);
+    let first = |outcome: casa_imaging_deconvolution::PlaneOutcome| outcome.trace[0].index;
+    assert_eq!(
+        first(plane.run(&Hogbom::new(false), &cycle).unwrap()),
+        early
+    );
+    assert_eq!(first(plane.run(&Clark::default(), &cycle).unwrap()), late);
 }
 
 /// CASA's Högbom loop does one component more than the cycle's budget and

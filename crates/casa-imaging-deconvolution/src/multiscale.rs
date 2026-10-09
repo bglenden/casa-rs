@@ -4,7 +4,7 @@
 
 use crate::Error;
 use crate::patch::subtract_window;
-use crate::plane::{PlaneShape, Support, casacore_max_abs, exceeds, peak_magnitude};
+use crate::plane::{PlaneShape, Support, casacore_max_abs, peak_magnitude};
 use crate::scales::ScaleBank;
 use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepEnd, StepStop};
 
@@ -46,8 +46,6 @@ pub struct MultiscaleState {
     masks: Vec<Support>,
     /// The strength of the step's first component (`tmpMaximumResidual`).
     first: Option<f64>,
-    /// The step's starting peak residual, the scale of its rounding ties.
-    tie_scale: f64,
 }
 
 /// Position of the `(low, high)` cross term, `low <= high`, in the packed
@@ -82,7 +80,7 @@ impl Solver for Multiscale {
         }
         let full = Support::full(shape);
         let psf_scale_peak = (0..scales)
-            .map(|scale| casacore_max_abs(&cross[cross_index(scale, scale, scales)], &full, 0.0).1)
+            .map(|scale| casacore_max_abs(&cross[cross_index(scale, scale, scales)], &full).1)
             .collect::<Vec<_>>();
         if psf_scale_peak.iter().any(|peak| *peak <= 0.0) {
             return Err(Error::NegativeScalePeak);
@@ -102,7 +100,6 @@ impl Solver for Multiscale {
             psf_scale_peak,
             masks,
             first: None,
-            tie_scale: peak_magnitude(&residual[0], view.support),
         })
     }
 
@@ -114,13 +111,12 @@ impl Solver for Multiscale {
     ) -> Result<Next, Error> {
         let mut best = (0.0_f64, 0_usize, 0_usize);
         for scale in 0..state.bank.len() {
-            let (index, value) =
-                casacore_max_abs(&state.dirty[scale], &state.masks[scale], state.tie_scale);
+            let (index, value) = casacore_max_abs(&state.dirty[scale], &state.masks[scale]);
             // b·v²/P: the response at the peak selects the scale.
             let maximum = value / state.psf_scale_peak[scale]
                 * state.bank.bias[scale]
                 * state.dirty[scale][index];
-            if exceeds(maximum.abs(), best.0.abs(), 0.0) {
+            if maximum.abs() > best.0.abs() {
                 best = (maximum, scale, index);
             }
         }

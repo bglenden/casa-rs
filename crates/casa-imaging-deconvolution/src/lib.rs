@@ -41,11 +41,11 @@ pub use controller::{
     ResidualStatistics,
 };
 pub use driver::{Component, PlaneOutcome, run_plane};
-pub use hogbom::{Hogbom, HogbomState};
+pub use hogbom::Hogbom;
 pub use multiscale::{Multiscale, MultiscaleState};
 pub use plane::{
-    PlaneShape, RobustNoise, Support, TIE_TOLERANCE, casacore_max_abs, first_peak, peak_magnitude,
-    psf_peak, robust_noise,
+    PlaneShape, RobustNoise, Support, casacore_max_abs, first_peak, peak_magnitude, psf_peak,
+    robust_noise,
 };
 pub use psf::{ClarkPatch, PsfSummary};
 pub use refresh::LinearRefresh;

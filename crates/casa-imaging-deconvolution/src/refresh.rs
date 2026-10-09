@@ -51,9 +51,7 @@ impl LinearRefresh {
             padded_axis(shape.nx, centre[0]),
             padded_axis(shape.ny, centre[1]),
         ];
-        // Estimated plans: a timed plan's rounding, and with it Clark's
-        // choice between equal pixels, could change from run to run.
-        let mut fft = RealFft2::with_threads(padded, 1)?.with_estimated_plan();
+        let mut fft = RealFft2::with_threads(padded, 1)?;
         let mut psf_spectrum = vec![Complex32::default(); fft.storage_len()];
         let row_stride = fft.real_row_stride();
         let real: &mut [f32] = bytemuck::cast_slice_mut(&mut psf_spectrum);
