@@ -114,7 +114,7 @@ pub(crate) fn run(inputs: ImagingInputs<'_>) -> Result<ImagingOutcome, ImagingEr
     let setup = minor_setup(problem, inputs.image_response, &inputs.masks);
     let mut mask_plans = inputs.masks.clone();
     let mut run = Run::open(inputs)?;
-    let mut major = run.initial(!cleaning)?;
+    let major = run.initial(!cleaning)?;
     let mut outcome = ImagingOutcome {
         scientific: major.completion,
         masks: None,
@@ -159,40 +159,17 @@ pub(crate) fn run(inputs: ImagingInputs<'_>) -> Result<ImagingOutcome, ImagingEr
             &mut cache,
             &run.team,
         )?;
-        let entering = (
-            outcome.total_minor_iterations,
-            outcome.total_actual_minor_iterations,
-        );
-        controller.record_minor_cycle(minor.summary.iterations, minor.summary.peak);
-        outcome.total_minor_iterations = controller.iterations();
-        outcome.total_actual_minor_iterations += minor.summary.components;
-        let cycle = outcome.minor_cycles.len() + 1;
-        let record = minor_cycle_record(
-            cycle,
+        let global_threshold = controls
+            .threshold_jy_per_beam()
+            .max(statistics.nsigma_threshold);
+        let cycle = account_minor_cycle(
+            &mut outcome,
+            &mut controller,
             &minor,
             &cycle_controls,
-            controls
-                .threshold_jy_per_beam()
-                .max(statistics.nsigma_threshold),
-            entering,
-            (
-                outcome.total_minor_iterations,
-                outcome.total_actual_minor_iterations,
-            ),
+            global_threshold,
+            started,
         );
-        tracing::info!(
-            "imaging minor cycle {cycle}: {} iterations ({} total), peak {:.6} -> {:.6} Jy, \
-             cycle threshold {:.6} Jy, stop {:?}, {:.2} s",
-            record.iterations,
-            record.total_iterations,
-            record.initial_peak_flux,
-            record.final_peak_flux,
-            record.effective_threshold,
-            record.stop_reason,
-            started.elapsed().as_secs_f64(),
-        );
-        outcome.minor_cycles.push(record);
-        outcome.masks = Some(ReconstructionMaskSet::Domains(minor.masks.clone()));
         let last = controller.budget_spent() || controller.last_cycle(&statistics);
         mask_plans = next_masks(&mask_plans, &minor, cycle, cycle_controls.threshold_reached)?;
         if minor.summary.iterations == 0 {
@@ -209,25 +186,79 @@ pub(crate) fn run(inputs: ImagingInputs<'_>) -> Result<ImagingOutcome, ImagingEr
             outcome.masks = Some(ReconstructionMaskSet::Domains(prepared.masks().clone()));
             break;
         }
-        major = run.refresh(outcome.scientific, minor.terms, &minor.masks, last)?;
+        let major = run.refresh(outcome.scientific, minor.terms, &minor.masks, last)?;
         controller.end_major_cycle();
         outcome.scientific = major.completion;
         outcome.visibility_products = major.visibility;
         outcome.major_cycle_count += 1;
     }
-    if run.visibility_write.is_some() && outcome.visibility_products.is_none() {
-        // The pass that ended the run was not known to be the last when it
-        // ran; predict the final model once more to write it.
-        let masks = match &outcome.masks {
-            Some(ReconstructionMaskSet::Domains(masks)) => masks.clone(),
-            _ => unreachable!("a cleaning run has formed its masks"),
-        };
-        major = run.refresh(outcome.scientific, Vec::new(), &masks, true)?;
-        outcome.scientific = major.completion;
-        outcome.visibility_products = major.visibility;
-        outcome.major_cycle_count += 1;
-    }
+    let mut outcome = predict_final_model(&mut run, outcome)?;
     outcome.planes_per_wave = run.planes_per_wave;
+    Ok(outcome)
+}
+
+/// Fold one minor cycle into the run's totals and its controller
+/// (`mergeMinorCycleSummary`), record and log it; returns its ordinal.
+fn account_minor_cycle(
+    outcome: &mut ImagingOutcome,
+    controller: &mut Controller,
+    minor: &MinorCycleOutcome,
+    cycle_controls: &CycleControls,
+    global_threshold: f64,
+    started: Instant,
+) -> usize {
+    let entering = (
+        outcome.total_minor_iterations,
+        outcome.total_actual_minor_iterations,
+    );
+    controller.record_minor_cycle(minor.summary.iterations, minor.summary.peak);
+    outcome.total_minor_iterations = controller.iterations();
+    outcome.total_actual_minor_iterations += minor.summary.components;
+    let cycle = outcome.minor_cycles.len() + 1;
+    let record = minor_cycle_record(
+        cycle,
+        minor,
+        cycle_controls,
+        global_threshold,
+        entering,
+        (
+            outcome.total_minor_iterations,
+            outcome.total_actual_minor_iterations,
+        ),
+    );
+    tracing::info!(
+        "imaging minor cycle {cycle}: {} iterations ({} total), peak {:.6} -> {:.6} Jy, \
+         cycle threshold {:.6} Jy, stop {:?}, {:.2} s",
+        record.iterations,
+        record.total_iterations,
+        record.initial_peak_flux,
+        record.final_peak_flux,
+        record.effective_threshold,
+        record.stop_reason,
+        started.elapsed().as_secs_f64(),
+    );
+    outcome.minor_cycles.push(record);
+    outcome.masks = Some(ReconstructionMaskSet::Domains(minor.masks.clone()));
+    cycle
+}
+
+/// Predict the final model once more to write the model column, when the
+/// pass that ended the run was not known to be the last when it ran.
+fn predict_final_model(
+    run: &mut Run<'_>,
+    mut outcome: ImagingOutcome,
+) -> Result<ImagingOutcome, ImagingError> {
+    if run.visibility_write.is_none() || outcome.visibility_products.is_some() {
+        return Ok(outcome);
+    }
+    let masks = match &outcome.masks {
+        Some(ReconstructionMaskSet::Domains(masks)) => masks.clone(),
+        _ => unreachable!("a cleaning run has formed its masks"),
+    };
+    let major = run.refresh(outcome.scientific, Vec::new(), &masks, true)?;
+    outcome.scientific = major.completion;
+    outcome.visibility_products = major.visibility;
+    outcome.major_cycle_count += 1;
     Ok(outcome)
 }
 

@@ -103,15 +103,14 @@ impl LinearRefresh {
     /// Subtract the pending batch convolved with `psf` from `residual` and
     /// clear the batch. Returns whether the FFT path ran.
     ///
+    /// Called inside a rayon pool (`ThreadPool::install`), the sparse path
+    /// splits its rows across that pool; elsewhere it runs on the calling
+    /// thread. The result is the same either way.
+    ///
     /// # Errors
     ///
     /// When the transform fails.
-    pub fn refresh(
-        &mut self,
-        residual: &mut [f64],
-        psf: &[f64],
-        workers: usize,
-    ) -> Result<bool, Error> {
+    pub fn refresh(&mut self, residual: &mut [f64], psf: &[f64]) -> Result<bool, Error> {
         let stride = self.fft.real_row_stride();
         if !self.dense {
             let real: &[f32] = bytemuck::cast_slice(&self.components);
@@ -140,6 +139,11 @@ impl LinearRefresh {
                 * self.padded[1] as u128
                 * u128::from(self.padded[0].ilog2() + self.padded[1].ilog2());
             if direct <= transform {
+                let workers = if rayon::current_thread_index().is_some() {
+                    rayon::current_num_threads()
+                } else {
+                    1
+                };
                 sparse_refresh(psf, self.shape, self.centre, &components, workers, residual);
                 let real: &mut [f32] = bytemuck::cast_slice_mut(&mut self.components);
                 for &index in &self.sparse {
@@ -238,9 +242,14 @@ mod tests {
     }
 
     /// Sparse and FFT refreshes both equal the linear convolution, for every
-    /// PSF origin of odd and non-square planes, with components at the edges.
+    /// PSF origin of odd and non-square planes, with components at the edges,
+    /// inside a pool as on the calling thread.
     #[test]
     fn both_paths_are_the_linear_convolution_for_every_origin() {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(3)
+            .build()
+            .unwrap();
         for shape in [
             PlaneShape::new(3, 4),
             PlaneShape::new(5, 7),
@@ -257,21 +266,27 @@ mod tests {
                 ];
                 let mut expected = vec![0.5; shape.len()];
                 direct(&psf, shape, shape.pixel(peak), &components, &mut expected);
-                for (dense, workers) in [(false, 1), (false, 3), (true, 1)] {
+                for (dense, pooled) in [(false, false), (false, true), (true, false)] {
                     let mut refresh = LinearRefresh::new(&psf, shape, peak).unwrap();
                     for &(index, flux) in &components {
                         refresh.add(index, flux);
                     }
                     refresh.dense = dense;
+                    let mut run = |actual: &mut Vec<f64>| {
+                        if pooled {
+                            pool.install(|| refresh.refresh(actual, &psf)).unwrap()
+                        } else {
+                            refresh.refresh(actual, &psf).unwrap()
+                        }
+                    };
                     let mut actual = vec![0.5; shape.len()];
-                    let fft = refresh.refresh(&mut actual, &psf, workers).unwrap();
-                    assert_eq!(fft, dense);
+                    assert_eq!(run(&mut actual), dense);
                     for (a, e) in actual.iter().zip(&expected) {
                         assert!((a - e).abs() < 1e-5, "{shape:?} peak {peak}: {a} vs {e}");
                     }
                     // A refreshed batch is cleared.
                     let done = actual.clone();
-                    assert!(!refresh.refresh(&mut actual, &psf, workers).unwrap());
+                    assert!(!run(&mut actual));
                     assert_eq!(actual, done);
                 }
             }
@@ -289,20 +304,12 @@ mod tests {
             refresh.add(index, 0.25);
         }
         assert!(refresh.dense);
-        assert!(
-            refresh
-                .refresh(&mut vec![0.0; shape.len()], &psf, 1)
-                .unwrap()
-        );
+        assert!(refresh.refresh(&mut vec![0.0; shape.len()], &psf).unwrap());
         for index in 0..40 {
             refresh.add(shape.index(14 + index / 8, 12 + index % 8), 0.25);
         }
         assert!(!refresh.dense);
-        assert!(
-            refresh
-                .refresh(&mut vec![0.0; shape.len()], &psf, 1)
-                .unwrap()
-        );
+        assert!(refresh.refresh(&mut vec![0.0; shape.len()], &psf).unwrap());
     }
 
     /// Splitting rows across a pool gives the same residual as one worker.

@@ -9,7 +9,7 @@ use crate::Error;
 use crate::patch::subtract_window;
 use crate::plane::{PlaneShape, Support, beam_patch, casacore_max_abs};
 use crate::scales::ScaleBank;
-use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepEnd, StepStop};
+use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepEnd};
 
 /// The scale-mask threshold of the multi-term cleaner (`setupUserMask`).
 const SCALE_MASK_THRESHOLD: f64 = 0.1;
@@ -225,7 +225,7 @@ impl Solver for Taylor {
             return Err(Error::NonFinite);
         }
         if peak < state.threshold {
-            return Ok(Next::Stop(StepStop::Threshold));
+            return Ok(Next::Stop);
         }
         let shape = state.shape;
         let (low, high) = state
@@ -249,6 +249,20 @@ impl Solver for Taylor {
             scale,
             strength,
         }))
+    }
+
+    fn component_fluxes(
+        &self,
+        state: &TaylorState,
+        candidate: Candidate,
+        gain: f64,
+        fluxes: &mut Vec<f64>,
+    ) {
+        let Candidate::Pixel { index, scale, .. } = candidate;
+        let scales = state.scales();
+        fluxes.extend(
+            (0..state.terms).map(|term| gain * state.coefficients[term * scales + scale][index]),
+        );
     }
 
     fn accept(

@@ -8,7 +8,7 @@ use crate::Error;
 use crate::plane::PlaneShape;
 use crate::psf::ClarkPatch;
 use crate::refresh::LinearRefresh;
-use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepEnd, StepStop};
+use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepEnd};
 
 /// Clark's major cycles per step (`setMaxNumberMajorCycles(10)`).
 const MAJOR_CYCLES: usize = 10;
@@ -65,12 +65,6 @@ pub struct ClarkState {
     step_components: usize,
     active: Vec<Active>,
     refresh: LinearRefresh,
-}
-
-/// C++ `std::max(value, floor)`: `floor` only when `value < floor`, so a NaN
-/// `value` stays NaN.
-fn cpp_max(value: f64, floor: f64) -> f64 {
-    if value < floor { floor } else { value }
 }
 
 impl Solver for Clark {
@@ -140,8 +134,6 @@ impl Solver for Clark {
                     best
                 }
             });
-            // A NaN iteration flux limit (no exterior sidelobe) ends the
-            // Clark cycle after one component, as in CASA.
             if state.cycle_iterations < state.maximum_cycle_iterations
                 && let Some(pixel) = peak
                 && pixel.value.abs() > state.iteration_flux_limit
@@ -156,14 +148,11 @@ impl Solver for Clark {
                 }));
             }
             if state.cycle_iterations == 0 {
-                return Ok(Next::Stop(StepStop::Threshold));
+                return Ok(Next::Stop);
             }
             state.refresh_pending(&mut residual[0], view)?;
-            if state.max_residual <= state.threshold {
-                return Ok(Next::Stop(StepStop::Threshold));
-            }
-            if state.cycles >= MAJOR_CYCLES {
-                return Ok(Next::Stop(StepStop::Exhausted));
+            if state.max_residual <= state.threshold || state.cycles >= MAJOR_CYCLES {
+                return Ok(Next::Stop);
             }
             state.begin(&residual[0], view);
         }
@@ -214,7 +203,15 @@ impl Solver for Clark {
         state.cycle_iterations += 1;
         state.step_components += 1;
         state.fmn += state.fac / state.step_components as f64;
-        state.iteration_flux_limit = cpp_max(state.flux_limit * state.fmn, state.threshold);
+        state.iteration_flux_limit = if state.flux_limit > 0.0 {
+            (state.flux_limit * state.fmn).max(state.threshold)
+        } else {
+            // Without an exterior sidelobe the flux limit is 0, CASA's
+            // `Fac = absRes / fluxLimit` (speedup −1) is infinite and its
+            // iteration limit `max(0 · ∞, threshold)` is NaN, so the Clark
+            // cycle ends after one component.
+            f64::INFINITY
+        };
         Ok(())
     }
 
@@ -261,9 +258,12 @@ impl ClarkState {
             .active
             .iter()
             .fold(0.0_f64, |best, pixel| best.max(pixel.value.abs()));
-        // `pow(fluxLimit / absRes, speedup)` with CASA's speedup of −1:
-        // infinite without an exterior sidelobe.
-        self.fac = peak / self.flux_limit;
+        // `pow(fluxLimit / absRes, speedup)` with CASA's speedup of −1.
+        self.fac = if self.flux_limit > 0.0 {
+            peak / self.flux_limit
+        } else {
+            0.0
+        };
         self.fmn = 0.0;
         self.iteration_flux_limit = cutoff;
         self.cycle_iterations = 0;
@@ -281,7 +281,7 @@ impl ClarkState {
             .active
             .iter()
             .fold(0.0_f64, |peak, pixel| peak.max(pixel.value.abs()));
-        self.refresh.refresh(residual, &view.psf[0], view.workers)?;
+        self.refresh.refresh(residual, &view.psf[0])?;
         self.cycles += 1;
         self.cycle_iterations = 0;
         if self.max_residual > previous {

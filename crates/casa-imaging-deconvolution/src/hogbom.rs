@@ -4,8 +4,8 @@
 
 use crate::Error;
 use crate::patch::subtract_shifted;
-use crate::plane::{casacore_max_abs, first_peak};
-use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepEnd, StepStop};
+use crate::plane::{first_peak, peak_magnitude};
+use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepEnd};
 
 /// Högbom's point CLEAN on one plane.
 ///
@@ -51,13 +51,13 @@ impl Solver for Hogbom {
         residual: &mut [Vec<f64>],
     ) -> Result<Next, Error> {
         let Some((index, value)) = first_peak(&residual[0], view.support) else {
-            return Ok(Next::Stop(StepStop::Exhausted));
+            return Ok(Next::Stop);
         };
         if !value.is_finite() {
             return Err(Error::NonFinite);
         }
         if value.abs() < *threshold {
-            return Ok(Next::Stop(StepStop::Threshold));
+            return Ok(Next::Stop);
         }
         Ok(Next::Clean(Candidate::Pixel {
             index,
@@ -97,9 +97,10 @@ impl Solver for Hogbom {
         residual: &mut [Vec<f64>],
         _: &Delta,
     ) -> Result<StepEnd, Error> {
-        // SDAlgorithmHogbomClean::takeOneStep reports the signed extreme.
+        // SDAlgorithmHogbomClean::takeOneStep reports SDAlgorithmBase's
+        // findMaxAbsMask, a magnitude (unlike casacore's signed one).
         Ok(StepEnd {
-            peak: casacore_max_abs(&residual[0], view.support).1,
+            peak: peak_magnitude(&residual[0], view.support),
             refreshes: 0,
         })
     }

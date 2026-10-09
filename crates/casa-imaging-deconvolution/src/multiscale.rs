@@ -6,7 +6,7 @@ use crate::Error;
 use crate::patch::subtract_window;
 use crate::plane::{PlaneShape, Support, casacore_max_abs, peak_magnitude};
 use crate::scales::ScaleBank;
-use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepEnd, StepStop};
+use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepEnd};
 
 /// The scale-mask threshold of `MatrixCleaner` (`itsMaskThreshold`): a
 /// scale may be centred where at least 90% of it lies inside the mask.
@@ -122,7 +122,7 @@ impl Solver for Multiscale {
         }
         let (maximum, scale, index) = best;
         if maximum == 0.0 {
-            return Ok(Next::Stop(StepStop::Threshold));
+            return Ok(Next::Stop);
         }
         let strength = maximum / state.bank.bias[scale] / state.dirty[scale][index];
         if !strength.is_finite() {
@@ -130,11 +130,11 @@ impl Solver for Multiscale {
         }
         let first = *state.first.get_or_insert(strength.abs());
         if strength.abs() < state.threshold {
-            return Ok(Next::Stop(StepStop::Threshold));
+            return Ok(Next::Stop);
         }
         // A component half again as strong as the step's first: diverging.
         if strength.abs() - first > first / 2.0 {
-            return Ok(Next::Stop(StepStop::Diverged));
+            return Ok(Next::Stop);
         }
         Ok(Next::Clean(Candidate::Pixel {
             index,

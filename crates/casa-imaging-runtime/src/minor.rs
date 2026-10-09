@@ -7,6 +7,12 @@
 //! [`prepare_minor_cycle`] forms the masks and measures every plane (CASA's
 //! `initminorcycle`), and [`run_minor_cycle`] cleans every plane under the
 //! controls the controller derived from those measurements.
+//!
+//! Each half reads its planes from the normal state itself, so a plane is
+//! read twice per cycle. A paged cube is not held in memory between the
+//! halves; only the planes in flight on the team are.
+//!
+//! [`Controller`]: casa_imaging_deconvolution::Controller
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
@@ -29,7 +35,7 @@ use casa_imaging_reconstruction::{
 
 use crate::pass::WorkerTeam;
 
-/// Components kept per minor cycle for diagnostics.
+/// Component records kept per minor cycle for diagnostics.
 const TRACE: usize = 64;
 
 /// A failure of the minor cycle.
@@ -114,12 +120,14 @@ impl PreparedMinorCycle {
     }
 }
 
-/// One component of a minor cycle, in model coordinates.
+/// One model term of one component of a minor cycle, in model coordinates:
+/// a multi-term component gives one record per Taylor coefficient.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TracedComponent {
-    /// The model cell of the component centre.
+    /// The model cell of the component centre; its coefficient is the
+    /// channel of a cube plane or the Taylor term.
     pub cell: ModelCell,
-    /// Term-0 flux after the loop gain.
+    /// The term's flux after the loop gain.
     pub flux: f64,
     /// Scale size in pixels (0 for a point).
     pub scale_px: f64,
@@ -132,11 +140,11 @@ pub struct MinorCycleSummary {
     pub iterations: usize,
     /// Components actually cleaned.
     pub components: usize,
-    /// Sum of the absolute term-0 component fluxes.
+    /// Sum of the absolute component fluxes over every term.
     pub absolute_flux: f64,
     /// Largest peak residual on entry.
     pub start_peak: f64,
-    /// Largest peak residual of the planes that stopped on a rule
+    /// Largest peak residual magnitude of the planes that stopped on a rule
     /// (`SDAlgorithmBase::deconvolve`'s across-plane maximum).
     pub peak: f64,
     /// Largest robust noise of a plane, when `nsigma` is on.
@@ -145,7 +153,7 @@ pub struct MinorCycleSummary {
     pub stops: Vec<PlaneStop>,
     /// Exact whole-plane residual refreshes over every plane.
     pub refreshes: usize,
-    /// The first components.
+    /// The first component records.
     pub trace: Vec<TracedComponent>,
 }
 
@@ -160,6 +168,12 @@ pub struct MinorCycleOutcome {
     pub auto_masks: Box<[Option<AutoMultithreshEvidence>]>,
     /// What the cycle did.
     pub summary: MinorCycleSummary,
+}
+
+/// One plane's measurements before the cycle.
+struct Measured {
+    statistics: PlaneStatistics,
+    summary: PsfSummary,
 }
 
 /// Form the masks of `completion` and measure every plane: its peak
@@ -177,26 +191,31 @@ pub fn prepare_minor_cycle(
 ) -> Result<PreparedMinorCycle, MinorCycleRunError> {
     let normal = completion.normal_state();
     let base = completion.final_model();
-    let keys = plane_keys(normal);
+    let taylor = is_taylor(normal);
+    let keys = plane_keys(normal, taylor);
     // The automatic mask (one-channel continuum only) smooths by the
     // primary PSF's beam; a cube's first channel may hold no data.
     let beam = if setup.automask {
         let primary = keys[0];
-        summarise(normal, cache, primary)?;
+        summarise(normal, taylor, cache, primary)?;
         Some(automask_beam(&cache.summaries[&primary]))
     } else {
         None
     };
     let (masks, auto_masks) = mask_plans.materialize(base, normal, beam)?.into_parts();
-    let weights = response_weights(normal, setup, &keys)?;
+    let weights = response_weights(normal, setup, taylor, &keys)?;
     let inputs = Inputs {
         normal,
         base,
         masks: &masks,
         setup,
         weights: &weights,
+        taylor,
     };
-    let mut slots = keys.iter().map(|key| (*key, None)).collect::<Vec<_>>();
+    let mut slots = keys
+        .iter()
+        .map(|key| (*key, None::<Measured>))
+        .collect::<Vec<_>>();
     let missing = keys
         .iter()
         .filter(|key| !cache.summaries.contains_key(key))
@@ -217,18 +236,25 @@ pub fn prepare_minor_cycle(
             setup.nsigma,
             setup.automask,
         );
-        *out = Some((statistics, summary));
+        *out = Some(Measured {
+            statistics,
+            summary,
+        });
         Ok::<_, MinorCycleRunError>(())
     })?;
     let mut planes = Vec::with_capacity(keys.len());
     let mut sidelobes = Vec::with_capacity(keys.len());
     for (key, measured) in slots {
-        let Some((plane, summary)) = measured else {
+        let Some(Measured {
+            statistics,
+            summary,
+        }) = measured
+        else {
             continue;
         };
         sidelobes.push(summary.sidelobe());
         cache.summaries.entry(key).or_insert(summary);
-        planes.push((key, plane));
+        planes.push((key, statistics));
     }
     // Each image domain is one CASA image store.
     let mut statistics = ResidualStatistics::empty();
@@ -260,6 +286,13 @@ pub fn prepare_minor_cycle(
     })
 }
 
+/// One plane of a multi-plane cycle on the team.
+struct Slot {
+    key: PlaneKey,
+    statistics: PlaneStatistics,
+    solved: Option<Solved>,
+}
+
 /// Clean every plane of `completion` under `controls`.
 ///
 /// Planes are independent: several run concurrently on `team`, each on one
@@ -285,46 +318,46 @@ pub fn run_minor_cycle(
         weights,
         ..
     } = prepared;
+    let normal = completion.normal_state();
     let inputs = Inputs {
-        normal: completion.normal_state(),
+        normal,
         base: completion.final_model(),
         masks: &masks,
         setup,
         weights: &weights,
+        taylor: is_taylor(normal),
     };
     let mut results = Vec::with_capacity(planes.len());
     if let [(key, statistics)] = planes.as_slice() {
         let summary = cache.summaries[key];
-        let clark = cache.clark.take();
-        let (result, refresh) = team.install(|| {
-            solve(
-                &inputs,
-                *key,
-                &summary,
-                statistics,
-                controls,
-                team.workers(),
-                clark,
-            )
-        });
-        cache.clark = refresh;
-        results.push(result?);
+        let clark = &mut cache.clark;
+        results.push(team.install(|| solve(&inputs, *key, &summary, statistics, controls, clark))?);
     } else {
         let mut slots = planes
             .iter()
-            .map(|(key, statistics)| (*key, *statistics, None))
+            .map(|(key, statistics)| Slot {
+                key: *key,
+                statistics: *statistics,
+                solved: None,
+            })
             .collect::<Vec<_>>();
         let shared = &*cache;
-        team.for_each_mut(&mut slots, |_, (key, statistics, out)| {
-            let summary = shared.summaries[key];
-            let (result, _) = solve(&inputs, *key, &summary, statistics, controls, 1, None);
-            *out = Some(result?);
+        team.for_each_mut(&mut slots, |_, slot| {
+            let summary = shared.summaries[&slot.key];
+            slot.solved = Some(solve(
+                &inputs,
+                slot.key,
+                &summary,
+                &slot.statistics,
+                controls,
+                &mut None,
+            )?);
             Ok::<_, MinorCycleRunError>(())
         })?;
         results.extend(
             slots
                 .into_iter()
-                .map(|(_, _, result)| result.expect("every plane slot ran")),
+                .map(|slot| slot.solved.expect("every plane slot ran")),
         );
     }
     let mut summary = MinorCycleSummary {
@@ -370,12 +403,17 @@ pub fn run_minor_cycle(
     })
 }
 
+/// Whether `normal` holds one Taylor family (decided once per cycle half).
+fn is_taylor(normal: &FinalNormalState) -> bool {
+    normal.catalog() == NormalStateCatalog::UnnormalizedTaylorBlockV1
+}
+
 /// The planes a minor cycle cleans, in CASA's order within each image
 /// domain: one Taylor family, every channel of every polarization of a
 /// cube or continuum plane, or each polarization of every image field.
-fn plane_keys(normal: &FinalNormalState) -> Vec<PlaneKey> {
+fn plane_keys(normal: &FinalNormalState, taylor: bool) -> Vec<PlaneKey> {
     let first = normal.slab().core_range().start;
-    if normal.catalog() == NormalStateCatalog::UnnormalizedTaylorBlockV1 {
+    if taylor {
         return vec![PlaneKey {
             domain: 0,
             channel: first,
@@ -400,6 +438,7 @@ fn plane_keys(normal: &FinalNormalState) -> Vec<PlaneKey> {
 /// Measure the PSF of `key` into the cache.
 fn summarise(
     normal: &FinalNormalState,
+    taylor: bool,
     cache: &mut PsfCache,
     key: PlaneKey,
 ) -> Result<(), MinorCycleRunError> {
@@ -407,7 +446,7 @@ fn summarise(
         return Ok(());
     }
     let shape = plane_shape(normal, key);
-    let psf = read_psf(normal, key)?;
+    let psf = read_psf(normal, taylor, key)?;
     let peak = psf_peak_value(&psf, shape)?;
     cache
         .summaries
@@ -434,8 +473,12 @@ fn plane_shape(normal: &FinalNormalState, key: PlaneKey) -> PlaneShape {
 }
 
 /// Term-0 PSF of `key`, unnormalised.
-fn read_psf(normal: &FinalNormalState, key: PlaneKey) -> Result<Vec<f64>, MinorCycleRunError> {
-    if normal.catalog() == NormalStateCatalog::UnnormalizedTaylorBlockV1 {
+fn read_psf(
+    normal: &FinalNormalState,
+    taylor: bool,
+    key: PlaneKey,
+) -> Result<Vec<f64>, MinorCycleRunError> {
+    if taylor {
         let window = normal.read_window(normal.slab().core_range())?;
         let moment = window
             .normal_moment(0)
@@ -463,6 +506,23 @@ struct Inputs<'a> {
     setup: &'a MinorCycleSetup,
     /// The response weights, read once per cycle.
     weights: &'a BTreeMap<(usize, usize), ResponseWeights>,
+    /// Whether the normal state is one Taylor family.
+    taylor: bool,
+}
+
+/// A direction-dependent response bound to one plane's weights: what turns
+/// a solved value back into the physical model (`divideModelByWeight`).
+struct ResponseBinding<'a> {
+    sensitivity: Cow<'a, [f64]>,
+    response: MinorCycleImageResponse,
+    sum_weight: f64,
+}
+
+/// One plane's residual and PSF terms as the solver sees them.
+struct PlaneTerms<'a> {
+    residual: Vec<Vec<f64>>,
+    psf: Vec<Vec<f64>>,
+    response: Option<ResponseBinding<'a>>,
 }
 
 /// One plane read as a deconvolution view.
@@ -472,19 +532,19 @@ struct PlaneData<'a> {
     psf: Vec<Vec<f64>>,
     support: Support,
     valid: Support,
-    /// Converts a solved value at a pixel to the physical model.
-    physical: Option<(Cow<'a, [f64]>, MinorCycleImageResponse, f64)>,
+    response: Option<ResponseBinding<'a>>,
 }
 
 impl PlaneData<'_> {
     /// The plane's conversion of solved values to the physical model,
     /// bound once (binding scans the sensitivity plane).
     fn physical(&self) -> Result<Physical<'_>, MinorCycleRunError> {
-        Ok(match &self.physical {
+        Ok(match &self.response {
             None => Physical::Identity,
-            Some((sensitivity, response, sum_weight)) => Physical::Mosaic(
-                MosaicSensitivity::new(sensitivity)?.with_normal_sum_weight(*sum_weight)?,
-                response,
+            Some(binding) => Physical::Mosaic(
+                MosaicSensitivity::new(&binding.sensitivity)?
+                    .with_normal_sum_weight(binding.sum_weight)?,
+                &binding.response,
             ),
         })
     }
@@ -524,9 +584,9 @@ fn load<'a>(
         masks,
         setup,
         weights,
+        taylor,
     } = *inputs;
     let shape = plane_shape(normal, key);
-    let taylor = normal.catalog() == NormalStateCatalog::UnnormalizedTaylorBlockV1;
     let validity = if taylor {
         normal.support_validity()
     } else {
@@ -561,26 +621,20 @@ fn load<'a>(
         .zip(&valid)
         .map(|(masked, valid)| *masked && *valid)
         .collect();
-    let (residual, psf, physical) = if taylor {
+    let terms = if taylor {
         read_taylor(normal, setup)?
     } else {
         read_single(normal, setup, key, weights)?
     };
     Ok(Some(PlaneData {
         shape,
-        residual,
-        psf,
+        residual: terms.residual,
+        psf: terms.psf,
         support: Support::new(shape, support),
         valid: Support::new(shape, valid),
-        physical,
+        response: terms.response,
     }))
 }
-
-type Views<'a> = (
-    Vec<Vec<f64>>,
-    Vec<Vec<f64>>,
-    Option<(Cow<'a, [f64]>, MinorCycleImageResponse, f64)>,
-);
 
 /// A direction-dependent response's weights for one image domain and
 /// polarization (CASA's weight image of one store).
@@ -596,11 +650,11 @@ struct ResponseWeights {
 fn response_weights(
     normal: &FinalNormalState,
     setup: &MinorCycleSetup,
+    taylor: bool,
     keys: &[PlaneKey],
 ) -> Result<BTreeMap<(usize, usize), ResponseWeights>, MinorCycleRunError> {
     let mut weights = BTreeMap::new();
-    if setup.response.is_none() || normal.catalog() == NormalStateCatalog::UnnormalizedTaylorBlockV1
-    {
+    if setup.response.is_none() || taylor {
         return Ok(weights);
     }
     let window = normal.read_window(normal.slab().core_range())?;
@@ -632,14 +686,15 @@ fn response_weights(
 
 /// One plane's residual and PSF. Without a response both are divided by the
 /// PSF peak; with one the residual takes CASA's normalisation
-/// (`SIImageStore::divideResidualByWeight`) and the components convert back
-/// with `divideModelByWeight`.
+/// (`SIImageStore::divideResidualByWeight`: by the published sum of weights,
+/// and the weight image by the PSF gridding's) and the components convert
+/// back with `divideModelByWeight`.
 fn read_single<'a>(
     normal: &FinalNormalState,
     setup: &MinorCycleSetup,
     key: PlaneKey,
     weights: &'a BTreeMap<(usize, usize), ResponseWeights>,
-) -> Result<Views<'a>, MinorCycleRunError> {
+) -> Result<PlaneTerms<'a>, MinorCycleRunError> {
     let plane = normal.read_reconstruction_plane(key.domain, key.channel, key.polarization)?;
     let shape = plane_shape(normal, key);
     let psf = plane
@@ -650,8 +705,11 @@ fn read_single<'a>(
     let peak = psf_peak_value(&psf, shape)?;
     let raw = plane.residual();
     let Some(response) = setup.response else {
-        let residual = raw.iter().map(|value| value.re / peak).collect();
-        return Ok((vec![residual], vec![normalise(psf, peak)], None));
+        return Ok(PlaneTerms {
+            residual: vec![raw.iter().map(|value| value.re / peak).collect()],
+            psf: vec![normalise(psf, peak)],
+            response: None,
+        });
     };
     let weights = &weights[&(key.domain, key.polarization)];
     let bound = MosaicSensitivity::new(&weights.sensitivity)?
@@ -669,15 +727,15 @@ fn read_single<'a>(
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    Ok((
-        vec![residual],
-        vec![normalise(psf, peak)],
-        Some((
-            Cow::Borrowed(weights.sensitivity.as_slice()),
+    Ok(PlaneTerms {
+        residual: vec![residual],
+        psf: vec![normalise(psf, peak)],
+        response: Some(ResponseBinding {
+            sensitivity: Cow::Borrowed(weights.sensitivity.as_slice()),
             response,
-            weights.normal_weight,
-        )),
-    ))
+            sum_weight: weights.normal_weight,
+        }),
+    })
 }
 
 /// The Taylor family's residual terms and `2·N_t − 1` PSF moments, scaled
@@ -686,7 +744,7 @@ fn read_single<'a>(
 fn read_taylor(
     normal: &FinalNormalState,
     setup: &MinorCycleSetup,
-) -> Result<Views<'static>, MinorCycleRunError> {
+) -> Result<PlaneTerms<'static>, MinorCycleRunError> {
     let window = normal.read_window(normal.slab().core_range())?;
     let [nx, ny] = normal.shape();
     let shape = PlaneShape::new(nx, ny);
@@ -712,14 +770,16 @@ fn read_taylor(
     });
     let Some(response) = setup.response else {
         let peak = psf_peak_value(&moments[0], shape)?;
-        let residual = raw
-            .map(|term| term.iter().map(|value| value.re / peak).collect())
-            .collect();
-        let psf = moments
-            .into_iter()
-            .map(|moment| normalise(moment, peak))
-            .collect();
-        return Ok((residual, psf, None));
+        return Ok(PlaneTerms {
+            residual: raw
+                .map(|term| term.iter().map(|value| value.re / peak).collect())
+                .collect(),
+            psf: moments
+                .into_iter()
+                .map(|moment| normalise(moment, peak))
+                .collect(),
+            response: None,
+        });
     };
     let normal_weight = principal.sum_weight();
     let published_weight = window.published_sum_weights()[0];
@@ -741,15 +801,18 @@ fn read_taylor(
                 .collect::<Result<Vec<_>, _>>()
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let psf = moments
-        .into_iter()
-        .map(|moment| normalise(moment, normal_weight))
-        .collect();
-    Ok((
+    Ok(PlaneTerms {
         residual,
-        psf,
-        Some((Cow::Owned(sensitivity), response, normal_weight)),
-    ))
+        psf: moments
+            .into_iter()
+            .map(|moment| normalise(moment, normal_weight))
+            .collect(),
+        response: Some(ResponseBinding {
+            sensitivity: Cow::Owned(sensitivity),
+            response,
+            sum_weight: normal_weight,
+        }),
+    })
 }
 
 fn psf_peak_value(psf: &[f64], shape: PlaneShape) -> Result<f64, MinorCycleRunError> {
@@ -768,122 +831,100 @@ fn normalise(mut plane: Vec<f64>, scale: f64) -> Vec<f64> {
 }
 
 /// A plane's solve: its outcome, model terms keyed by model order, and the
-/// first components.
+/// first component records.
 struct Solved {
     outcome: PlaneOutcome,
     terms: Vec<(usize, ModelDeltaTerm)>,
     trace: Vec<TracedComponent>,
 }
 
-/// Read and clean one plane. Returns Clark's refresh for reuse.
-#[allow(clippy::too_many_arguments)]
+/// Read and clean one plane. Clark takes `clark`'s refresh, when it serves
+/// this PSF, and leaves its own there for the next cycle.
 fn solve(
     inputs: &Inputs<'_>,
     key: PlaneKey,
     summary: &PsfSummary,
     statistics: &PlaneStatistics,
     controls: &CycleControls,
-    workers: usize,
-    clark: Option<LinearRefresh>,
-) -> (Result<Solved, MinorCycleRunError>, Option<LinearRefresh>) {
-    let Inputs { base, setup, .. } = *inputs;
-    let plane = match load(inputs, key) {
-        Ok(Some(plane)) => plane,
-        Ok(None) => unreachable!("prepared planes have valid data"),
-        Err(error) => return (Err(error), clark),
-    };
+    clark: &mut Option<LinearRefresh>,
+) -> Result<Solved, MinorCycleRunError> {
+    let setup = inputs.setup;
+    let plane = load(inputs, key)?.expect("prepared planes have valid data");
     let view = MinorCycleView {
         shape: plane.shape,
         residual: &plane.residual,
         psf: &plane.psf,
         summary,
         support: &plane.support,
-        workers,
     };
-    let run = |solver: &dyn PlaneSolve| solver.run(&view, controls, statistics);
-    let (outcome, clark) = match &setup.algorithm {
-        ReconstructionAlgorithm::Hogbom => (
-            run(&Hogbom::new(
-                setup.accounting == HogbomIterationAccounting::CasaInclusive,
-            )),
-            clark,
-        ),
+    let outcome = match &setup.algorithm {
+        ReconstructionAlgorithm::Hogbom => clean(
+            &Hogbom::new(setup.accounting == HogbomIterationAccounting::CasaInclusive),
+            &view,
+            controls,
+            statistics,
+        )?,
         ReconstructionAlgorithm::Clark => {
-            let solver = Clark::new(clark);
-            let outcome = run(&solver);
-            (outcome, solver.into_refresh())
+            let solver = Clark::new(clark.take());
+            let outcome = clean(&solver, &view, controls, statistics);
+            *clark = solver.into_refresh();
+            outcome?
         }
         ReconstructionAlgorithm::Multiscale {
             scales_px,
             small_scale_bias,
-        } => (
-            run(&Multiscale::new(scales_px.clone(), *small_scale_bias)),
-            clark,
-        ),
+        } => clean(
+            &Multiscale::new(scales_px.clone(), *small_scale_bias),
+            &view,
+            controls,
+            statistics,
+        )?,
         ReconstructionAlgorithm::Mtmfs {
             scales_px,
             small_scale_bias,
-        } => (
-            run(&Taylor::new(
-                plane.residual.len(),
-                scales_px.clone(),
-                *small_scale_bias,
-            )),
-            clark,
-        ),
-        algorithm => {
-            return (Err(MinorCycleRunError::Algorithm(algorithm.clone())), clark);
-        }
+        } => clean(
+            &Taylor::new(plane.residual.len(), scales_px.clone(), *small_scale_bias),
+            &view,
+            controls,
+            statistics,
+        )?,
+        algorithm => return Err(MinorCycleRunError::Algorithm(algorithm.clone())),
     };
-    let solved = outcome.and_then(|outcome| {
-        let terms = model_terms(&outcome.delta, &plane, base, key)?;
-        let trace = trace(&outcome.trace, &plane, key, setup);
-        Ok(Solved {
-            outcome,
-            terms,
-            trace,
-        })
-    });
-    (solved, clark)
+    let terms = model_terms(&outcome.delta, &plane, inputs, key)?;
+    let trace = trace(&outcome.trace, &plane, inputs, key);
+    Ok(Solved {
+        outcome,
+        terms,
+        trace,
+    })
 }
 
-/// [`run_plane`] behind one object-safe signature for the solver choice.
-trait PlaneSolve {
-    fn run(
-        &self,
-        view: &MinorCycleView<'_>,
-        controls: &CycleControls,
-        statistics: &PlaneStatistics,
-    ) -> Result<PlaneOutcome, MinorCycleRunError>;
+/// [`run_plane`] with the cycle's trace length.
+fn clean<S: Solver>(
+    solver: &S,
+    view: &MinorCycleView<'_>,
+    controls: &CycleControls,
+    statistics: &PlaneStatistics,
+) -> Result<PlaneOutcome, MinorCycleRunError> {
+    Ok(run_plane(solver, view, controls, statistics, TRACE)?)
 }
 
-impl<S: Solver> PlaneSolve for S {
-    fn run(
-        &self,
-        view: &MinorCycleView<'_>,
-        controls: &CycleControls,
-        statistics: &PlaneStatistics,
-    ) -> Result<PlaneOutcome, MinorCycleRunError> {
-        Ok(run_plane(self, view, controls, statistics, TRACE)?)
-    }
+/// The model coefficient a plane's term `term` goes to: the Taylor term, or
+/// the channel of a cube plane.
+const fn coefficient(inputs: &Inputs<'_>, key: PlaneKey, term: usize) -> usize {
+    if inputs.taylor { term } else { key.channel }
 }
 
-/// The plane's components as model terms keyed by model order: a cube
-/// plane's coefficient is its channel, a Taylor term's its term.
+/// The plane's components as model terms keyed by model order.
 fn model_terms(
     delta: &Delta,
     plane: &PlaneData,
-    base: &ModelGeneration,
+    inputs: &Inputs<'_>,
     key: PlaneKey,
 ) -> Result<Vec<(usize, ModelDeltaTerm)>, MinorCycleRunError> {
     let mut terms = Vec::new();
     let physical = plane.physical()?;
     for term in 0..delta.term_count() {
-        let coefficient = if delta.term_count() > 1 {
-            term
-        } else {
-            key.channel
-        };
         for (index, flux) in delta.term(term) {
             let value = physical.apply(flux, index)?;
             if value == 0.0 {
@@ -891,11 +932,12 @@ fn model_terms(
             }
             let cell = ModelCell::new(
                 key.domain,
-                coefficient,
+                coefficient(inputs, key, term),
                 key.polarization,
                 plane.shape.pixel(index),
             );
-            let flat = base
+            let flat = inputs
+                .base
                 .shape()
                 .flat_index(cell)
                 .ok_or(ModelLifecycleError::CellOutsideShape)?;
@@ -914,10 +956,10 @@ fn model_terms(
 fn trace(
     components: &[Component],
     plane: &PlaneData,
+    inputs: &Inputs<'_>,
     key: PlaneKey,
-    setup: &MinorCycleSetup,
 ) -> Vec<TracedComponent> {
-    let scales = match &setup.algorithm {
+    let scales = match &inputs.setup.algorithm {
         ReconstructionAlgorithm::Multiscale { scales_px, .. }
         | ReconstructionAlgorithm::Mtmfs { scales_px, .. } => scales_px.as_slice(),
         _ => &[],
@@ -927,11 +969,7 @@ fn trace(
         .map(|component| TracedComponent {
             cell: ModelCell::new(
                 key.domain,
-                if plane.residual.len() > 1 {
-                    0
-                } else {
-                    key.channel
-                },
+                coefficient(inputs, key, component.term),
                 key.polarization,
                 plane.shape.pixel(component.index),
             ),

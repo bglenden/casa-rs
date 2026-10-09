@@ -49,8 +49,10 @@ pub use plane::{
 };
 pub use psf::{ClarkPatch, PsfSummary};
 pub use refresh::LinearRefresh;
+/// The scale taper, public for the T0 laws' extended sources only.
+#[doc(hidden)]
 pub use scales::spheroidal;
-pub use solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepEnd, StepStop};
+pub use solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepEnd};
 pub use taylor::{Taylor, TaylorState};
 
 /// Why a minor cycle could not run.

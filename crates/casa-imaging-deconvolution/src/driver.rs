@@ -6,14 +6,17 @@ use crate::Error;
 use crate::controller::{CycleControls, PlaneControl, PlaneStatistics, PlaneStop};
 use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver};
 
-/// One accepted component, for diagnostics.
+/// One model term of one accepted component, for diagnostics: a multi-term
+/// component gives one record per Taylor term.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Component {
     /// Storage index of the component centre.
     pub index: usize,
     /// Scale ordinal (0 for a point).
     pub scale: usize,
-    /// Term-0 flux after the loop gain.
+    /// The model term (Taylor coefficient) the flux goes to.
+    pub term: usize,
+    /// The term's flux after the loop gain.
     pub flux: f64,
 }
 
@@ -26,7 +29,7 @@ pub struct PlaneOutcome {
     pub iterations: usize,
     /// Components actually cleaned.
     pub components: usize,
-    /// Sum of the absolute term-0 component fluxes.
+    /// Sum of the absolute component fluxes over every term.
     pub absolute_flux: f64,
     /// The peak residual on entry.
     pub start_peak: f64,
@@ -34,7 +37,7 @@ pub struct PlaneOutcome {
     pub peak: f64,
     /// Why the plane stopped.
     pub stop: PlaneStop,
-    /// The first components, up to the requested count.
+    /// The first component records, up to the requested count.
     pub trace: Vec<Component>,
     /// Exact whole-plane residual refreshes.
     pub refreshes: usize,
@@ -130,23 +133,28 @@ fn run_step<S: Solver>(
     let limit = budget + solver.extra_iterations();
     let mut components = 0;
     let mut charged_stop = 0;
+    let mut fluxes = Vec::new();
     while components < limit {
         match solver.next(&mut state, view, residual)? {
-            Next::Stop(_) => {
+            Next::Stop => {
                 charged_stop = usize::from(solver.charges_stop());
                 break;
             }
             Next::Clean(candidate) => {
+                fluxes.clear();
+                solver.component_fluxes(&state, candidate, gain, &mut fluxes);
                 solver.accept(&mut state, view, residual, candidate, gain, &mut delta)?;
-                let Candidate::Pixel {
-                    index,
-                    scale,
-                    strength,
-                } = candidate;
-                let flux = gain * strength;
-                outcome.absolute_flux += flux.abs();
-                if outcome.trace.len() < trace {
-                    outcome.trace.push(Component { index, scale, flux });
+                let Candidate::Pixel { index, scale, .. } = candidate;
+                outcome.absolute_flux += fluxes.iter().map(|flux| flux.abs()).sum::<f64>();
+                for (term, &flux) in fluxes.iter().enumerate() {
+                    if outcome.trace.len() < trace {
+                        outcome.trace.push(Component {
+                            index,
+                            scale,
+                            term,
+                            flux,
+                        });
+                    }
                 }
                 components += 1;
             }

@@ -25,10 +25,6 @@ pub struct MinorCycleView<'a> {
     pub summary: &'a PsfSummary,
     /// Where components may be placed.
     pub support: &'a Support,
-    /// Workers the solver may spread one refresh across. More than one
-    /// only when the caller runs the solve inside its worker pool
-    /// (`rayon::ThreadPool::install`).
-    pub workers: usize,
 }
 
 /// One component a solver proposes.
@@ -52,21 +48,11 @@ pub enum Candidate {
 pub enum Next {
     /// Clean this component.
     Clean(Candidate),
-    /// The step ends by the solver's own rule.
-    Stop(StepStop),
-}
-
-/// Why a solver ended a step by its own rule.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum StepStop {
-    /// The peak fell below the step threshold.
-    Threshold,
-    /// The solver's divergence rule fired (multiscale: a component 50%
-    /// stronger than the step's first).
-    Diverged,
-    /// The solver ran out of work before its budget (Clark's ten
-    /// residual refreshes, or no supported pixel).
-    Exhausted,
+    /// The step ends by the solver's own rule: its threshold, its
+    /// divergence rule (multiscale's 50%) or no more work (Clark's ten
+    /// refreshes, no supported pixel). The plane controller judges the
+    /// plane from the step's peak and charge, as CASA's does.
+    Stop,
 }
 
 /// A plane solver: Högbom, Clark, multiscale or multi-term.
@@ -114,6 +100,20 @@ pub trait Solver {
         residual: &mut [Vec<f64>],
     ) -> Result<Next, Error>;
 
+    /// The flux `candidate` adds to each model term at loop gain `gain`,
+    /// term 0 first, pushed onto `fluxes` before [`Solver::accept`] applies
+    /// it: the single term `gain × strength` unless the solver has more.
+    fn component_fluxes(
+        &self,
+        _state: &Self::State,
+        candidate: Candidate,
+        gain: f64,
+        fluxes: &mut Vec<f64>,
+    ) {
+        let Candidate::Pixel { strength, .. } = candidate;
+        fluxes.push(gain * strength);
+    }
+
     /// Clean `candidate` with loop gain `gain`, adding the model update to
     /// `delta`.
     ///
@@ -149,8 +149,7 @@ pub trait Solver {
 /// How a step ended.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StepEnd {
-    /// The peak residual CASA reports for the step, with CASA's sign: signed
-    /// for Högbom (`findMaxAbsMask`), a magnitude for the others.
+    /// The peak residual magnitude CASA reports for the step.
     pub peak: f64,
     /// Exact whole-plane residual refreshes the step made (Clark's cycles,
     /// multiscale's terminal convolution).

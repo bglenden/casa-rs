@@ -89,7 +89,6 @@ impl Plane {
             psf: &self.psf,
             summary: &self.summary,
             support: &self.support,
-            workers: 1,
         }
     }
 
@@ -98,12 +97,21 @@ impl Plane {
         solver: &S,
         cycle: &CycleControls,
     ) -> Result<casa_imaging_deconvolution::PlaneOutcome, Error> {
+        self.run_traced(solver, cycle, 8)
+    }
+
+    fn run_traced<S: Solver>(
+        &self,
+        solver: &S,
+        cycle: &CycleControls,
+        trace: usize,
+    ) -> Result<casa_imaging_deconvolution::PlaneOutcome, Error> {
         run_plane(
             solver,
             &self.view(),
             cycle,
             &statistics(&self.residual[0], &self.support),
-            8,
+            trace,
         )
     }
 }
@@ -198,7 +206,8 @@ fn multiscale_recovers_a_point_and_an_extended_component() {
 }
 
 /// Two Taylor terms with distinct spectral behaviour, from PSF moments that
-/// are not proportional to one another, are recovered term by term.
+/// are not proportional to one another, are recovered term by term; every
+/// component records each term's flux, and the absolute flux sums them all.
 #[test]
 fn taylor_recovers_two_components_with_their_spectra() {
     let lobe = |scale| psf(2.0, scale);
@@ -224,7 +233,11 @@ fn taylor_recovers_two_components_with_their_spectra() {
         .collect::<Vec<_>>();
     let plane = Plane::new(residual, psfs);
     let outcome = plane
-        .run(&Taylor::new(2, vec![0.0], 0.0), &cycle(5000, 0.002))
+        .run_traced(
+            &Taylor::new(2, vec![0.0], 0.0),
+            &cycle(5000, 0.002),
+            usize::MAX,
+        )
         .unwrap();
     assert_eq!(outcome.stop, PlaneStop::CycleThreshold);
     for (at, fluxes) in model {
@@ -236,6 +249,44 @@ fn taylor_recovers_two_components_with_their_spectra() {
             );
         }
     }
+    // One record per term per component, in term order; their sum per term
+    // is the term's model update, and their magnitudes the absolute flux.
+    assert_eq!(outcome.trace.len(), 2 * outcome.components);
+    for [first, second] in outcome.trace.as_chunks::<2>().0 {
+        assert_eq!((first.term, second.term), (0, 1));
+        assert_eq!(first.index, second.index);
+    }
+    for term in 0..2 {
+        let traced = outcome
+            .trace
+            .iter()
+            .filter(|record| record.term == term)
+            .map(|record| record.flux)
+            .sum::<f64>();
+        let delta = outcome.delta.term(term).map(|(_, flux)| flux).sum::<f64>();
+        assert!(
+            (traced - delta).abs() < 1e-12,
+            "term {term}: {traced} vs {delta}"
+        );
+    }
+    let traced = outcome
+        .trace
+        .iter()
+        .map(|record| record.flux.abs())
+        .sum::<f64>();
+    assert!((outcome.absolute_flux - traced).abs() < 1e-12 * traced);
+}
+
+/// CASA's Högbom step reports the peak magnitude (`SDAlgorithmBase`'s
+/// `findMaxAbsMask`), so a negative source leaves a positive peak.
+#[test]
+fn hogbom_reports_the_peak_magnitude_of_a_negative_source() {
+    let point = psf(2.0, 1.0);
+    let at = SHAPE.index(20, 31);
+    let plane = Plane::new(vec![convolve(&point, &[(at, -1.0)])], vec![point]);
+    let outcome = plane.run(&Hogbom::new(false), &cycle(1, 0.0)).unwrap();
+    assert_eq!(outcome.trace[0].flux, -0.1);
+    assert!((outcome.peak - 0.9).abs() < 1e-12, "{}", outcome.peak);
 }
 
 /// A solver whose steps clean their whole budget with zero flux and report
@@ -297,10 +348,12 @@ impl Solver for Scripted {
     }
 }
 
-/// `SDAlgorithmBase::deconvolve` notes the peak a step starts from, then
-/// tests the step's own signed peak against the minimum of the earlier
-/// ones: a step that ends at −0.6 after starting from 0.5 has grown by 20%
-/// and stops the plane (code 4), although it is the smallest signed peak.
+/// `SDAlgorithmBase::deconvolve` notes the peak a step starts from
+/// (`setPeakResidual`), then tests the step's own peak against the minimum
+/// of the earlier ones (`checkStop`). `PlaneControl` keeps CASA's signed
+/// minimum; the CASA solvers all report magnitudes, so a negative scripted
+/// peak is what tells the two orders apart: −0.6 after 0.5 has grown by 20%
+/// and stops the plane (code 4).
 #[test]
 fn a_step_peak_is_tested_against_the_minimum_before_it() {
     let point = psf(2.0, 1.0);
