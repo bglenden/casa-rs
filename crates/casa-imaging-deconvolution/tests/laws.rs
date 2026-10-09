@@ -2,9 +2,12 @@
 //! T0 laws of the minor cycle: every solver recovers a known model, and the
 //! driver charges and stops as CASA does.
 
+use std::cell::Cell;
+
 use casa_imaging_deconvolution::{
-    Clark, CycleControls, Delta, Error, Hogbom, MinorCycleView, Multiscale, PlaneShape,
-    PlaneStatistics, PlaneStop, PsfSummary, Solver, Support, Taylor, run_plane,
+    Candidate, Clark, CycleControls, Delta, Error, Hogbom, MinorCycleView, Multiscale, Next,
+    PlaneShape, PlaneStatistics, PlaneStop, PsfSummary, Solver, StepEnd, Support, Taylor,
+    run_plane,
 };
 
 /// An odd, non-square plane.
@@ -233,6 +236,92 @@ fn taylor_recovers_two_components_with_their_spectra() {
             );
         }
     }
+}
+
+/// A solver whose steps clean their whole budget with zero flux and report
+/// scripted peaks, to test the driver's order alone.
+struct Scripted {
+    peaks: Vec<f64>,
+    step: Cell<usize>,
+}
+
+impl Scripted {
+    fn new(peaks: &[f64]) -> Self {
+        Self {
+            peaks: peaks.to_vec(),
+            step: Cell::new(0),
+        }
+    }
+}
+
+impl Solver for Scripted {
+    type State = ();
+
+    fn initialize(&self, _: &MinorCycleView<'_>, _: &[Vec<f64>], _: f64) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn next(&self, _: &mut (), _: &MinorCycleView<'_>, _: &mut [Vec<f64>]) -> Result<Next, Error> {
+        Ok(Next::Clean(Candidate::Pixel {
+            index: 0,
+            scale: 0,
+            strength: 0.0,
+        }))
+    }
+
+    fn accept(
+        &self,
+        _: &mut (),
+        _: &MinorCycleView<'_>,
+        _: &mut [Vec<f64>],
+        _: Candidate,
+        _: f64,
+        _: &mut Delta,
+    ) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn finalize(
+        &self,
+        _: (),
+        _: &MinorCycleView<'_>,
+        _: &mut [Vec<f64>],
+        _: &Delta,
+    ) -> Result<StepEnd, Error> {
+        let step = self.step.get();
+        self.step.set(step + 1);
+        Ok(StepEnd {
+            peak: self.peaks[step],
+            refreshes: 0,
+        })
+    }
+}
+
+/// `SDAlgorithmBase::deconvolve` notes the peak a step starts from, then
+/// tests the step's own signed peak against the minimum of the earlier
+/// ones: a step that ends at −0.6 after starting from 0.5 has grown by 20%
+/// and stops the plane (code 4), although it is the smallest signed peak.
+#[test]
+fn a_step_peak_is_tested_against_the_minimum_before_it() {
+    let point = psf(2.0, 1.0);
+    let residual = convolve(&point, &[(SHAPE.index(20, 31), 0.5)]);
+    let plane = Plane::new(vec![residual], vec![point]);
+    let cycle = cycle(6000, 0.0);
+    let outcome = plane
+        .run(&Scripted::new(&[-0.6, 0.3, 0.2]), &cycle)
+        .unwrap();
+    assert_eq!(
+        (outcome.stop, outcome.iterations),
+        (PlaneStop::Diverged, 2000)
+    );
+    // Falling peaks run every 2000-iteration step.
+    let outcome = plane
+        .run(&Scripted::new(&[0.45, 0.4, 0.35]), &cycle)
+        .unwrap();
+    assert_eq!(
+        (outcome.stop, outcome.iterations),
+        (PlaneStop::Iterations, 6000)
+    );
 }
 
 /// Exactly equal peaks go to casacore's first: x-fastest for Högbom's

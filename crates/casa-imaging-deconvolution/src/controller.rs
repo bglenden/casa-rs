@@ -259,7 +259,6 @@ impl Controller {
             .cycle_iteration_limit()
             .filter(|limit| *limit > 0)
             .map_or(niter, |limit| limit.min(niter));
-        // `with_cycle_threshold` sets the three together.
         let cycle_rule = match (
             controls.cycle_factor(),
             controls.minimum_psf_fraction(),
@@ -272,7 +271,8 @@ impl Controller {
                     maximum_psf_fraction,
                 })
             }
-            _ => None,
+            (None, None, None) => None,
+            _ => unreachable!("with_cycle_threshold sets the cycle factor and both fractions"),
         };
         Self {
             niter,
@@ -527,8 +527,10 @@ impl PlaneControl {
         self.iterations
     }
 
-    /// Note a step's peak residual, signed as its solver reports it, before
-    /// testing it (`setPeakResidual`): the minimum is signed, as CASA's is.
+    /// Note the peak residual a step starts from, signed as its solver
+    /// reports it (`setPeakResidual`, before `takeOneStep`): the minimum is
+    /// signed, as CASA's is, and a step's own peak is tested against the
+    /// minimum of the peaks before it.
     pub fn observe(&mut self, peak: f64) {
         self.minimum = self.minimum.min(peak);
     }

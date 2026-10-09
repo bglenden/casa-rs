@@ -90,6 +90,9 @@ pub fn run_plane<S: Solver>(
     let threshold = control.step_threshold();
     let step_budget = cycle.step_iterations();
     while stop.is_none() {
+        // SDAlgorithmBase::deconvolve: setPeakResidual with the previous
+        // step's peak, takeOneStep, then checkStop on the new peak.
+        control.observe(outcome.peak);
         let step = run_step(
             solver,
             view,
@@ -101,8 +104,6 @@ pub fn run_plane<S: Solver>(
             &mut outcome,
         )?;
         control.charge(step);
-        // SDAlgorithmBase::deconvolve: setPeakResidual, then checkStop.
-        control.observe(outcome.peak);
         stop = control.stop(outcome.peak);
         if stop.is_none() && step != step_budget {
             stop = Some(PlaneStop::Exited);

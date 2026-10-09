@@ -281,8 +281,8 @@ CASA's rounding went both ways: `MatrixCleaner` took the first mirror in
 scan order, and the multi-term cleaner the later one (one tie, at [50,47] /
 [50,53], value 4.9e-5, in the last cycle). casa-rs's FFTW plans are chosen
 by timing, so its `refim_point` multiscale row comes out at 5.4e-6 or
-4.5e-2 NRMS from run to run; its MT-MFS row is 3.4e-4 with the timed plans
-seen so far and 3.1e-2 under FFTW's estimated plans. Both outcomes are
+4.5e-2 NRMS from run to run; its MT-MFS row is 3.4e-4 when the tie goes
+CASA's way and 3.1e-2 when it does not (as on `main`). Both outcomes are
 equally valid cleans; such rows cannot measure parity, so
 IF-5's multiscale and MT-MFS acceptance uses skies without the symmetry
 (`refim_twopoints_twochan`, `refim_eptwochan`).
