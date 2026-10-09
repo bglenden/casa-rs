@@ -42,7 +42,7 @@
 <a href=#42 id=42 data-nosnippet>42</a>    <span class="doccomment">/// Return the provider-owned reference-data identity.
 <a href=#43 id=43 data-nosnippet>43</a>    </span><span class="attr">#[must_use]
 <a href=#44 id=44 data-nosnippet>44</a>    </span><span class="kw">pub const fn </span>identity(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; LogicalIdentity {
-<a href=#45 id=45 data-nosnippet>45</a>        LogicalIdentity::from_sha256(<span class="self">self</span>.provider_state.identity_sha256())
+<a href=#45 id=45 data-nosnippet>45</a>        LogicalIdentity::from_bytes(<span class="self">self</span>.provider_state.identity_sha256())
 <a href=#46 id=46 data-nosnippet>46</a>    }
 <a href=#47 id=47 data-nosnippet>47</a>
 <a href=#48 id=48 data-nosnippet>48</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const fn </span>retained_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {

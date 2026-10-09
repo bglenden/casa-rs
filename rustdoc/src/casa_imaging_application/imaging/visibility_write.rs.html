@@ -168,7 +168,7 @@
 <a href=#168 id=168 data-nosnippet>168</a>            corrected_data: <span class="self">self
 <a href=#169 id=169 data-nosnippet>169</a>                </span>.transform
 <a href=#170 id=170 data-nosnippet>170</a>                .filter(|<span class="kw">_</span>| <span class="self">self</span>.corrected_data)
-<a href=#171 id=171 data-nosnippet>171</a>                .map(|transform| LogicalIdentity::from_sha256(transform.contract_id().as_bytes())),
+<a href=#171 id=171 data-nosnippet>171</a>                .map(|transform| LogicalIdentity::from_bytes(transform.contract_id().as_bytes())),
 <a href=#172 id=172 data-nosnippet>172</a>        })<span class="question-mark">?</span>;
 <a href=#173 id=173 data-nosnippet>173</a>        <span class="prelude-val">Ok</span>(<span class="self">self</span>.samples)
 <a href=#174 id=174 data-nosnippet>174</a>    }

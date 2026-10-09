@@ -503,7 +503,7 @@
 <a href=#503 id=503 data-nosnippet>503</a>            hasher.update(generation.as_bytes());
 <a href=#504 id=504 data-nosnippet>504</a>        }
 <a href=#505 id=505 data-nosnippet>505</a>        <span class="self">self</span>.manifest.consistency_token =
-<a href=#506 id=506 data-nosnippet>506</a>            encode_identity(LogicalIdentity::from_sha256(hasher.finalize().into()));
+<a href=#506 id=506 data-nosnippet>506</a>            encode_identity(LogicalIdentity::from_bytes(hasher.finalize().into()));
 <a href=#507 id=507 data-nosnippet>507</a>        <span class="self">self</span>.manifest.main_modify_counter = measurement_set
 <a href=#508 id=508 data-nosnippet>508</a>            .main_table()
 <a href=#509 id=509 data-nosnippet>509</a>            .locked_modify_counter()<span class="question-mark">?
@@ -1425,7 +1425,7 @@
 <a href=#1425 id=1425 data-nosnippet>1425</a>    hasher.update(ordinal.to_le_bytes());
 <a href=#1426 id=1426 data-nosnippet>1426</a>    hasher.update((label.len() <span class="kw">as </span>u64).to_le_bytes());
 <a href=#1427 id=1427 data-nosnippet>1427</a>    hasher.update(label);
-<a href=#1428 id=1428 data-nosnippet>1428</a>    LogicalIdentity::from_sha256(hasher.finalize().into())
+<a href=#1428 id=1428 data-nosnippet>1428</a>    LogicalIdentity::from_bytes(hasher.finalize().into())
 <a href=#1429 id=1429 data-nosnippet>1429</a>}
 <a href=#1430 id=1430 data-nosnippet>1430</a>
 <a href=#1431 id=1431 data-nosnippet>1431</a><span class="kw">fn </span>encode_identity(identity: LogicalIdentity) -&gt; String {
@@ -1452,7 +1452,7 @@
 <a href=#1452 id=1452 data-nosnippet>1452</a>    <span class="kw">if </span>bytes == [<span class="number">0</span>; <span class="number">32</span>] {
 <a href=#1453 id=1453 data-nosnippet>1453</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ObservationOwnerError::InvalidIdentity { field });
 <a href=#1454 id=1454 data-nosnippet>1454</a>    }
-<a href=#1455 id=1455 data-nosnippet>1455</a>    <span class="prelude-val">Ok</span>(LogicalIdentity::from_sha256(bytes))
+<a href=#1455 id=1455 data-nosnippet>1455</a>    <span class="prelude-val">Ok</span>(LogicalIdentity::from_bytes(bytes))
 <a href=#1456 id=1456 data-nosnippet>1456</a>}
 <a href=#1457 id=1457 data-nosnippet>1457</a>
 <a href=#1458 id=1458 data-nosnippet>1458</a><span class="kw">fn </span>validate_transaction_precondition(
@@ -1695,7 +1695,7 @@
 <a href=#1695 id=1695 data-nosnippet>1695</a>    <span class="kw">use </span>ndarray::ArrayD;
 <a href=#1696 id=1696 data-nosnippet>1696</a>
 <a href=#1697 id=1697 data-nosnippet>1697</a>    <span class="kw">fn </span>identity(byte: u8) -&gt; LogicalIdentity {
-<a href=#1698 id=1698 data-nosnippet>1698</a>        LogicalIdentity::from_sha256([byte; <span class="number">32</span>])
+<a href=#1698 id=1698 data-nosnippet>1698</a>        LogicalIdentity::from_bytes([byte; <span class="number">32</span>])
 <a href=#1699 id=1699 data-nosnippet>1699</a>    }
 <a href=#1700 id=1700 data-nosnippet>1700</a>
 <a href=#1701 id=1701 data-nosnippet>1701</a>    <span class="kw">fn </span>one_row_selection() -&gt; ObservationSelection {

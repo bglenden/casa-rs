@@ -1004,7 +1004,7 @@
 <a href=#1004 id=1004 data-nosnippet>1004</a>        encoder.identity(<span class="self">self</span>.authority.as_bytes());
 <a href=#1005 id=1005 data-nosnippet>1005</a>        encoder.u64(<span class="self">self</span>.seal.<span class="number">0</span>);
 <a href=#1006 id=1006 data-nosnippet>1006</a>        encoder.u64(ordinal);
-<a href=#1007 id=1007 data-nosnippet>1007</a>        ModelGenerationId(LogicalIdentity::from_sha256(encoder.finish()))
+<a href=#1007 id=1007 data-nosnippet>1007</a>        ModelGenerationId(LogicalIdentity::from_bytes(encoder.finish()))
 <a href=#1008 id=1008 data-nosnippet>1008</a>    }
 <a href=#1009 id=1009 data-nosnippet>1009</a>
 <a href=#1010 id=1010 data-nosnippet>1010</a>    <span class="kw">fn </span>ensure_open(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), ModelLifecycleError&gt; {
@@ -1143,7 +1143,7 @@
 <a href=#1143 id=1143 data-nosnippet>1143</a>    encoder.identity(contract.contract_id().as_bytes());
 <a href=#1144 id=1144 data-nosnippet>1144</a>    encoder.identity(attempt.identity().as_bytes());
 <a href=#1145 id=1145 data-nosnippet>1145</a>    encoder.u64(epoch);
-<a href=#1146 id=1146 data-nosnippet>1146</a>    LogicalIdentity::from_sha256(encoder.finish())
+<a href=#1146 id=1146 data-nosnippet>1146</a>    LogicalIdentity::from_bytes(encoder.finish())
 <a href=#1147 id=1147 data-nosnippet>1147</a>}
 <a href=#1148 id=1148 data-nosnippet>1148</a>
 <a href=#1149 id=1149 data-nosnippet>1149</a><span class="attr">#[allow(clippy::too_many_arguments)]
@@ -1170,7 +1170,7 @@
 <a href=#1170 id=1170 data-nosnippet>1170</a>        }
 <a href=#1171 id=1171 data-nosnippet>1171</a>    }
 <a href=#1172 id=1172 data-nosnippet>1172</a>    encoder.identity(generation.as_bytes());
-<a href=#1173 id=1173 data-nosnippet>1173</a>    FinalModelCompletionId(LogicalIdentity::from_sha256(encoder.finish()))
+<a href=#1173 id=1173 data-nosnippet>1173</a>    FinalModelCompletionId(LogicalIdentity::from_bytes(encoder.finish()))
 <a href=#1174 id=1174 data-nosnippet>1174</a>}
 <a href=#1175 id=1175 data-nosnippet>1175</a>
 <a href=#1176 id=1176 data-nosnippet>1176</a><span class="kw">fn </span>store_exact_samples&lt;E&gt;(

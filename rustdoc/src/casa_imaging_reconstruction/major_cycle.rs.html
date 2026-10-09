@@ -1165,7 +1165,7 @@
 <a href=#1165 id=1165 data-nosnippet>1165</a>        }
 <a href=#1166 id=1166 data-nosnippet>1166</a>        <span class="prelude-val">None </span>=&gt; encoder.u8(<span class="number">0</span>),
 <a href=#1167 id=1167 data-nosnippet>1167</a>    }
-<a href=#1168 id=1168 data-nosnippet>1168</a>    FinalNormalStateCompletionId(LogicalIdentity::from_sha256(encoder.finish()))
+<a href=#1168 id=1168 data-nosnippet>1168</a>    FinalNormalStateCompletionId(LogicalIdentity::from_bytes(encoder.finish()))
 <a href=#1169 id=1169 data-nosnippet>1169</a>}
 <a href=#1170 id=1170 data-nosnippet>1170</a>
 <a href=#1171 id=1171 data-nosnippet>1171</a><span class="kw">fn </span>major_cycle_completion_id(
@@ -1181,7 +1181,7 @@
 <a href=#1181 id=1181 data-nosnippet>1181</a>    encoder.u64(epoch);
 <a href=#1182 id=1182 data-nosnippet>1182</a>    encoder.identity(normal_state.as_bytes());
 <a href=#1183 id=1183 data-nosnippet>1183</a>    encoder.identity(model.as_bytes());
-<a href=#1184 id=1184 data-nosnippet>1184</a>    MajorCycleCompletionId(LogicalIdentity::from_sha256(encoder.finish()))
+<a href=#1184 id=1184 data-nosnippet>1184</a>    MajorCycleCompletionId(LogicalIdentity::from_bytes(encoder.finish()))
 <a href=#1185 id=1185 data-nosnippet>1185</a>}
 <a href=#1186 id=1186 data-nosnippet>1186</a>
 <a href=#1187 id=1187 data-nosnippet>1187</a><span class="doccomment">/// Exact reason a Major-Cycle reconciliation failed closed.

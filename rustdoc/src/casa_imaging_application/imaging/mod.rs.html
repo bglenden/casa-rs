@@ -18,7 +18,7 @@
 <a href=#18 id=18 data-nosnippet>18</a>    MajorCycleError, MaskError, ModelLifecycleError, SpectralOperatorError,
 <a href=#19 id=19 data-nosnippet>19</a>};
 <a href=#20 id=20 data-nosnippet>20</a><span class="kw">use </span>casa_imaging_runtime::pass::PassError;
-<a href=#21 id=21 data-nosnippet>21</a><span class="kw">use </span>casa_imaging_runtime::{MinorCycleRunError, ResourceError};
+<a href=#21 id=21 data-nosnippet>21</a><span class="kw">use </span>casa_imaging_runtime::{Admission, Cancelled, MinorCycleRunError};
 <a href=#22 id=22 data-nosnippet>22</a>
 <a href=#23 id=23 data-nosnippet>23</a><span class="doccomment">/// A failure of a native imaging run.
 <a href=#24 id=24 data-nosnippet>24</a></span><span class="attr">#[derive(Debug, thiserror::Error)]
@@ -53,14 +53,17 @@
 <a href=#53 id=53 data-nosnippet>53</a>    <span class="doccomment">/// The next cycle's masks could not be planned.
 <a href=#54 id=54 data-nosnippet>54</a>    </span><span class="attr">#[error(transparent)]
 <a href=#55 id=55 data-nosnippet>55</a>    </span>Mask(<span class="attr">#[from] </span>MaskError),
-<a href=#56 id=56 data-nosnippet>56</a>    <span class="doccomment">/// The host resources could not be read.
+<a href=#56 id=56 data-nosnippet>56</a>    <span class="doccomment">/// A phase's memory did not fit the resource policy.
 <a href=#57 id=57 data-nosnippet>57</a>    </span><span class="attr">#[error(transparent)]
-<a href=#58 id=58 data-nosnippet>58</a>    </span>Resources(<span class="attr">#[from] </span>ResourceError),
-<a href=#59 id=59 data-nosnippet>59</a>    <span class="doccomment">/// The selected observation could not be opened.
-<a href=#60 id=60 data-nosnippet>60</a>    </span><span class="attr">#[error(<span class="string">"selected observation: {0}"</span>)]
-<a href=#61 id=61 data-nosnippet>61</a>    </span>Observation(<span class="attr">#[source] </span>Box&lt;<span class="kw">dyn </span>std::error::Error + Send + Sync&gt;),
-<a href=#62 id=62 data-nosnippet>62</a>    <span class="doccomment">/// The paged cube state could not be created.
-<a href=#63 id=63 data-nosnippet>63</a>    </span><span class="attr">#[error(<span class="string">"cube state: {0}"</span>)]
-<a href=#64 id=64 data-nosnippet>64</a>    </span>CubeState(<span class="attr">#[from] </span>std::io::Error),
-<a href=#65 id=65 data-nosnippet>65</a>}
+<a href=#58 id=58 data-nosnippet>58</a>    </span>Admission(<span class="attr">#[from] </span>Admission),
+<a href=#59 id=59 data-nosnippet>59</a>    <span class="doccomment">/// The run was cancelled between phases.
+<a href=#60 id=60 data-nosnippet>60</a>    </span><span class="attr">#[error(transparent)]
+<a href=#61 id=61 data-nosnippet>61</a>    </span>Cancelled(<span class="attr">#[from] </span>Cancelled),
+<a href=#62 id=62 data-nosnippet>62</a>    <span class="doccomment">/// The selected observation could not be opened.
+<a href=#63 id=63 data-nosnippet>63</a>    </span><span class="attr">#[error(<span class="string">"selected observation: {0}"</span>)]
+<a href=#64 id=64 data-nosnippet>64</a>    </span>Observation(<span class="attr">#[source] </span>Box&lt;<span class="kw">dyn </span>std::error::Error + Send + Sync&gt;),
+<a href=#65 id=65 data-nosnippet>65</a>    <span class="doccomment">/// The paged cube state could not be created.
+<a href=#66 id=66 data-nosnippet>66</a>    </span><span class="attr">#[error(<span class="string">"cube state: {0}"</span>)]
+<a href=#67 id=67 data-nosnippet>67</a>    </span>CubeState(<span class="attr">#[from] </span>std::io::Error),
+<a href=#68 id=68 data-nosnippet>68</a>}
 </code></pre></div></section></main></body></html>

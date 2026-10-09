@@ -531,7 +531,7 @@
 <a href=#531 id=531 data-nosnippet>531</a>/// ```compile_fail
 <a href=#532 id=532 data-nosnippet>532</a>/// use casa_imaging_model::SelectedRowSequenceId;
 <a href=#533 id=533 data-nosnippet>533</a>///
-<a href=#534 id=534 data-nosnippet>534</a>/// let _ = SelectedRowSequenceId::from_sha256([0; 32]);
+<a href=#534 id=534 data-nosnippet>534</a>/// let _ = SelectedRowSequenceId::from_bytes([0; 32]);
 <a href=#535 id=535 data-nosnippet>535</a>/// ```
 <a href=#536 id=536 data-nosnippet>536</a></span><span class="attr">#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 <a href=#537 id=537 data-nosnippet>537</a></span><span class="kw">pub struct </span>SelectedRowSequenceId(LogicalIdentity);
@@ -902,7 +902,7 @@
 <a href=#902 id=902 data-nosnippet>902</a>        <span class="self">self</span>.used_data_description_ids.sort_unstable();
 <a href=#903 id=903 data-nosnippet>903</a>        (
 <a href=#904 id=904 data-nosnippet>904</a>            <span class="self">self</span>.observed_row_count,
-<a href=#905 id=905 data-nosnippet>905</a>            SelectedRowSequenceId(LogicalIdentity::from_sha256(<span class="self">self</span>.encoder.finish())),
+<a href=#905 id=905 data-nosnippet>905</a>            SelectedRowSequenceId(LogicalIdentity::from_bytes(<span class="self">self</span>.encoder.finish())),
 <a href=#906 id=906 data-nosnippet>906</a>            <span class="self">self</span>.used_data_description_ids.into_iter().collect(),
 <a href=#907 id=907 data-nosnippet>907</a>        )
 <a href=#908 id=908 data-nosnippet>908</a>    }
@@ -2882,7 +2882,7 @@
 <a href=#2882 id=2882 data-nosnippet>2882</a>        encoder.identity(<span class="kw-2">*</span>identity);
 <a href=#2883 id=2883 data-nosnippet>2883</a>    }
 <a href=#2884 id=2884 data-nosnippet>2884</a>    encode_model(<span class="kw-2">&amp;mut </span>encoder, model);
-<a href=#2885 id=2885 data-nosnippet>2885</a>    ObservationSnapshotId(LogicalIdentity::from_sha256(encoder.finish()))
+<a href=#2885 id=2885 data-nosnippet>2885</a>    ObservationSnapshotId(LogicalIdentity::from_bytes(encoder.finish()))
 <a href=#2886 id=2886 data-nosnippet>2886</a>}
 <a href=#2887 id=2887 data-nosnippet>2887</a>
 <a href=#2888 id=2888 data-nosnippet>2888</a><span class="kw">fn </span>canonical_provenance_id(
@@ -2902,7 +2902,7 @@
 <a href=#2902 id=2902 data-nosnippet>2902</a>        encoder.bytes(source.provenance.locator.as_bytes());
 <a href=#2903 id=2903 data-nosnippet>2903</a>        encoder.identity(source.provenance.selection_request);
 <a href=#2904 id=2904 data-nosnippet>2904</a>    }
-<a href=#2905 id=2905 data-nosnippet>2905</a>    ObservationProvenanceId(LogicalIdentity::from_sha256(encoder.finish()))
+<a href=#2905 id=2905 data-nosnippet>2905</a>    ObservationProvenanceId(LogicalIdentity::from_bytes(encoder.finish()))
 <a href=#2906 id=2906 data-nosnippet>2906</a>}
 <a href=#2907 id=2907 data-nosnippet>2907</a>
 <a href=#2908 id=2908 data-nosnippet>2908</a><span class="kw">fn </span>encode_selection(encoder: <span class="kw-2">&amp;mut </span>CanonicalEncoder, selection: <span class="kw-2">&amp;</span>ObservationSelection) {

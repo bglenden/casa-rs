@@ -1407,7 +1407,7 @@
 <a href=#1407 id=1407 data-nosnippet>1407</a>    </span>};
 <a href=#1408 id=1408 data-nosnippet>1408</a>
 <a href=#1409 id=1409 data-nosnippet>1409</a>    <span class="kw">let </span><span class="kw-2">mut </span>compiled = CompiledGeometry {
-<a href=#1410 id=1410 data-nosnippet>1410</a>        geometry_id: CompiledGeometryId(LogicalIdentity::from_sha256([<span class="number">0</span>; <span class="number">32</span>])),
+<a href=#1410 id=1410 data-nosnippet>1410</a>        geometry_id: CompiledGeometryId(LogicalIdentity::from_bytes([<span class="number">0</span>; <span class="number">32</span>])),
 <a href=#1411 id=1411 data-nosnippet>1411</a>        domains: domains.into_boxed_slice(),
 <a href=#1412 id=1412 data-nosnippet>1412</a>        centres: input.centres,
 <a href=#1413 id=1413 data-nosnippet>1413</a>        uvw: input.uvw,
@@ -1759,7 +1759,7 @@
 <a href=#1759 id=1759 data-nosnippet>1759</a>    encode_spectral(<span class="kw-2">&amp;mut </span>encoder, <span class="kw-2">&amp;</span>geometry.spectral);
 <a href=#1760 id=1760 data-nosnippet>1760</a>    encode_optional_identity(<span class="kw-2">&amp;mut </span>encoder, geometry.measures_reference);
 <a href=#1761 id=1761 data-nosnippet>1761</a>    encode_optional_identity(<span class="kw-2">&amp;mut </span>encoder, geometry.ephemeris_reference);
-<a href=#1762 id=1762 data-nosnippet>1762</a>    CompiledGeometryId(LogicalIdentity::from_sha256(encoder.finish()))
+<a href=#1762 id=1762 data-nosnippet>1762</a>    CompiledGeometryId(LogicalIdentity::from_bytes(encoder.finish()))
 <a href=#1763 id=1763 data-nosnippet>1763</a>}
 <a href=#1764 id=1764 data-nosnippet>1764</a>
 <a href=#1765 id=1765 data-nosnippet>1765</a><span class="kw">fn </span>encode_direction_coordinate(encoder: <span class="kw-2">&amp;mut </span>CanonicalEncoder, direction: DirectionCoordinateSpec) {

@@ -309,7 +309,7 @@
 <a href=#309 id=309 data-nosnippet>309</a>                SpectralChannelValidity::Unmapped =&gt; <span class="number">2</span>,
 <a href=#310 id=310 data-nosnippet>310</a>            });
 <a href=#311 id=311 data-nosnippet>311</a>        }
-<a href=#312 id=312 data-nosnippet>312</a>        LogicalIdentity::from_sha256(encoder.finish())
+<a href=#312 id=312 data-nosnippet>312</a>        LogicalIdentity::from_bytes(encoder.finish())
 <a href=#313 id=313 data-nosnippet>313</a>    }
 <a href=#314 id=314 data-nosnippet>314</a>}
 <a href=#315 id=315 data-nosnippet>315</a>
@@ -514,7 +514,7 @@
 <a href=#514 id=514 data-nosnippet>514</a>            }
 <a href=#515 id=515 data-nosnippet>515</a>            encoder.identity(domain.primitives.normal_state_content_identity().as_bytes());
 <a href=#516 id=516 data-nosnippet>516</a>        }
-<a href=#517 id=517 data-nosnippet>517</a>        LogicalIdentity::from_sha256(encoder.finish())
+<a href=#517 id=517 data-nosnippet>517</a>        LogicalIdentity::from_bytes(encoder.finish())
 <a href=#518 id=518 data-nosnippet>518</a>    }
 <a href=#519 id=519 data-nosnippet>519</a>}
 <a href=#520 id=520 data-nosnippet>520</a>
