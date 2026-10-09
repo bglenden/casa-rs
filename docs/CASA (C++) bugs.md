@@ -5,7 +5,11 @@ Notes on bugs or likely bugs observed while doing Rust/C++ parity work against C
 Known imaging parity defect: [CASA Högbom `niter` off-by-one](#casa-hogbom-niter-off-by-one-bug).
 CASA behaviours casa-rs follows for parity:
 [AW-projection hand pairing](#aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell),
-[AW-projection prediction w](#aw-projection-predicts-with-the-unrotated-w).
+[AW-projection prediction w](#aw-projection-predicts-with-the-unrotated-w),
+[MatrixCleaner's stop iteration](#matrixcleaner-counts-the-iteration-that-stops-it).
+CASA behaviours casa-rs does not follow:
+[odd-size scale convolutions](#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes),
+[MatrixCleaner's step residual](#matrixcleaners-step-residual-forgets-earlier-steps).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
 
@@ -208,3 +212,51 @@ difference to `7.64e-5`, matching the dirty gridding numerical floor. On the ful
 `niter=500`, `cycleniter=50` heavy row, the same CASA-compatible mode reduced the
 CASA/casa-rs product differences to `.model` RMS `1.71e-7`, `.residual` RMS
 `5.68e-5`, and `.image` RMS `5.87e-5`.
+
+## MatrixCleaner counts the iteration that stops it
+
+- Date noted: 2026-10-09
+- Status: CASA accounting quirk; casa-rs follows it for parity (IF-5, #654)
+- Affected code: `synthesis/MeasurementEquations/MatrixCleaner.cc`
+  (`MatrixCleaner::clean`), read by `SDAlgorithmMSClean::takeOneStep`
+
+`clean` increments `itsIteration` at the top of each pass and only then tests
+the threshold (`abs(strength) < threshold()`) and the 50% divergence rule, so
+a step that stops on either reports one more iteration
+(`numberIterations()`) than it cleaned components. Multiscale `iterdone`,
+the `niter` budget and the per-cycle `summaryminor` counts include it; on
+`refim_point` with scales `[0, 6, 10]` CASA reports `[22, 3, 25, 3, 47]` for
+`[21, 2, 24, 2, 51]` components when the extra iteration is not charged.
+casa-rs charges it (`Solver::charges_stop`).
+
+## Multiscale and multi-term scale convolutions shift by a pixel on odd image sizes
+
+- Date noted: 2026-10-09
+- Status: likely CASA bug; casa-rs does not follow it (IF-5, #654)
+- Affected code: `synthesis/MeasurementEquations/MatrixCleaner.cc`
+  (`makeScale`, `makePsfScales`, `makeDirtyScales`),
+  `MultiTermMatrixCleaner.cc` (`computeRHS`, `computeHessianPeak`)
+
+Scale functions are centred at `(nx/2, ny/2)` and convolved by FFT without
+moving that centre to the origin. Single convolutions are re-centred with
+`FFTServer::flip`, which rotates by `ceil(n/2)`; double convolutions
+(PSF ⊛ scale ⊛ scale) are not flipped, relying on the two `n/2` shifts
+cancelling. Both are exact only for even `n`: on an odd axis the scale-
+convolved residual is one pixel off its residual and the PSF cross terms one
+pixel off the PSF peak. casa-rs convolves with the scale centred at the
+origin, which agrees with CASA on every even axis.
+
+## MatrixCleaner's step residual forgets earlier steps
+
+- Date noted: 2026-10-09
+- Status: likely CASA bug; casa-rs does not follow it (IF-5, #654)
+- Affected code: `synthesis/ImagerObjects/SDAlgorithmMSClean.cc`
+  (`takeOneStep`), `SDAlgorithmBase.cc` (`deconvolve`)
+
+With `cycleniter ≥ 5000` a plane's minor cycle runs in 2000-iteration
+`takeOneStep` calls. Each call sets the residual to
+`itsDirty − PSF ⊛ (model − prevModel)`, where `itsDirty` is the residual at
+the plane's first step and `model − prevModel` only this step's components,
+so from the second step on the reported peak residual omits the earlier
+steps' subtraction. That peak drives the minor-cycle stop codes 2 and 4.
+casa-rs carries each step's residual into the next.

@@ -232,7 +232,7 @@ pub fn beam_patch(maximum_scale_px: f64, shape: PlaneShape) -> usize {
     if support > shape.nx || support > shape.ny {
         support = shape.nx.min(shape.ny);
     }
-    if support % 2 != 0 {
+    if !support.is_multiple_of(2) {
         support -= 1;
     }
     support

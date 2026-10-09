@@ -176,12 +176,15 @@ pub fn prepare_minor_cycle(
     let normal = completion.normal_state();
     let base = completion.final_model();
     let keys = plane_keys(normal);
-    let primary = keys
-        .first()
-        .copied()
-        .expect("a normal state has at least one plane");
-    summarise(normal, cache, primary)?;
-    let beam = automask_beam(&cache.summaries[&primary]);
+    // The automatic mask (one-channel continuum only) smooths by the
+    // primary PSF's beam; a cube's first channel may hold no data.
+    let beam = if setup.automask {
+        let primary = keys[0];
+        summarise(normal, cache, primary)?;
+        Some(automask_beam(&cache.summaries[&primary]))
+    } else {
+        None
+    };
     let (masks, auto_masks) = mask_plans.materialize(base, normal, beam)?.into_parts();
     let mut slots = keys.iter().map(|key| (*key, None)).collect::<Vec<_>>();
     let missing = keys

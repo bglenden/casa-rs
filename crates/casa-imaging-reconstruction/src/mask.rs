@@ -256,12 +256,13 @@ impl ReconstructionMaskPlan {
     }
 
     /// Materialize one immutable generation for the exact current model;
-    /// `beam` is the primary PSF's, which the automatic mask smooths by.
+    /// `beam` is the primary PSF's, which an automatic mask smooths by and
+    /// requires.
     pub fn materialize(
         &self,
         base: &crate::ModelGeneration,
         normal: &FinalNormalState,
-        beam: AutoMaskBeam,
+        beam: Option<AutoMaskBeam>,
     ) -> Result<(ReconstructionMask, Option<AutoMultithreshEvidence>), MaskError> {
         let problem = normal.problem_id();
         let model_generation = base.generation_id();
@@ -325,7 +326,7 @@ impl ReconstructionMaskPlan {
                     *cycle_threshold_reached,
                     *evolution_stopped,
                     *controls,
-                    beam,
+                    beam.ok_or(MaskError::InvalidBeamArea)?,
                 )?;
                 Ok((mask, Some(evidence)))
             }
@@ -520,12 +521,12 @@ impl ImageDomainReconstructionMaskPlans {
     }
 
     /// Materialize every domain support against one shared Normal State;
-    /// `beam` is the primary PSF's.
+    /// `beam` is the primary PSF's, required by an automatic mask.
     pub fn materialize(
         &self,
         base: &crate::ModelGeneration,
         normal: &FinalNormalState,
-        beam: AutoMaskBeam,
+        beam: Option<AutoMaskBeam>,
     ) -> Result<ImageDomainMaskMaterialization, MaskError> {
         if self.plans.len() != normal.domain_count()
             || self.plans.len() != base.shape().domains().len()
