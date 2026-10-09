@@ -40,7 +40,7 @@
 <a href=#40 id=40 data-nosnippet>40</a>};
 <a href=#41 id=41 data-nosnippet>41</a><span class="kw">use </span><span class="kw">super</span>::source::{MeasurementSetSource, PlaneBounds};
 <a href=#42 id=42 data-nosnippet>42</a><span class="kw">use </span><span class="kw">super</span>::visibility_write::{VisibilityWriteTarget, VisibilityWriter};
-<a href=#43 id=43 data-nosnippet>43</a><span class="kw">use </span><span class="kw">crate</span>::NativeMinorCycleOutcome;
+<a href=#43 id=43 data-nosnippet>43</a><span class="kw">use crate</span>::{AwCatalogDeployment, NativeMinorCycleOutcome};
 <a href=#44 id=44 data-nosnippet>44</a>
 <a href=#45 id=45 data-nosnippet>45</a><span class="doccomment">/// What one native imaging run needs besides the compiled problem.
 <a href=#46 id=46 data-nosnippet>46</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ImagingInputs&lt;<span class="lifetime">'a</span>&gt; {
@@ -52,638 +52,669 @@
 <a href=#52 id=52 data-nosnippet>52</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) authority: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>ResourceAuthority,
 <a href=#53 id=53 data-nosnippet>53</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) policy: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>ResourcePolicy,
 <a href=#54 id=54 data-nosnippet>54</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) spill_directory: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Path,
-<a href=#55 id=55 data-nosnippet>55</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) backend: BackendChoice,
-<a href=#56 id=56 data-nosnippet>56</a>}
-<a href=#57 id=57 data-nosnippet>57</a>
-<a href=#58 id=58 data-nosnippet>58</a><span class="doccomment">/// The final reconciliation and the record of the cycles that led to it.
-<a href=#59 id=59 data-nosnippet>59</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ImagingOutcome {
-<a href=#60 id=60 data-nosnippet>60</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) scientific: MajorCycleCompletion,
-<a href=#61 id=61 data-nosnippet>61</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) masks: <span class="prelude-ty">Option</span>&lt;ReconstructionMaskSet&gt;,
-<a href=#62 id=62 data-nosnippet>62</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) minor_cycles: Vec&lt;NativeMinorCycleOutcome&gt;,
-<a href=#63 id=63 data-nosnippet>63</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) major_cycle_count: usize,
-<a href=#64 id=64 data-nosnippet>64</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) total_minor_iterations: usize,
-<a href=#65 id=65 data-nosnippet>65</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) total_actual_minor_iterations: usize,
-<a href=#66 id=66 data-nosnippet>66</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) visibility_products: <span class="prelude-ty">Option</span>&lt;VisibilityProductCompletion&gt;,
-<a href=#67 id=67 data-nosnippet>67</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) workers: usize,
-<a href=#68 id=68 data-nosnippet>68</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) planes_per_wave: <span class="prelude-ty">Option</span>&lt;u32&gt;,
-<a href=#69 id=69 data-nosnippet>69</a>}
-<a href=#70 id=70 data-nosnippet>70</a>
-<a href=#71 id=71 data-nosnippet>71</a><span class="doccomment">/// Fixed parts of one run shared by every pass.
-<a href=#72 id=72 data-nosnippet>72</a></span><span class="kw">struct </span>Run&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#73 id=73 data-nosnippet>73</a>    problem: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>CompiledProblem,
-<a href=#74 id=74 data-nosnippet>74</a>    domains: Vec&lt;DomainOperator&gt;,
-<a href=#75 id=75 data-nosnippet>75</a>    source: MeasurementSetSource&lt;<span class="lifetime">'a</span>&gt;,
-<a href=#76 id=76 data-nosnippet>76</a>    weighting: WeightingGeneration,
-<a href=#77 id=77 data-nosnippet>77</a>    weighting_id: WeightingGenerationId,
-<a href=#78 id=78 data-nosnippet>78</a>    team: WorkerTeam,
-<a href=#79 id=79 data-nosnippet>79</a>    cancel: Cancel,
-<a href=#80 id=80 data-nosnippet>80</a>    cube: <span class="prelude-ty">Option</span>&lt;CubeState&gt;,
-<a href=#81 id=81 data-nosnippet>81</a>    budget: u64,
-<a href=#82 id=82 data-nosnippet>82</a>    native_spacing_hz: f64,
-<a href=#83 id=83 data-nosnippet>83</a>    backend: BackendChoice,
-<a href=#84 id=84 data-nosnippet>84</a>    attempts: u64,
-<a href=#85 id=85 data-nosnippet>85</a>    visibility_write: <span class="prelude-ty">Option</span>&lt;VisibilityWriteTarget&gt;,
-<a href=#86 id=86 data-nosnippet>86</a>    <span class="doccomment">/// Planes per wave of the most finely waved pass so far.
-<a href=#87 id=87 data-nosnippet>87</a>    </span>planes_per_wave: <span class="prelude-ty">Option</span>&lt;u32&gt;,
-<a href=#88 id=88 data-nosnippet>88</a>}
-<a href=#89 id=89 data-nosnippet>89</a>
-<a href=#90 id=90 data-nosnippet>90</a><span class="doccomment">/// One reconciled major cycle and the lifecycle that owns its model.
-<a href=#91 id=91 data-nosnippet>91</a></span><span class="kw">struct </span>Major {
-<a href=#92 id=92 data-nosnippet>92</a>    lifecycle: ModelLifecycle,
-<a href=#93 id=93 data-nosnippet>93</a>    completion: MajorCycleCompletion,
-<a href=#94 id=94 data-nosnippet>94</a>    visibility: <span class="prelude-ty">Option</span>&lt;VisibilityProductCompletion&gt;,
-<a href=#95 id=95 data-nosnippet>95</a>}
-<a href=#96 id=96 data-nosnippet>96</a>
-<a href=#97 id=97 data-nosnippet>97</a><span class="doccomment">/// Run every major and minor cycle of `inputs.problem`.
-<a href=#98 id=98 data-nosnippet>98</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>run(inputs: ImagingInputs&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;ImagingOutcome, ImagingError&gt; {
-<a href=#99 id=99 data-nosnippet>99</a>    <span class="kw">let </span>problem = inputs.problem;
-<a href=#100 id=100 data-nosnippet>100</a>    <span class="kw">let </span>controls = problem.reconstruction().controls();
-<a href=#101 id=101 data-nosnippet>101</a>    <span class="kw">let </span>cleaning = controls.max_minor_iterations() &gt; <span class="number">0</span>;
-<a href=#102 id=102 data-nosnippet>102</a>    <span class="kw">let </span>image_response = inputs.image_response;
-<a href=#103 id=103 data-nosnippet>103</a>    <span class="kw">let </span><span class="kw-2">mut </span>mask_plans = inputs.masks.clone();
-<a href=#104 id=104 data-nosnippet>104</a>    <span class="kw">let </span><span class="kw-2">mut </span>run = Run::open(inputs)<span class="question-mark">?</span>;
-<a href=#105 id=105 data-nosnippet>105</a>    <span class="kw">let </span><span class="kw-2">mut </span>major = run.initial(!cleaning)<span class="question-mark">?</span>;
-<a href=#106 id=106 data-nosnippet>106</a>    <span class="kw">if </span>!cleaning {
-<a href=#107 id=107 data-nosnippet>107</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(ImagingOutcome {
-<a href=#108 id=108 data-nosnippet>108</a>            scientific: major.completion,
-<a href=#109 id=109 data-nosnippet>109</a>            masks: <span class="prelude-val">None</span>,
-<a href=#110 id=110 data-nosnippet>110</a>            minor_cycles: Vec::new(),
-<a href=#111 id=111 data-nosnippet>111</a>            major_cycle_count: <span class="number">1</span>,
-<a href=#112 id=112 data-nosnippet>112</a>            total_minor_iterations: <span class="number">0</span>,
-<a href=#113 id=113 data-nosnippet>113</a>            total_actual_minor_iterations: <span class="number">0</span>,
-<a href=#114 id=114 data-nosnippet>114</a>            visibility_products: major.visibility,
-<a href=#115 id=115 data-nosnippet>115</a>            workers: run.team.workers(),
-<a href=#116 id=116 data-nosnippet>116</a>            planes_per_wave: run.planes_per_wave,
-<a href=#117 id=117 data-nosnippet>117</a>        });
-<a href=#118 id=118 data-nosnippet>118</a>    }
-<a href=#119 id=119 data-nosnippet>119</a>    <span class="comment">// CASA's `nmajor = -1` leaves the major-cycle count open, but every
-<a href=#120 id=120 data-nosnippet>120</a>    // productive cycle spends at least one of the minor-iteration budget.
-<a href=#121 id=121 data-nosnippet>121</a>    </span><span class="kw">let </span>maximum_cycles = controls
-<a href=#122 id=122 data-nosnippet>122</a>        .maximum_major_cycles()
-<a href=#123 id=123 data-nosnippet>123</a>        .unwrap_or(controls.max_minor_iterations());
-<a href=#124 id=124 data-nosnippet>124</a>    <span class="kw">let </span>clark_reuse = ReconstructionPlaneWorkspace::clark_reuse_bytes(problem);
-<a href=#125 id=125 data-nosnippet>125</a>    <span class="kw">let </span><span class="kw-2">mut </span>minor_cycles = Vec::new();
-<a href=#126 id=126 data-nosnippet>126</a>    <span class="kw">let </span><span class="kw-2">mut </span>totals = (<span class="number">0_usize</span>, <span class="number">0_usize</span>);
-<a href=#127 id=127 data-nosnippet>127</a>    <span class="kw">for </span>cycle <span class="kw">in </span><span class="number">1</span>.. {
-<a href=#128 id=128 data-nosnippet>128</a>        <span class="kw">let </span>remaining = (cycle &gt; <span class="number">1</span>).then(|| controls.max_minor_iterations() - totals.<span class="number">0</span>);
-<a href=#129 id=129 data-nosnippet>129</a>        <span class="kw">let </span>program = minor_program(problem, image_response, remaining)<span class="question-mark">?
-<a href=#130 id=130 data-nosnippet>130</a>            </span>.with_clark_workspace_reuse(clark_reuse);
-<a href=#131 id=131 data-nosnippet>131</a>        <span class="kw">let </span>started = Instant::now();
-<a href=#132 id=132 data-nosnippet>132</a>        <span class="kw">let </span>outcome = run_minor_cycle(
-<a href=#133 id=133 data-nosnippet>133</a>            major.completion,
-<a href=#134 id=134 data-nosnippet>134</a>            <span class="kw-2">&amp;</span>major.lifecycle,
-<a href=#135 id=135 data-nosnippet>135</a>            <span class="kw-2">&amp;</span>mask_plans,
-<a href=#136 id=136 data-nosnippet>136</a>            program,
-<a href=#137 id=137 data-nosnippet>137</a>            <span class="kw-2">&amp;</span>run.team,
-<a href=#138 id=138 data-nosnippet>138</a>        )<span class="question-mark">?</span>;
-<a href=#139 id=139 data-nosnippet>139</a>        <span class="kw">let </span>entering = totals;
-<a href=#140 id=140 data-nosnippet>140</a>        totals = (
-<a href=#141 id=141 data-nosnippet>141</a>            totals
-<a href=#142 id=142 data-nosnippet>142</a>                .<span class="number">0
-<a href=#143 id=143 data-nosnippet>143</a>                </span>.checked_add(outcome.evidence.controller_iterations())
-<a href=#144 id=144 data-nosnippet>144</a>                .ok_or(ImagingError::IterationOverflow)<span class="question-mark">?</span>,
-<a href=#145 id=145 data-nosnippet>145</a>            totals
-<a href=#146 id=146 data-nosnippet>146</a>                .<span class="number">1
-<a href=#147 id=147 data-nosnippet>147</a>                </span>.checked_add(outcome.evidence.iterations())
-<a href=#148 id=148 data-nosnippet>148</a>                .ok_or(ImagingError::IterationOverflow)<span class="question-mark">?</span>,
-<a href=#149 id=149 data-nosnippet>149</a>        );
-<a href=#150 id=150 data-nosnippet>150</a>        <span class="kw">let </span>record = minor_cycle_record(cycle, <span class="kw-2">&amp;</span>outcome, entering, totals);
-<a href=#151 id=151 data-nosnippet>151</a>        <span class="macro">tracing::info!</span>(
-<a href=#152 id=152 data-nosnippet>152</a>            <span class="string">"imaging minor cycle {cycle}: {} iterations ({} total), peak {:.6} -&gt; {:.6} Jy, \
-<a href=#153 id=153 data-nosnippet>153</a>             threshold {:.6} Jy, stop {:?}, {:.2} s"</span>,
-<a href=#154 id=154 data-nosnippet>154</a>            record.iterations,
-<a href=#155 id=155 data-nosnippet>155</a>            totals.<span class="number">0</span>,
-<a href=#156 id=156 data-nosnippet>156</a>            record.initial_peak_flux,
-<a href=#157 id=157 data-nosnippet>157</a>            record.final_peak_flux,
-<a href=#158 id=158 data-nosnippet>158</a>            record.effective_threshold,
-<a href=#159 id=159 data-nosnippet>159</a>            record.stop_reason,
-<a href=#160 id=160 data-nosnippet>160</a>            started.elapsed().as_secs_f64(),
-<a href=#161 id=161 data-nosnippet>161</a>        );
-<a href=#162 id=162 data-nosnippet>162</a>        minor_cycles.push(record);
-<a href=#163 id=163 data-nosnippet>163</a>        <span class="kw">let </span>continue_cleaning = cycle &lt; maximum_cycles
-<a href=#164 id=164 data-nosnippet>164</a>            &amp;&amp; totals.<span class="number">0 </span>&lt; controls.max_minor_iterations()
-<a href=#165 id=165 data-nosnippet>165</a>            &amp;&amp; outcome.evidence.requests_reconciliation();
-<a href=#166 id=166 data-nosnippet>166</a>        <span class="kw">let </span>next_masks = next_masks(<span class="kw-2">&amp;</span>mask_plans, <span class="kw-2">&amp;</span>outcome, cycle)<span class="question-mark">?</span>;
-<a href=#167 id=167 data-nosnippet>167</a>        <span class="kw">let </span>masks = outcome.masks.clone();
-<a href=#168 id=168 data-nosnippet>168</a>        major = run.refresh(outcome, !continue_cleaning)<span class="question-mark">?</span>;
-<a href=#169 id=169 data-nosnippet>169</a>        <span class="kw">if </span>continue_cleaning {
-<a href=#170 id=170 data-nosnippet>170</a>            mask_plans = next_masks;
-<a href=#171 id=171 data-nosnippet>171</a>            <span class="kw">continue</span>;
-<a href=#172 id=172 data-nosnippet>172</a>        }
-<a href=#173 id=173 data-nosnippet>173</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(ImagingOutcome {
-<a href=#174 id=174 data-nosnippet>174</a>            scientific: major.completion,
-<a href=#175 id=175 data-nosnippet>175</a>            masks: <span class="prelude-val">Some</span>(masks),
-<a href=#176 id=176 data-nosnippet>176</a>            minor_cycles,
-<a href=#177 id=177 data-nosnippet>177</a>            major_cycle_count: cycle + <span class="number">1</span>,
-<a href=#178 id=178 data-nosnippet>178</a>            total_minor_iterations: totals.<span class="number">0</span>,
-<a href=#179 id=179 data-nosnippet>179</a>            total_actual_minor_iterations: totals.<span class="number">1</span>,
-<a href=#180 id=180 data-nosnippet>180</a>            visibility_products: major.visibility,
-<a href=#181 id=181 data-nosnippet>181</a>            workers: run.team.workers(),
-<a href=#182 id=182 data-nosnippet>182</a>            planes_per_wave: run.planes_per_wave,
-<a href=#183 id=183 data-nosnippet>183</a>        });
-<a href=#184 id=184 data-nosnippet>184</a>    }
-<a href=#185 id=185 data-nosnippet>185</a>    <span class="macro">unreachable!</span>(<span class="string">"the cycle counter is unbounded"</span>)
-<a href=#186 id=186 data-nosnippet>186</a>}
-<a href=#187 id=187 data-nosnippet>187</a>
-<a href=#188 id=188 data-nosnippet>188</a><span class="kw">impl</span>&lt;<span class="lifetime">'a</span>&gt; Run&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#189 id=189 data-nosnippet>189</a>    <span class="doccomment">/// The operators, worker team, source and imaging weights of a run.
-<a href=#190 id=190 data-nosnippet>190</a>    </span><span class="kw">fn </span>open(inputs: ImagingInputs&lt;<span class="lifetime">'a</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ImagingError&gt; {
-<a href=#191 id=191 data-nosnippet>191</a>        <span class="kw">let </span>problem = inputs.problem;
-<a href=#192 id=192 data-nosnippet>192</a>        <span class="kw">let </span>backend = inputs.backend;
-<a href=#193 id=193 data-nosnippet>193</a>        <span class="kw">if </span>backend == BackendChoice::Metal
-<a href=#194 id=194 data-nosnippet>194</a>            &amp;&amp; !inputs
-<a href=#195 id=195 data-nosnippet>195</a>                .authority
-<a href=#196 id=196 data-nosnippet>196</a>                .topology()
-<a href=#197 id=197 data-nosnippet>197</a>                .accelerators
-<a href=#198 id=198 data-nosnippet>198</a>                .iter()
-<a href=#199 id=199 data-nosnippet>199</a>                .any(|accelerator| accelerator.kind == AcceleratorKind::Metal)
-<a href=#200 id=200 data-nosnippet>200</a>        {
-<a href=#201 id=201 data-nosnippet>201</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::Unsupported {
-<a href=#202 id=202 data-nosnippet>202</a>                reason: <span class="string">"the Metal backend needs a unified-memory Metal 3 device"</span>,
-<a href=#203 id=203 data-nosnippet>203</a>            });
-<a href=#204 id=204 data-nosnippet>204</a>        }
-<a href=#205 id=205 data-nosnippet>205</a>        <span class="kw">let </span>correlations = selected_correlations(problem)<span class="question-mark">?</span>;
-<a href=#206 id=206 data-nosnippet>206</a>        <span class="kw">let </span>domains = problem
-<a href=#207 id=207 data-nosnippet>207</a>            .geometry()
-<a href=#208 id=208 data-nosnippet>208</a>            .domains()
-<a href=#209 id=209 data-nosnippet>209</a>            .iter()
-<a href=#210 id=210 data-nosnippet>210</a>            .map(|domain| domain_operator(problem, domain, <span class="kw-2">&amp;</span>correlations, backend))
-<a href=#211 id=211 data-nosnippet>211</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#212 id=212 data-nosnippet>212</a>        <span class="kw">if </span>inputs.visibility_write.is_some() &amp;&amp; domains.len() &gt; <span class="number">1 </span>{
-<a href=#213 id=213 data-nosnippet>213</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::Unsupported {
-<a href=#214 id=214 data-nosnippet>214</a>                reason: <span class="string">"visibilities are written back for one image domain"</span>,
-<a href=#215 id=215 data-nosnippet>215</a>            });
-<a href=#216 id=216 data-nosnippet>216</a>        }
-<a href=#217 id=217 data-nosnippet>217</a>        <span class="kw">let </span>(workers, memory) = inputs.authority.phase_budget(inputs.policy)<span class="question-mark">?</span>;
-<a href=#218 id=218 data-nosnippet>218</a>        <span class="kw">let </span>team = WorkerTeam::new(workers)<span class="question-mark">?</span>;
-<a href=#219 id=219 data-nosnippet>219</a>        <span class="kw">let </span>cancel = Cancel::new();
-<a href=#220 id=220 data-nosnippet>220</a>        <span class="kw">let </span>selected = inputs
-<a href=#221 id=221 data-nosnippet>221</a>            .access
-<a href=#222 id=222 data-nosnippet>222</a>            .into_deferred()
-<a href=#223 id=223 data-nosnippet>223</a>            .open(problem)
-<a href=#224 id=224 data-nosnippet>224</a>            .map_err(|error| ImagingError::Observation(Box::new(error)))<span class="question-mark">?</span>;
-<a href=#225 id=225 data-nosnippet>225</a>        <span class="kw">let </span>main = <span class="kw-2">&amp;</span>domains[<span class="number">0</span>].operator;
-<a href=#226 id=226 data-nosnippet>226</a>        <span class="kw">let </span><span class="kw-2">mut </span>source = MeasurementSetSource::new(
-<a href=#227 id=227 data-nosnippet>227</a>            problem,
-<a href=#228 id=228 data-nosnippet>228</a>            selected,
-<a href=#229 id=229 data-nosnippet>229</a>            main.basis().planes(),
-<a href=#230 id=230 data-nosnippet>230</a>            plane_bounds(problem),
-<a href=#231 id=231 data-nosnippet>231</a>        );
-<a href=#232 id=232 data-nosnippet>232</a>        <span class="kw">let </span>started = Instant::now();
-<a href=#233 id=233 data-nosnippet>233</a>        <span class="kw">let </span>weighting = weighting(problem, <span class="kw-2">&amp;</span>domains[<span class="number">0</span>], <span class="kw-2">&amp;mut </span>source, <span class="kw-2">&amp;</span>team, <span class="kw-2">&amp;</span>cancel)<span class="question-mark">?</span>;
-<a href=#234 id=234 data-nosnippet>234</a>        <span class="macro">tracing::info!</span>(
-<a href=#235 id=235 data-nosnippet>235</a>            <span class="string">"imaging weights: {workers} workers, {:.2} s"</span>,
-<a href=#236 id=236 data-nosnippet>236</a>            started.elapsed().as_secs_f64()
-<a href=#237 id=237 data-nosnippet>237</a>        );
-<a href=#238 id=238 data-nosnippet>238</a>        <span class="kw">let </span>cube = <span class="macro">matches!</span>(main.basis(), Basis::ChannelLocal { .. })
-<a href=#239 id=239 data-nosnippet>239</a>            .then(|| cube_state(problem, inputs.spill_directory, workers, memory))
-<a href=#240 id=240 data-nosnippet>240</a>            .transpose()<span class="question-mark">?</span>;
-<a href=#241 id=241 data-nosnippet>241</a>        <span class="kw">let </span>run = <span class="self">Self </span>{
-<a href=#242 id=242 data-nosnippet>242</a>            problem,
-<a href=#243 id=243 data-nosnippet>243</a>            domains,
-<a href=#244 id=244 data-nosnippet>244</a>            source,
-<a href=#245 id=245 data-nosnippet>245</a>            weighting,
-<a href=#246 id=246 data-nosnippet>246</a>            weighting_id: WeightingGenerationId::next(),
-<a href=#247 id=247 data-nosnippet>247</a>            team,
-<a href=#248 id=248 data-nosnippet>248</a>            cancel,
-<a href=#249 id=249 data-nosnippet>249</a>            cube,
-<a href=#250 id=250 data-nosnippet>250</a>            budget: memory.saturating_sub(memory / <span class="number">4</span>),
-<a href=#251 id=251 data-nosnippet>251</a>            native_spacing_hz: native_spacing_hz(problem),
-<a href=#252 id=252 data-nosnippet>252</a>            backend,
-<a href=#253 id=253 data-nosnippet>253</a>            attempts: <span class="number">0</span>,
-<a href=#254 id=254 data-nosnippet>254</a>            visibility_write: inputs.visibility_write,
-<a href=#255 id=255 data-nosnippet>255</a>            planes_per_wave: <span class="prelude-val">None</span>,
-<a href=#256 id=256 data-nosnippet>256</a>        };
-<a href=#257 id=257 data-nosnippet>257</a>        <span class="kw">if </span>run.visibility_write.is_some() {
-<a href=#258 id=258 data-nosnippet>258</a>            <span class="comment">// The pass that writes is the initial one without cleaning and a
-<a href=#259 id=259 data-nosnippet>259</a>            // residual refresh otherwise; it must hold every plane, and is
-<a href=#260 id=260 data-nosnippet>260</a>            // refused now rather than after the cycles that precede it.
-<a href=#261 id=261 data-nosnippet>261</a>            </span><span class="kw">let </span>cleaning = problem.reconstruction().controls().max_minor_iterations() &gt; <span class="number">0</span>;
-<a href=#262 id=262 data-nosnippet>262</a>            <span class="kw">let </span>(modes, with_model) = <span class="kw">if </span>cleaning {
-<a href=#263 id=263 data-nosnippet>263</a>                (ModeSet::DATA, <span class="bool-val">true</span>)
-<a href=#264 id=264 data-nosnippet>264</a>            } <span class="kw">else </span>{
-<a href=#265 id=265 data-nosnippet>265</a>                (ModeSet::DATA_PSF, start_model(problem))
-<a href=#266 id=266 data-nosnippet>266</a>            };
-<a href=#267 id=267 data-nosnippet>267</a>            <span class="kw">if </span>run.residency(modes, with_model)<span class="question-mark">? </span>!= Residency::All {
-<a href=#268 id=268 data-nosnippet>268</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::Pass(PassError::VisibilityWriteWaves));
-<a href=#269 id=269 data-nosnippet>269</a>            }
-<a href=#270 id=270 data-nosnippet>270</a>        }
-<a href=#271 id=271 data-nosnippet>271</a>        <span class="prelude-val">Ok</span>(run)
-<a href=#272 id=272 data-nosnippet>272</a>    }
-<a href=#273 id=273 data-nosnippet>273</a>
-<a href=#274 id=274 data-nosnippet>274</a>    <span class="doccomment">/// The initial major cycle: data and PSF, from the start model when the
-<a href=#275 id=275 data-nosnippet>275</a>    /// problem has one; it writes visibilities when it is also final.
-<a href=#276 id=276 data-nosnippet>276</a>    </span><span class="kw">fn </span>initial(<span class="kw-2">&amp;mut </span><span class="self">self</span>, last: bool) -&gt; <span class="prelude-ty">Result</span>&lt;Major, ImagingError&gt; {
-<a href=#277 id=277 data-nosnippet>277</a>        <span class="kw">let </span><span class="kw-2">mut </span>lifecycle = ModelLifecycle::bind(
-<a href=#278 id=278 data-nosnippet>278</a>            ExecutableModelProblem::from_compiled(<span class="self">self</span>.problem.clone())<span class="question-mark">?</span>,
-<a href=#279 id=279 data-nosnippet>279</a>            <span class="self">self</span>.next_attempt(),
-<a href=#280 id=280 data-nosnippet>280</a>            <span class="number">1</span>,
-<a href=#281 id=281 data-nosnippet>281</a>            <span class="self">self</span>.model_storage()<span class="question-mark">?</span>,
-<a href=#282 id=282 data-nosnippet>282</a>        )<span class="question-mark">?</span>;
-<a href=#283 id=283 data-nosnippet>283</a>        <span class="kw">let </span>start_model = !<span class="macro">matches!</span>(lifecycle.contract().input(), ModelInputCommitment::Empty);
-<a href=#284 id=284 data-nosnippet>284</a>        <span class="kw">let </span>named = <span class="kw">if </span>start_model {
-<a href=#285 id=285 data-nosnippet>285</a>            lifecycle.initial_reprojected()<span class="question-mark">?
-<a href=#286 id=286 data-nosnippet>286</a>        </span>} <span class="kw">else </span>{
-<a href=#287 id=287 data-nosnippet>287</a>            lifecycle.initial_empty()<span class="question-mark">?
-<a href=#288 id=288 data-nosnippet>288</a>        </span>};
-<a href=#289 id=289 data-nosnippet>289</a>        <span class="kw">let </span>preparation = MajorCyclePreparation::prepare(<span class="kw-2">&amp;</span>lifecycle, named, <span class="prelude-val">None</span>)<span class="question-mark">?</span>;
-<a href=#290 id=290 data-nosnippet>290</a>        <span class="kw">let </span>residency = <span class="self">self</span>.residency(ModeSet::DATA_PSF, start_model)<span class="question-mark">?</span>;
-<a href=#291 id=291 data-nosnippet>291</a>        <span class="kw">let </span>state = PassNormalState::initial(
-<a href=#292 id=292 data-nosnippet>292</a>            <span class="self">self</span>.problem,
-<a href=#293 id=293 data-nosnippet>293</a>            <span class="self">self</span>.weighting_id,
-<a href=#294 id=294 data-nosnippet>294</a>            preparation.final_model_generation(),
-<a href=#295 id=295 data-nosnippet>295</a>            <span class="self">self</span>.normal_storage(residency)<span class="question-mark">?</span>,
-<a href=#296 id=296 data-nosnippet>296</a>        )<span class="question-mark">?</span>;
-<a href=#297 id=297 data-nosnippet>297</a>        <span class="self">self</span>.reconcile(lifecycle, state, preparation, <span class="prelude-val">None</span>, last, residency)
-<a href=#298 id=298 data-nosnippet>298</a>    }
-<a href=#299 id=299 data-nosnippet>299</a>
-<a href=#300 id=300 data-nosnippet>300</a>    <span class="doccomment">/// The major cycle after a minor cycle: the residual of the updated model.
-<a href=#301 id=301 data-nosnippet>301</a>    </span><span class="kw">fn </span>refresh(<span class="kw-2">&amp;mut </span><span class="self">self</span>, outcome: MinorCycleOutcome, last: bool) -&gt; <span class="prelude-ty">Result</span>&lt;Major, ImagingError&gt; {
-<a href=#302 id=302 data-nosnippet>302</a>        <span class="kw">let </span>MinorCycleOutcome {
-<a href=#303 id=303 data-nosnippet>303</a>            normal_state,
-<a href=#304 id=304 data-nosnippet>304</a>            continuation,
-<a href=#305 id=305 data-nosnippet>305</a>            masks,
-<a href=#306 id=306 data-nosnippet>306</a>            delta,
-<a href=#307 id=307 data-nosnippet>307</a>            ..
-<a href=#308 id=308 data-nosnippet>308</a>        } = outcome;
-<a href=#309 id=309 data-nosnippet>309</a>        <span class="kw">let </span>terms = delta.map(|delta| delta.terms().to_vec());
-<a href=#310 id=310 data-nosnippet>310</a>        <span class="kw">let </span>attempt = <span class="self">self</span>.next_attempt();
-<a href=#311 id=311 data-nosnippet>311</a>        <span class="kw">let </span>(lifecycle, named) = ModelLifecycle::continue_from(
-<a href=#312 id=312 data-nosnippet>312</a>            ExecutableModelProblem::from_compiled(<span class="self">self</span>.problem.clone())<span class="question-mark">?</span>,
-<a href=#313 id=313 data-nosnippet>313</a>            attempt,
-<a href=#314 id=314 data-nosnippet>314</a>            <span class="number">1</span>,
-<a href=#315 id=315 data-nosnippet>315</a>            continuation,
-<a href=#316 id=316 data-nosnippet>316</a>            <span class="self">self</span>.model_storage()<span class="question-mark">?</span>,
+<a href=#55 id=55 data-nosnippet>55</a>    <span class="doccomment">/// The AW catalog of an A-projection run.
+<a href=#56 id=56 data-nosnippet>56</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) aw_catalog: <span class="prelude-ty">Option</span>&lt;AwCatalogDeployment&gt;,
+<a href=#57 id=57 data-nosnippet>57</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) backend: BackendChoice,
+<a href=#58 id=58 data-nosnippet>58</a>}
+<a href=#59 id=59 data-nosnippet>59</a>
+<a href=#60 id=60 data-nosnippet>60</a><span class="doccomment">/// The final reconciliation and the record of the cycles that led to it.
+<a href=#61 id=61 data-nosnippet>61</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ImagingOutcome {
+<a href=#62 id=62 data-nosnippet>62</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) scientific: MajorCycleCompletion,
+<a href=#63 id=63 data-nosnippet>63</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) masks: <span class="prelude-ty">Option</span>&lt;ReconstructionMaskSet&gt;,
+<a href=#64 id=64 data-nosnippet>64</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) minor_cycles: Vec&lt;NativeMinorCycleOutcome&gt;,
+<a href=#65 id=65 data-nosnippet>65</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) major_cycle_count: usize,
+<a href=#66 id=66 data-nosnippet>66</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) total_minor_iterations: usize,
+<a href=#67 id=67 data-nosnippet>67</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) total_actual_minor_iterations: usize,
+<a href=#68 id=68 data-nosnippet>68</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) visibility_products: <span class="prelude-ty">Option</span>&lt;VisibilityProductCompletion&gt;,
+<a href=#69 id=69 data-nosnippet>69</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) workers: usize,
+<a href=#70 id=70 data-nosnippet>70</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) planes_per_wave: <span class="prelude-ty">Option</span>&lt;u32&gt;,
+<a href=#71 id=71 data-nosnippet>71</a>}
+<a href=#72 id=72 data-nosnippet>72</a>
+<a href=#73 id=73 data-nosnippet>73</a><span class="doccomment">/// Fixed parts of one run shared by every pass.
+<a href=#74 id=74 data-nosnippet>74</a></span><span class="kw">struct </span>Run&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#75 id=75 data-nosnippet>75</a>    problem: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>CompiledProblem,
+<a href=#76 id=76 data-nosnippet>76</a>    domains: Vec&lt;DomainOperator&gt;,
+<a href=#77 id=77 data-nosnippet>77</a>    source: MeasurementSetSource&lt;<span class="lifetime">'a</span>&gt;,
+<a href=#78 id=78 data-nosnippet>78</a>    weighting: WeightingGeneration,
+<a href=#79 id=79 data-nosnippet>79</a>    weighting_id: WeightingGenerationId,
+<a href=#80 id=80 data-nosnippet>80</a>    team: WorkerTeam,
+<a href=#81 id=81 data-nosnippet>81</a>    cancel: Cancel,
+<a href=#82 id=82 data-nosnippet>82</a>    cube: <span class="prelude-ty">Option</span>&lt;CubeState&gt;,
+<a href=#83 id=83 data-nosnippet>83</a>    budget: u64,
+<a href=#84 id=84 data-nosnippet>84</a>    native_spacing_hz: f64,
+<a href=#85 id=85 data-nosnippet>85</a>    backend: BackendChoice,
+<a href=#86 id=86 data-nosnippet>86</a>    attempts: u64,
+<a href=#87 id=87 data-nosnippet>87</a>    visibility_write: <span class="prelude-ty">Option</span>&lt;VisibilityWriteTarget&gt;,
+<a href=#88 id=88 data-nosnippet>88</a>    <span class="doccomment">/// Planes per wave of the most finely waved pass so far.
+<a href=#89 id=89 data-nosnippet>89</a>    </span>planes_per_wave: <span class="prelude-ty">Option</span>&lt;u32&gt;,
+<a href=#90 id=90 data-nosnippet>90</a>    <span class="doccomment">/// Whether the initial pass also grids the sensitivity image
+<a href=#91 id=91 data-nosnippet>91</a>    /// (`Mode::Weight`): a kernel set with weight taps on any domain.
+<a href=#92 id=92 data-nosnippet>92</a>    </span>weight_image: bool,
+<a href=#93 id=93 data-nosnippet>93</a>}
+<a href=#94 id=94 data-nosnippet>94</a>
+<a href=#95 id=95 data-nosnippet>95</a><span class="doccomment">/// One reconciled major cycle and the lifecycle that owns its model.
+<a href=#96 id=96 data-nosnippet>96</a></span><span class="kw">struct </span>Major {
+<a href=#97 id=97 data-nosnippet>97</a>    lifecycle: ModelLifecycle,
+<a href=#98 id=98 data-nosnippet>98</a>    completion: MajorCycleCompletion,
+<a href=#99 id=99 data-nosnippet>99</a>    visibility: <span class="prelude-ty">Option</span>&lt;VisibilityProductCompletion&gt;,
+<a href=#100 id=100 data-nosnippet>100</a>}
+<a href=#101 id=101 data-nosnippet>101</a>
+<a href=#102 id=102 data-nosnippet>102</a><span class="doccomment">/// Run every major and minor cycle of `inputs.problem`.
+<a href=#103 id=103 data-nosnippet>103</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>run(inputs: ImagingInputs&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;ImagingOutcome, ImagingError&gt; {
+<a href=#104 id=104 data-nosnippet>104</a>    <span class="kw">let </span>problem = inputs.problem;
+<a href=#105 id=105 data-nosnippet>105</a>    <span class="kw">let </span>controls = problem.reconstruction().controls();
+<a href=#106 id=106 data-nosnippet>106</a>    <span class="kw">let </span>cleaning = controls.max_minor_iterations() &gt; <span class="number">0</span>;
+<a href=#107 id=107 data-nosnippet>107</a>    <span class="kw">let </span>image_response = inputs.image_response;
+<a href=#108 id=108 data-nosnippet>108</a>    <span class="kw">let </span><span class="kw-2">mut </span>mask_plans = inputs.masks.clone();
+<a href=#109 id=109 data-nosnippet>109</a>    <span class="kw">let </span><span class="kw-2">mut </span>run = Run::open(inputs)<span class="question-mark">?</span>;
+<a href=#110 id=110 data-nosnippet>110</a>    <span class="kw">let </span><span class="kw-2">mut </span>major = run.initial(!cleaning)<span class="question-mark">?</span>;
+<a href=#111 id=111 data-nosnippet>111</a>    <span class="kw">if </span>!cleaning {
+<a href=#112 id=112 data-nosnippet>112</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(ImagingOutcome {
+<a href=#113 id=113 data-nosnippet>113</a>            scientific: major.completion,
+<a href=#114 id=114 data-nosnippet>114</a>            masks: <span class="prelude-val">None</span>,
+<a href=#115 id=115 data-nosnippet>115</a>            minor_cycles: Vec::new(),
+<a href=#116 id=116 data-nosnippet>116</a>            major_cycle_count: <span class="number">1</span>,
+<a href=#117 id=117 data-nosnippet>117</a>            total_minor_iterations: <span class="number">0</span>,
+<a href=#118 id=118 data-nosnippet>118</a>            total_actual_minor_iterations: <span class="number">0</span>,
+<a href=#119 id=119 data-nosnippet>119</a>            visibility_products: major.visibility,
+<a href=#120 id=120 data-nosnippet>120</a>            workers: run.team.workers(),
+<a href=#121 id=121 data-nosnippet>121</a>            planes_per_wave: run.planes_per_wave,
+<a href=#122 id=122 data-nosnippet>122</a>        });
+<a href=#123 id=123 data-nosnippet>123</a>    }
+<a href=#124 id=124 data-nosnippet>124</a>    <span class="comment">// CASA's `nmajor = -1` leaves the major-cycle count open, but every
+<a href=#125 id=125 data-nosnippet>125</a>    // productive cycle spends at least one of the minor-iteration budget.
+<a href=#126 id=126 data-nosnippet>126</a>    </span><span class="kw">let </span>maximum_cycles = controls
+<a href=#127 id=127 data-nosnippet>127</a>        .maximum_major_cycles()
+<a href=#128 id=128 data-nosnippet>128</a>        .unwrap_or(controls.max_minor_iterations());
+<a href=#129 id=129 data-nosnippet>129</a>    <span class="kw">let </span>clark_reuse = ReconstructionPlaneWorkspace::clark_reuse_bytes(problem);
+<a href=#130 id=130 data-nosnippet>130</a>    <span class="kw">let </span><span class="kw-2">mut </span>minor_cycles = Vec::new();
+<a href=#131 id=131 data-nosnippet>131</a>    <span class="kw">let </span><span class="kw-2">mut </span>totals = (<span class="number">0_usize</span>, <span class="number">0_usize</span>);
+<a href=#132 id=132 data-nosnippet>132</a>    <span class="kw">for </span>cycle <span class="kw">in </span><span class="number">1</span>.. {
+<a href=#133 id=133 data-nosnippet>133</a>        <span class="kw">let </span>remaining = (cycle &gt; <span class="number">1</span>).then(|| controls.max_minor_iterations() - totals.<span class="number">0</span>);
+<a href=#134 id=134 data-nosnippet>134</a>        <span class="kw">let </span>program = minor_program(problem, image_response, remaining)<span class="question-mark">?
+<a href=#135 id=135 data-nosnippet>135</a>            </span>.with_clark_workspace_reuse(clark_reuse);
+<a href=#136 id=136 data-nosnippet>136</a>        <span class="kw">let </span>started = Instant::now();
+<a href=#137 id=137 data-nosnippet>137</a>        <span class="kw">let </span>outcome = run_minor_cycle(
+<a href=#138 id=138 data-nosnippet>138</a>            major.completion,
+<a href=#139 id=139 data-nosnippet>139</a>            <span class="kw-2">&amp;</span>major.lifecycle,
+<a href=#140 id=140 data-nosnippet>140</a>            <span class="kw-2">&amp;</span>mask_plans,
+<a href=#141 id=141 data-nosnippet>141</a>            program,
+<a href=#142 id=142 data-nosnippet>142</a>            <span class="kw-2">&amp;</span>run.team,
+<a href=#143 id=143 data-nosnippet>143</a>        )<span class="question-mark">?</span>;
+<a href=#144 id=144 data-nosnippet>144</a>        <span class="kw">let </span>entering = totals;
+<a href=#145 id=145 data-nosnippet>145</a>        totals = (
+<a href=#146 id=146 data-nosnippet>146</a>            totals
+<a href=#147 id=147 data-nosnippet>147</a>                .<span class="number">0
+<a href=#148 id=148 data-nosnippet>148</a>                </span>.checked_add(outcome.evidence.controller_iterations())
+<a href=#149 id=149 data-nosnippet>149</a>                .ok_or(ImagingError::IterationOverflow)<span class="question-mark">?</span>,
+<a href=#150 id=150 data-nosnippet>150</a>            totals
+<a href=#151 id=151 data-nosnippet>151</a>                .<span class="number">1
+<a href=#152 id=152 data-nosnippet>152</a>                </span>.checked_add(outcome.evidence.iterations())
+<a href=#153 id=153 data-nosnippet>153</a>                .ok_or(ImagingError::IterationOverflow)<span class="question-mark">?</span>,
+<a href=#154 id=154 data-nosnippet>154</a>        );
+<a href=#155 id=155 data-nosnippet>155</a>        <span class="kw">let </span>record = minor_cycle_record(cycle, <span class="kw-2">&amp;</span>outcome, entering, totals);
+<a href=#156 id=156 data-nosnippet>156</a>        <span class="macro">tracing::info!</span>(
+<a href=#157 id=157 data-nosnippet>157</a>            <span class="string">"imaging minor cycle {cycle}: {} iterations ({} total), peak {:.6} -&gt; {:.6} Jy, \
+<a href=#158 id=158 data-nosnippet>158</a>             threshold {:.6} Jy, stop {:?}, {:.2} s"</span>,
+<a href=#159 id=159 data-nosnippet>159</a>            record.iterations,
+<a href=#160 id=160 data-nosnippet>160</a>            totals.<span class="number">0</span>,
+<a href=#161 id=161 data-nosnippet>161</a>            record.initial_peak_flux,
+<a href=#162 id=162 data-nosnippet>162</a>            record.final_peak_flux,
+<a href=#163 id=163 data-nosnippet>163</a>            record.effective_threshold,
+<a href=#164 id=164 data-nosnippet>164</a>            record.stop_reason,
+<a href=#165 id=165 data-nosnippet>165</a>            started.elapsed().as_secs_f64(),
+<a href=#166 id=166 data-nosnippet>166</a>        );
+<a href=#167 id=167 data-nosnippet>167</a>        minor_cycles.push(record);
+<a href=#168 id=168 data-nosnippet>168</a>        <span class="kw">let </span>continue_cleaning = cycle &lt; maximum_cycles
+<a href=#169 id=169 data-nosnippet>169</a>            &amp;&amp; totals.<span class="number">0 </span>&lt; controls.max_minor_iterations()
+<a href=#170 id=170 data-nosnippet>170</a>            &amp;&amp; outcome.evidence.requests_reconciliation();
+<a href=#171 id=171 data-nosnippet>171</a>        <span class="kw">let </span>next_masks = next_masks(<span class="kw-2">&amp;</span>mask_plans, <span class="kw-2">&amp;</span>outcome, cycle)<span class="question-mark">?</span>;
+<a href=#172 id=172 data-nosnippet>172</a>        <span class="kw">let </span>masks = outcome.masks.clone();
+<a href=#173 id=173 data-nosnippet>173</a>        major = run.refresh(outcome, !continue_cleaning)<span class="question-mark">?</span>;
+<a href=#174 id=174 data-nosnippet>174</a>        <span class="kw">if </span>continue_cleaning {
+<a href=#175 id=175 data-nosnippet>175</a>            mask_plans = next_masks;
+<a href=#176 id=176 data-nosnippet>176</a>            <span class="kw">continue</span>;
+<a href=#177 id=177 data-nosnippet>177</a>        }
+<a href=#178 id=178 data-nosnippet>178</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(ImagingOutcome {
+<a href=#179 id=179 data-nosnippet>179</a>            scientific: major.completion,
+<a href=#180 id=180 data-nosnippet>180</a>            masks: <span class="prelude-val">Some</span>(masks),
+<a href=#181 id=181 data-nosnippet>181</a>            minor_cycles,
+<a href=#182 id=182 data-nosnippet>182</a>            major_cycle_count: cycle + <span class="number">1</span>,
+<a href=#183 id=183 data-nosnippet>183</a>            total_minor_iterations: totals.<span class="number">0</span>,
+<a href=#184 id=184 data-nosnippet>184</a>            total_actual_minor_iterations: totals.<span class="number">1</span>,
+<a href=#185 id=185 data-nosnippet>185</a>            visibility_products: major.visibility,
+<a href=#186 id=186 data-nosnippet>186</a>            workers: run.team.workers(),
+<a href=#187 id=187 data-nosnippet>187</a>            planes_per_wave: run.planes_per_wave,
+<a href=#188 id=188 data-nosnippet>188</a>        });
+<a href=#189 id=189 data-nosnippet>189</a>    }
+<a href=#190 id=190 data-nosnippet>190</a>    <span class="macro">unreachable!</span>(<span class="string">"the cycle counter is unbounded"</span>)
+<a href=#191 id=191 data-nosnippet>191</a>}
+<a href=#192 id=192 data-nosnippet>192</a>
+<a href=#193 id=193 data-nosnippet>193</a><span class="kw">impl</span>&lt;<span class="lifetime">'a</span>&gt; Run&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#194 id=194 data-nosnippet>194</a>    <span class="doccomment">/// The operators, worker team, source and imaging weights of a run.
+<a href=#195 id=195 data-nosnippet>195</a>    </span><span class="kw">fn </span>open(inputs: ImagingInputs&lt;<span class="lifetime">'a</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ImagingError&gt; {
+<a href=#196 id=196 data-nosnippet>196</a>        <span class="kw">let </span>problem = inputs.problem;
+<a href=#197 id=197 data-nosnippet>197</a>        <span class="kw">let </span>backend = inputs.backend;
+<a href=#198 id=198 data-nosnippet>198</a>        <span class="kw">if </span>backend == BackendChoice::Metal
+<a href=#199 id=199 data-nosnippet>199</a>            &amp;&amp; !inputs
+<a href=#200 id=200 data-nosnippet>200</a>                .authority
+<a href=#201 id=201 data-nosnippet>201</a>                .topology()
+<a href=#202 id=202 data-nosnippet>202</a>                .accelerators
+<a href=#203 id=203 data-nosnippet>203</a>                .iter()
+<a href=#204 id=204 data-nosnippet>204</a>                .any(|accelerator| accelerator.kind == AcceleratorKind::Metal)
+<a href=#205 id=205 data-nosnippet>205</a>        {
+<a href=#206 id=206 data-nosnippet>206</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::Unsupported {
+<a href=#207 id=207 data-nosnippet>207</a>                reason: <span class="string">"the Metal backend needs a unified-memory Metal 3 device"</span>,
+<a href=#208 id=208 data-nosnippet>208</a>            });
+<a href=#209 id=209 data-nosnippet>209</a>        }
+<a href=#210 id=210 data-nosnippet>210</a>        <span class="kw">let </span>correlations = selected_correlations(problem)<span class="question-mark">?</span>;
+<a href=#211 id=211 data-nosnippet>211</a>        <span class="kw">let </span>selected = inputs
+<a href=#212 id=212 data-nosnippet>212</a>            .access
+<a href=#213 id=213 data-nosnippet>213</a>            .into_deferred()
+<a href=#214 id=214 data-nosnippet>214</a>            .open(problem)
+<a href=#215 id=215 data-nosnippet>215</a>            .map_err(|error| ImagingError::Observation(Box::new(error)))<span class="question-mark">?</span>;
+<a href=#216 id=216 data-nosnippet>216</a>        <span class="kw">let </span>dish_classes = selected.antenna_response_classes();
+<a href=#217 id=217 data-nosnippet>217</a>        <span class="kw">let </span>domains = problem
+<a href=#218 id=218 data-nosnippet>218</a>            .geometry()
+<a href=#219 id=219 data-nosnippet>219</a>            .domains()
+<a href=#220 id=220 data-nosnippet>220</a>            .iter()
+<a href=#221 id=221 data-nosnippet>221</a>            .map(|domain| {
+<a href=#222 id=222 data-nosnippet>222</a>                domain_operator(
+<a href=#223 id=223 data-nosnippet>223</a>                    problem,
+<a href=#224 id=224 data-nosnippet>224</a>                    domain,
+<a href=#225 id=225 data-nosnippet>225</a>                    <span class="kw-2">&amp;</span>correlations,
+<a href=#226 id=226 data-nosnippet>226</a>                    backend,
+<a href=#227 id=227 data-nosnippet>227</a>                    inputs.aw_catalog.as_ref(),
+<a href=#228 id=228 data-nosnippet>228</a>                    <span class="kw-2">&amp;</span>dish_classes,
+<a href=#229 id=229 data-nosnippet>229</a>                )
+<a href=#230 id=230 data-nosnippet>230</a>            })
+<a href=#231 id=231 data-nosnippet>231</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#232 id=232 data-nosnippet>232</a>        <span class="kw">let </span>weight_image = domains.iter().any(|domain| domain.weight_image);
+<a href=#233 id=233 data-nosnippet>233</a>        <span class="kw">if </span>inputs.visibility_write.is_some() &amp;&amp; domains.len() &gt; <span class="number">1 </span>{
+<a href=#234 id=234 data-nosnippet>234</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::Unsupported {
+<a href=#235 id=235 data-nosnippet>235</a>                reason: <span class="string">"visibilities are written back for one image domain"</span>,
+<a href=#236 id=236 data-nosnippet>236</a>            });
+<a href=#237 id=237 data-nosnippet>237</a>        }
+<a href=#238 id=238 data-nosnippet>238</a>        <span class="kw">let </span>(workers, memory) = inputs.authority.phase_budget(inputs.policy)<span class="question-mark">?</span>;
+<a href=#239 id=239 data-nosnippet>239</a>        <span class="kw">let </span>team = WorkerTeam::new(workers)<span class="question-mark">?</span>;
+<a href=#240 id=240 data-nosnippet>240</a>        <span class="kw">let </span>cancel = Cancel::new();
+<a href=#241 id=241 data-nosnippet>241</a>        <span class="kw">let </span>main = <span class="kw-2">&amp;</span>domains[<span class="number">0</span>].operator;
+<a href=#242 id=242 data-nosnippet>242</a>        <span class="kw">let </span><span class="kw-2">mut </span>source = MeasurementSetSource::new(
+<a href=#243 id=243 data-nosnippet>243</a>            problem,
+<a href=#244 id=244 data-nosnippet>244</a>            selected,
+<a href=#245 id=245 data-nosnippet>245</a>            main.basis().planes(),
+<a href=#246 id=246 data-nosnippet>246</a>            plane_bounds(problem),
+<a href=#247 id=247 data-nosnippet>247</a>            domains
+<a href=#248 id=248 data-nosnippet>248</a>                .iter()
+<a href=#249 id=249 data-nosnippet>249</a>                .any(|domain| domain.operator.cf().pointing_ramp()),
+<a href=#250 id=250 data-nosnippet>250</a>            dish_classes,
+<a href=#251 id=251 data-nosnippet>251</a>        );
+<a href=#252 id=252 data-nosnippet>252</a>        <span class="kw">let </span>started = Instant::now();
+<a href=#253 id=253 data-nosnippet>253</a>        <span class="kw">let </span>weighting = weighting(problem, <span class="kw-2">&amp;</span>domains[<span class="number">0</span>], <span class="kw-2">&amp;mut </span>source, <span class="kw-2">&amp;</span>team, <span class="kw-2">&amp;</span>cancel)<span class="question-mark">?</span>;
+<a href=#254 id=254 data-nosnippet>254</a>        <span class="macro">tracing::info!</span>(
+<a href=#255 id=255 data-nosnippet>255</a>            <span class="string">"imaging weights: {workers} workers, {:.2} s"</span>,
+<a href=#256 id=256 data-nosnippet>256</a>            started.elapsed().as_secs_f64()
+<a href=#257 id=257 data-nosnippet>257</a>        );
+<a href=#258 id=258 data-nosnippet>258</a>        <span class="kw">let </span>cube = <span class="macro">matches!</span>(main.basis(), Basis::ChannelLocal { .. })
+<a href=#259 id=259 data-nosnippet>259</a>            .then(|| cube_state(problem, inputs.spill_directory, workers, memory))
+<a href=#260 id=260 data-nosnippet>260</a>            .transpose()<span class="question-mark">?</span>;
+<a href=#261 id=261 data-nosnippet>261</a>        <span class="kw">let </span>run = <span class="self">Self </span>{
+<a href=#262 id=262 data-nosnippet>262</a>            problem,
+<a href=#263 id=263 data-nosnippet>263</a>            domains,
+<a href=#264 id=264 data-nosnippet>264</a>            source,
+<a href=#265 id=265 data-nosnippet>265</a>            weighting,
+<a href=#266 id=266 data-nosnippet>266</a>            weighting_id: WeightingGenerationId::next(),
+<a href=#267 id=267 data-nosnippet>267</a>            team,
+<a href=#268 id=268 data-nosnippet>268</a>            cancel,
+<a href=#269 id=269 data-nosnippet>269</a>            cube,
+<a href=#270 id=270 data-nosnippet>270</a>            budget: memory.saturating_sub(memory / <span class="number">4</span>),
+<a href=#271 id=271 data-nosnippet>271</a>            native_spacing_hz: native_spacing_hz(problem),
+<a href=#272 id=272 data-nosnippet>272</a>            backend,
+<a href=#273 id=273 data-nosnippet>273</a>            attempts: <span class="number">0</span>,
+<a href=#274 id=274 data-nosnippet>274</a>            visibility_write: inputs.visibility_write,
+<a href=#275 id=275 data-nosnippet>275</a>            planes_per_wave: <span class="prelude-val">None</span>,
+<a href=#276 id=276 data-nosnippet>276</a>            weight_image,
+<a href=#277 id=277 data-nosnippet>277</a>        };
+<a href=#278 id=278 data-nosnippet>278</a>        <span class="kw">if </span>run.visibility_write.is_some() {
+<a href=#279 id=279 data-nosnippet>279</a>            <span class="comment">// The pass that writes is the initial one without cleaning and a
+<a href=#280 id=280 data-nosnippet>280</a>            // residual refresh otherwise; it must hold every plane, and is
+<a href=#281 id=281 data-nosnippet>281</a>            // refused now rather than after the cycles that precede it.
+<a href=#282 id=282 data-nosnippet>282</a>            </span><span class="kw">let </span>cleaning = problem.reconstruction().controls().max_minor_iterations() &gt; <span class="number">0</span>;
+<a href=#283 id=283 data-nosnippet>283</a>            <span class="kw">let </span>(modes, with_model) = <span class="kw">if </span>cleaning {
+<a href=#284 id=284 data-nosnippet>284</a>                (ModeSet::DATA, <span class="bool-val">true</span>)
+<a href=#285 id=285 data-nosnippet>285</a>            } <span class="kw">else </span>{
+<a href=#286 id=286 data-nosnippet>286</a>                (run.initial_modes(), start_model(problem))
+<a href=#287 id=287 data-nosnippet>287</a>            };
+<a href=#288 id=288 data-nosnippet>288</a>            <span class="kw">if </span>run.residency(modes, with_model)<span class="question-mark">? </span>!= Residency::All {
+<a href=#289 id=289 data-nosnippet>289</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::Pass(PassError::VisibilityWriteWaves));
+<a href=#290 id=290 data-nosnippet>290</a>            }
+<a href=#291 id=291 data-nosnippet>291</a>        }
+<a href=#292 id=292 data-nosnippet>292</a>        <span class="prelude-val">Ok</span>(run)
+<a href=#293 id=293 data-nosnippet>293</a>    }
+<a href=#294 id=294 data-nosnippet>294</a>
+<a href=#295 id=295 data-nosnippet>295</a>    <span class="doccomment">/// The initial major cycle: data and PSF, from the start model when the
+<a href=#296 id=296 data-nosnippet>296</a>    /// problem has one; it writes visibilities when it is also final.
+<a href=#297 id=297 data-nosnippet>297</a>    </span><span class="kw">fn </span>initial(<span class="kw-2">&amp;mut </span><span class="self">self</span>, last: bool) -&gt; <span class="prelude-ty">Result</span>&lt;Major, ImagingError&gt; {
+<a href=#298 id=298 data-nosnippet>298</a>        <span class="kw">let </span><span class="kw-2">mut </span>lifecycle = ModelLifecycle::bind(
+<a href=#299 id=299 data-nosnippet>299</a>            ExecutableModelProblem::from_compiled(<span class="self">self</span>.problem.clone())<span class="question-mark">?</span>,
+<a href=#300 id=300 data-nosnippet>300</a>            <span class="self">self</span>.next_attempt(),
+<a href=#301 id=301 data-nosnippet>301</a>            <span class="number">1</span>,
+<a href=#302 id=302 data-nosnippet>302</a>            <span class="self">self</span>.model_storage()<span class="question-mark">?</span>,
+<a href=#303 id=303 data-nosnippet>303</a>        )<span class="question-mark">?</span>;
+<a href=#304 id=304 data-nosnippet>304</a>        <span class="kw">let </span>start_model = !<span class="macro">matches!</span>(lifecycle.contract().input(), ModelInputCommitment::Empty);
+<a href=#305 id=305 data-nosnippet>305</a>        <span class="kw">let </span>named = <span class="kw">if </span>start_model {
+<a href=#306 id=306 data-nosnippet>306</a>            lifecycle.initial_reprojected()<span class="question-mark">?
+<a href=#307 id=307 data-nosnippet>307</a>        </span>} <span class="kw">else </span>{
+<a href=#308 id=308 data-nosnippet>308</a>            lifecycle.initial_empty()<span class="question-mark">?
+<a href=#309 id=309 data-nosnippet>309</a>        </span>};
+<a href=#310 id=310 data-nosnippet>310</a>        <span class="kw">let </span>preparation = MajorCyclePreparation::prepare(<span class="kw-2">&amp;</span>lifecycle, named, <span class="prelude-val">None</span>)<span class="question-mark">?</span>;
+<a href=#311 id=311 data-nosnippet>311</a>        <span class="kw">let </span>residency = <span class="self">self</span>.residency(<span class="self">self</span>.initial_modes(), start_model)<span class="question-mark">?</span>;
+<a href=#312 id=312 data-nosnippet>312</a>        <span class="kw">let </span>state = PassNormalState::initial(
+<a href=#313 id=313 data-nosnippet>313</a>            <span class="self">self</span>.problem,
+<a href=#314 id=314 data-nosnippet>314</a>            <span class="self">self</span>.weighting_id,
+<a href=#315 id=315 data-nosnippet>315</a>            preparation.final_model_generation(),
+<a href=#316 id=316 data-nosnippet>316</a>            <span class="self">self</span>.normal_storage(residency)<span class="question-mark">?</span>,
 <a href=#317 id=317 data-nosnippet>317</a>        )<span class="question-mark">?</span>;
-<a href=#318 id=318 data-nosnippet>318</a>        <span class="kw">let </span>delta = terms
-<a href=#319 id=319 data-nosnippet>319</a>            .filter(|terms| !terms.is_empty())
-<a href=#320 id=320 data-nosnippet>320</a>            .map(|terms| lifecycle.compile_delta(<span class="kw-2">&amp;</span>named, terms))
-<a href=#321 id=321 data-nosnippet>321</a>            .transpose()<span class="question-mark">?</span>;
-<a href=#322 id=322 data-nosnippet>322</a>        <span class="kw">let </span>preparation = MajorCyclePreparation::prepare(<span class="kw-2">&amp;</span>lifecycle, named, delta)<span class="question-mark">?</span>;
-<a href=#323 id=323 data-nosnippet>323</a>        <span class="kw">let </span>residency = <span class="self">self</span>.residency(ModeSet::DATA, <span class="bool-val">true</span>)<span class="question-mark">?</span>;
-<a href=#324 id=324 data-nosnippet>324</a>        <span class="kw">let </span>state = PassNormalState::refresh(
-<a href=#325 id=325 data-nosnippet>325</a>            <span class="self">self</span>.problem,
-<a href=#326 id=326 data-nosnippet>326</a>            normal_state,
-<a href=#327 id=327 data-nosnippet>327</a>            preparation.final_model_generation(),
-<a href=#328 id=328 data-nosnippet>328</a>            <span class="self">self</span>.normal_storage(residency)<span class="question-mark">?</span>,
-<a href=#329 id=329 data-nosnippet>329</a>        )<span class="question-mark">?</span>;
-<a href=#330 id=330 data-nosnippet>330</a>        <span class="self">self</span>.reconcile(lifecycle, state, preparation, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>masks), last, residency)
-<a href=#331 id=331 data-nosnippet>331</a>    }
-<a href=#332 id=332 data-nosnippet>332</a>
-<a href=#333 id=333 data-nosnippet>333</a>    <span class="doccomment">/// Run one pass into `state` and reconcile it with the prepared model.
-<a href=#334 id=334 data-nosnippet>334</a>    /// The initial pass grids the start model's residual only when there is
-<a href=#335 id=335 data-nosnippet>335</a>    /// a start model; every refresh grids the residual.
-<a href=#336 id=336 data-nosnippet>336</a>    </span><span class="kw">fn </span>reconcile(
-<a href=#337 id=337 data-nosnippet>337</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#338 id=338 data-nosnippet>338</a>        <span class="kw-2">mut </span>lifecycle: ModelLifecycle,
-<a href=#339 id=339 data-nosnippet>339</a>        <span class="kw-2">mut </span>state: PassNormalState,
-<a href=#340 id=340 data-nosnippet>340</a>        preparation: MajorCyclePreparation,
-<a href=#341 id=341 data-nosnippet>341</a>        masks: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>ReconstructionMaskSet&gt;,
-<a href=#342 id=342 data-nosnippet>342</a>        last: bool,
-<a href=#343 id=343 data-nosnippet>343</a>        residency: Residency,
-<a href=#344 id=344 data-nosnippet>344</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Major, ImagingError&gt; {
-<a href=#345 id=345 data-nosnippet>345</a>        <span class="kw">let </span>initial = masks.is_none();
-<a href=#346 id=346 data-nosnippet>346</a>        <span class="kw">let </span>modes = <span class="kw">if </span>initial {
-<a href=#347 id=347 data-nosnippet>347</a>            ModeSet::DATA_PSF
-<a href=#348 id=348 data-nosnippet>348</a>        } <span class="kw">else </span>{
-<a href=#349 id=349 data-nosnippet>349</a>            ModeSet::DATA
-<a href=#350 id=350 data-nosnippet>350</a>        };
-<a href=#351 id=351 data-nosnippet>351</a>        <span class="kw">let </span>with_model = !initial || start_model(<span class="self">self</span>.problem);
-<a href=#352 id=352 data-nosnippet>352</a>        <span class="kw">let </span>model = with_model.then(|| preparation.final_model());
-<a href=#353 id=353 data-nosnippet>353</a>        <span class="kw">let </span>transform = <span class="self">self</span>.problem.visibility_transform();
-<a href=#354 id=354 data-nosnippet>354</a>        <span class="kw">let </span><span class="kw-2">mut </span>writer = <span class="self">self
-<a href=#355 id=355 data-nosnippet>355</a>            </span>.visibility_write
-<a href=#356 id=356 data-nosnippet>356</a>            .as_ref()
-<a href=#357 id=357 data-nosnippet>357</a>            .filter(|<span class="kw">_</span>| last)
-<a href=#358 id=358 data-nosnippet>358</a>            .map(|target| VisibilityWriter::begin(target, transform))
-<a href=#359 id=359 data-nosnippet>359</a>            .transpose()
-<a href=#360 id=360 data-nosnippet>360</a>            .map_err(|error| ImagingError::Pass(PassError::VisibilityWrite(error)))<span class="question-mark">?</span>;
-<a href=#361 id=361 data-nosnippet>361</a>        <span class="kw">if let </span>Residency::Waves { planes_per_wave } = residency {
-<a href=#362 id=362 data-nosnippet>362</a>            <span class="self">self</span>.planes_per_wave = <span class="prelude-val">Some</span>(
-<a href=#363 id=363 data-nosnippet>363</a>                <span class="self">self</span>.planes_per_wave
-<a href=#364 id=364 data-nosnippet>364</a>                    .map_or(planes_per_wave, |planes| planes.min(planes_per_wave)),
-<a href=#365 id=365 data-nosnippet>365</a>            );
-<a href=#366 id=366 data-nosnippet>366</a>        }
-<a href=#367 id=367 data-nosnippet>367</a>        <span class="kw">let </span>started = Instant::now();
-<a href=#368 id=368 data-nosnippet>368</a>        <span class="kw">let </span>summary = <span class="self">self</span>.pass(
-<a href=#369 id=369 data-nosnippet>369</a>            modes,
-<a href=#370 id=370 data-nosnippet>370</a>            model,
-<a href=#371 id=371 data-nosnippet>371</a>            residency,
-<a href=#372 id=372 data-nosnippet>372</a>            <span class="kw-2">&amp;mut </span>state,
-<a href=#373 id=373 data-nosnippet>373</a>            initial,
-<a href=#374 id=374 data-nosnippet>374</a>            writer.as_mut(),
-<a href=#375 id=375 data-nosnippet>375</a>        )<span class="question-mark">?</span>;
-<a href=#376 id=376 data-nosnippet>376</a>        <span class="kw">let </span>pass_seconds = started.elapsed().as_secs_f64();
-<a href=#377 id=377 data-nosnippet>377</a>        <span class="kw">let </span>final_model = preparation.final_model_generation();
-<a href=#378 id=378 data-nosnippet>378</a>        <span class="kw">let </span>visibility = writer
-<a href=#379 id=379 data-nosnippet>379</a>            .map(|writer| writer.complete(final_model))
+<a href=#318 id=318 data-nosnippet>318</a>        <span class="self">self</span>.reconcile(lifecycle, state, preparation, <span class="prelude-val">None</span>, last, residency)
+<a href=#319 id=319 data-nosnippet>319</a>    }
+<a href=#320 id=320 data-nosnippet>320</a>
+<a href=#321 id=321 data-nosnippet>321</a>    <span class="doccomment">/// The major cycle after a minor cycle: the residual of the updated model.
+<a href=#322 id=322 data-nosnippet>322</a>    </span><span class="kw">fn </span>refresh(<span class="kw-2">&amp;mut </span><span class="self">self</span>, outcome: MinorCycleOutcome, last: bool) -&gt; <span class="prelude-ty">Result</span>&lt;Major, ImagingError&gt; {
+<a href=#323 id=323 data-nosnippet>323</a>        <span class="kw">let </span>MinorCycleOutcome {
+<a href=#324 id=324 data-nosnippet>324</a>            normal_state,
+<a href=#325 id=325 data-nosnippet>325</a>            continuation,
+<a href=#326 id=326 data-nosnippet>326</a>            masks,
+<a href=#327 id=327 data-nosnippet>327</a>            delta,
+<a href=#328 id=328 data-nosnippet>328</a>            ..
+<a href=#329 id=329 data-nosnippet>329</a>        } = outcome;
+<a href=#330 id=330 data-nosnippet>330</a>        <span class="kw">let </span>terms = delta.map(|delta| delta.terms().to_vec());
+<a href=#331 id=331 data-nosnippet>331</a>        <span class="kw">let </span>attempt = <span class="self">self</span>.next_attempt();
+<a href=#332 id=332 data-nosnippet>332</a>        <span class="kw">let </span>(lifecycle, named) = ModelLifecycle::continue_from(
+<a href=#333 id=333 data-nosnippet>333</a>            ExecutableModelProblem::from_compiled(<span class="self">self</span>.problem.clone())<span class="question-mark">?</span>,
+<a href=#334 id=334 data-nosnippet>334</a>            attempt,
+<a href=#335 id=335 data-nosnippet>335</a>            <span class="number">1</span>,
+<a href=#336 id=336 data-nosnippet>336</a>            continuation,
+<a href=#337 id=337 data-nosnippet>337</a>            <span class="self">self</span>.model_storage()<span class="question-mark">?</span>,
+<a href=#338 id=338 data-nosnippet>338</a>        )<span class="question-mark">?</span>;
+<a href=#339 id=339 data-nosnippet>339</a>        <span class="kw">let </span>delta = terms
+<a href=#340 id=340 data-nosnippet>340</a>            .filter(|terms| !terms.is_empty())
+<a href=#341 id=341 data-nosnippet>341</a>            .map(|terms| lifecycle.compile_delta(<span class="kw-2">&amp;</span>named, terms))
+<a href=#342 id=342 data-nosnippet>342</a>            .transpose()<span class="question-mark">?</span>;
+<a href=#343 id=343 data-nosnippet>343</a>        <span class="kw">let </span>preparation = MajorCyclePreparation::prepare(<span class="kw-2">&amp;</span>lifecycle, named, delta)<span class="question-mark">?</span>;
+<a href=#344 id=344 data-nosnippet>344</a>        <span class="kw">let </span>residency = <span class="self">self</span>.residency(ModeSet::DATA, <span class="bool-val">true</span>)<span class="question-mark">?</span>;
+<a href=#345 id=345 data-nosnippet>345</a>        <span class="kw">let </span>state = PassNormalState::refresh(
+<a href=#346 id=346 data-nosnippet>346</a>            <span class="self">self</span>.problem,
+<a href=#347 id=347 data-nosnippet>347</a>            normal_state,
+<a href=#348 id=348 data-nosnippet>348</a>            preparation.final_model_generation(),
+<a href=#349 id=349 data-nosnippet>349</a>            <span class="self">self</span>.normal_storage(residency)<span class="question-mark">?</span>,
+<a href=#350 id=350 data-nosnippet>350</a>        )<span class="question-mark">?</span>;
+<a href=#351 id=351 data-nosnippet>351</a>        <span class="self">self</span>.reconcile(lifecycle, state, preparation, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>masks), last, residency)
+<a href=#352 id=352 data-nosnippet>352</a>    }
+<a href=#353 id=353 data-nosnippet>353</a>
+<a href=#354 id=354 data-nosnippet>354</a>    <span class="doccomment">/// Run one pass into `state` and reconcile it with the prepared model.
+<a href=#355 id=355 data-nosnippet>355</a>    /// The initial pass grids the start model's residual only when there is
+<a href=#356 id=356 data-nosnippet>356</a>    /// a start model; every refresh grids the residual.
+<a href=#357 id=357 data-nosnippet>357</a>    </span><span class="kw">fn </span>reconcile(
+<a href=#358 id=358 data-nosnippet>358</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#359 id=359 data-nosnippet>359</a>        <span class="kw-2">mut </span>lifecycle: ModelLifecycle,
+<a href=#360 id=360 data-nosnippet>360</a>        <span class="kw-2">mut </span>state: PassNormalState,
+<a href=#361 id=361 data-nosnippet>361</a>        preparation: MajorCyclePreparation,
+<a href=#362 id=362 data-nosnippet>362</a>        masks: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>ReconstructionMaskSet&gt;,
+<a href=#363 id=363 data-nosnippet>363</a>        last: bool,
+<a href=#364 id=364 data-nosnippet>364</a>        residency: Residency,
+<a href=#365 id=365 data-nosnippet>365</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Major, ImagingError&gt; {
+<a href=#366 id=366 data-nosnippet>366</a>        <span class="kw">let </span>initial = masks.is_none();
+<a href=#367 id=367 data-nosnippet>367</a>        <span class="kw">let </span>modes = <span class="kw">if </span>initial {
+<a href=#368 id=368 data-nosnippet>368</a>            <span class="self">self</span>.initial_modes()
+<a href=#369 id=369 data-nosnippet>369</a>        } <span class="kw">else </span>{
+<a href=#370 id=370 data-nosnippet>370</a>            ModeSet::DATA
+<a href=#371 id=371 data-nosnippet>371</a>        };
+<a href=#372 id=372 data-nosnippet>372</a>        <span class="kw">let </span>with_model = !initial || start_model(<span class="self">self</span>.problem);
+<a href=#373 id=373 data-nosnippet>373</a>        <span class="kw">let </span>model = with_model.then(|| preparation.final_model());
+<a href=#374 id=374 data-nosnippet>374</a>        <span class="kw">let </span>transform = <span class="self">self</span>.problem.visibility_transform();
+<a href=#375 id=375 data-nosnippet>375</a>        <span class="kw">let </span><span class="kw-2">mut </span>writer = <span class="self">self
+<a href=#376 id=376 data-nosnippet>376</a>            </span>.visibility_write
+<a href=#377 id=377 data-nosnippet>377</a>            .as_ref()
+<a href=#378 id=378 data-nosnippet>378</a>            .filter(|<span class="kw">_</span>| last)
+<a href=#379 id=379 data-nosnippet>379</a>            .map(|target| VisibilityWriter::begin(target, transform))
 <a href=#380 id=380 data-nosnippet>380</a>            .transpose()
-<a href=#381 id=381 data-nosnippet>381</a>            .map_err(|error| ImagingError::Pass(PassError::VisibilityWrite(error)))<span class="question-mark">?
-<a href=#382 id=382 data-nosnippet>382</a>            </span>.map(|samples| {
-<a href=#383 id=383 data-nosnippet>383</a>                VisibilityProductCompletion::new(
-<a href=#384 id=384 data-nosnippet>384</a>                    <span class="self">self</span>.problem.problem_id(),
-<a href=#385 id=385 data-nosnippet>385</a>                    final_model,
-<a href=#386 id=386 data-nosnippet>386</a>                    <span class="self">self</span>.weighting_id,
-<a href=#387 id=387 data-nosnippet>387</a>                    samples,
-<a href=#388 id=388 data-nosnippet>388</a>                )
-<a href=#389 id=389 data-nosnippet>389</a>            });
-<a href=#390 id=390 data-nosnippet>390</a>        <span class="kw">let </span>normal = state.finish(summary.samples, summary.blocks)<span class="question-mark">?</span>;
-<a href=#391 id=391 data-nosnippet>391</a>        <span class="kw">let </span><span class="kw-2">mut </span>owner = MajorCycleOwner::from_complete_data(normal, preparation)<span class="question-mark">?</span>;
-<a href=#392 id=392 data-nosnippet>392</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(masks) = masks {
-<a href=#393 id=393 data-nosnippet>393</a>            owner = owner.bind_reconstruction_masks(masks)<span class="question-mark">?</span>;
-<a href=#394 id=394 data-nosnippet>394</a>        }
-<a href=#395 id=395 data-nosnippet>395</a>        <span class="kw">let </span>completion = owner.reconcile(<span class="kw-2">&amp;mut </span>lifecycle)<span class="question-mark">?</span>;
-<a href=#396 id=396 data-nosnippet>396</a>        <span class="macro">tracing::info!</span>(
-<a href=#397 id=397 data-nosnippet>397</a>            <span class="string">"imaging major cycle: {} samples, pass {pass_seconds:.2} s, total {:.2} s"</span>,
-<a href=#398 id=398 data-nosnippet>398</a>            summary.samples,
-<a href=#399 id=399 data-nosnippet>399</a>            started.elapsed().as_secs_f64(),
-<a href=#400 id=400 data-nosnippet>400</a>        );
-<a href=#401 id=401 data-nosnippet>401</a>        <span class="prelude-val">Ok</span>(Major {
-<a href=#402 id=402 data-nosnippet>402</a>            lifecycle,
-<a href=#403 id=403 data-nosnippet>403</a>            completion,
-<a href=#404 id=404 data-nosnippet>404</a>            visibility,
-<a href=#405 id=405 data-nosnippet>405</a>        })
-<a href=#406 id=406 data-nosnippet>406</a>    }
-<a href=#407 id=407 data-nosnippet>407</a>
-<a href=#408 id=408 data-nosnippet>408</a>    <span class="kw">fn </span>next_attempt(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; casa_imaging_model::ModelExecutionAttemptId {
-<a href=#409 id=409 data-nosnippet>409</a>        <span class="self">self</span>.attempts += <span class="number">1</span>;
-<a href=#410 id=410 data-nosnippet>410</a>        <span class="kw">let </span><span class="kw-2">mut </span>identity = [<span class="number">0_u8</span>; <span class="number">32</span>];
-<a href=#411 id=411 data-nosnippet>411</a>        identity[<span class="number">0</span>] = <span class="number">1</span>;
-<a href=#412 id=412 data-nosnippet>412</a>        identity[<span class="number">24</span>..].copy_from_slice(<span class="kw-2">&amp;</span><span class="self">self</span>.attempts.to_be_bytes());
-<a href=#413 id=413 data-nosnippet>413</a>        casa_imaging_model::ModelExecutionAttemptId::new(
-<a href=#414 id=414 data-nosnippet>414</a>            casa_imaging_model::LogicalIdentity::from_sha256(identity),
-<a href=#415 id=415 data-nosnippet>415</a>        )
-<a href=#416 id=416 data-nosnippet>416</a>    }
-<a href=#417 id=417 data-nosnippet>417</a>
-<a href=#418 id=418 data-nosnippet>418</a>    <span class="kw">fn </span>model_storage(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;ModelStoragePlan, ImagingError&gt; {
-<a href=#419 id=419 data-nosnippet>419</a>        <span class="prelude-val">Ok</span>(<span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.cube {
-<a href=#420 id=420 data-nosnippet>420</a>            <span class="prelude-val">Some</span>(cube) =&gt; cube.model_storage()<span class="question-mark">?</span>,
-<a href=#421 id=421 data-nosnippet>421</a>            <span class="prelude-val">None </span>=&gt; ModelStoragePlan::resident(usize::MAX)<span class="question-mark">?</span>,
-<a href=#422 id=422 data-nosnippet>422</a>        })
-<a href=#423 id=423 data-nosnippet>423</a>    }
-<a href=#424 id=424 data-nosnippet>424</a>
-<a href=#425 id=425 data-nosnippet>425</a>    <span class="doccomment">/// Normal storage whose paged window holds the planes of one wave of
-<a href=#426 id=426 data-nosnippet>426</a>    /// `residency`.
-<a href=#427 id=427 data-nosnippet>427</a>    </span><span class="kw">fn </span>normal_storage(<span class="kw-2">&amp;</span><span class="self">self</span>, residency: Residency) -&gt; <span class="prelude-ty">Result</span>&lt;NormalStoragePlan, ImagingError&gt; {
-<a href=#428 id=428 data-nosnippet>428</a>        <span class="kw">let </span>planes = <span class="self">self</span>.domains[<span class="number">0</span>].operator.basis().planes() <span class="kw">as </span>usize;
-<a href=#429 id=429 data-nosnippet>429</a>        <span class="prelude-val">Ok</span>(<span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.cube {
-<a href=#430 id=430 data-nosnippet>430</a>            <span class="prelude-val">Some</span>(cube) =&gt; cube.normal_storage(<span class="kw">match </span>residency {
-<a href=#431 id=431 data-nosnippet>431</a>                Residency::All =&gt; planes,
-<a href=#432 id=432 data-nosnippet>432</a>                Residency::Waves { planes_per_wave } =&gt; planes_per_wave <span class="kw">as </span>usize,
-<a href=#433 id=433 data-nosnippet>433</a>            })<span class="question-mark">?</span>,
-<a href=#434 id=434 data-nosnippet>434</a>            <span class="prelude-val">None </span>=&gt; NormalStoragePlan::resident(planes)<span class="question-mark">?</span>,
-<a href=#435 id=435 data-nosnippet>435</a>        })
-<a href=#436 id=436 data-nosnippet>436</a>    }
-<a href=#437 id=437 data-nosnippet>437</a>
-<a href=#438 id=438 data-nosnippet>438</a>    <span class="doccomment">/// The waves of a pass accumulating `modes`, with a model when
-<a href=#439 id=439 data-nosnippet>439</a>    /// `with_model`, that fit the budget: planned once per major cycle for
-<a href=#440 id=440 data-nosnippet>440</a>    /// both the pass and its normal storage.
-<a href=#441 id=441 data-nosnippet>441</a>    </span><span class="kw">fn </span>residency(<span class="kw-2">&amp;</span><span class="self">self</span>, modes: ModeSet, with_model: bool) -&gt; <span class="prelude-ty">Result</span>&lt;Residency, ImagingError&gt; {
-<a href=#442 id=442 data-nosnippet>442</a>        <span class="kw">let </span>domains = pass_domains(<span class="kw-2">&amp;</span><span class="self">self</span>.domains, <span class="self">self</span>.team.workers());
-<a href=#443 id=443 data-nosnippet>443</a>        <span class="prelude-val">Ok</span>(Residency::plan(
-<a href=#444 id=444 data-nosnippet>444</a>            <span class="kw-2">&amp;</span>WaveDemand {
-<a href=#445 id=445 data-nosnippet>445</a>                domains: <span class="kw-2">&amp;</span>domains,
-<a href=#446 id=446 data-nosnippet>446</a>                modes,
-<a href=#447 id=447 data-nosnippet>447</a>                with_model,
-<a href=#448 id=448 data-nosnippet>448</a>                native_spacing_hz: <span class="self">self</span>.native_spacing_hz,
-<a href=#449 id=449 data-nosnippet>449</a>                workers: <span class="self">self</span>.team.workers(),
-<a href=#450 id=450 data-nosnippet>450</a>                backend: <span class="self">self</span>.backend,
-<a href=#451 id=451 data-nosnippet>451</a>            },
-<a href=#452 id=452 data-nosnippet>452</a>            <span class="self">self</span>.budget,
-<a href=#453 id=453 data-nosnippet>453</a>        )<span class="question-mark">?</span>)
-<a href=#454 id=454 data-nosnippet>454</a>    }
-<a href=#455 id=455 data-nosnippet>455</a>
-<a href=#456 id=456 data-nosnippet>456</a>    <span class="doccomment">/// One pass over every image domain, appending its images to `state`.
-<a href=#457 id=457 data-nosnippet>457</a>    </span><span class="kw">fn </span>pass(
-<a href=#458 id=458 data-nosnippet>458</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#459 id=459 data-nosnippet>459</a>        modes: ModeSet,
-<a href=#460 id=460 data-nosnippet>460</a>        model: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>ModelGeneration&gt;,
-<a href=#461 id=461 data-nosnippet>461</a>        residency: Residency,
-<a href=#462 id=462 data-nosnippet>462</a>        state: <span class="kw-2">&amp;mut </span>PassNormalState,
-<a href=#463 id=463 data-nosnippet>463</a>        initial: bool,
-<a href=#464 id=464 data-nosnippet>464</a>        <span class="kw-2">mut </span>writer: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;mut </span>VisibilityWriter&lt;<span class="lifetime">'_</span>&gt;&gt;,
-<a href=#465 id=465 data-nosnippet>465</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;PassSummary, ImagingError&gt; {
-<a href=#466 id=466 data-nosnippet>466</a>        <span class="kw">let </span>domains = pass_domains(<span class="kw-2">&amp;</span><span class="self">self</span>.domains, <span class="self">self</span>.team.workers());
-<a href=#467 id=467 data-nosnippet>467</a>        <span class="kw">let </span>prepare = |domain: usize, planes: PlaneRange| {
-<a href=#468 id=468 data-nosnippet>468</a>            <span class="kw">let </span>generation = model.expect(<span class="string">"the closure is installed only with a model"</span>);
-<a href=#469 id=469 data-nosnippet>469</a>            prepare_model(<span class="kw-2">&amp;</span><span class="self">self</span>.domains[domain].operator, generation, domain, planes)
-<a href=#470 id=470 data-nosnippet>470</a>                .map_err(|error| PassError::Model(Box::new(error)))
-<a href=#471 id=471 data-nosnippet>471</a>        };
-<a href=#472 id=472 data-nosnippet>472</a>        <span class="kw">let </span>pass = MajorCyclePass {
-<a href=#473 id=473 data-nosnippet>473</a>            domains: <span class="kw-2">&amp;</span>domains,
-<a href=#474 id=474 data-nosnippet>474</a>            weighting: <span class="kw-2">&amp;</span><span class="self">self</span>.weighting,
-<a href=#475 id=475 data-nosnippet>475</a>            modes,
-<a href=#476 id=476 data-nosnippet>476</a>            model: model.map(|<span class="kw">_</span>| <span class="kw-2">&amp;</span>prepare <span class="kw">as </span><span class="kw-2">&amp;</span>ModelPreparation&lt;<span class="lifetime">'_</span>&gt;),
-<a href=#477 id=477 data-nosnippet>477</a>            residency,
-<a href=#478 id=478 data-nosnippet>478</a>            native_spacing_hz: <span class="self">self</span>.native_spacing_hz,
-<a href=#479 id=479 data-nosnippet>479</a>            backend: <span class="self">self</span>.backend,
-<a href=#480 id=480 data-nosnippet>480</a>        };
-<a href=#481 id=481 data-nosnippet>481</a>        <span class="kw">let </span>predictions = writer.as_deref().map(VisibilityWriter::needs_predictions);
-<a href=#482 id=482 data-nosnippet>482</a>        <span class="kw">let </span><span class="kw-2">mut </span>write = |block: <span class="kw-2">&amp;</span><span class="kw">_</span>, predictions: <span class="kw-2">&amp;</span>[<span class="kw">_</span>]| <span class="kw">match </span>writer.as_deref_mut() {
-<a href=#483 id=483 data-nosnippet>483</a>            <span class="prelude-val">Some</span>(writer) =&gt; writer.write(block, predictions),
-<a href=#484 id=484 data-nosnippet>484</a>            <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Ok</span>(()),
-<a href=#485 id=485 data-nosnippet>485</a>        };
-<a href=#486 id=486 data-nosnippet>486</a>        <span class="kw">let </span><span class="kw-2">mut </span>sink = predictions.map(|predictions| VisibilitySink {
-<a href=#487 id=487 data-nosnippet>487</a>            predictions,
-<a href=#488 id=488 data-nosnippet>488</a>            write: <span class="kw-2">&amp;mut </span>write,
-<a href=#489 id=489 data-nosnippet>489</a>        });
-<a href=#490 id=490 data-nosnippet>490</a>        <span class="prelude-val">Ok</span>(run_major_cycle(
-<a href=#491 id=491 data-nosnippet>491</a>            <span class="kw-2">&amp;</span>pass,
-<a href=#492 id=492 data-nosnippet>492</a>            <span class="kw-2">&amp;mut </span><span class="self">self</span>.source,
-<a href=#493 id=493 data-nosnippet>493</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.team,
-<a href=#494 id=494 data-nosnippet>494</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.cancel,
-<a href=#495 id=495 data-nosnippet>495</a>            <span class="kw-2">&amp;mut </span>|domain, images| {
-<a href=#496 id=496 data-nosnippet>496</a>                state
-<a href=#497 id=497 data-nosnippet>497</a>                    .append(pass_images(domain, <span class="kw-2">&amp;</span>images, initial))
-<a href=#498 id=498 data-nosnippet>498</a>                    .map_err(|error| PassError::Images(Box::new(error)))
-<a href=#499 id=499 data-nosnippet>499</a>            },
-<a href=#500 id=500 data-nosnippet>500</a>            sink.as_mut(),
-<a href=#501 id=501 data-nosnippet>501</a>        )<span class="question-mark">?</span>)
-<a href=#502 id=502 data-nosnippet>502</a>    }
-<a href=#503 id=503 data-nosnippet>503</a>}
-<a href=#504 id=504 data-nosnippet>504</a>
-<a href=#505 id=505 data-nosnippet>505</a><span class="doccomment">/// Every image domain's operator, resampler and partition: planes split
-<a href=#506 id=506 data-nosnippet>506</a>/// among `workers` for a channel-local basis, grid strips otherwise.
-<a href=#507 id=507 data-nosnippet>507</a></span><span class="kw">fn </span>pass_domains(domains: <span class="kw-2">&amp;</span>[DomainOperator], workers: usize) -&gt; Vec&lt;PassDomain&lt;<span class="lifetime">'_</span>&gt;&gt; {
-<a href=#508 id=508 data-nosnippet>508</a>    domains
-<a href=#509 id=509 data-nosnippet>509</a>        .iter()
-<a href=#510 id=510 data-nosnippet>510</a>        .map(|domain| PassDomain {
-<a href=#511 id=511 data-nosnippet>511</a>            operator: <span class="kw-2">&amp;</span>domain.operator,
-<a href=#512 id=512 data-nosnippet>512</a>            resampler: <span class="kw-2">&amp;</span>domain.resampler,
-<a href=#513 id=513 data-nosnippet>513</a>            partition: <span class="kw">match </span>domain.operator.basis() {
-<a href=#514 id=514 data-nosnippet>514</a>                Basis::ChannelLocal { .. } =&gt; Partition::Planes { owners: workers },
-<a href=#515 id=515 data-nosnippet>515</a>                Basis::Constant | Basis::Taylor { .. } =&gt; {
-<a href=#516 id=516 data-nosnippet>516</a>                    Partition::regions(<span class="kw-2">&amp;</span>domain.operator, workers)
-<a href=#517 id=517 data-nosnippet>517</a>                }
-<a href=#518 id=518 data-nosnippet>518</a>            },
-<a href=#519 id=519 data-nosnippet>519</a>        })
-<a href=#520 id=520 data-nosnippet>520</a>        .collect()
-<a href=#521 id=521 data-nosnippet>521</a>}
-<a href=#522 id=522 data-nosnippet>522</a>
-<a href=#523 id=523 data-nosnippet>523</a><span class="doccomment">/// Whether `problem` starts from a model (CASA `startmodel`).
-<a href=#524 id=524 data-nosnippet>524</a></span><span class="kw">fn </span>start_model(problem: <span class="kw-2">&amp;</span>CompiledProblem) -&gt; bool {
-<a href=#525 id=525 data-nosnippet>525</a>    !<span class="macro">matches!</span>(
-<a href=#526 id=526 data-nosnippet>526</a>        problem.model_lifecycle().input(),
-<a href=#527 id=527 data-nosnippet>527</a>        ModelInputCommitment::Empty
-<a href=#528 id=528 data-nosnippet>528</a>    )
-<a href=#529 id=529 data-nosnippet>529</a>}
-<a href=#530 id=530 data-nosnippet>530</a>
-<a href=#531 id=531 data-nosnippet>531</a><span class="doccomment">/// The next cycle's mask plans: automask evolves from the masks just used.
-<a href=#532 id=532 data-nosnippet>532</a></span><span class="kw">fn </span>next_masks(
-<a href=#533 id=533 data-nosnippet>533</a>    plans: <span class="kw-2">&amp;</span>ImageDomainReconstructionMaskPlans,
-<a href=#534 id=534 data-nosnippet>534</a>    outcome: <span class="kw-2">&amp;</span>MinorCycleOutcome,
-<a href=#535 id=535 data-nosnippet>535</a>    cycle: usize,
-<a href=#536 id=536 data-nosnippet>536</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ImageDomainReconstructionMaskPlans, ImagingError&gt; {
-<a href=#537 id=537 data-nosnippet>537</a>    <span class="kw">let </span>ReconstructionMaskSet::Domains(applied) = <span class="kw-2">&amp;</span>outcome.masks <span class="kw">else </span>{
-<a href=#538 id=538 data-nosnippet>538</a>        <span class="macro">unreachable!</span>(<span class="string">"the minor cycle masks every image domain"</span>)
-<a href=#539 id=539 data-nosnippet>539</a>    };
-<a href=#540 id=540 data-nosnippet>540</a>    <span class="kw">let </span>stopped = (<span class="number">0</span>..applied.len())
-<a href=#541 id=541 data-nosnippet>541</a>        .map(|domain| outcome.auto_masks[domain].is_some_and(|evidence| evidence.channel_stopped))
-<a href=#542 id=542 data-nosnippet>542</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#543 id=543 data-nosnippet>543</a>    <span class="prelude-val">Ok</span>(plans.next_cycle(
-<a href=#544 id=544 data-nosnippet>544</a>        applied,
-<a href=#545 id=545 data-nosnippet>545</a>        cycle,
-<a href=#546 id=546 data-nosnippet>546</a>        outcome.evidence.cycle_threshold_is_global(),
-<a href=#547 id=547 data-nosnippet>547</a>        <span class="kw-2">&amp;</span>stopped,
-<a href=#548 id=548 data-nosnippet>548</a>    )<span class="question-mark">?</span>)
-<a href=#549 id=549 data-nosnippet>549</a>}
-<a href=#550 id=550 data-nosnippet>550</a>
-<a href=#551 id=551 data-nosnippet>551</a><span class="doccomment">/// CASA's imaging weights for the run: the input weights (natural) or the
-<a href=#552 id=552 data-nosnippet>552</a>/// density weights of one traversal on the main domain's cells, which every
-<a href=#553 id=553 data-nosnippet>553</a>/// domain shares (`SynthesisImagerVi2::weight`).
-<a href=#554 id=554 data-nosnippet>554</a></span><span class="kw">fn </span>weighting(
-<a href=#555 id=555 data-nosnippet>555</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
-<a href=#556 id=556 data-nosnippet>556</a>    main: <span class="kw-2">&amp;</span>DomainOperator,
-<a href=#557 id=557 data-nosnippet>557</a>    source: <span class="kw-2">&amp;mut </span>MeasurementSetSource&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#558 id=558 data-nosnippet>558</a>    team: <span class="kw-2">&amp;</span>WorkerTeam,
-<a href=#559 id=559 data-nosnippet>559</a>    cancel: <span class="kw-2">&amp;</span>Cancel,
-<a href=#560 id=560 data-nosnippet>560</a>) -&gt; <span class="prelude-ty">Result</span>&lt;WeightingGeneration, ImagingError&gt; {
-<a href=#561 id=561 data-nosnippet>561</a>    <span class="kw">let </span>contract = problem.weighting();
-<a href=#562 id=562 data-nosnippet>562</a>    <span class="kw">let </span>taper = contract.uv_taper();
-<a href=#563 id=563 data-nosnippet>563</a>    <span class="kw">let </span>(robust, bandwidth) = <span class="kw">match </span>contract.scheme() {
-<a href=#564 id=564 data-nosnippet>564</a>        WeightingScheme::Natural =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(WeightingGeneration::Natural { taper }),
-<a href=#565 id=565 data-nosnippet>565</a>        WeightingScheme::Uniform =&gt; (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>),
-<a href=#566 id=566 data-nosnippet>566</a>        WeightingScheme::Briggs { robust } =&gt; (<span class="prelude-val">Some</span>(robust), <span class="prelude-val">None</span>),
-<a href=#567 id=567 data-nosnippet>567</a>        WeightingScheme::BriggsBandwidthTaper { robust } =&gt; {
-<a href=#568 id=568 data-nosnippet>568</a>            <span class="kw">let </span>spectral = problem.geometry().spectral();
-<a href=#569 id=569 data-nosnippet>569</a>            <span class="kw">let </span>last = spectral.output_channels().saturating_sub(<span class="number">1</span>);
-<a href=#570 id=570 data-nosnippet>570</a>            <span class="kw">let </span>(<span class="prelude-val">Some</span>(first_hz), <span class="prelude-val">Some</span>(last_hz)) = (
-<a href=#571 id=571 data-nosnippet>571</a>                spectral.channel_centre_hz(<span class="number">0</span>),
-<a href=#572 id=572 data-nosnippet>572</a>                spectral.channel_centre_hz(last),
-<a href=#573 id=573 data-nosnippet>573</a>            ) <span class="kw">else </span>{
-<a href=#574 id=574 data-nosnippet>574</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::Unsupported {
-<a href=#575 id=575 data-nosnippet>575</a>                    reason: <span class="string">"the image spectral axis has no channels"</span>,
-<a href=#576 id=576 data-nosnippet>576</a>                });
-<a href=#577 id=577 data-nosnippet>577</a>            };
-<a href=#578 id=578 data-nosnippet>578</a>            (
-<a href=#579 id=579 data-nosnippet>579</a>                <span class="prelude-val">Some</span>(robust),
-<a href=#580 id=580 data-nosnippet>580</a>                <span class="prelude-val">Some</span>(BandwidthTaper::from_frequency_range(first_hz, last_hz)<span class="question-mark">?</span>),
-<a href=#581 id=581 data-nosnippet>581</a>            )
-<a href=#582 id=582 data-nosnippet>582</a>        }
-<a href=#583 id=583 data-nosnippet>583</a>    };
-<a href=#584 id=584 data-nosnippet>584</a>    <span class="kw">let </span>shape = density_shape(problem, <span class="kw-2">&amp;</span>problem.geometry().domains()[<span class="number">0</span>])<span class="question-mark">?</span>;
-<a href=#585 id=585 data-nosnippet>585</a>    <span class="kw">let </span>grid = run_density_pass(<span class="kw-2">&amp;</span>main.operator, <span class="kw-2">&amp;</span>main.resampler, shape, source, team, cancel)<span class="question-mark">?</span>;
-<a href=#586 id=586 data-nosnippet>586</a>    <span class="prelude-val">Ok</span>(WeightingGeneration::density(
-<a href=#587 id=587 data-nosnippet>587</a>        grid, robust, bandwidth, taper,
-<a href=#588 id=588 data-nosnippet>588</a>    )<span class="question-mark">?</span>)
-<a href=#589 id=589 data-nosnippet>589</a>}
-<a href=#590 id=590 data-nosnippet>590</a>
-<a href=#591 id=591 data-nosnippet>591</a><span class="doccomment">/// The output-frame frequency envelope of a plane range of a channel-local
-<a href=#592 id=592 data-nosnippet>592</a>/// basis: from the low edge of its first channel to the high edge of its
-<a href=#593 id=593 data-nosnippet>593</a>/// last.
-<a href=#594 id=594 data-nosnippet>594</a></span><span class="kw">fn </span>plane_bounds(problem: <span class="kw-2">&amp;</span>CompiledProblem) -&gt; <span class="prelude-ty">Option</span>&lt;PlaneBounds&gt; {
-<a href=#595 id=595 data-nosnippet>595</a>    <span class="kw">if </span>!<span class="macro">matches!</span>(
-<a href=#596 id=596 data-nosnippet>596</a>        problem.reconstruction().basis(),
-<a href=#597 id=597 data-nosnippet>597</a>        casa_imaging_model::ReconstructionBasis::ChannelLocal { .. }
-<a href=#598 id=598 data-nosnippet>598</a>    ) {
-<a href=#599 id=599 data-nosnippet>599</a>        <span class="kw">return </span><span class="prelude-val">None</span>;
-<a href=#600 id=600 data-nosnippet>600</a>    }
-<a href=#601 id=601 data-nosnippet>601</a>    <span class="kw">let </span>SpectralWcs::Linear {
-<a href=#602 id=602 data-nosnippet>602</a>        reference_pixel,
-<a href=#603 id=603 data-nosnippet>603</a>        reference_frequency_hz,
-<a href=#604 id=604 data-nosnippet>604</a>        increment_hz,
-<a href=#605 id=605 data-nosnippet>605</a>        ..
-<a href=#606 id=606 data-nosnippet>606</a>    } = <span class="kw-2">*</span>problem.geometry().spectral().wcs()
-<a href=#607 id=607 data-nosnippet>607</a>    <span class="kw">else </span>{
-<a href=#608 id=608 data-nosnippet>608</a>        <span class="kw">return </span><span class="prelude-val">None</span>;
-<a href=#609 id=609 data-nosnippet>609</a>    };
-<a href=#610 id=610 data-nosnippet>610</a>    <span class="kw">let </span>centre = <span class="kw">move </span>|channel: u32| {
-<a href=#611 id=611 data-nosnippet>611</a>        reference_frequency_hz + (f64::from(channel) - reference_pixel) * increment_hz
-<a href=#612 id=612 data-nosnippet>612</a>    };
-<a href=#613 id=613 data-nosnippet>613</a>    <span class="prelude-val">Some</span>(Box::new(<span class="kw">move </span>|planes: PlaneRange| {
-<a href=#614 id=614 data-nosnippet>614</a>        <span class="kw">let </span>half = increment_hz.abs() / <span class="number">2.0</span>;
-<a href=#615 id=615 data-nosnippet>615</a>        <span class="kw">let </span>[first, last] = [centre(planes.start), centre(planes.end - <span class="number">1</span>)];
-<a href=#616 id=616 data-nosnippet>616</a>        [first.min(last) - half, first.max(last) + half]
-<a href=#617 id=617 data-nosnippet>617</a>    }))
-<a href=#618 id=618 data-nosnippet>618</a>}
-<a href=#619 id=619 data-nosnippet>619</a>
-<a href=#620 id=620 data-nosnippet>620</a><span class="doccomment">/// The paged cube state of a channel-local run, with a cache as large as
-<a href=#621 id=621 data-nosnippet>621</a>/// the whole cube when a quarter of the memory budget allows.
-<a href=#622 id=622 data-nosnippet>622</a></span><span class="kw">fn </span>cube_state(
-<a href=#623 id=623 data-nosnippet>623</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
-<a href=#624 id=624 data-nosnippet>624</a>    directory: <span class="kw-2">&amp;</span>Path,
-<a href=#625 id=625 data-nosnippet>625</a>    workers: usize,
-<a href=#626 id=626 data-nosnippet>626</a>    memory: u64,
-<a href=#627 id=627 data-nosnippet>627</a>) -&gt; <span class="prelude-ty">Result</span>&lt;CubeState, ImagingError&gt; {
-<a href=#628 id=628 data-nosnippet>628</a>    <span class="kw">let </span>target = problem.model_lifecycle().target();
-<a href=#629 id=629 data-nosnippet>629</a>    <span class="kw">let </span>domains = target
-<a href=#630 id=630 data-nosnippet>630</a>        .domains()
-<a href=#631 id=631 data-nosnippet>631</a>        .iter()
-<a href=#632 id=632 data-nosnippet>632</a>        .map(|domain| domain.pixels())
-<a href=#633 id=633 data-nosnippet>633</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#634 id=634 data-nosnippet>634</a>    <span class="kw">let </span>planes = target.coefficients() * target.polarizations();
-<a href=#635 id=635 data-nosnippet>635</a>    <span class="kw">let </span>(minimum, full) = CubeState::cache_limits(directory, <span class="kw-2">&amp;</span>domains, planes, workers)<span class="question-mark">?</span>;
-<a href=#636 id=636 data-nosnippet>636</a>    <span class="kw">let </span>cache = full.min(minimum.max(usize::try_from(memory / <span class="number">4</span>).unwrap_or(usize::MAX)));
-<a href=#637 id=637 data-nosnippet>637</a>    <span class="prelude-val">Ok</span>(CubeState::new(directory, <span class="kw-2">&amp;</span>domains, planes, cache)<span class="question-mark">?</span>)
-<a href=#638 id=638 data-nosnippet>638</a>}
-<a href=#639 id=639 data-nosnippet>639</a>
-<a href=#640 id=640 data-nosnippet>640</a><span class="kw">fn </span>minor_program(
-<a href=#641 id=641 data-nosnippet>641</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
-<a href=#642 id=642 data-nosnippet>642</a>    response: <span class="prelude-ty">Option</span>&lt;MinorCycleImageResponse&gt;,
-<a href=#643 id=643 data-nosnippet>643</a>    remaining: <span class="prelude-ty">Option</span>&lt;usize&gt;,
-<a href=#644 id=644 data-nosnippet>644</a>) -&gt; <span class="prelude-ty">Result</span>&lt;MinorCycleProgram, ImagingError&gt; {
-<a href=#645 id=645 data-nosnippet>645</a>    <span class="kw">let </span><span class="kw-2">mut </span>program = MinorCycleProgram::for_problem(problem)<span class="question-mark">?</span>.record_component_sequence(<span class="number">64</span>)<span class="question-mark">?</span>;
-<a href=#646 id=646 data-nosnippet>646</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(remaining) = remaining {
-<a href=#647 id=647 data-nosnippet>647</a>        program = program.limit_iterations(remaining)<span class="question-mark">?</span>;
-<a href=#648 id=648 data-nosnippet>648</a>    }
-<a href=#649 id=649 data-nosnippet>649</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(response) = response {
-<a href=#650 id=650 data-nosnippet>650</a>        program = program.with_image_response(response);
-<a href=#651 id=651 data-nosnippet>651</a>    }
-<a href=#652 id=652 data-nosnippet>652</a>    <span class="prelude-val">Ok</span>(program)
-<a href=#653 id=653 data-nosnippet>653</a>}
-<a href=#654 id=654 data-nosnippet>654</a>
-<a href=#655 id=655 data-nosnippet>655</a><span class="kw">fn </span>minor_cycle_record(
-<a href=#656 id=656 data-nosnippet>656</a>    cycle: usize,
-<a href=#657 id=657 data-nosnippet>657</a>    outcome: <span class="kw-2">&amp;</span>MinorCycleOutcome,
-<a href=#658 id=658 data-nosnippet>658</a>    (iterations_entering, actual_iterations_entering): (usize, usize),
-<a href=#659 id=659 data-nosnippet>659</a>    (total_iterations, total_actual_iterations): (usize, usize),
-<a href=#660 id=660 data-nosnippet>660</a>) -&gt; NativeMinorCycleOutcome {
-<a href=#661 id=661 data-nosnippet>661</a>    <span class="kw">let </span>evidence = <span class="kw-2">&amp;</span>outcome.evidence;
-<a href=#662 id=662 data-nosnippet>662</a>    <span class="kw">let </span>mask = outcome.masks.primary();
-<a href=#663 id=663 data-nosnippet>663</a>    NativeMinorCycleOutcome {
-<a href=#664 id=664 data-nosnippet>664</a>        cycle,
-<a href=#665 id=665 data-nosnippet>665</a>        iterations_entering,
-<a href=#666 id=666 data-nosnippet>666</a>        iterations: evidence.controller_iterations(),
-<a href=#667 id=667 data-nosnippet>667</a>        total_iterations,
-<a href=#668 id=668 data-nosnippet>668</a>        actual_iterations_entering,
-<a href=#669 id=669 data-nosnippet>669</a>        actual_iterations: evidence.iterations(),
-<a href=#670 id=670 data-nosnippet>670</a>        total_actual_iterations,
-<a href=#671 id=671 data-nosnippet>671</a>        total_flux: evidence.total_flux(),
-<a href=#672 id=672 data-nosnippet>672</a>        initial_peak_flux: evidence.initial_peak_flux(),
-<a href=#673 id=673 data-nosnippet>673</a>        final_peak_flux: evidence.final_peak_flux(),
-<a href=#674 id=674 data-nosnippet>674</a>        noise_rms: evidence.noise_rms(),
-<a href=#675 id=675 data-nosnippet>675</a>        effective_threshold: evidence.effective_threshold(),
-<a href=#676 id=676 data-nosnippet>676</a>        global_threshold: evidence.global_threshold(),
-<a href=#677 id=677 data-nosnippet>677</a>        cycle_threshold: evidence.cycle_threshold(),
-<a href=#678 id=678 data-nosnippet>678</a>        stop_reason: evidence.stop_reason().into(),
-<a href=#679 id=679 data-nosnippet>679</a>        clark_refreshes: evidence.clark_refreshes(),
-<a href=#680 id=680 data-nosnippet>680</a>        associated_replay_ordinal: cycle,
-<a href=#681 id=681 data-nosnippet>681</a>        recorded_components: evidence.recorded_components().copied().collect(),
-<a href=#682 id=682 data-nosnippet>682</a>        mask_support: mask.support().to_vec(),
-<a href=#683 id=683 data-nosnippet>683</a>        mask_generation: mask.generation_id(),
-<a href=#684 id=684 data-nosnippet>684</a>        mask_model_generation: mask.model_generation(),
-<a href=#685 id=685 data-nosnippet>685</a>        mask_normal_state: mask.normal_state_completion(),
-<a href=#686 id=686 data-nosnippet>686</a>        auto_mask: outcome.auto_masks[<span class="number">0</span>],
-<a href=#687 id=687 data-nosnippet>687</a>    }
-<a href=#688 id=688 data-nosnippet>688</a>}
+<a href=#381 id=381 data-nosnippet>381</a>            .map_err(|error| ImagingError::Pass(PassError::VisibilityWrite(error)))<span class="question-mark">?</span>;
+<a href=#382 id=382 data-nosnippet>382</a>        <span class="kw">if let </span>Residency::Waves { planes_per_wave } = residency {
+<a href=#383 id=383 data-nosnippet>383</a>            <span class="self">self</span>.planes_per_wave = <span class="prelude-val">Some</span>(
+<a href=#384 id=384 data-nosnippet>384</a>                <span class="self">self</span>.planes_per_wave
+<a href=#385 id=385 data-nosnippet>385</a>                    .map_or(planes_per_wave, |planes| planes.min(planes_per_wave)),
+<a href=#386 id=386 data-nosnippet>386</a>            );
+<a href=#387 id=387 data-nosnippet>387</a>        }
+<a href=#388 id=388 data-nosnippet>388</a>        <span class="kw">let </span>started = Instant::now();
+<a href=#389 id=389 data-nosnippet>389</a>        <span class="kw">let </span>summary = <span class="self">self</span>.pass(
+<a href=#390 id=390 data-nosnippet>390</a>            modes,
+<a href=#391 id=391 data-nosnippet>391</a>            model,
+<a href=#392 id=392 data-nosnippet>392</a>            residency,
+<a href=#393 id=393 data-nosnippet>393</a>            <span class="kw-2">&amp;mut </span>state,
+<a href=#394 id=394 data-nosnippet>394</a>            initial,
+<a href=#395 id=395 data-nosnippet>395</a>            writer.as_mut(),
+<a href=#396 id=396 data-nosnippet>396</a>        )<span class="question-mark">?</span>;
+<a href=#397 id=397 data-nosnippet>397</a>        <span class="kw">let </span>pass_seconds = started.elapsed().as_secs_f64();
+<a href=#398 id=398 data-nosnippet>398</a>        <span class="kw">let </span>final_model = preparation.final_model_generation();
+<a href=#399 id=399 data-nosnippet>399</a>        <span class="kw">let </span>visibility = writer
+<a href=#400 id=400 data-nosnippet>400</a>            .map(|writer| writer.complete(final_model))
+<a href=#401 id=401 data-nosnippet>401</a>            .transpose()
+<a href=#402 id=402 data-nosnippet>402</a>            .map_err(|error| ImagingError::Pass(PassError::VisibilityWrite(error)))<span class="question-mark">?
+<a href=#403 id=403 data-nosnippet>403</a>            </span>.map(|samples| {
+<a href=#404 id=404 data-nosnippet>404</a>                VisibilityProductCompletion::new(
+<a href=#405 id=405 data-nosnippet>405</a>                    <span class="self">self</span>.problem.problem_id(),
+<a href=#406 id=406 data-nosnippet>406</a>                    final_model,
+<a href=#407 id=407 data-nosnippet>407</a>                    <span class="self">self</span>.weighting_id,
+<a href=#408 id=408 data-nosnippet>408</a>                    samples,
+<a href=#409 id=409 data-nosnippet>409</a>                )
+<a href=#410 id=410 data-nosnippet>410</a>            });
+<a href=#411 id=411 data-nosnippet>411</a>        <span class="kw">let </span>normal = state.finish(summary.samples, summary.blocks)<span class="question-mark">?</span>;
+<a href=#412 id=412 data-nosnippet>412</a>        <span class="kw">let </span><span class="kw-2">mut </span>owner = MajorCycleOwner::from_complete_data(normal, preparation)<span class="question-mark">?</span>;
+<a href=#413 id=413 data-nosnippet>413</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(masks) = masks {
+<a href=#414 id=414 data-nosnippet>414</a>            owner = owner.bind_reconstruction_masks(masks)<span class="question-mark">?</span>;
+<a href=#415 id=415 data-nosnippet>415</a>        }
+<a href=#416 id=416 data-nosnippet>416</a>        <span class="kw">let </span>completion = owner.reconcile(<span class="kw-2">&amp;mut </span>lifecycle)<span class="question-mark">?</span>;
+<a href=#417 id=417 data-nosnippet>417</a>        <span class="macro">tracing::info!</span>(
+<a href=#418 id=418 data-nosnippet>418</a>            <span class="string">"imaging major cycle: {} samples, pass {pass_seconds:.2} s, total {:.2} s"</span>,
+<a href=#419 id=419 data-nosnippet>419</a>            summary.samples,
+<a href=#420 id=420 data-nosnippet>420</a>            started.elapsed().as_secs_f64(),
+<a href=#421 id=421 data-nosnippet>421</a>        );
+<a href=#422 id=422 data-nosnippet>422</a>        <span class="prelude-val">Ok</span>(Major {
+<a href=#423 id=423 data-nosnippet>423</a>            lifecycle,
+<a href=#424 id=424 data-nosnippet>424</a>            completion,
+<a href=#425 id=425 data-nosnippet>425</a>            visibility,
+<a href=#426 id=426 data-nosnippet>426</a>        })
+<a href=#427 id=427 data-nosnippet>427</a>    }
+<a href=#428 id=428 data-nosnippet>428</a>
+<a href=#429 id=429 data-nosnippet>429</a>    <span class="kw">fn </span>next_attempt(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; casa_imaging_model::ModelExecutionAttemptId {
+<a href=#430 id=430 data-nosnippet>430</a>        <span class="self">self</span>.attempts += <span class="number">1</span>;
+<a href=#431 id=431 data-nosnippet>431</a>        <span class="kw">let </span><span class="kw-2">mut </span>identity = [<span class="number">0_u8</span>; <span class="number">32</span>];
+<a href=#432 id=432 data-nosnippet>432</a>        identity[<span class="number">0</span>] = <span class="number">1</span>;
+<a href=#433 id=433 data-nosnippet>433</a>        identity[<span class="number">24</span>..].copy_from_slice(<span class="kw-2">&amp;</span><span class="self">self</span>.attempts.to_be_bytes());
+<a href=#434 id=434 data-nosnippet>434</a>        casa_imaging_model::ModelExecutionAttemptId::new(
+<a href=#435 id=435 data-nosnippet>435</a>            casa_imaging_model::LogicalIdentity::from_sha256(identity),
+<a href=#436 id=436 data-nosnippet>436</a>        )
+<a href=#437 id=437 data-nosnippet>437</a>    }
+<a href=#438 id=438 data-nosnippet>438</a>
+<a href=#439 id=439 data-nosnippet>439</a>    <span class="kw">fn </span>model_storage(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;ModelStoragePlan, ImagingError&gt; {
+<a href=#440 id=440 data-nosnippet>440</a>        <span class="prelude-val">Ok</span>(<span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.cube {
+<a href=#441 id=441 data-nosnippet>441</a>            <span class="prelude-val">Some</span>(cube) =&gt; cube.model_storage()<span class="question-mark">?</span>,
+<a href=#442 id=442 data-nosnippet>442</a>            <span class="prelude-val">None </span>=&gt; ModelStoragePlan::resident(usize::MAX)<span class="question-mark">?</span>,
+<a href=#443 id=443 data-nosnippet>443</a>        })
+<a href=#444 id=444 data-nosnippet>444</a>    }
+<a href=#445 id=445 data-nosnippet>445</a>
+<a href=#446 id=446 data-nosnippet>446</a>    <span class="doccomment">/// Normal storage whose paged window holds the planes of one wave of
+<a href=#447 id=447 data-nosnippet>447</a>    /// `residency`.
+<a href=#448 id=448 data-nosnippet>448</a>    </span><span class="kw">fn </span>normal_storage(<span class="kw-2">&amp;</span><span class="self">self</span>, residency: Residency) -&gt; <span class="prelude-ty">Result</span>&lt;NormalStoragePlan, ImagingError&gt; {
+<a href=#449 id=449 data-nosnippet>449</a>        <span class="kw">let </span>planes = <span class="self">self</span>.domains[<span class="number">0</span>].operator.basis().planes() <span class="kw">as </span>usize;
+<a href=#450 id=450 data-nosnippet>450</a>        <span class="prelude-val">Ok</span>(<span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.cube {
+<a href=#451 id=451 data-nosnippet>451</a>            <span class="prelude-val">Some</span>(cube) =&gt; cube.normal_storage(<span class="kw">match </span>residency {
+<a href=#452 id=452 data-nosnippet>452</a>                Residency::All =&gt; planes,
+<a href=#453 id=453 data-nosnippet>453</a>                Residency::Waves { planes_per_wave } =&gt; planes_per_wave <span class="kw">as </span>usize,
+<a href=#454 id=454 data-nosnippet>454</a>            })<span class="question-mark">?</span>,
+<a href=#455 id=455 data-nosnippet>455</a>            <span class="prelude-val">None </span>=&gt; NormalStoragePlan::resident(planes)<span class="question-mark">?</span>,
+<a href=#456 id=456 data-nosnippet>456</a>        })
+<a href=#457 id=457 data-nosnippet>457</a>    }
+<a href=#458 id=458 data-nosnippet>458</a>
+<a href=#459 id=459 data-nosnippet>459</a>    <span class="doccomment">/// The modes of the initial pass: data and PSF, plus the sensitivity
+<a href=#460 id=460 data-nosnippet>460</a>    /// image when a kernel set has weight taps (mosaic, AW).
+<a href=#461 id=461 data-nosnippet>461</a>    </span><span class="kw">const fn </span>initial_modes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ModeSet {
+<a href=#462 id=462 data-nosnippet>462</a>        ModeSet {
+<a href=#463 id=463 data-nosnippet>463</a>            data: <span class="bool-val">true</span>,
+<a href=#464 id=464 data-nosnippet>464</a>            psf: <span class="bool-val">true</span>,
+<a href=#465 id=465 data-nosnippet>465</a>            weight: <span class="self">self</span>.weight_image,
+<a href=#466 id=466 data-nosnippet>466</a>        }
+<a href=#467 id=467 data-nosnippet>467</a>    }
+<a href=#468 id=468 data-nosnippet>468</a>
+<a href=#469 id=469 data-nosnippet>469</a>    <span class="doccomment">/// The waves of a pass accumulating `modes`, with a model when
+<a href=#470 id=470 data-nosnippet>470</a>    /// `with_model`, that fit the budget: planned once per major cycle for
+<a href=#471 id=471 data-nosnippet>471</a>    /// both the pass and its normal storage.
+<a href=#472 id=472 data-nosnippet>472</a>    </span><span class="kw">fn </span>residency(<span class="kw-2">&amp;</span><span class="self">self</span>, modes: ModeSet, with_model: bool) -&gt; <span class="prelude-ty">Result</span>&lt;Residency, ImagingError&gt; {
+<a href=#473 id=473 data-nosnippet>473</a>        <span class="kw">let </span>domains = pass_domains(<span class="kw-2">&amp;</span><span class="self">self</span>.domains, <span class="self">self</span>.team.workers());
+<a href=#474 id=474 data-nosnippet>474</a>        <span class="prelude-val">Ok</span>(Residency::plan(
+<a href=#475 id=475 data-nosnippet>475</a>            <span class="kw-2">&amp;</span>WaveDemand {
+<a href=#476 id=476 data-nosnippet>476</a>                domains: <span class="kw-2">&amp;</span>domains,
+<a href=#477 id=477 data-nosnippet>477</a>                modes,
+<a href=#478 id=478 data-nosnippet>478</a>                with_model,
+<a href=#479 id=479 data-nosnippet>479</a>                native_spacing_hz: <span class="self">self</span>.native_spacing_hz,
+<a href=#480 id=480 data-nosnippet>480</a>                workers: <span class="self">self</span>.team.workers(),
+<a href=#481 id=481 data-nosnippet>481</a>                backend: <span class="self">self</span>.backend,
+<a href=#482 id=482 data-nosnippet>482</a>            },
+<a href=#483 id=483 data-nosnippet>483</a>            <span class="self">self</span>.budget,
+<a href=#484 id=484 data-nosnippet>484</a>        )<span class="question-mark">?</span>)
+<a href=#485 id=485 data-nosnippet>485</a>    }
+<a href=#486 id=486 data-nosnippet>486</a>
+<a href=#487 id=487 data-nosnippet>487</a>    <span class="doccomment">/// One pass over every image domain, appending its images to `state`.
+<a href=#488 id=488 data-nosnippet>488</a>    </span><span class="kw">fn </span>pass(
+<a href=#489 id=489 data-nosnippet>489</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#490 id=490 data-nosnippet>490</a>        modes: ModeSet,
+<a href=#491 id=491 data-nosnippet>491</a>        model: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>ModelGeneration&gt;,
+<a href=#492 id=492 data-nosnippet>492</a>        residency: Residency,
+<a href=#493 id=493 data-nosnippet>493</a>        state: <span class="kw-2">&amp;mut </span>PassNormalState,
+<a href=#494 id=494 data-nosnippet>494</a>        initial: bool,
+<a href=#495 id=495 data-nosnippet>495</a>        <span class="kw-2">mut </span>writer: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;mut </span>VisibilityWriter&lt;<span class="lifetime">'_</span>&gt;&gt;,
+<a href=#496 id=496 data-nosnippet>496</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;PassSummary, ImagingError&gt; {
+<a href=#497 id=497 data-nosnippet>497</a>        <span class="kw">let </span>domains = pass_domains(<span class="kw-2">&amp;</span><span class="self">self</span>.domains, <span class="self">self</span>.team.workers());
+<a href=#498 id=498 data-nosnippet>498</a>        <span class="kw">let </span>prepare = |domain: usize, planes: PlaneRange| {
+<a href=#499 id=499 data-nosnippet>499</a>            <span class="kw">let </span>generation = model.expect(<span class="string">"the closure is installed only with a model"</span>);
+<a href=#500 id=500 data-nosnippet>500</a>            prepare_model(<span class="kw-2">&amp;</span><span class="self">self</span>.domains[domain].operator, generation, domain, planes)
+<a href=#501 id=501 data-nosnippet>501</a>                .map_err(|error| PassError::Model(Box::new(error)))
+<a href=#502 id=502 data-nosnippet>502</a>        };
+<a href=#503 id=503 data-nosnippet>503</a>        <span class="kw">let </span>pass = MajorCyclePass {
+<a href=#504 id=504 data-nosnippet>504</a>            domains: <span class="kw-2">&amp;</span>domains,
+<a href=#505 id=505 data-nosnippet>505</a>            weighting: <span class="kw-2">&amp;</span><span class="self">self</span>.weighting,
+<a href=#506 id=506 data-nosnippet>506</a>            modes,
+<a href=#507 id=507 data-nosnippet>507</a>            model: model.map(|<span class="kw">_</span>| <span class="kw-2">&amp;</span>prepare <span class="kw">as </span><span class="kw-2">&amp;</span>ModelPreparation&lt;<span class="lifetime">'_</span>&gt;),
+<a href=#508 id=508 data-nosnippet>508</a>            residency,
+<a href=#509 id=509 data-nosnippet>509</a>            native_spacing_hz: <span class="self">self</span>.native_spacing_hz,
+<a href=#510 id=510 data-nosnippet>510</a>            backend: <span class="self">self</span>.backend,
+<a href=#511 id=511 data-nosnippet>511</a>        };
+<a href=#512 id=512 data-nosnippet>512</a>        <span class="kw">let </span>predictions = writer.as_deref().map(VisibilityWriter::needs_predictions);
+<a href=#513 id=513 data-nosnippet>513</a>        <span class="kw">let </span><span class="kw-2">mut </span>write = |block: <span class="kw-2">&amp;</span><span class="kw">_</span>, predictions: <span class="kw-2">&amp;</span>[<span class="kw">_</span>]| <span class="kw">match </span>writer.as_deref_mut() {
+<a href=#514 id=514 data-nosnippet>514</a>            <span class="prelude-val">Some</span>(writer) =&gt; writer.write(block, predictions),
+<a href=#515 id=515 data-nosnippet>515</a>            <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Ok</span>(()),
+<a href=#516 id=516 data-nosnippet>516</a>        };
+<a href=#517 id=517 data-nosnippet>517</a>        <span class="kw">let </span><span class="kw-2">mut </span>sink = predictions.map(|predictions| VisibilitySink {
+<a href=#518 id=518 data-nosnippet>518</a>            predictions,
+<a href=#519 id=519 data-nosnippet>519</a>            write: <span class="kw-2">&amp;mut </span>write,
+<a href=#520 id=520 data-nosnippet>520</a>        });
+<a href=#521 id=521 data-nosnippet>521</a>        <span class="prelude-val">Ok</span>(run_major_cycle(
+<a href=#522 id=522 data-nosnippet>522</a>            <span class="kw-2">&amp;</span>pass,
+<a href=#523 id=523 data-nosnippet>523</a>            <span class="kw-2">&amp;mut </span><span class="self">self</span>.source,
+<a href=#524 id=524 data-nosnippet>524</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.team,
+<a href=#525 id=525 data-nosnippet>525</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.cancel,
+<a href=#526 id=526 data-nosnippet>526</a>            <span class="kw-2">&amp;mut </span>|domain, images| {
+<a href=#527 id=527 data-nosnippet>527</a>                state
+<a href=#528 id=528 data-nosnippet>528</a>                    .append(pass_images(domain, <span class="kw-2">&amp;</span>images, initial))
+<a href=#529 id=529 data-nosnippet>529</a>                    .map_err(|error| PassError::Images(Box::new(error)))
+<a href=#530 id=530 data-nosnippet>530</a>            },
+<a href=#531 id=531 data-nosnippet>531</a>            sink.as_mut(),
+<a href=#532 id=532 data-nosnippet>532</a>        )<span class="question-mark">?</span>)
+<a href=#533 id=533 data-nosnippet>533</a>    }
+<a href=#534 id=534 data-nosnippet>534</a>}
+<a href=#535 id=535 data-nosnippet>535</a>
+<a href=#536 id=536 data-nosnippet>536</a><span class="doccomment">/// Every image domain's operator, resampler and partition: planes split
+<a href=#537 id=537 data-nosnippet>537</a>/// among `workers` for a channel-local basis, grid strips otherwise.
+<a href=#538 id=538 data-nosnippet>538</a></span><span class="kw">fn </span>pass_domains(domains: <span class="kw-2">&amp;</span>[DomainOperator], workers: usize) -&gt; Vec&lt;PassDomain&lt;<span class="lifetime">'_</span>&gt;&gt; {
+<a href=#539 id=539 data-nosnippet>539</a>    domains
+<a href=#540 id=540 data-nosnippet>540</a>        .iter()
+<a href=#541 id=541 data-nosnippet>541</a>        .map(|domain| PassDomain {
+<a href=#542 id=542 data-nosnippet>542</a>            operator: <span class="kw-2">&amp;</span>domain.operator,
+<a href=#543 id=543 data-nosnippet>543</a>            resampler: <span class="kw-2">&amp;</span>domain.resampler,
+<a href=#544 id=544 data-nosnippet>544</a>            partition: <span class="kw">match </span>domain.operator.basis() {
+<a href=#545 id=545 data-nosnippet>545</a>                Basis::ChannelLocal { .. } =&gt; Partition::Planes { owners: workers },
+<a href=#546 id=546 data-nosnippet>546</a>                Basis::Constant | Basis::Taylor { .. } =&gt; {
+<a href=#547 id=547 data-nosnippet>547</a>                    Partition::regions(<span class="kw-2">&amp;</span>domain.operator, workers)
+<a href=#548 id=548 data-nosnippet>548</a>                }
+<a href=#549 id=549 data-nosnippet>549</a>            },
+<a href=#550 id=550 data-nosnippet>550</a>        })
+<a href=#551 id=551 data-nosnippet>551</a>        .collect()
+<a href=#552 id=552 data-nosnippet>552</a>}
+<a href=#553 id=553 data-nosnippet>553</a>
+<a href=#554 id=554 data-nosnippet>554</a><span class="doccomment">/// Whether `problem` starts from a model (CASA `startmodel`).
+<a href=#555 id=555 data-nosnippet>555</a></span><span class="kw">fn </span>start_model(problem: <span class="kw-2">&amp;</span>CompiledProblem) -&gt; bool {
+<a href=#556 id=556 data-nosnippet>556</a>    !<span class="macro">matches!</span>(
+<a href=#557 id=557 data-nosnippet>557</a>        problem.model_lifecycle().input(),
+<a href=#558 id=558 data-nosnippet>558</a>        ModelInputCommitment::Empty
+<a href=#559 id=559 data-nosnippet>559</a>    )
+<a href=#560 id=560 data-nosnippet>560</a>}
+<a href=#561 id=561 data-nosnippet>561</a>
+<a href=#562 id=562 data-nosnippet>562</a><span class="doccomment">/// The next cycle's mask plans: automask evolves from the masks just used.
+<a href=#563 id=563 data-nosnippet>563</a></span><span class="kw">fn </span>next_masks(
+<a href=#564 id=564 data-nosnippet>564</a>    plans: <span class="kw-2">&amp;</span>ImageDomainReconstructionMaskPlans,
+<a href=#565 id=565 data-nosnippet>565</a>    outcome: <span class="kw-2">&amp;</span>MinorCycleOutcome,
+<a href=#566 id=566 data-nosnippet>566</a>    cycle: usize,
+<a href=#567 id=567 data-nosnippet>567</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ImageDomainReconstructionMaskPlans, ImagingError&gt; {
+<a href=#568 id=568 data-nosnippet>568</a>    <span class="kw">let </span>ReconstructionMaskSet::Domains(applied) = <span class="kw-2">&amp;</span>outcome.masks <span class="kw">else </span>{
+<a href=#569 id=569 data-nosnippet>569</a>        <span class="macro">unreachable!</span>(<span class="string">"the minor cycle masks every image domain"</span>)
+<a href=#570 id=570 data-nosnippet>570</a>    };
+<a href=#571 id=571 data-nosnippet>571</a>    <span class="kw">let </span>stopped = (<span class="number">0</span>..applied.len())
+<a href=#572 id=572 data-nosnippet>572</a>        .map(|domain| outcome.auto_masks[domain].is_some_and(|evidence| evidence.channel_stopped))
+<a href=#573 id=573 data-nosnippet>573</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#574 id=574 data-nosnippet>574</a>    <span class="prelude-val">Ok</span>(plans.next_cycle(
+<a href=#575 id=575 data-nosnippet>575</a>        applied,
+<a href=#576 id=576 data-nosnippet>576</a>        cycle,
+<a href=#577 id=577 data-nosnippet>577</a>        outcome.evidence.cycle_threshold_is_global(),
+<a href=#578 id=578 data-nosnippet>578</a>        <span class="kw-2">&amp;</span>stopped,
+<a href=#579 id=579 data-nosnippet>579</a>    )<span class="question-mark">?</span>)
+<a href=#580 id=580 data-nosnippet>580</a>}
+<a href=#581 id=581 data-nosnippet>581</a>
+<a href=#582 id=582 data-nosnippet>582</a><span class="doccomment">/// CASA's imaging weights for the run: the input weights (natural) or the
+<a href=#583 id=583 data-nosnippet>583</a>/// density weights of one traversal on the main domain's cells, which every
+<a href=#584 id=584 data-nosnippet>584</a>/// domain shares (`SynthesisImagerVi2::weight`).
+<a href=#585 id=585 data-nosnippet>585</a></span><span class="kw">fn </span>weighting(
+<a href=#586 id=586 data-nosnippet>586</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
+<a href=#587 id=587 data-nosnippet>587</a>    main: <span class="kw-2">&amp;</span>DomainOperator,
+<a href=#588 id=588 data-nosnippet>588</a>    source: <span class="kw-2">&amp;mut </span>MeasurementSetSource&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#589 id=589 data-nosnippet>589</a>    team: <span class="kw-2">&amp;</span>WorkerTeam,
+<a href=#590 id=590 data-nosnippet>590</a>    cancel: <span class="kw-2">&amp;</span>Cancel,
+<a href=#591 id=591 data-nosnippet>591</a>) -&gt; <span class="prelude-ty">Result</span>&lt;WeightingGeneration, ImagingError&gt; {
+<a href=#592 id=592 data-nosnippet>592</a>    <span class="kw">let </span>contract = problem.weighting();
+<a href=#593 id=593 data-nosnippet>593</a>    <span class="kw">let </span>taper = contract.uv_taper();
+<a href=#594 id=594 data-nosnippet>594</a>    <span class="kw">let </span>(robust, bandwidth) = <span class="kw">match </span>contract.scheme() {
+<a href=#595 id=595 data-nosnippet>595</a>        WeightingScheme::Natural =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(WeightingGeneration::Natural { taper }),
+<a href=#596 id=596 data-nosnippet>596</a>        WeightingScheme::Uniform =&gt; (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>),
+<a href=#597 id=597 data-nosnippet>597</a>        WeightingScheme::Briggs { robust } =&gt; (<span class="prelude-val">Some</span>(robust), <span class="prelude-val">None</span>),
+<a href=#598 id=598 data-nosnippet>598</a>        WeightingScheme::BriggsBandwidthTaper { robust } =&gt; {
+<a href=#599 id=599 data-nosnippet>599</a>            <span class="kw">let </span>spectral = problem.geometry().spectral();
+<a href=#600 id=600 data-nosnippet>600</a>            <span class="kw">let </span>last = spectral.output_channels().saturating_sub(<span class="number">1</span>);
+<a href=#601 id=601 data-nosnippet>601</a>            <span class="kw">let </span>(<span class="prelude-val">Some</span>(first_hz), <span class="prelude-val">Some</span>(last_hz)) = (
+<a href=#602 id=602 data-nosnippet>602</a>                spectral.channel_centre_hz(<span class="number">0</span>),
+<a href=#603 id=603 data-nosnippet>603</a>                spectral.channel_centre_hz(last),
+<a href=#604 id=604 data-nosnippet>604</a>            ) <span class="kw">else </span>{
+<a href=#605 id=605 data-nosnippet>605</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::Unsupported {
+<a href=#606 id=606 data-nosnippet>606</a>                    reason: <span class="string">"the image spectral axis has no channels"</span>,
+<a href=#607 id=607 data-nosnippet>607</a>                });
+<a href=#608 id=608 data-nosnippet>608</a>            };
+<a href=#609 id=609 data-nosnippet>609</a>            (
+<a href=#610 id=610 data-nosnippet>610</a>                <span class="prelude-val">Some</span>(robust),
+<a href=#611 id=611 data-nosnippet>611</a>                <span class="prelude-val">Some</span>(BandwidthTaper::from_frequency_range(first_hz, last_hz)<span class="question-mark">?</span>),
+<a href=#612 id=612 data-nosnippet>612</a>            )
+<a href=#613 id=613 data-nosnippet>613</a>        }
+<a href=#614 id=614 data-nosnippet>614</a>    };
+<a href=#615 id=615 data-nosnippet>615</a>    <span class="kw">let </span>shape = density_shape(problem, <span class="kw-2">&amp;</span>problem.geometry().domains()[<span class="number">0</span>])<span class="question-mark">?</span>;
+<a href=#616 id=616 data-nosnippet>616</a>    <span class="kw">let </span>grid = run_density_pass(<span class="kw-2">&amp;</span>main.operator, <span class="kw-2">&amp;</span>main.resampler, shape, source, team, cancel)<span class="question-mark">?</span>;
+<a href=#617 id=617 data-nosnippet>617</a>    <span class="prelude-val">Ok</span>(WeightingGeneration::density(
+<a href=#618 id=618 data-nosnippet>618</a>        grid, robust, bandwidth, taper,
+<a href=#619 id=619 data-nosnippet>619</a>    )<span class="question-mark">?</span>)
+<a href=#620 id=620 data-nosnippet>620</a>}
+<a href=#621 id=621 data-nosnippet>621</a>
+<a href=#622 id=622 data-nosnippet>622</a><span class="doccomment">/// The output-frame frequency envelope of a plane range of a channel-local
+<a href=#623 id=623 data-nosnippet>623</a>/// basis: from the low edge of its first channel to the high edge of its
+<a href=#624 id=624 data-nosnippet>624</a>/// last.
+<a href=#625 id=625 data-nosnippet>625</a></span><span class="kw">fn </span>plane_bounds(problem: <span class="kw-2">&amp;</span>CompiledProblem) -&gt; <span class="prelude-ty">Option</span>&lt;PlaneBounds&gt; {
+<a href=#626 id=626 data-nosnippet>626</a>    <span class="kw">if </span>!<span class="macro">matches!</span>(
+<a href=#627 id=627 data-nosnippet>627</a>        problem.reconstruction().basis(),
+<a href=#628 id=628 data-nosnippet>628</a>        casa_imaging_model::ReconstructionBasis::ChannelLocal { .. }
+<a href=#629 id=629 data-nosnippet>629</a>    ) {
+<a href=#630 id=630 data-nosnippet>630</a>        <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#631 id=631 data-nosnippet>631</a>    }
+<a href=#632 id=632 data-nosnippet>632</a>    <span class="kw">let </span>SpectralWcs::Linear {
+<a href=#633 id=633 data-nosnippet>633</a>        reference_pixel,
+<a href=#634 id=634 data-nosnippet>634</a>        reference_frequency_hz,
+<a href=#635 id=635 data-nosnippet>635</a>        increment_hz,
+<a href=#636 id=636 data-nosnippet>636</a>        ..
+<a href=#637 id=637 data-nosnippet>637</a>    } = <span class="kw-2">*</span>problem.geometry().spectral().wcs()
+<a href=#638 id=638 data-nosnippet>638</a>    <span class="kw">else </span>{
+<a href=#639 id=639 data-nosnippet>639</a>        <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#640 id=640 data-nosnippet>640</a>    };
+<a href=#641 id=641 data-nosnippet>641</a>    <span class="kw">let </span>centre = <span class="kw">move </span>|channel: u32| {
+<a href=#642 id=642 data-nosnippet>642</a>        reference_frequency_hz + (f64::from(channel) - reference_pixel) * increment_hz
+<a href=#643 id=643 data-nosnippet>643</a>    };
+<a href=#644 id=644 data-nosnippet>644</a>    <span class="prelude-val">Some</span>(Box::new(<span class="kw">move </span>|planes: PlaneRange| {
+<a href=#645 id=645 data-nosnippet>645</a>        <span class="kw">let </span>half = increment_hz.abs() / <span class="number">2.0</span>;
+<a href=#646 id=646 data-nosnippet>646</a>        <span class="kw">let </span>[first, last] = [centre(planes.start), centre(planes.end - <span class="number">1</span>)];
+<a href=#647 id=647 data-nosnippet>647</a>        [first.min(last) - half, first.max(last) + half]
+<a href=#648 id=648 data-nosnippet>648</a>    }))
+<a href=#649 id=649 data-nosnippet>649</a>}
+<a href=#650 id=650 data-nosnippet>650</a>
+<a href=#651 id=651 data-nosnippet>651</a><span class="doccomment">/// The paged cube state of a channel-local run, with a cache as large as
+<a href=#652 id=652 data-nosnippet>652</a>/// the whole cube when a quarter of the memory budget allows.
+<a href=#653 id=653 data-nosnippet>653</a></span><span class="kw">fn </span>cube_state(
+<a href=#654 id=654 data-nosnippet>654</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
+<a href=#655 id=655 data-nosnippet>655</a>    directory: <span class="kw-2">&amp;</span>Path,
+<a href=#656 id=656 data-nosnippet>656</a>    workers: usize,
+<a href=#657 id=657 data-nosnippet>657</a>    memory: u64,
+<a href=#658 id=658 data-nosnippet>658</a>) -&gt; <span class="prelude-ty">Result</span>&lt;CubeState, ImagingError&gt; {
+<a href=#659 id=659 data-nosnippet>659</a>    <span class="kw">let </span>target = problem.model_lifecycle().target();
+<a href=#660 id=660 data-nosnippet>660</a>    <span class="kw">let </span>domains = target
+<a href=#661 id=661 data-nosnippet>661</a>        .domains()
+<a href=#662 id=662 data-nosnippet>662</a>        .iter()
+<a href=#663 id=663 data-nosnippet>663</a>        .map(|domain| domain.pixels())
+<a href=#664 id=664 data-nosnippet>664</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#665 id=665 data-nosnippet>665</a>    <span class="kw">let </span>planes = target.coefficients() * target.polarizations();
+<a href=#666 id=666 data-nosnippet>666</a>    <span class="kw">let </span>(minimum, full) = CubeState::cache_limits(directory, <span class="kw-2">&amp;</span>domains, planes, workers)<span class="question-mark">?</span>;
+<a href=#667 id=667 data-nosnippet>667</a>    <span class="kw">let </span>cache = full.min(minimum.max(usize::try_from(memory / <span class="number">4</span>).unwrap_or(usize::MAX)));
+<a href=#668 id=668 data-nosnippet>668</a>    <span class="prelude-val">Ok</span>(CubeState::new(directory, <span class="kw-2">&amp;</span>domains, planes, cache)<span class="question-mark">?</span>)
+<a href=#669 id=669 data-nosnippet>669</a>}
+<a href=#670 id=670 data-nosnippet>670</a>
+<a href=#671 id=671 data-nosnippet>671</a><span class="kw">fn </span>minor_program(
+<a href=#672 id=672 data-nosnippet>672</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
+<a href=#673 id=673 data-nosnippet>673</a>    response: <span class="prelude-ty">Option</span>&lt;MinorCycleImageResponse&gt;,
+<a href=#674 id=674 data-nosnippet>674</a>    remaining: <span class="prelude-ty">Option</span>&lt;usize&gt;,
+<a href=#675 id=675 data-nosnippet>675</a>) -&gt; <span class="prelude-ty">Result</span>&lt;MinorCycleProgram, ImagingError&gt; {
+<a href=#676 id=676 data-nosnippet>676</a>    <span class="kw">let </span><span class="kw-2">mut </span>program = MinorCycleProgram::for_problem(problem)<span class="question-mark">?</span>.record_component_sequence(<span class="number">64</span>)<span class="question-mark">?</span>;
+<a href=#677 id=677 data-nosnippet>677</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(remaining) = remaining {
+<a href=#678 id=678 data-nosnippet>678</a>        program = program.limit_iterations(remaining)<span class="question-mark">?</span>;
+<a href=#679 id=679 data-nosnippet>679</a>    }
+<a href=#680 id=680 data-nosnippet>680</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(response) = response {
+<a href=#681 id=681 data-nosnippet>681</a>        program = program.with_image_response(response);
+<a href=#682 id=682 data-nosnippet>682</a>    }
+<a href=#683 id=683 data-nosnippet>683</a>    <span class="prelude-val">Ok</span>(program)
+<a href=#684 id=684 data-nosnippet>684</a>}
+<a href=#685 id=685 data-nosnippet>685</a>
+<a href=#686 id=686 data-nosnippet>686</a><span class="kw">fn </span>minor_cycle_record(
+<a href=#687 id=687 data-nosnippet>687</a>    cycle: usize,
+<a href=#688 id=688 data-nosnippet>688</a>    outcome: <span class="kw-2">&amp;</span>MinorCycleOutcome,
+<a href=#689 id=689 data-nosnippet>689</a>    (iterations_entering, actual_iterations_entering): (usize, usize),
+<a href=#690 id=690 data-nosnippet>690</a>    (total_iterations, total_actual_iterations): (usize, usize),
+<a href=#691 id=691 data-nosnippet>691</a>) -&gt; NativeMinorCycleOutcome {
+<a href=#692 id=692 data-nosnippet>692</a>    <span class="kw">let </span>evidence = <span class="kw-2">&amp;</span>outcome.evidence;
+<a href=#693 id=693 data-nosnippet>693</a>    <span class="kw">let </span>mask = outcome.masks.primary();
+<a href=#694 id=694 data-nosnippet>694</a>    NativeMinorCycleOutcome {
+<a href=#695 id=695 data-nosnippet>695</a>        cycle,
+<a href=#696 id=696 data-nosnippet>696</a>        iterations_entering,
+<a href=#697 id=697 data-nosnippet>697</a>        iterations: evidence.controller_iterations(),
+<a href=#698 id=698 data-nosnippet>698</a>        total_iterations,
+<a href=#699 id=699 data-nosnippet>699</a>        actual_iterations_entering,
+<a href=#700 id=700 data-nosnippet>700</a>        actual_iterations: evidence.iterations(),
+<a href=#701 id=701 data-nosnippet>701</a>        total_actual_iterations,
+<a href=#702 id=702 data-nosnippet>702</a>        total_flux: evidence.total_flux(),
+<a href=#703 id=703 data-nosnippet>703</a>        initial_peak_flux: evidence.initial_peak_flux(),
+<a href=#704 id=704 data-nosnippet>704</a>        final_peak_flux: evidence.final_peak_flux(),
+<a href=#705 id=705 data-nosnippet>705</a>        noise_rms: evidence.noise_rms(),
+<a href=#706 id=706 data-nosnippet>706</a>        effective_threshold: evidence.effective_threshold(),
+<a href=#707 id=707 data-nosnippet>707</a>        global_threshold: evidence.global_threshold(),
+<a href=#708 id=708 data-nosnippet>708</a>        cycle_threshold: evidence.cycle_threshold(),
+<a href=#709 id=709 data-nosnippet>709</a>        stop_reason: evidence.stop_reason().into(),
+<a href=#710 id=710 data-nosnippet>710</a>        clark_refreshes: evidence.clark_refreshes(),
+<a href=#711 id=711 data-nosnippet>711</a>        associated_replay_ordinal: cycle,
+<a href=#712 id=712 data-nosnippet>712</a>        recorded_components: evidence.recorded_components().copied().collect(),
+<a href=#713 id=713 data-nosnippet>713</a>        mask_support: mask.support().to_vec(),
+<a href=#714 id=714 data-nosnippet>714</a>        mask_generation: mask.generation_id(),
+<a href=#715 id=715 data-nosnippet>715</a>        mask_model_generation: mask.model_generation(),
+<a href=#716 id=716 data-nosnippet>716</a>        mask_normal_state: mask.normal_state_completion(),
+<a href=#717 id=717 data-nosnippet>717</a>        auto_mask: outcome.auto_masks[<span class="number">0</span>],
+<a href=#718 id=718 data-nosnippet>718</a>    }
+<a href=#719 id=719 data-nosnippet>719</a>}
 </code></pre></div></section></main></body></html>
