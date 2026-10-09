@@ -34,6 +34,7 @@ use crate::convolution::{
 use crate::geometry::GridGeometry;
 use crate::polarization::PolarizationRouting;
 use crate::sample::CfKey;
+use crate::weighting::SPEED_OF_LIGHT_M_PER_S;
 
 /// `CFStore2::makePersistent`: the imaging cell prefix.
 const IMAGING_PREFIX: &str = "CFS_";
@@ -740,9 +741,10 @@ impl ConvolutionFunctionSet for AwCatalog {
     /// CASA's visibility polarization operator angle negated back to the
     /// physical angle in degrees, as the cells record it.
     /// `group` is the gridding cell (the conjugate-frequency cell under
-    /// `conjbeams`, `DataToGrid` with `conjBeams`); `cube` the
-    /// native-frequency, original-MS-w cell a prediction reads (`GridToData`,
-    /// `nearestFreqNdx(spw, chan)` and `vb_p->uvw()(2,irow)`).
+    /// `conjbeams`, `DataToGrid` with `conjBeams`); `cube` the cell a
+    /// prediction reads: the native frequency's (`GridToData`,
+    /// `nearestFreqNdx(spw, chan)`) at the w-plane of the unrotated w
+    /// ([`Self::prediction_w`]).
     fn key(&self, row: &RowContext, freq_hz: f64, w_lambda: f64) -> CfKey {
         let pa_deg = (-row.parallactic_angle_rad[0]).to_degrees();
         let pa = self.pa_cell(pa_deg);
@@ -797,11 +799,13 @@ impl ConvolutionFunctionSet for AwCatalog {
         &self.mueller
     }
 
+    /// `GridToData` keys its w-plane and tap conjugation on
+    /// `vb_p->uvw()(2, irow)`, the MeasurementSet w before the
+    /// phase-centre rotation, while `DataToGrid` reads the rotated
+    /// `uvw_p` (#667).
     fn prediction_w(&self, row: &RowContext, freq_hz: f64, w_lambda: f64) -> f64 {
-        // AWVisResampler::GridToData reads vb_p->uvw()(2,irow) for the
-        // W cell and parity; DataToGrid reads the rotated vbs.uvw_p.
         row.original_w_m
-            .map_or(w_lambda, |w| w * freq_hz / 299_792_458.0)
+            .map_or(w_lambda, |w_m| w_m * freq_hz / SPEED_OF_LIGHT_M_PER_S)
     }
 
     fn image_correction(&self) -> &ImageCorrection {
@@ -819,55 +823,64 @@ impl ConvolutionFunctionSet for AwCatalog {
     }
 }
 
-/// Compile the diagonal-cell routes of `AWVisResampler`. `getConvFunc_p`
-/// chooses the own/partner cell; `DataToGridImpl_p` then reads visibility
-/// `muellerElement % nDataPol` into the original grid polarization, while
-/// `GridToData` reads that index's grid polarization into the original
-/// visibility. The partner is `RR ↔ LL`, `RL ↔ LR` (likewise linear feeds).
+/// `AWVisResampler`'s routes through diagonal Mueller cells. Each selected
+/// correlation (the `outer` loop of `DataToGrid` and `GridToData`) has the
+/// element `e` of its own hand (`RR, RL, LR, LL` → `0, 5, 10, 15`,
+/// `AWProjectFT::makeCFPolMap`) and the partner `15 − e` (`RR ↔ LL`,
+/// `RL ↔ LR`), or `e` again when the partner hand is not a selected
+/// correlation (`PolOuterProduct::makeConjPol2CFMat` keeps the direct
+/// entry). `getConvFunc_p` selects the own cell for `w > 0` and the
+/// partner's otherwise in the adjoint, the reverse in the forward
+/// transform (`GridToData` passes `mNdx` and `conjMNdx` swapped); the hand
+/// of the selected cell is `element % npol`, CASA's index into the
+/// visibility axis, so
+///
+/// `DataToGrid`: `grid[pol_map[outer]] += vis[hand(cell)] ⋆ cell`,
+/// `GridToData`: `vis[outer] += model[pol_map[hand(cell)]] ⋆ cell`.
+///
+/// `None` when a cell is missing or two outer correlations route one
+/// (grid, visibility) pair through different cells (a non-canonical
+/// three-correlation selection, where `element % npol` collides).
 fn routing(elements: &[u32], polarization: &PolarizationRouting) -> Option<MuellerRouting> {
     let pol_map = polarization.pol_map();
-    let gpols = polarization.grid_pols();
+    let correlations = polarization.correlations();
     let plane_of = |element: u32| {
         elements
             .binary_search(&element)
             .ok()
             .map(|plane| u8::try_from(plane).expect("planes fit u8"))
     };
-    let empty = || vec![vec![None; pol_map.len()]; gpols];
+    let selected = |element: u32| {
+        correlations
+            .iter()
+            .zip(pol_map)
+            .any(|(correlation, target)| {
+                target.is_some() && mueller_element(*correlation) == Some(element)
+            })
+    };
+    let hand = |element: u32| element as usize % pol_map.len();
+    let empty = || vec![vec![None; pol_map.len()]; polarization.grid_pols()];
     let mut adjoint = [empty(), empty()];
     let mut forward = [empty(), empty()];
-    for (vpol, (correlation, target)) in polarization.correlations().iter().zip(pol_map).enumerate()
-    {
+    for (outer, (correlation, target)) in correlations.iter().zip(pol_map).enumerate() {
         let Some(gpol) = *target else {
             continue;
         };
-        let element = mueller_element(*correlation)?;
-        // `PolOuterProduct::makeConjPol2CFMat` starts from the direct
-        // map and substitutes a partner only when that hand is active.
-        let partner = polarization
-            .correlations()
-            .iter()
-            .zip(pol_map)
-            .find_map(|(correlation, target)| {
-                (target.is_some()
-                    && mueller_element(*correlation) == Some(MUELLER_ELEMENTS - 1 - element))
-                .then_some(MUELLER_ELEMENTS - 1 - element)
-            })
-            .unwrap_or(element);
-        for (positive, selected) in [partner, element].into_iter().enumerate() {
-            let input = selected as usize % pol_map.len();
-            // A single table entry cannot represent two distinct cells
-            // (possible for noncanonical three-correlation subsets).
-            if adjoint[positive][usize::from(gpol)][input]
-                .replace(plane_of(selected)?)
+        let own = mueller_element(*correlation)?;
+        let partner = Some(MUELLER_ELEMENTS - 1 - own)
+            .filter(|partner| selected(*partner))
+            .unwrap_or(own);
+        for positive in [false, true] {
+            let cell = if positive { own } else { partner };
+            let plane = plane_of(cell)?;
+            if adjoint[usize::from(positive)][usize::from(gpol)][hand(cell)]
+                .replace(plane)
                 .is_some()
             {
                 return None;
             }
-        }
-        for (positive, selected) in [element, partner].into_iter().enumerate() {
-            if let Some(input_grid) = pol_map[selected as usize % pol_map.len()] {
-                forward[positive][usize::from(input_grid)][vpol] = Some(plane_of(selected)?);
+            if let Some(input_grid) = pol_map[hand(cell)] {
+                forward[usize::from(!positive)][usize::from(input_grid)][outer] = Some(plane);
             }
         }
     }
@@ -1305,9 +1318,9 @@ mod tests {
             .expect("parallel hands");
         let routes = routing(&[0, 15], &pol).expect("routes");
         let diagonal = vec![vec![Some(0), None], vec![None, Some(1)]];
-        // AWVisResampler.cc:381 uses the selected cell's Mueller element
-        // modulo npol for the INPUT visibility; :540 uses it for the
-        // INPUT grid. The outer loop still names the output in each case.
+        // `DataToGrid` reads the visibility of the selected cell's hand
+        // (`muellerElement % nDataPol`), `GridToData` the model grid of
+        // that hand; the outer loop names the output in both.
         assert_eq!(routes.table(true, false), &diagonal);
         assert_eq!(routes.table(false, true), &diagonal);
         assert_eq!(

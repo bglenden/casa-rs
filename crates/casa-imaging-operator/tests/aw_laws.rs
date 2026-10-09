@@ -161,6 +161,7 @@ fn keyed_placements(operator: &MeasurementOperator, count: usize, rng: &mut Rng)
     for placement in &mut placed {
         let window = (rng.next_u64() % 2) as u32;
         placement.w = rng.signed() * max_w;
+        placement.prediction_w_positive = placement.w > 0.0;
         placement.cf = operator.cf().key(
             &context(17.0, window),
             FREQUENCIES_HZ[window as usize],
@@ -378,7 +379,7 @@ fn prediction_uses_original_ms_w_while_gridding_uses_rotated_w() {
         panic!("one sample")
     };
     assert!(placed.w > 0.0);
-    assert_eq!(placed.prediction_w_positive, Some(false));
+    assert!(!placed.prediction_w_positive);
     assert_ne!(placed.cf.group, placed.cf.cube);
 }
 
@@ -447,6 +448,7 @@ fn predictions_divide_by_the_kernel_sum_of_the_swapped_plane() {
     for placement in &placed {
         let mirrored = Placement {
             w: -placement.w,
+            prediction_w_positive: -placement.w > 0.0,
             ..*placement
         };
         // The forward transform of a w > 0 row reads RR through the LL
@@ -584,7 +586,7 @@ fn unequal_hands_follow_casa_in_both_directions_and_on_both_w_signs() {
                 u: 13.0,
                 v: -19.0,
                 w,
-                prediction_w_positive: Some(prediction_w > 0.0),
+                prediction_w_positive: prediction_w > 0.0,
                 phase: 0.0,
                 plane: 0,
                 spectral: 0.0,

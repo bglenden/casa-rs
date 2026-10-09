@@ -524,8 +524,9 @@ impl<'a> Run<'a> {
             &self.team,
             &self.cancel,
             &mut |domain, images| {
+                let basis = self.domains[domain].operator.basis();
                 state
-                    .append(pass_images(domain, &images, initial))
+                    .append(pass_images(domain, &images, initial, basis))
                     .map_err(|error| PassError::Images(Box::new(error)))
             },
             sink.as_mut(),

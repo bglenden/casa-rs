@@ -307,7 +307,8 @@ pub fn placements(
             u,
             v,
             w: rng.signed() * 50.0,
-            prediction_w_positive: Some(rng.next_u64().is_multiple_of(2)),
+            // Independent of the sign of `w`, as an AW row's can be.
+            prediction_w_positive: rng.next_u64().is_multiple_of(2),
             phase: rng.signed() * std::f64::consts::PI,
             plane: (rng.next_u64() % u64::from(planes)) as u32,
             spectral: (0.3 * rng.signed()) as f32,

@@ -329,7 +329,11 @@ fn a_constant_complex_tap_cancels_in_the_prediction_for_every_sign_of_w() {
     let mut placed = Vec::new();
     for base in placements(operator.geometry(), 6, 1, &mut rng) {
         for w in [25.0, 0.0, -25.0] {
-            placed.push(Placement { w, ..base });
+            placed.push(Placement {
+                w,
+                prediction_w_positive: w > 0.0,
+                ..base
+            });
         }
     }
     let mut block = SampleBuffer::new(2);

@@ -194,20 +194,19 @@ pub enum KernelNormalisation {
 }
 
 /// Which kernel Mueller plane serves each (grid polarization, visibility
-/// polarization) pair.
+/// polarization) pair, per direction of the transform and sign of `w`.
 ///
-/// Each direction has two `[grid pol][visibility pol]` tables: index 0
-/// for `w ≤ 0`, index 1 for `w > 0`. `None` skips a pair. These describe
-/// the complete routing, including which visibility or grid polarization
-/// belongs to the selected cell; they are not merely cell-index maps.
-///
-/// CASA's `AWVisResampler::DataToGridImpl_p` selects its input visibility
-/// with `muellerElement % nDataPol`, after `getConvFunc_p` selects the cell.
-/// `GridToData` instead uses that index to select the model grid and writes
-/// to the original output visibility. Consequently its forward tables
-/// cannot in general be obtained by swapping the two adjoint tables.
-/// Tap conjugation is separate: adjoint taps are conjugated for `w > 0`,
-/// forward taps for `w ≤ 0` (`accumulateToGrid` / `accumulateFromGrid`).
+/// Four `[grid pol][visibility pol]` tables; `None` skips a pair. CASA
+/// routes the two directions differently (`AWVisResampler`):
+/// `getConvFunc_p` selects the cell by the sign of `w` (`mNdx` for
+/// `w > 0`, `conjMNdx` otherwise; `GridToData` passes the two swapped),
+/// then `DataToGrid` reads the visibility of the selected cell's own hand
+/// (`muellerElement % nDataPol`) into the outer grid polarization, while
+/// `GridToData` reads the model grid of that hand into the outer
+/// visibility polarization. A forward table is therefore not a swap of an
+/// adjoint one. Tap conjugation is separate from the routing: adjoint
+/// taps are conjugated for `w > 0`, forward taps for `w ≤ 0`
+/// (`accumulateToGrid.inc`, `accumulateFromGrid.inc`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MuellerRouting {
     /// Adjoint tables, indexed by `usize::from(w > 0)`.
@@ -262,9 +261,10 @@ impl MuellerRouting {
 /// Per-row context a kernel set keys its cells on.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RowContext {
-    /// Original MeasurementSet w in metres, before phase-centre rotation.
-    /// `None` means it is the same as the supplied image-frame w. CASA's
-    /// AW prediction selects its cell using this original coordinate.
+    /// The row's MeasurementSet `UVW` w in metres before the phase-centre
+    /// rotation, when the source rotated the row; `None` when the row's
+    /// uvw are the MeasurementSet's. The AW set keys its prediction cell
+    /// and parity on it ([`ConvolutionFunctionSet::prediction_w`]).
     pub original_w_m: Option<f64>,
     /// Row time in seconds (MeasurementSet `TIME`).
     pub time_s: f64,
@@ -389,12 +389,14 @@ pub trait ConvolutionFunctionSet: Send + Sync {
     /// Mueller plane routing for every cell of the set.
     fn mueller(&self) -> &MuellerRouting;
 
-    /// W coordinate used by prediction for cell selection and tap parity.
-    /// Most sets use the image-frame coordinate. `AWVisResampler::GridToData`
-    /// uses the original MS coordinate even though U,V and the phasor have
-    /// been rotated to the image phase centre.
-    fn prediction_w(&self, row: &RowContext, freq_hz: f64, w_lambda: f64) -> f64 {
-        let _ = (row, freq_hz);
+    /// The w in wavelengths a prediction of `row`'s sample at `freq_hz`
+    /// keys its cell and tap conjugation on: the image-frame `w_lambda` the
+    /// gridding uses, for every set but AW. `AWVisResampler::GridToData`
+    /// reads the MeasurementSet w before the phase-centre rotation
+    /// (`vb_p->uvw()(2, irow)`) for the w-plane and the sign, while its u,
+    /// v and phasor are the rotated ones (`sgrid` on `uvw_p`);
+    /// `DataToGrid` reads the rotated w for both.
+    fn prediction_w(&self, _row: &RowContext, _freq_hz: f64, w_lambda: f64) -> f64 {
         w_lambda
     }
 

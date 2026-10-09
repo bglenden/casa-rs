@@ -88,11 +88,12 @@ pub fn placements(
         if !geometry.fits(location, [3, 3]) {
             continue;
         }
+        let w = rng.signed() * 50.0;
         out.push(Placement {
             u,
             v,
-            w: rng.signed() * 50.0,
-            prediction_w_positive: None,
+            w,
+            prediction_w_positive: w > 0.0,
             phase: rng.signed() * std::f64::consts::PI,
             plane: (rng.next_u64() % u64::from(planes)) as u32,
             spectral: 0.0,

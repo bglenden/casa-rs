@@ -36,14 +36,17 @@ pub struct Placement {
     pub u: f64,
     /// Baseline `v` in wavelengths.
     pub v: f64,
-    /// Baseline `w` in wavelengths; its sign selects the Mueller table for
-    /// each direction. Adjoint taps are conjugated for `w > 0`, forward
-    /// taps for `w ≤ 0`.
+    /// Baseline `w` in wavelengths in the image frame. Its sign selects the
+    /// adjoint's Mueller table and tap conjugation (taps conjugated for
+    /// `w > 0`, `accumulateToGrid.inc`).
     pub w: f64,
-    /// Prediction's sign of w when it differs from the image-frame rule.
-    /// `None` uses `w > 0`. AW prediction uses original MS w; gridding
-    /// continues to use the rotated `w` (`AWVisResampler::GridToData`).
-    pub prediction_w_positive: Option<bool>,
+    /// Whether the w the prediction keys on is positive. It selects the
+    /// forward Mueller table and tap conjugation (taps conjugated for
+    /// `w ≤ 0`, `accumulateFromGrid.inc`): `w > 0` for every set but AW,
+    /// whose prediction reads the MeasurementSet w before the phase-centre
+    /// rotation
+    /// ([`ConvolutionFunctionSet::prediction_w`](crate::ConvolutionFunctionSet::prediction_w)).
+    pub prediction_w_positive: bool,
     /// Phase-centre shift argument in radians. The block's values already
     /// carry `e^{iφ}`; prediction applies `e^{−iφ}`. The pointing ramp's
     /// phase at the sample's fine offset belongs to the kernels, which

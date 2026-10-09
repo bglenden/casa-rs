@@ -3,6 +3,66 @@
 Notes on bugs or likely bugs observed while doing Rust/C++ parity work against CASA.
 
 Known imaging parity defect: [CASA Högbom `niter` off-by-one](#casa-hogbom-niter-off-by-one-bug).
+CASA behaviours casa-rs follows for parity:
+[AW-projection hand pairing](#aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell),
+[AW-projection prediction w](#aw-projection-predicts-with-the-unrotated-w).
+
+## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
+
+- Date noted: 2026-10-09
+- Status: likely CASA bug; casa-rs follows it for parity (#667, PR #668)
+- Affected code:
+  - `casatools/src/code/synthesis/TransformMachines2/AWVisResampler.cc`
+    (`getConvFunc_p`, `DataToGridImpl_p`, `GridToData`)
+
+### Summary
+
+For a row with `w ≤ 0`, `getConvFunc_p` selects the conjugate-baseline cell of
+the outer correlation's Mueller element (`conjMNdx`, the partner hand:
+`RR ↔ LL`, `RL ↔ LR`), and `DataToGridImpl_p` then grids the visibility of the
+*selected cell's* hand (`visVecElement = muellerElement % nDataPol`), not the
+outer correlation's. The RR grid receives `RR × conj(CF_RR)` for `w > 0` and
+`LL × CF_LL` for `w ≤ 0`; `GridToData` likewise reads the partner's model
+grid into the outer visibility. Stokes I of an unpolarized source is
+unaffected (the two hands are equal); per-hand grids of data whose hands
+differ, such as a circularly polarized source, mix the hands on the `w ≤ 0`
+rows.
+
+### Why this looks like a bug
+
+The Mueller element of a real power pattern has a Hermitian transform, so
+the RR kernel at `−|w|` is the conjugate of the kernel of the mirrored RR
+beam at `+|w|`; for the EVLA squint (R and L beams offset in opposite
+directions) the mirrored RR beam is the LL beam, which is why the partner
+cell stands in for the conjugate. The visibility being convolved is still
+the outer hand's. The index `muellerElement % nDataPol` returns the column
+of the selected cell's own element instead of the column of its position in
+the conjugate Mueller matrix.
+
+### Effect
+
+On `refim_mawproject` (CASA 6.7.6.14, Stokes I, `wbawp=True`,
+`conjbeams=True`) the two pairings differ by 3.06e-3 normalised RMS in the
+dirty image. casa-rs compiles CASA's pairing (`casa-imaging-operator`,
+`aw::routing` into `MuellerRouting`) and agrees with CASA to 2e-7.
+
+## AW-projection predicts with the unrotated w
+
+- Date noted: 2026-10-09
+- Status: CASA inconsistency between gridding and prediction; casa-rs follows it for parity (#667, PR #668)
+- Affected code: `AWVisResampler.cc` (`GridToData` reads `vbs.vb_p->uvw()(2, irow)`;
+  `DataToGridImpl_p` reads the rotated `vbs.uvw_p`)
+
+### Summary
+
+`AWProjectFT` hands the resampler the uvw rotated to the image phase centre
+and the phase shift (`vbs.uvw_p`, `dphase_p`) together with the VisBuffer
+(`vbs.vb_p`). `GridToData` selects its w-plane and tap conjugation from the
+VisBuffer's unrotated w while placing the sample at the rotated u, v with the
+rotated phasor; `DataToGridImpl_p` uses the rotated w for both. The two
+differ only where the rotation moves a w across a plane boundary or through
+zero. casa-rs carries the unrotated w per row (`RowContext::original_w_m`,
+`ConvolutionFunctionSet::prediction_w`) and keys the AW prediction on it.
 
 ## `importvla` stale `VLACDA` cache crash on old VLA export data
 

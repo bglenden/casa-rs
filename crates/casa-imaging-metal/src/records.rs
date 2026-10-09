@@ -236,7 +236,7 @@ pub(crate) fn prepare(
         };
         let location = geometry.locate(u, v, table.oversampling);
         let w_positive = placement.w > 0.0;
-        let prediction_w_positive = placement.prediction_w_positive.unwrap_or(w_positive);
+        let prediction_w_positive = placement.prediction_w_positive;
         let half = table.half_support;
         let (origin, plane) = match &targets.adjoint {
             Some((layout, _)) => (

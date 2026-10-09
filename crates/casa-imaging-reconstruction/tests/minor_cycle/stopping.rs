@@ -6,8 +6,12 @@
 
 use super::*;
 
+/// `SIImageStore::divideResidualByWeight` divides the residual by the
+/// published `.sumwt` and the weight image by the PSF gridding's sum (the
+/// same number unless the pass published another gridding's, #667); the
+/// flat-noise peak the minor cycle cleans follows from both.
 #[test]
-fn flat_noise_clean_uses_the_psf_sum_for_both_weight_and_residual() {
+fn the_minor_cycle_divides_the_residual_by_the_published_sum_and_the_weight_by_the_psf_sum() {
     use casa_imaging_reconstruction::{
         MajorCycleOwner, MinorCycleImageResponse, PassNormalState, WeightingGenerationId,
         runtime_adapter::NormalStoragePlan,
@@ -19,9 +23,6 @@ fn flat_noise_clean_uses_the_psf_sum_for_both_weight_and_residual() {
     let mut images = scene(&problem).pass_images(preparation.final_model(), true);
     let cells = SHAPE[0] * SHAPE[1];
     images.sum_weights = vec![8.0];
-    // AW's data and weight kernels have different sums. CASA retains the
-    // PSF .sumwt (FTMachine::finalizeToSkyNew), then SIImageStore divides
-    // BOTH raw residual and weight by it before flat-noise normalization.
     images.published_sum_weights = vec![3.0];
     images.weight = Some(vec![16.0; cells]);
     images.residual.fill(0.0);
@@ -60,10 +61,10 @@ fn flat_noise_clean_uses_the_psf_sum_for_both_weight_and_residual() {
             .with_image_response(response),
     )
     .expect("minor cycle");
-    // (8 / 8) / (sqrt(16 / 8) * sqrt(16 / 8)) = 0.5 Jy.
-    // The same value follows directly from published raw/sqrt(weight*peak).
-    assert!((result.evidence().initial_peak_flux() - 0.5).abs() < 1e-7);
-    assert!((result.evidence().total_flux() - 0.125).abs() < 1e-7);
+    // (8 / 3) / (√(16 / 8) · √(16 / 8)) = 4/3 Jy; one iteration at gain
+    // 0.25 removes a third of a Jansky.
+    assert!((result.evidence().initial_peak_flux() - 4.0 / 3.0).abs() < 1e-6);
+    assert!((result.evidence().total_flux() - 1.0 / 3.0).abs() < 1e-6);
 }
 
 #[test]
