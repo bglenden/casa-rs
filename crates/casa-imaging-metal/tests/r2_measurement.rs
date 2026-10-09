@@ -48,10 +48,12 @@ fn centred_placements(
         {
             continue;
         }
+        let w = rng.signed() * 50.0;
         out.push(Placement {
             u,
             v,
-            w: rng.signed() * 50.0,
+            w,
+            prediction_w_positive: w > 0.0,
             phase: rng.signed() * std::f64::consts::PI,
             plane: 0,
             spectral: 0.0,

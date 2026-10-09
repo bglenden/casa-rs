@@ -26,6 +26,7 @@ const WIDE_INCREMENT_RAD: f64 = 1.0e-3;
 
 fn context() -> RowContext {
     RowContext {
+        original_w_m: None,
         time_s: 0.0,
         antennas: [0, 1],
         antenna_types: [0, 0],
@@ -82,6 +83,7 @@ fn keyed_placements(
     let cf = operator.cf();
     for placement in &mut placed {
         placement.w = rng.signed() * max_w;
+        placement.prediction_w_positive = placement.w > 0.0;
         placement.cf = cf.key(&context(), 1.0e9, placement.w);
         if !fits(operator, placement) {
             // Pull the sample toward the grid centre so its support fits.
@@ -101,6 +103,7 @@ fn mirror(operator: &MeasurementOperator, placement: &Placement) -> Placement {
         u: -placement.u,
         v: -placement.v,
         w: -placement.w,
+        prediction_w_positive: -placement.w > 0.0,
         phase: -placement.phase,
         cf: operator.cf().key(&context(), 1.0e9, -placement.w),
         ..*placement
@@ -490,6 +493,7 @@ fn the_w_term_carries_the_same_sign_as_the_uv_term() {
         for placement in &placed {
             let placement = Placement {
                 w,
+                prediction_w_positive: w > 0.0,
                 cf: operator.cf().key(&context(), 1.0e9, w),
                 ..*placement
             };

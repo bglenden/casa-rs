@@ -209,7 +209,7 @@ impl CpuBackend {
             prediction.resize(npol, Complex64::default());
             return;
         }
-        let w_positive = placement.w > 0.0;
+        let w_positive = placement.prediction_w_positive;
         let table = cf.mueller().table(w_positive, true);
         let plane = layout.planes().local(placement.plane);
         let divide = cf.normalisation() == KernelNormalisation::KernelSum;

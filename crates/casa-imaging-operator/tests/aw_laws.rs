@@ -15,11 +15,13 @@ use casa_imaging_model::{
 use casa_imaging_operator::{
     AwCatalog, AwIndexing, Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend, GridBackend,
     GridGeometry, GridPadding, GridPrecision, GridScalar, ImageExtent, KernelNormalisation,
-    MeasurementOperator, Mode, ModeSet, Placement, PlaneRange, PolarizationRouting, RowContext,
-    SampleBuffer, TapLayout, Work,
+    MeasurementOperator, Mode, ModeSet, ModelImages, ModelPlane, ModelPrescale, NativeRow,
+    Placement, PlaneRange, PolarizationRouting, RowContext, SampleBuffer, SpectralResampler,
+    TapLayout, WeightingGeneration, Work,
 };
 use common::{IMAGE, Rng, buffer, placements, samples};
-use num_complex::Complex32;
+use ndarray::Array2;
+use num_complex::{Complex32, Complex64};
 
 const RR_LL: [CorrelationType; 2] = [CorrelationType::CircularRr, CorrelationType::CircularLl];
 const STOKES_I: [PolarizationCoordinate; 1] = [PolarizationCoordinate::StokesI];
@@ -109,6 +111,7 @@ fn indexing(conjugate_beams: bool) -> AwIndexing {
 
 fn context(pa_deg: f64, spectral_window: u32) -> RowContext {
     RowContext {
+        original_w_m: None,
         time_s: 0.0,
         antennas: [0, 1],
         antenna_types: [0, 0],
@@ -158,6 +161,7 @@ fn keyed_placements(operator: &MeasurementOperator, count: usize, rng: &mut Rng)
     for placement in &mut placed {
         let window = (rng.next_u64() % 2) as u32;
         placement.w = rng.signed() * max_w;
+        placement.prediction_w_positive = placement.w > 0.0;
         placement.cf = operator.cf().key(
             &context(17.0, window),
             FREQUENCIES_HZ[window as usize],
@@ -236,18 +240,16 @@ fn generated_cells_open_with_casa_index_rules_and_swapped_mueller_tables() {
             cube: catalog.group_index(0, 1, 1) as u16
         }
     );
-    // makeConjPolMap: RR reads the RR plane on the direct table and the LL
-    // plane on the conjugate one. The adjoint reads the direct table for a
-    // positive-w row and the conjugate one otherwise
-    // (`AWVisResampler::getConvFunc_p`: `mNdx` for `wVal > 0`, else
-    // `conjMNdx`), while the cell itself is conjugated for `wVal > 0`; the
-    // forward transform swaps the tables.
+    // `DataToGridImpl_p` selects the input via muellerElement % nDataPol
+    // after selecting the cell: for Stokes I both signs pair RR with its
+    // own cell and LL with its own cell. `GridToData` keeps the output
+    // hand and selects the model grid via that index, so prediction still
+    // swaps the cells for w > 0. These are four independent routes (#667).
     let mueller = catalog.mueller();
-    assert_eq!(mueller.direct, vec![vec![Some(0), Some(1)]]);
-    assert_eq!(mueller.conjugate, vec![vec![Some(1), Some(0)]]);
-    assert_eq!(mueller.table(true, false), &mueller.direct[..]);
-    assert_eq!(mueller.table(false, false), &mueller.conjugate[..]);
-    assert_eq!(mueller.table(true, true), &mueller.conjugate[..]);
+    assert_eq!(mueller.table(true, false), &[vec![Some(0), Some(1)]]);
+    assert_eq!(mueller.table(false, false), &[vec![Some(0), Some(1)]]);
+    assert_eq!(mueller.table(true, true), &[vec![Some(1), Some(0)]]);
+    assert_eq!(mueller.table(false, true), &[vec![Some(0), Some(1)]]);
     assert_eq!(catalog.normalisation(), KernelNormalisation::KernelSum);
     assert!(catalog.pointing_ramp());
     // Every cell is dense, four fine offsets, two planes, inside the halo.
@@ -324,6 +326,64 @@ fn conjugate_beams_select_the_cell_nearest_the_conjugate_frequency() {
 }
 
 #[test]
+fn prediction_uses_original_ms_w_while_gridding_uses_rotated_w() {
+    let root = tempfile::tempdir().expect("cache directory");
+    let catalog = generated(root.path(), false, usize::MAX);
+    let frequency = FREQUENCIES_HZ[0];
+    let scale = frequency / 299_792_458.0;
+    // AWVisResampler.cc:326 uses rotated UVW; :493 uses vb_p->uvw().
+    // Separate index changes from sign changes, including the zero branch.
+    for (rotated_w, original_w, grid_cell, prediction_cell) in [
+        (700.0, 0.0, 1, 0),
+        (0.0, 700.0, 0, 1),
+        (700.0, -700.0, 1, 1),
+        (-700.0, 700.0, 1, 1),
+    ] {
+        let row = RowContext {
+            original_w_m: Some(original_w / scale),
+            ..context(17.0, 0)
+        };
+        let key = catalog.key(&row, frequency, rotated_w);
+        assert_eq!(usize::from(key.group), catalog.group_index(0, 0, grid_cell));
+        assert_eq!(
+            usize::from(key.cube),
+            catalog.group_index(0, 0, prediction_cell)
+        );
+    }
+    let operator = operator_with(catalog);
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("resampler");
+    let row = NativeRow {
+        uvw_m: [0.0, 0.0, 700.0 / scale],
+        phase_shift_m: 0.0,
+        pointing_offset_rad: [0.0; 2],
+        frequencies_hz: &[frequency],
+        values: &[Complex32::new(1.0, 0.0); 2],
+        weights: &[1.0; 2],
+        flags: &[false; 2],
+        row_flag: false,
+        context: RowContext {
+            original_w_m: Some(-1.0 / scale),
+            ..context(17.0, 0)
+        },
+    };
+    let mut buffer = SampleBuffer::new(2);
+    resampler
+        .place(
+            &operator,
+            &WeightingGeneration::Natural { taper: None },
+            &row,
+            &mut buffer,
+        )
+        .expect("place");
+    let [placed] = buffer.placements() else {
+        panic!("one sample")
+    };
+    assert!(placed.w > 0.0);
+    assert!(!placed.prediction_w_positive);
+    assert_ne!(placed.cf.group, placed.cf.cube);
+}
+
+#[test]
 fn cold_and_warm_catalogs_give_identical_keys_taps_and_products() {
     let mut rng = Rng::new(103);
     let root = tempfile::tempdir().expect("cache directory");
@@ -388,11 +448,12 @@ fn predictions_divide_by_the_kernel_sum_of_the_swapped_plane() {
     for placement in &placed {
         let mirrored = Placement {
             w: -placement.w,
+            prediction_w_positive: -placement.w > 0.0,
             ..*placement
         };
         // The forward transform of a w > 0 row reads RR through the LL
-        // plane conjugated; the mirrored row reads LL through the LL
-        // plane unconjugated: the norms are conjugates of each other.
+        // plane unconjugated; the mirrored row reads LL through the LL
+        // plane conjugated: the norms are conjugates of each other.
         let (positive, negative) = if placement.w > 0.0 {
             (placement, &mirrored)
         } else {
@@ -420,9 +481,8 @@ fn predictions_divide_by_the_kernel_sum_of_the_swapped_plane() {
             assert!((norm.norm() - 1.0).abs() < 5.0e-2, "centre norm {norm}");
         }
     }
-    // sumwt follows W·|N| and the data grid of a weight-one, unit sample
-    // equals the spread of the routed plane: pin the rule with the
-    // operator's own norm.
+    // `DataToGridImpl_p` pairs each input with its own cell for Stokes I,
+    // on both signs of w. sumwt follows W·|Σ taps| of that cell.
     let (values, weights) = samples(&placed, 2, &mut rng);
     let block = buffer(&placed, &values, &weights, 2);
     let (_, sumwt) = grid(&operator, &block, Mode::Data);
@@ -433,14 +493,13 @@ fn predictions_divide_by_the_kernel_sum_of_the_swapped_plane() {
             (0..2)
                 .map(|vpol| {
                     let weight = f64::from(weights[index * 2 + vpol] as f32);
-                    // The adjoint routes vpol through the direct (w > 0) or
-                    // conjugate (w ≤ 0) table: the plane the forward
-                    // transform of the mirrored row would use.
-                    let mirrored = Placement {
-                        w: -placement.w,
-                        ..*placement
-                    };
-                    weight * operator.prediction_norm(&mirrored, vpol).norm()
+                    let mut hold = CellHold::new();
+                    let taps = operator.cf().taps(placement.cf, &mut hold);
+                    let location =
+                        operator
+                            .geometry()
+                            .locate(placement.u, placement.v, taps.oversampling());
+                    weight * taps.norm(location, vpol as u8, placement.w > 0.0).norm()
                 })
                 .sum::<f64>()
         })
@@ -450,6 +509,208 @@ fn predictions_divide_by_the_kernel_sum_of_the_swapped_plane() {
         "{} vs {expected}",
         sumwt[0]
     );
+}
+
+/// #667: exercise the data operands as well as the cell map. PSF-only or
+/// equal-hand data cannot expose selection of the wrong input visibility.
+#[test]
+fn unequal_hands_follow_casa_in_both_directions_and_on_both_w_signs() {
+    let widen = |value: Complex32| Complex64::new(f64::from(value.re), f64::from(value.im));
+    let root = tempfile::tempdir().expect("cache directory");
+    AwCatalog::generate_native(root.path(), &request(false), false).expect("generate");
+    // This tiny aperture fixture can undersample away the EVLA squint.
+    // Give LL a distinct spatial profile so a hand swap cannot pass just
+    // because both cells happen to agree (the blind spot in #667).
+    for entry in std::fs::read_dir(root.path()).expect("cells") {
+        let path = entry.expect("entry").path();
+        let name = path.file_name().expect("name").to_string_lossy();
+        if name.starts_with("CFS_") && name.ends_with("_1.im") {
+            let mut image = casa_images::PagedImage::<Complex32>::open(&path).expect("cell");
+            let mut pixels = image.get().expect("pixels");
+            let width = pixels.shape()[0] as f32;
+            let height = pixels.shape()[1] as f32;
+            for (index, value) in pixels.indexed_iter_mut() {
+                let x = (index[0] as f32 - width / 2.0 - 1.0) / OVERSAMPLING as f32;
+                let y = (index[1] as f32 - height / 2.0) / OVERSAMPLING as f32;
+                *value += Complex32::new(0.05, 0.02) * (-0.5 * (x * x + y * y)).exp();
+            }
+            image.put_slice(&pixels, &[0, 0, 0, 0]).expect("write cell");
+            image.save().expect("save cell");
+        }
+    }
+    let values = [Complex32::new(2.0, -0.5), Complex32::new(-0.7, 1.3)];
+    for requested in [
+        vec![PolarizationCoordinate::StokesI],
+        vec![
+            PolarizationCoordinate::CircularRr,
+            PolarizationCoordinate::CircularLl,
+        ],
+    ] {
+        let pol = PolarizationRouting::compile(&RR_LL, &requested).expect("routing");
+        let pol_map = pol.pol_map().to_vec();
+        let catalog =
+            AwCatalog::open_casa(root.path(), indexing(false), &geometry(), &pol, usize::MAX)
+                .expect("open");
+        let operator = MeasurementOperator::new(
+            geometry(),
+            Basis::Constant,
+            pol,
+            Box::new(catalog),
+            GridPrecision::F64,
+        );
+        // Distinct model planes make a wrong forward grid-row selection
+        // observable; an off-centre component makes the cells distinguishable.
+        let model = ModelImages {
+            first_plane: 0,
+            planes: vec![ModelPlane {
+                images: (0..requested.len())
+                    .map(|p| {
+                        let mut image = Array2::zeros((IMAGE, IMAGE));
+                        image[(IMAGE / 2 + 5, IMAGE / 2 - 3)] = 1.0 + p as f32;
+                        image
+                    })
+                    .collect(),
+            }],
+        };
+        let prepared = operator
+            .prepare_model(&model, ModelPrescale::Unit)
+            .expect("model");
+        for (w, prediction_w) in [
+            (-700.0, -700.0),
+            (0.0, 0.0),
+            (700.0, 700.0),
+            (-700.0, 700.0),
+            (700.0, -700.0),
+        ] {
+            let placement = Placement {
+                u: 13.0,
+                v: -19.0,
+                w,
+                prediction_w_positive: prediction_w > 0.0,
+                phase: 0.0,
+                plane: 0,
+                spectral: 0.0,
+                cf: operator.cf().key(&context(17.0, 0), FREQUENCIES_HZ[0], w),
+                gradient: [0.0; 2],
+            };
+            let mut buffer = SampleBuffer::new(2);
+            buffer.push(placement, &values, &[1.0; 2]);
+            let mut hold = CellHold::new();
+            let TapLayout::Dense {
+                data,
+                support,
+                oversampling,
+                ..
+            } = operator.cf().taps(placement.cf, &mut hold)
+            else {
+                panic!("dense")
+            };
+            let location = operator
+                .geometry()
+                .locate(placement.u, placement.v, oversampling);
+            let [sx, sy] = support.map(usize::from);
+            let fine = usize::from(location.oy) * (usize::from(oversampling) + 1)
+                + usize::from(location.ox);
+            let tap = |m: usize, ix: usize, iy: usize| {
+                widen(data[(fine * 2 + m) * sx * sy + iy * sx + ix])
+            };
+            assert!(
+                (0..sy).any(|iy| (0..sx).any(|ix| (tap(0, ix, iy) - tap(1, ix, iy)).norm() > 1e-6)),
+                "the oracle needs distinguishable polarization cells"
+            );
+            let cell = |ix: usize, iy: usize| {
+                (location.y as usize + iy - sy / 2) * IMAGE + location.x as usize + ix - sx / 2
+            };
+            let mut expected_grid = vec![Complex64::default(); IMAGE * IMAGE * requested.len()];
+            let mut expected_sumwt = vec![0.0; requested.len()];
+            let mut expected_prediction = [Complex64::default(); 2];
+            // Direct transcription of AWVisResampler's outer-ipol loop:
+            // getConvFunc_p selects the cell, then muellerElement % 2
+            // selects the INPUT operand, not the output being filled.
+            for outer in 0..2 {
+                let gpol = usize::from(pol_map[outer].expect("mapped"));
+                let m = if w > 0.0 { outer } else { 1 - outer };
+                let mut norm = Complex64::default();
+                for iy in 0..sy {
+                    for ix in 0..sx {
+                        let t = tap(m, ix, iy);
+                        let t = if w > 0.0 { t.conj() } else { t };
+                        expected_grid[gpol * IMAGE * IMAGE + cell(ix, iy)] += widen(values[m]) * t;
+                        norm += t;
+                    }
+                }
+                expected_sumwt[gpol] += norm.norm();
+
+                let m = if prediction_w > 0.0 { 1 - outer } else { outer };
+                let input_grid = usize::from(pol_map[m].expect("mapped"));
+                let mut norm = Complex64::default();
+                for iy in 0..sy {
+                    for ix in 0..sx {
+                        let t = tap(m, ix, iy);
+                        let t = if prediction_w <= 0.0 { t.conj() } else { t };
+                        expected_prediction[outer] +=
+                            t * prepared.block::<f64>(0, input_grid, 0)[cell(ix, iy)];
+                        norm += t;
+                    }
+                }
+                expected_prediction[outer] /= norm;
+            }
+            let (actual, sumwt) = grid(&operator, &buffer, Mode::Data);
+            for (actual, expected) in actual.iter().zip(&expected_grid) {
+                assert!(
+                    (widen(*actual) - expected).norm() < 1e-6,
+                    "w {w}: grid {actual} vs {expected}"
+                );
+            }
+            for (actual, expected) in sumwt.iter().zip(expected_sumwt) {
+                assert!((actual - expected).abs() < 1e-10);
+            }
+            let mut predicted = [Complex32::default(); 2];
+            CpuBackend::new()
+                .apply(
+                    &buffer.block(),
+                    operator.cf(),
+                    Work::Predict {
+                        model: &prepared,
+                        out: &mut predicted,
+                    },
+                )
+                .expect("predict");
+            for (actual, expected) in predicted.into_iter().zip(expected_prediction) {
+                assert!(
+                    (widen(actual) - expected).norm() < 1e-6,
+                    "w {w}: prediction {actual} vs {expected}"
+                );
+            }
+            // A fused residual must predict using original-W parity and
+            // spread using rotated-W parity in the same dispatch.
+            let mut residual_buffer = SampleBuffer::new(2);
+            residual_buffer.push(
+                placement,
+                &[values[0] - predicted[0], values[1] - predicted[1]],
+                &[1.0; 2],
+            );
+            let (expected, _) = grid(&operator, &residual_buffer, Mode::Data);
+            let mut acc = operator.accumulator(PlaneRange::single(0), None, ModeSet::DATA);
+            CpuBackend::new()
+                .apply(
+                    &buffer.block(),
+                    operator.cf(),
+                    Work::ResidualGrid {
+                        model: &prepared,
+                        acc: &mut acc,
+                        residual_out: None,
+                    },
+                )
+                .expect("fused residual");
+            for (actual, expected) in <f64 as GridScalar>::cells(acc.storage())
+                .iter()
+                .zip(expected)
+            {
+                assert!((*actual - widen(expected)).norm() < 1e-6);
+            }
+        }
+    }
 }
 
 #[test]

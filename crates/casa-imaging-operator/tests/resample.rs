@@ -21,6 +21,7 @@ const STOKES_I: [PolarizationCoordinate; 1] = [PolarizationCoordinate::StokesI];
 
 fn context() -> RowContext {
     RowContext {
+        original_w_m: None,
         time_s: 0.0,
         antennas: [0, 1],
         antenna_types: [0, 0],

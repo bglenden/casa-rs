@@ -52,11 +52,14 @@ pub struct PassImages {
     /// `sumwt` of the PSF gridding per PSF-moment plane on an initial pass;
     /// empty otherwise. It normalises the PSF and weight planes.
     pub sum_weights: Vec<f64>,
-    /// `sumwt` of the data gridding per PSF-moment plane on an initial pass
-    /// (the PSF's beyond the data terms); empty otherwise. It normalises
-    /// the residual (CASA `getImage` divides each image by its own
-    /// gridding's `sumwt`), and equals `sum_weights` unless the set grids
-    /// its PSF with another kernel than its data (`AWProjectFT`).
+    /// The `.sumwt` CASA publishes per PSF-moment plane on an initial pass;
+    /// empty otherwise. It normalises the residual
+    /// (`SIImageStore::divideResidualByWeight`). The pass that assembles
+    /// the images chooses it as CASA does: the PSF gridding's sum, kept
+    /// through the data passes (`FTMachine::finalizeToSkyNew`), or for a
+    /// Taylor basis the data gridding's per data term
+    /// (`MultiTermFTNew::finalizeToSkyNew`); it equals `sum_weights`
+    /// otherwise.
     pub published_sum_weights: Vec<f64>,
     /// The gridded sensitivity (weight) planes of an initial pass with a
     /// kernel set that has weight taps (mosaic, AW), `[channel][pol]`;

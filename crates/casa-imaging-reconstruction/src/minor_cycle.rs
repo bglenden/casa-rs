@@ -2826,8 +2826,10 @@ impl<'a> TaylorSolveResponse<'a> {
     }
 
     /// The response of one polarization plane of a constant-basis state:
-    /// its dense sensitivity and the sum weights of its gridding (the PSF's
-    /// for the beam, the data's for the residual).
+    /// its dense sensitivity, the PSF gridding's sum that normalises the
+    /// beam, and the published `.sumwt` the residual divides by
+    /// (`SIImageStore::divideResidualByWeight`; the pass that assembled the
+    /// images chose which gridding's sum CASA publishes).
     fn for_plane(
         domain: crate::FinalNormalDomainState<'a>,
         polarization: usize,

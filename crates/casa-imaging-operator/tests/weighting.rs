@@ -26,6 +26,7 @@ fn placement(u: f64, v: f64) -> Placement {
         u,
         v,
         w: 0.0,
+        prediction_w_positive: false,
         phase: 0.0,
         plane: 0,
         spectral: 0.0,

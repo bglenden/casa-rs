@@ -23,7 +23,7 @@ struct Sample {
     uint model_plane;  // model-local plane
     uint table;        // kernel table
     float spectral;    // Taylor variable
-    uint flags;        // bit 0: w > 0
+    uint flags;        // bit 0: gridding w > 0; bit 1: prediction w > 0
     float2 gradient;   // pointing phase gradient, radians per cell
 };
 
@@ -67,7 +67,7 @@ static inline float2 cconj(float2 a) {
 // plus the sample's fine offset (off − s/2)/s in cells: the ramp is anchored at
 // the sample, as CASA reads the ramped kernel at ix·sampling + off.
 static inline float2 tap_value(Table t, device const float *rows, device const float2 *dense,
-                               Sample s, uint mueller, uint ix, uint iy) {
+                               Sample s, uint mueller, uint ix, uint iy, bool w_positive) {
     if (t.dense == 0) {
         uint support = t.support.x;
         float wx = rows[t.offset + uint(s.fine.x) * support + ix];
@@ -79,7 +79,7 @@ static inline float2 tap_value(Table t, device const float *rows, device const f
     ulong tile = (ulong(s.fine.y) * ulong(t.oversampling + 1) + ulong(s.fine.x))
                      * ulong(t.mueller_planes) + ulong(mueller);
     float2 tap = dense[ulong(t.offset) + tile * ulong(sx * sy) + ulong(iy * sx + ix)];
-    if ((s.flags & 1u) != 0u) {
+    if (w_positive) {
         tap = cconj(tap);
     }
     if (s.gradient.x != 0.0f || s.gradient.y != 0.0f) {
@@ -127,7 +127,7 @@ static inline void spread_values(Sample s, Table t, thread const float2 *values,
                 if (mueller < 0 || weights[index * p.npol + vpol] == 0.0f) {
                     continue;
                 }
-                float2 contribution = cmul(values[vpol], tap_value(t, rows, dense, s, uint(mueller), ix, iy));
+                float2 contribution = cmul(values[vpol], tap_value(t, rows, dense, s, uint(mueller), ix, iy, w_positive != 0u));
                 for (uint term = 0; term < p.term_count; ++term) {
                     float2 value = contribution * powers[term];
                     ulong block = ulong((s.plane * p.gpols + gpol) * p.terms + p.term_base + term);
@@ -152,7 +152,7 @@ static inline void gather(Sample s, Table t, device const float2 *inverse_norms,
     float2 sums[MAX_POLS] = {float2(0.0f), float2(0.0f), float2(0.0f), float2(0.0f)};
     uint sx = t.support.x;
     uint taps = sx * support_y(t);
-    uint w_positive = s.flags & 1u;
+    uint w_positive = (s.flags >> 1u) & 1u;
     ulong grid_cells = ulong(p.grid_shape.x) * ulong(p.grid_shape.y);
     for (uint k = lane; k < taps; k += width) {
         uint ix = k % sx;
@@ -165,7 +165,7 @@ static inline void gather(Sample s, Table t, device const float2 *inverse_norms,
                 if (mueller < 0) {
                     continue;
                 }
-                float2 tap = cconj(tap_value(t, rows, dense, s, uint(mueller), ix, iy));
+                float2 tap = cconj(tap_value(t, rows, dense, s, uint(mueller), ix, iy, w_positive != 0u));
                 for (uint term = 0; term < p.term_count; ++term) {
                     ulong block = ulong((s.model_plane * p.gpols + gpol) * p.model_terms + term);
                     sums[vpol] += cmul(tap, model[block * grid_cells + cell]) * powers[term];
