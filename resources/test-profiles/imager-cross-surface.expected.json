@@ -40,6 +40,7 @@
       "measurement_set": "VLASS.multi-spw.ms",
       "min_psf_fraction": 0.05,
       "minor_cycle_length": 2000,
+      "mosaic_gridder": false,
       "mosaic_pb_limit": 0.0001,
       "multiscale_scales": [0.0, 5.0, 12.0],
       "niter": 7,

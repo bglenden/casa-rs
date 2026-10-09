@@ -67,9 +67,12 @@
  "native_package_workspace_dependencies": {
   "casa-imaging-model": [],
   "casa-imaging-operator": [
+   "casa-coordinates",
    "casa-fft",
+   "casa-images",
    "casa-imaging-model",
-   "casa-numerics"
+   "casa-numerics",
+   "casa-types"
   ],
   "casa-imaging-deconvolution": [
    "casa-fft",
@@ -195,11 +198,8 @@
    "regex": "\\benv::var(?:_os)?\\s*\\(|\\bstd::env\\b",
    "grandfathered": [
     "crates/casa-imaging-products/src/taylor.rs",
-    "crates/casa-imaging-reconstruction/src/aw_projection.rs",
     "crates/casa-imaging-reconstruction/src/minor_cycle/clark.rs",
     "crates/casa-imaging-reconstruction/src/minor_cycle/deep_clark_tests.rs",
-    "crates/casa-imaging-runtime/src/prepared_artifact/filesystem.rs",
-    "crates/casa-imaging-runtime/src/prepared_artifact/transaction/occupancy_probe.rs",
     "crates/casa-imaging-runtime/src/receipt.rs",
     "crates/casa-imaging-runtime/src/resource_authority.rs"
    ]
@@ -223,14 +223,9 @@
    "regex": "\\beprintln!\\s*\\(",
    "grandfathered": [
     "crates/casa-imaging-application/src/casa_product_sink.rs",
-    "crates/casa-imaging-application/src/prepared_aw_phase.rs",
-    "crates/casa-imaging-application/src/prepared_aw_phase/native.rs",
     "crates/casa-imaging-products/src/taylor.rs",
-    "crates/casa-imaging-reconstruction/src/aw_projection.rs",
     "crates/casa-imaging-reconstruction/src/minor_cycle/clark.rs",
     "crates/casa-imaging-reconstruction/src/minor_cycle/deep_clark_tests.rs",
-    "crates/casa-imaging-runtime/src/prepared_artifact/reader.rs",
-    "crates/casa-imaging-runtime/src/prepared_artifact/transaction/occupancy_probe.rs",
     "crates/casa-imaging-runtime/src/receipt.rs",
     "crates/casa-imaging-runtime/src/resource_authority.rs"
    ]
@@ -254,19 +249,13 @@
    "regex": "\\bsha2::|\\bSha256\\b|\\bcrc32c?::|\\bcrc::",
    "grandfathered": [
     "crates/casa-imaging-application/src/continuum_request.rs",
-    "crates/casa-imaging-application/src/prepared_aw_phase.rs",
     "crates/casa-imaging-model/src/compiled_problem.rs",
     "crates/casa-imaging-model/src/measurement_equation.rs",
     "crates/casa-imaging-model/src/native_aw.rs",
-    "crates/casa-imaging-model/src/prepared_artifact.rs",
     "crates/casa-imaging-model/src/visibility_transform.rs",
     "crates/casa-imaging-reconstruction/src/identity.rs",
     "crates/casa-imaging-runtime/src/execution/tests.rs",
     "crates/casa-imaging-runtime/src/execution_bindings.rs",
-    "crates/casa-imaging-runtime/src/prepared_artifact.rs",
-    "crates/casa-imaging-runtime/src/prepared_artifact/native.rs",
-    "crates/casa-imaging-runtime/src/prepared_artifact/reader.rs",
-    "crates/casa-imaging-runtime/src/prepared_artifact/transaction.rs",
     "crates/casa-imaging-runtime/src/product_publication.rs",
     "crates/casa-imaging-runtime/src/receipt.rs",
     "crates/casa-imaging-runtime/src/resource_authority.rs",

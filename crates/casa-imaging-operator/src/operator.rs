@@ -10,7 +10,7 @@ use crate::accumulator::{
     PlaneRange, Tile,
 };
 use crate::backend::PreparedModelGrids;
-use crate::convolution::ConvolutionFunctionSet;
+use crate::convolution::{CellHold, ConvolutionFunctionSet};
 use crate::error::OperatorError;
 use crate::fft::PlaneFft;
 use crate::geometry::GridGeometry;
@@ -220,6 +220,11 @@ impl MeasurementOperator {
             ny,
             "correction y axis must span the grid"
         );
+        assert_eq!(
+            (correction.model_x().len(), correction.model_y().len()),
+            (nx, ny),
+            "model-side correction must span the grid"
+        );
         Self {
             geometry,
             basis,
@@ -261,13 +266,16 @@ impl MeasurementOperator {
 
     /// The kernel norm a prediction of `placement`'s visibility
     /// polarization `vpol` is divided by: the sum, over the Mueller planes
-    /// the forward table routes to `vpol`, of the w-conjugated taps at the
-    /// sample's fine offset, without the pointing ramp. `sumwt` accumulates
-    /// `W · |norm|` on the adjoint side, so the operator pair is exactly
-    /// adjoint once each sample's data are divided by the conjugate norm.
+    /// the forward table routes to `vpol`, of the taps at the sample's fine
+    /// offset conjugated for `w ≤ 0` (`accumulateFromGrid.inc` sums the
+    /// taps it multiplies the grid by), without the pointing ramp. `sumwt`
+    /// accumulates `W · |norm|` on the adjoint side, so the operator pair
+    /// is exactly adjoint once each sample's data are divided by the
+    /// conjugate norm.
     #[must_use]
     pub fn prediction_norm(&self, placement: &Placement, vpol: usize) -> Complex64 {
-        let taps = self.cf.taps(placement.cf);
+        let mut hold = CellHold::new();
+        let taps = self.cf.taps(placement.cf, &mut hold);
         let location = self
             .geometry
             .locate(placement.u, placement.v, taps.oversampling());
@@ -423,7 +431,7 @@ impl MeasurementOperator {
                             if let Some(factor) = factor {
                                 value *= f64::from(factor[(y, x)]);
                             }
-                            value *= correction.at(ix + x, iy + y);
+                            value *= correction.model_at(ix + x, iy + y);
                             grid[(iy + y) * nx + ix + x] =
                                 Complex::new(T::from_f64(value.re), T::from_f64(value.im));
                         }
@@ -476,7 +484,8 @@ impl MeasurementOperator {
                     for (gpol, image) in gpol_images.iter_mut().enumerate() {
                         work.copy_from_slice(acc.block::<T>(plane_local, gpol, term));
                         fft.transform(&mut work, true)?;
-                        *image = self.cropped_image(&work);
+                        let correct = mode != Mode::Weight || self.cf.corrects_weight_image();
+                        *image = self.cropped_image(&work, correct);
                     }
                     for pol in 0..pols {
                         images[slot].push(self.requested_image(pol, &gpol_images, mode));
@@ -512,9 +521,9 @@ impl MeasurementOperator {
         matches!(self.basis, Basis::ChannelLocal { .. })
     }
 
-    /// Correction and crop of one transformed grid plane, `[y][x]` over the
-    /// image extent.
-    fn cropped_image<T: GridScalar>(&self, grid: &[Complex<T>]) -> Vec<Complex64> {
+    /// Correction (when `correct`) and crop of one transformed grid plane,
+    /// `[y][x]` over the image extent.
+    fn cropped_image<T: GridScalar>(&self, grid: &[Complex<T>], correct: bool) -> Vec<Complex64> {
         let [nx, _] = self.geometry.grid_shape();
         let [ix, iy] = self.geometry.image_origin();
         let [width, height] = self.geometry.image().shape;
@@ -523,7 +532,11 @@ impl MeasurementOperator {
         for y in 0..height {
             for x in 0..width {
                 let cell = grid[(iy + y) * nx + ix + x];
-                let factor = correction.at(ix + x, iy + y);
+                let factor = if correct {
+                    correction.at(ix + x, iy + y)
+                } else {
+                    1.0
+                };
                 image.push(Complex64::new(
                     cell.re.into_f64() * factor,
                     cell.im.into_f64() * factor,

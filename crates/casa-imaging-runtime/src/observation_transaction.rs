@@ -70,25 +70,6 @@ impl ObservationTransactionWork {
         }
     }
 
-    /// Name reconstruction checkpoints whose scientific input is an already
-    /// sealed runtime artifact rather than the selected observation.
-    #[must_use]
-    pub(crate) const fn new_source_free_reconstruction(
-        initial_consistency_check: WorkNodeId,
-        post_replay_reconciliation: WorkNodeId,
-        commit: WorkNodeId,
-    ) -> Self {
-        Self {
-            publication_scope: ObservationTransactionPublicationScope::ReconstructionOnly,
-            source_free_reconstruction: true,
-            initial_consistency_check: Some(initial_consistency_check),
-            observation_reads: BTreeSet::new(),
-            post_replay_reconciliation: Some(post_replay_reconciliation),
-            product_staging: BTreeSet::new(),
-            commit,
-        }
-    }
-
     /// Name checkpoints for publication with independent atomic image replacements.
     #[must_use]
     pub const fn new_product_publication(

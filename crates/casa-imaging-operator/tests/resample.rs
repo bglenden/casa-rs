@@ -9,10 +9,10 @@ use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 use casa_imaging_operator::{
     Basis, DensityCellRule, DensityGridShape, DensityUv, GridGeometry, GridPadding, GridPrecision,
     ImageExtent, MeasurementOperator, NativeRow, OperatorError, PolarizationRouting, RowContext,
-    SampleBuffer, SpectralAxis, SpectralKernel, SpectralResampler, Spheroidal, WeightingGeneration,
-    build_density_grid,
+    SampleBuffer, SpectralAxis, SpectralKernel, SpectralResampler, Spheroidal, WPlaneCount,
+    WPlanes, WeightingGeneration, build_density_grid,
 };
-use common::operator;
+use common::{geometry, operator};
 use num_complex::Complex32;
 
 const C: f64 = 299_792_458.0;
@@ -23,9 +23,10 @@ fn context() -> RowContext {
     RowContext {
         time_s: 0.0,
         antennas: [0, 1],
+        antenna_types: [0, 0],
         parallactic_angle_rad: [0.0, 0.0],
         field: 0,
-        pointing_offset_rad: [0.0, 0.0],
+        spectral_window: 0,
     }
 }
 
@@ -55,6 +56,7 @@ fn planes_of(
     let row = NativeRow {
         uvw_m: [10.0, 10.0, 0.0],
         phase_shift_m: 0.0,
+        pointing_offset_rad: [0.0; 2],
         frequencies_hz: &frequencies,
         values: &values,
         weights: &weights,
@@ -104,6 +106,7 @@ fn direct_sampling_places_every_unflagged_channel_on_plane_zero() {
     let row = NativeRow {
         uvw_m: [300.0, -150.0, 20.0],
         phase_shift_m: 0.25,
+        pointing_offset_rad: [0.0; 2],
         frequencies_hz: &frequencies,
         values: &values,
         weights: &weights,
@@ -168,6 +171,7 @@ fn samples_whose_support_leaves_the_grid_are_dropped() {
         let row = NativeRow {
             uvw_m: [u, 0.0, 0.0],
             phase_shift_m: 0.0,
+            pointing_offset_rad: [0.0; 2],
             frequencies_hz: &frequencies,
             values: &values,
             weights: &weights,
@@ -198,6 +202,7 @@ fn taylor_basis_sets_the_spectral_variable() {
     let row = NativeRow {
         uvw_m: [10.0, 10.0, 0.0],
         phase_shift_m: 0.0,
+        pointing_offset_rad: [0.0; 2],
         frequencies_hz: &frequencies,
         values: &values,
         weights: &weights,
@@ -247,6 +252,7 @@ fn linear_mapping_interpolates_values_and_channel_weights_and_ors_flags() {
     let row = NativeRow {
         uvw_m: [10.0, 0.0, 0.0],
         phase_shift_m: 0.0,
+        pointing_offset_rad: [0.0; 2],
         frequencies_hz: &frequencies,
         values: &values,
         weights: &weights,
@@ -393,6 +399,7 @@ fn cube_briggs_weights_come_from_the_nearest_native_channel_on_the_padded_axis()
         NativeRow {
             uvw_m: [10.0, 0.0, 0.0],
             phase_shift_m: 0.0,
+            pointing_offset_rad: [0.0; 2],
             frequencies_hz,
             values,
             weights,
@@ -499,6 +506,7 @@ fn an_end_point_sample_takes_its_own_channel_value() {
     let row = NativeRow {
         uvw_m: [10.0, 10.0, 0.0],
         phase_shift_m: 0.0,
+        pointing_offset_rad: [0.0; 2],
         frequencies_hz: &frequencies,
         values: &values,
         weights: &[1.0; 6],
@@ -578,6 +586,7 @@ fn density_pass_carries_the_unpolarized_weight_without_a_support_test() {
     let row = NativeRow {
         uvw_m: [far, 0.0, 0.0],
         phase_shift_m: 0.0,
+        pointing_offset_rad: [0.0; 2],
         frequencies_hz: &frequencies,
         values: &values,
         weights: &weights,
@@ -621,6 +630,7 @@ fn cube_density_samples_interpolate_native_weights_linearly() {
     let row = NativeRow {
         uvw_m: [10.0, 10.0, 0.0],
         phase_shift_m: 0.0,
+        pointing_offset_rad: [0.0; 2],
         frequencies_hz: &frequencies,
         values: &[Complex32::new(1.0, 0.0); 4],
         weights: &[2.0, 2.0, 6.0, 6.0],
@@ -659,6 +669,7 @@ fn autocorrelations_reach_the_density_but_not_the_grid() {
     let row = NativeRow {
         uvw_m: [0.0; 3],
         phase_shift_m: 0.0,
+        pointing_offset_rad: [0.0; 2],
         frequencies_hz: &frequencies,
         values: &[Complex32::new(1.0, 0.0); 2],
         weights: &[1.0, 1.0],
@@ -729,6 +740,7 @@ fn standard_density_cells_use_casa_single_precision_coordinates() {
     let row = NativeRow {
         uvw_m,
         phase_shift_m: 0.0,
+        pointing_offset_rad: [0.0; 2],
         frequencies_hz: &frequencies,
         values: &values,
         weights: &weights,
@@ -760,4 +772,45 @@ fn standard_density_cells_use_casa_single_precision_coordinates() {
         .expect("place");
     assert_eq!(placed.len(), 1);
     assert_eq!(placed.block().weights_of(0), &[1.0, 1.0]);
+}
+
+#[test]
+fn a_row_past_the_last_w_plane_is_not_placed() {
+    // `wprojgrid.f`: `swp` rounds the plane of the unclamped w and `owp`
+    // drops the row, so it reaches no grid, PSF or sumwt; the prediction
+    // shares the placement. Plane 2 of four is kept, plane 4 is not.
+    let polarization = PolarizationRouting::compile(&XX_YY, &STOKES_I).expect("routing");
+    let planes = WPlanes::new(&geometry(), &polarization, WPlaneCount::Fixed(4)).expect("planes");
+    let w_scale = planes.w_scale();
+    let operator = MeasurementOperator::new(
+        geometry(),
+        Basis::Constant,
+        polarization,
+        Box::new(planes),
+        GridPrecision::F64,
+    );
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
+    let frequencies = [1.0e9];
+    let wavelength_m = C / frequencies[0];
+    let values = [Complex32::new(1.0, 0.0); 2];
+    let weights = [1.0_f32; 2];
+    let flags = [false; 2];
+    for (root, placed) in [(2.0_f64, 1), (4.0, 0)] {
+        let row = NativeRow {
+            uvw_m: [10.0, 10.0, root * root / w_scale * wavelength_m],
+            phase_shift_m: 0.0,
+            pointing_offset_rad: [0.0; 2],
+            frequencies_hz: &frequencies,
+            values: &values,
+            weights: &weights,
+            flags: &flags,
+            row_flag: false,
+            context: context(),
+        };
+        let mut out = SampleBuffer::new(2);
+        resampler
+            .place(&operator, &natural(), &row, &mut out)
+            .expect("place");
+        assert_eq!(out.len(), placed, "root {root}");
+    }
 }

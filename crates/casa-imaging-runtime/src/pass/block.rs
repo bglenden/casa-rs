@@ -21,6 +21,10 @@ pub struct DomainProjection {
     pub uvw_m: [f64; 3],
     /// Path-length shift to the domain's phase centre in metres.
     pub phase_shift_m: f64,
+    /// Offset of the row's pointing centre from the domain's reference
+    /// direction as direction cosines `[Δl, Δm]` along the image axes, in
+    /// radians ([`NativeRow::pointing_offset_rad`]).
+    pub pointing_offset_rad: [f64; 2],
 }
 
 /// Values of one native row shared by every image domain.
@@ -167,6 +171,7 @@ impl NativeBlock {
         NativeRow {
             uvw_m: projection.uvw_m,
             phase_shift_m: projection.phase_shift_m,
+            pointing_offset_rad: projection.pointing_offset_rad,
             frequencies_hz: &self.frequencies_hz[index * channels..(index + 1) * channels],
             values: &self.values[index * cells..(index + 1) * cells],
             weights: &self.weights[index * cells..(index + 1) * cells],

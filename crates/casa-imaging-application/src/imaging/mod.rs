@@ -32,6 +32,9 @@ pub(crate) enum ImagingError {
     /// The measurement operator rejected its inputs.
     #[error(transparent)]
     Operator(#[from] OperatorError),
+    /// The AW convolution-function catalog could not be opened or generated.
+    #[error(transparent)]
+    KernelSet(#[from] casa_imaging_operator::AwCatalogError),
     /// A major-cycle or density pass failed.
     #[error(transparent)]
     Pass(#[from] PassError),

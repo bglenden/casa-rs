@@ -10,12 +10,6 @@
 use casa_imaging_model::ModelSupport;
 pub use casa_imaging_model::model_support_identity;
 
-mod aw_generation;
-// No operator drives the AW, mosaic and primary-beam gridding loops; they are
-// kept for the CASA-pinned kernel and beam science on which IF-3 (#652)
-// builds `AwCatalog` and `MosaicPb`.
-#[expect(dead_code, reason = "IF-3 (#652) replaces the AW gridding loops")]
-mod aw_projection;
 mod block_normal;
 mod continuum_transform;
 mod identity;
@@ -28,14 +22,6 @@ mod minor_cycle;
 mod model_lifecycle;
 mod model_reprojection;
 mod model_storage;
-#[expect(dead_code, reason = "IF-3 (#652) builds MosaicPb on this beam science")]
-mod mosaic;
-// The beam models' own unit tests use them, so they are dead only outside tests.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "IF-3 (#652) builds MosaicPb on these beam models")
-)]
-mod primary_beam;
 mod psf_beam;
 mod reconstruction_cycle;
 mod spectral_operator;
@@ -46,15 +32,6 @@ pub use model_storage::{
     ModelSampleStorage, ModelSampleUpdate, ModelStorageFactory, ModelStoragePlan,
 };
 
-pub use aw_generation::{
-    EvlaApertureGrid, EvlaApertureModel, EvlaAwWorkspace, NativeAwGenerationError, NativeAwPair,
-    NativeAwPlane,
-};
-pub use aw_projection::{
-    AwConvolutionCell, AwConvolutionKernel, AwKernelLayout, AwOperatorDiagnostics, AwOperatorError,
-    AwPreparedCatalog, AwPreparedCellDisposition, AwPreparedCellLease, AwPreparedCellMetadata,
-    AwPreparedCellProvider, AwProjectionOperator, AwVisibilitySample, PreparedAwProjection,
-};
 pub use image_response::{ImageResponseError, MinorCycleImageResponse, MosaicSensitivity};
 pub use spectral_operator::{
     PassImages, PassNormalState, SpectralChannelValidity, SpectralOperatorError,
@@ -72,7 +49,6 @@ pub mod runtime_adapter {
         ReconstructionPlaneWork, ReconstructionPlaneWorkspace,
     };
     pub use crate::spectral_operator::CompleteDataOwnerCompletion;
-    pub use crate::spectral_operator::PreparedFft;
     pub use crate::spectral_operator::normal_storage::{
         CompleteDataNormalState, CompleteDataNormalWindow, NormalArrayStorage,
         NormalStorageFactory, NormalStoragePlan,
@@ -101,7 +77,7 @@ pub use mask::{
     AutoMultithreshControls, AutoMultithreshEvidence, ImageDomainMaskMaterialization,
     ImageDomainReconstructionMaskPlans, ImageDomainReconstructionMasks, MaskBox, MaskError,
     ReconstructionMask, ReconstructionMaskGenerationId, ReconstructionMaskPlan,
-    ReconstructionMaskSet, auto_multithresh, reproject_mask_support,
+    ReconstructionMaskSet, auto_multithresh, direction_world_to_pixel, reproject_mask_support,
 };
 pub use minor_cycle::{
     ClarkApproximation, ComponentDivergence, ImageDomainMinorCycleEvidence, MinorCycleComponent,

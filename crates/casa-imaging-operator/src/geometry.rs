@@ -190,19 +190,41 @@ impl GridGeometry {
             && location.y - hy >= 0
             && location.y + hy < self.grid_shape[1] as i64
     }
+
+    /// The pointing phase gradient in radians per grid cell `[g_x, g_y]`
+    /// of a pointing `offset_rad` (direction cosines `[Δl, Δm]` along the
+    /// image axes) from the image centre: CASA's `pixFieldDir` per
+    /// convolution-function pixel (`SimplePBConvFunc::findConvFunction`,
+    /// `PointingOffsets::gradPerPixel`) times the oversampling, with the
+    /// pointing's pixel offset `Δl/Δx` and the grid extent `n`:
+    /// `g = −2π · (Δl/Δx) / n`.
+    #[must_use]
+    pub fn pointing_gradient(&self, offset_rad: [f64; 2]) -> [f32; 2] {
+        let gradient = |axis: usize| {
+            let pixels = offset_rad[axis] / self.image.increment_rad[axis];
+            (-std::f64::consts::TAU * pixels / self.grid_shape[axis] as f64) as f32
+        };
+        [gradient(0), gradient(1)]
+    }
 }
 
 /// CASA's padded grid length: `floor(factor · n − 0.5)`, at least `n`, even,
 /// and composed only of the primes 2, 3 and 5.
 fn casa_composite_padded_len(image_len: usize, factor: f64) -> usize {
-    let mut padded = ((factor * image_len as f64 - 0.5).floor() as usize).max(image_len);
-    if !padded.is_multiple_of(2) {
-        padded += 1;
+    next_larger_even_composite(((factor * image_len as f64 - 0.5).floor() as usize).max(image_len))
+}
+
+/// casacore `CompositeNumber::nextLargerEven`: the smallest even number
+/// at least `n` whose prime factors are 2, 3 and 5.
+pub(crate) fn next_larger_even_composite(n: usize) -> usize {
+    let mut value = n.max(2);
+    if !value.is_multiple_of(2) {
+        value += 1;
     }
-    while !is_casa_composite_len(padded) {
-        padded += 2;
+    while !is_casa_composite_len(value) {
+        value += 2;
     }
-    padded
+    value
 }
 
 fn is_casa_composite_len(mut value: usize) -> bool {

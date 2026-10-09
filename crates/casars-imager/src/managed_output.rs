@@ -297,7 +297,8 @@ fn managed_gridder_from_config(config: &CliConfig) -> &'static str {
         "wproject"
     } else if config.facets > 1 {
         "widefield"
-    } else if config.use_pointing
+    } else if config.mosaic_gridder
+        || config.use_pointing
         || config
             .field_ids
             .as_ref()
@@ -318,7 +319,8 @@ fn managed_gridder_from_request(
         "wproject"
     } else if request.facets > 1 {
         "widefield"
-    } else if request.use_pointing
+    } else if request.mosaic_gridder
+        || request.use_pointing
         || request
             .field_ids
             .as_ref()
@@ -395,6 +397,7 @@ mod tests {
             weighting: WeightingMode::Natural,
             per_channel_weight_density: true,
             use_pointing: false,
+            mosaic_gridder: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::Common,
             deconvolver: Deconvolver::Mtmfs,
@@ -577,6 +580,7 @@ mod tests {
                 weighting: ImagerWeighting::Briggs { robust: -0.25 },
                 per_channel_weight_density: Some(true),
                 use_pointing: true,
+                mosaic_gridder: false,
                 uv_taper: None,
                 restoring_beam_mode: ImagerRestoringBeamMode::PerPlane,
                 deconvolver: ImagerDeconvolver::Clark,

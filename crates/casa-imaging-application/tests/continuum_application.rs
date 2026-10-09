@@ -6,15 +6,14 @@ use std::{
 };
 
 use casa_coordinates::{
-    CoordinateModel, CoordinateSystem, DirectionCoordinate, LinearCoordinate, Projection,
-    ProjectionType, SpectralCoordinate, StokesCoordinate, StokesType,
+    CoordinateModel, CoordinateSystem, DirectionCoordinate, Projection, ProjectionType, StokesType,
 };
 use casa_images::PagedImage;
 use casa_imaging_application::{
-    ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumAwProjection, ContinuumBeamPolicy,
-    ContinuumImagingRequest, ContinuumMask, ContinuumMaskBox, ContinuumStopReason,
-    ContinuumWeighting, SpectralImagingMode, TaskRequirement, VisibilityContinuumSubtraction,
-    execute_continuum, resource_policy_for_task_requirements,
+    ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
+    ContinuumMask, ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting, SpectralImagingMode,
+    TaskRequirement, VisibilityContinuumSubtraction, execute_continuum,
+    resource_policy_for_task_requirements,
 };
 use casa_imaging_model::{
     ImageDomainRole, ProductBeamRule, ProductRole, ProductTerm, ProductUnit, ProductValidityRule,

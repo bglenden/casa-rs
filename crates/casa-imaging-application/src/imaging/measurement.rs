@@ -3,23 +3,28 @@
 //! compiled problem: plan section 5.3 projected from `CompiledProblem`.
 
 use casa_imaging_model::{
-    CompiledImageDomain, CompiledProblem, CorrelationType, ReconstructionBasis, SpectralKernel,
-    SpectralWcs, WeightDensityScope,
+    AntennaResponseClass, CompiledImageDomain, CompiledProblem, CorrelationType, InstrumentModel,
+    ReconstructionBasis, SpectralKernel, SpectralWcs, WeightDensityScope,
 };
 use casa_imaging_operator::{
-    Basis, DensityCellRule, DensityGridShape, GridGeometry, GridPadding, GridPrecision,
-    ImageExtent, MeasurementOperator, PolarizationRouting, SpectralAxis, SpectralResampler,
-    Spheroidal,
+    AiryDish, AwCatalog, Basis, ConvolutionFunctionSet, DensityCellRule, DensityGridShape,
+    GridGeometry, GridPadding, GridPrecision, ImageExtent, MeasurementOperator, MosaicPb,
+    MosaicWindow, PolarizationRouting, SpectralAxis, SpectralResampler, Spheroidal, WPlaneCount,
+    WPlanes,
 };
 use casa_imaging_runtime::pass::BackendChoice;
 
 use super::ImagingError;
+use crate::AwCatalogDeployment;
 
 /// The operator of one image domain and the resampler that places rows on
 /// its planes.
 pub(crate) struct DomainOperator {
     pub(crate) operator: MeasurementOperator,
     pub(crate) resampler: SpectralResampler,
+    /// Whether the kernel set grids a sensitivity (weight) image
+    /// (`ConvolutionFunctionSet::weight_taps`): mosaic and AW.
+    pub(crate) weight_image: bool,
 }
 
 /// Correlation types every block delivers, in block order: the first
@@ -98,32 +103,193 @@ pub(crate) const fn precision(basis: Basis, backend: BackendChoice) -> GridPreci
     }
 }
 
-/// The operator of `domain` for the standard kernel set, in the precision
-/// `backend` grids at.
+/// Which kernel set the compiled problem's measurement equation names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum KernelSetKind {
+    /// The standard spheroidal set (`GridFT`).
+    Standard,
+    /// W-projection planes (`WProjectFT`).
+    WPlanes,
+    /// The heterogeneous-array mosaic beams (`MosaicFT` with
+    /// `HetArrayConvFunc`).
+    Mosaic,
+    /// The AW catalog (`AWProjectFT`).
+    Aw,
+}
+
+fn kernel_set_kind(problem: &CompiledProblem) -> KernelSetKind {
+    let equation = problem.science().measurement_equation();
+    if equation.aw_projection().is_some() {
+        KernelSetKind::Aw
+    } else if equation.w_projection().is_some() {
+        KernelSetKind::WPlanes
+    } else if problem.science().instrument_model()
+        == Some(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1)
+    {
+        KernelSetKind::Mosaic
+    } else {
+        KernelSetKind::Standard
+    }
+}
+
+/// The operator of `domain` with the kernel set the problem names: the
+/// standard spheroidal set, W-projection planes sized by the W contract,
+/// the mosaic primary beams of the selected windows, or the AW catalog of
+/// `aw_catalog`, in the precision `backend` grids at. The mosaic set takes
+/// one dish per selected aperture class in `dish_classes`
+/// (`HetArrayConvFunc::findAntennaSizes`), the order the rows' antenna
+/// types index. Mosaic and AW grid without padding (CASA `MosaicFT`,
+/// `AWProjectFT`); the others on CASA's composite-padded grid. The Metal
+/// backend grids the standard set until its W, mosaic and AW rows land at
+/// gate R2 (#653).
 pub(crate) fn domain_operator(
     problem: &CompiledProblem,
     domain: &CompiledImageDomain,
     correlations: &[CorrelationType],
     backend: BackendChoice,
+    aw_catalog: Option<&AwCatalogDeployment>,
+    dish_classes: &[AntennaResponseClass],
 ) -> Result<DomainOperator, ImagingError> {
-    let geometry = GridGeometry::new(image_extent(domain)?, GridPadding::CasaComposite)?;
+    let kind = kernel_set_kind(problem);
+    if backend == BackendChoice::Metal && kind != KernelSetKind::Standard {
+        return Err(ImagingError::Unsupported {
+            reason: "the Metal backend grids the standard kernel set; W, mosaic and AW wait for R2",
+        });
+    }
+    let padding = match kind {
+        KernelSetKind::Standard | KernelSetKind::WPlanes => GridPadding::CasaComposite,
+        KernelSetKind::Mosaic | KernelSetKind::Aw => GridPadding::None,
+    };
+    let geometry = GridGeometry::new(image_extent(domain)?, padding)?;
     let polarization = PolarizationRouting::compile(
         correlations,
         problem.reconstruction().polarization().coordinates(),
     )?;
     let basis = basis(problem)?;
+    if matches!(basis, Basis::ChannelLocal { .. })
+        && matches!(kind, KernelSetKind::Mosaic | KernelSetKind::Aw)
+    {
+        // The channel-local normal state keeps a scalar sumwt per plane;
+        // the dense sensitivity these sets grid has no plane to live in
+        // until the cube tickets.
+        return Err(ImagingError::Unsupported {
+            reason: "cube mosaic and A-projection imaging wait for the cube tickets' per-plane sensitivity",
+        });
+    }
     let resampler = resampler(problem, basis)?;
-    let cf = Spheroidal::new(&geometry, &polarization);
+    let cf: Box<dyn ConvolutionFunctionSet> = match kind {
+        KernelSetKind::Standard => Box::new(Spheroidal::new(&geometry, &polarization)),
+        KernelSetKind::WPlanes => {
+            let contract = problem
+                .science()
+                .measurement_equation()
+                .w_projection()
+                .expect("the kind names a W contract");
+            let count = match (contract.planes(), contract.statistics()) {
+                (Some(planes), _) => WPlaneCount::Fixed(planes.get() as u32),
+                (None, Some(statistics)) => WPlaneCount::Auto {
+                    min_w: statistics.minimum_abs_w_lambda(),
+                    max_w: contract.maximum_abs_w_lambda(),
+                    rms_w: statistics.rms_w_lambda(),
+                },
+                (None, None) => {
+                    return Err(ImagingError::Unsupported {
+                        reason: "an automatic W-plane count needs the selection's w statistics",
+                    });
+                }
+            };
+            Box::new(WPlanes::new(&geometry, &polarization, count)?)
+        }
+        KernelSetKind::Mosaic => {
+            if dish_classes.is_empty() {
+                return Err(ImagingError::Unsupported {
+                    reason: "the mosaic set needs ALMA or ACA dishes in the selection",
+                });
+            }
+            let dishes = dish_classes
+                .iter()
+                .map(|class| {
+                    AiryDish::casa_alma(
+                        match class {
+                            AntennaResponseClass::CasaAlma12m => 12.0,
+                            AntennaResponseClass::CasaAca7m => 7.0,
+                        },
+                        &geometry,
+                    )
+                })
+                .collect::<Vec<_>>();
+            Box::new(MosaicPb::new(
+                &geometry,
+                &polarization,
+                reference_frequency_hz(problem)?,
+                &dishes,
+                &mosaic_windows(problem)?,
+            )?)
+        }
+        KernelSetKind::Aw => {
+            let deployment = aw_catalog.ok_or(ImagingError::Unsupported {
+                reason: "an A-projection run needs its convolution-function catalog",
+            })?;
+            Box::new(AwCatalog::open_casa(
+                &deployment.root,
+                deployment.indexing,
+                &geometry,
+                &polarization,
+                deployment.resident_bytes,
+            )?)
+        }
+    };
     Ok(DomainOperator {
         operator: MeasurementOperator::new(
             geometry,
             basis,
             polarization,
-            Box::new(cf),
+            cf,
             precision(basis, backend),
         ),
         resampler,
+        weight_image: matches!(kind, KernelSetKind::Mosaic | KernelSetKind::Aw),
     })
+}
+
+/// The selected spectral windows as the mosaic set keys them: every
+/// channel of the window, its first channel width and the selected
+/// channels' frequencies (`HetArrayConvFunc` beams per window).
+fn mosaic_windows(problem: &CompiledProblem) -> Result<Vec<MosaicWindow>, ImagingError> {
+    let mut windows = Vec::new();
+    for source in problem.selected_observation().read_set().sources() {
+        for window in source.selection().spectral_windows() {
+            if windows
+                .iter()
+                .any(|known: &MosaicWindow| known.spectral_window == window.spectral_window_id())
+            {
+                continue;
+            }
+            let catalog = window
+                .coordinate_catalog()
+                .ok_or(ImagingError::Unsupported {
+                    reason: "the mosaic set needs every window's channel frequencies",
+                })?;
+            let selected = window
+                .channel_indices()
+                .iter()
+                .map(|index| {
+                    catalog
+                        .channel_frequency_hz(*index as usize)
+                        .ok_or(ImagingError::Unsupported {
+                            reason: "a selected channel lies outside its window",
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            windows.push(MosaicWindow {
+                spectral_window: window.spectral_window_id(),
+                window_frequencies_hz: catalog.channel_frequencies_hz().to_vec(),
+                channel_width_hz: catalog.first_channel_width_hz(),
+                selected_frequencies_hz: selected,
+            });
+        }
+    }
+    Ok(windows)
 }
 
 fn image_extent(domain: &CompiledImageDomain) -> Result<ImageExtent, ImagingError> {

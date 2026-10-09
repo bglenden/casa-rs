@@ -32,30 +32,40 @@
 //! `StokesImageUtil` including its `1/2` factors and `sumwt` rule.
 
 mod accumulator;
+mod aw;
 mod backend;
 mod convolution;
 mod cpu;
+mod dense;
 mod error;
 mod fft;
 mod geometry;
+mod mosaic;
 mod operator;
 mod polarization;
 mod resample;
 mod sample;
 mod spheroidal;
 mod weighting;
+mod wplanes;
 
 pub use accumulator::{
     AccumulatorLayout, DeviceCells, GridAccumulator, GridPrecision, GridScalar, GridStorage, Mode,
     ModeSet, PlaneRange, Tile,
 };
+pub use aw::{
+    AwCatalog, AwCatalogError, AwIndexing, EvlaApertureGrid, EvlaApertureModel, EvlaAwWorkspace,
+    NativeAwGenerationError, NativeAwPair, NativeAwPlane,
+};
 pub use backend::{GridBackend, PreparedModelGrids, Work};
 pub use convolution::{
-    ConvolutionFunctionSet, ImageCorrection, MuellerRouting, RowContext, TapLayout,
+    CellHold, ConvolutionFunctionSet, DenseCell, ImageCorrection, KernelNormalisation,
+    MuellerRouting, RowContext, TapLayout,
 };
 pub use cpu::CpuBackend;
 pub use error::{DeviceFailure, OperatorError};
 pub use geometry::{CellLocation, GridGeometry, GridPadding, ImageExtent};
+pub use mosaic::{AiryDish, MOSAIC_OVERSAMPLING, MosaicPb, MosaicWindow, pair_plane};
 pub use operator::{
     Basis, MeasurementOperator, ModelImages, ModelPlane, ModelPrescale, NormalImages, NormalPlane,
 };
@@ -67,3 +77,4 @@ pub use weighting::{
     BandwidthTaper, DensityCellRule, DensityGrid, DensityGridShape, DensityUv, RobustFactors,
     Taper, WeightingGeneration, build_density_grid,
 };
+pub use wplanes::{WPlaneCount, WPlanes};

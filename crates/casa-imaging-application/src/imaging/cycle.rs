@@ -40,7 +40,7 @@ use super::measurement::{
 };
 use super::source::{MeasurementSetSource, PlaneBounds};
 use super::visibility_write::{VisibilityWriteTarget, VisibilityWriter};
-use crate::NativeMinorCycleOutcome;
+use crate::{AwCatalogDeployment, NativeMinorCycleOutcome};
 
 /// What one native imaging run needs besides the compiled problem.
 pub(crate) struct ImagingInputs<'a> {
@@ -52,6 +52,8 @@ pub(crate) struct ImagingInputs<'a> {
     pub(crate) authority: &'a ResourceAuthority,
     pub(crate) policy: &'a ResourcePolicy,
     pub(crate) spill_directory: &'a Path,
+    /// The AW catalog of an A-projection run.
+    pub(crate) aw_catalog: Option<AwCatalogDeployment>,
     pub(crate) backend: BackendChoice,
 }
 
@@ -85,6 +87,9 @@ struct Run<'a> {
     visibility_write: Option<VisibilityWriteTarget>,
     /// Planes per wave of the most finely waved pass so far.
     planes_per_wave: Option<u32>,
+    /// Whether the initial pass also grids the sensitivity image
+    /// (`Mode::Weight`): a kernel set with weight taps on any domain.
+    weight_image: bool,
 }
 
 /// One reconciled major cycle and the lifecycle that owns its model.
@@ -203,12 +208,28 @@ impl<'a> Run<'a> {
             });
         }
         let correlations = selected_correlations(problem)?;
+        let selected = inputs
+            .access
+            .into_deferred()
+            .open(problem)
+            .map_err(|error| ImagingError::Observation(Box::new(error)))?;
+        let dish_classes = selected.antenna_response_classes();
         let domains = problem
             .geometry()
             .domains()
             .iter()
-            .map(|domain| domain_operator(problem, domain, &correlations, backend))
+            .map(|domain| {
+                domain_operator(
+                    problem,
+                    domain,
+                    &correlations,
+                    backend,
+                    inputs.aw_catalog.as_ref(),
+                    &dish_classes,
+                )
+            })
             .collect::<Result<Vec<_>, _>>()?;
+        let weight_image = domains.iter().any(|domain| domain.weight_image);
         if inputs.visibility_write.is_some() && domains.len() > 1 {
             return Err(ImagingError::Unsupported {
                 reason: "visibilities are written back for one image domain",
@@ -217,17 +238,16 @@ impl<'a> Run<'a> {
         let (workers, memory) = inputs.authority.phase_budget(inputs.policy)?;
         let team = WorkerTeam::new(workers)?;
         let cancel = Cancel::new();
-        let selected = inputs
-            .access
-            .into_deferred()
-            .open(problem)
-            .map_err(|error| ImagingError::Observation(Box::new(error)))?;
         let main = &domains[0].operator;
         let mut source = MeasurementSetSource::new(
             problem,
             selected,
             main.basis().planes(),
             plane_bounds(problem),
+            domains
+                .iter()
+                .any(|domain| domain.operator.cf().pointing_ramp()),
+            dish_classes,
         );
         let started = Instant::now();
         let weighting = weighting(problem, &domains[0], &mut source, &team, &cancel)?;
@@ -253,6 +273,7 @@ impl<'a> Run<'a> {
             attempts: 0,
             visibility_write: inputs.visibility_write,
             planes_per_wave: None,
+            weight_image,
         };
         if run.visibility_write.is_some() {
             // The pass that writes is the initial one without cleaning and a
@@ -262,7 +283,7 @@ impl<'a> Run<'a> {
             let (modes, with_model) = if cleaning {
                 (ModeSet::DATA, true)
             } else {
-                (ModeSet::DATA_PSF, start_model(problem))
+                (run.initial_modes(), start_model(problem))
             };
             if run.residency(modes, with_model)? != Residency::All {
                 return Err(ImagingError::Pass(PassError::VisibilityWriteWaves));
@@ -287,7 +308,7 @@ impl<'a> Run<'a> {
             lifecycle.initial_empty()?
         };
         let preparation = MajorCyclePreparation::prepare(&lifecycle, named, None)?;
-        let residency = self.residency(ModeSet::DATA_PSF, start_model)?;
+        let residency = self.residency(self.initial_modes(), start_model)?;
         let state = PassNormalState::initial(
             self.problem,
             self.weighting_id,
@@ -344,7 +365,7 @@ impl<'a> Run<'a> {
     ) -> Result<Major, ImagingError> {
         let initial = masks.is_none();
         let modes = if initial {
-            ModeSet::DATA_PSF
+            self.initial_modes()
         } else {
             ModeSet::DATA
         };
@@ -433,6 +454,16 @@ impl<'a> Run<'a> {
             })?,
             None => NormalStoragePlan::resident(planes)?,
         })
+    }
+
+    /// The modes of the initial pass: data and PSF, plus the sensitivity
+    /// image when a kernel set has weight taps (mosaic, AW).
+    const fn initial_modes(&self) -> ModeSet {
+        ModeSet {
+            data: true,
+            psf: true,
+            weight: self.weight_image,
+        }
     }
 
     /// The waves of a pass accumulating `modes`, with a model when

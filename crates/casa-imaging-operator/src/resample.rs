@@ -13,8 +13,9 @@ use num_complex::{Complex32, Complex64};
 
 use crate::accumulator::PlaneRange;
 use crate::backend::{GridBackend, PreparedModelGrids, Work};
-use crate::convolution::RowContext;
+use crate::convolution::{CellHold, ConvolutionFunctionSet, RowContext};
 use crate::error::OperatorError;
+use crate::geometry::{CellLocation, GridGeometry};
 use crate::operator::{Basis, MeasurementOperator};
 use crate::sample::{Placement, SampleBuffer};
 use crate::weighting::{
@@ -33,6 +34,10 @@ pub struct NativeRow<'a> {
     /// Path-length shift to the image phase centre in metres; the phasor
     /// `e^{i·2π·shift·ν/c}` is applied to the data.
     pub phase_shift_m: f64,
+    /// Offset of the row's pointing centre from the image reference
+    /// direction as direction cosines `[Δl, Δm]` along the image axes, in
+    /// radians; read only by kernel sets with a pointing ramp.
+    pub pointing_offset_rad: [f64; 2],
     /// Native channel centres in Hz.
     pub frequencies_hz: &'a [f64],
     /// Visibilities.
@@ -453,37 +458,50 @@ fn sample_weight(
     }
 }
 
-/// A placement predicting `row` on `plane` at `frequency_hz`, when its kernel
-/// support fits the padded grid.
-fn prediction_placement(
-    operator: &MeasurementOperator,
+/// The placement of `row`'s sample at `frequency_hz` on `plane`: its cell,
+/// its pointing gradient when the set has a ramp (the kernels anchor the
+/// ramp at the sample's fine offset), and its phase-centre shift, when the
+/// cell's support fits the padded grid.
+fn locate_sample(
+    cf: &dyn ConvolutionFunctionSet,
+    geometry: &GridGeometry,
     basis: Basis,
     row: &NativeRow<'_>,
     plane: u32,
     frequency_hz: f64,
-) -> Option<Placement> {
+    hold: &mut CellHold,
+) -> Option<(Placement, CellLocation)> {
     let scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
     let w = row.uvw_m[2] * scale;
-    let cf = operator.cf();
+    if !cf.admits(w) {
+        return None;
+    }
     let key = cf.key(&row.context, frequency_hz, w);
     let (u, v) = (row.uvw_m[0] * scale, row.uvw_m[1] * scale);
-    let geometry = operator.geometry();
-    let taps = cf.taps(key);
-    geometry
-        .fits(
-            geometry.locate(u, v, taps.oversampling()),
-            taps.half_support(),
-        )
-        .then_some(Placement {
+    let oversampling = cf.taps(key, hold).oversampling();
+    let location = geometry.locate(u, v, oversampling);
+    if !geometry.fits(location, cf.placement_half_support(key, hold)) {
+        return None;
+    }
+    let gradient = if cf.pointing_ramp() {
+        geometry.pointing_gradient(row.pointing_offset_rad)
+    } else {
+        [0.0, 0.0]
+    };
+    let phase = std::f64::consts::TAU * row.phase_shift_m * scale;
+    Some((
+        Placement {
             u,
             v,
             w,
-            phase: std::f64::consts::TAU * row.phase_shift_m * scale,
+            phase,
             plane,
             spectral: basis.spectral(frequency_hz),
             cf: key,
-            gradient: [0.0, 0.0],
-        })
+            gradient,
+        },
+        location,
+    ))
 }
 
 /// Turns native rows into placed, weighted samples for one operator.
@@ -633,29 +651,21 @@ impl SpectralResampler {
             .transpose()?;
         let mut values = vec![Complex32::default(); npol];
         let mut weights = vec![0.0_f32; npol];
+        let mut hold = CellHold::new();
         self.for_each_sample(row, |plane, frequency_hz, source| {
             if sample_flagged(row, npol, source) {
                 return;
             }
-            let scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
-            let w = row.uvw_m[2] * scale;
-            let key = cf.key(&row.context, frequency_hz, w);
-            let taps = cf.taps(key);
-            let u = row.uvw_m[0] * scale;
-            let v = row.uvw_m[1] * scale;
-            let location = geometry.locate(u, v, taps.oversampling());
-            if !geometry.fits(location, taps.half_support()) {
-                return;
-            }
-            let placement = Placement {
-                u,
-                v,
-                w,
-                phase: std::f64::consts::TAU * row.phase_shift_m * scale,
+            let Some((placement, _)) = locate_sample(
+                cf,
+                geometry,
+                self.basis,
+                row,
                 plane,
-                spectral: self.basis.spectral(frequency_hz),
-                cf: key,
-                gradient: [0.0, 0.0],
+                frequency_hz,
+                &mut hold,
+            ) else {
+                return;
             };
             let weight = sample_weight(weighting, row, npol, source, &placement, density_axis);
             if weight <= 0.0 {
@@ -924,13 +934,20 @@ impl SpectralResampler {
         } = scratch;
         let buffer = buffer.as_mut().expect("reset installs the buffer");
         let prepared = model.layout().planes();
+        let mut hold = CellHold::new();
         let mut place = |plane: u32, frequency_hz: f64, source: usize| {
             if !prepared.contains(plane) {
                 return;
             }
-            if let Some(placement) =
-                prediction_placement(operator, self.basis, row, plane, frequency_hz)
-            {
+            if let Some((placement, _)) = locate_sample(
+                operator.cf(),
+                operator.geometry(),
+                self.basis,
+                row,
+                plane,
+                frequency_hz,
+                &mut hold,
+            ) {
                 buffer.push(placement, zeros, ones);
                 sources.push(source);
             }

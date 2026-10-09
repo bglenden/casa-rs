@@ -27,13 +27,10 @@ use casa_imaging_model::{
     ModelStateIdentity, MsColumnKind, NumericPrecision, NumericalStage, NumericsContract,
     ObservationSourceState, ObservationTransactionId, ObservationTransactionRequirements,
     PhaseCentreLaw, PointingCentreLaw, PolarizationContract, PolarizationCoordinate,
-    PreparedArtifactAwInterpretation, PreparedArtifactCellSemantics,
-    PreparedArtifactKernelAlgorithm, PreparedArtifactKernelSemantics,
-    PreparedArtifactScientificIdentity, PreparedArtifactSpectralMapSemantics, ProblemSpecification,
-    ProductKind, ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
-    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
-    ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
-    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    ProblemSpecification, ProductKind, ProductNormalization, ProductRequirements, Projection,
+    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
+    ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract,
+    SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
     SpectralSamplingLaw, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
     WeightDensityScope, WeightingContract, WeightingScheme, compile,
 };
@@ -52,7 +49,7 @@ use casa_imaging_runtime::{
     CacheIdentity, CapabilityPredicate, CapacityDomainId, CapacityViewId, ClaimLifetime,
     CompiledProblemEvidence, CountDemand, CpuClassCapacity, DemandAlternative, DemandEnvelope,
     ExecutionDag, ExecutionDagSpecification, ExecutionError, ExecutionEvidenceError,
-    ExecutionKnobs, ExecutionOutcome, ExecutionPlanId, ExecutionProvenance, ExecutionReceipt,
+    ExecutionKnobs, ExecutionOutcome, ExecutionPlanId, ExecutionProvenance,
     ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionStatus, ExternalPressure, FenceId,
     FenceKind, HostInventory, ImplementationContractCatalog, ImplementationContractMetadata,
     ImplementationRegistry, ImplementationRegistryId, InitializationPolicy, IoBufferDemand,
@@ -61,25 +58,19 @@ use casa_imaging_runtime::{
     ObservationReadCompletionContext, ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot,
     PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction,
     PlannedArtifact, PlannerCostModelProfileId, PlanningBindings, PredictionConfidence,
-    PredictionUncertainty, PreparedArtifactBudget, PreparedArtifactCatalogPlanFragment,
-    PreparedArtifactDescriptor, PreparedArtifactError, PreparedArtifactLoadSource,
-    PreparedArtifactOperation, PreparedArtifactOrder, PreparedArtifactPlanFragment,
-    PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision, PreparedArtifactRegistration,
-    PreparedArtifactRejection, PreparedArtifactReuseOutcome, PreparedArtifactSegmentDescriptor,
-    PreparedArtifactSourceSegment, PreparedArtifactStore, PreparedArtifactUvAffine,
-    ProductPublicationPlan, ProductionStorageProfile, PublicationLayoutLedger,
-    PublicationMappedStaging, PublicationParticipant, PublicationPhysicalLayout,
-    PublicationResourceBounds, PublicationStaging, QueueDemand, QueueResource, QueueResourceId,
-    QuiescencePoint, RateDemand, RateResource, RateResourceId, RateUnit, ReceiptFailureKind,
-    ReceiptRetention, ReceiptStatus, RedactedPath, ResourceAuthority, ResourceClaim, ResourceError,
-    ResourceHeadroom, ResourceMeasurement, ResourceOverride, ResourcePolicy, ResourceTopology,
-    RunBindings, RunController, RunDirective, RunError, RunToCompletion, RuntimeOverheadDemand,
-    ScalingMetadata, SerialProductPublicationExecutor, SerialProductPublicationPlan,
-    SerialProductPublicationPolicy, SerialProductPublicationRegistry, SerialProductPublicationSink,
-    SlotCompatibility, StagePrediction, StorageDomain, StorageDomainId, StorageIoResourceBinding,
-    StorageMode, StorageUseKind, WorkDependency, WorkDomain, WorkExecutionContext,
-    WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements, WorkNode, WorkNodeId,
-    plan as runtime_plan, run as runtime_run,
+    PredictionUncertainty, ProductPublicationPlan, ProductionStorageProfile,
+    PublicationLayoutLedger, PublicationMappedStaging, PublicationParticipant,
+    PublicationPhysicalLayout, PublicationResourceBounds, PublicationStaging, QueueDemand,
+    QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId,
+    RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus, RedactedPath, ResourceAuthority,
+    ResourceClaim, ResourceError, ResourceHeadroom, ResourceMeasurement, ResourceOverride,
+    ResourcePolicy, ResourceTopology, RunBindings, RunController, RunDirective, RunError,
+    RunToCompletion, RuntimeOverheadDemand, ScalingMetadata, SerialProductPublicationExecutor,
+    SerialProductPublicationPlan, SerialProductPublicationPolicy, SerialProductPublicationRegistry,
+    SerialProductPublicationSink, SlotCompatibility, StagePrediction, StorageDomain,
+    StorageDomainId, StorageIoResourceBinding, StorageMode, WorkDependency, WorkDomain,
+    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements,
+    WorkNode, WorkNodeId, plan as runtime_plan, run as runtime_run,
 };
 use casa_ms::{
     BoundSelectedObservation, ObservationSourceBinding, SelectedObservationCompletion,
@@ -109,8 +100,6 @@ mod imaging_plan_selection;
 mod observation_transaction;
 #[path = "compile_plan_run/plan_binding.rs"]
 mod plan_binding;
-#[path = "compile_plan_run/prepared_artifact.rs"]
-mod prepared_artifact;
 #[path = "compile_plan_run/publication_lifecycle.rs"]
 mod publication_lifecycle;
 #[path = "compile_plan_run/receipt_evidence.rs"]

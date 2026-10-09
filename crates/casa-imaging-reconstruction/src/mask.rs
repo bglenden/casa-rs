@@ -100,7 +100,16 @@ pub(crate) fn direction_pixel_to_world(
     Ok([longitude, latitude])
 }
 
-pub(crate) fn direction_world_to_pixel(
+/// The pixel of `world` (longitude and latitude in radians, in the
+/// coordinate's frame) under `coordinate`'s SIN projection: CASA
+/// `DirectionCoordinate::toPixel` for the projections the imaging route
+/// compiles.
+///
+/// # Errors
+///
+/// The projection is not SIN, the PC matrix is singular, or the pixel is
+/// not finite.
+pub fn direction_world_to_pixel(
     coordinate: DirectionCoordinateSpec,
     world: [f64; 2],
 ) -> Result<[f64; 2], MaskError> {

@@ -8,7 +8,6 @@ mod measurement_equation;
 mod model_state;
 mod native_aw;
 mod observation;
-mod prepared_artifact;
 mod product_graph;
 mod selected_observation;
 mod selected_observation_sample;
@@ -29,7 +28,7 @@ pub use compiled_problem::{
     SpectralContract, SpectralCoupling, SpectralCovariance, SpectralEdgePolicy, SpectralKernel,
     SpectralSamplingLaw, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy,
     UncorrectedImageMaskPolicy, UvTaper, WProjectionContract, WProjectionContractError,
-    WeightDensityScope, WeightingContract, WeightingScheme, compile,
+    WStatistics, WeightDensityScope, WeightingContract, WeightingScheme, compile,
     validate_compiled_problem_identity,
 };
 
@@ -81,16 +80,9 @@ pub use observation::{
     compile_observation,
 };
 
-pub use prepared_artifact::{
-    PreparedArtifactAwInterpretation, PreparedArtifactCellSemantics,
-    PreparedArtifactKernelAlgorithm, PreparedArtifactKernelSemantics,
-    PreparedArtifactScientificIdentity, PreparedArtifactScientificIdentityError,
-    PreparedArtifactScientificKind, PreparedArtifactSpectralMapSemantics,
-};
-
 pub use native_aw::{
-    EvlaAwCellRequest, EvlaDishSurface, NativeAwFrequencyGroup, NativeAwGrid, NativeAwRequest,
-    NativeAwRequestError, NativeAwRequestInput, NativeAwTerms,
+    EvlaAwCellRequest, EvlaDishSurface, NativeAwFrequencyGroup, NativeAwGrid, NativeAwRequestError,
+    NativeAwRequestInput, NativeAwTerms,
 };
 
 pub use selected_observation::{

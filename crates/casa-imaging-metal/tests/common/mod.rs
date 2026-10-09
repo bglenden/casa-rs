@@ -6,10 +6,10 @@
 use casa_imaging_metal::MetalBackend;
 use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 use casa_imaging_operator::{
-    Basis, CfKey, ConvolutionFunctionSet, GridAccumulator, GridGeometry, GridPadding,
-    GridPrecision, GridScalar, ImageCorrection, ImageExtent, MeasurementOperator, ModelImages,
-    ModelPlane, MuellerRouting, Placement, PolarizationRouting, RowContext, SampleBuffer,
-    Spheroidal, TapLayout, Tile,
+    Basis, CellHold, CfKey, ConvolutionFunctionSet, GridAccumulator, GridGeometry, GridPadding,
+    GridPrecision, GridScalar, ImageCorrection, ImageExtent, KernelNormalisation,
+    MeasurementOperator, ModelImages, ModelPlane, MuellerRouting, Placement, PolarizationRouting,
+    RowContext, SampleBuffer, Spheroidal, TapLayout, Tile,
 };
 use ndarray::Array2;
 use num_complex::{Complex32, Complex64};
@@ -135,13 +135,13 @@ impl ConvolutionFunctionSet for Separable {
     fn key(&self, _row: &RowContext, _freq_hz: f64, _w_lambda: f64) -> CfKey {
         CfKey::default()
     }
-    fn taps(&self, _key: CfKey) -> TapLayout<'_> {
+    fn taps<'s>(&'s self, _key: CfKey, _hold: &'s mut CellHold) -> TapLayout<'s> {
         self.layout()
     }
     fn max_half_support(&self) -> [u16; 2] {
         [self.support / 2; 2]
     }
-    fn weight_taps(&self, _key: CfKey) -> Option<TapLayout<'_>> {
+    fn weight_taps<'s>(&'s self, _key: CfKey, _hold: &'s mut CellHold) -> Option<TapLayout<'s>> {
         Some(self.layout())
     }
     fn mueller(&self) -> &MuellerRouting {
@@ -149,6 +149,12 @@ impl ConvolutionFunctionSet for Separable {
     }
     fn image_correction(&self) -> &ImageCorrection {
         &self.correction
+    }
+    fn normalisation(&self) -> KernelNormalisation {
+        KernelNormalisation::KernelSum
+    }
+    fn pointing_ramp(&self) -> bool {
+        true
     }
 }
 
@@ -192,7 +198,7 @@ impl ConvolutionFunctionSet for Dense {
     fn key(&self, _row: &RowContext, _freq_hz: f64, _w_lambda: f64) -> CfKey {
         CfKey::default()
     }
-    fn taps(&self, key: CfKey) -> TapLayout<'_> {
+    fn taps<'s>(&'s self, key: CfKey, _hold: &'s mut CellHold) -> TapLayout<'s> {
         TapLayout::Dense {
             data: &self.cells[usize::from(key.cube)],
             support: [self.support, self.support],
@@ -203,14 +209,23 @@ impl ConvolutionFunctionSet for Dense {
     fn max_half_support(&self) -> [u16; 2] {
         [self.support / 2; 2]
     }
-    fn weight_taps(&self, key: CfKey) -> Option<TapLayout<'_>> {
-        Some(self.taps(CfKey {
-            group: 0,
-            cube: 1 - key.cube,
-        }))
+    fn weight_taps<'s>(&'s self, key: CfKey, hold: &'s mut CellHold) -> Option<TapLayout<'s>> {
+        Some(self.taps(
+            CfKey {
+                group: 0,
+                cube: 1 - key.cube,
+            },
+            hold,
+        ))
     }
     fn mueller(&self) -> &MuellerRouting {
         &self.mueller
+    }
+    fn normalisation(&self) -> KernelNormalisation {
+        KernelNormalisation::KernelSum
+    }
+    fn pointing_ramp(&self) -> bool {
+        true
     }
     fn image_correction(&self) -> &ImageCorrection {
         &self.correction
@@ -258,8 +273,9 @@ pub fn placements(
     let geometry = operator.geometry();
     let [nx, ny] = geometry.grid_shape();
     let [sx, sy] = geometry.scale();
+    let mut hold = CellHold::new();
     let dense = matches!(
-        operator.cf().taps(CfKey::default()),
+        operator.cf().taps(CfKey::default(), &mut hold),
         TapLayout::Dense { .. }
     );
     let mut out = Vec::with_capacity(count);
@@ -272,7 +288,7 @@ pub fn placements(
                 0
             },
         };
-        let taps = operator.cf().taps(cf);
+        let taps = operator.cf().taps(cf, &mut hold);
         let half = taps.half_support().map(i64::from);
         let u = rng.signed() * 0.5 * nx as f64 / sx.abs();
         let v = rng.signed() * 0.5 * ny as f64 / sy.abs();

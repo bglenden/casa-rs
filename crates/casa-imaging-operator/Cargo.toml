@@ -11,11 +11,17 @@ publish = false
 workspace = true
 
 [dependencies]
+casa-coordinates = { path = "../casa-coordinates" }
 casa-fft = { path = "../casa-fft" }
+casa-images = { path = "../casa-images" }
 casa-imaging-model = { path = "../casa-imaging-model" }
 casa-numerics = { path = "../casa-numerics" }
+casa-types = { path = "../casa-types" }
 ndarray.workspace = true
 num-complex.workspace = true
 num-traits = "0.2"
 thiserror.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

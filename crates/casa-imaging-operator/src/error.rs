@@ -72,6 +72,12 @@ pub enum OperatorError {
         /// Which rule failed.
         reason: &'static str,
     },
+    /// A convolution-function set cannot be built from its inputs.
+    #[error("convolution function set: {reason}")]
+    ConvolutionFunction {
+        /// Which rule failed.
+        reason: &'static str,
+    },
     /// A device backend could not run a dispatch.
     #[error("gridding device: {0}")]
     Device(DeviceFailure),

@@ -3,7 +3,7 @@
 
 use std::ops::Range;
 
-use casa_imaging_operator::{MeasurementOperator, ModeSet, Placement, PlaneRange, Tile};
+use casa_imaging_operator::{CellHold, MeasurementOperator, ModeSet, Placement, PlaneRange, Tile};
 
 use super::{BackendChoice, PassDomain, PassError, native_residuals};
 
@@ -269,6 +269,19 @@ impl Router {
         }
     }
 
+    /// The one owner that grids the weight image when the grid is split
+    /// into regions: the owner of the centre row, where `Mode::Weight`
+    /// places every sample's `FT[PB²]` taps. `None` when every owner holds
+    /// whole planes and grids its own samples' weights.
+    pub(super) fn weight_owner(&self) -> Option<usize> {
+        match self {
+            Self::Planes { .. } => None,
+            Self::Regions { owner_of_row, .. } => {
+                Some(usize::from(owner_of_row[owner_of_row.len() / 2]))
+            }
+        }
+    }
+
     /// Plane range and tile owner `owner` accumulates in `wave`.
     pub(super) fn target(
         &self,
@@ -297,7 +310,8 @@ impl Router {
                 starts.partition_point(|start| *start <= placement.plane) - 1
             }
             Self::Regions { owner_of_row, halo } => {
-                let taps = operator.cf().taps(placement.cf);
+                let mut hold = CellHold::new();
+                let taps = operator.cf().taps(placement.cf, &mut hold);
                 debug_assert!(
                     usize::from(taps.half_support()[1]) <= *halo,
                     "a kernel cell's support exceeds the regions' halo"

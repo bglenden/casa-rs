@@ -89,6 +89,7 @@ impl Rows {
                     projections: vec![DomainProjection {
                         uvw_m: [u, v, rng.signed() * 20.0],
                         phase_shift_m: rng.signed() * 0.05,
+                        pointing_offset_rad: [0.0; 2],
                     }],
                     values: (0..cells)
                         .map(|_| Complex32::new(rng.signed() as f32, rng.signed() as f32))
@@ -117,6 +118,7 @@ impl Rows {
             row.projections.push(DomainProjection {
                 uvw_m: [u * cos - v * sin, u * sin + v * cos, w],
                 phase_shift_m: 0.1 + rng.signed() * 0.05,
+                pointing_offset_rad: [0.0; 2],
             });
         }
     }
@@ -127,6 +129,7 @@ impl Rows {
         NativeRow {
             uvw_m: row.projections[domain].uvw_m,
             phase_shift_m: row.projections[domain].phase_shift_m,
+            pointing_offset_rad: row.projections[domain].pointing_offset_rad,
             frequencies_hz: &self.frequencies,
             values: &row.values,
             weights: &row.weights,
@@ -180,9 +183,10 @@ pub fn context() -> RowContext {
     RowContext {
         time_s: 0.0,
         antennas: [0, 1],
+        antenna_types: [0, 0],
         parallactic_angle_rad: [0.0; 2],
         field: 0,
-        pointing_offset_rad: [0.0; 2],
+        spectral_window: 0,
     }
 }
 

@@ -12,7 +12,8 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use casa_imaging_operator::{
-    AccumulatorLayout, CellLocation, CfKey, ConvolutionFunctionSet, Mode, SampleBlock, TapLayout,
+    AccumulatorLayout, CellHold, CellLocation, CfKey, ConvolutionFunctionSet, KernelNormalisation,
+    Mode, SampleBlock, TapLayout,
 };
 use num_complex::{Complex32, Complex64};
 
@@ -105,22 +106,32 @@ impl TapsKind {
         }
     }
 
-    /// The cell's taps of this kind; `None` when the set has no weight
-    /// taps for it.
-    pub(crate) fn taps(self, cf: &dyn ConvolutionFunctionSet, key: CfKey) -> Option<TapLayout<'_>> {
+    /// The cell's taps of this kind, lent through `hold`; `None` when the
+    /// set has no weight taps for it.
+    pub(crate) fn taps<'s>(
+        self,
+        cf: &'s dyn ConvolutionFunctionSet,
+        key: CfKey,
+        hold: &'s mut CellHold,
+    ) -> Option<TapLayout<'s>> {
         match self {
-            Self::Imaging => Some(cf.taps(key)),
-            Self::Weight => cf.weight_taps(key),
+            Self::Imaging => Some(cf.taps(key, hold)),
+            Self::Weight => cf.weight_taps(key, hold),
         }
     }
 }
 
-/// One kernel cell known to the device: its table index and the norm of
-/// every fine offset and Mueller plane.
+/// One kernel cell known to the device: its table index, its shape and the
+/// norm of every fine offset and Mueller plane, so record preparation
+/// never touches the kernel set again.
 #[derive(Debug)]
 pub(crate) struct KnownTable {
     /// Index into the device's table list.
     pub index: u32,
+    /// Fine offsets per cell.
+    pub oversampling: u16,
+    /// Half the support along each axis.
+    pub half_support: [u16; 2],
     /// `norm[(oy · (oversampling + 1) + ox) · mueller_planes + m]`,
     /// unconjugated.
     norms: Vec<Complex64>,
@@ -149,6 +160,8 @@ impl KnownTable {
         }
         Self {
             index,
+            oversampling: taps.oversampling(),
+            half_support: taps.half_support(),
             norms,
             fine_rows,
             mueller_planes,
@@ -188,8 +201,10 @@ impl Targets<'_> {
 }
 
 /// Fill `records[j]` for samples `range` of `block` and, for a forward
-/// transform, `inverse_norms` (`1/N` per visibility polarization, zero for
-/// a zero norm); add the adjoint's `W·s^t·|N|` to `sumwt`.
+/// transform, `inverse_norms` (`1/N` per visibility polarization under
+/// [`KernelNormalisation::KernelSum`], zero for a zero norm, one under the
+/// other rules); add the adjoint's `W·s^t·n` to `sumwt` with `n` the
+/// set's rule: one, `Re N` or `|N|`, as the CPU backend does.
 ///
 /// Panics when a sample's support leaves the accumulator tile (the model's
 /// grid for a prediction) or its plane lies outside a target: the placement
@@ -208,23 +223,20 @@ pub(crate) fn prepare(
 ) {
     let npol = block.npol;
     let mueller = cf.mueller();
+    let rule = cf.normalisation();
     let geometry = targets.geometry();
     let mut powers = [0.0_f64; MAX_TERMS];
     for (local, index) in range.enumerate() {
         let record = &mut records[local];
         let placement = &block.placements[index];
         let table = &known[&(placement.cf, targets.kind)];
-        let taps = targets
-            .kind
-            .taps(cf, placement.cf)
-            .expect("known tables exist");
         let (u, v) = match targets.kind {
             TapsKind::Imaging => (placement.u, placement.v),
             TapsKind::Weight => (0.0, 0.0),
         };
-        let location = geometry.locate(u, v, taps.oversampling());
+        let location = geometry.locate(u, v, table.oversampling);
         let w_positive = placement.w > 0.0;
-        let half = taps.half_support();
+        let half = table.half_support;
         let (origin, plane) = match &targets.adjoint {
             Some((layout, _)) => (
                 tile_origin(layout, location, half),
@@ -264,7 +276,13 @@ pub(crate) fn prepare(
                     if weight == 0.0 {
                         continue;
                     }
-                    let norm = table.norm(location, m, !w_positive).norm();
+                    let norm = match rule {
+                        KernelNormalisation::UnitSum => 1.0,
+                        KernelNormalisation::RealSum => table.norm(location, m, w_positive).re,
+                        KernelNormalisation::KernelSum => {
+                            table.norm(location, m, w_positive).norm()
+                        }
+                    };
                     for (power, term) in powers.iter().zip(terms.clone()) {
                         sumwt[layout.block_index(plane as usize, gpol, term)] +=
                             f64::from(weight) * power * norm;
@@ -274,8 +292,15 @@ pub(crate) fn prepare(
         }
         if let Some(inverse) = inverse_norms.as_deref_mut() {
             let inverse = &mut inverse[local * npol..(local + 1) * npol];
+            if rule != KernelNormalisation::KernelSum {
+                inverse.fill(Complex32::new(1.0, 0.0));
+                continue;
+            }
             inverse.fill(Complex32::default());
             let mut norms = [Complex64::default(); MAX_POLS];
+            // The forward norm sums the taps the gather multiplies the grid
+            // by, conjugated for w ≤ 0 (`accumulateFromGrid.inc`): the
+            // opposite conjugation from the adjoint's `sumwt` norm above.
             for row in mueller.table(w_positive, true) {
                 for (vpol, plane_index) in row.iter().enumerate() {
                     if let Some(m) = *plane_index {

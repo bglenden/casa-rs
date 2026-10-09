@@ -56,6 +56,7 @@ fn native_aw_request(w_plane_count: Option<usize>) -> ContinuumImagingRequest {
         save_continuum_residual: false,
         write_primary_beam: true,
         pbcor: false,
+        mosaic_use_pointing: false,
         w_projection_planes: Some(32),
         aw_projection: Some(ContinuumAwProjection {
             source: ContinuumAwCfSource::NativeEvla(NativeEvlaAwCache {

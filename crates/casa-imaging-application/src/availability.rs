@@ -4,8 +4,8 @@
 use std::{error::Error, fmt};
 
 use casa_imaging_model::{
-    CompiledProblem, ImageDomainRole, InstrumentResponse, PolarizationCoordinate, ProductKind,
-    ReconstructionBasis, RequiredCapability, SpectralKernel,
+    CompiledProblem, ImageDomainRole, PolarizationCoordinate, ProductKind, ReconstructionBasis,
+    RequiredCapability, SpectralKernel,
 };
 
 /// A task-surface requirement not represented by [`CompiledProblem`].
@@ -116,8 +116,6 @@ pub enum UnsupportedRequirement {
     Task(TaskRequirement),
     /// Non-Stokes-I or multi-polarization execution requires an independent-plane basis.
     IndependentBasisForPolarizationSelection,
-    /// The implementation requires a scalar measurement equation.
-    ScalarInstrumentResponse,
     /// The cube spectral kernel is neither nearest nor linear; cubic waits
     /// for #42, after IF-4.
     NearestOrLinearCubeInterpolation,
@@ -131,7 +129,6 @@ impl UnsupportedRequirement {
             Self::Capability(_) => "capability",
             Self::Task(_) => "task",
             Self::IndependentBasisForPolarizationSelection
-            | Self::ScalarInstrumentResponse
             | Self::NearestOrLinearCubeInterpolation => "constraint",
         }
     }
@@ -147,7 +144,6 @@ impl UnsupportedRequirement {
             Self::IndependentBasisForPolarizationSelection => {
                 "constraint.independent_basis_for_polarization_selection".to_string()
             }
-            Self::ScalarInstrumentResponse => "constraint.scalar_instrument_response".to_string(),
             Self::NearestOrLinearCubeInterpolation => {
                 "constraint.nearest_or_linear_cube_interpolation".to_string()
             }
@@ -288,13 +284,6 @@ pub fn validate_installed_implementation(
     ) {
         unsupported.push(UnsupportedRequirement::IndependentBasisForPolarizationSelection);
     }
-    let response = problem
-        .science()
-        .measurement_equation()
-        .instrument_response();
-    if response != InstrumentResponse::Scalar || problem.science().instrument_model().is_some() {
-        unsupported.push(UnsupportedRequirement::ScalarInstrumentResponse);
-    }
     if matches!(
         problem.reconstruction().basis(),
         ReconstructionBasis::ChannelLocal { .. }
@@ -323,10 +312,10 @@ fn coupled_basis_requires_independent_polarization(
     ) && coordinates != [PolarizationCoordinate::StokesI]
 }
 
-/// Task surfaces the major-cycle pass runs. W projection, A projection and
-/// mosaic (with `mvc`, which always carries a primary beam) wait for their
-/// convolution-function sets (IF-3, #652); the Metal backend exists only on
-/// macOS.
+/// Task surfaces the major-cycle pass runs, with the standard, W-plane,
+/// mosaic and AW kernel sets. Multi-term continuum through cube major
+/// cycles (`mvc`) has no pass implementation; the Metal backend exists only
+/// on macOS.
 const fn supports_task(requirement: TaskRequirement) -> bool {
     match requirement {
         TaskRequirement::MetalGridder => cfg!(target_os = "macos"),
@@ -335,6 +324,10 @@ const fn supports_task(requirement: TaskRequirement) -> bool {
             TaskRequirement::SpectralCube
                 | TaskRequirement::SpectralCubedata
                 | TaskRequirement::SpectralCubeSource
+                | TaskRequirement::MosaicGridder
+                | TaskRequirement::WProjection
+                | TaskRequirement::WProjectionPlanes
+                | TaskRequirement::AwProjection
                 | TaskRequirement::PolarizationSelection
                 | TaskRequirement::Automasking
                 | TaskRequirement::MaskProduct
@@ -347,13 +340,15 @@ const fn supports_task(requirement: TaskRequirement) -> bool {
 }
 
 /// Scientific capabilities of the major-cycle pass. Faceted geometry has no
-/// pass implementation until #664, after IF-4; the primary-beam
-/// response, W and A projection and the mosaic weight products wait for
-/// IF-3 (#652).
+/// pass implementation until #664, after IF-4; the primary-beam-corrected
+/// spectral index has none.
 const fn supports_capability(capability: RequiredCapability) -> bool {
     matches!(
         capability,
         RequiredCapability::Polarization(_)
+            | RequiredCapability::WProjection
+            | RequiredCapability::AwProjection
+            | RequiredCapability::PrimaryBeamResponse
             | RequiredCapability::SpectralFrameTransform
             | RequiredCapability::SpectralResampling
             | RequiredCapability::CommonBeamSpectralCoupling
@@ -379,6 +374,8 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
             | RequiredCapability::Product(ProductKind::Model)
             | RequiredCapability::Product(ProductKind::RestoredImage)
             | RequiredCapability::Product(ProductKind::SumWeights)
+            | RequiredCapability::Product(ProductKind::Weight)
+            | RequiredCapability::Product(ProductKind::Sensitivity)
             | RequiredCapability::Product(ProductKind::Mask)
             | RequiredCapability::Product(ProductKind::Beam)
             | RequiredCapability::Product(ProductKind::PrimaryBeam)
@@ -398,30 +395,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn convolution_function_sets_wait_for_their_ticket_and_metal_needs_macos() {
-        for task in [
-            TaskRequirement::MosaicGridder,
-            TaskRequirement::WProjection,
-            TaskRequirement::WProjectionPlanes,
-            TaskRequirement::AwProjection,
-            TaskRequirement::SpectralMtmfsViaCube,
-        ] {
-            assert!(!supports_task(task), "{task:?}");
-        }
+    fn mtmfs_via_cube_and_facets_wait_and_metal_needs_macos() {
+        assert!(!supports_task(TaskRequirement::SpectralMtmfsViaCube));
         assert_eq!(
             supports_task(TaskRequirement::MetalGridder),
             cfg!(target_os = "macos")
         );
         for capability in [
-            RequiredCapability::WProjection,
-            RequiredCapability::AwProjection,
-            RequiredCapability::PrimaryBeamResponse,
             RequiredCapability::FacetedGeometry,
-            RequiredCapability::Product(ProductKind::Weight),
-            RequiredCapability::Product(ProductKind::Sensitivity),
             RequiredCapability::Product(ProductKind::PbCorrectedSpectralIndex),
         ] {
             assert!(!supports_capability(capability), "{capability:?}");
+        }
+    }
+
+    #[test]
+    fn the_pass_runs_every_convolution_function_set() {
+        for task in [
+            TaskRequirement::MosaicGridder,
+            TaskRequirement::WProjection,
+            TaskRequirement::WProjectionPlanes,
+            TaskRequirement::AwProjection,
+        ] {
+            assert!(supports_task(task), "{task:?}");
+        }
+        for capability in [
+            RequiredCapability::WProjection,
+            RequiredCapability::AwProjection,
+            RequiredCapability::PrimaryBeamResponse,
+            RequiredCapability::Product(ProductKind::Weight),
+            RequiredCapability::Product(ProductKind::Sensitivity),
+        ] {
+            assert!(supports_capability(capability), "{capability:?}");
         }
     }
 
@@ -526,10 +531,12 @@ mod tests {
                 .iter()
                 .find(|entry| {
                     entry.requirement()
-                        == ImagingCapabilityRequirement::Task(TaskRequirement::AwProjection)
+                        == ImagingCapabilityRequirement::Task(TaskRequirement::SpectralMtmfsViaCube)
                 })
                 .and_then(ImagingCapabilityCatalogEntry::unsupported),
-            Some(UnsupportedRequirement::Task(TaskRequirement::AwProjection))
+            Some(UnsupportedRequirement::Task(
+                TaskRequirement::SpectralMtmfsViaCube
+            ))
         );
         assert!(
             catalog
@@ -537,7 +544,7 @@ mod tests {
                 .find(|entry| {
                     entry.requirement()
                         == ImagingCapabilityRequirement::Scientific(RequiredCapability::Product(
-                            ProductKind::Sensitivity,
+                            ProductKind::PbCorrectedSpectralIndex,
                         ))
                 })
                 .is_some_and(|entry| entry.unsupported().is_some())

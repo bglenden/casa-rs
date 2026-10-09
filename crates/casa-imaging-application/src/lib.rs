@@ -8,27 +8,14 @@
 //! submit requests here; they do not compose native execution stages directly.
 
 mod availability;
-mod aw_cache;
 mod casa_product_sink;
 mod continuum_domains;
 mod continuum_request;
 mod imaging;
-// No major-cycle phase consumes prepared AW artifacts until the AW catalog
-// replaces this preparation (plan section 6 row 5).
-#[expect(
-    dead_code,
-    reason = "IF-3 (#652) replaces AW preparation with AwCatalog"
-)]
-mod prepared_aw_phase;
-
 pub use availability::{
     ImagingCapabilityCatalogEntry, ImagingCapabilityRequirement, ImplementationUnavailable,
     TaskRequirement, UnsupportedRequirement, installed_imaging_capability_catalog,
     validate_installed_implementation,
-};
-pub use aw_cache::{
-    CasaAwCache, CasaAwCacheError, CasaAwCacheInventory, CasaAwCellImporter, PreparedAwCell,
-    PreparedAwCellProvider,
 };
 pub use casa_imaging_model::{
     HogbomIterationAccounting, ImagingRequestVersion, PolarizationCoordinate, ProductNormalization,
@@ -143,28 +130,21 @@ pub struct ApplicationNative<S> {
     pub runtime: ApplicationRuntime,
     /// Product-generation and independently atomic publication configuration.
     pub publication: ApplicationPublication<S>,
-    /// Optional validated AW cache and private prepared-store deployment input.
-    pub aw_preparation: Option<ApplicationAwPreparation>,
+    /// The AW convolution-function catalog of an A-projection run.
+    pub aw_catalog: Option<AwCatalogDeployment>,
 }
 
-/// Deployment-only inputs for the AW prepared-artifact pre-phase.
-#[derive(Clone)]
-pub struct ApplicationAwPreparation {
-    source: ApplicationAwSource,
-    private_root: PathBuf,
-    storage_domain: casa_imaging_runtime::StorageDomain,
-    resident_bytes: usize,
-    conjugate_beams: bool,
-}
-
-#[derive(Clone)]
-enum ApplicationAwSource {
-    CasaImport(PathBuf),
-    NativeEvla {
-        input: Box<casa_imaging_model::NativeAwRequestInput>,
-        policy: NativeAwCachePolicy,
-        cache_bytes: u64,
-    },
+/// The AW catalog a run opens (`AwCatalog::open_casa`): a directory of CASA
+/// `CFS_*`/`WTCFS_*` cells, imported or generated natively at preparation,
+/// its index rules and the resident cell bound.
+#[derive(Clone, Debug)]
+pub struct AwCatalogDeployment {
+    /// Directory holding the cell images.
+    pub root: PathBuf,
+    /// Conjugate-beam and parallactic-angle cell rules.
+    pub indexing: casa_imaging_operator::AwIndexing,
+    /// Largest number of bytes of cells resident at once.
+    pub resident_bytes: usize,
 }
 
 /// Product-generation controls, deployment resources, and sole storage sink.
@@ -373,13 +353,8 @@ where
     let ApplicationNative {
         runtime,
         publication,
-        aw_preparation,
+        aw_catalog,
     } = input.native?;
-    if aw_preparation.is_some() {
-        return Err(boxed(
-            "A-projection convolution-function preparation is not implemented by the major-cycle pass",
-        ));
-    }
     publication.controls.validate_for_problem(problem)?;
     let visibility_write = (input.write_model_column || input.write_corrected_data)
         .then(|| {
@@ -408,6 +383,7 @@ where
         authority: &runtime.authority,
         policy: &runtime.resource_policy,
         spill_directory: paged_state.directory(),
+        aw_catalog,
         backend: runtime.backend,
     })?;
     publish_products(

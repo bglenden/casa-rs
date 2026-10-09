@@ -2,9 +2,11 @@
 //! The selected MeasurementSet as a [`BoundedSource`] of native row blocks.
 
 use casa_imaging_model::{
-    CompiledProblem, FiniteValuePolicy, SelectedNumericVisibility, SelectedNumericWeights,
+    AntennaResponseClass, CompiledProblem, DirectionCoordinateSpec, FiniteValuePolicy,
+    SelectedAntennaResponses, SelectedNumericVisibility, SelectedNumericWeights, SkyDirection,
 };
 use casa_imaging_operator::{PlaneRange, RowContext};
+use casa_imaging_reconstruction::direction_world_to_pixel;
 use casa_imaging_runtime::pass::{
     BoundedSource, DomainProjection, NativeBlock, NativeRowHeader, RowAddress, SourceError,
 };
@@ -27,6 +29,57 @@ const NONFINITE_INPUT: &str = "a selected visibility, weight or uvw is not finit
 /// Output-frame frequency bounds of a plane range, for windowed traversals
 /// of a cube: the low edge of the first plane to the high edge of the last.
 pub(crate) type PlaneBounds = Box<dyn Fn(PlaneRange) -> [f64; 2] + Send + Sync>;
+
+/// The mosaic dish index of each antenna of a row: its aperture class's
+/// position in the selection's `classes`, the order
+/// [`super::measurement::domain_operator`] lists the dishes in; a row
+/// without response classes (every problem without an instrument model)
+/// is on the first dish.
+fn antenna_types(
+    responses: Option<SelectedAntennaResponses>,
+    classes: &[AntennaResponseClass],
+) -> [u8; 2] {
+    let index = |class: AntennaResponseClass| {
+        classes
+            .iter()
+            .position(|known| *known == class)
+            .map_or(0, |index| u8::try_from(index).expect("few dish classes"))
+    };
+    responses.map_or([0, 0], |responses| {
+        [index(responses.antenna1), index(responses.antenna2)]
+    })
+}
+
+/// The offset of a row's pointing from `direction`'s reference pixel as
+/// direction cosines along the image axes: the A-projection pointing pixel
+/// when the selection evaluated one, else the antenna-1 pointing direction
+/// on the image plane (`SimplePBConvFunc::findConvFunction` takes the
+/// buffer's first `direction1`; under tclean `usepointing=False` the
+/// selection evaluates it as the field's phase-tracking centre).
+fn pointing_offset(
+    direction: DirectionCoordinateSpec,
+    aw_pixel: Option<[f64; 2]>,
+    pointing: SkyDirection,
+) -> Result<[f64; 2], SourceError> {
+    let pixel = match aw_pixel {
+        Some(pixel) => pixel,
+        None => {
+            if pointing.frame() != direction.reference_direction().frame() {
+                return Err("a row's pointing direction is not in the image frame".into());
+            }
+            direction_world_to_pixel(
+                direction,
+                [pointing.longitude_rad(), pointing.latitude_rad()],
+            )?
+        }
+    };
+    let reference = direction.reference_pixel();
+    let increment = direction.increment_rad();
+    Ok([
+        (pixel[0] - reference[0]) * increment[0],
+        (pixel[1] - reference[1]) * increment[1],
+    ])
+}
 
 #[expect(
     clippy::large_enum_variant,
@@ -61,6 +114,11 @@ struct Stream<'a> {
 pub(crate) struct MeasurementSetSource<'a> {
     problem: &'a CompiledProblem,
     domains: usize,
+    /// The direction law of every domain when a kernel set ramps each row
+    /// to its pointing; empty otherwise.
+    pointing: Vec<DirectionCoordinateSpec>,
+    /// The selection's aperture classes in dish order.
+    dish_classes: Vec<AntennaResponseClass>,
     planes: u32,
     bounds: Option<PlaneBounds>,
     proven: bool,
@@ -73,16 +131,28 @@ pub(crate) struct MeasurementSetSource<'a> {
 
 impl<'a> MeasurementSetSource<'a> {
     /// A source over `selected` delivering rows projected on every domain.
-    /// `bounds` enables restricted traversals for a basis of `planes` planes.
+    /// `bounds` enables restricted traversals for a basis of `planes`
+    /// planes; `pointing_ramp` carries each row's pointing offset for a
+    /// kernel set that ramps to it; `dish_classes` orders the antenna
+    /// types the mosaic set keys on.
     pub(crate) fn new(
         problem: &'a CompiledProblem,
         selected: BoundSelectedObservation,
         planes: u32,
         bounds: Option<PlaneBounds>,
+        pointing_ramp: bool,
+        dish_classes: Vec<AntennaResponseClass>,
     ) -> Self {
+        let domains = problem.geometry().domains();
         Self {
             problem,
-            domains: problem.geometry().domains().len(),
+            domains: domains.len(),
+            pointing: if pointing_ramp {
+                domains.iter().map(|domain| domain.direction()).collect()
+            } else {
+                Vec::new()
+            },
+            dish_classes,
             planes,
             bounds,
             proven: false,
@@ -121,21 +191,30 @@ impl<'a> MeasurementSetSource<'a> {
         );
         for row in 0..rows {
             let numeric = block.numeric_row(geometry, row)?;
+            let metadata = &numeric.row.metadata;
+            let coordinates = &numeric.row.coordinates;
             self.projections.clear();
             for domain in 0..self.domains {
                 let projection = numeric
                     .row
                     .domain_projections()
                     .get(domain as u32)
-                    .ok_or("a selected row lacks an image-domain projection")?
-                    .model();
+                    .ok_or("a selected row lacks an image-domain projection")?;
+                let model = projection.model();
+                let pointing_offset_rad = match self.pointing.get(domain) {
+                    Some(direction) => pointing_offset(
+                        *direction,
+                        projection.aw_pointing_pixel(),
+                        coordinates.pointing_directions.antenna1,
+                    )?,
+                    None => [0.0; 2],
+                };
                 self.projections.push(DomainProjection {
-                    uvw_m: projection.transformed_uvw_m(),
-                    phase_shift_m: projection.phase_shift_m(),
+                    uvw_m: model.transformed_uvw_m(),
+                    phase_shift_m: model.phase_shift_m(),
+                    pointing_offset_rad,
                 });
             }
-            let metadata = &numeric.row.metadata;
-            let coordinates = &numeric.row.coordinates;
             let nonfinite_uvw = !self.projections.iter().all(|projection| {
                 projection.uvw_m.iter().all(|value| value.is_finite())
                     && projection.phase_shift_m.is_finite()
@@ -148,9 +227,10 @@ impl<'a> MeasurementSetSource<'a> {
                 context: RowContext {
                     time_s: coordinates.time.mjd_days() * SECONDS_PER_DAY,
                     antennas: [metadata.antenna1 as u32, metadata.antenna2 as u32],
+                    antenna_types: antenna_types(metadata.antenna_responses, &self.dish_classes),
                     parallactic_angle_rad: coordinates.parallactic_angles_rad.unwrap_or([0.0; 2]),
                     field: metadata.field_id as u32,
-                    pointing_offset_rad: [0.0; 2],
+                    spectral_window: numeric.row.spectral_window_id,
                 },
                 address: RowAddress {
                     physical_row: numeric.row.physical_row,

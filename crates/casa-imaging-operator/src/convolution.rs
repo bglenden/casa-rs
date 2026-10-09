@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Convolution-function sets: tap layouts, Mueller routing and the paired
-//! image-domain correction.
+//! Convolution-function sets: tap layouts, Mueller routing, the paired
+//! image-domain correction and the per-set normalisation rule.
+
+use std::sync::Arc;
 
 use num_complex::{Complex32, Complex64};
 
@@ -82,14 +84,126 @@ impl TapLayout<'_> {
     }
 }
 
+/// Dense taps of one cell in the [`TapLayout::Dense`] order, owned so a
+/// bounded cache can hand them out while it evicts others.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DenseCell {
+    /// `(oversampling + 1)² × mueller_planes × sy × sx` tap values.
+    pub data: Box<[Complex32]>,
+    /// Taps per axis `[sx, sy]` (odd).
+    pub support: [u16; 2],
+    /// Fine offsets per cell (even).
+    pub oversampling: u16,
+    /// Mueller planes per tile.
+    pub mueller_planes: u8,
+}
+
+impl DenseCell {
+    /// The cell as a tap layout.
+    #[must_use]
+    pub fn layout(&self) -> TapLayout<'_> {
+        TapLayout::Dense {
+            data: &self.data,
+            support: self.support,
+            oversampling: self.oversampling,
+            mueller_planes: self.mueller_planes,
+        }
+    }
+
+    /// Bytes of the tap values.
+    #[must_use]
+    pub fn bytes(&self) -> usize {
+        std::mem::size_of_val(self.data.as_ref())
+    }
+}
+
+/// A caller-owned slot that keeps one cell of a bounded cache alive while
+/// the taps borrowed from it are in use.
+///
+/// Resident sets ignore it and lend their own storage. A set whose cells
+/// come and go ([`AwCatalog`](crate::AwCatalog)) parks the cell here, so
+/// the cache may drop its own reference without invalidating the borrow,
+/// and a worker holds at most one cell per slot beyond the cache's bound.
+#[derive(Clone, Debug, Default)]
+pub struct CellHold {
+    cell: Option<Arc<DenseCell>>,
+    /// The cell's key and the set's slot (imaging, weight, prediction cell)
+    /// when parked through [`Self::lend_keyed`]; a repeated key lends the
+    /// parked cell again without touching the set's cache.
+    keyed: Option<(CfKey, u8)>,
+}
+
+impl CellHold {
+    /// An empty slot.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            cell: None,
+            keyed: None,
+        }
+    }
+
+    /// Park `cell` and lend its taps.
+    pub fn lend(&mut self, cell: Arc<DenseCell>) -> TapLayout<'_> {
+        self.keyed = None;
+        self.cell.insert(cell).layout()
+    }
+
+    /// Lend the taps of the cell parked for `key` in the set's `slot` (the
+    /// set numbers its kinds of cell), fetching it with `load` when another
+    /// cell is parked: rows of one key in sequence cost one fetch.
+    pub fn lend_keyed(
+        &mut self,
+        key: CfKey,
+        slot: u8,
+        load: impl FnOnce() -> Arc<DenseCell>,
+    ) -> TapLayout<'_> {
+        if self.keyed != Some((key, slot)) || self.cell.is_none() {
+            self.cell = Some(load());
+            self.keyed = Some((key, slot));
+        }
+        self.cell.as_ref().expect("a parked cell").layout()
+    }
+
+    /// Release the parked cell.
+    pub fn clear(&mut self) {
+        self.cell = None;
+        self.keyed = None;
+    }
+}
+
+/// How a set's kernels are normalised: what a prediction divides by and
+/// what `sumwt` accumulates, with `N` the sum of the w-conjugated taps a
+/// visibility polarization uses at its fine offset, without the pointing
+/// ramp (plan section 5.3; R1 on #650). CASA's machines differ, so the
+/// rule is a property of the set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum KernelNormalisation {
+    /// Unit-sum taps: predictions are the gathered sums and `sumwt += W`
+    /// (CASA `GridFT`, `MosaicFT`: `fgridft.f`, `fmosaic.f` add the weight
+    /// without a kernel sum).
+    UnitSum,
+    /// Predictions are the gathered sums and `sumwt += W · Re N` (CASA
+    /// `WProjectFT`: `wprojgrid.f` accumulates `norm += real(cwt)` and adds
+    /// `weight · norm`; `dwgrid` does not divide).
+    RealSum,
+    /// A prediction divides once by `N` summed over its routed Mueller
+    /// planes and `sumwt += W · |N|` (CASA `AWVisResampler::DataToGrid`,
+    /// `GridToData` and `faccumulateFromGrid.f`).
+    KernelSum,
+}
+
 /// Which kernel Mueller plane serves each (grid polarization, visibility
 /// polarization) pair.
 ///
 /// `direct` is the adjoint table for `w > 0`; `conjugate` its partner for
-/// `w ≤ 0`. The kernel swaps the tables on the sign of `w` and on the
-/// direction of the transform and conjugates the taps (HPG
-/// `mueller_indexes` / `conjugate_mueller_indexes`). `None` skips a pair.
-/// Both tables are `[grid pol][visibility pol]`.
+/// `w ≤ 0`. `AWVisResampler::getConvFunc_p` reads `mNdx` for `wVal > 0`
+/// and `conjMNdx` otherwise, while `accumulateToGrid` conjugates the cell
+/// for `wVal > 0`: the table swap and the tap conjugation sit on opposite
+/// signs of `w`. The kernel swaps the tables on the sign of `w` and on the
+/// direction of the transform (HPG `mueller_indexes` /
+/// `conjugate_mueller_indexes`). `None` skips a pair. Both tables are
+/// `[grid pol][visibility pol]`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MuellerRouting {
     /// Adjoint table for `w > 0`.
@@ -130,8 +244,8 @@ impl MuellerRouting {
         self.direct.first().map_or(0, Vec::len)
     }
 
-    /// The table for one transform: the adjoint uses `direct` for `w > 0`,
-    /// the forward transform swaps them.
+    /// The table for one transform: the adjoint uses `direct` for `w > 0`
+    /// and `conjugate` otherwise, the forward transform swaps them.
     #[must_use]
     pub fn table(&self, w_positive: bool, forward: bool) -> &[Vec<Option<u8>>] {
         if w_positive != forward {
@@ -149,49 +263,97 @@ pub struct RowContext {
     pub time_s: f64,
     /// Antenna pair.
     pub antennas: [u32; 2],
-    /// Parallactic angle of each antenna in radians.
+    /// Antenna type of each antenna: an index into the kernel set's
+    /// antenna classes (CASA `HetArrayConvFunc` dish classes, AW baseline
+    /// types); 0 for a homogeneous array.
+    pub antenna_types: [u8; 2],
+    /// CASA's visibility polarization operator angle of each antenna in
+    /// radians: the negative of the physical parallactic angle.
     pub parallactic_angle_rad: [f64; 2],
     /// Field (pointing) identifier.
     pub field: u32,
-    /// Pointing offset from the image phase centre in radians `[Δl, Δm]`.
-    pub pointing_offset_rad: [f64; 2],
+    /// Spectral window of the row's data description; kernel sets with
+    /// per-window frequency cells key on it.
+    pub spectral_window: u32,
 }
 
-/// Paired image-domain gridding correction: one real vector per grid axis,
-/// applied as `x[gx] · y[gy]` on both sides of the operator (CASA divides
-/// the model and the dirty image by the same spheroidal response).
+/// Image-domain gridding correction: one real vector per grid axis on each
+/// side of the operator, applied as `x[gx] · y[gy]` to the image the
+/// adjoint forms ([`Self::at`]) and to the model the forward transform
+/// reads ([`Self::model_at`]).
+///
+/// CASA's `GridFT` divides the model and the dirty image by the same
+/// response ([`Self::new`]); `MosaicFT` (`prepGridForDegrid`, `getImage`)
+/// and `WProjectFT` (`initializeToVis`, `getImage`) multiply the model by
+/// their sinc and divide the image by it, so the sides differ
+/// ([`Self::split`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImageCorrection {
     x: Box<[f64]>,
     y: Box<[f64]>,
+    model_x: Box<[f64]>,
+    model_y: Box<[f64]>,
 }
 
 impl ImageCorrection {
-    /// Correction vectors over the padded grid axes.
+    /// The same correction vectors on both sides, over the padded grid
+    /// axes.
     #[must_use]
     pub fn new(x: Vec<f64>, y: Vec<f64>) -> Self {
         Self {
+            model_x: x.clone().into_boxed_slice(),
+            model_y: y.clone().into_boxed_slice(),
             x: x.into_boxed_slice(),
             y: y.into_boxed_slice(),
         }
     }
 
-    /// Correction along the grid x axis.
+    /// Different vectors for the image side (`x`, `y`) and the model side
+    /// (`model_x`, `model_y`).
+    #[must_use]
+    pub fn split(x: Vec<f64>, y: Vec<f64>, model_x: Vec<f64>, model_y: Vec<f64>) -> Self {
+        Self {
+            x: x.into_boxed_slice(),
+            y: y.into_boxed_slice(),
+            model_x: model_x.into_boxed_slice(),
+            model_y: model_y.into_boxed_slice(),
+        }
+    }
+
+    /// Image-side correction along the grid x axis.
     #[must_use]
     pub fn x(&self) -> &[f64] {
         &self.x
     }
 
-    /// Correction along the grid y axis.
+    /// Image-side correction along the grid y axis.
     #[must_use]
     pub fn y(&self) -> &[f64] {
         &self.y
     }
 
-    /// Correction at grid cell `(gx, gy)`.
+    /// Model-side correction along the grid x axis.
+    #[must_use]
+    pub fn model_x(&self) -> &[f64] {
+        &self.model_x
+    }
+
+    /// Model-side correction along the grid y axis.
+    #[must_use]
+    pub fn model_y(&self) -> &[f64] {
+        &self.model_y
+    }
+
+    /// Image-side correction at grid cell `(gx, gy)`.
     #[must_use]
     pub fn at(&self, gx: usize, gy: usize) -> f64 {
         self.x[gx] * self.y[gy]
+    }
+
+    /// Model-side correction at grid cell `(gx, gy)`.
+    #[must_use]
+    pub fn model_at(&self, gx: usize, gy: usize) -> f64 {
+        self.model_x[gx] * self.model_y[gy]
     }
 }
 
@@ -204,8 +366,9 @@ pub trait ConvolutionFunctionSet: Send + Sync {
     /// live here.
     fn key(&self, row: &RowContext, freq_hz: f64, w_lambda: f64) -> CfKey;
 
-    /// Imaging taps of a cell.
-    fn taps(&self, key: CfKey) -> TapLayout<'_>;
+    /// Imaging taps of a cell. A set that pages cells parks the cell in
+    /// `hold` and lends from it; resident sets lend their own storage.
+    fn taps<'s>(&'s self, key: CfKey, hold: &'s mut CellHold) -> TapLayout<'s>;
 
     /// The largest [`TapLayout::half_support`] of any cell `key` can
     /// return, `[x, y]`: the halo a tile needs so that every sample anchored
@@ -214,11 +377,61 @@ pub trait ConvolutionFunctionSet: Send + Sync {
 
     /// `FT[PB²]` taps for the weight (sensitivity) image, placed at the uv
     /// origin; `None` for sets without a weight image.
-    fn weight_taps(&self, key: CfKey) -> Option<TapLayout<'_>>;
+    fn weight_taps<'s>(&'s self, key: CfKey, hold: &'s mut CellHold) -> Option<TapLayout<'s>>;
 
     /// Mueller plane routing for every cell of the set.
     fn mueller(&self) -> &MuellerRouting;
 
     /// The paired image-domain correction.
     fn image_correction(&self) -> &ImageCorrection;
+
+    /// The normalisation rule of the set's kernels.
+    fn normalisation(&self) -> KernelNormalisation;
+
+    /// Whether placements carry the pointing phase gradient
+    /// (`Placement::gradient`): the kernels encode a pointing offset from
+    /// the image centre as `e^{i(k·g)}` over the taps (mosaic, AW).
+    fn pointing_ramp(&self) -> bool;
+
+    /// The taps `Mode::Psf` grids a sample with at its uv position: the
+    /// imaging taps for `GridFT`, `WProjectFT` and `MosaicFT`; the AW
+    /// catalog grids its PSF with the weight cells (`AWProjectFT::
+    /// findConvFunction` maps `cfwts2_p` when `makingPSF`).
+    fn psf_taps<'s>(&'s self, key: CfKey, hold: &'s mut CellHold) -> TapLayout<'s> {
+        self.taps(key, hold)
+    }
+
+    /// The taps a prediction gathers with: the gridding taps for every set
+    /// but the AW catalog, whose `GridToData` reads the native-frequency
+    /// cell (`CFBuffer::nearestFreqNdx(spw, chan)` without `conjBeams`)
+    /// where `DataToGrid` read the conjugate one.
+    fn prediction_taps<'s>(&'s self, key: CfKey, hold: &'s mut CellHold) -> TapLayout<'s> {
+        self.taps(key, hold)
+    }
+
+    /// The half support a placement keyed `key` must keep inside the grid:
+    /// the largest of every tap layout the key can lend.
+    fn placement_half_support(&self, key: CfKey, hold: &mut CellHold) -> [u16; 2] {
+        self.taps(key, hold).half_support()
+    }
+
+    /// Whether a sample at `w_lambda` is gridded at all. `WProjectFT`'s
+    /// gridder drops a row whose plane index `nint(√(wScale·|w|))` lies
+    /// beyond the last plane (`wprojgrid.f` `owp` tests the unclamped
+    /// `loc(3)`); every other set accepts every `w` (the AW catalog clamps,
+    /// `CFBuffer::nearestWNdx`).
+    fn admits(&self, w_lambda: f64) -> bool {
+        let _ = w_lambda;
+        true
+    }
+
+    /// Whether the weight (sensitivity) image receives the image-side
+    /// correction. `AWProjectFT::getWeightImage` divides its average PB by
+    /// the sampling sinc as `getImage` does; `MosaicFT` publishes the
+    /// transform of its gridded weight functions as `skyCoverage_p` with
+    /// no correction at all, while its `getImage` divides the data and PSF
+    /// by the sinc.
+    fn corrects_weight_image(&self) -> bool {
+        true
+    }
 }

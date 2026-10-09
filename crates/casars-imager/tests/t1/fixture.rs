@@ -11,8 +11,8 @@ use std::sync::Once;
 use casa_coordinates::{CoordinateModel, ProjectionType, StokesType};
 use casa_images::{GaussianBeam, PagedImage};
 use casa_ms::{
-    MeasurementSet, SyntheticAnalyticComponent, SyntheticAnalyticSpectrum,
-    SyntheticCorruptionConfig, SyntheticNoiseCorruption, SyntheticNoiseMode,
+    MeasurementSet, SyntheticAnalyticComponent, SyntheticAnalyticSpectrum, SyntheticAntenna,
+    SyntheticCorruptionConfig, SyntheticField, SyntheticNoiseCorruption, SyntheticNoiseMode,
     SyntheticObservationRequest, SyntheticSkyModel, SyntheticSpectralSetup, VisibilityDataColumn,
     generate_synthetic_observation_ms, initialize_measurement_set_owner_manifest,
     tutorial_vla_a_antennas,
@@ -40,6 +40,86 @@ const DURATION_SECONDS: f64 = 3_600.0;
 const INTEGRATION_SECONDS: f64 = 24.0;
 /// Parallel-hand correlations combined into Stokes I.
 const STOKES_I_CORRELATIONS: usize = 2;
+/// J2000 phase centre of every T1 track: 18h at declination −23°, the
+/// `vla_ppdisk` tutorial field.
+pub const PHASE_CENTER_RAD: [f64; 2] = [4.712_391_234_768_306, -0.401_423_788_703_971_4];
+
+/// The image geometry a run images and a component's pixel offsets refer to.
+#[derive(Debug, Clone, Copy)]
+pub struct Geometry {
+    /// Image side in pixels.
+    pub image_size: usize,
+    /// Cell in arcseconds.
+    pub cell_arcsec: f64,
+}
+
+impl Geometry {
+    /// The default T1 geometry: [`IMAGE_SIZE`] cells of [`CELL_ARCSEC`].
+    pub const DEFAULT: Self = Self {
+        image_size: IMAGE_SIZE,
+        cell_arcsec: CELL_ARCSEC,
+    };
+
+    /// Cell in radians.
+    pub fn cell_rad(self) -> f64 {
+        self.cell_arcsec.to_radians() / 3_600.0
+    }
+
+    /// Pixel `[x, y]` of a component offset from the image reference pixel.
+    pub fn pixel(self, component: Component) -> [usize; 2] {
+        let centre = (self.image_size / 2) as i32;
+        [
+            usize::try_from(centre + component.offset_px[0]).expect("component inside image"),
+            usize::try_from(centre + component.offset_px[1]).expect("component inside image"),
+        ]
+    }
+}
+
+/// The instrument, pointings and band of a synthetic track.
+pub struct Setup {
+    /// `OBSERVATION.TELESCOPE_NAME`; selects the simulator's primary beam.
+    pub telescope: String,
+    /// The array.
+    pub antennas: Vec<SyntheticAntenna>,
+    /// Pointings `[ra, dec]` in radians observed round-robin per
+    /// integration; empty for one field at [`PHASE_CENTER_RAD`].
+    pub fields: Vec<[f64; 2]>,
+    /// The one spectral window.
+    pub spectral: SyntheticSpectralSetup,
+    /// The geometry component offsets refer to and runs image.
+    pub geometry: Geometry,
+    /// Per-component (real and imaginary) visibility noise in Jy.
+    pub noise_jy: f32,
+}
+
+impl Setup {
+    /// The VLA-A Q-band track: `channels` 128 MHz channels from 44 GHz on
+    /// the default geometry.
+    pub fn vla_q_band(channels: usize) -> Self {
+        Self {
+            telescope: "VLA".to_string(),
+            antennas: tutorial_vla_a_antennas(),
+            fields: Vec::new(),
+            spectral: SyntheticSpectralSetup {
+                name: "t1-qband".to_string(),
+                start_frequency_hz: START_FREQUENCY_HZ,
+                channel_width_hz: CHANNEL_WIDTH_HZ,
+                channel_count: channels,
+            },
+            geometry: Geometry::DEFAULT,
+            noise_jy: VISIBILITY_NOISE_JY,
+        }
+    }
+
+    /// `[ra, dec]` of a pointing `[Δl, Δm]` radians east and north of
+    /// [`PHASE_CENTER_RAD`].
+    pub fn pointing(offset_rad: [f64; 2]) -> [f64; 2] {
+        [
+            PHASE_CENTER_RAD[0] + offset_rad[0] / PHASE_CENTER_RAD[1].cos(),
+            PHASE_CENTER_RAD[1] + offset_rad[1],
+        ]
+    }
+}
 
 /// One analytic component centred on an image pixel.
 #[derive(Debug, Clone, Copy)]
@@ -60,17 +140,18 @@ impl Component {
         self.flux_jy * (frequency_hz / REFERENCE_FREQUENCY_HZ).powf(self.spectral_index)
     }
 
-    /// Direction cosines `[l, m]`: `l` grows east, opposite to image `x`.
-    fn direction_cosines(self) -> [f64; 2] {
-        let cell_rad = CELL_ARCSEC.to_radians() / 3_600.0;
+    /// Direction cosines `[l, m]` on `geometry`: `l` grows east, opposite
+    /// to image `x`.
+    pub fn direction_cosines(self, geometry: Geometry) -> [f64; 2] {
+        let cell_rad = geometry.cell_rad();
         [
             -f64::from(self.offset_px[0]) * cell_rad,
             f64::from(self.offset_px[1]) * cell_rad,
         ]
     }
 
-    fn analytic(self, name: &str) -> SyntheticAnalyticComponent {
-        let [l_rad, m_rad] = self.direction_cosines();
+    fn analytic(self, name: &str, geometry: Geometry) -> SyntheticAnalyticComponent {
+        let [l_rad, m_rad] = self.direction_cosines(geometry);
         let spectrum = SyntheticAnalyticSpectrum {
             flux_jy: self.flux_jy,
             spectral_index: self.spectral_index,
@@ -91,7 +172,7 @@ impl Component {
                 spectrum,
             },
             Some(fwhm_px) => {
-                let fwhm_rad = fwhm_px * CELL_ARCSEC.to_radians() / 3_600.0;
+                let fwhm_rad = fwhm_px * geometry.cell_rad();
                 SyntheticAnalyticComponent::Gaussian {
                     name,
                     l_rad,
@@ -113,6 +194,8 @@ pub struct Observation {
     phase_center_rad: [f64; 2],
     channel_frequencies_hz: Vec<f64>,
     unflagged_rows: usize,
+    geometry: Geometry,
+    noise_jy: f32,
 }
 
 impl Observation {
@@ -125,36 +208,47 @@ impl Observation {
     /// Observe `components` in one Q-band window of `channels` 128 MHz
     /// channels from 44 GHz.
     pub fn synthesise_band(channels: usize, components: &[(&str, Component)]) -> Self {
+        Self::synthesise_setup(Setup::vla_q_band(channels), components)
+    }
+
+    /// Observe `components` with `setup`.
+    pub fn synthesise_setup(setup: Setup, components: &[(&str, Component)]) -> Self {
         let root = tempfile::tempdir().expect("T1 fixture directory");
         let measurement_set = root.path().join("t1.ms");
         let mut request = SyntheticObservationRequest::vla_ppdisk(
             root.path().join("unused.fits"),
             &measurement_set,
-            tutorial_vla_a_antennas(),
+            setup.antennas,
         );
+        request.telescope_name = setup.telescope;
         request.field_name = "t1".to_string();
+        request.phase_center_rad = PHASE_CENTER_RAD;
+        request.fields = setup
+            .fields
+            .iter()
+            .enumerate()
+            .map(|(index, phase_center_rad)| SyntheticField {
+                name: format!("t1-{index}"),
+                phase_center_rad: *phase_center_rad,
+            })
+            .collect();
         request.duration_seconds = DURATION_SECONDS;
         request.integration_seconds = INTEGRATION_SECONDS;
-        request.spectral_windows = vec![SyntheticSpectralSetup {
-            name: "t1-qband".to_string(),
-            start_frequency_hz: START_FREQUENCY_HZ,
-            channel_width_hz: CHANNEL_WIDTH_HZ,
-            channel_count: channels,
-        }];
+        request.spectral_windows = vec![setup.spectral];
         request.model = Some(SyntheticSkyModel::AnalyticComponents {
             path: None,
             schema_version: Some(1),
             name: Some("t1-sky".to_string()),
             components: components
                 .iter()
-                .map(|(name, component)| component.analytic(name))
+                .map(|(name, component)| component.analytic(name, setup.geometry))
                 .collect(),
         });
         request.corruption = Some(SyntheticCorruptionConfig {
             seed: 20_261_007,
             noise: Some(SyntheticNoiseCorruption {
                 mode: SyntheticNoiseMode::SimpleNoise,
-                simplenoise_jy: VISIBILITY_NOISE_JY,
+                simplenoise_jy: setup.noise_jy,
             }),
             gain: None,
             bandpass: None,
@@ -170,7 +264,19 @@ impl Observation {
             unflagged_rows: report.main_row_count - report.flagged_row_count,
             measurement_set,
             root,
+            geometry: setup.geometry,
+            noise_jy: setup.noise_jy,
         }
+    }
+
+    /// The geometry the track was synthesised for and runs image.
+    pub fn geometry(&self) -> Geometry {
+        self.geometry
+    }
+
+    /// A path for a run's private inputs inside the observation's directory.
+    pub fn scratch(&self, name: &str) -> PathBuf {
+        self.root.path().join(name)
     }
 
     /// Native channel centres in Hz.
@@ -196,12 +302,12 @@ impl Observation {
     /// Natural-weighting Stokes I image noise for unit-weight visibilities:
     /// `sigma / sqrt(N)` over the Stokes I samples.
     pub fn image_noise_jy(&self) -> f64 {
-        f64::from(VISIBILITY_NOISE_JY) / (self.stokes_i_samples() as f64).sqrt()
+        f64::from(self.noise_jy) / (self.stokes_i_samples() as f64).sqrt()
     }
 
     /// Natural-weighting image noise of one native channel.
     pub fn channel_noise_jy(&self) -> f64 {
-        f64::from(VISIBILITY_NOISE_JY) / (self.stokes_i_samples_per_channel() as f64).sqrt()
+        f64::from(self.noise_jy) / (self.stokes_i_samples_per_channel() as f64).sqrt()
     }
 
     /// Run the production route with `controls` merged over the T1 geometry
@@ -218,8 +324,8 @@ impl Observation {
         let mut request = json!({
             "measurement_set": self.measurement_set,
             "image_name": image_name,
-            "image_size": IMAGE_SIZE,
-            "cell_arcsec": CELL_ARCSEC,
+            "image_size": self.geometry.image_size,
+            "cell_arcsec": self.geometry.cell_arcsec,
         });
         let fields = request.as_object_mut().expect("request object");
         for (key, value) in controls.as_object().expect("controls object") {
@@ -282,7 +388,8 @@ impl Observation {
             (frequency_hz - band_centre_hz).abs() < 1.0,
             "MFS reference frequency {frequency_hz} Hz, band centre {band_centre_hz} Hz"
         );
-        assert_eq!(image.pixels.dim(), (IMAGE_SIZE, IMAGE_SIZE));
+        let side = self.geometry.image_size;
+        assert_eq!(image.pixels.dim(), (side, side));
     }
 
     /// Direction and Stokes axes: SIN projection at the phase centre with
@@ -304,7 +411,7 @@ impl Observation {
                 reference[axis]
             );
         }
-        let cell_rad = CELL_ARCSEC.to_radians() / 3_600.0;
+        let cell_rad = self.geometry.cell_rad();
         let increment = coordinates.coordinate(0).increment();
         assert!(
             (increment[0] + cell_rad).abs() < 1.0e-6 * cell_rad,
@@ -316,7 +423,7 @@ impl Observation {
         );
         assert_eq!(
             coordinates.coordinate(0).reference_pixel(),
-            vec![(IMAGE_SIZE / 2) as f64; 2]
+            vec![(self.geometry.image_size / 2) as f64; 2]
         );
         let CoordinateModel::Stokes(stokes) = coordinates.coordinate(1) else {
             panic!(".image coordinate 1 is not a Stokes coordinate");
@@ -368,8 +475,9 @@ impl Product {
 
     /// The `[x, y]` plane of `channel` (Stokes I).
     pub fn plane(&self, channel: usize) -> Array2<f32> {
+        let shape = self.image.shape();
         self.image
-            .get_slice(&[0, 0, 0, channel], &[IMAGE_SIZE, IMAGE_SIZE, 1, 1])
+            .get_slice(&[0, 0, 0, channel], &[shape[0], shape[1], 1, 1])
             .expect("read product plane")
             .index_axis_move(Axis(3), 0)
             .index_axis_move(Axis(2), 0)
@@ -476,8 +584,13 @@ pub fn box_sum(pixels: &Array2<f32>, centre: [usize; 2], half_width: usize) -> f
 
 /// Independent PSF main-lobe Gaussian: a weighted least-squares fit of a
 /// quadratic to `ln(psf)` over the connected lobe above `cutoff` of the peak.
-/// Returns FWHM `[major, minor]` in radians.
+/// Returns FWHM `[major, minor]` in radians on the default geometry.
 pub fn fit_psf_main_lobe(psf: &Array2<f32>, cutoff: f32) -> [f64; 2] {
+    fit_psf_main_lobe_cells(psf, cutoff).map(|fwhm| fwhm * Geometry::DEFAULT.cell_rad())
+}
+
+/// [`fit_psf_main_lobe`] in cells.
+pub fn fit_psf_main_lobe_cells(psf: &Array2<f32>, cutoff: f32) -> [f64; 2] {
     let (peak_value, [x0, y0], _) = peak(psf);
     let mut lobe = vec![[x0, y0]];
     let mut seen = BTreeSet::from([[x0, y0]]);
@@ -509,20 +622,19 @@ pub fn fit_psf_main_lobe(psf: &Array2<f32>, cutoff: f32) -> [f64; 2] {
     let (a, b, d) = (-2.0 * c[3], -c[4], -2.0 * c[5]);
     let mean = 0.5 * (a + d);
     let spread = (0.25 * (a - d) * (a - d) + b * b).sqrt();
-    let cell_rad = CELL_ARCSEC.to_radians() / 3_600.0;
-    let fwhm = |precision: f64| 2.0 * (2.0 * 2.0_f64.ln() / precision).sqrt() * cell_rad;
+    let fwhm = |precision: f64| 2.0 * (2.0 * 2.0_f64.ln() / precision).sqrt();
     [fwhm(mean - spread), fwhm(mean + spread)]
 }
 
 /// RMS of `pixels` inside the central half of the image, excluding discs of
 /// `radius_px` around `exclusions`.
 pub fn off_source_rms(pixels: &Array2<f32>, exclusions: &[[usize; 2]], radius_px: f64) -> f64 {
-    let quarter = IMAGE_SIZE / 4;
+    let (nx, ny) = pixels.dim();
     let (sum, count) = pixels
         .indexed_iter()
         .filter(|((x, y), _)| {
-            (quarter..IMAGE_SIZE - quarter).contains(x)
-                && (quarter..IMAGE_SIZE - quarter).contains(y)
+            (nx / 4..nx - nx / 4).contains(x)
+                && (ny / 4..ny - ny / 4).contains(y)
                 && exclusions.iter().all(|[cx, cy]| {
                     let dx = *x as f64 - *cx as f64;
                     let dy = *y as f64 - *cy as f64;

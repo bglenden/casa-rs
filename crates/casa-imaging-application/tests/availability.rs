@@ -118,31 +118,23 @@ fn unavailable_task_requirements_are_exact_and_typed() {
 }
 
 #[test]
-fn w_projection_rejects_until_its_convolution_function_set_is_installed() {
+fn w_projection_runs_on_the_installed_pass() {
     let mut fixture = ProblemFixture::standard();
     fixture.measurement_equation = fixture
         .measurement_equation
         .with_w_projection(WProjectionContract::new(100.0, None).expect("W contract"));
-    let error = require_installed_implementation(
+    require_installed_implementation(
         &fixture.compile(),
         [
             TaskRequirement::WProjection,
             TaskRequirement::WProjectionPlanes,
         ],
     )
-    .expect_err("W projection must reject before physical planning");
-    assert_exactly_unsupported(
-        &error,
-        [
-            UnsupportedRequirement::Capability(RequiredCapability::WProjection),
-            UnsupportedRequirement::Task(TaskRequirement::WProjection),
-            UnsupportedRequirement::Task(TaskRequirement::WProjectionPlanes),
-        ],
-    );
+    .expect("W projection runs with its W-planes set");
 }
 
 #[test]
-fn aw_projection_rejects_until_its_convolution_function_set_is_installed() {
+fn aw_projection_runs_on_the_installed_pass() {
     let mut fixture =
         ProblemFixture::standard().with_primary_beam(InstrumentModel::CasaEvlaWidebandAwV1);
     fixture.measurement_equation = fixture.measurement_equation.with_aw_projection(
@@ -161,41 +153,18 @@ fn aw_projection_rejects_until_its_convolution_function_set_is_installed() {
         .expect("AW contract"),
     );
     fixture.products.push(ProductKind::Weight);
-    let error =
-        require_installed_implementation(&fixture.compile(), [TaskRequirement::AwProjection])
-            .expect_err("AW projection must reject before physical planning");
-    assert_exactly_unsupported(
-        &error,
-        [
-            UnsupportedRequirement::Capability(RequiredCapability::AwProjection),
-            UnsupportedRequirement::Capability(RequiredCapability::PrimaryBeamResponse),
-            UnsupportedRequirement::Capability(RequiredCapability::Product(ProductKind::Weight)),
-            UnsupportedRequirement::Task(TaskRequirement::AwProjection),
-            UnsupportedRequirement::ScalarInstrumentResponse,
-        ],
-    );
+    require_installed_implementation(&fixture.compile(), [TaskRequirement::AwProjection])
+        .expect("AW projection runs with its catalog and weight image");
 }
 
 #[test]
-fn mosaic_primary_beam_response_rejects_until_its_convolution_function_set_is_installed() {
+fn mosaic_runs_on_the_installed_pass() {
     let mut fixture = ProblemFixture::standard()
         .with_primary_beam(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1);
     fixture.uvw = UvwCoordinateLaw::MosaicPhaseTrackingCentre;
     fixture.products.push(ProductKind::Sensitivity);
-    let error =
-        require_installed_implementation(&fixture.compile(), [TaskRequirement::MosaicGridder])
-            .expect_err("mosaic must reject before physical planning");
-    assert_exactly_unsupported(
-        &error,
-        [
-            UnsupportedRequirement::Capability(RequiredCapability::PrimaryBeamResponse),
-            UnsupportedRequirement::Capability(RequiredCapability::Product(
-                ProductKind::Sensitivity,
-            )),
-            UnsupportedRequirement::Task(TaskRequirement::MosaicGridder),
-            UnsupportedRequirement::ScalarInstrumentResponse,
-        ],
-    );
+    require_installed_implementation(&fixture.compile(), [TaskRequirement::MosaicGridder])
+        .expect("mosaic runs with its primary-beam set and sensitivity image");
 }
 
 #[test]

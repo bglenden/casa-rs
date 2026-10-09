@@ -218,12 +218,10 @@ fn weighting() -> WeightingContract {
 }
 
 #[test]
-fn t52_native_aw_identity_covers_every_resolved_scientific_input() {
+fn native_aw_request_input_validates_its_axes_and_terms() {
     use casa_imaging_model::{
-        EvlaDishSurface, NativeAwFrequencyGroup, NativeAwGrid, NativeAwRequest,
-        NativeAwRequestInput, NativeAwTerms,
+        EvlaDishSurface, NativeAwFrequencyGroup, NativeAwGrid, NativeAwRequestInput, NativeAwTerms,
     };
-    let problem = compile_request(specification(false), inputs(false)).unwrap();
     let surface = EvlaDishSurface::new(
         (0..=1250)
             .map(|n| {
@@ -267,281 +265,19 @@ fn t52_native_aw_identity_covers_every_resolved_scientific_input() {
         },
         maximum_cells: 32,
     };
-    let baseline = NativeAwRequest::new(problem.geometry().geometry_id(), input.clone()).unwrap();
-    assert_eq!(baseline.cell_count(), 16);
-    let first = baseline.cell(0).unwrap();
-    assert_eq!(first.0.conjugate_frequency_hz, 3.25e9);
-    assert_eq!(first.0.mueller, 0);
-    assert_eq!(baseline.cell(1).unwrap().0.mueller, 15);
-    assert_eq!(baseline.cell(4).unwrap().0.w_wavelengths, 100.0);
-    assert!(baseline.cell(16).is_none());
-    let repeated = NativeAwRequest::new(problem.geometry().geometry_id(), input.clone()).unwrap();
-    for index in 0..baseline.cell_count() {
-        assert_eq!(baseline.cell(index), repeated.cell(index));
-    }
-    let changes: &[fn(&mut NativeAwRequestInput)] = &[
-        |i| i.grid.size = 256,
-        |i| i.grid.sky_increment_rad = [-0.002, 0.002],
-        |i| i.grid.oversampling = 8,
-        |i| i.frequencies[0].spectral_window = 3,
-        |i| i.frequencies[0].channel_frequencies_hz[0] += 1e6,
-        |i| i.frequencies[0].cf_frequency_hz += 1e6,
-        |i| i.w_values[1] += 1.0,
-        |i| i.w_increment *= 2.0,
-        |i| i.pa_values[1] += 0.1,
-        |i| i.mueller_elements = vec![0],
-        |i| i.reference_frequency_hz += 1e6,
-        |i| i.terms.aperture = false,
-        |i| {
-            i.terms.w_term = false;
-            i.w_values = vec![0.0];
-        },
-        |i| i.terms.prolate_spheroidal = false,
-        |i| {
-            i.terms.wideband = false;
-            i.frequencies.truncate(1);
-            i.frequencies[0].cf_frequency_hz = i.reference_frequency_hz;
-        },
-        |i| i.terms.conjugate_beams = false,
-        |i| {
-            let mut s = i.surface.samples().to_vec();
-            s[20][1] += 1e-6;
-            i.surface = EvlaDishSurface::new(s).unwrap();
-        },
-    ];
-    for (index, change) in changes.iter().enumerate() {
-        let mut changed = input.clone();
-        change(&mut changed);
-        let changed = NativeAwRequest::new(problem.geometry().geometry_id(), changed).unwrap();
-        assert_ne!(
-            first.1,
-            changed.cell(0).unwrap().1,
-            "scientific mutation {index}"
-        );
-    }
+    assert!(input.validate().is_ok());
     let mut bounded = input.clone();
     bounded.maximum_cells = 15;
-    assert!(NativeAwRequest::new(problem.geometry().geometry_id(), bounded).is_err());
+    assert!(bounded.validate().is_err());
     let mut diameter = input.clone();
     diameter.antenna_diameter_m = 24.0;
-    assert!(NativeAwRequest::new(problem.geometry().geometry_id(), diameter).is_err());
+    assert!(diameter.validate().is_err());
     let mut duplicate = input.clone();
     duplicate.frequencies[1].spectral_window = 2;
-    assert!(NativeAwRequest::new(problem.geometry().geometry_id(), duplicate).is_err());
-    let mut resource_only = input;
-    resource_only.maximum_cells = 64;
-    assert_eq!(
-        first.1,
-        NativeAwRequest::new(problem.geometry().geometry_id(), resource_only)
-            .unwrap()
-            .cell(0)
-            .unwrap()
-            .1
-    );
-}
-
-#[test]
-fn prepared_cf_dependencies_exclude_solve_controls_but_retain_operator_science() {
-    use casa_imaging_model::PreparedArtifactScientificKind::{
-        ConvolutionFunction, Kernel, SpectralMap,
-    };
-
-    let make = |reconstruction, science, weighting, products, numerics, inputs| {
-        compile_request(
-            ProblemSpecification::new(
-                science,
-                reconstruction,
-                weighting,
-                products,
-                read_only_transaction(),
-                numerics,
-            ),
-            inputs,
-        )
-        .expect("prepared dependency fixture")
-    };
-    let baseline = make(
-        reconstruction(),
-        science(),
-        weighting(),
-        products(false),
-        numerics(false),
-        inputs(false),
-    );
-    let dependency = baseline.prepared_artifact_dependency_id(ConvolutionFunction);
-    for (algorithm, controls) in [
-        (
-            ReconstructionAlgorithm::Mtmfs {
-                scales_px: vec![0.0],
-                small_scale_bias: 0.0,
-            },
-            ReconstructionControls::new(0, 0.1, 0.0),
-        ),
-        (
-            ReconstructionAlgorithm::Mtmfs {
-                scales_px: vec![0.0],
-                small_scale_bias: 0.0,
-            },
-            ReconstructionControls::new(30, 0.2, 0.001),
-        ),
-    ] {
-        let other = make(
-            ReconstructionContract::new(
-                ReconstructionBasis::Taylor { terms: 2 },
-                algorithm,
-                controls,
-                PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
-            ),
-            science(),
-            weighting(),
-            products(false),
-            numerics(false),
-            inputs(false),
-        );
-        assert_ne!(baseline.problem_id(), other.problem_id());
-        assert_eq!(
-            dependency,
-            other.prepared_artifact_dependency_id(ConvolutionFunction)
-        );
-        for kind in [SpectralMap, Kernel] {
-            assert_ne!(
-                baseline.prepared_artifact_dependency_id(kind),
-                other.prepared_artifact_dependency_id(kind)
-            );
-        }
-    }
-    let selected_products = ProductRequirements::new(
-        vec![ProductKind::Psf],
-        ProductNormalization::UnitResponse,
-        RestoringBeamPolicy::None,
-        product_validity(),
-    );
-    let publication = make(
-        reconstruction(),
-        science(),
-        weighting(),
-        selected_products,
-        numerics(false),
-        inputs(false),
-    );
-    assert_ne!(baseline.problem_id(), publication.problem_id());
-    assert_eq!(
-        dependency,
-        publication.prepared_artifact_dependency_id(ConvolutionFunction)
-    );
-
-    let variants = [
-        make(
-            reconstruction(),
-            ScientificContract::new(
-                SpectralContract::new(SpectralSamplingLaw::LINEAR, SpectralCoupling::Independent),
-                MeasurementEquationContract::new(InstrumentResponse::Scalar, inner_products()),
-            ),
-            weighting(),
-            products(false),
-            numerics(false),
-            inputs(false),
-        ),
-        make(
-            reconstruction(),
-            science(),
-            WeightingContract::new(
-                WeightingScheme::Briggs { robust: -0.5 },
-                WeightDensityScope::GlobalSelection,
-            ),
-            products(false),
-            numerics(false),
-            inputs(false),
-        ),
-        make(
-            reconstruction(),
-            science(),
-            weighting(),
-            products(false),
-            NumericsContract::new(
-                vec![NumericPrecision::F32, NumericPrecision::F64],
-                ReductionPolicy::Compensated,
-                FiniteValuePolicy::FlagInputRejectGenerated,
-                NumericalStage::ALL
-                    .into_iter()
-                    .map(|stage| (stage, StageErrorBudget::new(2.0e-7, 1.0e-3)))
-                    .collect(),
-            ),
-            inputs(false),
-        ),
-        make(
-            reconstruction(),
-            science(),
-            weighting(),
-            products(false),
-            numerics(false),
-            problem_inputs(
-                2,
-                vec![
-                    (ReferenceDataKind::Measures, identity(3)),
-                    (ReferenceDataKind::Ephemeris, identity(4)),
-                ],
-                ModelStateIdentity::Seed(identity(5)),
-            ),
-        ),
-        make(
-            reconstruction(),
-            science(),
-            weighting(),
-            products(false),
-            numerics(false),
-            problem_inputs(
-                1,
-                vec![
-                    (ReferenceDataKind::Measures, identity(8)),
-                    (ReferenceDataKind::Ephemeris, identity(4)),
-                ],
-                ModelStateIdentity::Seed(identity(5)),
-            ),
-        ),
-        compile_with_geometry(
-            specification(false),
-            geometry().with_domains(vec![geometry().domains()[0].clone().with_facets(
-                FacetLayout::Regular {
-                    columns: 2,
-                    rows: 2,
-                },
-            )]),
-            inputs(false),
-        )
-        .expect("changed geometry"),
-    ];
-    for other in variants {
-        assert_ne!(
-            dependency,
-            other.prepared_artifact_dependency_id(ConvolutionFunction)
-        );
-    }
-    let model = make(
-        reconstruction(),
-        science(),
-        weighting(),
-        products(false),
-        numerics(false),
-        problem_inputs(
-            1,
-            vec![
-                (ReferenceDataKind::Measures, identity(3)),
-                (ReferenceDataKind::Ephemeris, identity(4)),
-            ],
-            ModelStateIdentity::Seed(identity(9)),
-        ),
-    );
-    assert_ne!(baseline.problem_id(), model.problem_id());
-    assert_ne!(
-        baseline.inputs().observation(),
-        model.inputs().observation()
-    );
-    assert_ne!(
-        dependency,
-        model.prepared_artifact_dependency_id(ConvolutionFunction),
-        "the retained observation snapshot includes its initial model generation"
-    );
+    assert!(duplicate.validate().is_err());
+    let mut narrow = input;
+    narrow.terms.wideband = false;
+    assert!(narrow.validate().is_err());
 }
 
 fn inputs(reverse: bool) -> ProblemInputIdentities {
@@ -1978,14 +1714,6 @@ fn sequential_continuum_transform_is_a_compiled_capability_and_identity_input() 
             .contains(&RequiredCapability::SequentialContinuumTransform)
     );
     assert_ne!(plain.problem_id(), transformed.problem_id());
-    assert_ne!(
-        plain.prepared_artifact_dependency_id(
-            casa_imaging_model::PreparedArtifactScientificKind::ConvolutionFunction
-        ),
-        transformed.prepared_artifact_dependency_id(
-            casa_imaging_model::PreparedArtifactScientificKind::ConvolutionFunction
-        ),
-    );
 }
 
 #[test]

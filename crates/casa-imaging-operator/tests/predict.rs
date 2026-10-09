@@ -26,9 +26,10 @@ fn context() -> RowContext {
     RowContext {
         time_s: 0.0,
         antennas: [0, 1],
+        antenna_types: [0, 0],
         parallactic_angle_rad: [0.0, 0.0],
         field: 0,
-        pointing_offset_rad: [0.0, 0.0],
+        spectral_window: 0,
     }
 }
 
@@ -66,6 +67,7 @@ fn predict(
     let row = NativeRow {
         uvw_m: UVW_M,
         phase_shift_m,
+        pointing_offset_rad: [0.0; 2],
         frequencies_hz,
         values: &values,
         weights: &weights,
@@ -125,6 +127,7 @@ fn direct_prediction_is_the_degridded_value_at_each_native_channel() {
         let row = NativeRow {
             uvw_m: UVW_M,
             phase_shift_m: 0.013,
+            pointing_offset_rad: [0.0; 2],
             frequencies_hz: std::slice::from_ref(frequency_hz),
             values: &values,
             weights: &[1.0, 1.0],

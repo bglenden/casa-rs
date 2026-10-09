@@ -3438,6 +3438,7 @@ impl ArtifactProjection {
 /// worst-case terminal for admission retains two projections and no encoding.
 /// Final persistence retains one projection, its index, and two compact byte
 /// buffers. Charge the larger phase, conservatively including per-item framing.
+#[cfg(test)]
 pub(crate) fn artifact_workspace_bytes(
     artifacts: impl IntoIterator<Item = crate::PlannedArtifact>,
 ) -> Result<u64, ReceiptError> {
@@ -6767,6 +6768,9 @@ fn project_centres(fields: &mut BTreeMap<String, String>, geometry: &CompiledGeo
                 "phase_tracking_centre",
             );
         }
+        PointingCentreLaw::FieldCentre => {
+            evidence_field(fields, "geometry.centres.pointing.kind", "field_centre");
+        }
         PointingCentreLaw::Fixed(direction) => {
             evidence_field(fields, "geometry.centres.pointing.kind", "fixed");
             project_sky_direction(fields, "geometry.centres.pointing.direction", *direction);
@@ -8364,10 +8368,10 @@ mod tests {
         use crate::{ArtifactIdentity, ArtifactRole, CacheIdentity, PlannedArtifact, WorkNodeId};
 
         let artifact = PlannedArtifact::new(
-            ArtifactIdentity::from_owner_digest([1; 32]),
+            ArtifactIdentity::from_sha256([1; 32]),
             WorkNodeId::new("catalog-\"escaped\"-node"),
             ArtifactRole::Prepared,
-            Some(CacheIdentity::from_owner_digest([2; 32])),
+            Some(CacheIdentity::from_sha256([2; 32])),
         );
         let one = artifact_workspace_bytes([artifact.clone()]).expect("one artifact workspace");
         for count in [1, 32, 1024] {

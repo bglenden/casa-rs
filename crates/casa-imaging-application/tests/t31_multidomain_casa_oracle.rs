@@ -271,6 +271,7 @@ fn request(
         save_continuum_residual: false,
         write_primary_beam: false,
         pbcor: false,
+        mosaic_use_pointing: false,
         w_projection_planes: None,
         aw_projection: None,
         task_requirements: vec![TaskRequirement::SerialCpu, TaskRequirement::FixedTileCpu],

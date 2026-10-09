@@ -40,7 +40,10 @@ pub struct Placement {
     /// kernel and Mueller table.
     pub w: f64,
     /// Phase-centre shift argument in radians. The block's values already
-    /// carry `e^{iφ}`; prediction applies `e^{−iφ}`.
+    /// carry `e^{iφ}`; prediction applies `e^{−iφ}`. The pointing ramp's
+    /// phase at the sample's fine offset belongs to the kernels, which
+    /// anchor the ramp at the sample in every mode (CASA reads the ramped
+    /// kernel at `ix · sampling + off`).
     pub phase: f64,
     /// Target grid plane: the output channel for a channel-local basis,
     /// 0 for a constant or Taylor basis.

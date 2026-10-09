@@ -12,8 +12,8 @@ use std::time::Instant;
 
 use casa_imaging_metal::MetalBackend;
 use casa_imaging_operator::{
-    CfKey, CpuBackend, GridAccumulator, GridBackend, MeasurementOperator, Mode, ModeSet, Placement,
-    PlaneRange, SampleBuffer, Tile, Work,
+    CellHold, CfKey, CpuBackend, GridAccumulator, GridBackend, MeasurementOperator, Mode, ModeSet,
+    Placement, PlaneRange, SampleBuffer, Tile, Work,
 };
 use common::{Rng, block, metal, wide_dense_operator};
 
@@ -31,7 +31,8 @@ fn centred_placements(
     let geometry = operator.geometry();
     let [nx, ny] = geometry.grid_shape();
     let [sx, sy] = geometry.scale();
-    let taps = operator.cf().taps(CfKey::default());
+    let mut hold = CellHold::new();
+    let taps = operator.cf().taps(CfKey::default(), &mut hold);
     let half = taps.half_support().map(i64::from);
     let mut out = Vec::with_capacity(count);
     while out.len() < count {
@@ -84,8 +85,9 @@ fn regions(operator: &MeasurementOperator, buffer: &SampleBuffer) -> Vec<(Tile, 
         })
         .collect();
     let block = buffer.block();
+    let mut hold = CellHold::new();
     for (index, placement) in block.placements.iter().enumerate() {
-        let taps = operator.cf().taps(placement.cf);
+        let taps = operator.cf().taps(placement.cf, &mut hold);
         let anchor = geometry.locate(placement.u, placement.v, taps.oversampling());
         let row = anchor.y as usize;
         let owner = (0..OWNERS)

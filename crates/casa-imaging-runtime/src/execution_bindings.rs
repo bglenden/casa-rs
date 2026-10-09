@@ -106,16 +106,6 @@ impl ArtifactIdentity {
     pub const fn from_logical_identity(identity: casa_imaging_model::LogicalIdentity) -> Self {
         Self(identity.as_bytes())
     }
-
-    pub(crate) const fn from_owner_digest(digest: [u8; 32]) -> Self {
-        Self(digest)
-    }
-}
-
-impl CacheIdentity {
-    pub(crate) const fn from_owner_digest(digest: [u8; 32]) -> Self {
-        Self(digest)
-    }
 }
 
 /// Fixed-point confidence in a conservative planner prediction.
@@ -629,6 +619,7 @@ impl ArtifactMeasurement {
         })
     }
 
+    #[cfg(test)]
     pub(crate) const fn new_store_owned(
         planned: ArtifactIdentity,
         observed: Option<ArtifactIdentity>,
@@ -1744,10 +1735,6 @@ impl PhysicalWorkBinding {
         &self.implementation_contract
     }
 
-    pub(crate) fn product_publication_plan(&self) -> Option<crate::ProductPublicationPlan> {
-        self.product_publication.clone()
-    }
-
     pub(crate) fn with_fixed_worker_count(self, workers: u64) -> Result<Self, ExecutionError> {
         let thread_stack_bytes = if workers == 1 {
             0
@@ -2858,13 +2845,6 @@ pub struct CompiledWorkContext<'a> {
 }
 
 impl<'a> CompiledWorkContext<'a> {
-    pub(crate) fn prepared_artifact_dependency_id(
-        self,
-        kind: casa_imaging_model::PreparedArtifactScientificKind,
-    ) -> casa_imaging_model::LogicalIdentity {
-        self.problem.prepared_artifact_dependency_id(kind)
-    }
-
     /// Return the stable compiled-problem identity.
     #[must_use]
     pub const fn problem_id(self) -> CompiledProblemId {
@@ -2949,57 +2929,7 @@ pub struct WorkExecutionContext<'a> {
     completed_observation_reads: &'a BTreeMap<WorkNodeId, AttemptBoundObservationCompletion>,
 }
 
-#[cfg(test)]
-pub(crate) struct WorkExecutionTestBindings<'a> {
-    problem: &'a CompiledProblem,
-    implementation_registry: ImplementationRegistryId,
-    completed_observation_reads: &'a BTreeMap<WorkNodeId, AttemptBoundObservationCompletion>,
-}
-
-#[cfg(test)]
-impl<'a> WorkExecutionTestBindings<'a> {
-    pub(crate) const fn new(
-        problem: &'a CompiledProblem,
-        implementation_registry: ImplementationRegistryId,
-        completed_observation_reads: &'a BTreeMap<WorkNodeId, AttemptBoundObservationCompletion>,
-    ) -> Self {
-        Self {
-            problem,
-            implementation_registry,
-            completed_observation_reads,
-        }
-    }
-}
-
 impl<'a> WorkExecutionContext<'a> {
-    #[cfg(test)]
-    pub(crate) fn for_test(
-        attempt_id: ExecutionAttemptId,
-        bindings: WorkExecutionTestBindings<'a>,
-        scheduled: &'a crate::execution::WorkExecutionContext,
-        planned_artifacts: &'a [PlannedArtifact],
-        stage_prediction: &'a StagePrediction,
-        resource_alternative: &'a crate::DemandAlternative,
-    ) -> Self {
-        Self {
-            control: None,
-            attempt_id,
-            compiled: CompiledWorkContext {
-                problem: bindings.problem,
-            },
-            implementation_registry: bindings.implementation_registry,
-            scheduled,
-            planned_artifacts,
-            stage_prediction,
-            resource_alternative,
-            observation_consistency: None,
-            observation_reads: None,
-            publication: None,
-            publication_resources: None,
-            completed_observation_reads: bindings.completed_observation_reads,
-        }
-    }
-
     /// Return the execution attempt that dispatched this exact node call.
     #[must_use]
     pub const fn attempt_id(self) -> ExecutionAttemptId {
@@ -3080,13 +3010,6 @@ impl<'a> WorkExecutionContext<'a> {
         self.planned_artifacts
             .iter()
             .filter(move |artifact| artifact.node() == node)
-    }
-
-    pub(crate) fn plan_artifact(self, identity: ArtifactIdentity) -> Option<&'a PlannedArtifact> {
-        self.planned_artifacts
-            .binary_search_by_key(&identity, PlannedArtifact::identity)
-            .ok()
-            .map(|index| &self.planned_artifacts[index])
     }
 
     /// Return the canonical prediction for this exact node.
@@ -3476,19 +3399,6 @@ pub trait ImplementationRegistry {
     ) -> Option<ImplementationContractMetadata> {
         None
     }
-
-    /// Resolve the canonical provider/catalog registration for preparation
-    /// owned by one implementation in this exact registry snapshot.
-    ///
-    /// Registries that do not own prepared artifacts leave this absent. A
-    /// prepared descriptor can only mint its closed owner through this lookup;
-    /// caller-authored provider strings are not accepted by the descriptor.
-    fn prepared_artifact_registration(
-        &self,
-        _implementation: &WorkImplementationId,
-    ) -> Option<&crate::prepared_artifact::PreparedArtifactRegistration> {
-        None
-    }
 }
 
 /// Immutable scheduler state exposed to a run controller without exposing the
@@ -3875,13 +3785,11 @@ fn validate_artifact_measurements(
                 disposition,
             });
         }
+        // A stale rejection observed something other than the planned
+        // artifact; reporting the planned identity as what was found
+        // contradicts the disposition.
         if disposition == ArtifactDisposition::RejectedStale
-            && measurement.observed_identity().is_none_or(|observed| {
-                crate::prepared_artifact::PreparedArtifactRejection::from_evidence_identity(
-                    artifact, observed,
-                )
-                .is_none()
-            })
+            && measurement.observed_identity() == Some(artifact)
         {
             return Err(ExecutionEvidenceError::ArtifactDispositionMismatch {
                 node: node.clone(),
@@ -5390,17 +5298,9 @@ mod artifact_measurement_tests {
     fn store_owned_rejection_requires_typed_identity_bound_to_planned_artifact() {
         let node = WorkNodeId::new("cache");
         let identity = ArtifactIdentity::from_sha256([1; 32]);
-        let other_identity = ArtifactIdentity::from_sha256([2; 32]);
         let planned = PlannedArtifact::new(identity, node.clone(), ArtifactRole::Cache, None);
         let planned_artifacts = BTreeMap::from([(identity, &planned)]);
-        let invalid = [
-            None,
-            Some(ArtifactIdentity::from_sha256([3; 32])),
-            Some(
-                crate::prepared_artifact::PreparedArtifactRejection::Missing
-                    .evidence_identity(other_identity),
-            ),
-        ];
+        let invalid = [Some(identity)];
 
         for observed in invalid {
             let measurements = WorkMeasurements::new(
@@ -5432,10 +5332,7 @@ mod artifact_measurement_tests {
             Vec::new(),
             vec![ArtifactMeasurement::new_store_owned(
                 identity,
-                Some(
-                    crate::prepared_artifact::PreparedArtifactRejection::Missing
-                        .evidence_identity(identity),
-                ),
+                None,
                 ArtifactDisposition::RejectedStale,
                 0,
                 None,

@@ -242,6 +242,7 @@ pub(crate) fn application_request(config: &CliConfig) -> Result<ContinuumImaging
         save_continuum_residual: config.save_continuum_residual,
         write_primary_beam: config.write_pb,
         pbcor: config.pbcor,
+        mosaic_use_pointing: config.use_pointing,
         w_projection_planes: config.w_project_planes,
         aw_projection: config
             .aw_project
@@ -295,7 +296,7 @@ fn task_requirements(config: &CliConfig) -> Vec<TaskRequirement> {
         requirements.push(TaskRequirement::AwProjection);
     } else if config.w_term_mode == WTermMode::WProject {
         requirements.push(TaskRequirement::WProjection);
-    } else if config.use_pointing && !config.force_standard_gridder {
+    } else if (config.mosaic_gridder || config.use_pointing) && !config.force_standard_gridder {
         requirements.push(TaskRequirement::MosaicGridder);
     }
     if config.use_mask == CleanMaskMode::AutoMultiThreshold {

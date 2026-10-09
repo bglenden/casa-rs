@@ -120,10 +120,13 @@ pub(super) fn resolve(
         frequencies[0].spectral_window,
     )? as f32;
     let pa = f64::from(pa + feed_angle);
+    // The catalog routes each hand through its own element and, for the
+    // conjugate baseline, the opposite hand (`makeConjPolMap`), so a
+    // single-hand image still needs both diagonal elements.
     let mueller_elements = match request.polarizations.as_slice() {
-        [PolarizationCoordinate::CircularRr] => vec![0],
-        [PolarizationCoordinate::CircularLl] => vec![15],
-        [PolarizationCoordinate::StokesI] => vec![0, 15],
+        [PolarizationCoordinate::CircularRr]
+        | [PolarizationCoordinate::CircularLl]
+        | [PolarizationCoordinate::StokesI] => vec![0, 15],
         _ => {
             return Err(boxed(
                 "native EVLA AW currently supports Stokes I or one circular parallel hand",

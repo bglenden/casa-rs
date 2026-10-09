@@ -1331,12 +1331,10 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(invocation.args, ["--managed-output", "true", "--json-run", "-"])
         XCTAssertEqual(invocation.protocolName, "casa_imager_task")
         XCTAssertEqual(invocation.protocolVersion, imagerTaskProtocolVersion)
-        // AW and W projection are typed unavailable from IF-2 until IF-3 (#652).
+        // IF-3 installed the AW and W-projection sets (#652); only the
+        // unconsumed source-stream control remains.
         let unsupported = Set(invocation.unsupportedReasons.map(\.id))
-        XCTAssertEqual(
-            unsupported,
-            Set(["task.aw_projection", "task.w_projection_planes", "task.memory_target"])
-        )
+        XCTAssertEqual(unsupported, Set(["task.memory_target"]))
 
         let stdin = try XCTUnwrap(invocation.stdin)
         let envelope = try XCTUnwrap(
@@ -1384,12 +1382,10 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(blockedReadiness.status, .infeasible)
         XCTAssertEqual(blockedReadiness.protocolName, "casa_imager_task")
         XCTAssertEqual(blockedReadiness.protocolVersion, imagerTaskProtocolVersion)
-        // AW and W projection are typed unavailable from IF-2 until IF-3 (#652).
+        // IF-3 installed the AW and W-projection sets (#652); the unconsumed
+        // source-stream control still blocks the launch.
         let blockedReasons = Set(blockedReadiness.unsupportedReasons.map(\.id))
-        XCTAssertEqual(
-            blockedReasons,
-            Set(["task.aw_projection", "task.w_projection_planes", "task.memory_target"])
-        )
+        XCTAssertEqual(blockedReasons, Set(["task.memory_target"]))
 
         blockedStore.setGenericTaskConfirmation(
             taskID: "imager",

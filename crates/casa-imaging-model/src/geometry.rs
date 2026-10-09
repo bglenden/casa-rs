@@ -621,6 +621,10 @@ pub enum DelayCentreLaw {
 pub enum PointingCentreLaw {
     /// Use the phase-tracking centre for every sample.
     PhaseTrackingCentre,
+    /// Use each sample's FIELD direction: where a mosaic or A-projection
+    /// pointing sits without the POINTING table (tclean `usepointing=False`,
+    /// `VisBuffer2::direction1` from the field).
+    FieldCentre,
     /// Use observation POINTING rows according to a complete sampling law.
     Observation(ObservationPointingLaw),
     /// Use one fixed framed direction.
@@ -1510,7 +1514,7 @@ fn canonicalize_centres(centres: &mut CentreLaws) -> Result<(), CompileGeometryE
         *direction = direction.canonicalize()?;
     }
     match &mut centres.pointing {
-        PointingCentreLaw::PhaseTrackingCentre => {}
+        PointingCentreLaw::PhaseTrackingCentre | PointingCentreLaw::FieldCentre => {}
         PointingCentreLaw::Observation(law)
             if !matches!(
                 (law.direction_column, law.direction_semantic),
@@ -1802,6 +1806,7 @@ fn encode_centres(encoder: &mut CanonicalEncoder, centres: &CentreLaws) {
     }
     match centres.pointing {
         PointingCentreLaw::PhaseTrackingCentre => encoder.u8(0),
+        PointingCentreLaw::FieldCentre => encoder.u8(3),
         PointingCentreLaw::Observation(law) => {
             encoder.u8(1);
             encoder.u8(match law.direction_column {

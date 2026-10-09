@@ -10166,15 +10166,11 @@ mod tests {
             .iter()
             .map(|reason| reason.id.as_str())
             .collect::<Vec<_>>();
-        // AW and W projection are typed unavailable from IF-2 until IF-3
-        // installs their convolution-function sets (#652).
+        // IF-3 installed the AW and W-projection sets (#652); only the
+        // unconsumed source-stream control remains.
         assert_eq!(
             reasons,
-            [
-                "task.aw_projection",
-                "task.w_projection_planes",
-                "task.memory_target"
-            ],
+            ["task.memory_target"],
             "the installed imager must report the exact unsupported requirements and unconsumed source-stream controls"
         );
         let canonical_profile = uniffi_snapshot

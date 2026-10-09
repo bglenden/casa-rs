@@ -3699,6 +3699,11 @@ fn predict_channel_visibility_preprojected(
         return predictor.predictor.predict(u_lambda, v_lambda);
     }
     let w_lambda = prediction_uvw_m[2] / wavelength_m;
+    // The baseline was rotated to the model reference direction, so the
+    // phase-centre displacement (l, m, n) enters as `u'l + v'm − w'(n−1)`:
+    // for a rotation about `u` by δ, `v·sinδ + w(cosδ−1) = v'·sinδ −
+    // w'(cosδ−1)`. The FIELD-frame w term of the analytic predictor has
+    // the opposite sign.
     let phase = std::f64::consts::TAU
         * (u_lambda * predictor.phase_offset.l_rad + v_lambda * predictor.phase_offset.m_rad
             - w_lambda * predictor.phase_offset.n_minus_one);
@@ -3744,8 +3749,9 @@ fn predict_analytic_visibility(
             amplitude *= attenuation;
         }
         let phase = std::f64::consts::TAU
-            * (u_lambda * component.l_rad + v_lambda * component.m_rad
-                - w_lambda * component.n_minus_one);
+            * (u_lambda * component.l_rad
+                + v_lambda * component.m_rad
+                + w_lambda * component.n_minus_one);
         visibility += Complex32::new(
             (amplitude * phase.cos()) as f32,
             (amplitude * phase.sin()) as f32,
@@ -3773,8 +3779,9 @@ fn predict_analytic_row_values(
     for field_component in &predictor.components {
         let component = &field_component.component;
         let phase_coefficient = std::f64::consts::TAU
-            * (uvw_m[0] * component.l_rad + uvw_m[1] * component.m_rad
-                - uvw_m[2] * component.n_minus_one);
+            * (uvw_m[0] * component.l_rad
+                + uvw_m[1] * component.m_rad
+                + uvw_m[2] * component.n_minus_one);
         let (mut phase_sin, mut phase_cos) = (phase_coefficient * inverse_wavelength_0).sin_cos();
         let (step_sin, step_cos) = (phase_coefficient * inverse_wavelength_step).sin_cos();
         let gaussian_scale = component.major_sigma_rad.map(|major_sigma_rad| {
@@ -5985,6 +5992,75 @@ mod tests {
         );
 
         assert_eq!(serial, parallel);
+    }
+
+    #[test]
+    fn a_displaced_fits_reference_predicts_the_casa_component_phase_at_nonzero_w() {
+        // A unit point at the reference pixel of a model referenced 0.01 rad
+        // north of the phase centre. The baseline is rotated to the model
+        // reference, the gridder sees the point at its own centre (a real
+        // response) and the phase shift must return CASA's component
+        // visibility e^{2πi(ul + vm + w(n−1))} (`SimpleComponentFTMachine`,
+        // `UVWMachine`) with (l, m, n) the reference direction's cosines.
+        // In the rotated frame the w term changes sign; with the
+        // FIELD-frame sign the w-only baseline comes back 0.63 off.
+        let delta_rad = 0.01;
+        let mut pixels = Array2::<f32>::zeros((32, 32));
+        pixels[(16, 16)] = 1.0;
+        let model = FitsModelImage {
+            pixels: pixels.clone(),
+            channel_planes: Vec::new(),
+            cell_size_rad: [1.0e-5, 1.0e-5],
+            direction_increment_rad: None,
+            direction_wcs: None,
+            ra_axis_increases_with_x: false,
+            reference_direction_rad: Some([0.0, delta_rad]),
+        };
+        let phase_center_rad = [0.0, 0.0];
+        let geometry = ImageGeometry {
+            image_shape: [32, 32],
+            cell_size_rad: model.cell_size_rad,
+        };
+        let predictor = SyntheticFieldPredictor::Sampled(vec![SyntheticChannelPredictor {
+            predictor: StandardMfsModelPredictor::new(geometry, &pixels).unwrap(),
+            phase_offset: casa_model_phase_offset(&model, phase_center_rad),
+            phase_center_rad,
+            model_reference_direction_rad: model.reference_direction_rad,
+        }]);
+        // One channel at λ = 1 m.
+        let spectral_setup = SyntheticSpectralSetup {
+            name: "test".to_string(),
+            start_frequency_hz: 299_792_458.0,
+            channel_width_hz: 1.0,
+            channel_count: 1,
+        };
+        let row_uvws = [
+            [0.0, 0.0, 1000.0],
+            [300.0, -200.0, 1000.0],
+            [-150.0, 400.0, -800.0],
+            [250.0, -120.0, 0.0],
+        ];
+        let values = predicted_data_values_for_rows_with_workers(
+            Some(&predictor),
+            &spectral_setup,
+            &row_uvws,
+            1,
+            1,
+        );
+        let (sin_delta, cos_delta) = delta_rad.sin_cos();
+        for (uvw, row) in row_uvws.iter().zip(&values) {
+            let expected_phase =
+                std::f64::consts::TAU * (uvw[1] * sin_delta + uvw[2] * (cos_delta - 1.0));
+            let expected = Complex32::new(expected_phase.cos() as f32, expected_phase.sin() as f32);
+            let actual = row[0];
+            assert!(actual.norm() > 0.5, "{uvw:?}: {actual}");
+            let unit = actual / actual.norm();
+            // The model offset keeps m = δ for sin δ: 4e-4 rad at v = 400.
+            assert!(
+                (unit - expected).norm() < 2.0e-3,
+                "{uvw:?}: {unit} vs {expected}"
+            );
+        }
     }
 
     #[test]

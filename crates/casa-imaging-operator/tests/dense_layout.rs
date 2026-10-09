@@ -8,10 +8,10 @@ mod common;
 
 use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 use casa_imaging_operator::{
-    Basis, CfKey, ConvolutionFunctionSet, CpuBackend, GridBackend, GridPrecision, ImageCorrection,
-    MeasurementOperator, Mode, ModeSet, ModelImages, ModelPlane, ModelPrescale, MuellerRouting,
-    PlaneRange, PolarizationRouting, RowContext, SPHEROIDAL_OVERSAMPLING, Spheroidal, TapLayout,
-    Work,
+    Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend, GridBackend, GridPrecision,
+    ImageCorrection, KernelNormalisation, MeasurementOperator, Mode, ModeSet, ModelImages,
+    ModelPlane, ModelPrescale, MuellerRouting, PlaneRange, PolarizationRouting, RowContext,
+    SPHEROIDAL_OVERSAMPLING, Spheroidal, TapLayout, Work,
 };
 use common::{IMAGE, Rng, buffer, geometry, max_abs, placements, samples};
 use ndarray::Array2;
@@ -67,7 +67,7 @@ impl ConvolutionFunctionSet for DenseFromRows {
         CfKey::default()
     }
 
-    fn taps(&self, _key: CfKey) -> TapLayout<'_> {
+    fn taps<'s>(&'s self, _key: CfKey, _hold: &'s mut CellHold) -> TapLayout<'s> {
         TapLayout::Dense {
             data: &self.data,
             support: [self.support, self.support],
@@ -80,8 +80,8 @@ impl ConvolutionFunctionSet for DenseFromRows {
         [self.support / 2; 2]
     }
 
-    fn weight_taps(&self, _key: CfKey) -> Option<TapLayout<'_>> {
-        Some(self.taps(CfKey::default()))
+    fn weight_taps<'s>(&'s self, key: CfKey, hold: &'s mut CellHold) -> Option<TapLayout<'s>> {
+        Some(self.taps(key, hold))
     }
 
     fn mueller(&self) -> &MuellerRouting {
@@ -90,6 +90,14 @@ impl ConvolutionFunctionSet for DenseFromRows {
 
     fn image_correction(&self) -> &ImageCorrection {
         &self.correction
+    }
+
+    fn normalisation(&self) -> KernelNormalisation {
+        KernelNormalisation::UnitSum
+    }
+
+    fn pointing_ramp(&self) -> bool {
+        false
     }
 }
 
@@ -140,7 +148,7 @@ impl ConvolutionFunctionSet for SeparableRows {
         CfKey::default()
     }
 
-    fn taps(&self, _key: CfKey) -> TapLayout<'_> {
+    fn taps<'s>(&'s self, _key: CfKey, _hold: &'s mut CellHold) -> TapLayout<'s> {
         TapLayout::SeparableReal {
             rows: &self.rows,
             support: self.support,
@@ -152,7 +160,7 @@ impl ConvolutionFunctionSet for SeparableRows {
         [self.support / 2; 2]
     }
 
-    fn weight_taps(&self, _key: CfKey) -> Option<TapLayout<'_>> {
+    fn weight_taps<'s>(&'s self, _key: CfKey, _hold: &'s mut CellHold) -> Option<TapLayout<'s>> {
         None
     }
 
@@ -162,6 +170,14 @@ impl ConvolutionFunctionSet for SeparableRows {
 
     fn image_correction(&self) -> &ImageCorrection {
         &self.correction
+    }
+
+    fn normalisation(&self) -> KernelNormalisation {
+        KernelNormalisation::UnitSum
+    }
+
+    fn pointing_ramp(&self) -> bool {
+        false
     }
 }
 
@@ -211,11 +227,12 @@ fn dense_copy_of_the_spheroidal_kernel_matches_the_separable_path() {
         let geometry = geometry();
         let polarization = PolarizationRouting::compile(&XX_YY, &STOKES_I).expect("routing");
         let spheroidal = Spheroidal::new(&geometry, &polarization);
+        let mut hold = CellHold::new();
         let TapLayout::SeparableReal {
             rows,
             support,
             oversampling,
-        } = spheroidal.taps(CfKey::default())
+        } = spheroidal.taps(CfKey::default(), &mut hold)
         else {
             panic!("spheroidal taps are separable");
         };
@@ -350,11 +367,12 @@ fn weight_mode_places_the_weight_taps_at_the_origin() {
     let geometry = geometry();
     let polarization = PolarizationRouting::compile(&XX_YY, &STOKES_I).expect("routing");
     let template = Spheroidal::new(&geometry, &polarization);
+    let mut hold = CellHold::new();
     let TapLayout::SeparableReal {
         rows,
         support,
         oversampling,
-    } = template.taps(CfKey::default())
+    } = template.taps(CfKey::default(), &mut hold)
     else {
         panic!("spheroidal taps are separable");
     };

@@ -61,7 +61,11 @@ static inline float2 cconj(float2 a) {
     return float2(a.x, -a.y);
 }
 
-// tap' = (w > 0 ? t : conj(t)) · e^{i(kx gx + ky gy)}, k from the kernel centre.
+// tap' = (w > 0 ? conj(t) : t) · e^{i(kx gx + ky gy)}, k from the kernel centre
+// (CASA conjugates the kernel of a positive-w sample: `wprojgrid.f`,
+// `AWVisResampler::DataToGrid`),
+// plus the sample's fine offset (off − s/2)/s in cells: the ramp is anchored at
+// the sample, as CASA reads the ramped kernel at ix·sampling + off.
 static inline float2 tap_value(Table t, device const float *rows, device const float2 *dense,
                                Sample s, uint mueller, uint ix, uint iy) {
     if (t.dense == 0) {
@@ -75,12 +79,13 @@ static inline float2 tap_value(Table t, device const float *rows, device const f
     ulong tile = (ulong(s.fine.y) * ulong(t.oversampling + 1) + ulong(s.fine.x))
                      * ulong(t.mueller_planes) + ulong(mueller);
     float2 tap = dense[ulong(t.offset) + tile * ulong(sx * sy) + ulong(iy * sx + ix)];
-    if ((s.flags & 1u) == 0u) {
+    if ((s.flags & 1u) != 0u) {
         tap = cconj(tap);
     }
     if (s.gradient.x != 0.0f || s.gradient.y != 0.0f) {
-        float kx = float(int(ix) - int(sx / 2));
-        float ky = float(int(iy) - int(sy / 2));
+        float mid = float(t.oversampling) * 0.5f;
+        float kx = float(int(ix) - int(sx / 2)) + (float(s.fine.x) - mid) / float(t.oversampling);
+        float ky = float(int(iy) - int(sy / 2)) + (float(s.fine.y) - mid) / float(t.oversampling);
         float phase = kx * s.gradient.x + ky * s.gradient.y;
         tap = cmul(tap, float2(precise::cos(phase), precise::sin(phase)));
     }

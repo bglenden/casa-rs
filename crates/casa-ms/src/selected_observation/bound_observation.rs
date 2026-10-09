@@ -535,6 +535,21 @@ pub struct BoundSelectedObservation {
 }
 
 impl BoundSelectedObservation {
+    /// The distinct CASA aperture classes of the selected sources' antennas
+    /// in class order (`HetArrayConvFunc::findAntennaSizes`: one class per
+    /// distinct dish), empty when no antenna is an ALMA or ACA dish.
+    #[must_use]
+    pub fn antenna_response_classes(&self) -> Vec<casa_imaging_model::AntennaResponseClass> {
+        let mut classes = self
+            .sources
+            .iter()
+            .flat_map(|source| source.antenna_response_classes().iter().flatten().copied())
+            .collect::<Vec<_>>();
+        classes.sort_unstable();
+        classes.dedup();
+        classes
+    }
+
     #[cfg(unix)]
     pub(crate) fn single_source_content_requirements(
         problem: &CompiledProblem,

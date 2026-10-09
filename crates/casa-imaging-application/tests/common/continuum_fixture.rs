@@ -703,105 +703,6 @@ pub(super) fn string(value: &str) -> Value {
     Value::Scalar(ScalarValue::String(value.to_string()))
 }
 
-// `aw_projection` and `write_aw_sized_test_cell` serve only the AW-cache unit
-// tests, which `include!` this file from `src/aw_cache/ownership_transfer_probe.rs`;
-// the application tests request no AW projection until IF-3 (#652).
-#[allow(
-    dead_code,
-    reason = "used by the AW-cache unit tests that include this file, not by every includer"
-)]
-pub(super) fn aw_projection(casa_cache: PathBuf, use_pointing: bool) -> ContinuumAwProjection {
-    ContinuumAwProjection {
-        source: casa_imaging_application::ContinuumAwCfSource::CasaImport(casa_cache),
-        resident_bytes: 1 << 20,
-        w_plane_count: Some(32),
-        psf_phase_center_direction_rad: None,
-        vp_table: None,
-        a_term: true,
-        ps_term: false,
-        wideband: true,
-        conjugate_beams: true,
-        use_pointing,
-        pointing_offset_sigdev: Vec::new(),
-        mosaic_weighting: false,
-        compute_pa_step_deg: 360.0,
-        rotate_pa_step_deg: 360.0,
-    }
-}
-
-#[allow(
-    dead_code,
-    clippy::too_many_arguments,
-    reason = "used by the AW-cache unit tests that include this file, not by every includer"
-)]
-pub(super) fn write_aw_sized_test_cell(
-    root: &Path,
-    name: &str,
-    weight: bool,
-    increment: [f64; 2],
-    mueller: i32,
-    frequency_hz: f64,
-    value: Complex32,
-    extent: usize,
-) {
-    let path = root.join(name);
-    let shape = vec![extent, extent, 1, 1];
-    let reference_pixel = vec![(extent / 2) as f64, (extent / 2) as f64];
-    let support = if weight { 2 } else { 1 };
-    let mut coordinates = CoordinateSystem::new();
-    coordinates.add_coordinate(
-        LinearCoordinate::new(
-            2,
-            vec!["UU".to_string(), "VV".to_string()],
-            vec!["lambda".to_string(), "lambda".to_string()],
-        )
-        .with_reference_value(vec![0.0, 0.0])
-        .with_reference_pixel(reference_pixel)
-        .with_increment(increment.to_vec()),
-    );
-    coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::RR]));
-    coordinates.add_coordinate(SpectralCoordinate::new(
-        FrequencyRef::LSRK,
-        frequency_hz,
-        1.0,
-        0.0,
-        frequency_hz,
-    ));
-    let mut image =
-        PagedImage::<Complex32>::create(shape, coordinates, &path).expect("create AW cache cell");
-    image.set(value).expect("fill AW cache cell");
-    image
-        .set_misc_info(RecordValue::new(vec![
-            RecordField::new(
-                "BandName",
-                Value::Scalar(ScalarValue::String("EVLA_Q".to_string())),
-            ),
-            RecordField::new(
-                "ConjFreq",
-                Value::Scalar(ScalarValue::Float64(frequency_hz)),
-            ),
-            RecordField::new("ConjPoln", Value::Scalar(ScalarValue::Int32(8))),
-            RecordField::new("Diameter", Value::Scalar(ScalarValue::Float64(25.0))),
-            RecordField::new("MuellerElement", Value::Scalar(ScalarValue::Int32(mueller))),
-            RecordField::new("OpCode", Value::Scalar(ScalarValue::Bool(false))),
-            RecordField::new(
-                "ParallacticAngle",
-                Value::Scalar(ScalarValue::Float64(30.0)),
-            ),
-            RecordField::new("Sampling", Value::Scalar(ScalarValue::Float64(2.0))),
-            RecordField::new(
-                "TelescopeName",
-                Value::Scalar(ScalarValue::String("EVLA".to_string())),
-            ),
-            RecordField::new("WIncr", Value::Scalar(ScalarValue::Float64(0.5))),
-            RecordField::new("WValue", Value::Scalar(ScalarValue::Float64(0.0))),
-            RecordField::new("Xsupport", Value::Scalar(ScalarValue::Int32(support))),
-            RecordField::new("Ysupport", Value::Scalar(ScalarValue::Int32(support))),
-        ]))
-        .expect("attach AW cache metadata");
-    image.save().expect("save AW cache cell");
-}
-
 pub(super) fn request(
     measurement_set: PathBuf,
     image_name: PathBuf,
@@ -848,6 +749,7 @@ pub(super) fn request(
         save_continuum_residual: false,
         write_primary_beam: false,
         pbcor: false,
+        mosaic_use_pointing: false,
         w_projection_planes: None,
         aw_projection: None,
         task_requirements: Vec::new(),

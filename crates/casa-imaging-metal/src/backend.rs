@@ -5,9 +5,9 @@
 use std::ops::Range;
 
 use casa_imaging_operator::{
-    AccumulatorLayout, ConvolutionFunctionSet, DeviceCells, DeviceFailure, GridAccumulator,
-    GridBackend, GridScalar, GridStorage, Mode, OperatorError, PreparedModelGrids, SampleBlock,
-    TapLayout, Tile, Work,
+    AccumulatorLayout, CellHold, ConvolutionFunctionSet, DeviceCells, DeviceFailure,
+    GridAccumulator, GridBackend, GridScalar, GridStorage, Mode, OperatorError, PreparedModelGrids,
+    SampleBlock, TapLayout, Tile, Work,
 };
 use num_complex::{Complex32, Complex64};
 use objc2::rc::Retained;
@@ -177,8 +177,9 @@ impl<'cf> MetalBackend<'cf> {
                 continue;
             }
             last = Some(key);
+            let mut hold = CellHold::new();
             let taps = kind
-                .taps(self.kernels, key)
+                .taps(self.kernels, key, &mut hold)
                 .ok_or(OperatorError::WeightKernelUnavailable { key })?;
             let index = u32::try_from(self.tables.len()).expect("kernel tables fit u32");
             let table = match taps {

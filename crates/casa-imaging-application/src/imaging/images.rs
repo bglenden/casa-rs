@@ -25,22 +25,39 @@ pub(crate) fn pass_images(domain: usize, images: &NormalImages, initial: bool) -
             push_x_major(&mut residual, image);
         }
     }
-    let (psf, sum_weights) = if initial {
+    let (psf, sum_weights, published_sum_weights, weight) = if initial {
         let mut psf = Vec::new();
         let mut sum_weights = Vec::new();
+        let mut published_sum_weights = Vec::new();
+        let mut weight = Vec::new();
         for (index, plane) in images.planes.iter().enumerate() {
             for image in &plane.psf {
                 push_x_major(&mut psf, image);
             }
+            // CASA divides each image by the `sumwt` of its own gridding
+            // (`getImage`): the PSF and weight planes by the PSF's, the
+            // residual by the data's, which differ for a set whose PSF
+            // kernel is not its imaging kernel (`AWProjectFT`'s `cfwts2_p`).
             for term in 0..images.psf_terms {
                 for pol in 0..images.pols {
                     sum_weights.push(images.psf_sumwt(index, term, pol));
+                    published_sum_weights.push(if term < images.data_terms {
+                        images.data_sumwt(index, term, pol)
+                    } else {
+                        images.psf_sumwt(index, term, pol)
+                    });
                 }
             }
+            for image in &plane.weight {
+                push_x_major(&mut weight, image);
+            }
         }
-        (Some(psf), sum_weights)
+        // A kernel set with weight taps (mosaic, AW) gridded one sensitivity
+        // image per polarization and plane; the standard sets gridded none.
+        let weight = (!weight.is_empty()).then_some(weight);
+        (Some(psf), sum_weights, published_sum_weights, weight)
     } else {
-        (None, Vec::new())
+        (None, Vec::new(), Vec::new(), None)
     };
     PassImages {
         domain,
@@ -50,6 +67,8 @@ pub(crate) fn pass_images(domain: usize, images: &NormalImages, initial: bool) -
         residual,
         psf,
         sum_weights,
+        published_sum_weights,
+        weight,
     }
 }
 
