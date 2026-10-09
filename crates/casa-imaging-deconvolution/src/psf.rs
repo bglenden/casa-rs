@@ -27,7 +27,8 @@ pub struct ClarkPatch {
     pub radius: [usize; 2],
     /// The patch width per axis.
     pub size: [usize; 2],
-    /// The largest PSF magnitude outside the patch.
+    /// The largest PSF magnitude outside the patch, by casacore's
+    /// asymmetric box about the plane centre; 0 when the patch is the plane.
     pub exterior_sidelobe: f64,
 }
 
@@ -56,7 +57,7 @@ impl PsfSummary {
             peak,
             beam,
             sidelobe,
-            clark: ClarkPatch::new(psf, shape, peak, beam),
+            clark: ClarkPatch::new(psf, shape, beam),
         })
     }
 
@@ -88,22 +89,32 @@ impl PsfSummary {
 impl ClarkPatch {
     /// At least four pixels, otherwise the ceiling of the fitted widths;
     /// a `3·ncent + 1` square capped by the plane.
-    fn new(psf: &[f64], shape: PlaneShape, peak: usize, beam: RestoringBeam) -> Self {
+    fn new(psf: &[f64], shape: PlaneShape, beam: RestoringBeam) -> Self {
         let central = 4_usize
             .max(beam.major_fwhm_rad().ceil() as usize)
             .max(beam.minor_fwhm_rad().ceil() as usize);
         let requested = 3 * central + 1;
         let size = [requested.min(shape.nx), requested.min(shape.ny)];
         let radius = [size[0] / 2, size[1] / 2];
-        let [px, py] = shape.pixel(peak);
-        let exterior_sidelobe = psf
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| {
-                let [x, y] = shape.pixel(*index);
-                x.abs_diff(px) > radius[0] || y.abs_diff(py) > radius[1]
-            })
-            .fold(0.0_f64, |maximum, (_, value)| maximum.max(value.abs()));
+        // ClarkCleanLatModel::absMaxBeyondDist about the PSF origin
+        // (psfShape/2): rows beyond ±d, and in the other rows the columns
+        // left of −d and from +d on. A patch as large as the plane leaves no
+        // exterior (getPsfPatch's user value, 0).
+        let [cx, cy] = shape.centre();
+        let exterior_sidelobe = if size == [shape.nx, shape.ny] {
+            0.0
+        } else {
+            psf.iter()
+                .enumerate()
+                .filter(|(index, _)| {
+                    let [x, y] = shape.pixel(*index);
+                    y + radius[1] < cy
+                        || y > cy + radius[1]
+                        || x + radius[0] < cx
+                        || x >= cx + radius[0]
+                })
+                .fold(0.0_f64, |maximum, (_, value)| maximum.max(value.abs()))
+        };
         Self {
             radius,
             size,

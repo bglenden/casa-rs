@@ -235,8 +235,6 @@ fn taylor_recovers_two_components_with_their_spectra() {
     }
 }
 
-/// CASA's Högbom loop does one component more than the cycle's budget and
-/// charges the budget; the plane stops on `cycleniter` (code 1).
 /// A point-symmetric sky has mirror pixels of equal value, and rounding must
 /// not choose between them: nudging one mirror by an ulp leaves every
 /// solver's components as they were, each tie going to the first pixel in
@@ -270,16 +268,26 @@ fn rounding_does_not_choose_between_mirror_pixels() {
                 .unwrap(),
         )
     };
-    for (name, solver) in [
-        ("hogbom", &hogbom as &dyn Fn(&Plane) -> Vec<(usize, usize)>),
-        ("multiscale", &multiscale),
+    let clark = |plane: &Plane| trace(plane.run(&Clark::default(), &cycle).unwrap());
+    // Clark's active list is x-major (GETBIMF), so its first is the other
+    // mirror.
+    for (name, solver, first) in [
+        (
+            "hogbom",
+            &hogbom as &dyn Fn(&Plane) -> Vec<(usize, usize)>,
+            early,
+        ),
+        ("multiscale", &multiscale, early),
+        ("clark", &clark, late),
     ] {
         let clean = components(&symmetric, solver);
-        assert_eq!(clean[0].0, early, "{name}: the scan-first mirror wins");
+        assert_eq!(clean[0].0, first, "{name}: casacore's first mirror wins");
         assert_eq!(components(&nudged, solver), clean, "{name}");
     }
 }
 
+/// CASA's Högbom loop does one component more than the cycle's budget and
+/// charges the budget; the plane stops on `cycleniter` (code 1).
 #[test]
 fn inclusive_hogbom_cleans_one_extra_component_and_charges_the_budget() {
     let point = psf(2.0, 1.0);
@@ -372,8 +380,19 @@ fn a_nonfinite_residual_is_refused() {
     let mut residual = convolve(&point, &two_points());
     residual[SHAPE.index(10, 40)] = f64::NAN;
     let plane = Plane::new(vec![residual], vec![point]);
+    let cycle = cycle(100, 0.01);
     assert_eq!(
-        plane.run(&Hogbom::new(false), &cycle(100, 0.01)),
+        plane.run(&Hogbom::new(false), &cycle),
+        Err(Error::NonFinite)
+    );
+    assert_eq!(
+        plane.run(&Clark::default(), &cycle).map(|_| ()),
+        Err(Error::NonFinite)
+    );
+    assert_eq!(
+        plane
+            .run(&Multiscale::new(vec![0.0, 3.0], 0.0), &cycle)
+            .map(|_| ()),
         Err(Error::NonFinite)
     );
 }

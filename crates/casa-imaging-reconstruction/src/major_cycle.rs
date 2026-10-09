@@ -370,8 +370,19 @@ impl FinalNormalState {
             .read_plane(domain_ordinal, absolute_channel, polarization)
     }
 
-    /// Read one plane's residual and PSF in their stored precision.
-    #[doc(hidden)]
+    /// Read the residual and point-spread function of one plane, the inputs
+    /// of that plane's minor cycle.
+    ///
+    /// `domain_ordinal` names the image domain, `absolute_channel` the
+    /// output channel (in the slab's absolute numbering) and `polarization`
+    /// the polarization plane. Both fields are unnormalized, in their stored
+    /// precision: a paged state reads only this plane, a resident state
+    /// borrows it. The plane also carries its shape, validity and sum of
+    /// weights.
+    ///
+    /// # Errors
+    ///
+    /// When the plane is outside the state or its storage cannot be read.
     pub fn read_reconstruction_plane(
         &self,
         domain_ordinal: usize,

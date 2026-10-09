@@ -244,10 +244,9 @@ pub enum NativeMinorCycleStopReason {
     ThresholdReached,
     /// The bounded minor-cycle iteration budget was exhausted.
     IterationBound,
-    /// The next update would exceed the frozen-approximation envelope.
-    StalenessBound,
-    /// The multiscale residual trajectory diverged after accepted progress.
-    MultiscaleDivergence,
+    /// A plane's peak residual rose more than 10% above its minimum in the
+    /// cycle (CASA's plane stop code 4, any solver).
+    Diverged,
 }
 
 impl NativeMinorCycleStopReason {
@@ -258,7 +257,7 @@ impl NativeMinorCycleStopReason {
     pub fn from_planes(stops: &[casa_imaging_deconvolution::PlaneStop]) -> Self {
         use casa_imaging_deconvolution::PlaneStop;
         if stops.contains(&PlaneStop::Diverged) {
-            Self::MultiscaleDivergence
+            Self::Diverged
         } else if stops
             .iter()
             .any(|stop| matches!(stop, PlaneStop::Iterations | PlaneStop::Exited))

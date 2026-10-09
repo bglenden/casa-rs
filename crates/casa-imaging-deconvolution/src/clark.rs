@@ -5,7 +5,7 @@
 use std::cell::Cell;
 
 use crate::Error;
-use crate::plane::PlaneShape;
+use crate::plane::{PlaneShape, exceeds};
 use crate::psf::ClarkPatch;
 use crate::refresh::LinearRefresh;
 use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepEnd, StepStop};
@@ -65,6 +65,14 @@ pub struct ClarkState {
     step_components: usize,
     active: Vec<Active>,
     refresh: LinearRefresh,
+    /// The step's starting peak, the scale of its rounding ties.
+    tie_scale: f64,
+}
+
+/// C++ `std::max(value, floor)`: `floor` only when `value < floor`, so a NaN
+/// `value` stays NaN.
+fn cpp_max(value: f64, floor: f64) -> f64 {
+    if value < floor { floor } else { value }
 }
 
 impl Solver for Clark {
@@ -114,6 +122,7 @@ impl Solver for Clark {
             step_components: 0,
             active: Vec::new(),
             refresh,
+            tie_scale: max_residual,
         };
         state.begin(&residual[0], view);
         Ok(state)
@@ -126,13 +135,18 @@ impl Solver for Clark {
         residual: &mut [Vec<f64>],
     ) -> Result<Next, Error> {
         loop {
+            // ABSMAXF: the first largest in list order.
             let peak = state.active.iter().fold(None::<&Active>, |best, pixel| {
-                if best.is_none_or(|current| pixel.value.abs() > current.value.abs()) {
+                if best.is_none_or(|current| {
+                    exceeds(pixel.value.abs(), current.value.abs(), state.tie_scale)
+                }) {
                     Some(pixel)
                 } else {
                     best
                 }
             });
+            // A NaN iteration flux limit (no exterior sidelobe) ends the
+            // Clark cycle after one component, as in CASA.
             if state.cycle_iterations < state.maximum_cycle_iterations
                 && let Some(pixel) = peak
                 && pixel.value.abs() > state.iteration_flux_limit
@@ -205,7 +219,7 @@ impl Solver for Clark {
         state.cycle_iterations += 1;
         state.step_components += 1;
         state.fmn += state.fac / state.step_components as f64;
-        state.iteration_flux_limit = (state.flux_limit * state.fmn).max(state.threshold);
+        state.iteration_flux_limit = cpp_max(state.flux_limit * state.fmn, state.threshold);
         Ok(())
     }
 
@@ -237,27 +251,24 @@ impl ClarkState {
             self.flux_limit = self.flux_limit.min(0.95 * self.max_residual);
         }
         let cutoff = self.flux_limit.max(self.threshold);
+        // GETBIMF: supported pixels at or above the cutoff, x outer and y
+        // inner, which is storage order. (CASA lists a tiled residual tile
+        // by tile; a plane in one tile is listed in this order.)
         self.active.clear();
         for (index, (&value, &supported)) in
             residual.iter().zip(view.support.as_slice()).enumerate()
         {
-            if supported && value.abs() > cutoff {
+            if supported && value.abs() >= cutoff {
                 self.active.push(Active { index, value });
             }
         }
-        // casacore's active list is in x-fastest order, which decides ties.
-        let shape = self.shape;
-        self.active
-            .sort_unstable_by_key(|pixel| (pixel.index % shape.ny, pixel.index / shape.ny));
         let peak = self
             .active
             .iter()
             .fold(0.0_f64, |best, pixel| best.max(pixel.value.abs()));
-        self.fac = if self.flux_limit > 0.0 {
-            peak / self.flux_limit
-        } else {
-            0.0
-        };
+        // `pow(fluxLimit / absRes, speedup)` with CASA's speedup of −1:
+        // infinite without an exterior sidelobe.
+        self.fac = peak / self.flux_limit;
         self.fmn = 0.0;
         self.iteration_flux_limit = cutoff;
         self.cycle_iterations = 0;

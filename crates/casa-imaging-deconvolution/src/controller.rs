@@ -30,10 +30,10 @@ pub enum CleanStop {
     Threshold,
     /// 4: the peak residual did not change across the last major cycle.
     NoChange,
-    /// 5: the unmasked peak residual grew more than threefold over the
-    /// previous major cycle.
+    /// 5: the unmasked peak residual grew to more than four times its
+    /// value at the previous major cycle (a relative growth above 3).
     DivergedFromPrevious,
-    /// 6: the unmasked peak residual grew more than threefold over its
+    /// 6: the unmasked peak residual grew to more than four times its
     /// minimum.
     DivergedFromMinimum,
     /// 7: the mask is empty.
@@ -66,8 +66,9 @@ impl CleanStop {
 /// record, merged over fields).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ResidualStatistics {
-    /// Largest residual magnitude on the cleanable support of any plane;
-    /// a plane with an empty support contributes its unmasked peak.
+    /// Largest peak residual of any image store: within the store's mask
+    /// when its mask is not empty, else over its valid pixels
+    /// (`SynthesisDeconvolver::initMinorCycle`).
     pub peak: f64,
     /// Largest residual magnitude on the valid pixels of any plane.
     pub peak_no_mask: f64,
@@ -81,15 +82,29 @@ pub struct ResidualStatistics {
 }
 
 impl ResidualStatistics {
-    /// Fold one plane's statistics into the run's.
-    pub fn include(&mut self, plane: &PlaneStatistics, psf_sidelobe: f64, nsigma: f64) {
-        self.peak = self.peak.max(plane.peak);
-        self.peak_no_mask = self.peak_no_mask.max(plane.peak_no_mask);
-        self.psf_sidelobe = self.psf_sidelobe.max(psf_sidelobe);
-        self.mask_sum += plane.mask_sum;
-        if let Some(threshold) = plane.nsigma_threshold(nsigma) {
-            self.nsigma_threshold = self.nsigma_threshold.max(threshold);
+    /// Fold one image store (a field with all its channels and
+    /// polarizations) into the run's: each plane's statistics with its PSF
+    /// sidelobe. The store's peak is its masked peak when its mask sum over
+    /// every plane is positive, so a channel with an empty mask contributes
+    /// nothing then.
+    pub fn include_store<'a>(
+        &mut self,
+        planes: impl IntoIterator<Item = (&'a PlaneStatistics, f64)>,
+        nsigma: f64,
+    ) {
+        let (mut in_mask, mut no_mask, mut mask_sum) = (0.0_f64, 0.0_f64, 0);
+        for (plane, psf_sidelobe) in planes {
+            in_mask = in_mask.max(plane.peak_in_mask);
+            no_mask = no_mask.max(plane.peak_no_mask);
+            mask_sum += plane.mask_sum;
+            self.psf_sidelobe = self.psf_sidelobe.max(psf_sidelobe);
+            if let Some(threshold) = plane.nsigma_threshold(nsigma) {
+                self.nsigma_threshold = self.nsigma_threshold.max(threshold);
+            }
         }
+        self.peak = self.peak.max(if mask_sum > 0 { in_mask } else { no_mask });
+        self.peak_no_mask = self.peak_no_mask.max(no_mask);
+        self.mask_sum += mask_sum;
     }
 
     /// No plane yet.
@@ -108,9 +123,9 @@ impl ResidualStatistics {
 /// One plane's residual before a minor cycle.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlaneStatistics {
-    /// Largest residual magnitude on the cleanable support, or on the valid
-    /// pixels when the support is empty (`SDAlgorithmBase::deconvolve`).
-    pub peak: f64,
+    /// Largest residual magnitude on the cleanable support; zero when the
+    /// support is empty.
+    pub peak_in_mask: f64,
     /// Largest residual magnitude on the valid pixels.
     pub peak_no_mask: f64,
     /// Number of cleanable pixels.
@@ -122,9 +137,8 @@ pub struct PlaneStatistics {
 }
 
 impl PlaneStatistics {
-    /// Measure term 0 of a residual: the peak on `support`, or on `valid`
-    /// when the support is empty (`SDAlgorithmBase::deconvolve`), and the
-    /// robust noise of `valid` when `nsigma` is on
+    /// Measure term 0 of a residual: the peaks on `support` and on `valid`,
+    /// and the robust noise of `valid` when `nsigma` is on
     /// (`SIImageStore::calcRobustRMS` with the primary-beam mask).
     #[must_use]
     pub fn measure(
@@ -134,19 +148,26 @@ impl PlaneStatistics {
         nsigma: f64,
         automask: bool,
     ) -> Self {
-        let peak_no_mask = peak_magnitude(residual, valid);
         Self {
-            peak: if support.is_empty() {
-                peak_no_mask
-            } else {
-                peak_magnitude(residual, support)
-            },
-            peak_no_mask,
+            peak_in_mask: peak_magnitude(residual, support),
+            peak_no_mask: peak_magnitude(residual, valid),
             mask_sum: support.count(),
             noise: (nsigma > 0.0)
                 .then(|| robust_noise(residual, valid))
                 .flatten(),
             automask,
+        }
+    }
+
+    /// The plane's peak residual as its minor cycle starts from it: within
+    /// the mask when the plane has one, else over the valid pixels
+    /// (`SDAlgorithmBase::deconvolve`).
+    #[must_use]
+    pub fn peak(&self) -> f64 {
+        if self.mask_sum > 0 {
+            self.peak_in_mask
+        } else {
+            self.peak_no_mask
         }
     }
 
@@ -238,11 +259,21 @@ impl Controller {
             .cycle_iteration_limit()
             .filter(|limit| *limit > 0)
             .map_or(niter, |limit| limit.min(niter));
-        let cycle_rule = controls.cycle_factor().map(|factor| CycleThresholdRule {
-            factor,
-            minimum_psf_fraction: controls.minimum_psf_fraction().unwrap_or(0.0),
-            maximum_psf_fraction: controls.maximum_psf_fraction().unwrap_or(1.0),
-        });
+        // `with_cycle_threshold` sets the three together.
+        let cycle_rule = match (
+            controls.cycle_factor(),
+            controls.minimum_psf_fraction(),
+            controls.maximum_psf_fraction(),
+        ) {
+            (Some(factor), Some(minimum_psf_fraction), Some(maximum_psf_fraction)) => {
+                Some(CycleThresholdRule {
+                    factor,
+                    minimum_psf_fraction,
+                    maximum_psf_fraction,
+                })
+            }
+            _ => None,
+        };
         Self {
             niter,
             cycle_niter,
@@ -496,7 +527,8 @@ impl PlaneControl {
         self.iterations
     }
 
-    /// Note the peak residual before a step (`setPeakResidual`).
+    /// Note a step's peak residual, signed as its solver reports it, before
+    /// testing it (`setPeakResidual`): the minimum is signed, as CASA's is.
     pub fn observe(&mut self, peak: f64) {
         self.minimum = self.minimum.min(peak);
     }
@@ -685,7 +717,7 @@ mod tests {
 
     fn plane(noise: Option<RobustNoise>) -> PlaneStatistics {
         PlaneStatistics {
-            peak: 1.0,
+            peak_in_mask: 1.0,
             peak_no_mask: 1.0,
             mask_sum: 10,
             noise,
@@ -726,6 +758,29 @@ mod tests {
         control.charge(10);
         assert_eq!(control.stop(0.5), Some(PlaneStop::NSigma));
         assert_eq!(control.stop(0.7), None);
+    }
+
+    /// A store with a mask reports its masked peak even where one channel
+    /// has no mask; a store without one reports its unmasked peak.
+    #[test]
+    fn each_store_chooses_its_masked_or_unmasked_peak() {
+        let plane = |peak_in_mask, peak_no_mask, mask_sum| PlaneStatistics {
+            peak_in_mask,
+            peak_no_mask,
+            mask_sum,
+            noise: None,
+            automask: false,
+        };
+        let cube = [plane(0.5, 0.9, 10), plane(0.0, 2.0, 0)];
+        assert_eq!((cube[0].peak(), cube[1].peak()), (0.5, 2.0));
+        let mut statistics = ResidualStatistics::empty();
+        statistics.include_store(cube.iter().map(|plane| (plane, 0.1)), 0.0);
+        assert_eq!((statistics.peak, statistics.peak_no_mask), (0.5, 2.0));
+        let unmasked = [plane(0.0, 0.7, 0)];
+        statistics.include_store(unmasked.iter().map(|plane| (plane, 0.2)), 0.0);
+        assert_eq!(statistics.peak, 0.7);
+        assert_eq!(statistics.mask_sum, 10);
+        assert_eq!(statistics.psf_sidelobe, 0.2);
     }
 
     #[test]

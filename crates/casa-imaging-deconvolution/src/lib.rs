@@ -41,11 +41,11 @@ pub use controller::{
     ResidualStatistics,
 };
 pub use driver::{Component, PlaneOutcome, run_plane};
-pub use hogbom::Hogbom;
+pub use hogbom::{Hogbom, HogbomState};
 pub use multiscale::{Multiscale, MultiscaleState};
 pub use plane::{
-    PlaneShape, RobustNoise, Support, casacore_max_abs, first_peak, peak_magnitude, psf_peak,
-    robust_noise,
+    PlaneShape, RobustNoise, Support, TIE_TOLERANCE, casacore_max_abs, first_peak, peak_magnitude,
+    psf_peak, robust_noise,
 };
 pub use psf::{ClarkPatch, PsfSummary};
 pub use refresh::LinearRefresh;
@@ -69,6 +69,10 @@ pub enum Error {
     /// No requested scale fits in half the image.
     #[error("no multi-term scale fits in half the image")]
     NoScale,
+    /// The plane is too narrow for the multi-term cleaner's PSF patch
+    /// (`findBeamPatch` leaves no pixel).
+    #[error("the image is too small for the multi-term PSF patch")]
+    PlaneTooSmall,
     /// The multi-term Hessian is singular or its rows are dependent; the
     /// data cannot support that many Taylor terms.
     #[error(
@@ -80,12 +84,6 @@ pub enum Error {
     #[error("minor-cycle arithmetic produced a non-finite value")]
     NonFinite,
     /// A transform could not be planned or run.
-    #[error("FFT: {0}")]
-    Fft(String),
-}
-
-impl From<casa_fft::FftError> for Error {
-    fn from(error: casa_fft::FftError) -> Self {
-        Self::Fft(error.to_string())
-    }
+    #[error(transparent)]
+    Fft(#[from] casa_fft::FftError),
 }

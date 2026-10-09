@@ -4,8 +4,16 @@
 
 use crate::Error;
 use crate::patch::subtract_shifted;
-use crate::plane::{first_peak, peak_magnitude};
+use crate::plane::{casacore_max_abs, first_peak, peak_magnitude};
 use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepEnd, StepStop};
+
+/// Working state of one Högbom step.
+#[derive(Clone, Copy, Debug)]
+pub struct HogbomState {
+    threshold: f64,
+    /// The step's starting peak, the scale of its rounding ties.
+    tie_scale: f64,
+}
 
 /// Högbom's point CLEAN on one plane.
 ///
@@ -28,8 +36,7 @@ impl Hogbom {
 }
 
 impl Solver for Hogbom {
-    /// The step threshold.
-    type State = f64;
+    type State = HogbomState;
 
     fn extra_iterations(&self) -> usize {
         usize::from(self.inclusive)
@@ -37,26 +44,29 @@ impl Solver for Hogbom {
 
     fn initialize(
         &self,
-        _: &MinorCycleView<'_>,
-        _: &[Vec<f64>],
+        view: &MinorCycleView<'_>,
+        residual: &[Vec<f64>],
         threshold: f64,
-    ) -> Result<f64, Error> {
-        Ok(threshold)
+    ) -> Result<HogbomState, Error> {
+        Ok(HogbomState {
+            threshold,
+            tie_scale: peak_magnitude(&residual[0], view.support),
+        })
     }
 
     fn next(
         &self,
-        threshold: &mut f64,
+        state: &mut HogbomState,
         view: &MinorCycleView<'_>,
         residual: &mut [Vec<f64>],
     ) -> Result<Next, Error> {
-        let Some((index, value)) = first_peak(&residual[0], view.support) else {
+        let Some((index, value)) = first_peak(&residual[0], view.support, state.tie_scale) else {
             return Ok(Next::Stop(StepStop::Exhausted));
         };
         if !value.is_finite() {
             return Err(Error::NonFinite);
         }
-        if value.abs() < *threshold {
+        if value.abs() < state.threshold {
             return Ok(Next::Stop(StepStop::Threshold));
         }
         Ok(Next::Clean(Candidate::Pixel {
@@ -68,7 +78,7 @@ impl Solver for Hogbom {
 
     fn accept(
         &self,
-        _: &mut f64,
+        _: &mut HogbomState,
         view: &MinorCycleView<'_>,
         residual: &mut [Vec<f64>],
         candidate: Candidate,
@@ -92,13 +102,14 @@ impl Solver for Hogbom {
 
     fn finalize(
         &self,
-        _: f64,
+        state: HogbomState,
         view: &MinorCycleView<'_>,
         residual: &mut [Vec<f64>],
         _: &Delta,
     ) -> Result<StepEnd, Error> {
+        // SDAlgorithmHogbomClean::takeOneStep reports the signed extreme.
         Ok(StepEnd {
-            peak: peak_magnitude(&residual[0], view.support),
+            peak: casacore_max_abs(&residual[0], view.support, state.tie_scale).1,
             refreshes: 0,
         })
     }

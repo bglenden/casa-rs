@@ -103,14 +103,6 @@ int main(int argc, char** argv) try {
     store.multiplyModelByWeight(0.0f, "flatnoise");
     const auto native_response = get_model(store, 0);
     export_plane(output, "edges_native_pb_response", native_response);
-    for (unsigned term = 0; term < 2; ++term) put_model(store, term, ones);
-    store.divideModelByWeight(cutoff, "flatnoise");
-    const auto native_divided_ones = get_model(store, 0);
-    Matrix<Float> support(512, 512);
-    for (int x = 0; x < 512; ++x)
-        for (int y = 0; y < 512; ++y)
-            support(x, y) = native_divided_ones(x, y) != 0 ? 1.0f : 0.0f;
-    export_plane(output, "edges_expected_support", support);
 
     std::array<Matrix<Float>, 2> apparent{Matrix<Float>(512, 512), Matrix<Float>(512, 512)};
     for (unsigned term = 0; term < 2; ++term) {

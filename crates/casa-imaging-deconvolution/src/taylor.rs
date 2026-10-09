@@ -7,7 +7,7 @@ use casa_numerics::solve_symmetric_ldlt_casacore_dynamic;
 
 use crate::Error;
 use crate::patch::subtract_window;
-use crate::plane::{PlaneShape, Support, beam_patch, casacore_max_abs, exceeds};
+use crate::plane::{PlaneShape, Support, beam_patch, casacore_max_abs, exceeds, peak_magnitude};
 use crate::scales::ScaleBank;
 use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepEnd, StepStop};
 
@@ -68,6 +68,8 @@ pub struct TaylorState {
     masks: Vec<Support>,
     /// The region whose right-hand sides changed in the last update.
     window: Option<([usize; 2], [usize; 2])>,
+    /// The step's first work peak, the scale of its rounding ties.
+    tie_scale: Option<f64>,
 }
 
 impl TaylorState {
@@ -87,7 +89,7 @@ impl TaylorState {
     /// `checkConvergence`'s principal residual: the point-scale residual's
     /// masked peak over the Hessian's first entry.
     fn principal_peak(&self) -> f64 {
-        (casacore_max_abs(&self.rhs[0], &self.masks[0]).1 / self.principal).abs()
+        (casacore_max_abs(&self.rhs[0], &self.masks[0], 0.0).1 / self.principal).abs()
     }
 
     /// Recompute coefficients and work over `[low, high]` (inclusive).
@@ -140,6 +142,9 @@ impl Solver for Taylor {
         let mut bank = ScaleBank::new(&sizes, self.small_scale_bias, shape)?;
         let scales = bank.len();
         let patch = beam_patch(sizes[scales - 1], shape);
+        if patch == 0 {
+            return Err(Error::PlaneTooSmall);
+        }
         let [px, py] = shape.pixel(view.summary.peak());
         let psf_spectra = view
             .psf
@@ -193,6 +198,7 @@ impl Solver for Taylor {
             work: vec![vec![0.0; shape.len()]; scales],
             masks,
             window: None,
+            tie_scale: None,
         };
         let centre = patch_shape.index(patch / 2, patch / 2);
         for scale in 0..scales {
@@ -229,10 +235,16 @@ impl Solver for Taylor {
             .window
             .unwrap_or(([0, 0], [shape.nx - 1, shape.ny - 1]));
         state.solve_window(low, high);
+        let tie_scale = *state.tie_scale.get_or_insert_with(|| {
+            (0..state.bank.len())
+                .map(|scale| peak_magnitude(&state.work[scale], &state.masks[scale]))
+                .fold(0.0, f64::max)
+        });
         let mut best = (-1.0e10_f64, 0_usize, 0_usize);
         for scale in 0..state.scales() {
-            let (index, value) = casacore_max_abs(&state.work[scale], &state.masks[scale]);
-            if exceeds(value * state.bank.bias[scale], best.0) {
+            let (index, value) =
+                casacore_max_abs(&state.work[scale], &state.masks[scale], tie_scale);
+            if exceeds(value * state.bank.bias[scale], best.0, 0.0) {
                 best = (value * state.bank.bias[scale], scale, index);
             }
         }

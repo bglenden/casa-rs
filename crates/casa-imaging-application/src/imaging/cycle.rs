@@ -193,11 +193,22 @@ pub(crate) fn run(inputs: ImagingInputs<'_>) -> Result<ImagingOutcome, ImagingEr
         );
         outcome.minor_cycles.push(record);
         outcome.masks = Some(ReconstructionMaskSet::Domains(minor.masks.clone()));
-        if minor.summary.iterations == 0 {
-            break;
-        }
         let last = controller.budget_spent() || controller.last_cycle(&statistics);
         mask_plans = next_masks(&mask_plans, &minor, cycle, cycle_controls.threshold_reached)?;
+        if minor.summary.iterations == 0 {
+            // tclean skips the major cycle, updates the mask and still asks
+            // `hasConverged` for the stop it reports.
+            let prepared = prepare_minor_cycle(
+                &outcome.scientific,
+                &mask_plans,
+                &setup,
+                &mut cache,
+                &run.team,
+            )?;
+            outcome.stop = controller.clean_complete(&prepared.statistics);
+            outcome.masks = Some(ReconstructionMaskSet::Domains(prepared.masks().clone()));
+            break;
+        }
         major = run.refresh(outcome.scientific, minor.terms, &minor.masks, last)?;
         controller.end_major_cycle();
         outcome.scientific = major.completion;

@@ -2747,8 +2747,7 @@ fn project_minor_cycle(
         stop_reason: match cycle.stop_reason {
             NativeStop::ThresholdReached => ImagerMinorCycleStopReason::ThresholdReached,
             NativeStop::IterationBound => ImagerMinorCycleStopReason::IterationBound,
-            NativeStop::StalenessBound => ImagerMinorCycleStopReason::StalenessBound,
-            NativeStop::MultiscaleDivergence => ImagerMinorCycleStopReason::MultiscaleDivergence,
+            NativeStop::Diverged => ImagerMinorCycleStopReason::MultiscaleDivergence,
         },
         clark_refreshes: cycle.clark_refreshes,
         associated_replay_ordinal: cycle.associated_replay_ordinal,

@@ -149,7 +149,8 @@ pub trait Solver {
 /// How a step ended.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StepEnd {
-    /// The peak residual CASA reports for the step.
+    /// The peak residual CASA reports for the step, with CASA's sign: signed
+    /// for Högbom (`findMaxAbsMask`), a magnitude for the others.
     pub peak: f64,
     /// Exact whole-plane residual refreshes the step made (Clark's cycles,
     /// multiscale's terminal convolution).

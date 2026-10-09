@@ -50,7 +50,8 @@ pub struct PlaneOutcome {
 ///
 /// # Errors
 ///
-/// When the solver fails.
+/// [`Error::NonFinite`] when a plane to clean holds a NaN or an infinity in
+/// a residual or PSF term; otherwise when the solver fails.
 pub fn run_plane<S: Solver>(
     solver: &S,
     view: &MinorCycleView<'_>,
@@ -58,7 +59,7 @@ pub fn run_plane<S: Solver>(
     statistics: &PlaneStatistics,
     trace: usize,
 ) -> Result<PlaneOutcome, Error> {
-    let start_peak = statistics.peak;
+    let start_peak = statistics.peak();
     let mut control = PlaneControl::new(cycle, statistics, start_peak);
     let mut outcome = PlaneOutcome {
         delta: Delta::new(view.residual.len()),
@@ -76,11 +77,19 @@ pub fn run_plane<S: Solver>(
         outcome.stop = stop.unwrap_or(PlaneStop::ZeroMask);
         return Ok(outcome);
     }
+    if view
+        .residual
+        .iter()
+        .chain(view.psf)
+        .flatten()
+        .any(|value| !value.is_finite())
+    {
+        return Err(Error::NonFinite);
+    }
     let mut residual = view.residual.to_vec();
     let threshold = control.step_threshold();
     let step_budget = cycle.step_iterations();
     while stop.is_none() {
-        control.observe(outcome.peak);
         let step = run_step(
             solver,
             view,
@@ -92,6 +101,8 @@ pub fn run_plane<S: Solver>(
             &mut outcome,
         )?;
         control.charge(step);
+        // SDAlgorithmBase::deconvolve: setPeakResidual, then checkStop.
+        control.observe(outcome.peak);
         stop = control.stop(outcome.peak);
         if stop.is_none() && step != step_budget {
             stop = Some(PlaneStop::Exited);
