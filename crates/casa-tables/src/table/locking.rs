@@ -373,9 +373,18 @@ impl Table {
             return Ok(false);
         }
         // Some write operations change only the data managers or the files
-        // on disk, which the change count of the rows does not see.
-        self.inner.note_change();
+        // on disk, which the change count of the rows does not see. An
+        // admitted operation counts even if it later fails, since it may have
+        // written part of its change; a refused one does not.
+        let admitted = self.admit_write_operation(operation);
+        if admitted.is_ok() {
+            self.inner.note_change();
+        }
+        admitted
+    }
 
+    #[cfg(unix)]
+    fn admit_write_operation(&mut self, operation: &str) -> Result<bool, TableError> {
         let Some(state) = self.lock_state.as_mut() else {
             return Ok(false);
         };

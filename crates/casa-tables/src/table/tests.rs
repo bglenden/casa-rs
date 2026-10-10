@@ -5499,6 +5499,15 @@ mod lock_tests {
         let before = published();
 
         let mut writer = Table::open_with_lock(opts.clone(), lock_opts.clone()).unwrap();
+        // A write refused for want of the write lock changes nothing.
+        assert!(
+            writer
+                .add_row(RecordValue::new(vec![
+                    RecordField::new("id", Value::Scalar(ScalarValue::Int32(2))),
+                    RecordField::new("name", Value::Scalar(ScalarValue::String("bob".into()))),
+                ]))
+                .is_err()
+        );
         assert!(writer.lock(LockType::Write, 1).unwrap());
         assert_eq!(writer.row_count(), 1);
         writer.unlock().unwrap();
