@@ -31,7 +31,11 @@ use crate::{Table, TableError};
 /// handle holds this lock: its temporary write lock is refused rather than
 /// waited on, because the holder may be the same thread.
 ///
-/// On platforms without `fcntl` locking the guard holds nothing.
+/// On a file system without lock support (`fcntl` refused with `ENOLCK`, or
+/// `ENOTSUP` as on macOS SMB mounts) the lock counts as acquired, with one
+/// warning per lock file, as casacore does for `ENOLCK`: other handles in this
+/// process are still refused, other processes are not excluded. On platforms
+/// without `fcntl` locking the guard holds nothing.
 ///
 /// # C++ equivalent
 ///
@@ -65,8 +69,8 @@ impl TableWriteLock {
     ///
     /// [`TableError::LockFailed`] when another process or another handle in
     /// this process holds a conflicting lock after `nattempts`, and
-    /// [`TableError::LockIo`] when `table.lock` cannot be opened or locked,
-    /// for example on a file system without `fcntl` locks.
+    /// [`TableError::LockIo`] when `table.lock` cannot be opened or `fcntl`
+    /// fails for a reason other than a held lock or missing lock support.
     pub fn acquire(table_dir: impl AsRef<Path>, nattempts: u32) -> Result<Self, TableError> {
         let path = table_dir.as_ref().to_path_buf();
         #[cfg(unix)]

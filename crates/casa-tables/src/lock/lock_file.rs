@@ -31,11 +31,21 @@
 //! protocol is casacore's own, so casacore and casa-rs processes exclude each
 //! other through the same byte ranges.
 //!
+//! # File systems without locking
+//!
+//! casacore counts a lock refused with `ENOLCK` ("locking over a network
+//! file system is not working", NFS without `lockd`) as acquired, so tables
+//! there are used without cross-process exclusion. macOS `smbfs` refuses
+//! `fcntl` locks with `ENOTSUP`/`EOPNOTSUPP` for the same condition, and
+//! casa-rs treats all three alike: the lock counts as acquired, read or
+//! write, and one warning per lock file names the path and errno. Handles in
+//! one process still exclude each other through the registry.
+//!
 //! # C++ reference
 //!
 //! `LockFile.cc`, `FileLocker.cc`, `PlainTable::tableCache`
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::os::unix::io::RawFd;
 use std::path::{Path, PathBuf};
@@ -69,6 +79,7 @@ type LockFileKey = (u64, u64);
 struct SharedLockFd {
     fd: RawFd,
     writable: bool,
+    path: PathBuf,
     state: Mutex<ProcessLockState>,
 }
 
@@ -76,6 +87,47 @@ impl SharedLockFd {
     fn state(&self) -> MutexGuard<'_, ProcessLockState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
+
+    /// Set (or clear) an `fcntl` lock on `start..start + len` without
+    /// waiting; `false` when another process holds a conflicting lock.
+    fn set_lock(&self, lock_type: i32, start: i64, len: i64) -> io::Result<bool> {
+        self.granted(fcntl_lock(self.fd, lock_type, start, len))
+    }
+
+    /// Whether an `fcntl` outcome grants the lock. A file system without
+    /// lock support grants every lock, as casacore does for `ENOLCK`.
+    fn granted(&self, outcome: io::Result<FcntlOutcome>) -> io::Result<bool> {
+        Ok(match outcome? {
+            FcntlOutcome::Granted => true,
+            FcntlOutcome::Held => false,
+            FcntlOutcome::Unsupported(errno) => {
+                report_unsupported_locking(&self.path, errno);
+                true
+            }
+        })
+    }
+}
+
+/// Warn, once per lock file in this process, that its file system does not
+/// support `fcntl` locking. Returns whether this call warned.
+fn report_unsupported_locking(path: &Path, errno: i32) -> bool {
+    static REPORTED: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+    let first = REPORTED
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(path.to_path_buf());
+    if first {
+        tracing::warn!(
+            path = %path.display(),
+            errno,
+            error = %io::Error::from_raw_os_error(errno),
+            "the file system does not support table locking; the table is used without \
+             cross-process locks, as casacore does when locking over a network file system \
+             is not working (ENOLCK)"
+        );
+    }
+    first
 }
 
 /// Locks the handles of one process hold on one lock file.
@@ -235,6 +287,7 @@ impl LockFile {
                     let shared = Arc::new(SharedLockFd {
                         fd,
                         writable,
+                        path: path.clone(),
                         state: Mutex::new(ProcessLockState::default()),
                     });
                     registry.insert(
@@ -255,7 +308,7 @@ impl LockFile {
             let mut state = shared.state();
             let use_len = if perm_locking { 2 } else { 1 };
             if state.in_use_len < use_len {
-                let _ = fcntl_lock(shared.fd, libc::F_SETLK, libc::F_RDLCK as i32, 1, use_len);
+                let _ = shared.set_lock(libc::F_RDLCK as i32, 1, use_len);
                 state.in_use_len = use_len;
             }
         }
@@ -355,8 +408,8 @@ impl LockFile {
     /// One non-blocking attempt, arbitrated against the other handles of this
     /// process before the process's `fcntl` lock is changed.
     fn try_acquire(&mut self, lock_type: LockType) -> io::Result<Attempt> {
-        let fd = self.shared.fd;
-        let mut state = self.shared.state();
+        let shared = &self.shared;
+        let mut state = shared.state();
         match lock_type {
             LockType::Write => {
                 match state.writer {
@@ -364,7 +417,7 @@ impl LockFile {
                     Some(_) => return Ok(Attempt::HeldInProcess),
                     None => {}
                 }
-                if !fcntl_lock(fd, libc::F_SETLK, libc::F_WRLCK as i32, 0, 1)? {
+                if !shared.set_lock(libc::F_WRLCK as i32, 0, 1)? {
                     return Ok(Attempt::HeldByAnotherProcess);
                 }
                 if self.held == Some(LockType::Read) {
@@ -378,7 +431,7 @@ impl LockFile {
                 Some(LockType::Read) => Ok(Attempt::Acquired),
                 Some(LockType::Write) => {
                     // casacore converts a held write lock to a read lock.
-                    fcntl_lock(fd, libc::F_SETLK, libc::F_RDLCK as i32, 0, 1)?;
+                    shared.set_lock(libc::F_RDLCK as i32, 0, 1)?;
                     state.writer = None;
                     state.readers += 1;
                     self.held = Some(LockType::Read);
@@ -389,7 +442,7 @@ impl LockFile {
                     // handle holds a read or write lock.
                     if state.readers == 0
                         && state.writer.is_none()
-                        && !fcntl_lock(fd, libc::F_SETLK, libc::F_RDLCK as i32, 0, 1)?
+                        && !shared.set_lock(libc::F_RDLCK as i32, 0, 1)?
                     {
                         return Ok(Attempt::HeldByAnotherProcess);
                     }
@@ -408,8 +461,8 @@ impl LockFile {
     ///
     /// Returns `true` if a lock was released, `false` if no lock was held.
     pub fn release(&mut self) -> io::Result<bool> {
-        let fd = self.shared.fd;
-        let mut state = self.shared.state();
+        let shared = &self.shared;
+        let mut state = shared.state();
         let Some(held) = self.held.take() else {
             return Ok(false);
         };
@@ -417,7 +470,7 @@ impl LockFile {
             LockType::Read => {
                 state.readers -= 1;
                 if state.readers == 0 && state.writer.is_none() {
-                    fcntl_lock(fd, libc::F_SETLK, libc::F_UNLCK as i32, 0, 1)?;
+                    shared.set_lock(libc::F_UNLCK as i32, 0, 1)?;
                 }
             }
             LockType::Write => {
@@ -427,7 +480,7 @@ impl LockFile {
                 } else {
                     libc::F_UNLCK
                 };
-                fcntl_lock(fd, libc::F_SETLK, remaining as i32, 0, 1)?;
+                shared.set_lock(remaining as i32, 0, 1)?;
             }
         }
         Ok(true)
@@ -712,11 +765,37 @@ impl Drop for LockFile {
 
 // --- Low-level helpers ---
 
-/// Perform an `fcntl` lock operation.
+/// Outcome of one `fcntl` lock request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FcntlOutcome {
+    /// The lock was set (or cleared).
+    Granted,
+    /// Another process holds a conflicting lock.
+    Held,
+    /// The file system does not support `fcntl` locking; carries the errno.
+    Unsupported(i32),
+}
+
+/// Classify a failed `fcntl` lock request by its errno.
 ///
-/// Returns `true` if the lock was acquired/released, `false` if it would
-/// block. Treats `ENOLCK` as success (NFS compatibility, matching C++).
-fn fcntl_lock(fd: RawFd, cmd: i32, lock_type: i32, start: i64, len: i64) -> io::Result<bool> {
+/// `EAGAIN`/`EACCES` mean another process holds the lock. `ENOLCK` is what
+/// NFS returns when locking over the network is not working (casacore's
+/// `FileLocker` counts it as acquired), and macOS `smbfs` returns
+/// `ENOTSUP`/`EOPNOTSUPP` for the same condition. Any other errno is an error.
+fn outcome_of_failed_lock(error: io::Error) -> io::Result<FcntlOutcome> {
+    match error.raw_os_error() {
+        Some(libc::EAGAIN | libc::EACCES) => Ok(FcntlOutcome::Held),
+        Some(errno)
+            if errno == libc::ENOLCK || errno == libc::ENOTSUP || errno == libc::EOPNOTSUPP =>
+        {
+            Ok(FcntlOutcome::Unsupported(errno))
+        }
+        _ => Err(error),
+    }
+}
+
+/// Perform a non-blocking `fcntl` lock operation (`F_SETLK`).
+fn fcntl_lock(fd: RawFd, lock_type: i32, start: i64, len: i64) -> io::Result<FcntlOutcome> {
     let mut flock = libc::flock {
         l_type: lock_type as i16,
         l_whence: libc::SEEK_SET as i16,
@@ -724,18 +803,10 @@ fn fcntl_lock(fd: RawFd, cmd: i32, lock_type: i32, start: i64, len: i64) -> io::
         l_len: len,
         l_pid: 0,
     };
-    let result = unsafe { libc::fcntl(fd, cmd, &mut flock) };
-    if result == -1 {
-        let err = io::Error::last_os_error();
-        match err.raw_os_error() {
-            // EAGAIN/EACCES: lock held by another process (non-blocking).
-            Some(libc::EAGAIN) | Some(libc::EACCES) => Ok(false),
-            // ENOLCK: NFS can't grant lock — treat as success, matching C++.
-            Some(libc::ENOLCK) => Ok(true),
-            _ => Err(err),
-        }
+    if unsafe { libc::fcntl(fd, libc::F_SETLK, &mut flock) } == -1 {
+        outcome_of_failed_lock(io::Error::last_os_error())
     } else {
-        Ok(true)
+        Ok(FcntlOutcome::Granted)
     }
 }
 
@@ -885,6 +956,46 @@ mod tests {
         // Forced inspect should always check.
         // No requests pending, so should return false.
         assert!(!lf.inspect(true).unwrap());
+    }
+
+    #[test]
+    fn lock_refusals_are_classified_by_errno() {
+        let outcome = |errno| outcome_of_failed_lock(io::Error::from_raw_os_error(errno));
+        for errno in [libc::ENOLCK, libc::ENOTSUP, libc::EOPNOTSUPP] {
+            assert_eq!(outcome(errno).unwrap(), FcntlOutcome::Unsupported(errno));
+        }
+        for errno in [libc::EAGAIN, libc::EACCES] {
+            assert_eq!(outcome(errno).unwrap(), FcntlOutcome::Held);
+        }
+        assert!(outcome(libc::EBADF).is_err());
+    }
+
+    /// A file system without lock support (NFS without lockd, macOS smbfs)
+    /// grants every lock, as casacore does for ENOLCK, and is reported once
+    /// per lock file; a lock held by another process is still refused.
+    #[test]
+    fn a_file_system_without_locking_grants_locks_and_warns_once() {
+        let dir = TempDir::new().unwrap();
+        let lock = LockFile::create_or_open(dir.path(), true, 5.0, false).unwrap();
+        for errno in [libc::ENOTSUP, libc::EOPNOTSUPP, libc::ENOLCK] {
+            assert!(
+                lock.shared
+                    .granted(Ok(FcntlOutcome::Unsupported(errno)))
+                    .unwrap()
+            );
+        }
+        assert!(
+            !report_unsupported_locking(&lock.shared.path, libc::ENOTSUP),
+            "the lock file is reported once"
+        );
+        assert!(!lock.shared.granted(Ok(FcntlOutcome::Held)).unwrap());
+        assert!(
+            lock.shared
+                .granted(outcome_of_failed_lock(io::Error::from_raw_os_error(
+                    libc::EBADF
+                )))
+                .is_err()
+        );
     }
 
     #[test]
